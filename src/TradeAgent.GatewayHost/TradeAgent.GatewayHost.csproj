@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>tradeagent-gateway</AssemblyName>
+    <RootNamespace>TradeAgent.GatewayHost</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+  </ItemGroup>
+</Project>

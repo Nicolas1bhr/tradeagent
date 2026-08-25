@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <!-- Pinned ahead of the version Microsoft.Data.Sqlite 10.0.0 pulls in: 2.1.11 carries
+         GHSA-2m69-gcr7-jv3q (high). Same major, so the provider API is unchanged. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+  </ItemGroup>
+</Project>

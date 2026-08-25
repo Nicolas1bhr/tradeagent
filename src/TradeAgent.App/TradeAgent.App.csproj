@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>TradeAgent</AssemblyName>
+    <RootNamespace>TradeAgent.App</RootNamespace>
+    <ApplicationManifest Condition="Exists('app.manifest')">app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Avalonia over WPF/WinUI: it builds and runs on the CI/dev host as well as Windows, ships
+         self-contained with no runtime prerequisite for the user, and has the lowest packaging risk
+         of the three. See docs/DECISIONS.md. -->
+    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <ProjectReference Include="../TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <ProjectReference Include="../TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
+    <ProjectReference Include="../TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
+  </ItemGroup>
+</Project>

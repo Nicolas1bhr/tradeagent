@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" />
+    <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
+  </ItemGroup>
+</Project>

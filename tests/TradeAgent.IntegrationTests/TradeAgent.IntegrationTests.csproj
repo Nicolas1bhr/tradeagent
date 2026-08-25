@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
+  </ItemGroup>
+</Project>

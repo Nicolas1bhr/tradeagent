@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <Project Path="src/TradeAgent.App/TradeAgent.App.csproj" />
+    <Project Path="src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
+    <Project Path="src/TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <Project Path="src/TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
+    <Project Path="src/TradeAgent.ConnectorSdk/TradeAgent.ConnectorSdk.csproj" />
+    <Project Path="src/TradeAgent.Core/TradeAgent.Core.csproj" />
+    <Project Path="src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
+    <Project Path="src/TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <Project Path="src/TradeAgent.GatewayHost/TradeAgent.GatewayHost.csproj" />
+    <Project Path="src/TradeAgent.Security/TradeAgent.Security.csproj" />
+    <Project Path="src/TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TradeAgent.FaultTests/TradeAgent.FaultTests.csproj" />
+    <Project Path="tests/TradeAgent.IntegrationTests/TradeAgent.IntegrationTests.csproj" />
+    <Project Path="tests/TradeAgent.UnitTests/TradeAgent.UnitTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
+    <!-- DPAPI. Cross-platform package; the Windows-only calls are guarded at the call site. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+</Project>

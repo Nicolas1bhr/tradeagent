@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Builds everywhere by default WITHOUT the ATAS API file, so the protocol half is compiled and
+         tested on every machine and in CI. Build with -p:AtasBridgeBuild=true on a Windows box that
+         has ATAS installed to compile the real adapter. -->
+    <TargetFramework Condition="'$(AtasBridgeBuild)'=='true'">$(AtasBridgeTargetFramework)</TargetFramework>
+    <AtasBridgeTargetFramework Condition="'$(AtasBridgeTargetFramework)'==''">net8.0-windows</AtasBridgeTargetFramework>
+    <AssemblyName>TradeAgent.AtasBridge</AssemblyName>
+    <RootNamespace>TradeAgent.AtasBridge</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <DefineConstants Condition="'$(AtasBridgeBuild)'=='true'">$(DefineConstants);ATAS_SDK</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+  </ItemGroup>
+
+  <!-- The ATAS-facing file is excluded unless explicitly building against a real ATAS install. -->
+  <ItemGroup Condition="'$(AtasBridgeBuild)'!='true'">
+    <Compile Remove="AtasStrategyAdapter.cs" />
+  </ItemGroup>
+
+  <!-- Fill AtasInstallDir in via -p:AtasInstallDir="C:\Program Files\ATAS Platform".
+       The exact assembly names are a RESEARCH-REQUIRED item; see docs/RESEARCH-REQUIRED.md. -->
+  <ItemGroup Condition="'$(AtasBridgeBuild)'=='true'">
+    <Reference Include="ATAS.Indicators">
+      <HintPath>$(AtasInstallDir)\ATAS.Indicators.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ATAS.Strategies">
+      <HintPath>$(AtasInstallDir)\ATAS.Strategies.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ATAS.DataFeedsCore">
+      <HintPath>$(AtasInstallDir)\ATAS.DataFeedsCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

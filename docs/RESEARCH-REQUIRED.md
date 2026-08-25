@@ -1,0 +1,118 @@
+# Research required before release
+
+Every item here is something this build could not verify from a macOS host with no ATAS install and
+no AI-provider account. They are recorded as data-driven or single-file so that correcting one is a
+small change, never a redesign.
+
+**Rule: check against current official sources, not against this document and not from memory.**
+Prefer official docs, then official release notes/source, then maintained examples.
+
+---
+
+## A1 — ATAS extension API  ·  BLOCKING for real trading
+
+**File:** `src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs` (the only file in the product that cannot
+compile without ATAS). **Reference implementation:** `LoopbackAtasAdapter.cs` in the same folder shows
+the exact shape and honesty each method needs.
+
+Confirm, from ATAS's own documentation and the assemblies in your install:
+
+| # | Question |
+|---|---|
+| 1 | Correct base class and lifecycle hooks for a user-loadable chart strategy, and the assembly names to reference (the `.csproj` guesses `ATAS.Indicators`, `ATAS.Strategies`, `ATAS.DataFeedsCore`). |
+| 2 | Target framework ATAS loads (`AtasBridgeTargetFramework` defaults to `net8.0-windows` — unverified). |
+| 3 | The folder ATAS loads user strategies from, and whether a restart is required after copying files. |
+| 4 | Portfolio/account enumeration, and how to tell a simulation connection from a live one. |
+| 5 | Security/instrument enumeration, with tick size, tick value and contract size. |
+| 6 | Best bid/ask access, and the timestamp of the last update (staleness detection depends on it). |
+| 7 | Position enumeration and the position-changed callback. |
+| 8 | **Order placement carrying a client-supplied identifier, readable back from the order list.** |
+| 9 | **Order history including finished orders, covering an arbitrary `since` timestamp.** |
+| 10 | Modify, cancel, cancel-all, and programmatic position flattening. |
+| 11 | Execution/trade callbacks, and whether they carry the client identifier. |
+| 12 | Which failures are definite broker rejections versus ambiguous ones. |
+
+Items 8 and 9 decide how much autonomy is safe. Report them truthfully in `Describe()`:
+
+- no client-id round trip → `SupportsClientOrderId = false`
+- incomplete history → `SupportsOrderHistory = false`
+
+The gateway then refuses `LIVE_AUTONOMOUS` on that connector, by design. **Do not report a capability
+you have not proven.** A partial history is worse than none: it makes "this order does not exist" look
+provable when it is not.
+
+Item 12 maps onto `AtasRejectedException` (definite) versus any other exception (indefinite). Getting
+this backwards is the one mistake that can produce a duplicate live position.
+
+## A2 — ATAS install layout
+
+**File:** `src/TradeAgent.Connectors.Atas/AtasInstallation.cs` → `AtasLayout`.
+Overridable at runtime via `%LOCALAPPDATA%\TradeAgent\atas.json`.
+
+Confirm install directories, strategy/indicator folder, process names, executable names. Then set
+`Verified = true` — until then the Doctor warns the user that these paths are guesses.
+
+## A3 — ATAS version compatibility
+
+How does an ATAS update affect a compiled bridge assembly? Which version range does one build cover?
+`Versions.BridgeProtocolVersion` already gates a mismatched bridge (tested), but the *assembly*
+compatibility rule is unknown. Feed the answer into the "Trading paused — press Repair" path.
+
+---
+
+## B1 — OpenCode CLI
+
+**File:** `src/TradeAgent.AgentRuntime/RuntimeManifest.cs` → `RuntimeCatalog.BuiltIn()`.
+Overridable at runtime via `%LOCALAPPDATA%\TradeAgent\runtimes.json`.
+
+Confirm against <https://opencode.ai/docs/>:
+
+- Is there a self-contained Windows x64 download? (If yes, switch `InstallKind` from `Manual` to
+  `Download` and set the URL — the requirement is to avoid making the user install Node.)
+- Exact version, sign-in, and sign-in-status commands, and what success looks like on stdout — that
+  string becomes `AuthStateSuccessPattern`, which is how the wizard advances by itself.
+- Whether a non-interactive one-shot run exists (currently guessed as `run "<prompt>"`).
+- Whether an interactive session can be started in a chosen working directory.
+
+Then set `Verified = true`.
+
+## B2 — Codex CLI
+
+Same fields, against <https://developers.openai.com/codex/cli/>. Additionally:
+
+- Confirm ChatGPT-account sign-in works without an API key, and whether a device-code flow exists for
+  when a browser cannot open.
+- Confirm the one-shot command (currently guessed as `exec "<prompt>"`).
+
+## B3 — Agent workspace conventions
+
+Confirm both runtimes read `AGENTS.md` from the working directory. If either expects a different
+filename, `WorkspaceBuilder.Build` should write both.
+
+---
+
+## C1 — Windows secret storage
+
+`SecretStore` uses DPAPI (`ProtectedData`, CurrentUser) for the IPC token, falling back to a
+`0600` file elsewhere. Confirm this is the right choice versus the Windows Credential Manager for a
+per-user, per-machine secret. **Broker credentials are deliberately not in scope: ATAS owns those.**
+
+## C2 — Installer and signing
+
+Inno Setup 6 is scripted (`packaging/TradeAgent.iss`) but has never run. Confirm the per-user install
+works without administrator rights, and that the uninstaller leaves `%LOCALAPPDATA%\TradeAgent`
+(trading records and the AI's work) intact. Code signing remains a deployment concern; unsigned
+builds will show a SmartScreen warning, which for a nontechnical user is worth budgeting for.
+
+## C3 — Bridge dependency closure
+
+The bridge currently references `TradeAgent.ConnectorSdk`, which transitively drags
+`Microsoft.Data.Sqlite` into the ATAS process. It is never used there (no connection is ever opened),
+but the DLLs land in the ATAS folder. Before release, either trim the closure — move the shared enums
+into a small contracts assembly — or confirm the extra assemblies are harmless inside ATAS.
+
+## C4 — .NET runtime on the target laptop
+
+The app and CLI publish self-contained, so no runtime is required. Confirm the resulting install size
+and cold-start time are acceptable on the actual laptop this will run on, and revisit
+`PublishReadyToRun` / trimming only if they are not.

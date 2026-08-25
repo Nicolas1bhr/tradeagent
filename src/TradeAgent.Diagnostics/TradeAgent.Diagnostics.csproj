@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
+    <ProjectReference Include="../TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+  </ItemGroup>
+</Project>

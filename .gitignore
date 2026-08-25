@@ -1,0 +1,5 @@
+bin/
+obj/
+*.user
+artifacts/
+.DS_Store

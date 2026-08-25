@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>trade</AssemblyName>
+    <RootNamespace>TradeAgent.TradeCli</RootNamespace>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
+    <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
+  </ItemGroup>
+</Project>
