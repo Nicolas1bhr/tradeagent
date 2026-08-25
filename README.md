@@ -8,7 +8,7 @@ everything in between: setup, the trading gateway, the safety rules, and the eme
 > **This software can place real orders in a real brokerage account.** It is provided as is, with no
 > warranty of any kind, and nothing here is financial advice. Trading futures involves a genuine risk
 > of losing more than you deposit. Read [BUILD-STATUS.md](BUILD-STATUS.md) before pointing it at money:
-> the ATAS integration is not finished, and nothing in this repository has yet been run on Windows.
+> the ATAS integration is not finished, so it cannot trade through ATAS yet.
 
 **Current state: [BUILD-STATUS.md](BUILD-STATUS.md).** Read it before trusting anything here — it
 lists exactly what is verified, what is not, and what cannot trade yet.

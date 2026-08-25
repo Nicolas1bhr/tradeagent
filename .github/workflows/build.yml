@@ -16,14 +16,14 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - run: dotnet restore TradeAgent.sln
       - run: dotnet build TradeAgent.sln -c Release --no-restore
       - run: dotnet test TradeAgent.sln -c Release --no-build --logger "trx;LogFileName=results.trx"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-${{ matrix.os }}
@@ -33,14 +33,14 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       # No ATAS on a hosted runner, so the bridge is published without its ATAS adapter and the
       # artifact is labelled accordingly. A release build must be produced on a machine with ATAS.
       - run: pwsh packaging/build.ps1 -SkipTests
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: TradeAgent-windows-x64-NO-ATAS-ADAPTER
           path: |

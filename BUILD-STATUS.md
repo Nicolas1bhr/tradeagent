@@ -4,8 +4,9 @@
 remaining unimplemented layer. Pass B (hardening) partially done: reconciliation, fault tests,
 restart recovery and the risk/authority model are in. Pass C (fresh-machine acceptance) not started.
 
-**Built and verified on:** macOS 26 / arm64, .NET SDK 10.0.400.
-**Target platform:** Windows 11 x64. **Not yet built or run on Windows.**
+**Built and verified on:** macOS 26 / arm64 locally, and on `windows-latest`, `ubuntu-latest` and
+`macos-latest` in CI (.NET 10). **All 86 tests pass on Windows.**
+**Target platform:** Windows 11 x64.
 
 ---
 
@@ -42,26 +43,30 @@ Verified by `dotnet test TradeAgent.sln` — **86 tests, 0 failures** (29 unit, 
 - **ATAS itself.** `AtasStrategyAdapter.cs` is a skeleton of ~14 `NotImplementedException`s with
   per-method instructions. It is the only file that cannot compile or run without ATAS installed;
   everything it plugs into is tested. **The product cannot trade through ATAS until it is written.**
-- **Nothing has run on Windows.** No Windows build, no installer run, no fresh-machine test. The CI
-  workflow that would do the first two is written but has never executed.
+- **The installer has never been *installed*.** It now compiles in CI (Inno Setup 6.7.1) and produces
+  `TradeAgent-Setup-x64.exe` plus checksums, but nobody has run it on a clean Windows machine, so
+  fresh-machine acceptance (Pass C) is still unstarted.
 - **OpenCode and Codex install/sign-in commands are unverified.** They ship as overridable data
   (`RuntimeCatalog`), every entry flagged `Verified = false`, and the Doctor says so out loud.
 - **ATAS folder layout is unverified** — same pattern (`AtasLayout`, overridable, `Verified = false`).
 - **The window's visual layout has never been looked at.** It compiles and runs; nobody has seen it.
-- **The installer has never been built.** Inno Setup was not available on the build host.
+- **CI artifacts cannot trade through ATAS.** A hosted runner has no ATAS, so the packaging job
+  publishes the bridge without its ATAS adapter and labels the artifact
+  `TradeAgent-windows-x64-NO-ATAS-ADAPTER`. A releasable build must come off a machine with ATAS.
 - **Live money has never been touched.** Correct for this stage — see the trial sequence below.
 
 ## Current blockers
 
 1. **A Windows machine with ATAS installed and a broker connection.** Needed for: the ATAS adapter,
-   the folder-layout confirmation, the installer, and fresh-machine acceptance. Nothing else blocks.
+   the folder-layout confirmation, a releasable installer, and fresh-machine acceptance. The plain
+   Windows build and test story is now proven in CI, so this is the only remaining hard blocker.
 2. **An OpenCode or Codex account** to confirm the sign-in flow end to end.
 
 Neither can be manufactured here. Everything not gated on them is done.
 
 ## Next integration target
 
-1. On Windows: `dotnet test TradeAgent.sln` — expect 86/86. Any failure here is an OS assumption to fix.
+1. ~~On Windows: `dotnet test TradeAgent.sln`~~ — **done, 86/86 on `windows-latest`.**
 2. Fill in `AtasStrategyAdapter.cs` against current official ATAS docs — see
    [docs/RESEARCH-REQUIRED.md](docs/RESEARCH-REQUIRED.md) item **A1**, working method by method
    against `LoopbackAtasAdapter` as the reference.
