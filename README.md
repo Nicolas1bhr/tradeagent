@@ -113,3 +113,14 @@ says so. That is deliberate: the build never pretends to have ATAS support it ca
 ```
 
 `TRADEAGENT_HOME` relocates all of it — which is how the tests get an isolated install.
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE), plus
+[additional permissions](LICENSE-EXCEPTIONS.md) from the licensor.
+
+In short: use it, change it, share it, and run it on **your own** trading account, profit included.
+Selling it, building a paid product or service on it, or trading **other people's** money with it
+for a fee needs written permission — open an issue and ask.
+
+This is a source-available license, not an OSI-approved open-source one. That is deliberate.
