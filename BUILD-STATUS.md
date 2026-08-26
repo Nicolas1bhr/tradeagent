@@ -7,6 +7,8 @@ restart recovery and the risk/authority model are in. Pass C (fresh-machine acce
 **Built and verified on:** macOS 26 / arm64 locally, and on `windows-latest`, `ubuntu-latest` and
 `macos-latest` in CI (.NET 10). **All 86 tests pass on Windows.**
 **Target platform:** Windows 11 x64.
+**Written with:** Claude Opus 5 (Anthropic), via Claude Code, in a single session on 2026-08-25, from
+the build brief. The defects that session found and fixed are listed at the end of this file.
 
 ---
 

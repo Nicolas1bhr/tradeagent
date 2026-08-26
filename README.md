@@ -124,3 +124,12 @@ Selling it, building a paid product or service on it, or trading **other people'
 for a fee needs written permission — open an issue and ask.
 
 This is a source-available license, not an OSI-approved open-source one. That is deliberate.
+
+## Credits
+
+Built by [Nicolas Beeckman](https://github.com/Nicolas1bhr).
+
+The implementation was written with Claude Opus 5 (Anthropic), via Claude Code, working from a build
+brief that fixed the architecture and the safety model up front. What was decided and why is in
+[docs/DECISIONS.md](docs/DECISIONS.md); what is proven versus merely written is in
+[BUILD-STATUS.md](BUILD-STATUS.md), including the defects that surfaced during the build.
