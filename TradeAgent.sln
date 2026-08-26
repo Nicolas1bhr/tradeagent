@@ -18,6 +18,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradeAgent.TradeCli", "src\
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradeAgent.AgentRuntime", "src\TradeAgent.AgentRuntime\TradeAgent.AgentRuntime.csproj", "{400145E4-D3AE-539D-976E-8374F8C2AD99}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradeAgent.Provisioning", "src\TradeAgent.Provisioning\TradeAgent.Provisioning.csproj", "{6E5B9C21-4A3D-4F87-9D2A-1C8F0B7E5A34}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradeAgent.Security", "src\TradeAgent.Security\TradeAgent.Security.csproj", "{90CA06A3-0563-5311-8B86-03FE15146EFC}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TradeAgent.Diagnostics", "src\TradeAgent.Diagnostics\TradeAgent.Diagnostics.csproj", "{DF7BE00D-57F1-5BDC-A67D-8AAB90A7B33C}"
@@ -70,6 +72,10 @@ Global
 		{400145E4-D3AE-539D-976E-8374F8C2AD99}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{400145E4-D3AE-539D-976E-8374F8C2AD99}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{400145E4-D3AE-539D-976E-8374F8C2AD99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6E5B9C21-4A3D-4F87-9D2A-1C8F0B7E5A34}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6E5B9C21-4A3D-4F87-9D2A-1C8F0B7E5A34}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6E5B9C21-4A3D-4F87-9D2A-1C8F0B7E5A34}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6E5B9C21-4A3D-4F87-9D2A-1C8F0B7E5A34}.Release|Any CPU.Build.0 = Release|Any CPU
 		{90CA06A3-0563-5311-8B86-03FE15146EFC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{90CA06A3-0563-5311-8B86-03FE15146EFC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{90CA06A3-0563-5311-8B86-03FE15146EFC}.Release|Any CPU.ActiveCfg = Release|Any CPU

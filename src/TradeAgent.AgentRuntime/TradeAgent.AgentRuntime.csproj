@@ -2,5 +2,6 @@
   <ItemGroup>
     <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
     <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
+    <ProjectReference Include="../TradeAgent.Provisioning/TradeAgent.Provisioning.csproj" />
   </ItemGroup>
 </Project>

@@ -10,6 +10,7 @@
     <Project Path="src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
     <Project Path="src/TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
     <Project Path="src/TradeAgent.GatewayHost/TradeAgent.GatewayHost.csproj" />
+    <Project Path="src/TradeAgent.Provisioning/TradeAgent.Provisioning.csproj" />
     <Project Path="src/TradeAgent.Security/TradeAgent.Security.csproj" />
     <Project Path="src/TradeAgent.TradeCli/TradeAgent.TradeCli.csproj" />
   </Folder>

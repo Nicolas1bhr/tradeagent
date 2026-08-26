@@ -2,9 +2,19 @@
   <PropertyGroup>
     <!-- Builds everywhere by default WITHOUT the ATAS API file, so the protocol half is compiled and
          tested on every machine and in CI. Build with -p:AtasBridgeBuild=true on a Windows box that
-         has ATAS installed to compile the real adapter. -->
+         has ATAS installed to compile the real adapter.
+
+         AtasBridgeTargetFramework MUST be defined before it is used: MSBuild evaluates a property
+         group top to bottom, so setting TargetFramework from it first produced an EMPTY
+         TargetFramework and the ATAS build could never have worked.
+
+         net10.0-windows is not a guess. OFT.Platform.runtimeconfig.json in the live install reads
+         "tfm": "net10.0" with Microsoft.NETCore.App and Microsoft.WindowsDesktop.App 10.0.0, and the
+         ATAS docs state the assembly's target framework must match the platform's runtime or the DLL
+         silently fails to load. Override for an older platform with
+         -p:AtasBridgeTargetFramework=net8.0-windows. -->
+    <AtasBridgeTargetFramework Condition="'$(AtasBridgeTargetFramework)'==''">net10.0-windows</AtasBridgeTargetFramework>
     <TargetFramework Condition="'$(AtasBridgeBuild)'=='true'">$(AtasBridgeTargetFramework)</TargetFramework>
-    <AtasBridgeTargetFramework Condition="'$(AtasBridgeTargetFramework)'==''">net8.0-windows</AtasBridgeTargetFramework>
     <AssemblyName>TradeAgent.AtasBridge</AssemblyName>
     <RootNamespace>TradeAgent.AtasBridge</RootNamespace>
     <EnableDynamicLoading>true</EnableDynamicLoading>
@@ -20,8 +30,15 @@
     <Compile Remove="AtasStrategyAdapter.cs" />
   </ItemGroup>
 
-  <!-- Fill AtasInstallDir in via -p:AtasInstallDir="C:\Program Files\ATAS Platform".
-       The exact assembly names are a RESEARCH-REQUIRED item; see docs/RESEARCH-REQUIRED.md. -->
+  <!-- Fill AtasInstallDir in via -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform".
+       There is no ATAS NuGet package; file references into the install directory are the documented
+       and only method. All four assemblies are present in that directory on the verified install.
+       Private=false because the platform already provides these at runtime — copying them next to
+       the bridge is what breaks loading. -->
+  <PropertyGroup>
+    <AtasInstallDir Condition="'$(AtasInstallDir)'==''">C:\Program Files (x86)\ATAS Platform</AtasInstallDir>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(AtasBridgeBuild)'=='true'">
     <Reference Include="ATAS.Indicators">
       <HintPath>$(AtasInstallDir)\ATAS.Indicators.dll</HintPath>
@@ -33,6 +50,13 @@
     </Reference>
     <Reference Include="ATAS.DataFeedsCore">
       <HintPath>$(AtasInstallDir)\ATAS.DataFeedsCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Required: Utils.Common.Network.Client.ConnectionStates is the type behind
+         IDataFeedConnector.ConnectionState, and the ATAS docs list Utils.Common.dll as a reference a
+         strategy needs. -->
+    <Reference Include="Utils.Common">
+      <HintPath>$(AtasInstallDir)\Utils.Common.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

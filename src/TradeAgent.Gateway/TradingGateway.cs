@@ -46,11 +46,19 @@ public sealed class TradingGateway : IAsyncDisposable
         _opt = options ?? new GatewayOptions();
         Settings = LoadSettings();
 
-        _health.Changed += h => { _log.Health(h); StateChanged?.Invoke(); };
-        Connector.ConnectionChanged += s => _health.Set(Components.TradingConnection, s);
+        _health.Changed += OnHealthChanged;
+        Connector.ConnectionChanged += OnConnectionChanged;
         Connector.OrderChanged += OnOrderChanged;
-        Connector.ExecutionReceived += x => _log.Activity($"Filled {x.Quantity} {x.Symbol} at {x.Price}");
+        Connector.ExecutionReceived += OnExecutionReceived;
     }
+
+    // Named rather than inline so DisposeAsync can detach them again. A gateway that is torn down
+    // while still subscribed to a shared HealthRegistry keeps writing into the log after it stops
+    // being the authority — two owners of one fact, which is the defect class this design exists to
+    // avoid.
+    void OnHealthChanged(ComponentHealth h) { _log.Health(h); StateChanged?.Invoke(); }
+    void OnConnectionChanged(HealthState s) => _health.Set(Components.TradingConnection, s);
+    void OnExecutionReceived(ExecutionInfo x) => _log.Activity($"Filled {x.Quantity} {x.Symbol} at {x.Price}");
 
     // ---------------------------------------------------------------- settings
 
@@ -789,6 +797,10 @@ public sealed class TradingGateway : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _health.Changed -= OnHealthChanged;
+        Connector.ConnectionChanged -= OnConnectionChanged;
+        Connector.OrderChanged -= OnOrderChanged;
+        Connector.ExecutionReceived -= OnExecutionReceived;
         _dispatchGate.Dispose();
         await Connector.DisposeAsync();
     }

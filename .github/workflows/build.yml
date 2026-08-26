@@ -7,8 +7,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The trading core, the gateway, the trade CLI and the bridge protocol are cross-platform, so they
-  # are tested on every OS. Only the ATAS adapter and the installer are Windows-bound.
+  # The trading core, the gateway, the trade CLI, provisioning and the bridge protocol are all
+  # cross-platform, so they are tested on every OS. Only the ATAS adapter and the installer are
+  # Windows-bound. Every project in TradeAgent.sln is covered, so a new project is in this matrix as
+  # soon as it is in the solution.
   test:
     strategy:
       fail-fast: false
@@ -37,12 +39,41 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+
+      # packaging/build.ps1 is run with -RequireInstaller below, so a missing Inno Setup fails the
+      # job instead of quietly uploading an artifact with no installer in it. This step makes that
+      # failure impossible for a reason nobody can act on: if the runner image stops shipping Inno
+      # Setup, install it here rather than discovering it as an empty release.
+      - name: Ensure Inno Setup 6 is available
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
+          if ($iscc) {
+            Write-Host "Inno Setup already on this image: $iscc"
+          } else {
+            Write-Host 'Inno Setup not found on this image; installing it.'
+            choco install innosetup --no-progress --yes
+            if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed with exit code $LASTEXITCODE" }
+          }
+
       # No ATAS on a hosted runner, so the bridge is published without its ATAS adapter and the
       # artifact is labelled accordingly. A release build must be produced on a machine with ATAS.
-      - run: pwsh packaging/build.ps1 -SkipTests
+      # The script verifies the staged build before packaging and prints a manifest of what the
+      # artifact actually contains; read that in this step's log before trusting a release.
+      - name: Build the installer
+        run: pwsh packaging/build.ps1 -SkipTests -RequireInstaller
+
       - uses: actions/upload-artifact@v7
         with:
           name: TradeAgent-windows-x64-NO-ATAS-ADAPTER
+          # if-no-files-found: error, because an artifact named after an installer that is not in it
+          # is worse than no artifact at all.
+          if-no-files-found: error
           path: |
             artifacts/*.exe
             artifacts/SHA256SUMS.txt

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
@@ -378,5 +379,82 @@ public class RuntimeCatalogTests
             Assert.NotEmpty(RuntimeCatalog.Load());
         }
         finally { if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath); }
+    }
+}
+
+public class RuntimeResolutionTests
+{
+    static string Scratch([CallerMemberName] string name = "")
+    {
+        var dir = Path.Combine(TestEnv.Home, "resolve", name);
+        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    static CliAgentRuntime Runtime(string executable) =>
+        new(new RuntimeManifest { Id = "resolve-test", DisplayName = "t", Executable = executable });
+
+    [Fact]
+    public void An_exact_name_on_PATH_is_found()
+    {
+        var dir = Scratch();
+        var exe = Path.Combine(dir, "tool.exe");
+        File.WriteAllText(exe, "");
+        using var _ = new PathEntry(dir);
+        Assert.Equal(exe, Runtime("tool.exe").ResolveExecutable());
+    }
+
+    [Fact]
+    public void A_cmd_shim_satisfies_a_manifest_that_names_an_exe()
+    {
+        // npm installs its CLIs as a .cmd shim on Windows and hides the real binary in node_modules.
+        // Matching only "codex.exe" reported an installed, signed-in tool as missing.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Scratch();
+        var shim = Path.Combine(dir, "tool.cmd");
+        File.WriteAllText(shim, "@echo off");
+        using var _ = new PathEntry(dir);
+        Assert.Equal(shim, Runtime("tool.exe").ResolveExecutable());
+    }
+
+    [Fact]
+    public void A_real_exe_wins_over_a_shim_with_the_same_stem()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var dir = Scratch();
+        File.WriteAllText(Path.Combine(dir, "tool.cmd"), "@echo off");
+        var exe = Path.Combine(dir, "tool.exe");
+        File.WriteAllText(exe, "");
+        using var _ = new PathEntry(dir);
+        Assert.Equal(exe, Runtime("tool.exe").ResolveExecutable());
+    }
+
+    [Fact]
+    public void An_absolute_path_in_the_manifest_is_used_as_given()
+    {
+        var dir = Scratch();
+        var exe = Path.Combine(dir, "somewhere-else.bin");
+        File.WriteAllText(exe, "");
+        Assert.Equal(exe, Runtime(exe).ResolveExecutable());
+        Assert.Null(Runtime(Path.Combine(dir, "absent.bin")).ResolveExecutable());
+    }
+
+    [Fact]
+    public void Nothing_installed_resolves_to_nothing()
+    {
+        using var _ = new PathEntry(Scratch());
+        Assert.Null(Runtime("definitely-not-installed.exe").ResolveExecutable());
+    }
+
+    /// <summary>Prepends a directory to PATH for the life of the test.</summary>
+    sealed class PathEntry : IDisposable
+    {
+        readonly string? _previous = Environment.GetEnvironmentVariable("PATH");
+        public PathEntry(string dir) =>
+            Environment.SetEnvironmentVariable("PATH", dir + Path.PathSeparator + _previous);
+        public void Dispose() => Environment.SetEnvironmentVariable("PATH", _previous);
     }
 }

@@ -6,6 +6,7 @@ using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
+using TradeAgent.Provisioning;
 using TradeAgent.Security;
 
 namespace TradeAgent.App;
@@ -27,6 +28,43 @@ public sealed class AppHost : IAsyncDisposable
     public AgentSupervisor Agent { get; private set; } = null!;
     public OnboardingStore Onboarding { get; private set; } = null!;
     public ITradingConnector Connector { get; private set; } = null!;
+
+    /// <summary>
+    /// Everything this machine needs before the product can work, and the code that installs it.
+    ///
+    /// The list is the whole answer to "what do I have to do first?", and the intended answer is
+    /// "nothing". Only ATAS refuses to install itself, because it is somebody else's product.
+    /// </summary>
+    public IReadOnlyList<IPrerequisite> Prerequisites { get; } =
+    [
+        new NodePrerequisite(),
+        new AtasPrerequisite()
+    ];
+
+    /// <summary>
+    /// The conversation with the AI, or null before one has been prepared.
+    ///
+    /// Cached against the runtime instance that owns it, so asking twice returns the same
+    /// conversation and its history survives a refresh — but preparing a new runtime (a different AI
+    /// tool, or a restart) starts a genuinely new one rather than replaying the old thread.
+    /// </summary>
+    public IAgentConversation? Conversation
+    {
+        get
+        {
+            var runtime = Agent?.Current;
+            if (runtime is null) return null;
+            if (!ReferenceEquals(runtime, _conversationOwner))
+            {
+                _conversation = runtime.OpenConversation();
+                _conversationOwner = runtime;
+            }
+            return _conversation;
+        }
+    }
+
+    IAgentConversation? _conversation;
+    IAgentRuntime? _conversationOwner;
 
     public bool SingleInstance { get; private set; }
     public string? StartupProblem { get; private set; }
@@ -59,7 +97,7 @@ public sealed class AppHost : IAsyncDisposable
             Connector = chosen == "atas" ? new AtasConnector() : new FakeConnector();
 
             Gateway = new TradingGateway(_db, Connector, Health);
-            Gateway.StateChanged += () => Changed?.Invoke();
+            Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
@@ -84,12 +122,44 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    public void SwitchConnector(string id)
+    /// <summary>
+    /// Changes which backend the gateway executes against, immediately.
+    ///
+    /// This used to persist the choice and tell the user to restart, which left every later setup
+    /// step — "connecting to ATAS", "finding your account", "checking live prices" — interrogating
+    /// the connector that was still loaded. Choosing ATAS therefore validated the practice simulator
+    /// and finished setup claiming success. A choice that is not applied is not a choice.
+    /// </summary>
+    public async Task SwitchConnectorAsync(string id)
     {
-        _db!.SetKv("connector", id);
-        Gateway.Log.Activity($"Trading platform set to {id}. Restart TradeAgent to apply.");
+        if (_db is null) return;
+        var current = _db.GetKv("connector") ?? "fake";
+        _db.SetKv("connector", id);
+        if (current == id && Gateway is not null) return;
+
+        if (_server is not null) { await _server.DisposeAsync(); _server = null; }
+        if (Gateway is not null)
+        {
+            Gateway.StateChanged -= OnGatewayStateChanged;
+            await Gateway.DisposeAsync();
+        }
+
+        Health.Set(Components.TradingConnection, HealthState.STARTING);
+        Connector = id == "atas" ? new AtasConnector() : new FakeConnector();
+        Gateway = new TradingGateway(_db, Connector, Health);
+        Gateway.StateChanged += OnGatewayStateChanged;
+
+        _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
+        _server.Start();
+        Health.Set(Components.Gateway, HealthState.READY);
+
+        try { await Connector.ConnectAsync(); } catch (Exception) { /* health reports it */ }
+        await Gateway.RefreshHealthAsync();
+        Gateway.Log.Activity($"Trading platform set to {id}");
         Changed?.Invoke();
     }
+
+    void OnGatewayStateChanged() => Changed?.Invoke();
 
     public WorkspaceContext WorkspaceContext()
     {

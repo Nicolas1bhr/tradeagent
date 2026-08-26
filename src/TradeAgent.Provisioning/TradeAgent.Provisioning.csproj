@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../TradeAgent.Core/TradeAgent.Core.csproj" />
+    <!-- Connectors.Atas references only ConnectorSdk -> Core, so this is a straight line, not a
+         cycle. It is here so AtasPrerequisite can reuse the one place that knows where ATAS lives
+         instead of growing a second, divergent copy of that knowledge. -->
+    <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+  </ItemGroup>
+</Project>

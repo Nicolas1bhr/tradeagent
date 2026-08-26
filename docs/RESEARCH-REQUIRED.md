@@ -65,14 +65,19 @@ compatibility rule is unknown. Feed the answer into the "Trading paused — pres
 **File:** `src/TradeAgent.AgentRuntime/RuntimeManifest.cs` → `RuntimeCatalog.BuiltIn()`.
 Overridable at runtime via `%LOCALAPPDATA%\TradeAgent\runtimes.json`.
 
-Confirm against <https://opencode.ai/docs/>:
+The manifest now claims a self-contained Windows x64 download, a headless conversation and a
+browser sign-in. Every one of those values was read from published metadata and documentation, not
+from running the program, which is why `Verified` is still `false`. Confirm against
+<https://opencode.ai/docs/> **and by running the real CLI on Windows**:
 
-- Is there a self-contained Windows x64 download? (If yes, switch `InstallKind` from `Manual` to
-  `Download` and set the URL — the requirement is to avoid making the user install Node.)
-- Exact version, sign-in, and sign-in-status commands, and what success looks like on stdout — that
-  string becomes `AuthStateSuccessPattern`, which is how the wizard advances by itself.
-- Whether a non-interactive one-shot run exists (currently guessed as `run "<prompt>"`).
-- Whether an interactive session can be started in a chosen working directory.
+- The install route: the GitHub repo, the asset pattern, and the path of the executable inside the
+  archive. Then the npm fallback, through TradeAgent's own private Node.
+- The version, sign-in and sign-in-status commands, and what success looks like on stdout — that
+  string is what makes the wizard advance by itself, and the sign-in URL pattern is what lets
+  TradeAgent open the browser instead of showing a console.
+- The one-shot and resume commands, the flag that turns stdout into a machine-readable stream, and
+  the approval/sandbox flags. A headless run that still waits for a keypress hangs the chat panel
+  forever, which is the failure mode to look for.
 
 Then set `Verified = true`.
 
@@ -82,7 +87,9 @@ Same fields, against <https://developers.openai.com/codex/cli/>. Additionally:
 
 - Confirm ChatGPT-account sign-in works without an API key, and whether a device-code flow exists for
   when a browser cannot open.
-- Confirm the one-shot command (currently guessed as `exec "<prompt>"`).
+- Confirm the sandbox and git-repo flags the manifest passes are still the right ones. The agent's
+  workspace is not a git repository, and a CLI that refuses to run outside one would fail every
+  message.
 
 ## B3 — Agent workspace conventions
 
@@ -99,10 +106,33 @@ per-user, per-machine secret. **Broker credentials are deliberately not in scope
 
 ## C2 — Installer and signing
 
-Inno Setup 6 is scripted (`packaging/TradeAgent.iss`) but has never run. Confirm the per-user install
-works without administrator rights, and that the uninstaller leaves `%LOCALAPPDATA%\TradeAgent`
-(trading records and the AI's work) intact. Code signing remains a deployment concern; unsigned
-builds will show a SmartScreen warning, which for a nontechnical user is worth budgeting for.
+`packaging/TradeAgent.iss` has compiled and installed on real Windows 11. What has changed since and
+is therefore unconfirmed:
+
+- `PrivilegesRequiredOverridesAllowed` is now `commandline`, not `dialog`, so setup no longer asks a
+  non-technical user an all-users/just-me question it has no way to answer. Confirm setup runs with
+  no elevation prompt at all, and that `{autopf}` lands under `%LOCALAPPDATA%\Programs`.
+- `CloseApplications=yes` with `RestartApplications=no`. Confirm that installing over a **running**
+  TradeAgent names the running program and offers to close it, and that the app is launched exactly
+  once afterwards, by the `[Run]` entry.
+- `AppMutex=TradeAgent.SingleInstance` is inert: the app's single-instance guard is a file lock,
+  which Setup cannot see. Either create a named mutex with that exact name at startup, or delete the
+  directive so nobody mistakes it for protection that exists.
+- Confirm the uninstaller still leaves `%LOCALAPPDATA%\TradeAgent` (trading records and the AI's
+  work) intact.
+
+Code signing remains open: unsigned builds show a SmartScreen warning, which
+[docs/USER-GUIDE.md](USER-GUIDE.md) now tells the user to expect. Budget for a certificate before
+this goes to anyone who did not build it.
+
+## C2b — Icons and setup artwork
+
+There is no `.ico` or bitmap anywhere in this repository, so `SetupIconFile`, `WizardImageFile` and
+`WizardSmallImageFile` are deliberately absent from `TradeAgent.iss` (naming a file that does not
+exist fails the ISCC compile), and `TradeAgent.exe` carries the default .NET icon. A trading
+application whose taskbar button is a generic icon looks unfinished on a machine it did not build
+itself. Add artwork, then add those three directives and `<ApplicationIcon>` to
+`src/TradeAgent.App/TradeAgent.App.csproj`.
 
 ## C3 — Bridge dependency closure
 

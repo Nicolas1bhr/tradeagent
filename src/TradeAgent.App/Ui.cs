@@ -8,146 +8,426 @@ using TradeAgent.Core;
 namespace TradeAgent.App;
 
 /// <summary>
-/// Small code-built controls. No XAML and no MVVM framework on purpose: this UI is a dozen labels
-/// and a dozen buttons, and the indirection would cost more than it saves.
+/// The component vocabulary. Code-built, no XAML and no MVVM framework on purpose: this UI is a
+/// handful of screens, and the indirection would cost more than it saves.
+///
+/// Everything visual comes from <see cref="Tokens"/>. Nothing in this file invents a colour, a size
+/// or a gap — if a value is not in the theme it does not belong on the screen, which is the only
+/// mechanism that keeps a hand-built UI from drifting into forty slightly different greys.
 /// </summary>
 static class Ui
 {
+    /// <summary>
+    /// Where a failed button press goes. Set by the window at startup. Without it an exception in an
+    /// async click handler is an unobserved fault on a void-returning delegate, which ends the
+    /// process — the one failure mode a nontechnical user can do nothing at all about.
+    /// </summary>
+    public static Action<string>? ReportError;
+
+    static void Report(Exception ex) =>
+        ReportError?.Invoke(ex is TradeAgentException t
+            ? $"{t.Info.UserMessage} {t.Info.Repair}".Trim()
+            : ex.Message);
+
+    // ---- typography ------------------------------------------------------------------------
+
+    public static TextBlock Display(string text) => new()
+    {
+        Text = text, FontSize = Theme.Display, FontFamily = Theme.SansDisplay,
+        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 36,
+        TextWrapping = TextWrapping.Wrap
+    };
+
     public static TextBlock H1(string text) => new()
     {
-        Text = text, FontSize = 24, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 4)
+        Text = text, FontSize = Theme.H1, FontFamily = Theme.SansDisplay,
+        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 28,
+        TextWrapping = TextWrapping.Wrap
     };
 
-    public static TextBlock H2(string text) => new() { Text = text, FontSize = 17, FontWeight = FontWeight.SemiBold };
-
-    public static TextBlock Label(string text) => new()
+    public static TextBlock H2(string text) => new()
     {
-        Text = text.ToUpperInvariant(), FontSize = 11, FontWeight = FontWeight.Bold, Opacity = 0.6
+        Text = text, FontSize = Theme.H2, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 22
     };
 
-    public static TextBlock Body(string text, IBrush? brush = null) => new()
+    public static TextBlock H3(string text) => new()
     {
-        Text = text, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = brush
+        Text = text, FontSize = Theme.H3, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text
     };
 
-    public static Control Card(Control inner) => new Border
+    /// <summary>
+    /// Body text. The brush is applied only when one is supplied: assigning null to Foreground sets
+    /// a local value of null, which overrides the theme and paints nothing at all. Every explanatory
+    /// paragraph in this product goes through here, so that one assignment once made the whole app
+    /// render as blank space between headings.
+    /// </summary>
+    public static TextBlock Body(string text, IBrush? brush = null)
     {
-        Padding = new Thickness(14),
-        CornerRadius = new CornerRadius(8),
+        var t = new TextBlock
+        {
+            Text = text, FontSize = Theme.Base, TextWrapping = TextWrapping.Wrap,
+            LineHeight = 21, Foreground = Theme.Text
+        };
+        if (brush is not null) t.Foreground = brush;
+        return t;
+    }
+
+    public static TextBlock Muted(string text) => Body(text, Theme.TextMuted);
+
+    public static TextBlock Micro(string text) => new()
+    {
+        Text = text, FontSize = Theme.Micro, Foreground = Theme.TextFaint, TextWrapping = TextWrapping.Wrap
+    };
+
+    /// <summary>A section label. Letterspaced small caps — the quietest way to name a region.</summary>
+    public static TextBlock Eyebrow(string text) => new()
+    {
+        Text = text.ToUpperInvariant(), FontSize = Theme.Micro, FontWeight = FontWeight.SemiBold,
+        Foreground = Theme.TextFaint, LetterSpacing = 0.9
+    };
+
+    /// <summary>The old name for <see cref="Eyebrow"/>, kept so existing screens keep compiling.</summary>
+    public static TextBlock Label(string text) => Eyebrow(text);
+
+    /// <summary>Anything the user might compare with another value: prices, sizes, counts, times.</summary>
+    public static TextBlock Mono(string text, IBrush? brush = null) => new()
+    {
+        Text = text, FontSize = Theme.Small, FontFamily = Theme.Mono, Foreground = brush ?? Theme.Text
+    };
+
+    // ---- layout ----------------------------------------------------------------------------
+
+    public static StackPanel Col(double spacing, params Control[] kids)
+    {
+        var p = new StackPanel { Spacing = spacing };
+        foreach (var k in kids) p.Children.Add(k);
+        return p;
+    }
+
+    public static StackPanel Row(double spacing, params Control[] kids)
+    {
+        var p = new StackPanel { Orientation = Orientation.Horizontal, Spacing = spacing };
+        foreach (var k in kids) p.Children.Add(k);
+        return p;
+    }
+
+    public static Border Card(Control inner) => new()
+    {
+        Padding = new Thickness(Theme.S5),
+        CornerRadius = Theme.Radius,
         BorderThickness = new Thickness(1),
-        BorderBrush = new SolidColorBrush(Color.FromArgb(60, 128, 128, 128)),
+        BorderBrush = Theme.Line,
+        Background = Theme.BgElevated,
         Child = inner
     };
 
-    public static Control KeyValue(string key, string value) => new Grid
+    /// <summary>A card with a named region above it. The standard unit of the dashboard.</summary>
+    public static Control Section(string eyebrow, Control body) =>
+        Col(Theme.S2, Eyebrow(eyebrow), Card(body));
+
+    public static Control Divider() => new Border
     {
-        ColumnDefinitions = new ColumnDefinitions("200,*"),
-        Children =
-        {
-            new TextBlock { Text = key, Opacity = 0.7, FontSize = 13 },
-            new TextBlock { Text = value, FontSize = 13, FontWeight = FontWeight.SemiBold, [Grid.ColumnProperty] = 1 }
-        }
+        Height = 1, Background = Theme.Line, Margin = new Thickness(0, Theme.S2)
     };
 
-    public static Button Button(string text, Action onClick, bool emphasised = false)
+    public static Control Spacer(double h) => new Border { Height = h };
+
+    // ---- buttons ---------------------------------------------------------------------------
+
+    static Button Make(string cls, string text, Action onClick)
     {
-        var b = new Button { Content = text, Padding = new Thickness(14, 8), FontSize = 13 };
-        if (emphasised) { b.FontWeight = FontWeight.Bold; b.BorderThickness = new Thickness(2); }
-        b.Click += (_, _) => onClick();
+        var b = new Button { Content = text, Classes = { cls } };
+        b.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Report(ex); } };
         return b;
     }
 
-    public static Button Button(string text, Func<Task> onClick, bool emphasised = false)
+    /// <summary>
+    /// The async form disables itself while the work runs. Without that, a slow broker round trip
+    /// invites a second press, and a second press on "place order" is a second order.
+    /// </summary>
+    static Button Make(string cls, string text, Func<Task> onClick)
     {
-        var b = new Button { Content = text, Padding = new Thickness(14, 8), FontSize = 13 };
-        if (emphasised) { b.FontWeight = FontWeight.Bold; b.BorderThickness = new Thickness(2); }
+        var b = new Button { Content = text, Classes = { cls } };
         b.Click += async (_, _) =>
         {
             b.IsEnabled = false;
             try { await onClick(); }
+            catch (Exception ex) { Report(ex); }
             finally { b.IsEnabled = true; }
         };
         return b;
     }
 
+    public static Button Primary(string text, Action onClick) => Make("primary", text, onClick);
+    public static Button Primary(string text, Func<Task> onClick) => Make("primary", text, onClick);
+    public static Button Secondary(string text, Action onClick) => Make("secondary", text, onClick);
+    public static Button Secondary(string text, Func<Task> onClick) => Make("secondary", text, onClick);
+    public static Button Ghost(string text, Action onClick) => Make("ghost", text, onClick);
+    public static Button Ghost(string text, Func<Task> onClick) => Make("ghost", text, onClick);
+    public static Button Danger(string text, Action onClick) => Make("danger", text, onClick);
+    public static Button Danger(string text, Func<Task> onClick) => Make("danger", text, onClick);
+
+    /// <summary>Kept so existing call sites read the same. A plain button is the secondary one.</summary>
+    public static Button Button(string text, Action onClick, bool emphasised = false) =>
+        Make(emphasised ? "primary" : "secondary", text, onClick);
+
+    public static Button Button(string text, Func<Task> onClick, bool emphasised = false) =>
+        Make(emphasised ? "primary" : "secondary", text, onClick);
+
     public static Button Big(string text, IBrush background, Action onClick)
     {
-        var b = new Button
-        {
-            Content = text, Background = background, Foreground = Brushes.White,
-            FontSize = 16, FontWeight = FontWeight.Bold,
-            Padding = new Thickness(18, 14), HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Center
-        };
-        b.Click += (_, _) => onClick();
+        var b = new Button { Content = text, Classes = { "emergency" }, Background = background };
+        b.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Report(ex); } };
         return b;
+    }
+
+    /// <summary>Arming state for a two-step button, kept on the control so it survives a relabel.</summary>
+    sealed class ConfirmState
+    {
+        public string Label = "";
+        public string ConfirmLabel = "";
+        public bool Armed;
     }
 
     /// <summary>
     /// Two-step button. Anything that moves money or removes permission needs a deliberate second
-    /// press, so a mis-click cannot liquidate a portfolio.
+    /// press, so a mis-click cannot liquidate a portfolio. The armed state turns the control red and
+    /// says what the second press will do, in full — never just "Confirm".
     /// </summary>
     public static Button Confirm(string label, string confirmLabel, Action onConfirmed)
     {
-        var armed = false;
-        var b = new Button { Content = label, Padding = new Thickness(14, 8), FontSize = 13 };
+        var (b, state) = ConfirmShell(label, confirmLabel);
         b.Click += (_, _) =>
         {
-            if (!armed)
-            {
-                armed = true;
-                b.Content = confirmLabel;
-                b.Foreground = Brushes.Firebrick;
-                b.FontWeight = FontWeight.Bold;
-                return;
-            }
-            armed = false;
-            b.Content = label;
-            b.ClearValue(Avalonia.Controls.Button.ForegroundProperty);
-            b.FontWeight = FontWeight.Normal;
-            onConfirmed();
+            if (Arm(b, state)) return;
+            Disarm(b);
+            try { onConfirmed(); } catch (Exception ex) { Report(ex); }
         };
         return b;
     }
 
-    public static Button Confirm(string label, string confirmLabel, Func<Task> onConfirmed) =>
-        Confirm(label, confirmLabel, () => _ = onConfirmed());
-
-    public static Control StatusRow(ComponentHealth h) => new Grid
+    /// <summary>
+    /// Async form. The result is awaited rather than dropped: a cancel-all that fails must say so,
+    /// not disappear into an unobserved task.
+    /// </summary>
+    public static Button Confirm(string label, string confirmLabel, Func<Task> onConfirmed)
     {
-        ColumnDefinitions = new ColumnDefinitions("18,200,*"),
-        Children =
+        var (b, state) = ConfirmShell(label, confirmLabel);
+        b.Click += async (_, _) =>
         {
-            new Ellipse
-            {
-                Width = 10, Height = 10, Fill = Dot(h.State),
-                VerticalAlignment = VerticalAlignment.Center
-            },
-            new TextBlock { Text = h.Component, FontSize = 13, [Grid.ColumnProperty] = 1 },
-            new TextBlock
-            {
-                Text = Describe(h), FontSize = 13, Opacity = 0.75,
-                TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = 2
-            }
+            if (Arm(b, state)) return;
+            Disarm(b);
+            b.IsEnabled = false;
+            try { await onConfirmed(); }
+            catch (Exception ex) { Report(ex); }
+            finally { b.IsEnabled = true; }
+        };
+        return b;
+    }
+
+    static (Button, ConfirmState) ConfirmShell(string label, string confirmLabel)
+    {
+        var state = new ConfirmState { Label = label, ConfirmLabel = confirmLabel };
+        return (new Button { Content = label, Classes = { "secondary" }, Tag = state }, state);
+    }
+
+    static bool Arm(Button b, ConfirmState state)
+    {
+        if (state.Armed) return false;
+        state.Armed = true;
+        b.Content = state.ConfirmLabel;
+        b.Classes.Remove("secondary");
+        b.Classes.Add("danger");
+        return true;
+    }
+
+    static void Disarm(Button b)
+    {
+        if (b.Tag is not ConfirmState state) return;
+        state.Armed = false;
+        b.Content = state.Label;
+        b.Classes.Remove("danger");
+        if (!b.Classes.Contains("secondary")) b.Classes.Add("secondary");
+    }
+
+    /// <summary>Changes what a two-step button says without rebuilding it, disarming it as it goes.</summary>
+    public static void Relabel(Button b, string label, string confirmLabel)
+    {
+        if (b.Tag is not ConfirmState state) return;
+        if (state.Label == label && state.ConfirmLabel == confirmLabel) return;
+        state.Label = label;
+        state.ConfirmLabel = confirmLabel;
+        Disarm(b);
+    }
+
+    /// <summary>Marks the selected one of a row of buttons, in place.</summary>
+    public static void Emphasise(Button b, bool on)
+    {
+        if (on) { if (!b.Classes.Contains("on")) b.Classes.Add("on"); }
+        else b.Classes.Remove("on");
+
+        // Segmented rows are built from plain buttons, so carry the selection on colour too.
+        b.Background = on ? Theme.AccentSoft : Theme.BgElevated;
+        b.BorderBrush = on ? Theme.Accent : Theme.Line;
+        b.Foreground = on ? Theme.Accent : Theme.TextMuted;
+        b.FontWeight = on ? FontWeight.SemiBold : FontWeight.Medium;
+    }
+
+    // ---- state ------------------------------------------------------------------------------
+
+    /// <summary>A small tinted label. The tone is a claim: green means good, amber means look.</summary>
+    public static Border Pill(string text, IBrush tone) => new()
+    {
+        Background = Soft(tone),
+        CornerRadius = Theme.Pill,
+        Padding = new Thickness(Theme.S2, 3),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock
+        {
+            Text = text, FontSize = Theme.Micro, FontWeight = FontWeight.SemiBold,
+            Foreground = tone, LetterSpacing = 0.3
         }
     };
+
+    static IBrush Soft(IBrush tone) =>
+        tone == Theme.Positive ? Theme.PositiveSoft
+        : tone == Theme.Caution ? Theme.CautionSoft
+        : tone == Theme.Danger ? Theme.DangerSoft
+        : tone == Theme.Accent || tone == Theme.Info ? Theme.AccentSoft
+        : Theme.NeutralSoft;
+
+    public static Control Dot(IBrush tone) => new Ellipse
+    {
+        Width = 7, Height = 7, Fill = tone, VerticalAlignment = VerticalAlignment.Center
+    };
+
+    public static Control StatusRow(ComponentHealth h)
+    {
+        var tone = Tone(h.State);
+        return new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("16,180,*"),
+            Margin = new Thickness(0, 3),
+            Children =
+            {
+                Ui.With(Dot(tone), c => c.VerticalAlignment = VerticalAlignment.Center),
+                new TextBlock
+                {
+                    Text = h.Component, FontSize = Theme.Small, Foreground = Theme.Text,
+                    VerticalAlignment = VerticalAlignment.Center, [Grid.ColumnProperty] = 1
+                },
+                new TextBlock
+                {
+                    Text = Describe(h), FontSize = Theme.Small, Foreground = Theme.TextMuted,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = 2
+                }
+            }
+        };
+    }
 
     static string Describe(ComponentHealth h) => h.State switch
     {
         HealthState.READY => string.IsNullOrWhiteSpace(h.Detail) ? "ready" : h.Detail,
         HealthState.PAUSED => string.IsNullOrWhiteSpace(h.Detail) ? "paused" : $"paused — {h.Detail}",
-        _ => string.IsNullOrWhiteSpace(h.Detail) ? h.State.ToString().ToLowerInvariant() : $"{h.State.ToString().ToLowerInvariant()} — {h.Detail}"
+        _ => string.IsNullOrWhiteSpace(h.Detail)
+            ? h.State.ToString().ToLowerInvariant()
+            : $"{h.State.ToString().ToLowerInvariant()} — {h.Detail}"
     };
 
-    static IBrush Dot(HealthState s) => s switch
+    public static IBrush Tone(HealthState s) => s switch
     {
-        HealthState.READY => Brushes.SeaGreen,
-        HealthState.STARTING => Brushes.SteelBlue,
-        HealthState.DEGRADED => Brushes.Goldenrod,
-        HealthState.PAUSED => Brushes.DarkOrange,
-        HealthState.FAILED => Brushes.Firebrick,
-        _ => Brushes.Gray
+        HealthState.READY => Theme.Positive,
+        HealthState.STARTING => Theme.Info,
+        HealthState.DEGRADED => Theme.Caution,
+        HealthState.PAUSED => Theme.Caution,
+        HealthState.FAILED => Theme.Danger,
+        _ => Theme.Neutral
     };
+
+    // ---- data rows ---------------------------------------------------------------------------
+
+    /// <summary>A key/value row whose value control the caller keeps, so it can be updated in place.</summary>
+    public static Control KeyValueLive(string key, TextBlock value)
+    {
+        value.FontWeight = FontWeight.SemiBold;
+        value.FontSize = Theme.Small;
+        value.VerticalAlignment = VerticalAlignment.Center;
+        value[Grid.ColumnProperty] = 1;
+        return new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("190,*"),
+            Margin = new Thickness(0, 3),
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = key, Foreground = Theme.TextMuted, FontSize = Theme.Small,
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                value
+            }
+        };
+    }
+
+    public static Control KeyValue(string key, string value) =>
+        KeyValueLive(key, new TextBlock { Text = value });
+
+    public static Control FieldRow(string label, Control editor, string? hint = null)
+    {
+        var text = Col(2, new TextBlock
+        {
+            Text = label, FontSize = Theme.Small, Foreground = Theme.Text,
+            TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
+        });
+        if (hint is not null) text.Children.Add(Micro(hint));
+
+        var g = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(0, Theme.S1)
+        };
+        g.Children.Add(text);
+        editor[Grid.ColumnProperty] = 1;
+        editor.VerticalAlignment = VerticalAlignment.Center;
+        editor.Margin = new Thickness(Theme.S4, 0, 0, 0);
+        g.Children.Add(editor);
+        return g;
+    }
+
+    /// <summary>A labelled number the user edits. Committed only when they press Save.</summary>
+    public static NumericUpDown NumberField(decimal value, decimal min = 0m, decimal increment = 1m)
+        => new()
+        {
+            Value = value, Minimum = min, Maximum = 1_000_000_000m, Increment = increment,
+            FormatString = increment == 1m ? "0" : "0.####", Width = 150
+        };
+
+    public static TextBox TextField(string? text = null, string? placeholder = null) => new()
+    {
+        Text = text, PlaceholderText = placeholder, Width = 150
+    };
+
+    /// <summary>Indeterminate work with a sentence saying what is happening. Never a bare spinner.</summary>
+    public static Control Busy(string message) => Row(Theme.S3,
+        new ProgressBar { IsIndeterminate = true, Width = 90, VerticalAlignment = VerticalAlignment.Center },
+        With(Body(message, Theme.TextMuted), t => t.VerticalAlignment = VerticalAlignment.Center));
+
+    public static T With<T>(T c, Action<T> f) where T : Control { f(c); return c; }
+
+    /// <summary>
+    /// How the trading backend is named on screen.
+    ///
+    /// The qualifier is dropped when the connector's own name already carries it: the built-in
+    /// backend is called "Simulator (built in)", and "Simulator (built in) (simulation)" is the kind
+    /// of line that makes a product look like nobody read it. Real money is never dropped.
+    /// </summary>
+    public static string PlatformLabel(string? name, bool isPaper)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "not connected";
+        if (!isPaper) return $"{name} \u00b7 real money";
+        return name.Contains("simulat", StringComparison.OrdinalIgnoreCase) ? name : $"{name} \u00b7 simulation";
+    }
 
     public static string ModeLabel(TradingMode m) => m switch
     {
@@ -156,5 +436,15 @@ static class Ui
         TradingMode.LIVE_CONFIRM => "Real, ask me first",
         TradingMode.LIVE_AUTONOMOUS => "Real, fully automatic",
         _ => m.ToString()
+    };
+
+    /// <summary>Real money is a different kind of state from a mode, so it gets a different colour.</summary>
+    public static IBrush ModeTone(TradingMode m) => m switch
+    {
+        TradingMode.OBSERVE => Theme.Neutral,
+        TradingMode.PAPER => Theme.Info,
+        TradingMode.LIVE_CONFIRM => Theme.Caution,
+        TradingMode.LIVE_AUTONOMOUS => Theme.Danger,
+        _ => Theme.Neutral
     };
 }
