@@ -549,7 +549,9 @@ It is now session-aware, and says so.
 ## What does not work yet
 
 - **The bridge has never been installed into ATAS.** `probe atas` on 2026-08-27 reported
-  `BRIDGE IN STRATEGIES : NO`. The five steps the user performs inside ATAS have never been walked.
+  `BRIDGE IN STRATEGIES : NO`, and `%APPDATA%\ATAS\Strategies` still held 0 files at the end of that
+  day. The five steps the user performs inside ATAS have never been walked. What *is* now true is
+  that the installed app finally carries a bridge ATAS could load, so pressing the button can work.
 - **Nothing has traded through ATAS.** ATAS is now signed in and running, but not one line of
   `AtasStrategyAdapter` has ever executed, and there is no broker connection on the test machine.
 - **The two capabilities are still unmeasured.** `SupportsClientOrderId` turns true only after the
@@ -559,15 +561,12 @@ It is now session-aware, and says so.
   is now the instrument; it has run on the machine and correctly refused to answer without a bridge.
 - **The rule-1 safety fix compiles against real ATAS but has never executed.** It is a guard on a
   path that only runs inside ATAS.
-- **The protocol cannot distinguish "not proven yet" from "the round trip failed."** `BridgeHello`
-  carries one boolean and no attempt counter, so both are the same byte on the wire. `probe atas`
-  narrows it by reading the live order book and **labels the result as inferred, not reported.** The
-  clean fix is one extra field on `BridgeHello`; it has not been made.
-- **`AtasConnector` discards a mismatched hello, so nothing in the app can name the version.**
-  Reported and reproduced, not fixed — `AtasConnector.cs:112-118` sets `_connected = false` and fires
-  `FAILED` without ever assigning `_hello`, so `Bridge` stays null and the user sees "FAILED" and no
-  number. Assigning `_hello` as-is would be wrong: `Capabilities` derives from it, and an
-  incompatible bridge's claims must not reach the gateway. It wants a display-only field.
+- ~~The protocol cannot distinguish "not proven yet" from "the round trip failed."~~ **Fixed
+  2026-08-27** — `BridgeHello` carries the two counters and `probe atas` reports rather than infers.
+  The counters have still never been produced by the real adapter inside ATAS.
+- ~~`AtasConnector` discards a mismatched hello, so nothing in the app can name the version.~~
+  **Fixed 2026-08-27** — the identity is kept in `AtasConnector.Incompatible` and reaches the status
+  row; the claims are still refused. Never seen on screen.
 - **The Windows GUI has still not been looked at.** Captures cannot photograph an RDP desktop —
   `win-shot.sh` lands on the physical console, which is a different desktop, and captures blank.
   Every visual judgement remains one made against the app on macOS.
