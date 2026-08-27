@@ -15,9 +15,14 @@ and until it is, not one line of the ATAS adapter has ever executed.** Everythin
 downstream of getting the bridge listed inside ATAS — which is now the only thing standing between
 this project and its first real measurement.
 
-**And that step needs a person at the machine.** It is GUI work inside ATAS that no amount of SSH
-reaches: on 2026-08-27 the machine was up with no desktop session at all, so steps 1-4 could not be
-started. Everything in this file that can be done without a desktop, has been.
+**That step is GUI work, and there is now a tool that does GUI work.** `tools/winagent` is a resident
+UI-Automation agent inside the Windows desktop session, driven by `tools/win-ui.sh` — see
+`tools/README.md`. It removes the person from every step except one: **Windows logon**, which needs
+the account password and therefore needs you, exactly once. Enable autologon (command in
+`tools/README.md`) and the machine logs itself in at every boot, the agent starts itself with it, and
+nothing after that waits for anybody.
+
+Until that is done, `tools/win-agent.sh status` says `logged on: NOBODY` and every capture is blank.
 
 ## The rule that shapes every design decision
 
@@ -55,6 +60,15 @@ The rule also *creates* bugs that only exist because of it — see trap 1 below.
    Then in ATAS: open a chart → Strategies for that chart → **press refresh if TradeAgent Bridge is
    not listed** → Add → Start. ATAS does not watch the Strategies folder; the app now says so on the
    step itself, but it is still the thing that wastes the first twenty minutes if forgotten.
+
+   All of this is drivable from here once somebody is logged on — start by reading the UI rather
+   than clicking at it:
+   ```bash
+   tools/win-agent.sh status
+   tools/win-ui.sh launch --path 'C:\Program Files (x86)\ATAS Platform\OFT.Platform.exe'
+   tools/win-ui.sh wait --window ATAS --timeoutMs 120000
+   tools/win-ui.sh tree --window ATAS --depth 6
+   ```
 2. **Run the instrument and record the answer.**
    ```bash
    tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 180'
