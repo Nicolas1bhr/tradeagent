@@ -21,18 +21,15 @@ and the member list.
 Note `SupportsOrderHistory = false` is **not yet a real answer**: `HistoryCache()` reads
 `Connector?.Factory`, and `Connector` is null, so it means "could not look".
 
-**The machine now runs itself.** Autologon is configured (LSA secret, not plaintext), the UI agent
-starts at logon, and the whole ATAS journey above was driven from the Mac. **GUI work is no longer a
-reason to wait for anybody.**
+**The machine now runs itself, and that is not a plan — it is how the run above happened.**
+`tools/winagent` is a resident UI-Automation agent inside the Windows desktop session, driven from
+here by `tools/win-ui.sh` (`tools/README.md` has the reasoning). Autologon is already configured, as
+an LSA secret rather than plaintext, so the machine logs itself in at every boot and the agent starts
+with it. **Nothing in this file waits for a person any more.** The one act that needed the owner —
+a Windows logon, which needs the account password — was done on 2026-08-27 and does not recur.
 
-**That step is GUI work, and there is now a tool that does GUI work.** `tools/winagent` is a resident
-UI-Automation agent inside the Windows desktop session, driven by `tools/win-ui.sh` — see
-`tools/README.md`. It removes the person from every step except one: **Windows logon**, which needs
-the account password and therefore needs you, exactly once. Enable autologon (command in
-`tools/README.md`) and the machine logs itself in at every boot, the agent starts itself with it, and
-nothing after that waits for anybody.
-
-Until that is done, `tools/win-agent.sh status` says `logged on: NOBODY` and every capture is blank.
+Read the UI, do not click at it: `find` and `tree` name elements, `invoke --ref` acts on the one you
+looked at. ATAS's chart context menu carries `Sell Limit at ...` three rows above `Chart strategies`.
 
 ## The rule that shapes every design decision
 
