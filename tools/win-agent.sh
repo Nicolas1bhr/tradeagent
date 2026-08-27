@@ -23,8 +23,15 @@ CMD="${1:-status}"
 
 case "$CMD" in
   build)
+    # Stop it first: a running agent holds its own winagent.exe open, and the build fails with
+    # MSB3027 "the file is locked by winagent" rather than anything that names the real problem.
+    "$0" stop >/dev/null 2>&1 || true
+    sleep 1
     "$HERE/win-run.sh" 'cd C:\ta\repo\tools\winagent && dotnet build -c Release --nologo' \
       | grep -E 'error|Build succeeded|Error\(s\)' || true
+    "$0" start >/dev/null 2>&1 || true
+    sleep 2
+    "$0" status
     ;;
 
   install)
@@ -65,7 +72,12 @@ PS
     ;;
 
   start)   "$HERE/win-run.sh" "schtasks /run /tn $TASK" ;;
-  stop)    "$HERE/win-run.sh" "schtasks /end /tn $TASK; taskkill /im winagent.exe /f 2>nul" || true ;;
+  # cmd.exe is what is on the far end of ssh, and ';' is not a command separator there — it was
+  # swallowed as an argument to schtasks and taskkill never ran, so 'stop' quietly stopped nothing.
+  stop)
+    "$HERE/win-run.sh" "schtasks /end /tn $TASK" >/dev/null 2>&1 || true
+    "$HERE/win-run.sh" "taskkill /im winagent.exe /f" >/dev/null 2>&1 || true
+    ;;
   restart) "$0" stop >/dev/null 2>&1 || true; sleep 1; "$0" start ;;
 
   status)

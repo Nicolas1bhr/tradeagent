@@ -418,6 +418,77 @@ LONG SCRIPT PATH REACHED: C:\ta\win-ps-tmp.ps1
 host: <redacted: host names stay out of the repo>
 ```
 
+### THE BRIDGE RAN INSIDE ATAS, 2026-08-27
+
+The blocker that had stood since the project began is gone. The bridge was installed, added to a
+chart and started **entirely from the dev Mac**, with no person touching the Windows machine, and it
+dialled in. This is the first time a single line of `AtasStrategyAdapter` has ever executed.
+
+```
+BRIDGE PIPE           : ANSWERED after 00:00
+{"v":1,"op":"hello","data":{"bridge_protocol_version":1,"bridge_version":"8.0.14",
+ "atas_version":"8.0.14.397","account_id":"DEMO15M440CE","is_simulated":true,
+ "supports_client_order_id":false,"client_order_id_attempts":0,"client_order_id_checks":0,
+ "supports_order_history":false,"supports_modify":true,"supports_close_position":true}}
+PROTOCOL VERDICT      : MATCH — Versions.BridgeCompatible(1) = True
+CONNECTOR HANDSHAKE   : OK — AtasConnector accepted the same bridge
+```
+
+The two counters added earlier the same day travelled off the **real** adapter, so the probe reported
+rather than inferred — the NOT VERIFIED note above them is now closed:
+
+```
+SUBMITTED WITH AN ID  : 0
+READ-BACKS PERFORMED  : 0
+CLIENT ID VERDICT     : false BECAUSE NOTHING WAS EVER ATTEMPTED. This says nothing about ATAS.
+```
+
+Both accounts on the machine are simulated — `DEMO15M440CE` (ES@CME) and `CRYPTO5EB41`
+(BTCUSDT@BinanceFutures), each 100,000 balance. No real money is reachable from this configuration.
+
+### And it immediately found a real defect: the adapter is wired to the wrong ATAS surface
+
+Every read and every order in `AtasStrategyAdapter` goes through `RequireConnector()`, which returns
+`ChartStrategy.Connector` (an `IDataFeedConnector`). **ATAS leaves that null for a chart strategy.**
+Measured, not guessed — the same run that handshook successfully:
+
+```
+ACCOUNTS VISIBLE      : COULD NOT READ — ConnectorTransportException: this ATAS chart has no
+                        trading connection attached yet
+ORDERS IN LIVE BOOK   : COULD NOT READ — ConnectorTransportException: ...
+```
+
+It is not a timing problem (a second run minutes later reads the same) and it is not a chart
+misconfiguration: `Portfolio` **is** populated on the very same object — the hello carried
+`account_id: DEMO15M440CE`, which `Describe()` reads from `Portfolio.AccountID`. So the strategy is
+attached to a portfolio while `Connector` is null.
+
+The reflection dump names the surface that was wanted. `ATAS.Indicators.ITradingManager`, reached
+from the indicator's `IIndicatorDataProvider`, carries exactly what the adapter reads:
+
+```
+interface ATAS.Indicators.ITradingManager
+    IEnumerable`1 MyTrades { get; }      IEnumerable`1 Orders { get; }
+    Portfolio Portfolio { get; }         Position Position { get; }
+    Security Security { get; }
+    event Action`1 NewOrder              event Action`1 OrderChanged
+    event Action`1 NewMyTrade            event Action`1 PositionChanged
+    event Action`2 OrderRegisterFailed   event Action`2 OrderCancelFailed
+```
+
+and order placement is already on `ChartStrategy` itself: `Void OpenOrder(Order)`,
+`Task OpenOrderAsync(Order)`, `Task CancelOrderAsync(Order)`.
+
+**This is the next piece of work, and it is well specified:** move the ~12 `RequireConnector()` call
+sites and `HookConnector()`'s event wiring onto `TradingManager`, keep `Connector` only where a data
+feed is genuinely meant, and re-run `probe atas`. `SupportsOrderHistory` is reported false today, but
+that reading is **not yet trustworthy** — `HistoryCache()` is `Connector?.Factory as IAtasCache`, and
+`Connector` is null, so false there means "could not look", not "not available".
+
+**Why the compile did not catch this.** `Connector` exists, is the right type, and returns null at
+runtime — there was nothing for the compiler to reject. It is the class of defect only a live run
+finds, which is the entire argument for building the instrument before trusting the integration.
+
 ### A tool that presses the buttons, 2026-08-27
 
 `tools/winagent` is a resident UI-Automation agent for the Windows desktop session, driven by

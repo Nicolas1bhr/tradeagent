@@ -10,10 +10,20 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## The one sentence to carry
 
-**ATAS is installed, signed in and running on the test machine; the bridge is not yet loaded into it,
-and until it is, not one line of the ATAS adapter has ever executed.** Everything remaining is
-downstream of getting the bridge listed inside ATAS — which is now the only thing standing between
-this project and its first real measurement.
+**The bridge now runs inside ATAS and answers — and the first thing it proved is that the adapter is
+wired to the wrong ATAS surface.** `ChartStrategy.Connector` is null for a chart strategy, so every
+read and every order fails with "this ATAS chart has no trading connection attached yet", while
+`Portfolio` on the same object is populated. The surface that was wanted is
+`ITradingManager` (via the indicator's `IIndicatorDataProvider`), plus `ChartStrategy.OpenOrder`
+for placement. **That rewiring is the next task**, and `BUILD-STATUS.md` has the measured evidence
+and the member list.
+
+Note `SupportsOrderHistory = false` is **not yet a real answer**: `HistoryCache()` reads
+`Connector?.Factory`, and `Connector` is null, so it means "could not look".
+
+**The machine now runs itself.** Autologon is configured (LSA secret, not plaintext), the UI agent
+starts at logon, and the whole ATAS journey above was driven from the Mac. **GUI work is no longer a
+reason to wait for anybody.**
 
 **That step is GUI work, and there is now a tool that does GUI work.** `tools/winagent` is a resident
 UI-Automation agent inside the Windows desktop session, driven by `tools/win-ui.sh` — see

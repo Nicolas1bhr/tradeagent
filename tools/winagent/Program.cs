@@ -54,6 +54,16 @@ static class Program
 
     static int Main(string[] args)
     {
+        // FIRST, before anything reads a coordinate. This machine runs a scaled display, and a
+        // DPI-unaware process is handed virtualised coordinates: GetWindowRect reported 2208x1533
+        // for a window DWM described as 1530x914, and a capture of it came back scaled. Mixing the
+        // two spaces puts every synthesised click somewhere near the control instead of on it —
+        // which fails intermittently, looks like a flaky UI, and is very expensive to chase.
+        // Per-monitor-v2 makes UIA rectangles, GetWindowRect, SetCursorPos and CopyFromScreen all
+        // speak physical pixels.
+        try { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); }
+        catch (EntryPointNotFoundException) { try { SetProcessDPIAware(); } catch (Exception) { } }
+
         Directory.CreateDirectory(InDir);
         Directory.CreateDirectory(OutDir);
 
@@ -213,7 +223,8 @@ static class Program
             // The honest answer to "can you actually drive a GUI right now". A session with no
             // desktop reports a blank station and every capture comes back black; saying so here is
             // the difference between a diagnosable failure and a mysterious one.
-            ["can_drive_ui"] = CanDriveUi()
+            ["can_drive_ui"] = CanDriveUi(),
+            ["dpi_aware"] = true
         });
     }
 
@@ -797,4 +808,8 @@ static class Program
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+
+    static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 }

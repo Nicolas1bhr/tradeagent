@@ -78,7 +78,12 @@ fi
 
 B64="$(printf '%s' "$REQ" | base64 | tr -d '\n')"
 
-RESULT="$("$HERE/win-ps.sh" <<PS
+# Retry ONLY an SSH authentication failure, and only because of what it proves: auth happens before
+# a single byte of the request is written, so the agent never saw it and nothing was actuated. This
+# machine refuses roughly one connection in ten under rapid use. A blanket retry would be unsafe —
+# re-sending a click that may already have landed is how an automated trading UI presses a button
+# twice — so the retry is keyed to that one message and nothing else.
+run_once() { "$HERE/win-ps.sh" <<PS
 \$ErrorActionPreference = 'Stop'
 \$root = 'C:\ta\agent'
 if (-not (Test-Path "\$root\in")) { New-Item -ItemType Directory -Force -Path "\$root\in","\$root\out" | Out-Null }
@@ -108,7 +113,19 @@ while ((Get-Date) -lt \$deadline) {
 }
 '{"ok":false,"error":"the UI agent did not answer within $TIMEOUT s"}'
 PS
-)"
+}
+
+RESULT=""
+for attempt in 1 2 3 4; do
+  RESULT="$(run_once 2>&1)" || true
+  case "$RESULT" in
+    *"Permission denied"*|*"Connection closed"*|*"kex_exchange"*|*"Connection reset"*)
+      [ "$attempt" -lt 4 ] || break
+      sleep $((attempt * 2))
+      continue ;;
+  esac
+  break
+done
 
 echo "$RESULT"
 
