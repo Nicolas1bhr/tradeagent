@@ -31,9 +31,9 @@ ENC="$(printf '%s' "$SRC" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
 # size the script travels as a file instead. The encoded path stays the default because it needs one
 # round trip rather than two.
 #
-# Branch selection is verified (a short script goes straight to ssh, a long one reaches scp first).
-# The remote execution of the file path is NOT VERIFIED — the Windows machine went to sleep before
-# it could be run end to end.
+# Both branches are verified end to end. An 8,440-byte script travelled as a file and ran:
+#   LONG SCRIPT PATH REACHED: C:\ta\win-ps-tmp.ps1
+#   host: <redacted: host names stay out of the repo>
 if [ "${#ENC}" -lt 7000 ]; then
   exec "$HERE/win-run.sh" "powershell -NoProfile -NonInteractive -EncodedCommand $ENC"
 fi

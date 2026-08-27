@@ -53,7 +53,7 @@ it that way.
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # 91 tests; green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # 107 tests; green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```

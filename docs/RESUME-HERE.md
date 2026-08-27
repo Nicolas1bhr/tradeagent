@@ -15,6 +15,10 @@ and until it is, not one line of the ATAS adapter has ever executed.** Everythin
 downstream of getting the bridge listed inside ATAS — which is now the only thing standing between
 this project and its first real measurement.
 
+**And that step needs a person at the machine.** It is GUI work inside ATAS that no amount of SSH
+reaches: on 2026-08-27 the machine was up with no desktop session at all, so steps 1-4 could not be
+started. Everything in this file that can be done without a desktop, has been.
+
 ## The rule that shapes every design decision
 
 **A terminal is never shown to the user. Not once.** It is the entire reason this product exists:
@@ -26,6 +30,26 @@ features, so before "just shell out to it" feels reasonable, read
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
 ## What to do next, in order
+
+0. **DONE on 2026-08-27, but check it again after any reinstall.** The installed TradeAgent must
+   contain a bridge that has ATAS compiled into it. The copy on the test machine did not — it was a
+   protocol-only stub, and pressing "Install the add-on" would have copied that stub into ATAS where
+   no amount of refreshing could ever have listed it (trap 12). It has been rebuilt with
+   `-AtasInstallDir`, installed, and verified in place: `AtasStrategyAdapter: True`. Fifteen seconds
+   to re-check, and worth it every time the app is reinstalled:
+
+   ```bash
+   tools/win-ps.sh <<'EOF'
+   $d = "$env:LOCALAPPDATA\Programs\TradeAgent\bridge\TradeAgent.AtasBridge.dll"
+   $t = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($d))
+   "AtasStrategyAdapter: " + $t.Contains("AtasStrategyAdapter")
+   EOF
+   ```
+
+   False means rebuild and reinstall before going anywhere near ATAS:
+   `packaging\build.ps1 -RequireInstaller -AtasInstallDir "C:\Program Files (x86)\ATAS Platform"`,
+   then run the installer with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`. It is a per-user install
+   and it leaves `%LOCALAPPDATA%\TradeAgent` — the trading records and onboarding progress — alone.
 
 1. **Install the bridge and get it listed inside ATAS.** In TradeAgent, press "Install the add-on".
    Then in ATAS: open a chart → Strategies for that chart → **press refresh if TradeAgent Bridge is
@@ -42,6 +66,12 @@ The rule also *creates* bugs that only exist because of it — see trap 1 below.
    Rule 1 makes it false until an order has proved it. Place one paper order, then run the probe
    again. **That second reading is now capable of changing** — before 2026-08-27 it was not, because
    the bridge only ever sent its capabilities once, at the handshake. See trap 9.
+
+   The probe now prints *why* it is false, from counters the bridge reports rather than from an
+   inference: `false BECAUSE NOTHING WAS EVER ATTEMPTED`, `ATTEMPTED BUT NEVER CHECKED`, or
+   `AND THE READ-BACK GENUINELY FAILED`. Only the last is evidence about ATAS. Read that line before
+   concluding anything, and if the reported verdict disagrees with the order-book reading printed
+   under `AND, INDEPENDENTLY`, believe neither until the disagreement is explained.
 4. **Walk the whole setup journey on Windows and look at it — from the console, not over RDP.**
    Screen captures cannot photograph an RDP desktop: `win-shot.sh` lands on the physical console,
    which is a different desktop, and captures blank. Every visual judgement so far was made on macOS.
@@ -61,14 +91,6 @@ The rule also *creates* bugs that only exist because of it — see trap 1 below.
   is not.
 - What is the sign convention on `Position.Volume`? Deliberately unused: getting it wrong would not
   flatten a position, it would double it, so `ClosePosition` lets ATAS pick the side instead.
-- **Should `BridgeHello` carry an attempt counter?** The protocol has one boolean for
-  `SupportsClientOrderId` and no way to say *why* it is false, so "never attempted" and "attempted
-  and failed" are the identical byte on the wire. `probe atas` narrows it by reading the live order
-  book, and labels that verdict **inferred, not reported**. One extra field would make it read.
-- **Should a version-mismatched bridge be able to name its version?** `AtasConnector.cs:112-118`
-  discards the hello outright, so `Bridge` stays null and the user sees "FAILED" with no number.
-  Assigning `_hello` as-is is not the fix — `Capabilities` derives from it, and an incompatible
-  bridge's claims must not reach the gateway. It wants a display-only field.
 - Whether Windows Defender Firewall prompts when `codex login` binds its callback socket on port
   1455. A prompt there lands in front of a user the product promised would click Yes exactly once.
 
@@ -117,6 +139,16 @@ Each of these cost real time. None is obvious from the code.
     Use `tools/win-ps.sh`, which base64-encodes the script as UTF-16LE and hands it to
     `-EncodedCommand`.
 
+12. **A bridge DLL built without `-p:AtasBridgeBuild=true` is a stub, and it looks exactly like the
+    real one.** Same filename, same folder, loads without complaint — and contains no
+    `ChartStrategy` subclass at all, so ATAS lists nothing and says nothing. The visible symptom is
+    "TradeAgent Bridge is not in the Strategies list", which is *identical* to the symptom of trap 1
+    (ATAS not watching the folder), and trap 1's fix — press refresh — is the first thing anyone
+    tries. It cannot work, and there is no message anywhere to say so. This is deliberate on the
+    build's part: `packaging/build.ps1` will not pretend to ATAS support it cannot have. The trap is
+    that the *installed* app can be an older, ATAS-less build while the repo builds a real one.
+    Check the DLL for the string `AtasStrategyAdapter`, not the file's existence — step 0 above.
+
 ## How the last session was run
 
 Three agents in parallel against written contracts with hard file-ownership boundaries, then a single
@@ -144,7 +176,7 @@ integration pass by the session that dispatched them. What is worth copying:
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
-dotnet test TradeAgent.sln        # 102 tests: 43 unit, 23 integration, 36 fault
+dotnet test TradeAgent.sln        # 107 tests: 43 unit, 28 integration, 36 fault
 ```
 
 Start any Windows session by asking whether the machine can do the work at all — see

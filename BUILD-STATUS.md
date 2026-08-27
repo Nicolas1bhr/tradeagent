@@ -272,6 +272,166 @@ branch is not what an already-signed-in Codex hits, and the gate must remain `Au
 
 ---
 
+## Verified 2026-08-27, later session: the protocol can now say *why*
+
+Two of the open questions in `docs/RESUME-HERE.md` were design questions with one right answer, and
+both are now implemented, compiled against the real ATAS assemblies, and tested. Neither has yet run
+**inside** ATAS — see the honest note at the end of this section.
+
+### A false `SupportsClientOrderId` now says which false it is
+
+`BridgeHello` carries `client_order_id_attempts` and `client_order_id_checks`. Both are `int?`, and
+null is a distinct answer from zero: a bridge that reports nothing has not told anyone it attempted
+nothing. Nothing derives a capability from either — `ConnectorCapabilities` is untouched.
+
+The probe reports them instead of inferring. Run against a stand-in bridge on macOS, all three
+states render and are distinguishable — this is real output, three separate runs:
+
+```
+SUBMITTED WITH AN ID  : 0   (orders this bridge sent to ATAS carrying a client order id)
+READ-BACKS PERFORMED  : 0
+CLIENT ID VERDICT     : false BECAUSE NOTHING WAS EVER ATTEMPTED. This says nothing about ATAS.
+HOW THIS WAS DERIVED  : REPORTED BY THE BRIDGE. ...
+
+SUBMITTED WITH AN ID  : 2
+READ-BACKS PERFORMED  : 0
+CLIENT ID VERDICT     : false, ATTEMPTED BUT NEVER CHECKED — the round trip has not failed either.
+
+SUBMITTED WITH AN ID  : 3
+READ-BACKS PERFORMED  : 2
+CLIENT ID VERDICT     : false, AND THE READ-BACK GENUINELY FAILED. This IS evidence about ATAS.
+```
+
+Only the third is evidence about ATAS. Before this, all three were the same byte on the wire and the
+probe said so, labelling its own order-book reading **inferred, not reported**. That inference is
+still printed, under `AND, INDEPENDENTLY`, precisely because it comes from a different source: in the
+third run above the two **disagree** (the stand-in's order book is empty), and the probe says to
+believe neither until that is explained. That is the intended behaviour, not a defect in the output.
+
+### A version-mismatched bridge names itself, and still gains nothing
+
+`AtasConnector` kept refusing an incompatible hello — `_hello` stays null, so `Capabilities` reports
+nothing supported and the gateway cannot trade on anything it claimed. What changed is that the
+**identity** is kept separately, in `AtasConnector.Incompatible`, and reaches the dashboard as the
+health detail on the failed row:
+
+```
+bridge 9.9.9 speaks protocol 2, this build speaks 1 — reinstall the add-on from TradeAgent
+```
+
+Version strings from a refused peer are untrusted text on the way to a label, so they are stripped of
+control characters and clipped to 40 characters first. A test asserts both halves at once — the
+version survives, and not one of the four capabilities the mismatched bridge asserted got through —
+because the dangerous fix is the one that keeps the version by keeping the whole frame.
+
+### It compiles against real ATAS
+
+The adapter half of this change is excluded from every non-Windows build, so macOS cannot check it.
+Built on the Windows machine against the real assemblies:
+
+```
+  TradeAgent.AtasBridge -> C:\ta\repo\src\TradeAgent.AtasBridge\bin\Release\net10.0-windows\TradeAgent.AtasBridge.dll
+Build succeeded.
+    1 Warning(s)
+    0 Error(s)
+```
+
+Same one warning as the inherited baseline. The source was asserted to have arrived first — trap 8 —
+by grepping the remote file for `_clientOrderIdChecks` (3 hits) before believing the build.
+
+### Tests
+
+```
+Passed!  - Failed: 0, Passed: 36, Total: 36 - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 43, Total: 43 - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 28, Total: 28 - TradeAgent.IntegrationTests.dll (net10.0)
+```
+
+**107 passed, 0 failed** (was 102). The five new ones are integration tests over real named pipes:
+the counters travelling on a post-handshake frame, null-is-not-zero for a bridge that reports
+neither, the incompatible bridge naming itself while gaining nothing, the clipping of its version
+string, and the status row being re-announced when that bridge disconnects. The last one was
+checked the only way worth checking: it fails against the code without the fix (`Failed: 1`).
+
+### The test machine could not have loaded the bridge, and now can
+
+The copy of TradeAgent installed on the test machine shipped a bridge assembly with **no ATAS
+adapter in it** — the protocol-only stub `packaging/build.ps1` produces when it is not given
+`-AtasInstallDir`. Read out of the two DLLs directly:
+
+```
+installed  AtasStrategyAdapter : ABSENT      (37,376 bytes, 08/26 18:54)
+installed  ChartStrategy ref   : ABSENT
+fresh      AtasStrategyAdapter : PRESENT     (69,632 bytes, 08/27 13:33)
+fresh      ChartStrategy ref   : PRESENT
+```
+
+Pressing "Install the add-on" would have copied that stub into `%APPDATA%\ATAS\Strategies`, where it
+loads without complaint and contributes no strategy — so ATAS would have listed nothing, with no
+message anywhere saying why. See trap 12: that symptom is indistinguishable from trap 1, whose fix
+(press refresh) is the first thing anyone tries and could never have worked.
+
+Rebuilt with ATAS support. The manifest reads the adapter out of the compiled assembly, not out of
+the build flag, which is the line worth checking:
+
+```
+== what this build actually contains ==
+   version           0.1.0
+   staged files      289 files, 405.4 MB
+   bridge/           36 files, 32.9 MB
+   ATAS adapter      PRESENT - AtasStrategyAdapter is compiled into the bridge assembly
+      bridge/TradeAgent.AtasBridge.dll       68.0 KB
+   installer         artifacts\TradeAgent-Setup-x64.exe  (112.0 MB)
+```
+
+Installed it, silently and per-user, and read the result back out of the installed file rather than
+trusting the exit code:
+
+```
+installer: 117486505 bytes
+exit code: 0
+--- installed bridge afterwards ---
+  69632 bytes  08/27/2026 13:40:32
+  AtasStrategyAdapter  : True
+  ATAS.Strategies ref  : True
+  ClientOrderIdAttempts: True
+```
+
+The machine is now in a state where step 1 can actually succeed. `PrivilegesRequired=lowest` and the
+installer's `[UninstallDelete]` leaves `%LOCALAPPDATA%\TradeAgent` alone, so the trading records and
+onboarding progress survived the reinstall.
+
+### Tests on Windows, after all of the above
+
+```
+Passed!  - Failed: 0, Passed: 36, Total: 36 - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 43, Total: 43 - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 28, Total: 28 - TradeAgent.IntegrationTests.dll (net10.0)
+```
+
+### `tools/win-ps.sh` long-script path, previously NOT VERIFIED, now verified
+
+An 8,440-byte script exceeds the encoded-command limit and travels as a file. It ran:
+
+```
+LONG SCRIPT PATH REACHED: C:\ta\win-ps-tmp.ps1
+host: <redacted: host names stay out of the repo>
+```
+
+### NOT VERIFIED
+
+- **No counter has ever been produced by the real `AtasStrategyAdapter`.** The increments compile
+  against real ATAS and nothing more; the values seen above came from a stand-in bridge. Until the
+  bridge is loaded into ATAS this is exactly the same standing as every other adapter claim.
+- **The incompatible-bridge line has never been seen on screen.** The wiring is real —
+  `TradingGateway.OnConnectionChanged` passes the detail and `Ui.Describe` renders `failed — …` — but
+  it is asserted by test, not photographed, and producing it needs two builds of the bridge with
+  different protocol versions. The status column trims with an ellipsis, which is why the version
+  number is at the front of the string and the advice at the end: what gets cut is the recoverable
+  half.
+
+---
+
 ## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in
@@ -422,11 +582,16 @@ It is now session-aware, and says so.
 
 ## Current blockers
 
-1. **The bridge inside ATAS.** Everything left is downstream of it: the two capability verdicts, the
+1. **Somebody signed in at the test machine.** On 2026-08-27 it was reachable and idle with **no
+   desktop session at all** (`tools/win-state.sh`: `desktop: no active session`), and the remaining
+   steps are GUI work inside ATAS that no amount of SSH reaches. Everything that could be done
+   without a desktop has been: the ATAS-enabled build is installed and verified in place.
+2. **The bridge inside ATAS.** Everything left is downstream of it: the two capability verdicts, the
    five in-ATAS steps, and any claim that an order reached a broker. ATAS itself is no longer a
-   blocker — it is installed, signed in and running.
-2. **A broker connection**, before any claim that an order reached one.
-3. **A code-signing certificate**, before this goes to anyone who did not build it.
+   blocker — it is installed, signed in and running, and as of 2026-08-27 the installed TradeAgent
+   finally carries a bridge that ATAS could load.
+3. **A broker connection**, before any claim that an order reached one.
+4. **A code-signing certificate**, before this goes to anyone who did not build it.
 
 ## Next integration target
 
