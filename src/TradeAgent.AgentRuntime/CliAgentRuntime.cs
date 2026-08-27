@@ -409,6 +409,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// anyone to type a key into one. The key is not logged, not stored by TradeAgent, and not kept
     /// in memory beyond this call.
     /// </summary>
+    /// <summary>Storing a key is a local operation. Anything slower than this has stopped working.</summary>
+    static readonly TimeSpan KeySignInTimeout = TimeSpan.FromSeconds(30);
+
     public async Task SignInWithApiKeyAsync(string key, CancellationToken ct = default)
     {
         var plan = manifest.ApiKey
@@ -435,9 +438,36 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
             await p.StandardInput.WriteLineAsync(key);
             p.StandardInput.Close();
 
-            var err = await p.StandardError.ReadToEndAsync(ct);
-            var outp = await p.StandardOutput.ReadToEndAsync(ct);
-            await p.WaitForExitAsync(ct);
+            // Both pipes are drained concurrently, and under a deadline — the same shape Run() uses,
+            // and for the same reason. Reading stderr to end *first* deadlocks the moment the child
+            // writes more to stdout than the pipe buffer holds: the child blocks writing, so it never
+            // exits, so it never closes stderr, so this never returns. Measured on macOS with a
+            // stand-in that reads the key exactly as codex does: 64 KB of stdout returned in 0.2s,
+            // 128 KB never returned at all.
+            //
+            // Latent today — codex 0.150.0 prints nothing on stdout for `login --with-api-key` — and
+            // it stays latent only until a vendor makes that command chatty. The symptom would be the
+            // sign-in spinner turning forever with no error, which is trap 1 in docs/RESUME-HERE.md
+            // reappearing on the one path that handles the user's credential.
+            using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timer.CancelAfter(KeySignInTimeout);
+
+            var stdout = p.StandardOutput.ReadToEndAsync(timer.Token);
+            var stderr = p.StandardError.ReadToEndAsync(timer.Token);
+            string outp, err;
+            try
+            {
+                await p.WaitForExitAsync(timer.Token);
+                outp = await stdout;
+                err = await stderr;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                try { p.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+                throw new TradeAgentException(ErrorCode.AI_AUTH_TIMEOUT,
+                    $"{Path.GetFileName(exe)} did not accept the key within {KeySignInTimeout.TotalSeconds:0} seconds");
+            }
+
             if (p.ExitCode != 0)
                 throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED,
                     Summarise(string.IsNullOrWhiteSpace(err) ? outp : err));

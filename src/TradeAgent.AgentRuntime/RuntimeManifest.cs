@@ -159,12 +159,22 @@ public sealed class RuntimeManifest
 /// <item>Install fields (repo, asset pattern, path inside the archive, pinned URL, npm package) were
 /// read from the vendors' own live release metadata and, for Codex, from OpenAI's own install
 /// script, on 2026-08-26.</item>
-/// <item>Conversation and sign-in fields were read from the vendors' current published CLI
-/// documentation, not from running the programs.</item>
+/// <item>Conversation fields were read from the vendors' current published CLI documentation, not
+/// from running the programs.</item>
+/// <item>The sign-in fields — <c>AuthArgs</c>, <c>AuthUrlPattern</c>, <c>AuthStateArgs</c>,
+/// <c>AuthStateSuccessPattern</c> and both <c>ApiKey</c> shapes — were executed against the vendors'
+/// real binaries on <b>macOS 26.5.1 / arm64, 2026-08-27</b>: Codex 0.150.0 unpacked from
+/// <c>codex-package-aarch64-apple-darwin.tar.gz</c> and OpenCode 1.18.23 from
+/// <c>opencode-darwin-arm64.zip</c> — the macOS builds of the same two releases these manifests
+/// install on Windows. Every per-field note below says what was run and what came back. Nothing
+/// about that run speaks for the Windows-only halves of these manifests: the <c>.exe</c> names, the
+/// <c>%USERPROFILE%\.local\share</c> spelling of OpenCode's credentials file, or Codex's Windows
+/// archive layout.</item>
 /// </list>
 ///
-/// Both manifests are therefore <c>Verified = false</c>: nothing here has been proven by executing
-/// the real CLI on Windows, which is the only bar that counts.
+/// Both manifests nevertheless stay <c>Verified = false</c>. <c>Verified</c> means proven by running
+/// the real CLI <b>on Windows</b>, which is the only bar that counts, and a macOS run does not move
+/// it.
 /// </summary>
 public static class RuntimeCatalog
 {
@@ -200,6 +210,25 @@ public static class RuntimeCatalog
                 // OpenCode resolves its data directory with xdg-basedir, which has no Windows branch
                 // and so uses ~/.local/share on every platform. The shape below is its own Api record:
                 // { "<provider>": { "type": "api", "key": "..." } }.
+                //
+                // Both halves executed on macOS 26.5.1, OpenCode 1.18.23, 2026-08-27, against a home
+                // directory with no OpenCode state in it at all. `opencode auth list` names the file
+                // itself, so the path is the program's own word rather than an inference:
+                //     ┌  Credentials ~/.local/share/opencode/auth.json
+                //     │
+                //     └  0 credentials
+                // TradeAgent then wrote exactly the template below through
+                // CliAgentRuntime.SignInWithApiKeyAsync — 63 bytes,
+                // {"openai":{"type":"api","key":"sk-FAKE-tradeagent-probe-0000"}} — and the same
+                // command answered:
+                //     ┌  Credentials ~/.local/share/opencode/auth.json
+                //     │
+                //     ●  OpenAI api
+                //     │
+                //     └  1 credentials
+                // "OpenAI" and "api" are OpenCode reading the provider key and the type field back
+                // out of the record, which is what makes this a proof of the JSON shape and not only
+                // of the path. The Windows spelling of the same path has still never been exercised.
                 File = OperatingSystem.IsWindows()
                     ? @"%USERPROFILE%\.local\share\opencode\auth.json"
                     : "~/.local/share/opencode/auth.json",
@@ -211,7 +240,9 @@ public static class RuntimeCatalog
                 Kind = InstallKind.Download,
                 GitHubRepo = "anomalyco/opencode",
                 AssetPattern = @"^opencode-windows-x64\.zip$",
-                // The zip holds exactly one file, opencode.exe, at its root.
+                // The zip holds exactly one file, opencode.exe, at its root. Read out of the live
+                // asset's own central directory on 2026-08-27 with a ranged GET, rather than assumed:
+                // 1 entry, "opencode.exe", 179,550,760 bytes uncompressed.
                 ExecutableInArchive = "opencode.exe",
                 Url = "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip",
                 NpmPackage = "opencode-ai",
@@ -222,11 +253,24 @@ public static class RuntimeCatalog
             // prompt — there is no URL to open and no headless equivalent — so declaring it here
             // would put a Sign in button on screen that cannot do anything. The key field is the
             // sign-in for this runtime.
+            //
+            // Still true at 1.18.23: `opencode auth login --help` on macOS, 2026-08-27, lists only
+            // "-p, --provider" and "-m, --method", which skip the two *selection* prompts. Nothing
+            // there accepts a key.
             AuthArgs = [],
             AuthStateArgs = ["auth", "list"],
             // `opencode auth list` ends with "<n> credentials" and never sets an exit code, so the
             // exit code says nothing. A leading non-zero digit is what distinguishes "3 credentials"
             // from "0 credentials".
+            //
+            // Both measured on macOS, OpenCode 1.18.23, 2026-08-27: the command exits 0 whether it
+            // prints "0 credentials" or "1 credentials", so the exit code really is worthless here.
+            // It also prints "1 credentials", plural, so a pattern spelling the singular would miss.
+            // Its output does carry ANSI colour — "Credentials \e[90m~/.local/share/opencode/..."
+            // on stdout and a bare "\e[0m" on stderr — but on this version no escape lands between
+            // the digit and the word, so this pattern happens to match before Ansi.Strip as well as
+            // after. Do not read that as permission to drop the strip: the escape sits directly
+            // against the path, one field over.
             AuthStateSuccessPattern = @"\b[1-9]\d*\s+credentials\b",
             AuthUrlPattern = AnyUrl,
             TaskArgs = ["run", "{prompt}"],
@@ -256,6 +300,16 @@ public static class RuntimeCatalog
                 HelpUrl = "https://platform.openai.com/api-keys",
                 // Codex removed its --api-key flag and now reads the key from stdin. It refuses when
                 // stdin is a terminal, which is exactly the shape TradeAgent wants.
+                //
+                // Executed on macOS, Codex 0.150.0, 2026-08-27, through
+                // CliAgentRuntime.SignInWithApiKeyAsync's stdin branch with a deliberately fake key:
+                // the child read the line, exited 0, and wrote CODEX_HOME/auth.json as
+                // {"auth_mode":"apikey","OPENAI_API_KEY":"..."}. `codex login status` then printed
+                // "Logged in using an API key - sk-FAKE-***-0000" and exited 0.
+                //
+                // Note what that does and does not mean: Codex stores the key without contacting
+                // OpenAI, so an accepted key proves the key was *stored*, never that it works. The
+                // same is true of OpenCode. AuthState.Authenticated means "a credential is on disk".
                 StdinArgs = ["login", "--with-api-key"]
             },
             Executable = OperatingSystem.IsWindows() ? "codex.exe" : "codex",
@@ -271,13 +325,40 @@ public static class RuntimeCatalog
                 ManualUrl = "https://developers.openai.com/codex/cli/"
             },
             VersionArgs = ["--version"],
+            // On macOS at 0.150.0, `codex login` does NOT short-circuit when a credential is already
+            // stored: with an API key on disk it still started the browser flow and printed a fresh
+            // authorize URL. So BeginAuthenticationAsync's "finished without printing a URL" branch
+            // is not reached by an already-signed-in Codex on this version, and a user who presses
+            // Sign in twice gets a second sign-in, not a message saying they are done. Check the
+            // state with AuthStateArgs before offering the button; do not infer it from this command.
             AuthArgs = ["login"],
             // `codex login status` prints to stderr and exits 0 when signed in, 1 when not. The exit
             // code is the reliable signal, so no success pattern is set here.
+            //
+            // Both polarities measured on macOS, Codex 0.150.0, 2026-08-27: with a credential on
+            // disk, stderr "Logged in using an API key - sk-FAKE-***-0000", exit 0; against an empty
+            // CODEX_HOME, stderr "Not logged in", exit 1. stdout is empty in both cases and neither
+            // carries an ANSI escape.
             AuthStateArgs = ["login", "status"],
             // `codex login` prints two addresses: first the local callback server it just started,
             // then the one to actually visit. Requiring https and refusing localhost picks the
             // second, which is the one the user needs.
+            //
+            // Run on macOS, Codex 0.150.0, 2026-08-27, against an empty CODEX_HOME — the not-signed-in
+            // state that had never been exercised. Everything goes to stderr, stdout is empty, and
+            // the order is as described:
+            //     Starting local login server on http://localhost:1455.
+            //     If your browser did not open, navigate to this URL to authenticate:
+            //
+            //     https://auth.openai.com/oauth/authorize?response_type=code&client_id=...
+            //
+            //     On a remote or headless machine? Use `codex login --device-auth` instead.
+            // This pattern picked the auth.openai.com address; BeginAuthenticationAsync returned it
+            // in 0.2s with no window. Two details worth keeping: the callback address is printed as
+            // plain http, so on this version the "https" requirement alone already excludes it and
+            // the negative lookahead is belt-and-braces; and codex login emitted no ANSI escape at
+            // all when its output was a pipe, so Ansi.Strip is insurance on this path rather than
+            // the thing making it work. OpenCode's auth output does colour, so keep the strip.
             AuthUrlPattern = @"(https://(?!localhost|127\.0\.0\.1)[^\s""'<>\)\]]+)",
             TaskArgs = ["exec", "{prompt}"],
             ExecArgs = ["exec", "{prompt}"],

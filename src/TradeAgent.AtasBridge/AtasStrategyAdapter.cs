@@ -54,9 +54,13 @@ namespace TradeAgent.AtasBridge;
 ///   1. ClientOrderId travels on <see cref="AtasOrder.Comment"/> and is read back in GetOrders.
 ///      Describe() reports SupportsClientOrderId only after the round trip has actually been
 ///      OBSERVED at runtime (see <see cref="ProveClientOrderId"/>). It is false until then.
-///   2. ATAS exposes no order-history API at all — only a live in-memory order collection — so
-///      SupportsOrderHistory is a hard false. GetOrders still returns the live view, but it never
-///      lets a 'since' filter hide an order that is still working.
+///   2. SupportsOrderHistory is ANSWERED AT RUNTIME, not settled here. IDataFeedConnector itself
+///      exposes no history call — only a live in-memory order collection — but the one order-history
+///      query in the whole ATAS surface lives on ICache, which is reachable only if this platform's
+///      Connector.Factory really is the concrete cache. Describe() performs that type test on every
+///      ask (see HistoryCache()); false when nothing is reachable. GetOrders still returns the live
+///      view, but it never lets a 'since' filter hide an order that is still working, and it throws
+///      rather than answering a window it cannot cover.
 ///   3. AtasRejectedException is raised only where nothing can still be live: a pre-flight refusal
 ///      that happened before submission, or an explicit ATAS order-failure event naming our order.
 ///      Timeouts, disconnects and unattributable failures propagate as ordinary exceptions.
@@ -994,7 +998,23 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     void ProveClientOrderId(string clientOrderId)
     {
         if (string.IsNullOrEmpty(clientOrderId)) return;
-        lock (_gate) { if (_clientOrderIdProven) return; }
+        lock (_gate)
+        {
+            if (_clientOrderIdProven) return;
+
+            // Rule 1 is that the adapter reads back ITS OWN identifier, and this is what makes that
+            // literally true. Without it, OnOrderPayload handed in the Comment of every order that
+            // crossed the feed, and any order in ATAS's book carrying any comment — placed by hand,
+            // or by another strategy — set the latch. TradeAgent would then report
+            // SupportsClientOrderId = true on evidence it never produced, and with an order cache
+            // reachable that is the whole of ReconciliationProvable: the gateway would permit
+            // LIVE_AUTONOMOUS on a round trip nobody had performed. That is precisely the "do not
+            // fake it" the rule spells out on IAtasAdapter.
+            //
+            // Trim() can empty _submitted after 4096 orders, so a very old id stops being provable.
+            // That refuses a proof rather than inventing one, which is the direction to fail in.
+            if (!_submitted.ContainsKey(clientOrderId)) return;
+        }
 
         var c = Connector;
         if (c is null) return;

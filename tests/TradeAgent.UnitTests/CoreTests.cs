@@ -1,8 +1,10 @@
 using System.Runtime.CompilerServices;
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Diagnostics;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -334,6 +336,155 @@ public class CapabilityTests
         Assert.True(new ConnectorCapabilities(true, true, true, true, true, true).ReconciliationProvable);
         Assert.False(new ConnectorCapabilities(true, false, true, true, true, true).ReconciliationProvable);
         Assert.False(new ConnectorCapabilities(true, true, false, true, true, true).ReconciliationProvable);
+    }
+}
+
+/// <summary>
+/// The refusal of fully automatic live trading is correct; learning about it from a turned-down
+/// order is not. These pin the exact words the user reads, because the wording is the fix.
+/// </summary>
+public class DoctorReconciliationCheckTests
+{
+    const string Facts = "ATAS — carries TradeAgent's own order reference: ";
+    const string Action =
+        "Nothing is broken and there is nothing to press: this is what the trading platform reports " +
+        "about itself, and some platforms only confirm the order reference after TradeAgent has " +
+        "placed an order and read it back. “Watch only”, “Practice” and “Real, ask me first” all " +
+        "work normally — only “Real, fully automatic” is withheld.";
+
+    static ConnectorCapabilities Caps(bool clientOrderId, bool orderHistory) =>
+        new(IsPaper: false, SupportsClientOrderId: clientOrderId, SupportsOrderHistory: orderHistory,
+            SupportsModify: true, SupportsClosePosition: true, SupportsStreaming: true);
+
+    [Fact]
+    public void Both_confirmed_reads_as_ready_and_says_the_mode_is_available()
+    {
+        var c = Doctor.ReconciliationCheck("ATAS", Caps(true, true));
+
+        Assert.Equal("Fully automatic trading", c.Name);
+        Assert.Equal(HealthState.READY, c.State);
+        Assert.Equal(Facts + "confirmed; serves order history reaching far enough back: confirmed. " +
+                     "The mode “Real, fully automatic” is available.", c.Detail);
+        Assert.False(c.AutoRepairable);
+    }
+
+    [Fact]
+    public void No_order_reference_names_that_capability_and_leaves_the_other_confirmed()
+    {
+        var c = Doctor.ReconciliationCheck("ATAS", Caps(false, true));
+
+        Assert.Equal(HealthState.DEGRADED, c.State);
+        Assert.Equal(Facts + "not confirmed; serves order history reaching far enough back: confirmed. " +
+                     "Both are needed to prove what happened to an order after a disconnection, so the " +
+                     "mode “Real, fully automatic” is refused.", c.Detail);
+        Assert.Equal(Action, c.UserAction);
+        Assert.Equal(ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE, c.Code);
+    }
+
+    [Fact]
+    public void No_order_history_names_that_capability_and_leaves_the_other_confirmed()
+    {
+        var c = Doctor.ReconciliationCheck("ATAS", Caps(true, false));
+
+        Assert.Equal(HealthState.DEGRADED, c.State);
+        Assert.Equal(Facts + "confirmed; serves order history reaching far enough back: not confirmed. " +
+                     "Both are needed to prove what happened to an order after a disconnection, so the " +
+                     "mode “Real, fully automatic” is refused.", c.Detail);
+        Assert.Equal(Action, c.UserAction);
+    }
+
+    [Fact]
+    public void Neither_confirmed_is_still_a_warning_and_still_names_the_three_modes_that_work()
+    {
+        var c = Doctor.ReconciliationCheck("ATAS", Caps(false, false));
+
+        Assert.Equal(HealthState.DEGRADED, c.State);
+        Assert.Equal(Facts + "not confirmed; serves order history reaching far enough back: not confirmed. " +
+                     "Both are needed to prove what happened to an order after a disconnection, so the " +
+                     "mode “Real, fully automatic” is refused.", c.Detail);
+        Assert.Equal(Action, c.UserAction);
+        // Ui.ModeLabel's own words for OBSERVE, PAPER and LIVE_CONFIRM. A second vocabulary for the
+        // same four modes is how a product starts describing itself two ways.
+        Assert.Contains("“Watch only”", c.UserAction);
+        Assert.Contains("“Practice”", c.UserAction);
+        Assert.Contains("“Real, ask me first”", c.UserAction);
+    }
+
+    [Fact]
+    public void Nothing_is_ever_a_failure_and_nothing_is_ever_offered_as_a_repair()
+    {
+        // The user cannot fix this by clicking. FAILED would cry wolf over an installation that
+        // works in three of its four modes; AutoRepairable would promise a button that cannot exist.
+        foreach (var (id, hist) in new[] { (true, true), (true, false), (false, true), (false, false) })
+        {
+            var c = Doctor.ReconciliationCheck("ATAS", Caps(id, hist));
+            Assert.NotEqual(HealthState.FAILED, c.State);
+            Assert.False(c.AutoRepairable);
+        }
+    }
+
+    [Fact]
+    public void The_wording_never_calls_the_platform_incapable()
+    {
+        // A false is ambiguous and cannot be resolved from ConnectorCapabilities: the ATAS adapter
+        // reports SupportsClientOrderId only as "proven", and proven is false on a freshly connected
+        // session until an order has been placed and its reference read back. Saying "cannot" would
+        // tell that user their broker is broken when nothing has been tried yet.
+        foreach (var (id, hist) in new[] { (true, false), (false, true), (false, false) })
+        {
+            var c = Doctor.ReconciliationCheck("ATAS", Caps(id, hist));
+            var text = c.Detail + " " + c.UserAction;
+            foreach (var claim in new[] { "cannot", "can't", "unable", "incapable", "does not support", "not supported" })
+                Assert.False(text.Contains(claim, StringComparison.OrdinalIgnoreCase),
+                    $"the wording claims the platform {claim}, which is not knowable from a boolean");
+        }
+    }
+
+    [Fact]
+    public void A_simulator_with_order_history_hidden_reports_it_by_name()
+    {
+        // Driven through the connector's own fault seam rather than a hand-made capability record,
+        // so this breaks if FakeConnector ever stops reflecting HideOrderHistory into Capabilities.
+        var conn = new FakeConnector(faults: new FaultProfile { HideOrderHistory = true });
+        var c = Doctor.ReconciliationCheck(conn.DisplayName, conn.Capabilities);
+
+        Assert.Equal(HealthState.DEGRADED, c.State);
+        Assert.Equal("Simulator (built in) — carries TradeAgent's own order reference: confirmed; " +
+                     "serves order history reaching far enough back: not confirmed. " +
+                     "Both are needed to prove what happened to an order after a disconnection, so the " +
+                     "mode “Real, fully automatic” is refused.", c.Detail);
+    }
+
+    [Fact]
+    public async Task The_full_report_carries_the_check_and_lists_it_among_the_problems()
+    {
+        // The point of the whole change: "Check everything" prints report.Problems, so a backend that
+        // will refuse the fully automatic mode has to appear there, before an order depends on it.
+        var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { HideOrderHistory = true });
+        using var _2 = db;
+        await using var _3 = gw;
+
+        var report = await new Doctor(gw, allowNetwork: false).RunAsync();
+        var check = Assert.Single(report.Checks, c => c.Name == "Fully automatic trading");
+
+        Assert.Equal(HealthState.DEGRADED, check.State);
+        Assert.Contains("serves order history reaching far enough back: not confirmed", check.Detail);
+        Assert.Contains(report.Problems, p => p.Name == "Fully automatic trading");
+    }
+
+    [Fact]
+    public async Task A_backend_that_confirms_both_does_not_add_a_problem()
+    {
+        // The other half of not crying wolf: on the default simulator this check is silent.
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _2 = db;
+        await using var _3 = gw;
+
+        var report = await new Doctor(gw, allowNetwork: false).RunAsync();
+        var check = Assert.Single(report.Checks, c => c.Name == "Fully automatic trading");
+
+        Assert.Equal(HealthState.READY, check.State);
+        Assert.DoesNotContain(report.Problems, p => p.Name == "Fully automatic trading");
     }
 }
 

@@ -1,9 +1,11 @@
 # BUILD-STATUS
 
-**Milestone:** The product's two defining promises — *no terminal, ever* and *it installs what it
-needs itself* — are now **verified by running them on a real Windows 11 machine**, not inferred. The
-ATAS adapter, blocked since the project began because nobody had ATAS, is written and **compiles
-against the real ATAS assemblies**, and a releasable installer carrying it has been built.
+**Milestone:** ATAS is installed **and signed in** on the test machine — the blocker that had stood
+since the project began. The bridge is not yet loaded into it, so the two capability verdicts remain
+unmeasured; but there is now an instrument that measures them (`probe atas`), and the defect that
+would have made one of them **unreachable no matter how long anyone waited** has been found and
+fixed. The product's two defining promises — *no terminal, ever* and *it installs what it needs
+itself* — remain verified by running them on real Windows 11.
 
 **Built and verified on:** macOS 26 / arm64 locally, `windows-latest` / `ubuntu-latest` /
 `macos-latest` in CI (.NET 10), and a real Windows 11 Pro 26200 machine.
@@ -131,7 +133,146 @@ the adapter is 36.5 KB.
 
 ---
 
-## Defects found and fixed today
+## Verified on real Windows 11 hardware, 2026-08-27
+
+Re-verified the inherited claims on the machine before changing anything, then the new work.
+
+### The inherited baseline still holds
+
+```
+dotnet --version            10.0.400
+ATAS assemblies present     ATAS.Strategies.dll ATAS.Indicators.dll ATAS.DataFeedsCore.dll ATAS.Types.dll
+dotnet build TradeAgent.sln 0 Warning(s)  0 Error(s)
+bridge vs REAL ATAS         1 Warning(s)  0 Error(s)
+dotnet test                 34 + 36 + 21 = 91 passed, 0 failed
+```
+
+### ATAS is signed in, and the platform answered two open questions
+
+The user created the ATAS account and signed in. `%APPDATA%\ATAS` went from **absent** to fully
+populated — `Connectors.cnf`, `Instruments.cnf`, `TraderSettings.cnf`, `Workspaces_v3`, `Chart`,
+`Database` — written 01:22–01:27 on 2026-08-27. `probe atas` then read the platform itself:
+
+```
+ATAS INSTALLED        : YES
+ATAS INSTALL DIR      : C:\Program Files (x86)\ATAS Platform
+ATAS VERSION          : 8.0.14.397
+ATAS RUNTIME TFM      : net10.0
+                        read from the platform's own runtimeconfig. A bridge built for a different
+                        framework is not rejected with an error — ATAS simply never lists it.
+ATAS RUNNING          : YES
+LAYOUT VERIFIED       : YES
+STRATEGY FOLDER       : C:\Users\Nicolas\AppData\Roaming\ATAS\Strategies
+```
+
+That settles **A1 question 2** in `docs/RESEARCH-REQUIRED.md`, which had stood unverified with a
+default of `net8.0-windows`. The bridge builds `net10.0-windows`, which matches. Had the old guess
+shipped, ATAS would have silently never listed the strategy, with nothing anywhere saying why.
+
+**Still not measured:** `BRIDGE IN STRATEGIES : NO — no TradeAgent.AtasBridge.dll`. The bridge has
+never been loaded, so `SupportsClientOrderId` and `SupportsOrderHistory` remain unknown. `probe atas`
+exits 1 and names what was missing rather than guessing.
+
+### The rule-1 safety fix compiles against real ATAS
+
+Verified the way trap 8 requires — the change asserted present **on the machine** before believing
+any build:
+
+```
+== trap 8: did the change actually reach the machine? ==
+  FOUND guard at line 1016
+== build bridge against REAL ATAS ==
+    1 Warning(s)
+    0 Error(s)
+  TradeAgent.AtasBridge.dll  67.5 KB  built 01:41:03
+```
+
+### Tests, on Windows, after every change above
+
+```
+Passed!  - Failed: 0, Passed: 36, Total: 36 - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 43, Total: 43 - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 23, Total: 23 - TradeAgent.IntegrationTests.dll (net10.0)
+```
+
+**102 passed, 0 failed** (was 91).
+
+---
+
+## Verified on macOS against the real vendor binaries, 2026-08-27
+
+Two first-run paths that were `NOT VERIFIED` are now proven — on macOS, against the vendors' own
+release binaries, using **no credential of any kind** (the only key used anywhere was the literal
+string `sk-FAKE-tradeagent-probe-0000`; no browser was opened and no sign-in completed).
+
+### Codex's browser sign-in URL capture — PROVEN on macOS
+
+Codex 0.150.0, `CODEX_HOME` pointed at an empty directory — the genuinely-not-signed-in state the
+Windows machine could not reach because it was already signed in. Raw vendor stderr:
+
+```
+Starting local login server on http://localhost:1455.
+If your browser did not open, navigate to this URL to authenticate:
+
+https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann&...
+```
+
+`BeginAuthenticationAsync` returned the second address, in 0.2s. The manifest comment claiming
+"callback first, real address second" is correct — measured offsets `[32]` and `[124]`. Two details
+worth keeping: the callback is printed as plain **`http`**, so the `https` requirement alone excludes
+it; and codex emits **no ANSI escapes** when its output is a pipe, so `Ansi.Strip` is not what makes
+this path work — it is load-bearing for OpenCode, which does colour its output.
+
+### OpenCode's key sign-in — PROVEN on macOS
+
+OpenCode 1.18.23, `HOME` redirected to a scratch directory, `XDG_DATA_HOME` deliberately left unset
+so that finding the file proves `$HOME/.local/share` specifically. Before:
+
+```
+┌  Credentials  ~/.local/share/opencode/auth.json
+└  0 credentials
+```
+
+OpenCode **names the file itself** — the path is the program's own word, not an inference from its
+source. After `SignInWithApiKeyAsync` wrote 63 bytes there:
+
+```
+┌  Credentials  ~/.local/share/opencode/auth.json
+●  OpenAI  api
+└  1 credentials
+```
+
+`OpenAI` and `api` are OpenCode reading the provider key **and the `type` field** back out of the
+record, which is what makes this a proof of the JSON shape and not only of the path. The manifest's
+`AuthStateSuccessPattern` was confirmed in both polarities, and `auth list` exits 0 either way — so
+the comment saying the exit code means nothing is right, and the plural in "1 credentials" matters.
+
+Codex's stdin key branch was proven the same way, both polarities of `login status` included.
+
+**A caveat that applies to both, now written into the manifests:** Codex accepted an obviously fake
+key without contacting OpenAI. `AuthState.Authenticated` means *a credential is on disk*, never
+*the credential works*.
+
+### What the macOS run does NOT prove — stated plainly
+
+- `%USERPROFILE%\.local\share\opencode\auth.json` is untested, in two independent ways: that the
+  expansion lands where the profile is, and that `opencode.exe` reads there.
+- Every Windows-only branch of executable resolution: PATHEXT, the `.cmd` npm shim, and `SetCommand`
+  routing `.cmd`/`.bat` through `ComSpec`. If Windows Codex resolves to a `.cmd` shim, login output
+  is pumped through `cmd.exe` — a configuration this run never entered.
+- Whether `codex.exe` prints the same text, on stderr, without escapes. Different build, and the
+  Windows machine ran 0.149.1 against macOS's 0.150.0.
+- That `codex login` binds a listening socket on port 1455, and **whether Windows Defender Firewall
+  prompts for it** — a prompt in front of a user the product promised would click Yes only once.
+- Nothing here moves `Verified` off `false` on either manifest. That flag means proven on Windows.
+
+**Also corrected by running it:** `codex login` does *not* short-circuit when already signed in — it
+returns a fresh authorize URL. So `BeginAuthenticationAsync`'s "finished without printing a URL"
+branch is not what an already-signed-in Codex hits, and the gate must remain `AuthStateArgs`.
+
+---
+
+## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in
    addition to* the prompt argument — it announces `Reading additional input from stdin...` and
@@ -171,6 +312,67 @@ the adapter is 36.5 KB.
 
 ---
 
+## Defects found and fixed on 2026-08-27
+
+Seven, and the first two are the ones that mattered.
+
+1. **A capability that only becomes true after the handshake could never reach the gateway — so the
+   staged live trial could not finish.** `BridgeServer` sent `adapter.Describe()` exactly once per
+   pipe connection, at `Hello`; heartbeats carried `{v, op}` and no data. Rule 1 makes
+   `SupportsClientOrderId` false until a placed order has proved it, so the proof arrived strictly
+   *after* the only moment anyone read it. `AtasConnector` kept the handshake's answer for the life
+   of the connection, the gateway went on refusing `LIVE_AUTONOMOUS`, and the intended path — trade
+   in "Real, ask me first", prove the id, then enable "Real, fully automatic" — had no way to reach
+   its last step short of restarting ATAS. Reproduced against the real `BridgeServer` and real
+   `AtasConnector` over a real named pipe. Fixed: the heartbeat now carries the current `Describe()`.
+   Chosen over a change-triggered frame deliberately — a lost change notification leaves the two ends
+   permanently disagreeing, which is the same class of bug being fixed, whereas a lost heartbeat is
+   repaired by the next one. **This hid because `LoopbackAtasAdapter` reports the capability true
+   from the first frame, and a capability that is true immediately never has to travel.**
+2. **SAFETY: `SupportsClientOrderId` could be set true by an order TradeAgent never placed.**
+   `OnOrderPayload` fed `ProveClientOrderId` the `Comment` of *every* order crossing the feed, and
+   `ProveClientOrderId` never consulted `_submitted` — the dictionary of ids TradeAgent actually
+   submitted. Any order in ATAS's book carrying any comment, placed by hand or by another strategy,
+   set the latch. With an order cache reachable that is the whole of `ReconciliationProvable`, so the
+   gateway would have permitted `LIVE_AUTONOMOUS` on a round trip nobody performed. Rule 1 says read
+   *its own* identifier back and says **do not fake it**. Fixed inside `ProveClientOrderId`, so the
+   guarantee holds regardless of caller.
+3. **The credential path could hang forever, with no error and no timeout.**
+   `SignInWithApiKeyAsync`'s stdin branch drained stderr *to end* before reading stdout, so a CLI
+   that fills the stdout pipe blocks writing, never exits, and never closes stderr. Measured against
+   a stand-in that reads the key exactly as codex does — 64 KB returned in 0.2s, 128 KB never
+   returned at all. Latent today (codex writes nothing on stdout for `login --with-api-key`) and
+   latent only until a vendor makes that command chatty; the symptom would be a sign-in spinner
+   turning forever, which is trap 1 reappearing on the one path that handles the user's credential.
+   Fixed to `Run()`'s shape — both pipes drained concurrently, 30s deadline, kill on expiry. Verified
+   against the same reproduction: 128 KB now returns in 0.3s, 512 KB in 1.1s, 4 MB in 8.4s.
+4. **Nothing in the product ever showed the two capabilities that decide autonomy.** The gateway
+   refused at the moment an order was dispatched — the worst possible moment to find out. "Check
+   everything" now reports them: `DEGRADED` rather than `FAILED` (nothing is broken, nothing is
+   repairable, and three of the four modes work), and worded **"not confirmed"** rather than
+   "cannot", because a `false` from a fresh ATAS session means *nothing has been placed yet*, not
+   *your broker is incapable*. A test fails the build if that copy ever says "cannot", "unable" or
+   "does not support".
+5. **The setup journey walked the user into a dead end.** Trap 7 — ATAS does not watch its Strategies
+   folder, and the add-on is not listed until ATAS is told to look again — was recorded in the
+   handoff and **never reached the user**. Step 4 said "Choose TradeAgent Bridge" over what would be
+   an empty list, immediately after the app claimed it had installed the add-on. It now carries the
+   reason.
+6. **The system-check screen dropped the reason and kept only the advice.** For a non-READY check it
+   rendered `UserAction` and discarded `Detail`, on a screen that promises anything missing is "named
+   below, with what to do about it". The checks that suffered most were the ones whose action is
+   necessarily generic: every gateway health row says "See the activity history for what happened",
+   so the row read identically whether the trouble was no connection, no account or a stale bridge.
+7. **The adapter's own class doc contradicted its code on rule 2.** The summary stated
+   `SupportsOrderHistory` "is a hard false"; `Describe()` computes it at runtime from a type test.
+   Anyone reading the summary would have believed the value settled and skipped the one measurement
+   step 3 exists for.
+
+Plus one in the harness itself: `tools/win-state.sh` reported a live RDP desktop as locked, because
+it asked whether *any* `LogonUI` was running. Windows keeps one in the physical console session
+whenever that console sits at the lock screen — permanently, on a machine only ever reached over RDP.
+It is now session-aware, and says so.
+
 ## What is finished
 
 - **The whole UI.** A dark, code-built design system (`Theme.cs`) with one accent chosen because
@@ -186,39 +388,55 @@ the adapter is 36.5 KB.
 
 ## What does not work yet
 
-- **ATAS has never been run, and nothing has traded through it.** The adapter compiles; not one line
-  of it has executed. There is no broker connection on the test machine, and no ATAS account.
-- **Two capabilities decide themselves at runtime and are unproven.** `SupportsClientOrderId` flips
-  true only after the adapter reads its own client id back off a live order; `SupportsOrderHistory`
-  only if `Connector.Factory` really is the `ICache`. **While either is false the gateway refuses
-  fully automatic live trading** — which is correct, and must be checked on a live connection before
-  anyone relies on it.
-- **The Windows GUI was not looked at today.** The desktop was locked, so screen captures came back
-  blank. Every visual judgement in this session was made against the app running on macOS. The
-  Windows setup journey has not been clicked through since the changes.
-- **OpenCode's key sign-in has not been executed.** The file path and JSON shape come from reading
-  OpenCode's own source; nothing has written that file and started OpenCode with it.
-- **Codex's browser sign-in URL capture has not been exercised on Windows** — the test machine was
-  already signed in, so the code path that scrapes the URL out of stderr never ran.
-- **The bridge has never been installed into ATAS**, and the five steps the user performs inside ATAS
-  have never been walked.
+- **The bridge has never been installed into ATAS.** `probe atas` on 2026-08-27 reported
+  `BRIDGE IN STRATEGIES : NO`. The five steps the user performs inside ATAS have never been walked.
+- **Nothing has traded through ATAS.** ATAS is now signed in and running, but not one line of
+  `AtasStrategyAdapter` has ever executed, and there is no broker connection on the test machine.
+- **The two capabilities are still unmeasured.** `SupportsClientOrderId` turns true only after the
+  adapter reads its own client id back off a live order; `SupportsOrderHistory` only if
+  `Connector.Factory` really is the `ICache`. **While either is false the gateway refuses fully
+  automatic live trading** — correct, and not to be "fixed" by hard-coding either true. `probe atas`
+  is now the instrument; it has run on the machine and correctly refused to answer without a bridge.
+- **The rule-1 safety fix compiles against real ATAS but has never executed.** It is a guard on a
+  path that only runs inside ATAS.
+- **The protocol cannot distinguish "not proven yet" from "the round trip failed."** `BridgeHello`
+  carries one boolean and no attempt counter, so both are the same byte on the wire. `probe atas`
+  narrows it by reading the live order book and **labels the result as inferred, not reported.** The
+  clean fix is one extra field on `BridgeHello`; it has not been made.
+- **`AtasConnector` discards a mismatched hello, so nothing in the app can name the version.**
+  Reported and reproduced, not fixed — `AtasConnector.cs:112-118` sets `_connected = false` and fires
+  `FAILED` without ever assigning `_hello`, so `Bridge` stays null and the user sees "FAILED" and no
+  number. Assigning `_hello` as-is would be wrong: `Capabilities` derives from it, and an
+  incompatible bridge's claims must not reach the gateway. It wants a display-only field.
+- **The Windows GUI has still not been looked at.** Captures cannot photograph an RDP desktop —
+  `win-shot.sh` lands on the physical console, which is a different desktop, and captures blank.
+  Every visual judgement remains one made against the app on macOS.
+- **The system-check screen's two-line rows were not seen rendering.** The change is structurally
+  identical to the `Numbered` helper, which was watched rendering correctly on the Welcome screen;
+  the screen itself auto-advances on a healthy machine and was not forced open. NOT VERIFIED.
+- **Neither AI runtime is `Verified = true`.** That flag means proven on Windows. Both mechanisms are
+  now proven on macOS; the Windows-only halves are listed above, in the macOS section.
 - **The installer is unsigned.** Every user will see "Windows protected your PC" and must click
   More info → Run anyway. On a program that places trades, that wants a certificate.
 - **Live money has never been touched.** Correct for this stage.
 
 ## Current blockers
 
-1. **An ATAS account and a broker connection.** Everything left is downstream of actually running
-   ATAS: the two runtime capability verdicts, the bridge install, the five in-ATAS steps, and any
-   claim that an order reached a broker.
-2. **A code-signing certificate**, before this goes to anyone who did not build it.
+1. **The bridge inside ATAS.** Everything left is downstream of it: the two capability verdicts, the
+   five in-ATAS steps, and any claim that an order reached a broker. ATAS itself is no longer a
+   blocker — it is installed, signed in and running.
+2. **A broker connection**, before any claim that an order reached one.
+3. **A code-signing certificate**, before this goes to anyone who did not build it.
 
 ## Next integration target
 
-1. Sign in to ATAS on the test machine, start it, and install the bridge from the app.
-2. Read `Describe()` on a live connection and record what `SupportsClientOrderId` and
-   `SupportsOrderHistory` actually say.
-3. Walk the whole setup journey on Windows with the desktop unlocked, and look at it.
+1. Install the bridge from the app, then the five in-ATAS steps — noting that ATAS does not watch the
+   Strategies folder, so the strategy list must be refreshed before the add-on appears.
+2. Run `probe atas` and record what `SupportsClientOrderId` and `SupportsOrderHistory` actually say.
+   Expect `SupportsClientOrderId = false` on a fresh session: that is rule 1 behaving correctly, not
+   a fault. Place one paper order and run it again — that is now a path that can complete, which it
+   was not before 2026-08-27.
+3. Walk the whole setup journey on Windows and look at it, from the console rather than over RDP.
 4. Then, and only then, the staged live trial: paper → extended paper run → one tiny live order →
    disconnect/recovery test → autonomous live permission.
 

@@ -123,7 +123,26 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             return;
         }
 
-        if (f.Op == BridgeOps.Heartbeat) { _lastHeartbeat = DateTimeOffset.UtcNow; return; }
+        if (f.Op == BridgeOps.Heartbeat)
+        {
+            _lastHeartbeat = DateTimeOffset.UtcNow;
+
+            // A heartbeat now carries the bridge's current answer, because capabilities are not
+            // settled at the handshake: SupportsClientOrderId cannot be true until an order has
+            // proved it, and the account is unknown until ATAS has a portfolio. Adopt the newer
+            // answer — but only a whole, version-compatible one. A half-read frame must leave the
+            // latched handshake alone rather than silently widen or narrow what the gateway
+            // believes this platform is able to prove.
+            if (!f.Data.HasValue) return;
+            try
+            {
+                var refreshed = f.Data.Value.Deserialize<BridgeHello>(Json.Options);
+                if (refreshed is not null && Versions.BridgeCompatible(refreshed.BridgeProtocolVersion))
+                    _hello = refreshed;
+            }
+            catch (JsonException) { /* keep whatever the handshake established */ }
+            return;
+        }
 
         if (f.Id is not null && _pending.TryRemove(f.Id, out var tcs)) tcs.TrySetResult(f);
     }

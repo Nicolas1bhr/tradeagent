@@ -10,9 +10,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## The one sentence to carry
 
-**The product installs itself and never shows a terminal — both proven by running them on real
-Windows — and the ATAS adapter now compiles against real ATAS, but not one line of it has ever
-executed.** Everything remaining is downstream of actually running ATAS with an account and a broker.
+**ATAS is installed, signed in and running on the test machine; the bridge is not yet loaded into it,
+and until it is, not one line of the ATAS adapter has ever executed.** Everything remaining is
+downstream of getting the bridge listed inside ATAS — which is now the only thing standing between
+this project and its first real measurement.
 
 ## The rule that shapes every design decision
 
@@ -26,33 +27,50 @@ The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
 ## What to do next, in order
 
-1. **Sign in to ATAS on the Windows machine and start it.** ATAS is installed
-   (`C:\Program Files (x86)\ATAS Platform`) but has never been run, and it will not start without a
-   free ATAS account. That account is the user's to create; the app says so before the download.
-2. **Install the bridge from the app** (setup step "Installing the ATAS bridge"), then perform the
-   five in-ATAS steps the app lists. Note ATAS does *not* watch the Strategies folder — the user must
-   click the blinking button in ATAS's strategy list before the bridge appears at all.
-3. **Read `Describe()` on a live connection** and record what `SupportsClientOrderId` and
-   `SupportsOrderHistory` actually report. Both decide themselves at runtime and both are currently
-   unproven. **While either is false the gateway refuses fully automatic live trading** — that is
-   correct behaviour, not a bug, and nobody should "fix" it by hard-coding true.
-4. **Walk the whole setup journey on Windows with the desktop unlocked**, and look at it. Every
-   visual judgement in the last session was made against the app running on macOS.
+1. **Install the bridge and get it listed inside ATAS.** In TradeAgent, press "Install the add-on".
+   Then in ATAS: open a chart → Strategies for that chart → **press refresh if TradeAgent Bridge is
+   not listed** → Add → Start. ATAS does not watch the Strategies folder; the app now says so on the
+   step itself, but it is still the thing that wastes the first twenty minutes if forgotten.
+2. **Run the instrument and record the answer.**
+   ```bash
+   tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 180'
+   ```
+   TradeAgent must NOT be running — it owns the bridge pipe, and the bridge would dial into it
+   instead of the probe. Exit 0 means the bridge answered and the output is the record; a capability
+   reading of `false` is a valid answer and still exits 0.
+3. **Expect `SupportsClientOrderId = false` on a fresh session, and do not treat it as a fault.**
+   Rule 1 makes it false until an order has proved it. Place one paper order, then run the probe
+   again. **That second reading is now capable of changing** — before 2026-08-27 it was not, because
+   the bridge only ever sent its capabilities once, at the handshake. See trap 9.
+4. **Walk the whole setup journey on Windows and look at it — from the console, not over RDP.**
+   Screen captures cannot photograph an RDP desktop: `win-shot.sh` lands on the physical console,
+   which is a different desktop, and captures blank. Every visual judgement so far was made on macOS.
 5. Only then the staged live trial: paper → extended paper run → one tiny live order →
    disconnect/recovery test → autonomous live permission.
 
 ## Open questions nobody has answered
 
-- Does the placed order's `Comment` survive into `Connector.Orders`? That single fact decides
-  `SupportsClientOrderId`, and therefore whether the product may ever trade unattended.
+- Does the placed order's `Comment` survive into `Connector.Orders`? Still the single fact that
+  decides `SupportsClientOrderId`, and therefore whether the product may ever trade unattended.
+  **Note the proof is now stricter than it was:** it only counts for an id TradeAgent itself
+  submitted. It used to count for any order in the book carrying any comment, which was rule 1 being
+  faked — see `BUILD-STATUS.md`, defect 2 of 2026-08-27.
 - Is `Connector.Factory` really the `ICache`? That decides `SupportsOrderHistory`. When no cache is
   reachable, `GetOrders` **throws rather than returning a short list** if asked for a window older
   than the cache period — a partial history makes "this order does not exist" look provable when it
   is not.
 - What is the sign convention on `Position.Volume`? Deliberately unused: getting it wrong would not
   flatten a position, it would double it, so `ClosePosition` lets ATAS pick the side instead.
-- Has anyone signed OpenCode in through the in-app key field? The file path and JSON shape were read
-  out of OpenCode's own source; nothing has written that file and started OpenCode with it.
+- **Should `BridgeHello` carry an attempt counter?** The protocol has one boolean for
+  `SupportsClientOrderId` and no way to say *why* it is false, so "never attempted" and "attempted
+  and failed" are the identical byte on the wire. `probe atas` narrows it by reading the live order
+  book, and labels that verdict **inferred, not reported**. One extra field would make it read.
+- **Should a version-mismatched bridge be able to name its version?** `AtasConnector.cs:112-118`
+  discards the hello outright, so `Bridge` stays null and the user sees "FAILED" with no number.
+  Assigning `_hello` as-is is not the fix — `Capabilities` derives from it, and an incompatible
+  bridge's claims must not reach the gateway. It wants a display-only field.
+- Whether Windows Defender Firewall prompts when `codex login` binds its callback socket on port
+  1455. A prompt there lands in front of a user the product promised would click Yes exactly once.
 
 ## Traps already paid for
 
@@ -84,38 +102,72 @@ Each of these cost real time. None is obvious from the code.
 8. **A green build is not proof the change reached the machine.** A `scp` that reported "Connection
    closed" still produced a successful-looking remote build — of the *previous* source. Assert the
    artifact's identity (grep the remote file for the new symbol) before believing the build.
+9. **A capability that is true from the first frame never has to travel, so no test exercises the
+   frame that carries it.** `LoopbackAtasAdapter` reports `SupportsClientOrderId = true` at the
+   handshake, so every bridge test passed while the real adapter — which turns it true only *after*
+   an order proves it — could never get that answer across at all. When a test double answers
+   immediately, it is not testing the thing that makes the real one hard.
+10. **`LogonUI` is not a lock indicator on a machine reached over RDP.** Windows runs one in the
+    physical console session whenever that console sits at the lock screen, which is permanently.
+    `tools/win-state.sh` reported a live remote desktop as locked because of it. Match the process to
+    the *session*. The same split means `win-shot.sh` cannot photograph an RDP desktop — its
+    scheduled task lands on the console, a different desktop, and captures blank.
+11. **Four layers of quoting sit between a shell here and PowerShell there**, and the symptom of
+    getting it wrong is *empty output*, not an error — which reads as "the machine did not answer".
+    Use `tools/win-ps.sh`, which base64-encodes the script as UTF-16LE and hands it to
+    `-EncodedCommand`.
 
 ## How the last session was run
 
-Six agents in parallel against a written contract with hard file-ownership boundaries, then a single
-integration pass. Two things worth repeating and one worth not:
+Three agents in parallel against written contracts with hard file-ownership boundaries, then a single
+integration pass by the session that dispatched them. What is worth copying:
 
-- **Repeat: give research its own leg, and demand a source URL per fact.** It corrected two errors in
-  its own brief — `npm --prefix` without `-g` produces no launcher at all, and `sst/opencode` now
-  301-redirects to `anomalyco/opencode`. Both would have failed silently on a customer's machine.
-- **Repeat: verify on the real machine early.** Installing ATAS took twenty minutes and unblocked
-  work that had been stuck since the project began.
-- **Do not repeat: editing files while an agent still owns them.** Doing so mid-flight produced a
-  half-renamed tree and cost a recovery pass. Freeze the diff, then integrate.
+- **Repeat: give each agent an ownership list and hold to it.** Three agents worked the same tree for
+  twenty minutes with zero collisions in the repo. The only collision anywhere was two of them
+  writing the same filename in the shared scratchpad — worth giving each agent its own subdirectory.
+- **Repeat: send an agent to *disprove* something specific rather than to "look for bugs".** Every
+  finding that mattered came from a contract naming the thing it must not take on trust: "read the
+  adapter and tell me whether these two states are distinguishable", "prove the file path by running
+  the program, not by reading its source". Two of the three came back with defects their brief had
+  not predicted, because the brief had told them what to be suspicious of.
+- **Repeat: make an agent report defects in code it does not own instead of fixing them.** All three
+  did, and the three highest-value changes of the session came out of those reports — integrated by
+  one person who could see all three at once.
+- **Repeat: verify on the real machine early.** Re-verifying the inherited claims on Windows before
+  touching anything took four minutes and meant every later failure had a known-good baseline behind
+  it.
+- **Do not repeat: editing files while an agent still owns them.** Inherited advice, and it held: the
+  bridge protocol fix waited until the probe agent had landed, because that agent was reading those
+  files even though it did not own them.
 
 ## Verifying what you inherited
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
-dotnet test TradeAgent.sln        # 91 tests: 34 unit, 21 integration, 36 fault
+dotnet test TradeAgent.sln        # 102 tests: 43 unit, 23 integration, 36 fault
 ```
 
-The two claims the product stands on, re-runnable on Windows — see `tools/README.md` for setup:
+Start any Windows session by asking whether the machine can do the work at all — see
+`tools/README.md` for the one-time `~/.tradeagent/win.env` setup:
+
+```bash
+tools/win-state.sh
+```
+
+The claims the product stands on, re-runnable on Windows:
 
 ```bash
 tools/win-push.sh
 tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- install codex'
 tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- chat codex'
+tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas'
 ```
 
 `install` must reach `INSTALL OK` from an empty tools directory. `chat` must print
 `NO WINDOW OPENED` **and** `CONVERSATION OK`; it exits non-zero if either fails, so it is safe to
-run unattended.
+run unattended. `atas` is the step-3 instrument: it needs the bridge loaded inside ATAS, TradeAgent
+not running, and it exits non-zero when it could not reach the bridge rather than inventing a
+reading.
 
 Build the shipping artifact, with ATAS support, on a machine that has ATAS:
 

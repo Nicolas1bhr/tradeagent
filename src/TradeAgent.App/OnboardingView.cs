@@ -266,11 +266,22 @@ public sealed class OnboardingView
         return new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Children = { badge, text } };
     }
 
-    /// <summary>One thing that is or is not true yet, with the colour carrying the verdict.</summary>
-    static Control StateRow(IBrush tone, string label, string? detail = null)
+    /// <summary>
+    /// One thing that is or is not true yet, with the colour carrying the verdict.
+    ///
+    /// <paramref name="action"/> is a separate line rather than a replacement for
+    /// <paramref name="detail"/>: this screen promises that anything missing is "named below, with
+    /// what to do about it", and showing only the action delivers the second half and drops the
+    /// first. The checks that suffer most are the ones whose action is necessarily generic — the
+    /// gateway's health rows all say "See the activity history for what happened", so the row read
+    /// exactly the same whether the trouble was no connection, no account or a stale bridge.
+    /// </summary>
+    static Control StateRow(IBrush tone, string label, string? detail = null, string? action = null)
     {
         var text = Ui.Col(2, Ui.Body(label));
         if (!string.IsNullOrWhiteSpace(detail)) text.Children.Add(Ui.Micro(detail!));
+        if (!string.IsNullOrWhiteSpace(action) && !string.Equals(action, detail, StringComparison.Ordinal))
+            text.Children.Add(Ui.Micro(action!));
         text.Margin = new Thickness(Theme.S3, 0, 0, 0);
         text[Grid.ColumnProperty] = 1;
 
@@ -506,10 +517,10 @@ public sealed class OnboardingView
         {
             var rows = Ui.Col(Theme.S3);
             foreach (var c in _checks)
-                rows.Children.Add(StateRow(Ui.Tone(c.State), c.Name,
-                    c.State == HealthState.READY
-                        ? (string.IsNullOrWhiteSpace(c.Detail) ? "Ready." : c.Detail)
-                        : string.IsNullOrWhiteSpace(c.UserAction) ? c.Detail : c.UserAction));
+                rows.Children.Add(c.State == HealthState.READY
+                    ? StateRow(Ui.Tone(c.State), c.Name,
+                        string.IsNullOrWhiteSpace(c.Detail) ? "Ready." : c.Detail)
+                    : StateRow(Ui.Tone(c.State), c.Name, c.Detail, c.UserAction));
             body = Ui.Card(rows);
         }
 
@@ -942,7 +953,14 @@ public sealed class OnboardingView
                     Numbered(1, "Open ATAS"),
                     Numbered(2, "Open a chart"),
                     Numbered(3, "Open Strategies for that chart"),
-                    Numbered(4, "Choose TradeAgent Bridge"),
+                    // ATAS does not watch its Strategies folder. The add-on is on disk from the
+                    // previous step, but it is not in this list until ATAS is told to look again,
+                    // and the control that does it draws attention to itself only once. Without
+                    // this line the user reaches step 4, finds an empty list, and has been given
+                    // no reason why the thing TradeAgent just said it installed is not there.
+                    Numbered(4, "Choose TradeAgent Bridge",
+                        "Not in the list? Press the refresh button at the top of the strategy list first — "
+                        + "ATAS only rereads the folder when asked."),
                     Numbered(5, "Press Add, then press Start"))),
                 Ui.Busy("Waiting for ATAS to connect.")),
             Ui.Primary("Open ATAS", () => MainWindow.OpenAtasOrExplain(ShowProblem)))

@@ -20,7 +20,7 @@ Confirm, from ATAS's own documentation and the assemblies in your install:
 | # | Question |
 |---|---|
 | 1 | Correct base class and lifecycle hooks for a user-loadable chart strategy, and the assembly names to reference (the `.csproj` guesses `ATAS.Indicators`, `ATAS.Strategies`, `ATAS.DataFeedsCore`). |
-| 2 | Target framework ATAS loads (`AtasBridgeTargetFramework` defaults to `net8.0-windows` — unverified). |
+| 2 | ~~Target framework ATAS loads.~~ **ANSWERED 2026-08-27: `net10.0`**, read from the platform's own runtimeconfig on ATAS 8.0.14.397 by `probe atas`. The bridge builds `net10.0-windows`, which matches. A mismatch is not reported as an error — ATAS simply never lists the strategy. |
 | 3 | The folder ATAS loads user strategies from, and whether a restart is required after copying files. |
 | 4 | Portfolio/account enumeration, and how to tell a simulation connection from a live one. |
 | 5 | Security/instrument enumeration, with tick size, tick value and contract size. |
@@ -49,8 +49,11 @@ this backwards is the one mistake that can produce a duplicate live position.
 **File:** `src/TradeAgent.Connectors.Atas/AtasInstallation.cs` → `AtasLayout`.
 Overridable at runtime via `%LOCALAPPDATA%\TradeAgent\atas.json`.
 
-Confirm install directories, strategy/indicator folder, process names, executable names. Then set
-`Verified = true` — until then the Doctor warns the user that these paths are guesses.
+**ANSWERED 2026-08-27 against a real, signed-in ATAS 8.0.14.397** — `probe atas` reported
+`LAYOUT VERIFIED : YES`, install dir `C:\Program Files (x86)\ATAS Platform`, strategies
+`%APPDATA%\ATAS\Strategies`, indicators `%APPDATA%\ATAS\Indicators` (a *different* folder, never a
+fallback), processes `OFT.Platform` / `OFT.PlatformX`. What remains unconfirmed is only whether these
+hold across ATAS's other editions.
 
 ## A3 — ATAS version compatibility
 

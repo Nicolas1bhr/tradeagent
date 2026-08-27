@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using TradeAgent.AgentRuntime;
+using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -143,6 +144,13 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
                 r.Add(new CheckResult(h.Component, h.State, h.Detail,
                     h.State is HealthState.READY ? "" : "See the activity history for what happened.", false));
 
+            // The gateway already refuses LIVE_AUTONOMOUS on a backend whose order state cannot be
+            // proved after a disconnect — but it refuses at the moment an order is dispatched, which
+            // is the worst possible moment to find out. Nothing else in the product ever mentions the
+            // two capabilities that decide it, so a user picks the fully automatic mode, believes
+            // they are set up, and learns otherwise from a turned-down order. This says it here.
+            r.Add(ReconciliationCheck(gateway.Connector.DisplayName, gateway.Connector.Capabilities));
+
             var unreconciled = gateway.Requests.NeedingReconciliation();
             r.Add(unreconciled.Count == 0
                 ? CheckResult.Ok("Order confirmation", "nothing outstanding")
@@ -152,6 +160,49 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
         }
 
         return new DoctorReport(DateTimeOffset.UtcNow, r);
+    }
+
+    /// <summary>
+    /// What the trading platform has confirmed about proving an order's fate after a disconnection,
+    /// and therefore whether the fully automatic mode is reachable on it at all.
+    ///
+    /// Never FAILED, and never repairable. This is a property of the backend, not a fault the user
+    /// can put right by pressing something, and three of the four modes work regardless — reporting
+    /// it as a failure would be crying wolf over a perfectly usable installation. DEGRADED is the
+    /// truth: the product works, at less than its full range.
+    ///
+    /// The wording says "not confirmed" and never "cannot" — deliberately, and this is the whole
+    /// subtlety of the check. <see cref="ConnectorCapabilities"/> carries two plain booleans, and a
+    /// false has two meanings that are indistinguishable from here: a backend that genuinely cannot
+    /// do it, and one that has simply not had the chance to show it yet. The ATAS bridge is the
+    /// second kind — AtasStrategyAdapter turns SupportsClientOrderId true only once it has read its
+    /// own reference back off a real order, so a freshly connected session truthfully reports false
+    /// before anything has ever been placed. Telling that user their broker is incapable would be a
+    /// lie, so nothing here claims to know which case it is. It reports the absence of a confirmation,
+    /// which is true in both — and in the third case too, where nothing is connected and the platform
+    /// has said nothing at all.
+    /// </summary>
+    public static CheckResult ReconciliationCheck(string connectorName, ConnectorCapabilities caps)
+    {
+        const string name = "Fully automatic trading";
+        static string Confirmed(bool yes) => yes ? "confirmed" : "not confirmed";
+
+        // Mode names are the ones the user already reads on screen (Ui.ModeLabel). A second set of
+        // words for the same four modes is how a product starts describing itself two ways.
+        var facts = $"{connectorName} — carries TradeAgent's own order reference: {Confirmed(caps.SupportsClientOrderId)}; " +
+                    $"serves order history reaching far enough back: {Confirmed(caps.SupportsOrderHistory)}.";
+
+        if (caps.ReconciliationProvable)
+            return CheckResult.Ok(name, $"{facts} The mode “Real, fully automatic” is available.");
+
+        return CheckResult.Warn(name,
+            $"{facts} Both are needed to prove what happened to an order after a disconnection, so the " +
+            "mode “Real, fully automatic” is refused.",
+            "Nothing is broken and there is nothing to press: this is what the trading platform reports " +
+            "about itself, and some platforms only confirm the order reference after TradeAgent has " +
+            "placed an order and read it back. “Watch only”, “Practice” and “Real, ask me first” all " +
+            "work normally — only “Real, fully automatic” is withheld.",
+            ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE);
     }
 
     static bool CanWrite(string dir, out string error)

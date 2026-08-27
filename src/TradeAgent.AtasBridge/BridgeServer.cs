@@ -75,7 +75,34 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
                 try
                 {
                     await Task.Delay(HeartbeatInterval, token);
-                    await SendRaw(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat }, token);
+                    // The heartbeat carries the current Describe(), not just a pulse.
+                    //
+                    // Two of those fields are answered at runtime and only become true *after* the
+                    // handshake: SupportsClientOrderId turns true once a placed order has been seen
+                    // coming back out of ATAS carrying our client id, and AccountId/IsSimulated stay
+                    // unknown until ATAS has a portfolio. Sent once at Hello and never again, that
+                    // proof arrived after the only moment anyone ever read it — so the gateway went
+                    // on refusing autonomous live trading for the whole life of the connection, and
+                    // the staged trial (practice, then ask-me-first, then automatic) had no way to
+                    // reach its last step short of restarting ATAS.
+                    //
+                    // Re-sending it every beat is also self-correcting in a way a change-triggered
+                    // frame is not: a lost update is repaired by the next beat instead of leaving
+                    // the two ends permanently disagreeing, which is the same class of bug as the
+                    // one being fixed here. Describe() is a bool, a cached assembly identity and a
+                    // type test, so the cost of asking again is not worth a change-detection latch.
+                    //
+                    // Describe() reaches into ATAS's own Portfolio and Connector properties, and
+                    // this loop's catch is `return` — so letting it throw here would end the
+                    // heartbeat, and TradeAgent would declare the bridge dead fifteen seconds later.
+                    // A capability read must never be able to cost the liveness signal, so a failed
+                    // read degrades to the pulse this frame used to be: capabilities simply do not
+                    // refresh this beat, which is the old behaviour and fails closed.
+                    object? caps = null;
+                    try { caps = adapter.Describe(); } catch (Exception) { /* pulse without it */ }
+                    await SendRaw(caps is null
+                        ? new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat }
+                        : (object)new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat, data = caps }, token);
                 }
                 catch (Exception) { return; }
             }

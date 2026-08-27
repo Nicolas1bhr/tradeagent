@@ -182,6 +182,144 @@ public class BridgeRoundTripTests
         Assert.Equal("ATAS-LOOPBACK", (await second.GetAccountsAsync()).Single().Id);
     }
 
+    /// <summary>
+    /// An adapter that behaves the way the real one does about rule 1: it will not claim to carry a
+    /// client order id until it has actually seen one come back off a placed order.
+    /// <see cref="LoopbackAtasAdapter"/> reports a static true, which is exactly the case that hid
+    /// this bug — a capability that is true from the first frame never has to travel.
+    /// </summary>
+    sealed class ProvesOnFirstOrder(LoopbackAtasAdapter inner) : IAtasAdapter
+    {
+        bool _proven;
+
+        public BridgeHello Describe()
+        {
+            var h = inner.Describe();
+            h.SupportsClientOrderId = _proven;
+            return h;
+        }
+
+        public OrderInfo Place(PlaceOrderCommand cmd)
+        {
+            var o = inner.Place(cmd);
+            _proven = true;          // the id came back off the order, as AtasStrategyAdapter requires
+            return o;
+        }
+
+        public IReadOnlyList<AccountInfo> GetAccounts() => inner.GetAccounts();
+        public IReadOnlyList<InstrumentInfo> GetInstruments() => inner.GetInstruments();
+        public QuoteInfo? GetQuote(string symbol) => inner.GetQuote(symbol);
+        public IReadOnlyList<PositionInfo> GetPositions(string a) => inner.GetPositions(a);
+        public IReadOnlyList<OrderInfo> GetOrders(string a, bool i, DateTimeOffset? s) => inner.GetOrders(a, i, s);
+        public IReadOnlyList<ExecutionInfo> GetExecutions(string a, DateTimeOffset? s) => inner.GetExecutions(a, s);
+        public OrderInfo Modify(ModifyOrderCommand cmd) => inner.Modify(cmd);
+        public void Cancel(string id) => inner.Cancel(id);
+        public IReadOnlyList<string> CancelAll(string a) => inner.CancelAll(a);
+        public OrderInfo? ClosePosition(string a, string sym, string cid) => inner.ClosePosition(a, sym, cid);
+
+        public event Action<bool>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+    }
+
+    /// <summary>
+    /// A capability that only becomes true after the handshake must still reach the connector.
+    ///
+    /// The bridge used to send Describe() exactly once, on Hello. Rule 1 makes SupportsClientOrderId
+    /// false until a placed order has proved it, so the proof arrived strictly after the only moment
+    /// anyone read it: the gateway refused LIVE_AUTONOMOUS for the entire life of the connection, and
+    /// the staged trial could not reach its final step without restarting ATAS. Against that code
+    /// this test fails on the last two assertions.
+    /// </summary>
+    [Fact]
+    public async Task A_capability_proved_after_the_handshake_reaches_the_connector()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var adapter = new ProvesOnFirstOrder(new LoopbackAtasAdapter());
+        await using var bridge = new BridgeServer(adapter, pipe) { HeartbeatInterval = TimeSpan.FromMilliseconds(150) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // Nothing has been placed, so the platform has confirmed nothing and autonomy stays refused.
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+
+        await connector.PlaceOrderAsync(new PlaceOrderCommand(
+            TradingGateway.ClientOrderIdFor("proves-it"), "ATAS-LOOPBACK", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null));
+
+        // Same connection throughout — no reconnect, no restart.
+        await Wait(async () => await Task.FromResult(connector.Capabilities.SupportsClientOrderId));
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+        Assert.True(await connector.IsConnectedAsync());
+    }
+
+    /// <summary>Answers the handshake, then fails every later ask — ATAS's own properties throwing.</summary>
+    sealed class ThrowsAfterHandshake(LoopbackAtasAdapter inner) : IAtasAdapter
+    {
+        int _calls;
+
+        public BridgeHello Describe() =>
+            Interlocked.Increment(ref _calls) == 1 ? inner.Describe() : throw new InvalidOperationException("ATAS is not ready");
+
+        public IReadOnlyList<AccountInfo> GetAccounts() => inner.GetAccounts();
+        public IReadOnlyList<InstrumentInfo> GetInstruments() => inner.GetInstruments();
+        public QuoteInfo? GetQuote(string symbol) => inner.GetQuote(symbol);
+        public IReadOnlyList<PositionInfo> GetPositions(string a) => inner.GetPositions(a);
+        public IReadOnlyList<OrderInfo> GetOrders(string a, bool i, DateTimeOffset? s) => inner.GetOrders(a, i, s);
+        public IReadOnlyList<ExecutionInfo> GetExecutions(string a, DateTimeOffset? s) => inner.GetExecutions(a, s);
+        public OrderInfo Place(PlaceOrderCommand cmd) => inner.Place(cmd);
+        public OrderInfo Modify(ModifyOrderCommand cmd) => inner.Modify(cmd);
+        public void Cancel(string id) => inner.Cancel(id);
+        public IReadOnlyList<string> CancelAll(string a) => inner.CancelAll(a);
+        public OrderInfo? ClosePosition(string a, string sym, string cid) => inner.ClosePosition(a, sym, cid);
+
+        public event Action<bool>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+    }
+
+    /// <summary>
+    /// Reading the capabilities must never be able to cost the heartbeat.
+    ///
+    /// Describe() reaches into ATAS's own Portfolio and Connector properties. The heartbeat loop
+    /// catches by returning, so a throw there would stop the pulse and TradeAgent would declare a
+    /// perfectly healthy bridge dead once the heartbeat timeout expired — a worse failure than the
+    /// stale capability this frame exists to fix. A failed read must degrade to the plain pulse.
+    /// </summary>
+    [Fact]
+    public async Task A_failing_capability_read_does_not_stop_the_heartbeat()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromMilliseconds(600) };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new BridgeServer(new ThrowsAfterHandshake(new LoopbackAtasAdapter()), pipe)
+            { HeartbeatInterval = TimeSpan.FromMilliseconds(100) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // Well past several heartbeat timeouts, every one of which failed to read Describe().
+        await Task.Delay(1500);
+
+        Assert.True(await connector.IsConnectedAsync());
+        Assert.Equal(HealthState.READY, await connector.GetHealthAsync());
+        // The handshake's answer is retained rather than lost or invented.
+        Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
     static async Task Wait(Func<Task<bool>> condition, int timeoutMs = 10_000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
