@@ -46,7 +46,10 @@ $locked  = [bool](Get-Process LogonUI -ErrorAction SilentlyContinue | Where-Obje
 
 Say "host"      $env:COMPUTERNAME
 Say "user"      $env:USERNAME
-Say "session"   ("$state (id $sid" + $(if ($rdp) { ", over RDP)" } else { ", console)" }))
+# The SESSIONNAME column goes blank once a session disconnects, so "not RDP" and "cannot tell"
+# are the same reading there. Say which one it is rather than asserting the console.
+$where = if ($rdp) { ", over RDP" } elseif ($state -eq 'Active') { ", console" } else { "" }
+Say "session"   ("$state (id $sid$where)")
 Say "desktop"   $(if ($locked) { "LOCKED" } elseif ($state -ne 'Active') { "no active session" } else { "live" })
 Say "uptime"    ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).ToString("d\d\ hh\:mm")
 
