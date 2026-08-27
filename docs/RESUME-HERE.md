@@ -66,6 +66,19 @@ tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --w
 
 If ATAS is not running, bring the whole thing back with the recipe under "Driving ATAS from here".
 
+**UNVERIFIED, and it is the first thing to find out in the morning: whether the strategy survives an
+ATAS restart.** ATAS persists its workspace, so it probably comes back added — but whether it comes
+back *activated* has never been observed, and the bridge only starts on
+`StrategyStates.Started`. If `probe atas` answers, it survived. If it does not, re-activate with the
+recipe below; that takes about a minute and is not a setback.
+
+This was deliberately not tested at the end of 2026-08-27: ATAS **refuses a cross-session
+`taskkill`** ("can only be terminated forcefully"), and force-killing it risks losing the unsaved
+workspace — which would have destroyed the very thing the test was meant to measure. To close it
+properly, invoke its own window Close button through the agent
+(`tools/win-ui.sh find --window 'ATAS -' --query Close`), which is a real WM_CLOSE from inside the
+session.
+
 ## What to do next, in order
 
 1. **Rewire the adapter off `Connector` and onto `ITradingManager`. This is the whole job.**
