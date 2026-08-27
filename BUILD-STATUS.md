@@ -418,6 +418,39 @@ LONG SCRIPT PATH REACHED: C:\ta\win-ps-tmp.ps1
 host: <redacted: host names stay out of the repo>
 ```
 
+### A tool that presses the buttons, 2026-08-27
+
+`tools/winagent` is a resident UI-Automation agent for the Windows desktop session, driven by
+`tools/win-ui.sh`. It exists because every remaining step is GUI work inside ATAS. Compiled on the
+machine, `0 Warning(s) 0 Error(s)`.
+
+What is verified is the part that must be: **that it knows when it cannot work.** Run from the SSH
+session, which has no desktop:
+
+```
+{"ok":true,"data":{"pid":9480,"session":0,"interactive":false,"desktop":"Default",
+ "screen":"1024x768","user":"...","can_drive_ui":false}}
+```
+
+`can_drive_ui:false` is the correct answer there, and `win-ui.sh` refuses in 1.2 s when no heartbeat
+is fresh rather than hanging for its full 90-second timeout:
+
+```
+{"ok":false,"error":"the UI agent is not running (no fresh heartbeat). tools/win-agent.sh status"}
+```
+
+The scheduled task is registered with an at-logon trigger and correctly declined to start with nobody
+logged on: `not started: nobody is logged on, so there is no interactive session to start it into.`
+
+**NOT VERIFIED, and it is most of the tool:** no screenshot, no UI tree, no click, no keystroke and no
+`launch` has ever run on a real desktop, because there has not been one. Every op above the transport
+is compile-checked only. Treat the first run against a live session as a bring-up, not as a regression.
+
+**The one thing it cannot do for itself is Windows logon** — that needs the account password, so it
+needs the owner, once. Sysinternals Autologon is staged at `C:\ta\tools\autologon\` and its
+signature checked (`status: Valid`, `CN=Microsoft Corporation`). `tools/README.md` carries the command
+and states what enabling it trades away.
+
 ### NOT VERIFIED
 
 - **No counter has ever been produced by the real `AtasStrategyAdapter`.** The increments compile
