@@ -65,18 +65,44 @@ Say "repo"      $(if (Test-Path "C:\ta\repo") { "C:\ta\repo" } else { "absent - 
 Say "installed" (Test-Path "$env:LOCALAPPDATA\Programs\TradeAgent")
 Say "home"      (Test-Path "$env:LOCALAPPDATA\TradeAgent")
 
-Write-Output ""
-if ($locked -or $state -ne 'Active') {
-  Write-Output "  VERDICT: console work only. There is no live desktop, so ATAS cannot be started and"
-  Write-Output "           screen captures will come back blank. Sign in on the machine to go further."
-  exit 3
+# The UI agent is the authority now, and it settles this by trying rather than reasoning. A locked or
+# disconnected session used to be reported as "console work only", which is wrong in the way that
+# costs most: UI Automation and the bridge both keep working there, and only screen capture stops.
+$alive = 'C:\ta\agent\alive.json'
+$ag = $null
+if (Test-Path $alive) {
+  $j = Get-Content $alive -Raw | ConvertFrom-Json
+  if (((Get-Date) - [datetime]::Parse($j.at)).TotalSeconds -lt 20) { $ag = $j }
 }
-if ($rdp) {
-  Write-Output "  VERDICT: desktop is live, but it belongs to an RDP session. ATAS and GUI work are"
-  Write-Output "           available to whoever is at that session. tools/win-shot.sh is NOT: its"
-  Write-Output "           scheduled task lands on the physical console, which is a different desktop"
-  Write-Output "           and captures blank. Screen captures need someone signed in at the console."
+Write-Output "== UI agent =="
+if ($ag) {
+  Say "session"    ($ag.session.ToString() + "  interactive=" + $ag.interactive)
+  Say "automation" $(if ($ag.can_automate) { "WORKS - read the tree, find and invoke elements" } else { "NO" })
+  Say "capture"    $(if ($ag.can_capture)  { "WORKS" } else { "NO - this session renders nothing (disconnected RDP?)" })
+} else {
+  Say "agent" "NOT RUNNING - tools/win-agent.sh status"
+}
+
+Write-Output ""
+if ($ag -and $ag.can_automate -and $ag.can_capture) {
+  Write-Output "  VERDICT: everything works. GUI automation, ATAS and screen captures are all available."
   exit 0
 }
-Write-Output "  VERDICT: desktop is live on the console. GUI work, ATAS and screen captures all work."
+if ($ag -and $ag.can_automate) {
+  Write-Output "  VERDICT: automation works, pictures do not. tools/win-ui.sh can read the UI tree,"
+  Write-Output "           find elements and invoke them, and the ATAS bridge is unaffected — but"
+  Write-Output "           'shot' fails, because a disconnected RDP session renders nothing. Nothing"
+  Write-Output "           is blocked except LOOKING at it. Reconnect, or reboot into the console"
+  Write-Output "           session (autologon is on), to get captures back."
+  exit 0
+}
+if (-not $ag) {
+  Write-Output "  VERDICT: no UI agent. Console work only until it is running -"
+  Write-Output "           tools/win-agent.sh status, then install/start. It starts itself at logon,"
+  Write-Output "           so this usually means nobody is logged on at all."
+  exit 3
+}
+Write-Output "  VERDICT: the agent is up but reports it cannot drive the UI. Read the two lines above"
+Write-Output "           before assuming anything about ATAS."
+exit 3
 PS

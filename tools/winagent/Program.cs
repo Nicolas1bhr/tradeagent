@@ -142,7 +142,11 @@ static class Program
                     session = Process.GetCurrentProcess().SessionId,
                     interactive = Environment.UserInteractive,
                     desktop = DesktopName(),
-                    screen = ScreenSize()
+                    screen = ScreenSize(),
+                    // Carried on the heartbeat so tools/win-state.sh can tell the truth about this
+                    // machine by reading one file, without a round trip through the request queue.
+                    can_automate = CanDriveUi(),
+                    can_capture = CanCapture()
                 }, Json));
             }
             catch (Exception) { /* a failed heartbeat must not take the agent down */ }
@@ -223,7 +227,12 @@ static class Program
             // The honest answer to "can you actually drive a GUI right now". A session with no
             // desktop reports a blank station and every capture comes back black; saying so here is
             // the difference between a diagnosable failure and a mysterious one.
-            ["can_drive_ui"] = CanDriveUi(),
+            // Two separate answers, because they come apart. A disconnected RDP session keeps a
+            // working UI Automation tree and a live agent, and loses only the ability to render:
+            // capture fails with "The handle is invalid". Reporting one number for both said
+            // can_drive_ui:true on a session that could not photograph anything.
+            ["can_automate"] = CanDriveUi(),
+            ["can_capture"] = CanCapture(),
             ["dpi_aware"] = true
         });
     }
@@ -289,7 +298,20 @@ static class Program
         if (w <= 0 || h <= 0) throw new AgentException($"bad capture rectangle {w}x{h}");
 
         using var bmp = new Bitmap(w, h);
-        using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(x, y, 0, 0, bmp.Size);
+        try
+        {
+            using var g = Graphics.FromImage(bmp);
+            g.CopyFromScreen(x, y, 0, 0, bmp.Size);
+        }
+        catch (Exception ex)
+        {
+            // Almost always a disconnected RDP session: interactive, automatable, and with nothing
+            // rendering. Say that, rather than passing up "The handle is invalid".
+            throw new AgentException(
+                $"the screen could not be captured ({ex.Message}). This session has no rendering " +
+                "surface — usually a disconnected RDP session. UI Automation still works; only " +
+                "pictures do not. Reconnect, or use the console session.");
+        }
         bmp.Save(path, ImageFormat.Png);
 
         return Ok(new JsonObject
@@ -701,6 +723,23 @@ static class Program
         {
             var b = VirtualScreen();
             return Environment.UserInteractive && b.Right - b.Left > 0 && DesktopName() is "Default" or "default";
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// Attempts a one-pixel screen grab rather than reasoning about whether one would work.
+    /// A disconnected RDP session has an interactive desktop and no rendering surface, and the only
+    /// honest way to report that is to try it: BitBlt throws "The handle is invalid" there.
+    /// </summary>
+    static bool CanCapture()
+    {
+        try
+        {
+            using var probe = new Bitmap(1, 1);
+            using var g = Graphics.FromImage(probe);
+            g.CopyFromScreen(0, 0, 0, 0, probe.Size);
+            return true;
         }
         catch (Exception) { return false; }
     }

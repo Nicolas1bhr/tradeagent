@@ -93,8 +93,11 @@ if (Test-Path $alive) {
   "desktop        : " + $j.desktop
   "screen         : " + $j.screen
 } else { "heartbeat      : none — the agent has never run here" }
+# Win32_ComputerSystem.UserName is the CONSOLE interactive user and nothing else, so it is empty
+# for a perfectly live RDP session. It used to be printed as "logged on: NOBODY" next to an agent
+# that was demonstrably driving that session. The agent's own heartbeat above is the authority.
 $who = (Get-CimInstance Win32_ComputerSystem).UserName
-"logged on      : " + $(if ($who) { $who } else { "NOBODY - there is no desktop to drive" })
+"console user   : " + $(if ($who) { $who } else { "none (an RDP session does not show up here)" })
 PS
     ;;
 

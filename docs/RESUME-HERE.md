@@ -44,75 +44,119 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
+## Where the machine is right now (2026-08-28, 00:30)
+
+Left running, and it should still be like this:
+
+- **Autologon is on** for `Nicolas` (LSA secret, not plaintext). The machine logs itself in at boot.
+- **The UI agent auto-starts at logon.** `tools/win-agent.sh status` should say `interactive=True`.
+- **ATAS is running, signed in**, on portfolio `DEMO15M440CE`, with **TradeAgent Bridge added to the
+  ES 5m chart and activated**. It dials the pipe and answers `probe atas` today.
+- Nobody needs to be at the machine, and **no monitor needs switching on** — an `LC27G5xT` is
+  attached to the Radeon RX 6650 XT.
+- **The RDP session is disconnected, and almost everything still works.** Measured, not assumed:
+  UI Automation reads the ATAS tree, `invoke` acts on elements, and the bridge answers `probe atas`
+  in under a second. **Only screen capture fails** — a disconnected session renders nothing, and
+  `shot` returns "the screen could not be captured (The handle is invalid)". So a session can do all
+  the work and simply cannot take pictures of it. `tools/win-state.sh` now says exactly this.
+
+Check all of it in two commands before assuming any of it:
+
+```bash
+tools/win-agent.sh status
+tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
+```
+
+If ATAS is not running, bring the whole thing back with the recipe under "Driving ATAS from here".
+
 ## What to do next, in order
 
-0. **DONE on 2026-08-27, but check it again after any reinstall.** The installed TradeAgent must
-   contain a bridge that has ATAS compiled into it. The copy on the test machine did not — it was a
-   protocol-only stub, and pressing "Install the add-on" would have copied that stub into ATAS where
-   no amount of refreshing could ever have listed it (trap 12). It has been rebuilt with
-   `-AtasInstallDir`, installed, and verified in place: `AtasStrategyAdapter: True`. Fifteen seconds
-   to re-check, and worth it every time the app is reinstalled:
+1. **Rewire the adapter off `Connector` and onto `ITradingManager`. This is the whole job.**
+   `ChartStrategy.Connector` is null for a chart strategy — measured, see `BUILD-STATUS.md` — and
+   `RequireConnector()` gates all ~12 reads and every order, so the bridge handshakes and then can
+   read nothing. What ATAS actually offers a chart strategy:
 
-   ```bash
-   tools/win-ps.sh <<'EOF'
-   $d = "$env:LOCALAPPDATA\Programs\TradeAgent\bridge\TradeAgent.AtasBridge.dll"
-   $t = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($d))
-   "AtasStrategyAdapter: " + $t.Contains("AtasStrategyAdapter")
-   EOF
+   ```
+   ATAS.Indicators.ITradingManager        (reached from the indicator's IIndicatorDataProvider)
+       IEnumerable Orders                 IEnumerable MyTrades
+       Portfolio Portfolio                Position Position          Security Security
+       event NewOrder / OrderChanged / NewMyTrade / PositionChanged
+       event OrderRegisterFailed / OrderCancelFailed / OrderModifyFailed
    ```
 
-   False means rebuild and reinstall before going anywhere near ATAS:
-   `packaging\build.ps1 -RequireInstaller -AtasInstallDir "C:\Program Files (x86)\ATAS Platform"`,
-   then run the installer with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`. It is a per-user install
-   and it leaves `%LOCALAPPDATA%\TradeAgent` — the trading records and onboarding progress — alone.
+   Placement is already on `ChartStrategy` itself: `OpenOrder(Order)`, `OpenOrderAsync(Order)`,
+   `CancelOrderAsync(Order)`. The API dump that answers questions like this lives on the machine at
+   `C:\ta\atas-api.txt` (267 KB, 694 types) — **read it before guessing a member name.**
 
-1. **Install the bridge and get it listed inside ATAS.** In TradeAgent, press "Install the add-on".
-   Then in ATAS: open a chart → Strategies for that chart → **press refresh if TradeAgent Bridge is
-   not listed** → Add → Start. ATAS does not watch the Strategies folder; the app now says so on the
-   step itself, but it is still the thing that wastes the first twenty minutes if forgotten.
+   Three things not to lose in the rewrite:
+   - `HookConnector()` subscribes to connector events; the equivalents are the `ITradingManager`
+     events above. `IsLive()` compares against `Connector` and needs the same treatment.
+   - `HistoryCache()` is `Connector?.Factory as IAtasCache`. With `Connector` null it can only
+     return null, so **today's `SupportsOrderHistory = false` means "could not look", not "not
+     available"** — do not record it as an answer until this is fixed.
+   - Rule 1 still stands: `ProveClientOrderId` must read back an id **TradeAgent itself submitted**,
+     off the platform's own order collection. `TradingManager.Orders` is that collection now.
 
-   All of this is drivable from here once somebody is logged on — start by reading the UI rather
-   than clicking at it:
-   ```bash
-   tools/win-agent.sh status
-   tools/win-ui.sh launch --path 'C:\Program Files (x86)\ATAS Platform\OFT.Platform.exe'
-   tools/win-ui.sh wait --window ATAS --timeoutMs 120000
-   tools/win-ui.sh tree --window ATAS --depth 6
-   ```
-2. **Run the instrument and record the answer.**
-   ```bash
-   tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 180'
-   ```
-   TradeAgent must NOT be running — it owns the bridge pipe, and the bridge would dial into it
-   instead of the probe. Exit 0 means the bridge answered and the output is the record; a capability
-   reading of `false` is a valid answer and still exits 0.
-3. **Expect `SupportsClientOrderId = false` on a fresh session, and do not treat it as a fault.**
-   Rule 1 makes it false until an order has proved it. Place one paper order, then run the probe
-   again. **That second reading is now capable of changing** — before 2026-08-27 it was not, because
-   the bridge only ever sent its capabilities once, at the handshake. See trap 9.
+2. **Re-run `probe atas`.** `ACCOUNTS VISIBLE` and `ORDERS IN LIVE BOOK` must stop saying
+   `COULD NOT READ`. That is the pass/fail for step 1.
 
-   The probe now prints *why* it is false, from counters the bridge reports rather than from an
-   inference: `false BECAUSE NOTHING WAS EVER ATTEMPTED`, `ATTEMPTED BUT NEVER CHECKED`, or
-   `AND THE READ-BACK GENUINELY FAILED`. Only the last is evidence about ATAS. Read that line before
-   concluding anything, and if the reported verdict disagrees with the order-book reading printed
-   under `AND, INDEPENDENTLY`, believe neither until the disagreement is explained.
-4. **Walk the whole setup journey on Windows and look at it — from the console, not over RDP.**
-   Screen captures cannot photograph an RDP desktop: `win-shot.sh` lands on the physical console,
-   which is a different desktop, and captures blank. Every visual judgement so far was made on macOS.
-5. Only then the staged live trial: paper → extended paper run → one tiny live order →
+3. **Place one order on the simulated account, then probe again.** Both portfolios are simulated —
+   `DEMO15M440CE` (ES@CME) and `CRYPTO5EB41` (BTCUSDT@BinanceFutures), 100,000 each — so nothing is
+   at risk. This is the reading the whole product waits on: whether ATAS carries a client order id
+   back onto a live order, and therefore whether this may ever trade unattended.
+
+   The probe now reports *why* a false is false, from the bridge's own counters rather than an
+   inference: `NOTHING WAS EVER ATTEMPTED`, `ATTEMPTED BUT NEVER CHECKED`, or `THE READ-BACK
+   GENUINELY FAILED`. **Only the last is evidence about ATAS.** If that verdict disagrees with the
+   order-book reading printed under `AND, INDEPENDENTLY`, believe neither until it is explained.
+
+4. **Verify the machine survives a reboot unattended — NOT YET TESTED.** Autologon and the agent's
+   at-logon trigger have never actually been through a boot. Reboot, wait, then
+   `tools/win-agent.sh status` — `interactive=True` and a capture that is not `uniform: black` mean
+   it works headless for good. Also check whether ATAS reopens with the strategy still activated;
+   ATAS persists the workspace, but that it survives *activated* is unverified.
+
+5. **Walk the setup journey and look at it.** Now doable from here: `tools/win-ui.sh shot`. Every
+   visual judgement before 2026-08-27 was made against the app on macOS.
+
+6. Only then the staged live trial: paper → extended paper run → one tiny live order →
    disconnect/recovery test → autonomous live permission.
+
+## Driving ATAS from here
+
+The whole journey, as actually performed on 2026-08-27. Nobody was at the machine.
+
+```bash
+tools/win-agent.sh status                      # interactive=True, or nothing below works
+tools/win-ui.sh launch --path 'C:\Program Files (x86)\ATAS Platform\OFT.Platform.exe'
+tools/win-ui.sh find --query Authorization     # credentials are saved; just press Connect
+tools/win-ui.sh invoke --ref <ConnectButton>
+tools/win-ui.sh click --x 760 --y 597 --button right    # on the ES chart, well clear of the DOM
+tools/win-ui.sh find --query 'Chart strategies'         # then invoke it
+tools/win-ui.sh find --query 'TradeAgent Bridge'        # select it, then Add becomes enabled
+tools/win-ui.sh find --ref <dialog> --query Activ       # PART_ActivateButton is Start
+```
+
+**Read the UI, do not click at it.** `find` and `tree` return named elements; `invoke --ref` acts on
+the one you looked at. The chart's context menu has `Sell Limit at ...` and `Buy Stop at ...` three
+rows above `Chart strategies`, and the trading panel has four buttons called `Add`-ish things —
+coordinates would eventually hit one of them.
 
 ## Open questions nobody has answered
 
-- Does the placed order's `Comment` survive into `Connector.Orders`? Still the single fact that
-  decides `SupportsClientOrderId`, and therefore whether the product may ever trade unattended.
-  **Note the proof is now stricter than it was:** it only counts for an id TradeAgent itself
-  submitted. It used to count for any order in the book carrying any comment, which was rule 1 being
-  faked — see `BUILD-STATUS.md`, defect 2 of 2026-08-27.
-- Is `Connector.Factory` really the `ICache`? That decides `SupportsOrderHistory`. When no cache is
-  reachable, `GetOrders` **throws rather than returning a short list** if asked for a window older
-  than the cache period — a partial history makes "this order does not exist" look provable when it
-  is not.
+- Does the placed order's `Comment` survive into the platform's own order collection? Still the
+  single fact that decides `SupportsClientOrderId`, and therefore whether the product may ever trade
+  unattended. **Unchanged by 2026-08-27's run** — nothing has been placed, and the bridge reports
+  `client_order_id_attempts: 0` to say exactly that. **Note the proof is stricter than it was:** it
+  only counts for an id TradeAgent itself submitted; it used to count for any order in the book
+  carrying any comment, which was rule 1 being faked (`BUILD-STATUS.md`, defect 2 of 2026-08-27).
+  **And note the collection has moved** — `TradingManager.Orders`, not `Connector.Orders`.
+- Is `Connector.Factory` really the `ICache`? That decides `SupportsOrderHistory`, and it is now
+  **unanswerable as written**: `Connector` is null for a chart strategy, so `HistoryCache()` can only
+  return null and the false it produces means "could not look". Re-ask it after the `ITradingManager`
+  rewiring. When no cache is reachable, `GetOrders` **throws rather than returning a short list** if
+  asked for a window older than the cache period — a partial history makes "this order does not
+  exist" look provable when it is not.
 - What is the sign convention on `Position.Volume`? Deliberately unused: getting it wrong would not
   flatten a position, it would double it, so `ClosePosition` lets ATAS pick the side instead.
 - Whether Windows Defender Firewall prompts when `codex login` binds its callback socket on port
@@ -173,6 +217,52 @@ Each of these cost real time. None is obvious from the code.
     that the *installed* app can be an older, ATAS-less build while the repo builds a real one.
     Check the DLL for the string `AtasStrategyAdapter`, not the file's existence — step 0 above.
 
+13. **`ChartStrategy.Connector` is null, and nothing says so until runtime.** It exists, it has the
+    right type, the code compiles, and every read through it throws "this ATAS chart has no trading
+    connection attached yet" on a chart that is demonstrably attached to a portfolio. `Portfolio` on
+    the same object is populated. The trading surface for a chart strategy is `ITradingManager`.
+    This cost the first live run and it is the reason step 1 above exists.
+
+14. **A DPI-unaware process is handed virtualised coordinates, and every click lands near its
+    target instead of on it.** On this machine `GetWindowRect` reported 2208x1533 for a window DWM
+    described as 1530x914. Mixing the two spaces fails intermittently and reads as a flaky UI.
+    `winagent` calls `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` as its very first act,
+    before anything reads a coordinate. Do not move that line.
+
+15. **cmd.exe is what is on the far end of ssh, and `;` is not a command separator there.** It is
+    swallowed as an argument. `win-agent.sh stop` ran `schtasks /end ...; taskkill ...` and taskkill
+    silently never ran, so "stop" stopped nothing and the next build failed on a locked file.
+
+16. **ATAS labels its dialog buttons with Cyrillic "ОК"** (U+041E U+041A), which renders identically
+    to Latin "OK". A search for `OK` finds *nothing at all* — not the wrong element, no element. The
+    automation ids look the same too: `PART_ОКDialogButton`. Search by automation id, or paste the
+    string out of a `tree` dump rather than typing it.
+
+17. **The UI agent holds its own executable open**, so a rebuild fails with MSB3027 "the file is
+    locked by winagent" and names the process rather than the cause. `win-agent.sh build` now stops
+    it, builds, restarts it and prints status.
+
+18. **The Windows box refuses roughly one SSH connection in ten under rapid use** —
+    `Permission denied (publickey,password,keyboard-interactive)` on a connection that worked a
+    second earlier. `win-ui.sh` retries that one message and only that one: authentication happens
+    before any request is written, so nothing was actuated and the retry cannot double-press a
+    button. **Do not widen that retry** to cover timeouts or transport errors; those can mean the
+    click already landed.
+
+19. **A disconnected RDP session keeps automation and loses only rendering.** UI Automation, element
+    invokes and the ATAS bridge all keep working; `CopyFromScreen` throws "The handle is invalid".
+    The agent used to report one `can_drive_ui: true` for both and was therefore lying in the only
+    case where it mattered; it now reports `can_automate` and `can_capture` separately, and settles
+    the second by attempting a one-pixel grab rather than reasoning about it.
+
+20. **A `.ps1` written without a byte-order mark is read as ANSI by Windows PowerShell**, so every
+    non-ASCII character in it — an em dash, a curly quote — arrives mangled and can break parsing
+    outright. The error is `The string is missing the terminator` pointing at a line that is
+    perfectly correct, which sends you hunting an unbalanced quote that does not exist. This only
+    affects `win-ps.sh`'s **long-script** branch (the `-EncodedCommand` branch declares UTF-16LE and
+    is immune), which is exactly why the branch passed its first verification: that test was pure
+    ASCII. `win-ps.sh` now writes the BOM.
+
 ## How the last session was run
 
 Three agents in parallel against written contracts with hard file-ownership boundaries, then a single
@@ -204,11 +294,17 @@ dotnet test TradeAgent.sln        # 107 tests: 43 unit, 28 integration, 36 fault
 ```
 
 Start any Windows session by asking whether the machine can do the work at all — see
-`tools/README.md` for the one-time `~/.tradeagent/win.env` setup:
+`tools/README.md` for the one-time `~/.tradeagent/win.env` setup. **`win-state.sh` now consults the
+UI agent rather than guessing from the session table**, so its verdict distinguishes "cannot drive
+the UI" from "can drive it but cannot photograph it" — which are very different days:
 
 ```bash
-tools/win-state.sh
+tools/win-state.sh          # reachability, ATAS, the agent, and an honest verdict
+tools/win-agent.sh status   # if the agent is the thing that looks wrong
 ```
+
+The bridge itself is unaffected by any of that. It answers over a named pipe, so `probe atas` works
+from the SSH session no matter what the desktop is doing — that is proven, not assumed.
 
 The claims the product stands on, re-runnable on Windows:
 

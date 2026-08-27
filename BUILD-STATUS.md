@@ -446,6 +446,24 @@ CLIENT ID VERDICT     : false BECAUSE NOTHING WAS EVER ATTEMPTED. This says noth
 Both accounts on the machine are simulated — `DEMO15M440CE` (ES@CME) and `CRYPTO5EB41`
 (BTCUSDT@BinanceFutures), each 100,000 balance. No real money is reachable from this configuration.
 
+### What survives an RDP disconnect — measured
+
+The owner disconnected, leaving the session `Disc (id 2)` and the desktop `LOCKED`. Everything was
+re-tested in that state rather than reasoned about:
+
+```
+agent           : running (pid 4884, session 2), heartbeat 0s ago, interactive=True
+UI Automation   : WORKS   — 13 elements read off the live ATAS window
+the bridge      : WORKS   — BRIDGE PIPE : ANSWERED after 00:00, full hello, handshake OK
+screen capture  : FAILS   — Win32Exception: The handle is invalid.
+```
+
+So a disconnected session can do all of the work and simply cannot photograph it. That distinction
+matters because the agent previously reported a single `can_drive_ui: true` covering both, which was
+a lie in precisely the case it existed to catch. It now reports `can_automate` and `can_capture`
+separately and settles the second by attempting a one-pixel grab. `tools/win-state.sh` reads the same
+two facts off the heartbeat, so the first command of any session says what is actually available.
+
 ### And it immediately found a real defect: the adapter is wired to the wrong ATAS surface
 
 Every read and every order in `AtasStrategyAdapter` goes through `RequireConnector()`, which returns

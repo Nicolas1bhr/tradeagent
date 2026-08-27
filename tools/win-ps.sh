@@ -39,7 +39,13 @@ if [ "${#ENC}" -lt 7000 ]; then
 fi
 
 LOCAL="$(mktemp -t win-ps).ps1"
-printf '%s' "$SRC" > "$LOCAL"
+# The BOM is load-bearing. Windows PowerShell reads a .ps1 with no byte-order mark as ANSI, so every
+# non-ASCII character in the script — an em dash, a curly quote — arrives as mojibake and can break
+# string parsing outright ("The string is missing the terminator"). The error names a line that is
+# perfectly correct, which sends you hunting for an unbalanced quote that is not there. The
+# -EncodedCommand path above is immune because it declares UTF-16LE; only this branch needs it, and
+# the first version of this branch was verified with pure ASCII and so never showed it.
+printf '\xEF\xBB\xBF%s' "$SRC" > "$LOCAL"
 trap 'rm -f "$LOCAL"' EXIT
 REMOTE='C:/ta/win-ps-tmp.ps1'
 SCP_OPTS=(-o StrictHostKeyChecking=accept-new -o LogLevel=ERROR)
