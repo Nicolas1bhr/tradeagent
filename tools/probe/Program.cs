@@ -116,13 +116,17 @@ static int VisibleWindows() =>
 /// Two design points worth knowing before changing anything here:
 ///
 ///   * The hello frame is read off the pipe RAW, before TradeAgent's own AtasConnector is allowed
-///     near it. That is not duplication for its own sake. AtasConnector discards a hello whose
-///     protocol version it does not recognise (AtasConnector.cs Dispatch) — it never stores it — so
-///     an instrument built only on AtasConnector could report "FAILED" and could not say which
-///     version the bridge claimed. The mismatch case is exactly the one where the number matters.
-///   * The bridge protocol carries ONE boolean for the client-id round trip and no attempt counter,
-///     so "not proven yet" and "the round trip failed" are the same value on the wire. This verb
-///     narrows that from the order list instead, and says plainly that it is inferring.
+///     near it. That is not duplication for its own sake. AtasConnector refuses a hello whose
+///     protocol version it does not recognise — the frame never becomes Capabilities — and while it
+///     now keeps the version numbers for display (AtasConnector.Incompatible), it keeps only those.
+///     Reading the frame raw is what lets this verb print everything a refused bridge claimed,
+///     including the claims that were correctly thrown away. The mismatch case is exactly the one
+///     where seeing what was discarded matters.
+///   * The client-id round trip is reported TWICE, from two different sources, and each is labelled
+///     with which it is. The bridge's own attempt/read-back counters are a report; the reading taken
+///     from the live order book is an inference by this harness. A bridge older than those counters
+///     reports neither, and then only the inference is printed — still labelled. When the two
+///     disagree, that disagreement is the finding: believe neither until it is explained.
 /// </summary>
 static class AtasProbe
 {
@@ -470,16 +474,52 @@ static class AtasProbe
             Cont("exactly the pair the bridge requires before it reports true)");
         }
 
-        var verdict = ClientIdVerdict(caps.SupportsClientOrderId, orders, ordersError, withClientId, withBothIds).ToList();
-        Line("CLIENT ID VERDICT", verdict[0]);
-        foreach (var l in verdict.Skip(1)) Cont(l);
+        // The bridge's OWN account of why, when it keeps one. This is not the same class of
+        // statement as the order-book reading below it: one is reported, the other is inferred, and
+        // conflating them is how an inference ends up quoted as a measurement.
+        // Same fallback the capability block above uses: the live handshake when there is one, the
+        // raw hello when the handshake did not complete, so a refused bridge still gets to explain.
+        var reporting = connector.Bridge ?? hello;
+        var attempts = reporting?.ClientOrderIdAttempts;
+        var checks = reporting?.ClientOrderIdChecks;
+        var reported = ReportedClientIdVerdict(caps.SupportsClientOrderId, attempts, checks)?.ToList();
 
-        Line("HOW THIS WAS DERIVED", "The bridge protocol carries ONE boolean for this and no attempt");
-        Cont("counter, so \"not proven yet\" and \"the round trip failed\" are the same");
-        Cont("value on the wire. The verdict above is INFERRED from the order list by");
-        Cont("this harness — it is not something the bridge reported. Treat it as a");
-        Cont("reading of the evidence, and re-run after placing one order if you need");
-        Cont("the round trip itself answered.");
+        Line("SUBMITTED WITH AN ID", attempts is null
+            ? "NOT REPORTED — this bridge predates the attempt counters"
+            : $"{attempts}   (orders this bridge sent to ATAS carrying a client order id)");
+        Line("READ-BACKS PERFORMED", checks is null
+            ? "NOT REPORTED"
+            : $"{checks}   (times it then looked one of them up in ATAS's own order");
+        if (checks is not null) Cont("collection — the check that can set the flag)");
+
+        var verdict = ClientIdVerdict(caps.SupportsClientOrderId, orders, ordersError, withClientId, withBothIds).ToList();
+
+        if (reported is not null)
+        {
+            Line("CLIENT ID VERDICT", reported[0]);
+            foreach (var l in reported.Skip(1)) Cont(l);
+            Line("HOW THIS WAS DERIVED", "REPORTED BY THE BRIDGE. It carries the two counters above, so \"never");
+            Cont("attempted\" and \"attempted and the read-back failed\" are different values");
+            Cont("on the wire rather than the same false. This verdict is the bridge's own");
+            Cont("account of what it did, not this harness's reading of the order book.");
+            Line("AND, INDEPENDENTLY", verdict[0]);
+            foreach (var l in verdict.Skip(1)) Cont(l);
+            Cont("");
+            Cont("That second reading is INFERRED from the live order book by this harness.");
+            Cont("It is printed because it is derived from a different source than the");
+            Cont("counters: if the two disagree, believe neither and find out why.");
+        }
+        else
+        {
+            Line("CLIENT ID VERDICT", verdict[0]);
+            foreach (var l in verdict.Skip(1)) Cont(l);
+
+            Line("HOW THIS WAS DERIVED", "This bridge reports no attempt counters, so \"not proven yet\" and \"the");
+            Cont("round trip failed\" are the same value on the wire. The verdict above is");
+            Cont("INFERRED from the order list by this harness — it is not something the");
+            Cont("bridge reported. Treat it as a reading of the evidence, and re-run after");
+            Cont("placing one order if you need the round trip itself answered.");
+        }
 
         // ------------------------------------------------------------------ order history
 
@@ -547,6 +587,64 @@ static class AtasProbe
     }
 
     // ------------------------------------------------------------------------------------ pieces
+
+    /// <summary>
+    /// What the bridge itself says about rule 1, or null when it does not keep the count.
+    ///
+    /// Null is a real answer here and must stay distinguishable from zero: a bridge that reports
+    /// nothing has not told us it attempted nothing. Returning "0 attempts" for a silent bridge
+    /// would reintroduce, one field lower, the exact ambiguity these counters were added to remove.
+    /// </summary>
+    static IEnumerable<string>? ReportedClientIdVerdict(bool proven, int? attempts, int? checks)
+    {
+        if (attempts is null || checks is null) return null;
+        return Lines(proven, attempts.Value, checks.Value);
+
+        static IEnumerable<string> Lines(bool proven, int attempts, int checks)
+        {
+            if (proven)
+            {
+                yield return "PROVEN, AND THE BRIDGE SAYS SO ITSELF.";
+                yield return $"It submitted {attempts} order(s) carrying a client order id, performed";
+                yield return $"{checks} read-back(s) against ATAS's own order collection, and one of them";
+                yield return "found the identifier alongside a broker-assigned id. Rule 1 is satisfied";
+                yield return "by observation. It still does not prove the id survives an ATAS restart —";
+                yield return "nothing observable from inside a strategy can prove that.";
+                yield break;
+            }
+
+            if (attempts == 0)
+            {
+                yield return "false BECAUSE NOTHING WAS EVER ATTEMPTED. This says nothing about ATAS.";
+                yield return "The bridge has submitted no order carrying a client order id this session,";
+                yield return "so the round trip has not been tried, let alone failed. This is the";
+                yield return "EXPECTED reading on a fresh connection.";
+                yield return "";
+                yield return "To get an answer: place one order through TradeAgent on this connection —";
+                yield return "paper first — and run this verb again.";
+                yield break;
+            }
+
+            if (checks == 0)
+            {
+                yield return "false, ATTEMPTED BUT NEVER CHECKED — the round trip has not failed either.";
+                yield return $"{attempts} order(s) went out carrying a client order id, but the bridge has";
+                yield return "not once been able to look one up in ATAS's order collection. Nothing came";
+                yield return "back to examine: the orders may not have reached the book, or ATAS has not";
+                yield return "raised the events that trigger the read-back. Investigate the orders";
+                yield return "themselves before drawing any conclusion about the identifier.";
+                yield break;
+            }
+
+            yield return "false, AND THE READ-BACK GENUINELY FAILED. This IS evidence about ATAS.";
+            yield return $"{attempts} order(s) went out carrying a client order id and the bridge";
+            yield return $"performed {checks} read-back(s) against ATAS's own order collection without";
+            yield return "once finding the identifier alongside a broker-assigned id. On this backend";
+            yield return "the round trip does not complete, so rule 1 cannot be satisfied and fully";
+            yield return "autonomous live trading must stay refused. Confirm against the order-book";
+            yield return "reading below before treating it as final.";
+        }
+    }
 
     static IEnumerable<string> ClientIdVerdict(bool proven, IReadOnlyList<OrderInfo>? orders,
         string? ordersError, int withClientId, int withBothIds)
@@ -628,6 +726,8 @@ static class AtasProbe
         Cmp("account_id", a.AccountId, b.AccountId);
         Cmp("is_simulated", a.IsSimulated, b.IsSimulated);
         Cmp("supports_client_order_id", a.SupportsClientOrderId, b.SupportsClientOrderId);
+        Cmp("client_order_id_attempts", a.ClientOrderIdAttempts, b.ClientOrderIdAttempts);
+        Cmp("client_order_id_checks", a.ClientOrderIdChecks, b.ClientOrderIdChecks);
         Cmp("supports_order_history", a.SupportsOrderHistory, b.SupportsOrderHistory);
         Cmp("supports_modify", a.SupportsModify, b.SupportsModify);
         Cmp("supports_close_position", a.SupportsClosePosition, b.SupportsClosePosition);

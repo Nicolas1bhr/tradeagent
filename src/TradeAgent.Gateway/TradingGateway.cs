@@ -57,7 +57,11 @@ public sealed class TradingGateway : IAsyncDisposable
     // being the authority — two owners of one fact, which is the defect class this design exists to
     // avoid.
     void OnHealthChanged(ComponentHealth h) { _log.Health(h); StateChanged?.Invoke(); }
-    void OnConnectionChanged(HealthState s) => _health.Set(Components.TradingConnection, s);
+    // The detail is what makes a red row repairable: a version-mismatched ATAS bridge is refused
+    // for good reasons and otherwise looks identical to no bridge at all.
+    void OnConnectionChanged(HealthState s) =>
+        _health.Set(Components.TradingConnection, s,
+            s == HealthState.FAILED && Connector is IConnectorStatusDetail d ? d.StatusDetail ?? "" : "");
     void OnExecutionReceived(ExecutionInfo x) => _log.Activity($"Filled {x.Quantity} {x.Symbol} at {x.Price}");
 
     // ---------------------------------------------------------------- settings

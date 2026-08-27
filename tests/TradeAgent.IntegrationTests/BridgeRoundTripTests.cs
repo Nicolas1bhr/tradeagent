@@ -191,17 +191,24 @@ public class BridgeRoundTripTests
     sealed class ProvesOnFirstOrder(LoopbackAtasAdapter inner) : IAtasAdapter
     {
         bool _proven;
+        int _attempts, _checks;
 
         public BridgeHello Describe()
         {
             var h = inner.Describe();
             h.SupportsClientOrderId = _proven;
+            // Counted the way AtasStrategyAdapter counts them: the attempt when the order goes out,
+            // the check when the read-back is actually performed.
+            h.ClientOrderIdAttempts = _attempts;
+            h.ClientOrderIdChecks = _checks;
             return h;
         }
 
         public OrderInfo Place(PlaceOrderCommand cmd)
         {
+            _attempts++;
             var o = inner.Place(cmd);
+            _checks++;
             _proven = true;          // the id came back off the order, as AtasStrategyAdapter requires
             return o;
         }
@@ -318,6 +325,173 @@ public class BridgeRoundTripTests
         // The handshake's answer is retained rather than lost or invented.
         Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
         Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// A false SupportsClientOrderId must say WHICH false it is.
+    ///
+    /// The protocol carries one boolean for rule 1, and false is three different facts: nothing was
+    /// ever attempted, something was attempted but never came back to be checked, or the read-back
+    /// ran and failed. Only the last is evidence against ATAS, and it is the one that decides
+    /// whether this product may ever trade unattended. Before the counters existed the probe had to
+    /// INFER which case it was from the live order book, and labelled its own verdict inferred.
+    /// </summary>
+    [Fact]
+    public async Task Why_a_client_order_id_is_unproven_travels_with_the_answer()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new BridgeServer(new ProvesOnFirstOrder(new LoopbackAtasAdapter()), pipe)
+            { HeartbeatInterval = TimeSpan.FromMilliseconds(150) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // NEVER ATTEMPTED. False here says nothing whatever about ATAS.
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.Equal(0, connector.Bridge!.ClientOrderIdAttempts);
+        Assert.Equal(0, connector.Bridge!.ClientOrderIdChecks);
+
+        await connector.PlaceOrderAsync(new PlaceOrderCommand(
+            TradingGateway.ClientOrderIdFor("counts-it"), "ATAS-LOOPBACK", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null));
+
+        // ATTEMPTED AND CHECKED — and the count reaches the connector on the same refreshed frame
+        // that carries the capability, not only at a handshake that already happened.
+        await Wait(async () => await Task.FromResult(connector.Bridge!.ClientOrderIdAttempts == 1));
+        Assert.Equal(1, connector.Bridge!.ClientOrderIdChecks);
+        Assert.True(connector.Capabilities.SupportsClientOrderId);
+    }
+
+    /// <summary>
+    /// A bridge that does not report the counters must not read as one that attempted nothing.
+    ///
+    /// Null and zero are different claims: "I do not keep this count" against "I placed no orders".
+    /// Collapsing them would rebuild, one field lower down, exactly the ambiguity the counters were
+    /// added to remove — and it would do it silently, on any bridge older than this change.
+    /// </summary>
+    [Fact]
+    public async Task A_bridge_that_reports_no_counters_is_not_a_bridge_reporting_zero()
+    {
+        var (conn, bridge, _) = await ConnectedPair();
+        await using var _1 = conn;
+        await using var _2 = bridge;
+
+        // LoopbackAtasAdapter sets neither counter.
+        Assert.Null(conn.Bridge!.ClientOrderIdAttempts);
+        Assert.Null(conn.Bridge!.ClientOrderIdChecks);
+    }
+
+    /// <summary>
+    /// A bridge speaking the wrong protocol version is still allowed to say which version it is —
+    /// and still allowed nothing else.
+    ///
+    /// Refusing the hello outright was right about the capabilities and wrong about the user: the
+    /// screen read "FAILED" with no number on it, and repairing a version mismatch starts with
+    /// knowing what is loaded. This asserts both halves at once, because the dangerous fix is the
+    /// one that keeps the version by keeping the whole frame.
+    /// </summary>
+    [Fact]
+    public async Task An_incompatible_bridge_names_its_version_and_gains_nothing_by_it()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var client = new System.IO.Pipes.NamedPipeClientStream(
+            ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+        await client.ConnectAsync(10_000);
+        await using var w = new StreamWriter(client, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+
+        var hello = new BridgeHello
+        {
+            BridgeProtocolVersion = Versions.BridgeProtocolVersion + 1,
+            BridgeVersion = "9.9.9",
+            AtasVersion = "6.1.2.3",
+            // Everything an over-trusting connector could be talked into believing.
+            SupportsClientOrderId = true,
+            SupportsOrderHistory = true,
+            SupportsModify = true,
+            SupportsClosePosition = true
+        };
+        await w.WriteLineAsync(Json.Write(new BridgeFrame
+        {
+            Op = BridgeOps.Hello,
+            Data = System.Text.Json.JsonSerializer.SerializeToElement(hello, Json.Options)
+        }));
+
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+
+        // The identity survives, and it is enough to act on.
+        var bad = connector.Incompatible!;
+        Assert.Equal(Versions.BridgeProtocolVersion + 1, bad.ReportedProtocolVersion);
+        Assert.Equal(Versions.BridgeProtocolVersion, bad.ExpectedProtocolVersion);
+        Assert.Equal("9.9.9", bad.BridgeVersion);
+        Assert.Contains("9.9.9", connector.StatusDetail);
+
+        // The claims do not. Not one of the four capabilities it asserted got through, the
+        // connection is not up, and nothing may be traded on it.
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.SupportsOrderHistory);
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+        Assert.False(await connector.IsConnectedAsync());
+    }
+
+    /// <summary>
+    /// When the incompatible bridge goes away, the row that explained it must be told.
+    ///
+    /// An incompatible bridge never sets _connected, so the disconnect path's "was it up?" guard is
+    /// false and fires nothing. The reason string is cleared regardless — which would leave the
+    /// dashboard displaying a version mismatch for a bridge no longer on the pipe. On a status
+    /// display, the model and the screen disagreeing IS the bug.
+    /// </summary>
+    [Fact]
+    public async Task When_an_incompatible_bridge_disconnects_the_status_row_is_told()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        var failures = 0;
+        connector.ConnectionChanged += s => { if (s == HealthState.FAILED) Interlocked.Increment(ref failures); };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var client = new System.IO.Pipes.NamedPipeClientStream(
+            ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+        await client.ConnectAsync(10_000);
+        var w = new StreamWriter(client, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+        await w.WriteLineAsync(Json.Write(new BridgeFrame
+        {
+            Op = BridgeOps.Hello,
+            Data = System.Text.Json.JsonSerializer.SerializeToElement(
+                new BridgeHello { BridgeProtocolVersion = Versions.BridgeProtocolVersion + 1, BridgeVersion = "9.9.9" },
+                Json.Options)
+        }));
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        var afterHello = Volatile.Read(ref failures);
+
+        // The bridge goes away.
+        await w.DisposeAsync();
+        await client.DisposeAsync();
+
+        // The reason is dropped AND the row is re-announced, so nothing is left displaying a
+        // mismatch for a bridge that is gone.
+        await Wait(async () => await Task.FromResult(connector.Incompatible is null));
+        await Wait(async () => await Task.FromResult(Volatile.Read(ref failures) > afterHello));
+        Assert.Null(connector.StatusDetail);
+    }
+
+    /// <summary>A version string is untrusted text on its way to a label.</summary>
+    [Fact]
+    public void An_incompatible_bridges_version_string_is_clipped_before_it_is_shown()
+    {
+        Assert.Equal("unknown", IncompatibleBridge.Clean(null));
+        Assert.Equal("unknown", IncompatibleBridge.Clean("   "));
+        Assert.Equal("ab", IncompatibleBridge.Clean("a\r\nb"));
+        Assert.Equal(40, IncompatibleBridge.Clean(new string('x', 500)).Length);
     }
 
     static async Task Wait(Func<Task<bool>> condition, int timeoutMs = 10_000)

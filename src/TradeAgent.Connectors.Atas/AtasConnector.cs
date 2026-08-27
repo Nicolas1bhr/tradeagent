@@ -17,7 +17,7 @@ namespace TradeAgent.Connectors.Atas;
 ///   - capabilities come from the bridge's handshake, so a bridge that cannot serve order history
 ///     will not be granted autonomous live trading by the gateway.
 /// </summary>
-public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout = null) : ITradingConnector
+public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout = null) : ITradingConnector, IConnectorStatusDetail
 {
     readonly string _pipe = pipeName ?? Paths.BridgePipeName;
     readonly TimeSpan _timeout = rpcTimeout ?? TimeSpan.FromSeconds(10);
@@ -30,11 +30,23 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     Task? _accept;
     volatile bool _connected;
     BridgeHello? _hello;
+    IncompatibleBridge? _incompatible;
     DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
 
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;
+
+    /// <summary>
+    /// Set when a bridge dialled in speaking a protocol version this build does not, and null
+    /// otherwise. Display only — see <see cref="IncompatibleBridge"/>. It is deliberately a separate
+    /// property from <see cref="Bridge"/> so that no capability can ever be read off it by accident.
+    /// </summary>
+    public IncompatibleBridge? Incompatible => _incompatible;
+
+    /// <summary>One line explaining a FAILED trading connection, or null when there is nothing to
+    /// add. Read by the gateway for the health detail the dashboard shows.</summary>
+    public string? StatusDetail => _incompatible?.ToString();
 
     /// <summary>Missing for longer than this and we treat the bridge as gone.</summary>
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
@@ -88,13 +100,21 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     void Drop(string why)
     {
         var was = _connected;
+        // An incompatible bridge never set _connected, so 'was' alone would not fire — and the
+        // dashboard would go on displaying "bridge 9.9.9 speaks protocol 2" about a bridge that is
+        // no longer on the pipe. Clearing the reason without re-announcing the row leaves the model
+        // and the screen disagreeing, which on a status display is the whole of the bug.
+        var wasExplained = _incompatible is not null;
         _connected = false;
         _hello = null;
+        // The bridge is gone; "wrong version" stops being the live explanation the moment there is
+        // nothing on the pipe to be the wrong version.
+        _incompatible = null;
         _writer = null;
         foreach (var kv in _pending)
             if (_pending.TryRemove(kv.Key, out var tcs))
                 tcs.TrySetException(new ConnectorTransportException(why));
-        if (was) ConnectionChanged?.Invoke(HealthState.FAILED);
+        if (was || wasExplained) ConnectionChanged?.Invoke(HealthState.FAILED);
     }
 
     void Dispatch(string line)
@@ -111,12 +131,20 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             if (hello is null) return;
             if (!Versions.BridgeCompatible(hello.BridgeProtocolVersion))
             {
-                // A mismatched bridge is refused outright rather than half-trusted.
+                // A mismatched bridge is refused outright rather than half-trusted: _hello stays
+                // null, so Capabilities keeps reporting nothing supported and the gateway cannot
+                // trade on anything this bridge claims. Its IDENTITY is kept separately, because
+                // "FAILED" with no version number is not a repairable message — and keeping it in a
+                // different field is what stops it being mistaken for a capability later.
+                _incompatible = new IncompatibleBridge(
+                    hello.BridgeProtocolVersion, Versions.BridgeProtocolVersion,
+                    IncompatibleBridge.Clean(hello.BridgeVersion), IncompatibleBridge.Clean(hello.AtasVersion));
                 _connected = false;
                 ConnectionChanged?.Invoke(HealthState.FAILED);
                 return;
             }
             _hello = hello;
+            _incompatible = null;
             _connected = true;
             _lastHeartbeat = DateTimeOffset.UtcNow;
             ConnectionChanged?.Invoke(HealthState.READY);

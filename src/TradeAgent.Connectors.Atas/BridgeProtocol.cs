@@ -46,7 +46,61 @@ public sealed class BridgeHello
     [JsonPropertyName("account_id")] public string? AccountId { get; set; }
     [JsonPropertyName("is_simulated")] public bool IsSimulated { get; set; }
     [JsonPropertyName("supports_client_order_id")] public bool SupportsClientOrderId { get; set; }
+
+    /// <summary>
+    /// How many orders carrying a client order id this bridge has submitted to ATAS this session,
+    /// and how many times it has actually gone looking for one of them in ATAS's own order
+    /// collection.
+    ///
+    /// These exist because <see cref="SupportsClientOrderId"/> is ONE boolean while false is three
+    /// different facts: nothing was ever attempted; something was attempted but never came back to
+    /// be checked; something was attempted, checked, and the read-back genuinely failed. Only the
+    /// last is evidence against ATAS. Without these, a harness has to infer which one it is from
+    /// the live order book, and an inference is not a report.
+    ///
+    /// Null — not zero — when the bridge does not report them. A bridge that says nothing must not
+    /// read as one that attempted nothing; that conflation is the same mistake the boolean already
+    /// makes, and duplicating it here would defeat the point of the field.
+    ///
+    /// DIAGNOSTIC ONLY. Nothing derives a capability from these, and nothing may: a counter is not
+    /// a round trip, and rule 1 is satisfied by the read-back or not at all.
+    /// </summary>
+    [JsonPropertyName("client_order_id_attempts")] public int? ClientOrderIdAttempts { get; set; }
+
+    /// <inheritdoc cref="ClientOrderIdAttempts"/>
+    [JsonPropertyName("client_order_id_checks")] public int? ClientOrderIdChecks { get; set; }
     [JsonPropertyName("supports_order_history")] public bool SupportsOrderHistory { get; set; }
     [JsonPropertyName("supports_modify")] public bool SupportsModify { get; set; }
     [JsonPropertyName("supports_close_position")] public bool SupportsClosePosition { get; set; }
+}
+
+/// <summary>
+/// What a bridge speaking the wrong protocol version said about itself. DISPLAY ONLY.
+///
+/// A mismatched hello is refused: it never becomes <see cref="AtasConnector.Bridge"/>, because
+/// <c>Capabilities</c> derives from that and an incompatible bridge's claims must not reach the
+/// gateway — a bridge whose protocol this build does not speak cannot be allowed to say what it
+/// supports. But refusing the frame outright also threw away the version numbers, and left the user
+/// looking at "FAILED" with nothing to act on. Repairing a version mismatch begins with knowing
+/// which version is loaded.
+///
+/// So the identity is kept and the claims are dropped. Nothing here is trusted for any decision.
+/// The strings arrive from a peer this build has already declined to speak to, so they are clipped
+/// and stripped of anything that is not printable before they are stored — a version string is the
+/// one place a hostile or simply broken bridge gets to put text in front of the user.
+/// </summary>
+public sealed record IncompatibleBridge(int ReportedProtocolVersion, int ExpectedProtocolVersion,
+                                        string BridgeVersion, string AtasVersion)
+{
+    /// <summary>Untrusted text on its way to a label: one line, printable, and short.</summary>
+    public static string Clean(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "unknown";
+        var kept = new string(raw.Where(c => !char.IsControl(c)).Take(40).ToArray()).Trim();
+        return kept.Length == 0 ? "unknown" : kept;
+    }
+
+    public override string ToString() =>
+        $"bridge {BridgeVersion} speaks protocol {ReportedProtocolVersion}, this build speaks " +
+        $"{ExpectedProtocolVersion} — reinstall the add-on from TradeAgent";
 }

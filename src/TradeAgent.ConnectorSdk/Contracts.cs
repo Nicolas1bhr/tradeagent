@@ -59,6 +59,22 @@ public sealed class ConnectorRejectedException(string reason) : Exception(reason
 /// </summary>
 public sealed class ConnectorTransportException(string message, Exception? inner = null) : Exception(message, inner);
 
+/// <summary>
+/// Implemented by connectors that can say, in one line, why they are in the state they are in.
+///
+/// Optional on purpose. HealthState carries five words and no nouns, so a connector that knows the
+/// difference between "nothing has connected yet" and "the thing that connected speaks the wrong
+/// protocol" has nowhere to put it, and the user is shown a red row with no way to act on it. Kept
+/// off <see cref="ITradingConnector"/> so a connector with nothing to add implements nothing.
+///
+/// It is display text and only display text: nothing branches on it, and a connector must never use
+/// it to say something it is not entitled to say through Capabilities.
+/// </summary>
+public interface IConnectorStatusDetail
+{
+    string? StatusDetail { get; }
+}
+
 public interface ITradingConnector : IAsyncDisposable
 {
     string Id { get; }

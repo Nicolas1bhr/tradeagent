@@ -96,6 +96,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     IFeedConnector? _hooked;
     bool _clientOrderIdProven;
 
+    /// <summary>
+    /// What a false <c>SupportsClientOrderId</c> is actually saying. Attempts counts the orders we
+    /// submitted carrying a client id; checks counts the times we then went and looked one of them
+    /// up in the connector's own order collection. Attempts with no checks means nothing ever came
+    /// back to examine — a very different fact from a read-back that ran and found nothing.
+    ///
+    /// Deliberately NOT derived from <see cref="_submitted"/>, whose count Trim() resets to zero
+    /// after 4096 orders: a diagnostic that silently rewinds to "never attempted" is worse than no
+    /// diagnostic. These only ever increase.
+    /// </summary>
+    int _clientOrderIdAttempts, _clientOrderIdChecks;
+
     public AtasStrategyAdapter()
     {
         // Public, dump-verified path into the lifecycle: ChartStrategy exposes StateChanged
@@ -167,7 +179,8 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     {
         var portfolio = Portfolio;
         bool proven;
-        lock (_gate) proven = _clientOrderIdProven;
+        int attempts, checks;
+        lock (_gate) { proven = _clientOrderIdProven; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
 
         return new BridgeHello
         {
@@ -184,6 +197,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // Rule 1. False until a placed order has been seen coming back out of ATAS's own order
             // collection carrying our client id AND a broker-assigned id. Never hard-coded true.
             SupportsClientOrderId = proven,
+            // Why it is false, when it is. Diagnostic only — see BridgeHello.ClientOrderIdAttempts.
+            ClientOrderIdAttempts = attempts,
+            ClientOrderIdChecks = checks,
             // Rule 2, and it is answered at runtime for the same reason rule 1 is. See HistoryCache():
             // IDataFeedConnector itself has no history call, only a live order collection. The one
             // order-history query in the whole ATAS surface lives on an interface nothing publicly
@@ -368,6 +384,10 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             Trim();
             _failures.Remove(cmd.ClientOrderId);
             _submitted[cmd.ClientOrderId] = order;
+            // Counted here rather than after the round trip, because the question this answers is
+            // "was anything ever put to ATAS carrying an id" — and an order that failed on the way
+            // out was still an attempt.
+            if (!string.IsNullOrEmpty(cmd.ClientOrderId)) _clientOrderIdAttempts++;
         }
 
         // From here on nothing may be reported as REJECTED unless ATAS says so explicitly: once
@@ -1018,6 +1038,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         var c = Connector;
         if (c is null) return;
+
+        // Past this line the read-back genuinely happens: the id is one of ours, and there is a
+        // connector collection to look in. Everything above returned because there was nothing to
+        // learn, and counting those as checks would turn "we never got to look" into "we looked and
+        // it was not there" — the exact confusion the counter exists to remove.
+        lock (_gate) _clientOrderIdChecks++;
+
         foreach (var o in Items<AtasOrder>(c.Orders))
         {
             if (!string.Equals(o.Comment, clientOrderId, StringComparison.Ordinal)) continue;
