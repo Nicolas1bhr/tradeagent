@@ -1114,6 +1114,26 @@ static class AtasProbe
         Line("SupportsClientOrderId", $"{Yn(after.SupportsClientOrderId)}   AFTER the attempt — this is the reading that " +
                                       "counts.");
 
+        // The adapter measures something this harness structurally cannot see: whether the order it
+        // found in ATAS's collection is the SAME OBJECT it handed to ATAS. Place() constructs an
+        // Order, sets Comment on it, and passes that instance in. If ATAS's Orders collection simply
+        // contains that instance, then "the comment came back" is true by construction and the only
+        // thing proven is that an Id was assigned. That is rule 1 being faked, which the rule
+        // forbids by name — so the reading is printed next to the boolean it qualifies.
+        var coid = Token(connector.Bridge?.TradingSurface, "coid");
+        Line("ROUND TRIP, MEASURED", coid switch
+        {
+            "proven-distinct" => "proven-distinct — a genuinely SEPARATE object came back carrying our "
+                               + "identifier. This is the real round trip.",
+            "proven-sameref"  => "proven-sameref — ATAS handed back THE VERY OBJECT we submitted. "
+                               + "THE PROOF IS VACUOUS; see below.",
+            "notfound"        => "notfound — a read-back ran and no order carried our id with a broker id.",
+            "unchecked"       => "unchecked — submitted, but no read-back ever ran.",
+            "unattempted"     => "unattempted — nothing carrying a client order id has been submitted.",
+            null or ""        => "NOT REPORTED — this bridge predates the coid reading.",
+            _                 => coid
+        });
+
         // ------------------------------------------------------------------------- what it proves
 
         Section("THE TEST ORDER — WHAT THIS PROVES");
@@ -1201,6 +1221,26 @@ static class AtasProbe
             return ("disagreement", everSeen);
         }
 
+        if (coid == "proven-sameref")
+        {
+            Line("RULE 1", "NOT SATISFIED — THE MATCH IS REAL AND IT PROVES NOTHING.");
+            Cont($"'{clientOrderId}' did come back off ATAS's collection with the broker id");
+            Cont($"{broker}. But the adapter reports the matched order is REFERENCE-EQUAL to the");
+            Cont("Order instance it constructed, set Comment on, and handed to ATAS. So the");
+            Cont("comment came back because it never left: the collection is holding our own");
+            Cont("object. The only thing actually observed is that ATAS assigned an Order.Id.");
+            Cont("");
+            Cont("SupportsClientOrderId reads true from this, and it should not be believed.");
+            Cont("Rule 1 asks whether ATAS CARRIES an identifier onto the broker order, and a");
+            Cont("same-reference match cannot answer that either way. Do not enable autonomous");
+            Cont("trading on this reading, and do not 'fix' it by trusting the boolean.");
+            Cont("");
+            Cont("What would settle it: read the identifier back from a source that cannot be");
+            Cont("our own object — the platform's order history, a fresh ATAS session, or the");
+            Cont("broker's own report of the order.");
+            return ("proven-sameref", everSeen);
+        }
+
         Line("RULE 1", "SATISFIED, AND MEASURED HERE FOR THE FIRST TIME.");
         Cont($"TradeAgent submitted '{clientOrderId}', and that identifier came back off");
         Cont($"ATAS's own order collection alongside the broker-assigned id {broker},");
@@ -1273,8 +1313,8 @@ static class AtasProbe
                 Cont("re-read decides, not this.");
             }
 
-            poll = await PollOrders(connector, list => !list.Any(o => Mine(o, clientOrderId) && !Terminal(o)), CleanupLimit);
-            var stillResting = poll.Orders?.Where(o => Mine(o, clientOrderId) && !Terminal(o)).ToList();
+            poll = await PollOrders(connector, list => !list.Any(o => Mine(o, clientOrderId) && OrderStateMachine.IsLive(o.State)), CleanupLimit);
+            var stillResting = poll.Orders?.Where(o => Mine(o, clientOrderId) && OrderStateMachine.IsLive(o.State)).ToList();
             if (stillResting is not { Count: > 0 } || attempt == 2) break;
 
             // One more go. Where ATAS has since assigned an id, use it: the first cancel may have
@@ -1310,7 +1350,15 @@ static class AtasProbe
         foreach (var o in mine)
             Cont($"  {o.State}  filled={Num(o.FilledQuantity)}/{Num(o.Quantity)}  id={Blank(o.ConnectorOrderId)}");
 
-        var resting = mine.Where(o => !Terminal(o)).ToList();
+        // Resting means THE BROKER MAY STILL ACT ON OUR BEHALF, which is IsLive — not merely
+        // "not terminal". UNKNOWN is non-terminal (it leaves only through RECONCILING), so
+        // !Terminal() called a finished-but-undescribed order "still on the book" and sent the
+        // operator hunting in ATAS for an order that is not there. That matters more than it
+        // sounds: the adapter now reports Done-with-no-fill-evidence as UNKNOWN rather than
+        // inventing a CANCELLED, so this is the ORDINARY outcome of a successful cancel, and
+        // crying STILL-RESTING over it would train everyone to ignore the one banner that must
+        // never be ignored.
+        var resting = mine.Where(o => OrderStateMachine.IsLive(o.State)).ToList();
         if (resting.Count > 0)
             return Loud("STILL-RESTING", "AN ORDER FROM THIS RUN IS STILL ON THE BOOK.",
                 $"{resting.Count} order(s) carrying '{clientOrderId}' are in a non-terminal state" ,
@@ -1332,6 +1380,29 @@ static class AtasProbe
                 "or the quote it derived it from did not describe the market. Either one",
                 "matters far more than the client-order-id reading above, and neither should",
                 "be left unexplained before anything else is placed.");
+
+        // ATAS says finished and described no outcome. Almost certainly the cancel, since a buy
+        // limit far below the bid does not fill — but "almost certainly" is not what this file
+        // reports. Separated from CONFIRMED so nobody reads a guess as an observation, and from
+        // STILL-RESTING so nobody goes looking for an order that is not on the book.
+        var undescribed = mine.Where(o => o.State == ExecutionState.UNKNOWN).ToList();
+        if (undescribed.Count > 0)
+        {
+            Line("CLEANUP VERDICT", "FINISHED, OUTCOME NOT DESCRIBED — nothing is resting, and nothing proves why.");
+            Cont($"{undescribed.Count} order(s) carrying '{clientOrderId}' are finished in ATAS's own");
+            Cont("collection, and ATAS reported no fill evidence for them — no MyTrade, and no");
+            Cont("Unfilled it had written. The adapter therefore reports UNKNOWN rather than");
+            Cont("inventing a CANCELLED, because asserting a cancellation from silence is the");
+            Cont("same mistake as asserting a fill from silence.");
+            Cont("");
+            Cont("Nothing from this run can still be acted on by the broker, so nothing needs");
+            Cont("cancelling by hand. What is NOT settled is whether it ended cancelled or");
+            Cont("filled-but-unreported. Look at the account's position and Trading Journal in");
+            Cont($"ATAS for '{clientOrderId}' before placing anything else, and if it ended");
+            Cont("cancelled, Order.Canceled is the field that would let this be reported as");
+            Cont("evidence rather than as this paragraph.");
+            return new TestOrderOutcome("cleanup-undescribed", 4, everSeen);
+        }
 
         if (mine.Count > 0)
         {
@@ -1427,6 +1498,24 @@ static class AtasProbe
         string.Equals(o.ClientOrderId, clientOrderId, StringComparison.Ordinal);
 
     static bool Terminal(OrderInfo o) => OrderStateMachine.IsTerminal(o.State);
+
+    /// <summary>
+    /// Pulls one "key=value" out of the bridge's space-joined trading_surface string.
+    ///
+    /// The field is deliberately a flat, greppable line rather than structured JSON, because its
+    /// whole job is to be readable in a terminal next to the boolean it explains. That makes this
+    /// parse the price of admission. Returns null when the token is absent, which is a real case:
+    /// a bridge older than the token reports nothing rather than reporting a default, and those
+    /// must not read the same.
+    /// </summary>
+    static string? Token(string? surface, string key)
+    {
+        if (string.IsNullOrWhiteSpace(surface)) return null;
+        foreach (var part in surface.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            if (part.Length > key.Length + 1 && part[key.Length] == '=' && part.AsSpan(0, key.Length).SequenceEqual(key))
+                return part[(key.Length + 1)..];
+        return null;
+    }
 
     /// <summary>
     /// Whether an id is one the BROKER assigned, as opposed to one the adapter made up.
