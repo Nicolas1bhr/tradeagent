@@ -1,11 +1,18 @@
 # BUILD-STATUS
 
-**Milestone:** ATAS is installed **and signed in** on the test machine — the blocker that had stood
-since the project began. The bridge is not yet loaded into it, so the two capability verdicts remain
-unmeasured; but there is now an instrument that measures them (`probe atas`), and the defect that
-would have made one of them **unreachable no matter how long anyone waited** has been found and
-fixed. The product's two defining promises — *no terminal, ever* and *it installs what it needs
-itself* — remain verified by running them on real Windows 11.
+**Milestone:** the bridge runs inside ATAS and its reads work. The adapter was wired to a surface
+ATAS never fills for a chart strategy (`ChartStrategy.Connector` is null); rewired onto
+`ITradingManager`, accounts and orders now read back off the live platform where an hour earlier
+both said `COULD NOT READ`. Separately, the machine took its first unattended reboot: it logged
+itself in, and came back **unable to drive its own desktop** because a repo push had silently
+half-deleted the UI agent hours earlier. Both are fixed and both are quoted below.
+
+The two capability verdicts are still false, and the two falses are no longer the same kind of
+thing: `SupportsOrderHistory` now means "looked, and the call threw", while `SupportsClientOrderId`
+still means "nothing has ever been placed". **The one fact the product waits on — whether ATAS
+carries a client order id onto a live order — remains unmeasured.** The product's two defining
+promises — *no terminal, ever* and *it installs what it needs itself* — remain verified by running
+them on real Windows 11.
 
 **Built and verified on:** macOS 26 / arm64 locally, `windows-latest` / `ubuntu-latest` /
 `macos-latest` in CI (.NET 10), and a real Windows 11 Pro 26200 machine.
@@ -551,6 +558,135 @@ and states what enabling it trades away.
   different protocol versions. The status column trims with an ellipsis, which is why the version
   number is at the front of the string and the advice at the end: what gets cut is the recoverable
   half.
+
+---
+
+## Verified on real Windows 11 hardware, 2026-08-28
+
+### The adapter was reading a surface ATAS never fills, and now it is not
+
+`ChartStrategy.Connector` is null for a chart strategy. `RequireConnector()` gated all twelve reads
+and every order, so the bridge handshook and could then read nothing. Rewired onto `ITradingManager`
+via the indicator's `IIndicatorDataProvider`. The same probe verb, before and after, same machine,
+same chart, same account:
+
+```
+before   ACCOUNTS VISIBLE      : COULD NOT READ — ConnectorTransportException: this ATAS chart has
+                                 no trading connection attached yet
+         ORDERS IN LIVE BOOK   : COULD NOT READ — ConnectorTransportException: this ATAS chart has
+                                 no trading connection attached yet
+
+after    ACCOUNTS VISIBLE      : 1 — DEMO15M440CE (USD, simulated=true, trading=true)
+         ORDERS IN LIVE BOOK   : 0
+```
+
+The hello frame now carries the adapter's own account of what it bound to, read off the live bridge:
+
+```
+TRADING SURFACE       : DataProvider=ok TradingManager=ok Connector=null orders=0 strategyorders=0
+                        mytrades=0 portfolio=DEMO15M440CE security=ES position=none
+                        cache=none(connector-null,getservice-threw)
+```
+
+Built against the real ATAS **8.0.14.397** SDK on the Windows machine. The installed DLL's identity
+was asserted by reading the compiled bytes rather than trusting the build (trap 8):
+
+```
+  AtasStrategyAdapter  : present
+  ITradingManager      : present
+  TradingSurface       : present
+  RequireConnector     : absent
+```
+
+**`SupportsOrderHistory` is still false, and its meaning has changed.** It used to mean "could not
+look". It now means "looked, and `IIndicatorDataProvider.GetService` threw" — a fact about ATAS
+rather than about our wiring. Still not hard-coded true.
+
+**`SupportsClientOrderId` is still false, and its meaning has NOT changed:** `client_order_id_attempts`
+is 0. No order has been placed, so the round trip has not been attempted, let alone failed.
+**NOT VERIFIED: whether ATAS carries a client order id onto a live order.** That is the one fact the
+product waits on and it is untouched by today's work.
+
+**NOT VERIFIED: whether the synchronous order calls work off the GUI thread.** Building against the
+real SDK emits four `CS0618` warnings — `ITradingManager.OpenOrder`, `ModifyOrder`, `CancelOrder`
+and `ClosePosition` are obsolete, "Use ...Async instead". The adapter calls the synchronous
+overloads from the bridge's pipe thread. Nothing has exercised that path.
+
+### The machine survives an unattended reboot — and came back unable to drive itself
+
+Autologon had been configured but never taken through a boot. It works:
+
+```
+== machine ==
+  session          : Active (id 1, console)
+  desktop          : live
+  uptime           : 0d 00:01
+```
+
+Reboot to SSH answering was ~34 seconds, with nobody at the machine and no monitor switched on.
+Screen capture works again on the console session — `shot --full` returned a real 2560x1440 desktop
+(`uniform: null`), where a disconnected RDP session had returned "the handle is invalid".
+
+**But the UI agent did not come back**, and that is the more important finding:
+
+```
+== UI agent ==
+  agent            : NOT RUNNING - tools/win-agent.sh status
+lastRunTime  : 08/28/2026 15:04:41
+lastResult   : 0x80008083
+```
+
+`0x80008083` is the .NET host's `CoreHostLibMissingFailure`. Cause, confirmed by inspection: the
+agent's output directory held `winagent.exe` and `winagent.dll` but **no `winagent.runtimeconfig.json`**.
+`win-push.sh` clears `C:\ta\repo\tools` before unpacking and the agent ran from there; Windows
+refuses to delete a running `.exe` but deleted the unlocked JSON beside it, under `-EA 0`, so the
+push reported success and the already-loaded agent kept working for hours. Fixed: the agent now runs
+from `C:\ta\agent\bin`, the deploy fails loudly if the runtimeconfig is absent, and the push
+reports what it could not delete. Re-verified end to end:
+
+```
+Build succeeded.
+    0 Error(s)
+deployed: C:\ta\agent\bin (runtimeconfig present)
+process        : running (pid 3736, session 1)
+session        : 1   interactive=True
+```
+
+**NOT VERIFIED: that the agent now survives a reboot from its new location.** The move was made
+after the reboot, so the at-logon path has not been exercised since. One reboot settles it.
+
+### ATAS restores its workspace but not its chart strategies
+
+After the reboot ATAS reopened with both charts, the layout, the account `DEMO15M440CE` and all four
+connections green — and **"Selected strategies" empty on both ES charts**. The bridge was not
+stopped, it was absent. `probe atas` timed out with `BRIDGE PIPE : NO ANSWER within 60s`, which
+reads identically to a bridge that failed to load or a folder ATAS is not watching.
+
+Recovery is the full re-add, and the recipe is in `docs/RESUME-HERE.md` because two steps of it are
+not discoverable: the `IsActivated` checkbox in the settings grid cannot be toggled
+(`ChartStrategy.IsActivated` is `{ get; }`), and `PART_ActivateButton` does not exist in the UIA
+tree until the "Selected strategies" row is expanded.
+
+### A modal dialog was invisible, and a modal was the answer every time
+
+ATAS was asked to close three ways — UIA `Invoke` on `PART_CloseButton`, a physical click on it, and
+ALT+F4 — and stayed running each time. None was ignored: each raised a modal the tooling could not
+see, because `windows` enumerated one `MainWindowHandle` per process. With capture unavailable at
+the time, UI Automation was the only sense available and it was blind exactly where it mattered.
+
+After the fix, the same `close` produced the signature on the first try:
+
+```
+hwnd=  656008 owner=  197312 main=False enabled=True  title=Save current workspace?
+hwnd=  197312 owner=       0 main=True  enabled=False title=ATAS - [Default workspace]
+```
+
+— an enabled owned window in front of a disabled main window. The dialog's own "Save and close"
+button then exited ATAS cleanly, which is what finally released the bridge DLL for redeployment.
+The same op later showed the three-deep stack raised by activating a strategy
+(`Strategy will remain active` → `Chart strategies` → main window), all three states correct.
+
+**Tests:** 107/107 green on macOS after the rewrite (43 unit, 28 integration, 36 fault).
 
 ---
 
