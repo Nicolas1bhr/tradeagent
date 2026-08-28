@@ -1401,7 +1401,7 @@ static class AtasProbe
             Cont($"ATAS for '{clientOrderId}' before placing anything else, and if it ended");
             Cont("cancelled, Order.Canceled is the field that would let this be reported as");
             Cont("evidence rather than as this paragraph.");
-            return new TestOrderOutcome("cleanup-undescribed", 4, everSeen);
+            return new TestOrderOutcome(4, "cleanup-undescribed", Placed: true);
         }
 
         if (mine.Count > 0)
