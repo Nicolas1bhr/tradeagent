@@ -12,6 +12,11 @@ using TradeAgent.Core;
 // TradeAgent.ConnectorSdk.TimeInForce would otherwise collide on every use, and an alias makes it
 // obvious at each call site which side of the boundary a name comes from.
 using AtasDirections = ATAS.DataFeedsCore.OrderDirections;
+// One side of the book, or one print on the tape: the payload of the chart's own market-data
+// events and the type behind ChartStrategy.BestBid / BestAsk. Exactly ONE MarketDataArg exists in
+// the dump — ATAS.Indicators.MarketDataArg — so the alias is not resolving an ambiguity, it is
+// keeping the naming convention that every ATAS type here is spelled Atas*.
+using AtasMarketData = ATAS.Indicators.MarketDataArg;
 using AtasMyTrade = ATAS.DataFeedsCore.MyTrade;
 using AtasOrder = ATAS.DataFeedsCore.Order;
 using AtasOrderStates = ATAS.DataFeedsCore.OrderStates;
@@ -20,6 +25,10 @@ using AtasPortfolio = ATAS.DataFeedsCore.Portfolio;
 using AtasPosition = ATAS.DataFeedsCore.Position;
 using AtasSecurity = ATAS.DataFeedsCore.Security;
 using AtasTif = ATAS.DataFeedsCore.TimeInForce;
+// A print on the tape, as opposed to AtasMyTrade which is OUR fill. Referenced only as one of the
+// two shapes IOnlineDataProvider.NewTrades could carry, since the dump records that event's arity
+// and not its generic argument.
+using AtasTrade = ATAS.DataFeedsCore.Trade;
 using IAtasCache = ATAS.DataFeedsCore.Database.ICache;
 using IAtasDataProvider = ATAS.Indicators.IIndicatorDataProvider;
 // The interface ICache derives from, and the one ATAS's own code stores the object under
@@ -119,10 +128,54 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <summary>Orders we submitted, by client order id, so Place can watch the exact instance.</summary>
     readonly Dictionary<string, AtasOrder> _submitted = new(StringComparer.Ordinal);
 
-    /// <summary>Last bid/ask/last we actually saw change, per symbol, and when we saw it. A quote is
-    /// stamped with the time it was OBSERVED to move — never with "now" — because QuoteInfo.IsStale
-    /// is what stops the gateway sizing an order off a price that stopped updating an hour ago.</summary>
-    readonly Dictionary<string, (decimal Bid, decimal Ask, decimal? Last, DateTimeOffset At)> _quotes = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>What is known about each symbol's book, per SIDE, and where each side came from. A
+    /// quote is stamped with the time the price was true — never with "now" for a price that was
+    /// merely read — because QuoteInfo.IsStale is what stops the gateway sizing an order off a price
+    /// that stopped updating an hour ago. See the quotes section for why this is per-side.</summary>
+    readonly Dictionary<string, (QuoteSide Bid, QuoteSide Ask, QuoteSide Last)> _quotes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// One side of one symbol's book: the price, the size that arrived with it, when that price was
+    /// true, the <see cref="DateTimeKind"/> ATAS put on that time, and which surface said so.
+    ///
+    /// Per side rather than one row per symbol because ATAS's quote events are SINGLE-SIDED — a
+    /// <see cref="AtasMarketData"/> carries a bid or an ask, with its own Time — so one shared
+    /// timestamp would silently claim the newly arrived side's freshness for the other one.
+    /// </summary>
+    readonly record struct QuoteSide(decimal Price, decimal Size, DateTimeOffset At, DateTimeKind Kind, QuoteSource Source)
+    {
+        /// <summary>A non-positive price is "not reported", never "the price is zero". The whole file
+        /// reads it that way — BuildQuote did before this, and tools/probe says so in as many words:
+        /// "The adapter reports a zero bid as null rather than as a price".</summary>
+        public bool HasPrice => Price > 0m;
+
+        public static QuoteSide None { get; } = new(0m, 0m, DateTimeOffset.MinValue, DateTimeKind.Unspecified, QuoteSource.None);
+
+        /// <summary>A side read off an ATAS entity that carries its own DateTime. The Kind is kept
+        /// verbatim because it is the one reading that settles what <see cref="ToQuoteTime"/> has to
+        /// assume — see there.</summary>
+        public static QuoteSide From(decimal price, decimal size, DateTime time, QuoteSource source) =>
+            new(price, size, ToQuoteTime(time), time.Kind, source);
+    }
+
+    /// <summary>
+    /// Which surface a price came from, ordered WEAKEST TO STRONGEST and compared as such: a weaker
+    /// surface never displaces a side a stronger one has already filled, and never overwrites a real
+    /// price with a zero.
+    ///
+    ///   None          nothing has ever filled this side.
+    ///   SecurityRead  Security.BestBidPrice / BestAskPrice read at the moment of the call. There is
+    ///                 no timestamp anywhere on Security in the dump, so this price cannot be shown
+    ///                 to be current at all — it is the last resort and it leaves At unset.
+    ///   ChartProp     ChartStrategy.BestBid / BestAsk, read on demand. A MarketDataArg, so it does
+    ///                 carry a time; but it is a read, not something we watched arrive.
+    ///   SecurityMove  Security.PropertyChanged fired and the price had genuinely changed. We
+    ///                 watched that happen, so "now" is an honest stamp for it.
+    ///   MarketData    a BestBidAskChanged / NewTrades event, carrying the feed's own timestamp.
+    ///                 The strongest reading there is, and on this platform the only one measured to
+    ///                 carry an ES price at all.
+    /// </summary>
+    enum QuoteSource { None, SecurityRead, ChartProp, SecurityMove, MarketData }
 
     readonly HashSet<AtasSecurity> _tracked = [];
 
@@ -130,8 +183,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     /// <summary>The surfaces already subscribed to, so binding stays idempotent. Three separate
     /// fields because they are three separate objects with three separate lifetimes: the trading
-    /// manager is the one that must exist, the online data provider is a quote source, and the
-    /// connector may never be non-null at all.</summary>
+    /// manager is the one that must exist, the online data provider is THE quote source on this
+    /// surface — measured, see the quotes section — and the connector may never be non-null at
+    /// all.</summary>
     IAtasTrading? _hookedTrading;
     IAtasOnlineData? _hookedOnline;
     IFeedConnector? _hookedConnector;
@@ -392,6 +446,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 $"portfolio={Token(portfolio?.AccountID)}",
                 $"security={Token(SymbolOf(BoundSecurity))}",
                 $"position={(trading?.Position is { } p ? p.Volume.ToString(CultureInfo.InvariantCulture) : "none")}",
+                // Where the price came from and how old it is. Without this a refusal to place
+                // reads as "no bid" and says nothing about WHICH of four surfaces was empty.
+                $"quote={QuoteToken()}",
                 // Rule 1's reading, and the only token that says whether the proof is worth anything.
                 $"coid={ClientOrderIdToken()}",
                 $"cache={cacheNote}");
@@ -510,20 +567,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         return list;
     }
 
+    /// <summary>
+    /// The price, from the strongest source that has one — see <see cref="Compose"/> for the order
+    /// and for what each source is worth.
+    ///
+    /// Only a price whose source carries a time gets one. A quote assembled from a surface that has
+    /// no timestamp comes back at MinValue so IsStale() refuses it, rather than dressed up as fresh.
+    /// </summary>
     public QuoteInfo? GetQuote(string symbol)
     {
         var s = FindSecurity(symbol);
         if (s is null) return null;
         Track(s);
-
-        var key = SymbolOf(s);
-        lock (_gate)
-        {
-            // Only a quote we have watched move gets a real timestamp. One we have never seen tick
-            // is returned at MinValue so IsStale() refuses it, rather than dressed up as fresh.
-            var at = _quotes.TryGetValue(key, out var q) ? q.At : DateTimeOffset.MinValue;
-            return BuildQuote(s, key, at);
-        }
+        lock (_gate) return Compose(s, SymbolOf(s)).Quote;
     }
 
     /// <summary>
@@ -1362,11 +1418,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     }
 
     /// <summary>
-    /// The chart's quote feed. Quotes do NOT come from the connector on this surface — they come off
-    /// Security.PropertyChanged, which Track() subscribes to — so this is an additional wake-up, not
-    /// the only source. It never stamps a quote it did not see move: PublishQuote compares against
-    /// the last observed prices and returns without emitting when nothing changed, so a spurious
-    /// BestBidAskChanged cannot manufacture freshness.
+    /// THE quote feed on a chart strategy, and the thing whose absence stopped a placement.
+    ///
+    /// This used to fan the payload out as <see cref="AtasSecurity"/> and re-publish off the Security
+    /// object. That reads the wrong surface: the payload of BestBidAskChanged is market data, and the
+    /// chart's Security on ATAS 8.0.14.397 carries BestBidPrice = 0 — see the quotes section for the
+    /// measurement. So the handler now reads the payload for what it is.
+    ///
+    /// Subscribed here, alongside <see cref="HookTrading"/>, off the same Bind() call and with the
+    /// same idempotence check. Nothing is ever unsubscribed, for the same reason HookTrading
+    /// unsubscribes nothing: a fresh lambda cannot be removed with '-=' anyway. Each handler closes
+    /// over the provider it subscribed to and <see cref="IsLive(IAtasOnlineData?)"/> compares that
+    /// against the live one, so a subscription to a provider ATAS has since replaced goes inert
+    /// instead of writing stale prices into the book.
     /// </summary>
     void HookOnline(IAtasOnlineData? online)
     {
@@ -1377,15 +1441,22 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             _hookedOnline = online;
         }
 
-        // Action`1, arity dump-verified; the generic argument is not, so the payload is widened. If
-        // it carries Securities they are published; otherwise the chart's own instrument is re-read,
-        // which is what the event is about by construction — this is the chart's data provider.
-        online.BestBidAskChanged += a => Guard(() =>
-        {
-            var any = false;
-            foreach (var s in Fan<AtasSecurity>(a)) { any = true; PublishQuote(s); }
-            if (!any && BoundSecurity is { } own) PublishQuote(own);
-        });
+        // Dump, verbatim, on `interface ATAS.Indicators.IOnlineDataProvider`:
+        //
+        //     event Action`1 BestBidAskChanged
+        //     event Action`1 NewTrades
+        //
+        // Arities are dump-verified; the generic ARGUMENTS are not — the dump prints Action`1 and
+        // never Action<T> — so neither lambda names one. The parameter stays implicitly typed, the
+        // payload widens to object, and OnMarketData matches on the runtime type. Same convention as
+        // every other ATAS event in this file, and the only one that cannot bind to the wrong shape.
+        //
+        // NewTrades is subscribed for the LAST price alone. Bid and ask come from BestBidAskChanged;
+        // nothing derives a bid from a trade print, because the last trade is not a side of the book
+        // and pricing a resting order off it would be pricing off a different number than the one
+        // this was designed around.
+        online.BestBidAskChanged += a => Guard(() => OnMarketData(online, a));
+        online.NewTrades += a => Guard(() => OnMarketData(online, a));
     }
 
     /// <summary>
@@ -1419,6 +1490,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// since replaced must be ignored rather than reported as current.
     /// </summary>
     bool IsLive(IAtasTrading? trading) => trading is not null && ReferenceEquals(trading, Trading);
+
+    /// <inheritdoc cref="IsLive(IAtasTrading?)"/>
+    bool IsLive(IAtasOnlineData? online) => online is not null && ReferenceEquals(online, DataProvider?.OnlineDataProvider);
 
     /// <summary>
     /// What "connected" can honestly mean on each surface, and the two are not the same claim.
@@ -1540,12 +1614,106 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     // ---------------------------------------------------------------- quotes
 
+    // WHY THIS SECTION WAS REWRITTEN, AND WHAT THAT IS NOT A STORY ABOUT
+    //
+    // The bridge refused to place a test order because it had no price. Measured on ATAS
+    // 8.0.14.397, live, on an ES 5m chart that was attached, activated and answering every other
+    // read — the probe's own output, verbatim:
+    //
+    //     QUOTE (raw)  : {"symbol":"ES","at":"0001-01-01T00:00:00+00:00"}
+    //     REFUSED TO PLACE : THE QUOTE CARRIES NO USABLE BID.
+    //
+    // `at` is DateTimeOffset.MinValue and bid/ask/last are absent entirely, which is this adapter
+    // saying it has never written a quote for ES and that Security.BestBidPrice reads 0.
+    //
+    // THIS IS NOT A REGRESSION FROM THE ITradingManager REWIRING. Quotes came from two places
+    // before it and neither ever worked here: IDataFeedConnector events, on a Connector that is null
+    // for a chart strategy (trap 13), and Security.PropertyChanged on a Security object that the
+    // reading above shows carries no level-1 data at all. Both were already dead. The rewiring did
+    // not break quotes; it removed the last thing that made it possible not to notice they had never
+    // worked. Anyone reading this while bisecting will not find the commit that broke it.
+    //
+    // What ATAS actually gives a chart strategy, both dump-verified:
+    //
+    //     interface ATAS.Indicators.IOnlineDataProvider ...
+    //         event Action`1 BestBidAskChanged
+    //         event Action`1 NewTrades
+    //     abstract class ATAS.Strategies.Chart.ChartStrategy : Indicator
+    //         MarketDataArg BestAsk { get; set; }
+    //         MarketDataArg BestBid { get; set; }
+    //
+    // The events are the stream; the two properties are the same data at rest, for the moment
+    // before any event has arrived. Both carry MarketDataArg, which carries its own Time — and that
+    // is the whole reason this is worth doing rather than reading Security.BestBidPrice and
+    // stamping DateTime.UtcNow on it. A price with a manufactured timestamp defeats
+    // QuoteInfo.IsStale, and IsStale is the only thing standing between the gateway and an order
+    // sized off a book that stopped updating.
+    //
+    // THE FEED ON THIS MACHINE IS dxFeed 15-MINUTE DELAYED. A correct ES quote therefore reads about
+    // 900 seconds old and that is not a broken clock, a dead feed, or a wrong DateTimeKind. The
+    // quote= token in the surface report exists so that reading is not mistaken for any of them.
+
+    /// <summary>
+    /// The quote clock, and it is deliberately NOT <see cref="ToOffset"/>.
+    ///
+    /// ATAS hands out plain DateTimes and the dump records no Kind, so Unspecified has to be read as
+    /// something. THE TWO READINGS FAIL IN OPPOSITE DIRECTIONS AND ONLY ONE IS SAFE HERE:
+    ///
+    ///   * As UTC — what ToOffset does. If ATAS is in fact handing out local wall clock, this
+    ///     machine runs UTC+2, so the quote lands two hours in the FUTURE. UtcNow - At goes
+    ///     negative, QuoteInfo.IsStale(maxAge) returns false for a quote of any age whatsoever, and
+    ///     the one check that stops the gateway pricing off a dead book is silently disabled.
+    ///   * As LOCAL — what this does. If ATAS is in fact handing out UTC, the quote looks exactly
+    ///     the machine's own offset too old, and IsStale REFUSES it. A refused quote costs a probe
+    ///     run. An accepted dead one costs money.
+    ///
+    /// So Unspecified is read as local. <see cref="ToOffset"/> keeps reading it as UTC because its
+    /// failure mode is the other way round: it timestamps orders and trades, GetOrders never lets a
+    /// timestamp drop a working order, and nothing on that path can be made to look FRESH.
+    ///
+    /// THE ARGUMENT ABOVE IS ABOUT THIS MACHINE, AND THAT IS NOT GOOD ENOUGH ON ITS OWN. It runs
+    /// UTC+2, so local-read-as-UTC is the reading that lands in the future. West of Greenwich the two
+    /// swap over: on a UTC-5 box a UTC time read as local would land five hours ahead instead, and
+    /// the choice below would be the dangerous one. So the choice is not what makes this safe —
+    /// <see cref="Compose"/> refusing a quote stamped in the future is. Wrong in either direction, on
+    /// any machine, the quote is refused rather than accepted.
+    ///
+    /// NOTHING HERE IS GUESSING WHICH IT IS, AND NOTHING HAS TO. The surface report carries kind=
+    /// and age= for exactly this, and one probe run settles it outright:
+    ///
+    ///     kind=utc                     no assumption was used; the reading is whatever age= says.
+    ///     kind=local, age≈900s         ATAS marks its market data local, this reads it as local,
+    ///                                  and 900s is the 15-minute delay. Correct.
+    ///     kind=unspecified, age≈900s   the assumption here is right. Nothing to change.
+    ///     kind=unspecified, age≈8100s  900s plus this machine's UTC+2 offset: ATAS is handing out
+    ///                                  UTC as Unspecified, and the Unspecified branch below should
+    ///                                  be switched to the UTC one.
+    ///     a NEGATIVE age               the quote is stamped in the future, so this reading is wrong
+    ///                                  the other way. Compose has already unset the quote's At, so
+    ///                                  IsStale refuses it and nothing is priced off it; the token
+    ///                                  still shows the raw offset so the size of the error names
+    ///                                  the timezone that caused it.
+    ///
+    /// A DateTime nobody set stays unset: default in, MinValue out, never "now".
+    /// </summary>
+    static DateTimeOffset ToQuoteTime(DateTime t)
+    {
+        if (t == default) return DateTimeOffset.MinValue;
+        if (t.Kind == DateTimeKind.Utc) return new DateTimeOffset(t, TimeSpan.Zero);
+        // Unspecified is treated as local, per above; Local already is. DateTimeOffset throws rather
+        // than saturating when a garbage DateTime near the extremes is shifted by the local offset,
+        // and a diagnostic must never be the thing that takes a read down.
+        try { return new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Local)); }
+        catch (ArgumentOutOfRangeException) { return DateTimeOffset.MinValue; }
+    }
+
     void Track(AtasSecurity s)
     {
         lock (_gate) { if (!_tracked.Add(s)) return; }
         // PropertyChangedEventHandler is a BCL delegate, so unlike the ATAS events this one can be
-        // stored as a method group and removed again. On the chart-strategy surface this is the
-        // PRIMARY quote source, not a supplement: nothing else here streams prices.
+        // stored as a method group and removed again. It is kept because on a host where the Security
+        // object IS fed it is a real quote source — but it is no longer described as the primary one:
+        // on this platform it was measured carrying nothing at all.
         s.PropertyChanged += OnSecurityPropertyChanged;
         SeedQuote(s);
     }
@@ -1562,44 +1730,343 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         if (sender is AtasSecurity s) Guard(() => PublishQuote(s));
     }
 
+    /// <summary>
+    /// A market-data update from the chart's own feed: BestBidAskChanged, or NewTrades for the last
+    /// price. Runs inside <see cref="Guard"/> like every other ATAS callback — an exception thrown
+    /// back into ATAS's data loop can take down subscribers that have nothing to do with us.
+    ///
+    /// A payload from a provider ATAS has since replaced is dropped rather than written, which is
+    /// what <see cref="IsLive(IAtasOnlineData?)"/> is for.
+    /// </summary>
+    void OnMarketData(IAtasOnlineData online, object? payload)
+    {
+        if (!IsLive(online)) return;
+
+        // IOnlineDataProvider is THIS CHART's data provider, so an update it raises is about this
+        // chart's instrument. MarketDataArg names no Security of its own — the dump lists Price,
+        // Volume, Time, DataType, Direction, OpenInterest, OriginPrice, IsBid, IsAsk and two
+        // exchange order ids, and nothing else — so there is no other symbol it could honestly be
+        // filed under. With no bound security there is no key, and inventing one would file one
+        // instrument's book under another instrument's symbol.
+        var own = SymbolOf(BoundSecurity);
+
+        // A bool rather than a set of symbols: the only key anything below can push is `own`, since
+        // the tape deliberately pushes nothing (see ApplyMarketData). This runs per tick, so it does
+        // not allocate one.
+        var moved = false;
+        lock (_gate)
+        {
+            foreach (var a in Fan<AtasMarketData>(payload))
+                if (own.Length > 0 && ApplyMarketData(own, a)) moved = true;
+
+            // The other shape NewTrades could carry. Its generic argument is not in the dump either,
+            // and ATAS.DataFeedsCore.Trade is the plausible alternative to a MarketDataArg — so both
+            // are read and whichever the payload really holds is the one that matches. Unlike
+            // MarketDataArg a Trade names its own Security, so it is keyed off that where it has one.
+            foreach (var t in Fan<AtasTrade>(payload))
+            {
+                var key = SymbolOf(t.Security);
+                if (key.Length == 0) key = own;
+                if (key.Length == 0) continue;
+                // Recorded, deliberately not pushed — see ApplyMarketData for why the tape does not
+                // raise QuoteChanged.
+                Merge(key, QuoteSide.None, QuoteSide.None,
+                    QuoteSide.From(t.Price, t.Volume, t.Time, QuoteSource.MarketData));
+            }
+        }
+
+        // Outside the lock: a subscriber is arbitrary code and must never run holding _gate.
+        if (moved) EmitQuote(own);
+    }
+
+    /// <summary>
+    /// One market-data update is one SIDE of the book, or one print on the tape.
+    ///
+    /// IsBid / IsAsk are read instead of DataType deliberately. The dump prints simple type names,
+    /// and TWO enums called MarketDataType exist in it with identical members —
+    /// ATAS.Indicators.MarketDataType and ATAS.DataFeedsCore.MarketDataType — so which one DataType
+    /// is typed as cannot be settled from the dump, and naming the wrong one would not compile
+    /// against the real assembly. The dump's `Boolean IsAsk { get; }` and `Boolean IsBid { get; }`
+    /// are unambiguous, and "neither" is precisely the third member that enum has: a trade.
+    ///
+    /// Caller holds <see cref="_gate"/>. Returns whether the BOOK changed — which is not the same
+    /// as whether a price changed, see below.
+    /// </summary>
+    bool ApplyMarketData(string key, AtasMarketData a)
+    {
+        var side = QuoteSide.From(a.Price, a.Volume, a.Time, QuoteSource.MarketData);
+        if (a.IsBid) return Merge(key, side, QuoteSide.None, QuoteSide.None);
+        if (a.IsAsk) return Merge(key, QuoteSide.None, side, QuoteSide.None);
+
+        // A print on the tape. It updates `last` in the book, so the next GetQuote is exact — but it
+        // does NOT raise QuoteChanged, and that is a deliberate limit on what this change switches on.
+        //
+        // Nothing in the product subscribes to the quote stream: TradingGateway PULLS with
+        // GetQuoteAsync and never handles QuoteChanged. BridgeServer.Push is fire-and-forget behind a
+        // single semaphore, and the tape is the highest-rate stream ATAS has — so pushing a frame per
+        // print would put hundreds of writes a second on a pipe with no reader waiting for them, for
+        // a number no consumer reads. Book changes still push; they are the ones that mean something.
+        Merge(key, QuoteSide.None, QuoteSide.None, side);
+        return false;
+    }
+
     /// <summary>Records the current prices WITHOUT a timestamp, so the first genuine move is
-    /// detected as a move rather than mistaken for one.</summary>
+    /// detected as a move rather than mistaken for one. Written at the weakest source rank, so it
+    /// cannot displace a side a real tick has already filled.</summary>
     void SeedQuote(AtasSecurity s)
     {
         var key = SymbolOf(s);
-        lock (_gate)
-            if (!_quotes.ContainsKey(key))
-                _quotes[key] = (s.BestBidPrice, s.BestAskPrice, s.LastTradePrice, DateTimeOffset.MinValue);
+        if (key.Length == 0) return;
+        lock (_gate) Merge(key, ReadSide(s.BestBidPrice, s.BestBidVolume), ReadSide(s.BestAskPrice, s.BestAskVolume),
+            ReadSide(s.LastTradePrice ?? 0m, 0m));
     }
 
+    /// <summary>
+    /// The Security surface's own path. It fires when ATAS mutates the Security object, so a price
+    /// that differs from the one recorded here really was OBSERVED to move and "now" is an honest
+    /// stamp for it. An unchanged price emits nothing and refreshes nothing: a PropertyChanged for
+    /// LotSize must not be able to make an hour-old quote look current.
+    /// </summary>
     void PublishQuote(AtasSecurity s)
     {
         var key = SymbolOf(s);
         if (key.Length == 0) return;
 
-        QuoteInfo quote;
+        bool changed;
+        var now = DateTimeOffset.UtcNow;
+        QuoteSide Moved(decimal price, decimal size) => new(price, size, now, DateTimeKind.Utc, QuoteSource.SecurityMove);
         lock (_gate)
-        {
-            var bid = s.BestBidPrice;
-            var ask = s.BestAskPrice;
-            var last = s.LastTradePrice;
-            if (_quotes.TryGetValue(key, out var prev) && prev.Bid == bid && prev.Ask == ask && prev.Last == last)
-                return;
-            var at = DateTimeOffset.UtcNow;
-            _quotes[key] = (bid, ask, last, at);
-            quote = BuildQuote(s, key, at);
-        }
+            changed = Merge(key, Moved(s.BestBidPrice, s.BestBidVolume), Moved(s.BestAskPrice, s.BestAskVolume),
+                Moved(s.LastTradePrice ?? 0m, 0m));
+
+        if (changed) EmitQuote(key);
+    }
+
+    static QuoteSide ReadSide(decimal price, decimal size) =>
+        new(price, size, DateTimeOffset.MinValue, DateTimeKind.Unspecified, QuoteSource.SecurityRead);
+
+    /// <summary>Publishes the composed quote for one symbol. Never called holding
+    /// <see cref="_gate"/>: QuoteChanged runs arbitrary subscriber code.</summary>
+    void EmitQuote(string key)
+    {
+        var s = FindSecurity(key);
+        if (s is null) return;
+        QuoteInfo quote;
+        lock (_gate) quote = Compose(s, key).Quote;
         QuoteChanged?.Invoke(quote);
     }
 
-    static QuoteInfo BuildQuote(AtasSecurity s, string symbol, DateTimeOffset at) => new(
-        symbol,
-        s.BestBidPrice == 0m ? null : (decimal?)s.BestBidPrice,
-        s.BestAskPrice == 0m ? null : (decimal?)s.BestAskPrice,
-        s.LastTradePrice,
-        s.BestBidVolume == 0m ? null : (decimal?)s.BestBidVolume,
-        s.BestAskVolume == 0m ? null : (decimal?)s.BestAskVolume,
-        at);
+    /// <summary>
+    /// Folds freshly read sides into the book. Caller holds <see cref="_gate"/>.
+    ///
+    /// Returns whether a PRICE changed — which is what QuoteChanged is for — and NOT whether
+    /// anything was written, because a tick repeating the same price still refreshes how old that
+    /// price is. Those are two different questions and conflating them either floods the pipe with
+    /// every tick or freezes the age of a quiet-but-live book.
+    /// </summary>
+    bool Merge(string key, QuoteSide bid, QuoteSide ask, QuoteSide last)
+    {
+        // out var, not a conditional expression: the dictionary's value type carries the element
+        // NAMES, and a bare tuple literal in the other branch would erase them.
+        if (!_quotes.TryGetValue(key, out var book)) book = (QuoteSide.None, QuoteSide.None, QuoteSide.None);
+        var changed = false;
+        book.Bid = Fold(book.Bid, bid, ref changed);
+        book.Ask = Fold(book.Ask, ask, ref changed);
+        book.Last = Fold(book.Last, last, ref changed);
+        _quotes[key] = book;
+        return changed;
+    }
+
+    /// <summary>
+    /// One side, in or out. Three rules, and each of them names a way this has gone wrong:
+    ///
+    ///   * A non-positive price is "not reported", never "the price is zero". The chart's Security
+    ///     object reports BestBidPrice = 0 on this platform because it is never fed level-1 data at
+    ///     all; letting that overwrite a real bid would erase the only price there is, and the
+    ///     gateway would then be sizing an order off nothing.
+    ///   * A weaker surface never displaces a stronger one on the same side. The Security surface
+    ///     and a market-data tick can disagree, and the one measured to be empty must not win.
+    ///   * A repeat of the same price refreshes the timestamp only when it arrived as market data.
+    ///     A market-data event IS fresh evidence that the price is still true. A Security
+    ///     PropertyChanged for some unrelated field is not, and treating it as one is exactly the
+    ///     manufactured freshness the whole dictionary exists to prevent.
+    ///
+    /// A consequence worth stating out loud: if the strongest source stops, the side it filled is
+    /// PINNED and simply ages out, rather than quietly falling back to a weaker surface that may be
+    /// reporting something else. IsStale then refuses the quote and the quote= token shows
+    /// event(...,age=<large>) — a stopped feed, named as one. Silently substituting a different
+    /// surface's number under the same symbol is the failure this ordering exists to prevent.
+    /// </summary>
+    static QuoteSide Fold(QuoteSide old, QuoteSide fresh, ref bool changed)
+    {
+        if (!fresh.HasPrice) return old;
+        if (fresh.Source < old.Source) return old;
+        if (old.HasPrice && old.Price == fresh.Price)
+            return fresh.Source == QuoteSource.MarketData ? fresh : old;
+        changed = true;
+        return fresh;
+    }
+
+    /// <summary>
+    /// Assembles the answer to "what is the price right now" out of the strongest source that has
+    /// one, and hands back the side it priced off so the caller can say WHICH — a quote nobody can
+    /// trace is a quote nobody can diagnose. Caller holds <see cref="_gate"/>.
+    ///
+    /// Sources, strongest first:
+    ///
+    ///   1. the book, fed by market-data ticks and by observed Security moves;
+    ///   2. ChartStrategy.BestBid / BestAsk, read on demand — dump: `MarketDataArg BestAsk
+    ///      { get; set; }`, `MarketDataArg BestBid { get; set; }` on
+    ///      ATAS.Strategies.Chart.ChartStrategy. They carry a real MarketDataArg.Time, which is what
+    ///      makes reading them honest: the quote gets the time the price was true, not the time we
+    ///      looked. They describe THIS CHART's instrument and no other, so they are applied only to
+    ///      the chart's own symbol — attributing them to a connector-supplied symbol would price an
+    ///      order off a different instrument's book;
+    ///   3. Security.BestBidPrice / BestAskPrice. Last resort, and the dump gives Security NO time
+    ///      field anywhere, so a price from here CANNOT be shown to be current: At stays unset,
+    ///      IsStale refuses it, and the probe prints the MinValue and says in as many words that
+    ///      nothing proves the feed is live. It is kept rather than deleted because it was the only
+    ///      source this file ever had, so a host where it IS fed must not be made worse — and a
+    ///      number the operator can see beats a null they cannot.
+    ///
+    /// ONE SCALAR HAS TO STAND FOR THE WHOLE QUOTE, and it is the time of the side the price is
+    /// taken from: the bid, falling back to the ask and then to the last trade. The bid is what a
+    /// resting order is priced off, so the freshness claim tracks exactly the number that carries
+    /// the risk. Taking the newest of all three instead would let a bid that stopped updating an
+    /// hour ago ride on an ask that ticked a second ago.
+    /// </summary>
+    (QuoteInfo Quote, QuoteSide Priced) Compose(AtasSecurity s, string key)
+    {
+        // out var, not a conditional expression: the dictionary's value type carries the element
+        // NAMES, and a bare tuple literal in the other branch would erase them.
+        if (!_quotes.TryGetValue(key, out var book)) book = (QuoteSide.None, QuoteSide.None, QuoteSide.None);
+        var ignored = false;
+
+        // The chart's two properties, for the chart's own instrument only.
+        if (key.Length > 0 && string.Equals(key, SymbolOf(BoundSecurity), StringComparison.OrdinalIgnoreCase))
+        {
+            book.Bid = Fold(book.Bid, ChartSide(BestBid), ref ignored);
+            book.Ask = Fold(book.Ask, ChartSide(BestAsk), ref ignored);
+        }
+
+        // Re-read rather than trusting the seed: Track() seeds once, and the Security may have been
+        // updated since without a PropertyChanged ever reaching us.
+        book.Bid = Fold(book.Bid, ReadSide(s.BestBidPrice, s.BestBidVolume), ref ignored);
+        book.Ask = Fold(book.Ask, ReadSide(s.BestAskPrice, s.BestAskVolume), ref ignored);
+        book.Last = Fold(book.Last, ReadSide(s.LastTradePrice ?? 0m, 0m), ref ignored);
+
+        var priced = book.Bid.HasPrice ? book.Bid : book.Ask.HasPrice ? book.Ask : book.Last;
+
+        // A price stamped in the future is not a price with a timestamp, it is a price whose
+        // timestamp cannot be read — a wrong DateTimeKind assumption, or a feed clock nobody owns.
+        // Passing it through would be the one genuinely unsafe outcome available here: UtcNow - At
+        // goes negative, IsStale returns false for a quote of ANY age, and the gateway would price
+        // off a book that stopped updating hours ago. So At is unset instead and IsStale refuses it.
+        // The slack is generous on purpose: a feed clock a few seconds ahead of ours is normal, and
+        // every way of getting the Kind wrong is out by whole timezone-sized amounts.
+        var at = priced.HasPrice ? priced.At : DateTimeOffset.MinValue;
+        if (at > DateTimeOffset.UtcNow + FutureQuoteSlack) at = DateTimeOffset.MinValue;
+
+        var quote = new QuoteInfo(
+            key,
+            book.Bid.HasPrice ? book.Bid.Price : null,
+            book.Ask.HasPrice ? book.Ask.Price : null,
+            book.Last.HasPrice ? book.Last.Price : null,
+            book.Bid.HasPrice && book.Bid.Size > 0m ? book.Bid.Size : null,
+            book.Ask.HasPrice && book.Ask.Size > 0m ? book.Ask.Size : null,
+            at);
+        return (quote, priced);
+    }
+
+    /// <inheritdoc cref="Compose"/>
+    static readonly TimeSpan FutureQuoteSlack = TimeSpan.FromSeconds(60);
+
+    /// <summary>ChartStrategy.BestBid / BestAsk are typed as a reference and ATAS sets them when it
+    /// has data, so an unset one is null and must read as "no side" rather than as a zero price.</summary>
+    static QuoteSide ChartSide(AtasMarketData? a) =>
+        a is null ? QuoteSide.None : QuoteSide.From(a.Price, a.Volume, a.Time, QuoteSource.ChartProp);
+
+    /// <summary>
+    /// Where the price came from and how old it is, as one whitespace-free token in the surface
+    /// report. Without it a refusal to place reads as "no bid" and says nothing about WHICH of four
+    /// surfaces was empty — which is another live run spent finding out.
+    ///
+    ///   quote=event(bid=7751.25,ask=7751.50,age=902s,kind=utc)
+    ///       A BestBidAskChanged tick fed it. This is the working state. age≈900s is the dxFeed
+    ///       15-minute delay on this machine and is CORRECT; see ToQuoteTime for what age and kind
+    ///       together say about the DateTimeKind assumption. Nothing to do. (Prices print at the
+    ///       decimal scale the feed sent, so 7751.50 rather than 7751.5.)
+    ///       A NEGATIVE age here means the quote is stamped in the future: the price is real, the
+    ///       clock reading is not, Compose has already unset the quote's At so nothing prices off
+    ///       it, and ToQuoteTime is the function to change.
+    ///   quote=event(bid=none,ask=none,age=0s,kind=utc)
+    ///       NewTrades is arriving and BestBidAskChanged is not. The tape is live and the book is
+    ///       not being delivered — a placement still cannot be priced, and the thing to check is the
+    ///       chart's level-1 subscription, not this file.
+    ///   quote=chartprop(...)
+    ///       No tick has arrived yet, so ChartStrategy.BestBid / BestAsk answered instead. The price
+    ///       is real and timestamped, so a placement can proceed — but the event path has not been
+    ///       shown to work, and a growing age= here means it is not going to.
+    ///   quote=security(...)
+    ///       Security.PropertyChanged was watched moving. age is measured from OUR clock, not the
+    ///       feed's, so it cannot be compared with the 15-minute delay.
+    ///   quote=secprop(bid=...,ask=...,age=none,kind=none)
+    ///       Only Security.BestBidPrice answered, and it carries no timestamp anywhere in the dump.
+    ///       The price may be perfectly good; nothing here can show that it is. IsStale refuses it.
+    ///   quote=none(no-onlinedataprovider)
+    ///       DataProvider.OnlineDataProvider is null, so no quote source was ever subscribed. The
+    ///       strategy is not attached to a chart that has a data provider — re-add it and start it.
+    ///   quote=none(no-tick)
+    ///       Subscribed, and nothing has arrived and neither fallback holds a price. The chart is
+    ///       not receiving data: check the connection and the instrument, not this file.
+    ///   quote=none(no-security)
+    ///       No bound instrument at all, so there is nothing to quote. GetInstruments is empty too.
+    ///   quote=unreadable(Foo)
+    ///       Reading the quote threw. Never lets the handshake fail with it.
+    /// </summary>
+    string QuoteToken()
+    {
+        try
+        {
+            if (BoundSecurity is not { } s) return "none(no-security)";
+
+            QuoteInfo quote;
+            QuoteSide priced;
+            lock (_gate) (quote, priced) = Compose(s, SymbolOf(s));
+
+            if (!priced.HasPrice)
+                return DataProvider?.OnlineDataProvider is null ? "none(no-onlinedataprovider)" : "none(no-tick)";
+
+            // Measured from what the FEED stamped, not from the At that Compose hands the gateway,
+            // and signed rather than clipped at zero. Those are the same number until the clock
+            // reading is wrong, and when it is, this is the only place the error is still visible:
+            // Compose has unset the quote's At by then, so age= here would read "none" and say
+            // nothing about why.
+            var unset = priced.At == DateTimeOffset.MinValue;
+            var age = unset ? "none" : (DateTimeOffset.UtcNow - priced.At).TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + "s";
+            var kind = unset ? "none" : priced.Kind.ToString().ToLowerInvariant();
+
+            return $"{SourceToken(priced.Source)}(bid={PriceToken(quote.Bid)},ask={PriceToken(quote.Ask)},age={age},kind={kind})";
+        }
+        catch (Exception ex)
+        {
+            return $"unreadable({ex.GetType().Name})";
+        }
+    }
+
+    /// <inheritdoc cref="QuoteToken"/>
+    static string SourceToken(QuoteSource source) => source switch
+    {
+        QuoteSource.MarketData => "event",
+        QuoteSource.SecurityMove => "security",
+        QuoteSource.ChartProp => "chartprop",
+        QuoteSource.SecurityRead => "secprop",
+        _ => "none"
+    };
+
+    /// <summary>Invariant culture, because a comma decimal separator would split one token into two
+    /// in a report whose only structure is that it is space-separated.</summary>
+    static string PriceToken(decimal? value) => value is { } v ? v.ToString(CultureInfo.InvariantCulture) : "none";
 
     // ---------------------------------------------------------------- mapping
 
