@@ -22,6 +22,10 @@ using AtasSecurity = ATAS.DataFeedsCore.Security;
 using AtasTif = ATAS.DataFeedsCore.TimeInForce;
 using IAtasCache = ATAS.DataFeedsCore.Database.ICache;
 using IAtasDataProvider = ATAS.Indicators.IIndicatorDataProvider;
+// The interface ICache derives from, and the one ATAS's own code stores the object under
+// (IDataFeedConnector.Factory is typed IEntityFactory, not ICache). ProbeCache asks the service
+// locator for it by name, because that is the likelier registration of the two.
+using IAtasEntityFactory = ATAS.DataFeedsCore.IEntityFactory;
 using IAtasOnlineData = ATAS.Indicators.IOnlineDataProvider;
 using IAtasTrading = ATAS.Indicators.ITradingManager;
 using IFeedConnector = ATAS.DataFeedsCore.IDataFeedConnector;
@@ -538,108 +542,333 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///
     /// There is exactly one order-history query in the four ATAS assemblies:
     /// ATAS.DataFeedsCore.Database.ICache.GetOrders(String accountId). Nothing in the public surface
-    /// hands you an ICache, so this tries the two routes that exist and says which one answered:
+    /// hands you an ICache, so this walks every route that could plausibly produce one, writes down
+    /// what each route said, and confirms whatever it finds before letting it count.
     ///
-    ///   1. IDataFeedConnector.Factory, typed IEntityFactory — and the concrete
-    ///      ATAS.DataFeedsCore.Database.Cache implements ICache and IEntityFactory on the same
-    ///      object. This is the route the old code used, and it is the reason SupportsOrderHistory
-    ///      was previously meaningless: Connector is null, so it could only ever return null and its
-    ///      false meant "could not look".
-    ///   2. IIndicatorDataProvider.GetService&lt;T&gt;(), the indicator's own service locator, which
-    ///      IS reachable from a chart strategy.
+    /// WHY IT WALKS ALL OF THEM AND RECORDS EVERY ANSWER
     ///
-    /// A cache found by either route is then CONFIRMED, not assumed: it must be initialised, and it
-    /// must know the account being asked about. Rule 2 says a partial history is worse than none, and
+    /// The 2026-08-28 live reading inside ATAS 8.0.14.397 was, in full:
+    ///
+    ///     cache=none(connector-null,getservice-threw)
+    ///
+    /// That is a dead end, not a finding, and it is the misdiagnosis every line below exists to
+    /// prevent. It cannot separate three states with opposite consequences — GetService&lt;T&gt; is
+    /// constrained in a way ICache can never satisfy (the route is permanently dead), the service
+    /// locator is not built yet when the handshake runs (the route may work later), or the locator
+    /// is perfectly healthy and simply has no cache registered under that type (ask it for a
+    /// different type). It also stopped at the first failure, so nobody could tell whether any other
+    /// route had even been attempted. Both defects are fixed here: every route runs, guarded on its
+    /// own, and an outcome that is an exception NAMES the exception and part of its message.
+    ///
+    /// A cache found by any route is then CONFIRMED, not assumed: it must be initialised, and it
+    /// must know the account actually in use. Rule 2 says a partial history is worse than none, and
     /// a cache belonging to some other configuration would answer GetOrders with a short list that
-    /// looks complete. Nothing here can make SupportsOrderHistory true by accident.
+    /// looks complete. A route that produces a cache which fails confirmation does NOT stop the
+    /// walk — a later route may hand back a different instance that does belong here. Nothing in
+    /// this method can make SupportsOrderHistory true by accident.
     /// </summary>
     CacheProbe ProbeCache(string? accountId)
     {
+        // Every route's outcome, in the order attempted, whether or not a later route succeeded.
+        var log = new List<string>(6);
+        IAtasCache? found = null;
+        var via = "";
+
+        CacheProbe Result() => found is null
+            ? new CacheProbe(null, Joined("none", log))
+            : new CacheProbe(found, $"ok({via})");
+
+        // Returns true once a CONFIRMED cache is in hand, so the walk can stop. It returns false —
+        // and the walk continues — for a route that produced an object which failed confirmation:
+        // stopping there would report "foreign" or "uninit" as though it were the platform's final
+        // word, when the very next route may return a different instance that does belong here.
+        bool Land(string route, (object? Value, string? Fault) attempt)
+        {
+            if (attempt.Fault is { } fault) { log.Add($"{route}={fault}"); return false; }
+            if (attempt.Value is null) { log.Add($"{route}=null"); return false; }
+            if (attempt.Value is not IAtasCache cache)
+            {
+                // Names the class that came back. "The locator answered, with something else" is a
+                // completely different next step from "the locator had nothing", and only the
+                // concrete type name says which other type to go and ask for.
+                log.Add($"{route}=wrongtype({Clip(attempt.Value.GetType().Name, 40)})");
+                return false;
+            }
+
+            var note = Confirm(cache, accountId);
+            log.Add($"{route}={note}");
+            if (note != "ok") return false;
+            found = cache;
+            via = route;
+            return true;
+        }
+
         try
         {
-            // Route 1. Typed and dump-verified. Null on a chart strategy today; kept because where a
-            // connector DOES exist this is the authoritative cache for that connection.
-            if (Connector?.Factory is IAtasCache byFactory) return Confirm(byFactory, "connector.factory", accountId);
+            // ROUTE 1 — the connector's own entity factory.
+            // Dump: `interface ATAS.DataFeedsCore.IDataFeedConnector : ILoggerSource` declares
+            //       `IEntityFactory Factory { get; set; }`
+            // Dump: `class ATAS.DataFeedsCore.Database.Cache : Cache`1, ILoggerSource,
+            //       ISettingsSource`1, ICache, IEntityFactory` — ONE object implementing both, so a
+            //       connector's Factory genuinely can be the cache.
+            // Null on a chart strategy (trap 13), and kept only because where a connector does exist
+            // this is the authoritative cache for that connection.
+            var connector = Connector;
+            if (connector is null) log.Add("factory=connector-null");
+            else if (Land("factory", Attempt(() => (object?)connector.Factory))) return Result();
 
-            // Route 2.
             if (DataProvider is not { } provider)
-                return new CacheProbe(null, "none(no-dataprovider)");
+            {
+                log.Add("svc=no-dataprovider");
+                return Result();
+            }
 
-            var (service, note) = ResolveService(provider, typeof(IAtasCache));
-            if (service is IAtasCache byService) return Confirm(byService, "getservice", accountId);
-            // The locator answered with something that is not an ICache. Distinct from a plain miss:
-            // it means the route works and the platform simply does not register a cache under this
-            // type, which is a different next step from "the call could not be made at all".
-            if (service is not null) note = "getservice-wrongtype";
+            // One GetService definition, found once and shared by every route below, so "the method
+            // is not there at all" is said once rather than four times.
+            var definition = ServiceMethod();
+            if (definition is null)
+            {
+                // Structural: this ATAS build's IIndicatorDataProvider has no GetService<T>() at
+                // all. No reconnect, no retry and no other type argument can change that.
+                log.Add("svc=absent");
+                return Result();
+            }
 
-            var factoryNote = Connector is null ? "connector-null" : "factory-not-cache";
-            return new CacheProbe(null, $"none({factoryNote},{note})");
+            // CONTROL PROBE, and it is the single reading that makes the rest of this line
+            // interpretable. Ask the locator for the one service it is CERTAIN to know before asking
+            // it for anything exotic.
+            // Dump: `ITradingManager TradingManager { get; }` on
+            //       `interface ATAS.Indicators.IIndicatorDataProvider` — the same object is reachable
+            //       as a plain property, so the locator's answer can be compared by reference.
+            // Dump: `class ATAS.Indicators.IndicatorDataProvider : IIndicatorDataProvider` takes an
+            //       `IIndicatorServiceProvider indicatorServiceProvider` in its constructor and
+            //       exposes `T GetService()` — GetService is a facade over that locator, so a null
+            //       or unbuilt locator is exactly the failure this control detects.
+            //
+            //   ok-same    the locator works AND is wired to this chart. A null or a throw on the
+            //              cache routes below is therefore a real statement about REGISTRATION.
+            //   ok-other   the locator works but hands out a different instance than the property —
+            //              still a real statement, but whatever it returns may not be this chart's.
+            //   null       the locator answers and knows nothing, not even the trading manager. It
+            //              is empty or not yet populated: re-read after the chart has finished
+            //              attaching before concluding anything from the lines that follow.
+            //   threw(..)  the locator itself is broken or uninitialised. Every other svc line below
+            //              then says nothing at all about registration, and THIS is the one to chase.
+            log.Add("svc:probe=" + ControlNote(ResolveService(definition, provider, typeof(IAtasTrading)), provider));
+
+            // ROUTE 2 — ask the locator for the cache interface by name.
+            // Dump: `interface ATAS.DataFeedsCore.Database.ICache : IEntityFactory, ILoggerSource`,
+            //       carrying `ICollection`1 GetOrders(String accountId)` — the only order-history
+            //       query in the whole surface, which is why this type is worth asking for directly.
+            if (Land("svc:ICache", ResolveService(definition, provider, typeof(IAtasCache)))) return Result();
+
+            // ROUTE 3 — ask for the interface the platform actually STORES the object under, and see
+            // whether what comes back happens to be the cache. Likelier than route 2, not less.
+            // Dump: ICache derives from IEntityFactory (route 2's line), and the only place ATAS's
+            //       own code holds one of these is `IEntityFactory Factory { get; set; }` on
+            //       IDataFeedConnector — typed as the BASE, not as ICache. A container registering
+            //       `class ATAS.DataFeedsCore.Database.Cache : ..., ICache, IEntityFactory` under the
+            //       type ATAS itself asks for would therefore register it as IEntityFactory.
+            // If this answers with something that is not a cache, wrongtype() names the class, which
+            // is the next thing worth knowing rather than another dead end.
+            if (Land("svc:IEntityFactory", ResolveService(definition, provider, typeof(IAtasEntityFactory)))) return Result();
+
+            // ROUTE 4 — reach a connector through the locator, then take ITS factory.
+            // Dump: `IEntityFactory Factory { get; set; }` on
+            //       `interface ATAS.DataFeedsCore.IDataFeedConnector : ILoggerSource`.
+            // ChartStrategy.Connector being null (trap 13) is a fact about a property on the
+            // strategy, NOT evidence that the process has no connector — the locator may well hand
+            // one out. If it does, that is worth considerably more than the cache: the connector
+            // alone carries Portfolios, Securities, Positions and a socket-level IsConnected, every
+            // one of which this adapter currently reports as unavailable.
+            //
+            // It is deliberately NOT bound here. A diagnostic that rewires the adapter as a side
+            // effect of being read is a diagnostic nobody can trust, and Describe() runs on every
+            // five-second heartbeat.
+            var byLocator = ResolveService(definition, provider, typeof(IFeedConnector));
+            if (byLocator.Fault is { } locatorFault) log.Add($"svc:IDataFeedConnector={locatorFault}");
+            else if (byLocator.Value is null) log.Add("svc:IDataFeedConnector=null");
+            else if (byLocator.Value is not IFeedConnector viaLocator)
+                log.Add($"svc:IDataFeedConnector=wrongtype({Clip(byLocator.Value.GetType().Name, 40)})");
+            else
+            {
+                // Logged in its own token rather than left to be inferred from the SHAPE of the next
+                // one: "a connector is reachable from a chart strategy after all" is a bigger fact
+                // than anything this method was sent to find out, and it must be impossible to miss.
+                log.Add("svc:IDataFeedConnector=ok");
+                if (Land("svc:IDataFeedConnector.factory", Attempt(() => (object?)viaLocator.Factory))) return Result();
+            }
+
+            return Result();
         }
         catch (Exception ex)
         {
-            // Distinct from none(): the probe itself failed, so this is "could not look".
-            return new CacheProbe(null, $"err({ex.GetType().Name})");
+            // The walk itself fell over, which is distinct from none(): none() means the walk ran to
+            // the end and found nothing. Should be unreachable — every route above is individually
+            // guarded — so if this is ever read, the bug is in this method, not in ATAS.
+            return new CacheProbe(null, $"err({Clip(ex.GetType().Name, 40)})");
         }
-    }
-
-    CacheProbe Confirm(IAtasCache cache, string via, string? accountId)
-    {
-        try
-        {
-            if (!cache.IsInitialized) return new CacheProbe(null, $"uninit({via})");
-
-            // Rule 2. A cache that has never heard of this account would answer GetOrders(accountId)
-            // with an empty or short list, and that is exactly the answer that makes "this order does
-            // not exist" look provable when it is not. GetPortfolio is dump-verified on ICache and is
-            // the cheapest question that settles it.
-            if (!string.IsNullOrWhiteSpace(accountId) && cache.GetPortfolio(accountId) is null)
-                return new CacheProbe(null, $"foreign({via})");
-
-            return new CacheProbe(cache, $"ok({via})");
-        }
-        catch (Exception) { return new CacheProbe(null, $"err({via})"); }
     }
 
     /// <summary>
-    /// Calls IIndicatorDataProvider.GetService&lt;T&gt;() reflectively, and this is the one place in
-    /// the file that reaches for reflection on purpose.
+    /// Rule 2's gate. A cache that has been FOUND is not yet a cache that may be BELIEVED.
     ///
-    /// The dump records `T GetService()` and does not record generic CONSTRAINTS — it prints none
-    /// anywhere across 694 types, so their absence is not evidence of absence. If GetService&lt;T&gt;
-    /// is constrained to some ATAS service marker, `GetService&lt;ICache&gt;()` written directly is a
-    /// COMPILE error, on the one file in this product that can only be compiled on a machine this
-    /// session cannot reach. Reflection turns that unknown into a runtime fact — and, critically,
-    /// into a fact this method can NAME: getservice-absent, -constrained, -null and -threw are four
-    /// different strings, so the resulting SupportsOrderHistory = false stays legible instead of
-    /// collapsing back into "could not look".
+    /// Returns "ok" only when the cache is initialised and can answer for the account actually in
+    /// use. Every other answer is a word naming why not, and the caller keeps walking.
     ///
-    /// The method is looked up on the INTERFACE and invoked on the instance, so an explicit interface
-    /// implementation is found too. Nothing here can throw into ATAS.
+    /// A blank account is refused rather than waved through. That is stricter than it was: the old
+    /// code skipped the account check entirely when no portfolio was bound, so a cache found before
+    /// the chart finished attaching could have turned SupportsOrderHistory true having been confirmed
+    /// against nothing. False is the safe direction for rule 2 and true is the expensive one, and
+    /// the token says which of the two this is, so the false stays actionable.
     /// </summary>
-    static (object? Service, string Note) ResolveService(IAtasDataProvider provider, Type wanted)
+    string Confirm(IAtasCache cache, string? accountId)
     {
         try
         {
-            var definition = typeof(IAtasDataProvider).GetMethods()
+            if (!cache.IsInitialized) return "uninit";
+
+            // A cache that has never heard of this account would answer GetOrders(accountId) with an
+            // empty or short list, and that is precisely the answer that makes "this order does not
+            // exist" look provable when it is not. GetPortfolio is dump-verified on ICache
+            // (`Portfolio GetPortfolio(String accountId)`) and is the cheapest question that settles
+            // it.
+            if (string.IsNullOrWhiteSpace(accountId)) return "unconfirmed-no-account";
+            if (cache.GetPortfolio(accountId) is null) return "foreign";
+
+            return "ok";
+        }
+        catch (Exception ex) { return Fault(ex); }
+    }
+
+    /// <summary>
+    /// The open generic IIndicatorDataProvider.GetService&lt;T&gt;(), looked up on the INTERFACE so
+    /// that an explicit interface implementation is found too. Null when this ATAS build has no such
+    /// method, which is a structural answer rather than a transient one.
+    /// </summary>
+    static MethodInfo? ServiceMethod()
+    {
+        try
+        {
+            return typeof(IAtasDataProvider).GetMethods()
                 .FirstOrDefault(m => m.Name == "GetService"
                                      && m.IsGenericMethodDefinition
                                      && m.GetGenericArguments().Length == 1
                                      && m.GetParameters().Length == 0);
-            if (definition is null) return (null, "getservice-absent");
-
-            MethodInfo bound;
-            try { bound = definition.MakeGenericMethod(wanted); }
-            // Thrown when the type argument violates a constraint the dump could not show us.
-            catch (ArgumentException) { return (null, "getservice-constrained"); }
-
-            // Written as statements rather than a conditional expression: a tuple literal whose
-            // first element is a bare null has no natural type, and relying on target typing through
-            // a conditional is not something to discover on a machine this session cannot compile on.
-            var value = bound.Invoke(provider, null);
-            if (value is null) return (null, "getservice-null");
-            return (value, "getservice");
         }
-        catch (Exception) { return (null, "getservice-threw"); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Calls GetService&lt;T&gt;() reflectively, and this is the one place in the file that reaches
+    /// for reflection on purpose.
+    ///
+    /// The dump records `T GetService()` and does not record generic CONSTRAINTS — it prints none
+    /// anywhere across its 694 types, so their absence is not evidence of absence. If GetService is
+    /// constrained to some ATAS service marker, `GetService&lt;ICache&gt;()` written directly is a
+    /// COMPILE error, on the one file in this product that can only be compiled on a machine this
+    /// session cannot reach. Reflection turns that unknown into a runtime fact the caller can NAME.
+    ///
+    /// A null Fault means the call was made. A null Value with a null Fault therefore means the
+    /// locator answered and had nothing — which is a real answer about registration, and must never
+    /// be collapsed together with the call not having happened at all.
+    /// </summary>
+    static (object? Value, string? Fault) ResolveService(MethodInfo definition, IAtasDataProvider provider, Type wanted)
+    {
+        MethodInfo bound;
+        // Asked per type argument rather than once per method, because a constraint may well admit
+        // IEntityFactory and refuse ICache — and then only the per-route answer is true.
+        try { bound = definition.MakeGenericMethod(wanted); }
+        catch (ArgumentException) { return (null, "constrained"); }
+        catch (Exception ex) { return (null, Fault(ex)); }
+
+        try { return (bound.Invoke(provider, null), null); }
+        catch (Exception ex) { return (null, Fault(ex)); }
+    }
+
+    /// <summary>Reads the control probe: did the locator answer at all, and with this chart's own
+    /// trading manager? See the block comment at its call site for what each word means.</summary>
+    static string ControlNote((object? Value, string? Fault) probe, IAtasDataProvider provider)
+    {
+        if (probe.Fault is { } fault) return fault;
+        if (probe.Value is null) return "null";
+        // The comparison is a bonus, not the point: if reading the property throws, the locator has
+        // still demonstrably answered, and saying so is more useful than discarding that.
+        try { return ReferenceEquals(probe.Value, provider.TradingManager) ? "ok-same" : "ok-other"; }
+        catch (Exception) { return "ok-uncompared"; }
+    }
+
+    /// <summary>Runs one read that belongs to ATAS and cannot be trusted not to throw, turning the
+    /// throw into a named token instead of an escape.</summary>
+    static (object? Value, string? Fault) Attempt(Func<object?> read)
+    {
+        try { return (read(), null); }
+        catch (Exception ex) { return (null, Fault(ex)); }
+    }
+
+    /// <summary>
+    /// One token naming an exception: its type, and enough of its message to act on.
+    ///
+    /// The unwrap is the whole point. MethodInfo.Invoke wraps whatever the target threw in
+    /// TargetInvocationException, whose own message is the content-free "Exception has been thrown
+    /// by the target of an invocation." Reporting THAT would repeat 2026-08-28's `getservice-threw`
+    /// in a longer form: still unable to say whether ICache is simply not registered or the service
+    /// locator does not exist yet, which are the two states with opposite consequences.
+    /// </summary>
+    static string Fault(Exception ex)
+    {
+        var root = ex is TargetInvocationException { InnerException: { } inner } ? inner : ex;
+        var name = Clip(root.GetType().Name, 40);
+        var message = Clip(root.Message, 64);
+        return message.Length == 0 ? $"threw({name})" : $"threw({name}:{message})";
+    }
+
+    /// <summary>
+    /// One bounded, whitespace-free fragment of a diagnostic token.
+    ///
+    /// THE TRUNCATION IS LOAD-BEARING, NOT TIDINESS. Everything built here ends up inside
+    /// BridgeHello.TradingSurface, which travels in the hello frame — a single JSON line on the
+    /// bridge pipe, re-sent on every five-second heartbeat, and read in a terminal. An ATAS
+    /// exception message is not under this product's control: it can carry a database connection
+    /// string, a whole chain of nested messages, or a stack of type names. Letting one through would
+    /// trade a legible diagnostic for a handshake that is unreadable or, at the extreme the frame
+    /// reader guards against, refused outright — and a diagnostic that can break the handshake
+    /// teaches the reader nothing at all.
+    ///
+    /// Whitespace is replaced rather than kept because SurfaceReport joins its fields with spaces: a
+    /// message containing one would silently split into two fields and shift every field after it.
+    /// </summary>
+    static string Clip(string? raw, int max)
+    {
+        if (string.IsNullOrEmpty(raw) || max <= 0) return "";
+        var kept = new char[Math.Min(raw.Length, max)];
+        var n = 0;
+        foreach (var c in raw)
+        {
+            if (n == kept.Length) break;
+            if (char.IsLetterOrDigit(c) || c is '.' or '-' or '_' or ':') kept[n++] = c;
+            // Runs of punctuation collapse to a single dash so the character budget above is spent
+            // on the words rather than on quotes and brackets.
+            else if (n > 0 && kept[n - 1] != '-') kept[n++] = '-';
+        }
+        while (n > 0 && kept[n - 1] == '-') n--;
+        return new string(kept, 0, n);
+    }
+
+    /// <summary>
+    /// The route log as one whitespace-free token: kind(route=outcome,route=outcome,...).
+    ///
+    /// The overall cap is a second, blunter limit on top of the per-message one in <see cref="Clip"/>
+    /// — six routes each naming a long exception could still add up to more than any terminal line
+    /// can show. Routes are listed in the order they were attempted, so cutting the tail loses the
+    /// least, and the cut is marked so a truncated reading is never mistaken for a complete one.
+    /// </summary>
+    static string Joined(string kind, List<string> entries)
+    {
+        const int max = 320;
+        var body = string.Join(',', entries);
+        if (body.Length > max) body = body[..max] + "~cut";
+        return $"{kind}({body})";
     }
 
     public IReadOnlyList<ExecutionInfo> GetExecutions(string accountId, DateTimeOffset? since)
