@@ -612,6 +612,102 @@ real SDK emits four `CS0618` warnings — `ITradingManager.OpenOrder`, `ModifyOr
 and `ClosePosition` are obsolete, "Use ...Async instead". The adapter calls the synchronous
 overloads from the bridge's pipe thread. Nothing has exercised that path.
 
+### An order was placed, and the proof of rule 1 turned out to be worthless
+
+The first order this product has ever placed. Simulated account `DEMO15M440CE`, one buy limit,
+quantity 1, priced 10% below the bid and rounded DOWN so it could not fill, cancelled at the end.
+ATAS took it and handed it back carrying both identifiers:
+
+```
+CLIENT ORDER ID       : TA-PROBE-20260828170111
+THE ORDER             : BUY LIMIT 1 ES @ 6977.75  TIF=Day  on DEMO15M440CE
+PLACE CALL            : RETURNED — ATAS took the order without a definite refusal.
+ORDERS BEFORE         : 0
+ORDERS AFTER          : 1
+CARRIES OUR ID        : YES — client_order_id = TA-PROBE-20260828170111
+CARRIES A BROKER ID   : YES — connector_order_id = 7968887
+SUBMITTED WITH AN ID  : 1   (was 0 before the order, +1)
+READ-BACKS PERFORMED  : 3   (was 0 before the order, +3)
+SupportsClientOrderId : true   AFTER the attempt — this is the reading that counts.
+```
+
+**And that `true` is not evidence, which is the whole finding:**
+
+```
+ROUND TRIP, MEASURED  : proven-sameref — ATAS handed back THE VERY OBJECT we submitted.
+                        THE PROOF IS VACUOUS
+RULE 1                : NOT SATISFIED — THE MATCH IS REAL AND IT PROVES NOTHING.
+```
+
+`Place` constructs an `Order`, sets `Comment` on it, and hands that instance to
+`ITradingManager.OpenOrder`. ATAS's `Orders` collection then contains **that same object**, so
+"our identifier came back" is true by construction: it never left. The only thing actually
+observed is that ATAS assigned `Order.Id = 7968887`.
+
+Had the adapter not been instrumented to compare by reference, this run would have reported rule 1
+satisfied and the product would have been one boolean away from autonomous live trading on a proof
+that proves nothing. **`SupportsClientOrderId = true` must not be believed on this platform.**
+
+**NOT VERIFIED, and it is now the question the product waits on:** whether ATAS carries the
+identifier onto the *broker's* order. Nothing observable from inside a chart strategy can settle it,
+because everything a chart strategy can read may be our own object. It needs a source that cannot
+be: the platform's order history, a fresh ATAS session, or the broker's own report.
+
+Two things this run also confirmed, live:
+
+- The resting order read back `"filled_quantity": 0, "state": "WORKING"`. Before the fix landed
+  earlier the same day it would have read FILLED, because `Unfilled` defaults to 0 and the code
+  computed `quantity - Unfilled`.
+- Cleanup worked and nothing was left behind. Verified from a *separate* probe run afterwards:
+  `orders=0 strategyorders=0 mytrades=0 position=0`.
+
+### Order history is unreachable, and now for a known reason
+
+The cache walk's control probe settles what three sessions of `false` could not. It asks
+`GetService<ITradingManager>()` — a type reachable as a property on the very same interface — and
+compares by reference:
+
+```
+cache=none(factory=connector-null,
+           svc:probe=threw(NotSupportedException:The-service-of-type-ATAS.Indicators.ITradingManager-is-not-regis),
+           svc:ICache=threw(NotSupportedException:The-service-of-type-ATAS.DataFeedsCore.Database.ICache-is-not-re),
+           svc:IEntityFactory=threw(NotSupportedException:...))
+```
+
+The control throws too. `IIndicatorDataProvider.GetService<T>()` registers nothing usable, so every
+cache route is dead and `SupportsOrderHistory = false` is an **answer** rather than a gap. Without
+the control probe, `svc:ICache=threw` would have read as "try another type".
+
+Consequence, and it is the correct one: `ReconciliationProvable` is false, and `TradingGateway`
+refuses `LIVE_AUTONOMOUS` with `AUTONOMY_REQUIRES_PROVABLE_STATE`. Paper and attended live trading
+are unaffected.
+
+### The bridge had never seen a price
+
+`_quotes` was fed only from `IDataFeedConnector` events, and `Connector` is null, so no tick had ever
+arrived. The order test is what found it, by refusing to place:
+
+```
+QUOTE (raw)      : {"symbol":"ES","at":"0001-01-01T00:00:00+00:00"}
+REFUSED TO PLACE : THE QUOTE CARRIES NO USABLE BID.
+```
+
+Wired to `IOnlineDataProvider.BestBidAskChanged` / `NewTrades`, with `ChartStrategy.BestBid/BestAsk`
+as an on-demand fallback. Live afterwards:
+
+```
+quote=event(bid=7753.75,ask=7754.00,age=8544s,kind=unspecified)
+```
+
+That reading also settled `MarketDataArg.Time`'s `DateTimeKind`, which the API dump does not state.
+8544s is ~2 hours over the true age; this machine is UTC+2 and the feed is dxFeed 15-minute delayed,
+so **ATAS stamps UTC and labels it `Unspecified`**. Corrected. The guard that unsets `At` for any
+quote stamped more than 60s in the future stays, because that is a measurement of one platform on
+one machine and the sign of the error flips west of Greenwich.
+
+**NOT VERIFIED: the corrected conversion.** It was changed after the run above and has not been
+redeployed. One `probe atas` settles it — `age` should read ~900s, not ~8100s.
+
 ### The machine survives an unattended reboot — and came back unable to drive itself
 
 Autologon had been configured but never taken through a boot. It works:

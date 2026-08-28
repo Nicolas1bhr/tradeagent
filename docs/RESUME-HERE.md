@@ -10,19 +10,29 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## The one sentence to carry
 
-**The adapter is rewired onto `ITradingManager` and the reads work — and the machine survived its
-first unattended reboot, but came back unable to drive its own desktop and with the bridge gone from
-the chart.** Both of those were fixed today; the second one is the more important finding, because
-it was silent.
+**An order was placed, ATAS handed it back carrying our identifier and a broker id, and the proof is
+worthless — because the object it handed back is the one we gave it.**
 
-Where that leaves the two booleans the whole product waits on:
+```
+CARRIES OUR ID       : YES — client_order_id = TA-PROBE-20260828170111
+CARRIES A BROKER ID  : YES — connector_order_id = 7968887
+SupportsClientOrderId: true
+ROUND TRIP, MEASURED : proven-sameref — ATAS handed back THE VERY OBJECT we submitted.
+RULE 1               : NOT SATISFIED — THE MATCH IS REAL AND IT PROVES NOTHING.
+```
 
-- `SupportsClientOrderId` — **still false, still because nothing has been placed.** The bridge
-  reports `client_order_id_attempts: 0`, which is the honest reading, not a failure. Step 1 below.
-- `SupportsOrderHistory` — **still false, but the false has changed meaning.** It used to mean "could
-  not look" (`Connector` was null, so `HistoryCache()` could only return null). It now means
-  "looked, and `IIndicatorDataProvider.GetService` threw" — a fact about ATAS rather than about our
-  wiring.
+`Place` sets `Comment` on an `Order` and hands that instance to ATAS; ATAS's `Orders` collection then
+holds the same object, so "the id came back" is true by construction. **Do not believe
+`SupportsClientOrderId = true` on this platform, and do not "fix" it by trusting the boolean.**
+
+Where the two autonomy gates now stand:
+
+- `SupportsClientOrderId` — reads **true**, and is **not evidence**. See above.
+- `SupportsOrderHistory` — **false, and finally for a known reason.** `GetService<T>()` throws
+  `NotSupportedException` for *every* type including one reachable as a property on the same
+  interface, so no cache route exists. That is an answer, and a shippable one.
+
+`ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. That is correct.
 
 ## The rule that shapes every design decision
 
@@ -34,65 +44,62 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
-## Where the machine is right now (2026-08-28, 15:30)
+## Where the machine is right now (2026-08-28, 17:15)
 
-Verified today, in this order, each with the output quoted in `BUILD-STATUS.md`:
+- **Console session, autologon, and the UI agent all come back by themselves.** Verified through
+  three unattended reboots: `session: Active (id 1, console)`, `desktop: live`, agent
+  `interactive=True` ~35s after boot, screen capture working. The agent runs from
+  `C:\ta\agent\bin` — **not** the repo, and that is load-bearing (trap 21).
+- **ATAS is running, signed in, portfolio `DEMO15M440CE`,** with the bridge added to the ES 5m chart
+  and activated. `probe atas` answers immediately.
+- **Nothing is resting and there is no position.** Confirmed after the test order by a separate run:
+  `orders=0 strategyorders=0 mytrades=0 position=0`.
+- The bridge deployed there is one commit behind: the quote-timestamp fix is committed but **not
+  deployed**. See step 2.
 
-- **The console session, not RDP.** The machine rebooted at 15:04 and logged itself in
-  (`session: Active (id 1, console)`, `desktop: live`). Autologon works unattended — that claim is
-  now measured rather than configured.
-- **Screen capture works again**, because the session is the console one. Every visual judgement
-  before today was made against the app on macOS or not at all; `tools/win-ui.sh shot` now returns
-  a real desktop at 2560x1440.
-- **The UI agent runs from `C:\ta\agent\bin`, NOT from the repo.** This moved today and it is
-  load-bearing — see trap 21.
-- **ATAS is running, signed in**, portfolio `DEMO15M440CE`, with the rewired bridge added to the ES
-  5m chart and **activated**. `probe atas` answers in under a second.
-
-Check all of it in two commands before assuming any of it:
+Check it in two commands before assuming any of it:
 
 ```bash
 tools/win-state.sh
 tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
 ```
 
-**The reboot question is answered, and the answer is worse than expected.** ATAS restores the
-workspace — both charts, the layout, the account, all four connections — but **does not restore the
-chart strategy at all.** After the reboot, "Selected strategies" was empty on *both* ES charts: the
-bridge was not merely stopped, it was gone. Recovery is the full re-add below, not a single Start.
-Nothing anywhere says the bridge is missing; the pipe simply never answers.
+**Swapping the bridge DLL means closing ATAS, and closing ATAS is fiddly** (traps 22 and 23). The
+reliable route turned out to be a reboot: it force-closes ATAS, releases the DLL, and re-verifies the
+unattended-recovery path in one go, at about 70 seconds. Use it rather than fighting the modals — but
+note that a force-close does **not** save the workspace, so the strategy comes back only if the
+workspace was saved earlier (trap 24).
 
 ## What to do next, in order
 
-1. **Place one order on the simulated account and read the client order id back.** This is the
-   single fact the product waits on, and everything else is now ready for it. Both portfolios are
-   simulated — `DEMO15M440CE` (ES@CME) and `CRYPTO5EB41` (BTCUSDT@BinanceFutures), 100,000 each —
-   so nothing is at risk.
+1. **Settle rule 1 from a source that cannot be our own object.** This is now the only thing between
+   the product and autonomous trading, and nothing observable from inside a chart strategy can
+   answer it — everything a chart strategy reads may be the instance we submitted. Three candidate
+   sources, in order of cheapness:
+   - **A fresh ATAS session.** Place an order, restart ATAS, and read the order book. Anything that
+     survives a process restart cannot be our object. This is the cheapest real proof and it needs
+     no new code — the re-add recipe below is a minute's work.
+   - The platform's order history. Currently unreachable (see the cache walk), so not this one yet.
+   - The broker's own report of the order, outside ATAS entirely.
 
-   `probe atas --place-test-order --yes` places ONE buy limit far below market so it rests unfilled,
-   reads it back out of ATAS's own order collection, and cancels it. It refuses outright unless the
-   live handshake says `is_simulated: true`.
+   Until one of them answers, treat `SupportsClientOrderId` as unproven regardless of what it reads.
 
-   The probe reports *why* a false is false, from the bridge's own counters rather than an
-   inference: `NOTHING WAS EVER ATTEMPTED`, `ATTEMPTED BUT NEVER CHECKED`, or `THE READ-BACK
-   GENUINELY FAILED`. **Only the last is evidence about ATAS.** If that verdict disagrees with the
-   order-book reading printed under `AND, INDEPENDENTLY`, believe neither until it is explained.
+2. **Redeploy and confirm the quote timestamp fix.** `MarketDataArg.Time` is stamped UTC and labelled
+   `Unspecified`; the conversion was corrected after the last run and has **not been redeployed**.
+   One `probe atas` settles it: `quote=event(...,age=...)` should read ~900s (the dxFeed 15-minute
+   delay), not ~8100s. While it reads 8100s every quote looks two hours stale and the gateway
+   cannot size an order.
 
-2. **Settle whether an order-history cache is reachable at all.** `cache=` in `trading_surface` now
-   names the exception when a route throws. If every route is dead, `SupportsOrderHistory` is false
-   for a known reason and the gateway correctly withholds autonomous live trading — which is an
-   answer, and a shippable one. Do not hard-code it true to get past it.
+3. **Decide the sync-vs-async order call.** The four `CS0618` warnings are real — the SDK deprecates
+   `OpenOrder`/`ModifyOrder`/`CancelOrder`/`ClosePosition` in favour of the Async overloads. The
+   synchronous ones now have one live data point: the order above placed cleanly from the bridge's
+   pipe thread and returned in under two seconds, so they are not GUI-affine in any way that blocks.
+   That removes the urgency but not the deprecation. Switching moves every refusal from "thrown out
+   of the call" to "faulted task", and rule 3's classification is built on the first shape — so it
+   is a deliberate change with its own test, not a tidy-up.
 
-3. **Decide the sync-vs-async order call.** Building the bridge against the real SDK emits four
-   `CS0618` warnings: `ITradingManager.OpenOrder`, `ModifyOrder`, `CancelOrder` and `ClosePosition`
-   are **obsolete — "Use OpenOrderAsync instead"**. The adapter currently calls the synchronous
-   overloads from the bridge's pipe thread. That is unmeasured, not chosen: if step 1 places an
-   order cleanly, the sync path works and this is a tidy-up; if it hangs or throws a threading
-   error, `IIndicatorDataProvider.DoActionInGuiThread(Action)` exists and marshalling is the fix.
-   **Marshalling changes the error path, so settle this before any live order.**
-
-4. **Walk the setup journey and look at it.** Now genuinely doable: captures work
-   (`tools/win-ui.sh shot`). Nothing before today had ever been seen on Windows.
+4. **Walk the setup journey and look at it.** Captures work. Nothing in the app itself has ever been
+   seen on Windows.
 
 5. Only then the staged live trial: paper → extended paper run → one tiny live order →
    disconnect/recovery test → autonomous live permission.
@@ -293,11 +300,21 @@ Each of these cost real time. None is obvious from the code.
       again). Its "Don't show this message again" was ticked on this machine on 2026-08-28, so an
       unattended re-activation is not blocked by it — expect it once on a fresh machine.
 
-24. **ATAS restores its workspace but NOT its chart strategies.** After a reboot the charts, layout,
-    account and all four connections came back exactly as saved, and "Selected strategies" was empty
-    on both ES charts. The bridge is not stopped, it is absent. There is no message and no visible
-    difference — the pipe simply never answers, which reads identically to a bridge that failed to
-    load (trap 12) or a folder ATAS is not watching (trap 7).
+24. **ATAS restores a chart strategy STOPPED, and only if the workspace was saved after it was
+    added.** Measured across three reboots on 2026-08-28, and the first reading was wrong — it is
+    recorded here because the wrong version is the intuitive one:
+    - Reboot 1: "Selected strategies" was **empty on both ES charts**. The strategy had been added
+      the previous day and the workspace had never been saved since, and the reboot force-closed
+      ATAS. It was recorded as "ATAS does not restore strategies". That was wrong.
+    - Reboots 2 and 3: the strategy came back, listed in "Selected strategies", **stopped** — the
+      row shows the ▶ play control rather than the ■ stop control.
+
+    So the rule is: the workspace persists the strategy if it was saved after the add, and it always
+    comes back **stopped**. The bridge only starts on `StrategyStates.Started`, so it never dials in
+    and `probe atas` times out — which looks identical to a bridge that failed to load (trap 12) or
+    a folder ATAS is not watching (trap 7). Recovery is one click on `PART_ActivateButton`, not a
+    re-add — **but check "Selected strategies" before pressing Add**, or you get two bridges
+    competing for one named pipe. That happened, and it is only obvious from the icon on each row.
 
 25. **The ATAS SDK marks the synchronous order calls obsolete.** Building against ATAS 8.0.14.397
     emits `CS0618` for `ITradingManager.OpenOrder`, `ModifyOrder`, `CancelOrder` and `ClosePosition`
@@ -311,6 +328,20 @@ Each of these cost real time. None is obvious from the code.
     empty — and an empty script runs fine and prints nothing, which reads as "the machine did not
     answer". It now refuses. Three other `win-*.sh` scripts also required env vars they never
     sourced, so they failed on the first call of every session with `TA_WIN_HOST: set TA_WIN_HOST`.
+
+
+27. **A .NET assembly stores metadata names as UTF-8 and string literals as UTF-16, so the trap-8
+    identity check silently fails on literals.** Grepping a freshly built DLL for `AtasStrategyAdapter`
+    (a type name) works. Grepping the same DLL for `proven-sameref` (a string literal) returns
+    *absent* even though the code is right there — the bytes are UTF-16. That reads as "the build did
+    not take", and the natural next move is to rebuild and redeploy something that was already
+    correct. Check names as ASCII and literals as `[Text.Encoding]::Unicode`.
+
+28. **A green `dotnet build TradeAgent.sln` did not mean the probe compiled — it was not in the
+    solution.** `tools/probe` built only when invoked directly, so a two-argument mistake survived a
+    clean local build and a clean test run, and surfaced on the Windows machine mid-run, after a
+    push and a bridge rebuild. It is in the solution now. This is trap 8 one level further out: a
+    green build was not merely weak proof, it was proof about a different set of files.
 
 ## How the last session was run
 

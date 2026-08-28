@@ -1700,10 +1700,29 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     {
         if (t == default) return DateTimeOffset.MinValue;
         if (t.Kind == DateTimeKind.Utc) return new DateTimeOffset(t, TimeSpan.Zero);
-        // Unspecified is treated as local, per above; Local already is. DateTimeOffset throws rather
-        // than saturating when a garbage DateTime near the extremes is shifted by the local offset,
-        // and a diagnostic must never be the thing that takes a read down.
-        try { return new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Local)); }
+        if (t.Kind == DateTimeKind.Local) return new DateTimeOffset(t);
+
+        // MEASURED, 2026-08-28, ATAS 8.0.14.397: Unspecified means UTC.
+        //
+        // This branch used to read Unspecified as LOCAL, reasoning that on a UTC+2 machine the
+        // opposite mistake would stamp the quote in the FUTURE, make UtcNow - At negative, and leave
+        // IsStale returning false for a quote of any age — silently disabling the only check between
+        // the gateway and a dead book. The reasoning was sound and the premise was wrong. The live
+        // reading settled it in one run:
+        //
+        //   quote=event(bid=7753.75,ask=7754.00,age=8544s,kind=unspecified)
+        //
+        // 8544s is a hair over two hours plus the feed's own delay. This machine is UTC+2 and the ES
+        // feed is dxFeed 15-minute delayed, so the true age is ~900s and the extra 7200s is exactly
+        // this conversion. Read as local, every quote looks two hours stale, IsStale refuses all of
+        // them, and the gateway can never size an order — the failure is total rather than subtle,
+        // which is the only reason it was cheap to find.
+        //
+        // The safety net below is what actually makes this safe, and it stays regardless: it is a
+        // measurement of one platform on one machine, and the sign of the error flips west of
+        // Greenwich. Compose() still unsets At for anything stamped more than 60s in the future, so
+        // being wrong in either direction refuses the quote rather than trusting it.
+        try { return new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc), TimeSpan.Zero); }
         catch (ArgumentOutOfRangeException) { return DateTimeOffset.MinValue; }
     }
 
