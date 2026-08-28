@@ -705,8 +705,14 @@ so **ATAS stamps UTC and labels it `Unspecified`**. Corrected. The guard that un
 quote stamped more than 60s in the future stays, because that is a measurement of one platform on
 one machine and the sign of the error flips west of Greenwich.
 
-**NOT VERIFIED: the corrected conversion.** It was changed after the run above and has not been
-redeployed. One `probe atas` settles it — `age` should read ~900s, not ~8100s.
+**Verified after redeploying the correction**, same machine, same feed, ~40 minutes later:
+
+```
+quote=event(bid=7764.50,ask=7764.75,age=1383s,kind=unspecified)
+```
+
+`8544 - 7200 = 1344`, and this reads 1383 — the two-hour offset is gone and what remains is the
+dxFeed delay plus the gap since the last tick. Unspecified is UTC on this platform.
 
 ### The machine survives an unattended reboot — and came back unable to drive itself
 
