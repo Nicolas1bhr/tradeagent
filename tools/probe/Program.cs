@@ -359,6 +359,13 @@ static class AtasProbe
         Line("ATAS VERSION (hello)", Blank(hello.AtasVersion));
         Line("ACCOUNT ID (hello)", Blank(hello.AccountId));
 
+        // The adapter's own account of what it bound to. This is the line that separates "I could
+        // not look" from "I looked and there was nothing" — and the line that would have caught
+        // ChartStrategy.Connector being null without costing a live run to discover it.
+        Line("TRADING SURFACE", hello.TradingSurface is { Length: > 0 } surface
+            ? surface
+            : "NOT REPORTED — this bridge predates the trading-surface field");
+
         if (!compatible) { server.Dispose(); return 1; }
 
         // ---------------------------------------------- phase B: the product's own connector path
@@ -729,6 +736,7 @@ static class AtasProbe
         Cmp("client_order_id_attempts", a.ClientOrderIdAttempts, b.ClientOrderIdAttempts);
         Cmp("client_order_id_checks", a.ClientOrderIdChecks, b.ClientOrderIdChecks);
         Cmp("supports_order_history", a.SupportsOrderHistory, b.SupportsOrderHistory);
+        Cmp("trading_surface", a.TradingSurface, b.TradingSurface);
         Cmp("supports_modify", a.SupportsModify, b.SupportsModify);
         Cmp("supports_close_position", a.SupportsClosePosition, b.SupportsClosePosition);
         return diffs;

@@ -32,6 +32,11 @@ public sealed class LoopbackAtasAdapter : IAtasAdapter
         IsSimulated = true,
         SupportsClientOrderId = true,
         SupportsOrderHistory = true,
+        // Trap 9: a field that is only ever populated by the real adapter is a field no test ever
+        // carries across the wire. The loopback states its own surface for that reason — not to
+        // imitate ATAS, but so the framing, serialisation and probe rendering of this field are
+        // exercised by the suite rather than first tried on a live chart.
+        TradingSurface = "loopback DataProvider=ok TradingManager=ok Connector=null orders=0 cache=none(loopback)",
         SupportsModify = true,
         SupportsClosePosition = true
     };
