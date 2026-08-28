@@ -84,7 +84,11 @@ namespace TradeAgent.AtasBridge;
 ///   1. ClientOrderId travels on <see cref="AtasOrder.Comment"/> and is read back out of ATAS's own
 ///      order collection. Describe() reports SupportsClientOrderId only after the round trip has
 ///      actually been OBSERVED at runtime, for an id THIS adapter submitted (see
-///      <see cref="ProveClientOrderId"/>). It is false until then.
+///      <see cref="ProveClientOrderId"/>). It is false until then. What that observation is WORTH
+///      depends on whose object came back: Place hands ATAS the instance it constructed, so a match
+///      against that same instance proves only that ATAS assigned an Id. TradingSurface reports
+///      which of the two happened, as coid=proven-distinct or coid=proven-sameref. Nothing keys off
+///      it yet, deliberately — one live reading first.
 ///   2. SupportsOrderHistory is ANSWERED AT RUNTIME. The one order-history query in the whole ATAS
 ///      surface lives on <see cref="IAtasCache"/>; <see cref="ProbeCache"/> tries every route to one
 ///      that exists on this platform and reports which route answered, so a false is legible as
@@ -137,6 +141,30 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     bool? _lastConnected;
 
     bool _clientOrderIdProven;
+
+    /// <summary>
+    /// WHAT THE RULE-1 READ-BACK ACTUALLY OBSERVED — which is not the same question as whether it
+    /// matched.
+    ///
+    /// <see cref="Place"/> hands ATAS the very Order instance it constructed and set Comment on, and
+    /// the rest of Place assumes ATAS mutates that same instance. If ATAS's own collection simply
+    /// CONTAINS that instance, then "an order in ATAS's collection carries our client id" is true by
+    /// construction — the adapter is reading its own field back off its own object — and the only
+    /// thing genuinely proven is that ATAS assigned an Id. The round trip through the platform's own
+    /// storage, which is the thing reconciliation after a dropped pipe depends on, would not have
+    /// been demonstrated at all. Reporting SupportsClientOrderId = true off that reading would be
+    /// rule 1 faked, which is the one thing rule 1 names.
+    ///
+    /// So the proof records WHICH object carried the id back. Reference-equal to the one we
+    /// submitted: vacuous. A different object: ATAS really did carry our identifier onto something
+    /// this adapter did not write. Surfaced in BridgeHello.TradingSurface as coid=..., and
+    /// deliberately NOT yet wired into SupportsClientOrderId — one live reading first, and one
+    /// variable at a time.
+    /// </summary>
+    CoidProof _clientOrderIdProof;
+
+    /// <inheritdoc cref="_clientOrderIdProof"/>
+    enum CoidProof { NotProven, SameRef, Distinct }
 
     /// <summary>
     /// What a false <c>SupportsClientOrderId</c> is actually saying. Attempts counts the orders we
@@ -364,6 +392,8 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 $"portfolio={Token(portfolio?.AccountID)}",
                 $"security={Token(SymbolOf(BoundSecurity))}",
                 $"position={(trading?.Position is { } p ? p.Volume.ToString(CultureInfo.InvariantCulture) : "none")}",
+                // Rule 1's reading, and the only token that says whether the proof is worth anything.
+                $"coid={ClientOrderIdToken()}",
                 $"cache={cacheNote}");
         }
         catch (Exception ex)
@@ -386,6 +416,39 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         if (string.IsNullOrWhiteSpace(raw)) return "none";
         var kept = new string(raw.Where(c => !char.IsControl(c) && !char.IsWhiteSpace(c)).Take(24).ToArray());
         return kept.Length == 0 ? "none" : kept;
+    }
+
+    /// <summary>
+    /// The rule-1 read-back, in one token, with the five readings kept apart because they mean five
+    /// different things and only one of them is proof:
+    ///
+    ///   unattempted      no order carrying a client order id has been submitted yet. Says nothing
+    ///                    about ATAS.
+    ///   unchecked        one was submitted, and no read-back has ever run — there was no trading
+    ///                    surface to look in at the moment it would have. Still says nothing.
+    ///   notfound         a read-back RAN and no order in ATAS's own collection carried our id with a
+    ///                    broker-assigned Id on it. This one is evidence, and it is negative.
+    ///   proven-sameref   an order carried it back — and it is REFERENCE-EQUAL to the instance this
+    ///                    adapter submitted. ATAS handed us our own object, so the comment match was
+    ///                    true by construction and proves nothing beyond Order.Id being assigned.
+    ///                    MUST NOT be trusted as a round trip.
+    ///   proven-distinct  a genuinely different object carried our identifier. That is the round trip
+    ///                    rule 1 asks about, actually observed.
+    ///
+    /// Diagnostic only, on purpose: SupportsClientOrderId does not read this yet. The two proven
+    /// readings are being measured live before anything is allowed to branch on them.
+    /// </summary>
+    string ClientOrderIdToken()
+    {
+        CoidProof proof;
+        int attempts, checks;
+        lock (_gate) { proof = _clientOrderIdProof; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
+        return proof switch
+        {
+            CoidProof.Distinct => "proven-distinct",
+            CoidProof.SameRef => "proven-sameref",
+            _ => attempts == 0 ? "unattempted" : checks == 0 ? "unchecked" : "notfound"
+        };
     }
 
     // ---------------------------------------------------------------- reads
@@ -513,6 +576,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 "than that, so this history would be incomplete and must not be treated as proof");
 
         var byKey = new Dictionary<string, OrderInfo>(StringComparer.Ordinal);
+        // An order nothing identifies has no key to be deduplicated by — see OrderKey — and
+        // deduplicating several of them onto one empty key would DROP working orders from this list.
+        // A duplicate is a cosmetic problem; an order missing from the book the gateway reconciles
+        // against is the problem this whole file exists to avoid. So they are listed, not merged.
+        var keyless = new List<OrderInfo>();
 
         void Take(AtasOrder o)
         {
@@ -523,6 +591,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 if (!includeInactive) return;
                 if (since is not null && info.At < since.Value) return;
             }
+            if (info.ConnectorOrderId.Length == 0) { keyless.Add(info); return; }
             // First writer wins, and the live book is read first: a cached copy must never displace
             // the object ATAS is still updating.
             byKey.TryAdd(info.ConnectorOrderId, info);
@@ -530,7 +599,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         foreach (var o in LiveOrders()) Take(o);
         if (cache is not null) foreach (var o in Items<AtasOrder>(cache.GetOrders(accountId))) Take(o);
-        return [.. byKey.Values];
+        return [.. byKey.Values, .. keyless];
     }
 
     /// <summary>What a cache probe found, and — just as important — how it failed when it did not.
@@ -933,6 +1002,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         lock (_gate)
         {
             Trim();
+            // Both lines, and they are the same key today: Comment IS the client order id on an order
+            // this method just built. ClearFailures is here anyway because it is the one thing that
+            // stays in step with Lookup — a stale reason left under any key the lookup can reach is
+            // read back as a fresh refusal the instant this order is submitted.
+            ClearFailures(order);
             _failures.Remove(cmd.ClientOrderId);
             _submitted[cmd.ClientOrderId] = order;
             // Counted here rather than after the round trip, because the question this answers is
@@ -979,7 +1053,14 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         if (Failure(cmd.ClientOrderId, order) is { } refusal)
             throw new AtasRejectedException(refusal);
 
-        ProveClientOrderId(cmd.ClientOrderId);
+        // GUARDED, and the guard is the whole point. This is a diagnostic, and it enumerates ATAS's
+        // own order collection — which ATAS may be mutating on its own thread at precisely this
+        // moment, because the order was just added to it. Unguarded, a "Collection was modified"
+        // thrown in here propagates out of Place for an order that was placed perfectly well, and the
+        // gateway records UNKNOWN and goes reconciling a success. A diagnostic must never change the
+        // outcome of the operation it observes; the identical call in OnOrderPayload is Guarded for
+        // the same reason, and so are SurfaceReport's counts.
+        Guard(() => ProveClientOrderId(cmd.ClientOrderId));
         return ToOrder(order, null);
     }
 
@@ -1001,7 +1082,12 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         if (cmd.StopPrice is { } sp) replacement.TriggerPrice = ATAS.Strategies.ATM.Extensions.ShrinkPrice(sec, sp);
 
         var key = OrderKey(order);
-        lock (_gate) _failures.Remove(key);
+        // EVERY key Lookup can match on, not just this one. Clearing only OrderKey let a single
+        // OrderCancelFailed recorded against this order under its client id survive, and then every
+        // later modify of it was submitted to the broker and unconditionally reported as a definite
+        // refusal on the strength of a reason that belonged to a cancel that had already happened.
+        // Rule 3: AtasRejectedException is for a definite refusal of THIS request and nothing else.
+        lock (_gate) ClearFailures(order);
 
         // Same flag reasoning as Place: askConfirmation: false is rule 4, not a preference.
         // ChartStrategy.ModifyOrder(order, newOrder) is not used for the same reason its OpenOrder is
@@ -1022,42 +1108,143 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         return ToOrder(order, null);
     }
 
-    public void Cancel(string connectorOrderId)
+    /// <summary>
+    /// What a cancel actually achieved. FOUR outcomes, not two, because Cancel and CancelAll have to
+    /// react differently to the same events and "void, or an exception" cannot carry the difference:
+    ///
+    ///   * a pre-flight refusal and a broker refusal are both AtasRejectedException to a caller, and
+    ///     they are opposites for the book — the first means nothing was sent, the second means the
+    ///     order is STILL WORKING. CancelAll swallowed both as "nothing is live";
+    ///   * a cancel that was submitted and never acknowledged is neither a success nor a refusal, and
+    ///     returning void reported it to the operator as a completed cancellation.
+    /// </summary>
+    enum CancelResult
+    {
+        /// <summary>ATAS reported the order finished. Nothing is live.</summary>
+        Confirmed,
+
+        /// <summary>Refused before anything was submitted — already finished, or not an order ATAS
+        /// knows. Nothing was sent, so this cancel left nothing new live.</summary>
+        NotSubmitted,
+
+        /// <summary>The broker refused the cancellation. THE ORDER IS STILL WORKING.</summary>
+        Refused,
+
+        /// <summary>Submitted, and ATAS said nothing either way inside AckTimeout. The order may be
+        /// cancelled, may be working, may have filled. Rule 3's "anything ambiguous".</summary>
+        Unconfirmed
+    }
+
+    /// <summary>
+    /// The one cancel implementation. It CLASSIFIES rather than throwing, so that the two callers can
+    /// each be truthful: <see cref="Cancel"/> has only exceptions to speak with, and CancelAll needs
+    /// to tell "already finished" apart from "the broker said no and it is still on the book".
+    /// </summary>
+    (CancelResult Result, string Detail) CancelCore(string connectorOrderId)
     {
         var trading = RequireTrading();
-        var order = FindOrder(connectorOrderId)
-            ?? throw new AtasRejectedException($"ATAS does not know order '{connectorOrderId}'; nothing was submitted");
+        var order = FindOrder(connectorOrderId);
+        if (order is null)
+            return (CancelResult.NotSubmitted, $"ATAS does not know order '{connectorOrderId}'; nothing was submitted");
         if (order.State is AtasOrderStates.Done or AtasOrderStates.Failed)
-            throw new AtasRejectedException("order is not cancellable; nothing was submitted");
+            return (CancelResult.NotSubmitted, "order is not cancellable; nothing was submitted");
 
         var key = OrderKey(order);
-        lock (_gate) _failures.Remove(key);
+        // Every key Lookup reads, for the same reason as Modify: one earlier OrderCancelFailed
+        // recorded under this order's client id used to make every later cancel of it report a
+        // definite broker refusal that had already happened once. Rule 3.
+        lock (_gate) ClearFailures(order);
 
         trading.CancelOrder(order, askConfirmation: false, checkOrderStates: true);
 
         WaitFor(() => Failure(key, order) is not null || order.State is AtasOrderStates.Done or AtasOrderStates.Failed);
-        if (Failure(key, order) is { } refusal) throw new AtasRejectedException(refusal);
+        if (Failure(key, order) is { } refusal) return (CancelResult.Refused, refusal);
+        if (order.State is AtasOrderStates.Done or AtasOrderStates.Failed) return (CancelResult.Confirmed, "");
+
+        return (CancelResult.Unconfirmed,
+            $"the cancellation of '{connectorOrderId}' was submitted and ATAS did not confirm it within " +
+            $"{AckTimeout.TotalSeconds:0}s; the order may still be working and must be reconciled, not assumed gone");
     }
 
     /// <summary>
-    /// Best effort by design. One order ATAS definitively refuses to cancel (already done, already
-    /// gone) must not stop the rest from being pulled — that is the emergency path. Anything
-    /// ambiguous is different: those ids are collected and thrown afterwards, as an ordinary
-    /// exception, so the gateway reconciles them instead of assuming they are flat.
+    /// IAtasAdapter.Cancel returns void, so the only way to say "submitted, unconfirmed" is to not
+    /// return normally — and it must not return normally, because a silent return is read all the way
+    /// up as a completed cancellation. An ordinary exception is exactly right for it: the bridge
+    /// sends rejected=false, the connector raises ConnectorTransportException, and the gateway
+    /// settles the request UNKNOWN and pauses execution capability with "a cancellation is
+    /// unconfirmed" — which is the truth. Rule 3, from the side people forget.
+    ///
+    /// Both refusals stay AtasRejectedException because both are definite. Note what a REFUSED cancel
+    /// does not mean: the order is still working. Only CancelAll can act on that difference, and it
+    /// reads <see cref="CancelCore"/> directly to get it.
+    /// </summary>
+    public void Cancel(string connectorOrderId)
+    {
+        var (result, detail) = CancelCore(connectorOrderId);
+        switch (result)
+        {
+            case CancelResult.Confirmed: return;
+            case CancelResult.NotSubmitted:
+            case CancelResult.Refused: throw new AtasRejectedException(detail);
+            default: throw new InvalidOperationException(detail);
+        }
+    }
+
+    /// <summary>
+    /// Best effort by design. One order ATAS definitively refuses to cancel because it is already
+    /// finished must not stop the rest from being pulled — that is the emergency path.
+    ///
+    /// WHAT THIS USED TO GET WRONG: it caught AtasRejectedException and dropped it, commented
+    /// "definitively not cancellable; nothing is live". True of a pre-flight refusal. FALSE of a
+    /// broker-refused cancel, which means the broker declined to pull an order that is STILL ON THE
+    /// BOOK — and such an order appeared in neither the cancelled list nor the ambiguous one, so the
+    /// operator was told the book was clear while it was not. On the emergency path.
+    ///
+    /// Three ways this can now fail to clear an order, kept apart in the message because they need
+    /// different actions: still working (go cancel it another way), unaddressable (visible with no id
+    /// to cancel by), and unknown (reconcile it). Only a confirmed cancellation is reported as one.
     /// </summary>
     public IReadOnlyList<string> CancelAll(string accountId)
     {
         var cancelled = new List<string>();
+        var working = new List<string>();
+        var unaddressable = new List<string>();
         var ambiguous = new List<string>();
-        foreach (var id in GetOrders(accountId, includeInactive: false, since: null).Select(o => o.ConnectorOrderId))
+
+        foreach (var o in GetOrders(accountId, includeInactive: false, since: null))
         {
-            try { Cancel(id); cancelled.Add(id); }
-            catch (AtasRejectedException) { /* definitively not cancellable; nothing is live */ }
+            var id = o.ConnectorOrderId;
+            if (id.Length == 0)
+            {
+                // Nothing identifies it, so there is no id to send a cancel with. Silence here would
+                // be the same lie in a quieter form.
+                unaddressable.Add($"{o.Symbol} {o.Side} {o.Quantity} ({o.ClientOrderId ?? "no client order id"})");
+                continue;
+            }
+            try
+            {
+                switch (CancelCore(id).Result)
+                {
+                    case CancelResult.Confirmed: cancelled.Add(id); break;
+                    case CancelResult.NotSubmitted: break;
+                    case CancelResult.Refused: working.Add(id); break;
+                    default: ambiguous.Add(id); break;
+                }
+            }
             catch (Exception) { ambiguous.Add(id); }
         }
+
+        var problems = new List<string>();
+        if (working.Count > 0)
+            problems.Add($"still working after the broker refused to cancel: {string.Join(", ", working)}");
+        if (unaddressable.Count > 0)
+            problems.Add($"on the book with no id to cancel by: {string.Join(", ", unaddressable)}");
         if (ambiguous.Count > 0)
+            problems.Add($"unknown outcome: {string.Join(", ", ambiguous)}");
+        if (problems.Count > 0)
             throw new InvalidOperationException(
-                $"cancel-all finished with an unknown outcome for {string.Join(", ", ambiguous)}; these must be reconciled");
+                $"cancel-all did not clear the book — {string.Join("; ", problems)}. Cancelled " +
+                $"{cancelled.Count}. These must be dealt with, not assumed flat");
         return cancelled;
     }
 
@@ -1096,7 +1283,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         }
         if (position is null) return null;
 
-        var before = new HashSet<string>(LiveOrders().Select(OrderKey), StringComparer.Ordinal);
+        // Reference identity, not OrderKey. An order ATAS has not identified yet has no key to be
+        // diffed by — they all used to collapse onto one string — and "is this the same object I
+        // already saw" is exactly the question a before/after diff is asking. LiveOrders yields each
+        // entity once by the same identity, so the two agree.
+        var before = new HashSet<AtasOrder>(LiveOrders());
 
         // Same flags, same reasons. The boolean this returns has no documented meaning in the dump,
         // so it is NOT treated as a definite refusal — a false becomes part of the message below if
@@ -1107,7 +1298,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         WaitFor(() =>
         {
             created = LiveOrders()
-                .FirstOrDefault(o => !before.Contains(OrderKey(o)) && SymbolMatches(o.Security, o.SecurityId, symbol));
+                .FirstOrDefault(o => !before.Contains(o) && SymbolMatches(o.Security, o.SecurityId, symbol));
             return created is not null;
         });
 
@@ -1331,12 +1522,17 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         lock (_gate)
         {
+            // Identities only, and exactly the list Lookup reads back. OrderKey used to be written
+            // here too, and for an order ATAS had not identified yet that key was "ext:0" — SHARED by
+            // every such order. A refusal filed under it was then read back as the refusal of the
+            // next order placed: submitted to the broker, then settled REJECTED, then never
+            // reconciled, because "rejected" is precisely the state the gateway does not reconcile.
+            // Rule 3 exists to prevent that exact sequence. An order with no identity at all now
+            // records nothing, per the summary above: dropping an unattributable failure costs a
+            // reason, attributing it costs an order.
             foreach (var o in orders)
-            {
-                _failures[OrderKey(o)] = reason;
-                if (!string.IsNullOrEmpty(o.Id)) _failures[o.Id] = reason;
-                if (!string.IsNullOrEmpty(o.Comment)) _failures[o.Comment] = reason;
-            }
+                foreach (var key in FailureKeys(o))
+                    _failures[key] = reason;
         }
         _pulse.Set();
         foreach (var o in orders) OrderChanged?.Invoke(ToOrder(o, null));
@@ -1463,7 +1659,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             o.Direction == AtasDirections.Sell ? OrderSide.Sell : OrderSide.Buy,
             type,
             quantity,
-            filled,
+            // An unknown fill is reported as NO fill — see FilledOf for why that is the safe
+            // direction and the other one costs money.
+            filled ?? 0m,
             (type is OrderType.Limit or OrderType.StopLimit) && o.Price != 0m ? (decimal?)o.Price : null,
             (type is OrderType.Stop or OrderType.StopLimit) && o.TriggerPrice != 0m ? (decimal?)o.TriggerPrice : null,
             MapState(o, quantity, filled),
@@ -1500,43 +1698,88 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     /// <summary>
     /// ATAS has four order states where TradeAgent has twelve, so the fill quantity does the rest of
-    /// the work. OrderStates.None on an order that was never active means "submitted, no word yet";
-    /// on one that HAS been active it means the state is genuinely unknown, which is the state that
-    /// sends the gateway to reconcile instead of guessing.
+    /// the work — and where the fill is not KNOWN it refuses to do that work instead of guessing.
+    ///
+    /// OrderStates.None on an order that was never active means "submitted, no word yet"; on one that
+    /// HAS been active it means the state is genuinely unknown, which is the state that sends the
+    /// gateway to reconcile instead of guessing.
+    ///
+    /// Done with NO evidence either way is the case that used to read FILLED on an order that had
+    /// never traded. It is UNKNOWN now, and deliberately not CANCELLED: "this order finished and the
+    /// platform never said what happened to it" is not a licence to assert a fill, and not a licence
+    /// to assert a cancellation either. UNKNOWN is the one answer that routes it to reconciliation,
+    /// which is where an order nobody can account for belongs. FILLED is now unreachable without
+    /// trades that were actually observed.
     /// </summary>
-    static ExecutionState MapState(AtasOrder o, decimal quantity, decimal filled) => o.State switch
+    static ExecutionState MapState(AtasOrder o, decimal quantity, decimal? filled) => o.State switch
     {
         AtasOrderStates.Failed => ExecutionState.REJECTED,
+        // A lifted comparison: an unknown fill is not > 0, so this reads WORKING, never
+        // PARTIALLY_FILLED. A working order reported as partially filled is a position that does not
+        // exist.
         AtasOrderStates.Active => filled > 0m ? ExecutionState.PARTIALLY_FILLED : ExecutionState.WORKING,
-        AtasOrderStates.Done => quantity > 0m && filled >= quantity ? ExecutionState.FILLED : ExecutionState.CANCELLED,
+        AtasOrderStates.Done => filled is not { } done ? ExecutionState.UNKNOWN
+            : quantity > 0m && done >= quantity ? ExecutionState.FILLED
+            : ExecutionState.CANCELLED,
         _ => o.WasActive ? ExecutionState.UNKNOWN : ExecutionState.DISPATCHING
     };
 
     /// <summary>
-    /// Filled quantity from the trades themselves where there are any — the sum of my trades for an
-    /// order is what was filled, by definition — falling back to QuantityToFill minus Unfilled.
+    /// How much of this order the platform can be SHOWN to have filled — or null, meaning it has not
+    /// said. Two sources of positive evidence, and nothing else counts as any:
+    ///
+    ///   * MyTrades. The sum of an order's own trades is what was filled, by definition.
+    ///   * A STRICTLY POSITIVE Order.Unfilled, which ATAS must have written: decimal defaults to 0,
+    ///     so a positive value cannot be an untouched field. Note it also cannot on its own produce a
+    ///     full fill, because the remainder it implies is always strictly less than the quantity.
+    ///
+    /// WHAT THIS USED TO DO, AND IT WOULD HAVE FIRED ON THE VERY FIRST ORDER: Place constructs the
+    /// Order and never sets Unfilled, so Unfilled is 0. With no trades yet, "quantity - Unfilled" is
+    /// the WHOLE quantity — so a resting order that had never traded reported itself fully filled.
+    /// MapState then read PARTIALLY_FILLED while it worked and FILLED the moment ATAS marked it Done.
+    /// The reading was inferring a fill from the ABSENCE of information: Unfilled == 0 means both
+    /// "everything filled" and "nobody ever set this field", and the code picked the money-losing one.
+    ///
+    /// WHICH READING IS CHOSEN WHEN THE PLATFORM IS SILENT: no fill, and unknown rather than zero
+    /// where the caller can tell the difference. An unknown fill read as NO fill leaves the gateway
+    /// believing it still has a working order and an unsettled outcome, so it keeps watching, keeps
+    /// the order in the reconciliation set, and can correct itself on the next read. Read as a FULL
+    /// fill it believes it holds a position it does not hold, stops watching an order that is still
+    /// live at the broker, and sizes the next order off both — and nothing later contradicts it,
+    /// because a filled order is terminal. One error is self-correcting; the other is permanent.
     /// </summary>
-    decimal FilledOf(AtasOrder o, decimal quantity, IReadOnlyDictionary<string, decimal>? fills)
+    decimal? FilledOf(AtasOrder o, decimal quantity, IReadOnlyDictionary<string, decimal>? fills)
     {
         var key = OrderKey(o);
         decimal traded = 0m;
-        if (fills is not null) fills.TryGetValue(key, out traded);
-        else
+        // A keyless order matches no trade. Matching on an empty key would credit this order with
+        // another order's fills, which is the same mistake pointing the other way.
+        if (key.Length > 0)
         {
-            var counted = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var t in LiveTrades())
+            if (fills is not null) fills.TryGetValue(key, out traded);
+            else
             {
-                if (TradeKey(t) != key) continue;
-                // LiveTrades may read overlapping collections; a trade counted twice would report a
-                // fill larger than the order.
-                if (t.Id is { Length: > 0 } id && !counted.Add(id)) continue;
-                traded += t.Volume;
+                var counted = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var t in LiveTrades())
+                {
+                    if (TradeKey(t) != key) continue;
+                    // LiveTrades may read overlapping collections; a trade counted twice would report
+                    // a fill larger than the order.
+                    if (t.Id is { Length: > 0 } id && !counted.Add(id)) continue;
+                    traded += t.Volume;
+                }
             }
         }
         if (traded > 0m) return quantity > 0m ? Math.Min(traded, quantity) : traded;
 
-        var remaining = quantity - o.Unfilled;
-        return remaining <= 0m ? 0m : Math.Min(remaining, quantity);
+        // ATAS demonstrably wrote this one: positive, and no larger than the order it belongs to.
+        // Unfilled == quantity is a real reading too — "nothing has filled" — and it is what makes a
+        // genuine cancellation legible as CANCELLED rather than UNKNOWN.
+        if (o.Unfilled > 0m && o.Unfilled <= quantity) return quantity - o.Unfilled;
+
+        // Zero, negative, or larger than the order. Indistinguishable from a field nobody set, so the
+        // honest answer is that this adapter does not know.
+        return null;
     }
 
     IReadOnlyDictionary<string, decimal> FillsByOrder()
@@ -1653,21 +1896,87 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         if (string.IsNullOrWhiteSpace(connectorOrderId)) return null;
 
         foreach (var o in LiveOrders()) if (IsSameOrder(o, connectorOrderId)) return o;
-        foreach (var o in LiveOrders()) if (HasClientId(o, connectorOrderId)) return o;
 
-        lock (_gate) return _submitted.TryGetValue(connectorOrderId, out var mine) ? mine : null;
+        // A handle OrderKey minted before ATAS had identified the order carries our client order id
+        // inside it. The moment ATAS assigns an Id, that handle stops matching OrderKey — and the
+        // order it names is exactly the one a cancel issued seconds after a placement is aiming at,
+        // which is the cancel that matters most. So the id is recovered from the handle and looked up
+        // as the client order id it is. Still a second pass: identity across the whole book first.
+        var clientId = connectorOrderId.StartsWith(NoIdPrefix, StringComparison.Ordinal)
+            ? connectorOrderId[NoIdPrefix.Length..]
+            : connectorOrderId;
+
+        foreach (var o in LiveOrders()) if (HasClientId(o, clientId)) return o;
+
+        lock (_gate) return _submitted.TryGetValue(clientId, out var mine) ? mine : null;
     }
 
     static bool IsSameOrder(AtasOrder o, string id) =>
-        string.Equals(OrderKey(o), id, StringComparison.Ordinal)
+        (OrderKey(o) is { Length: > 0 } key && string.Equals(key, id, StringComparison.Ordinal))
         || (!string.IsNullOrEmpty(o.Id) && string.Equals(o.Id, id, StringComparison.Ordinal))
-        || string.Equals(o.ExtId.ToString(CultureInfo.InvariantCulture), id, StringComparison.Ordinal);
+        // ExtId 0 is the default of an Int64 nobody assigned, so it identifies nothing. Matching it
+        // against the literal "0" would hand back the first unidentified order in the book — and
+        // this function decides which order a cancel lands on.
+        || (o.ExtId != 0L && string.Equals(o.ExtId.ToString(CultureInfo.InvariantCulture), id, StringComparison.Ordinal));
 
     static bool HasClientId(AtasOrder o, string id) =>
         !string.IsNullOrEmpty(o.Comment) && string.Equals(o.Comment, id, StringComparison.Ordinal);
 
+    /// <summary>
+    /// The handle this adapter hands out for an order: reported as OrderInfo.ConnectorOrderId, and
+    /// the string a later cancel or modify arrives holding.
+    ///
+    /// IT IS NOT ALWAYS AN IDENTITY, AND IT USED TO PRETEND OTHERWISE. It returned "ext:{ExtId}"
+    /// whenever Order.Id was empty — and a freshly constructed order has Id = null and ExtId = 0, so
+    /// EVERY order ATAS had not identified yet came back as the same string, "ext:0". One handle
+    /// shared across unrelated orders is how a refusal recorded against order A is read back as a
+    /// refusal of order B, and how a cancel aimed at one order lands on another.
+    ///
+    /// The chain now ends in something that is either unique or empty:
+    ///
+    ///   Order.Id            the broker's own id, once it exists. The only broker-assigned answer.
+    ///   ext:{ExtId}         ATAS's platform id where it is set. Synthetic — and the "ext:" prefix is
+    ///                       what every reader downstream keys on to know it is not broker-assigned.
+    ///   ext:none/{Comment}  no platform id at all, but the order carries OUR client order id: unique
+    ///                       per order, and resolvable again by FindOrder. Still prefixed "ext:",
+    ///                       because a synthetic handle that stopped saying so would be read as a
+    ///                       broker id — including by the probe's rule-1 verdict.
+    ///   ""                  nothing identifies this order. An empty handle is the truthful answer; a
+    ///                       shared one is a wrong answer that looks usable.
+    /// </summary>
     static string OrderKey(AtasOrder o) =>
-        !string.IsNullOrEmpty(o.Id) ? o.Id : $"ext:{o.ExtId.ToString(CultureInfo.InvariantCulture)}";
+        !string.IsNullOrEmpty(o.Id) ? o.Id
+        : o.ExtId != 0L ? ExtKey(o.ExtId)
+        : !string.IsNullOrEmpty(o.Comment) ? NoIdPrefix + o.Comment
+        : "";
+
+    /// <summary>Prefix of a handle for an order ATAS has not identified at all. FindOrder strips it
+    /// back off; the "ext:" it starts with is what tells every reader downstream — the probe's rule-1
+    /// verdict included — that this is not a broker-assigned id.</summary>
+    const string NoIdPrefix = "ext:none/";
+
+    static string ExtKey(long extId) => $"ext:{extId.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// Every key a failure for this order could have been filed under, in ONE place, because
+    /// <see cref="Lookup"/> and the pre-flight clear in Place, Modify and CancelCore have to walk the
+    /// same list. When they did not, one OrderCancelFailed recorded under the client id outlived a
+    /// clear that only removed OrderKey, and poisoned every later modify and cancel of that order:
+    /// each was submitted to the broker and then reported as a definite refusal. Rule 3.
+    ///
+    /// ONLY IDENTITIES APPEAR HERE. A key that cannot tell one order from another is not a key, so
+    /// the "ext:0" that every unidentified order used to share is gone, and an order with nothing
+    /// identifying it at all yields nothing — a failure that cannot be attributed is dropped rather
+    /// than pinned on whichever order comes next.
+    /// </summary>
+    static IEnumerable<string> FailureKeys(AtasOrder o)
+    {
+        if (!string.IsNullOrEmpty(o.Id)) yield return o.Id;
+        if (o.ExtId != 0L) yield return ExtKey(o.ExtId);
+        // Ours, and unique per order. This is the key that lets a failure arriving BEFORE ATAS has
+        // assigned any id still be attributed to the right order.
+        if (!string.IsNullOrEmpty(o.Comment)) yield return o.Comment;
+    }
 
     static string SymbolOf(AtasSecurity? s) =>
         s is null ? "" : !string.IsNullOrWhiteSpace(s.Code) ? s.Code : s.SecurityId ?? "";
@@ -1681,17 +1990,26 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     static bool AccountMatches(string? candidate, string wanted) =>
         string.IsNullOrWhiteSpace(wanted) || string.Equals(candidate, wanted, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The caller holds the lock. Walks <see cref="FailureKeys"/> and nothing else, so that
+    /// what can be found is exactly what <see cref="ClearFailures"/> removes.</summary>
     string? Lookup(AtasOrder o)
     {
-        if (_failures.TryGetValue(OrderKey(o), out var byKey)) return byKey;
-        if (!string.IsNullOrEmpty(o.Id) && _failures.TryGetValue(o.Id, out var byId)) return byId;
-        if (!string.IsNullOrEmpty(o.Comment) && _failures.TryGetValue(o.Comment, out var byComment)) return byComment;
+        foreach (var key in FailureKeys(o))
+            if (_failures.TryGetValue(key, out var reason)) return reason;
         return null;
+    }
+
+    /// <inheritdoc cref="FailureKeys"/>
+    void ClearFailures(AtasOrder o)
+    {
+        foreach (var key in FailureKeys(o)) _failures.Remove(key);
     }
 
     string? Failure(string key, AtasOrder o)
     {
-        lock (_gate) return _failures.TryGetValue(key, out var direct) ? direct : Lookup(o);
+        // An empty key is never stored and must never be looked up: it would be asking the failure
+        // map a question that identifies no order.
+        lock (_gate) return key.Length > 0 && _failures.TryGetValue(key, out var direct) ? direct : Lookup(o);
     }
 
     /// <summary>
@@ -1722,10 +2040,26 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// are the SAME list has NOT been measured and reading only one of them could refuse a proof
     /// that was there. Reading both cannot manufacture one: the id must still be an id THIS adapter
     /// submitted, and the order must still carry a broker-assigned Id.
+    ///
+    /// AND THERE IS A WAY FOR ALL OF THAT TO BE TRUE AND PROVE NOTHING. Place hands ATAS the Order
+    /// INSTANCE it constructed and set Comment on. If ATAS's collection just holds that instance,
+    /// this loop finds our own object, reads our own field off it, and matches by construction —
+    /// every guard above passes and the only fact established is that ATAS assigned Order.Id. The
+    /// identifier would not have been shown to survive anything.
+    ///
+    /// This cannot be settled from here, so it is MEASURED instead: the match records whether the
+    /// order it matched is reference-equal to the instance we submitted, and Describe reports it as
+    /// coid=proven-sameref (vacuous) or coid=proven-distinct (a real round trip). A whole pass is
+    /// scanned rather than stopping at the first hit, so that a distinct match anywhere in the book
+    /// is not missed because our own instance happened to be enumerated first.
+    ///
+    /// SupportsClientOrderId deliberately does NOT read the distinction yet. One live reading first;
+    /// changing the surface and the capability in the same run would leave neither measured.
     /// </summary>
     void ProveClientOrderId(string clientOrderId)
     {
         if (string.IsNullOrEmpty(clientOrderId)) return;
+        AtasOrder? mine;
         lock (_gate)
         {
             if (_clientOrderIdProven) return;
@@ -1741,7 +2075,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             //
             // Trim() can empty _submitted after 4096 orders, so a very old id stops being provable.
             // That refuses a proof rather than inventing one, which is the direction to fail in.
-            if (!_submitted.ContainsKey(clientOrderId)) return;
+            if (!_submitted.TryGetValue(clientOrderId, out mine)) return;
         }
 
         // No trading surface means no collection to look in, so there is nothing to learn and this is
@@ -1751,12 +2085,24 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         lock (_gate) _clientOrderIdChecks++;
 
+        AtasOrder? match = null;
         foreach (var o in LiveOrders())
         {
             if (!string.Equals(o.Comment, clientOrderId, StringComparison.Ordinal)) continue;
             if (string.IsNullOrEmpty(o.Id)) continue;
-            lock (_gate) _clientOrderIdProven = true;
-            return;
+            match = o;
+            // A different object carrying our identifier is the reading worth having, so keep looking
+            // while the only match so far is the instance we handed in ourselves.
+            if (!ReferenceEquals(o, mine)) break;
+        }
+        if (match is null) return;
+
+        lock (_gate)
+        {
+            _clientOrderIdProven = true;
+            // ReferenceEquals, not Equals: Order does not override equality anywhere in the dump, and
+            // the question here is literally "is this the same object", not "does it look the same".
+            _clientOrderIdProof = ReferenceEquals(match, mine) ? CoidProof.SameRef : CoidProof.Distinct;
         }
     }
 
@@ -1765,12 +2111,33 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <summary>
     /// Waits for one of ATAS's async calls from a synchronous adapter method.
     ///
-    /// Only the CONNECTOR path needs this: its synchronous overloads are [Obsolete], and an obsolete
-    /// call is exactly the kind of thing that keeps working until a vendor update removes it — on the
-    /// path that places real orders. ITradingManager's synchronous overloads are not obsolete and are
-    /// used directly, which also sidesteps blocking on a task that may be marshalled to ATAS's GUI
-    /// thread. Blocking here is safe because every caller is on the bridge's pipe-handling thread,
-    /// never ATAS's UI thread, and ConfigureAwait(false) keeps it off any captured context.
+    /// Only the CONNECTOR path needs this: it is asked for work through its Async methods, and the
+    /// adapter's own methods are synchronous. The ITradingManager path calls the synchronous
+    /// overloads directly, which also sidesteps blocking on a task that may be marshalled to ATAS's
+    /// GUI thread.
+    ///
+    /// THOSE SYNCHRONOUS OVERLOADS ARE OBSOLETE. This comment used to claim they were not. Building
+    /// against the real ATAS 8.0.14.397 SDK says otherwise, verbatim:
+    ///
+    ///     warning CS0618: 'ITradingManager.OpenOrder(Order, bool, bool, bool)' is obsolete:
+    ///                     'Use OpenOrderAsync instead.'
+    ///     warning CS0618: 'ITradingManager.ModifyOrder(Order, Order, bool, bool)' is obsolete:
+    ///                     'Use ModifyOrderAsync instead.'
+    ///     warning CS0618: 'ITradingManager.CancelOrder(Order, bool, bool)' is obsolete:
+    ///                     'Use CancelOrderAsync instead.'
+    ///     warning CS0618: 'ITradingManager.ClosePosition(Position, bool, bool)' is obsolete:
+    ///                     'Use ClosePositionAsync instead.'
+    ///
+    /// They are still what this adapter calls, deliberately, for now. Moving to the Async overloads
+    /// moves every refusal from "thrown out of the call" to "faulted task unwrapped here", and rule
+    /// 3's classification — a definite broker refusal versus anything ambiguous — is built on exactly
+    /// where and how those failures arrive. Changing the surface and the error path in the same run
+    /// would leave neither measured, so: one live measurement of the current path first, then the
+    /// switch as its own change. An obsolete call on the path that places real money is not something
+    /// to leave sitting there afterwards.
+    ///
+    /// Blocking here is safe because every caller is on the bridge's pipe-handling thread, never
+    /// ATAS's UI thread, and ConfigureAwait(false) keeps it off any captured context.
     /// </summary>
     static void Block(Task task) => task.ConfigureAwait(false).GetAwaiter().GetResult();
 
