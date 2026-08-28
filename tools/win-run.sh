@@ -1,6 +1,7 @@
 #!/bin/bash
 # Run a command on the Windows machine over SSH. See tools/README.md for configuration.
 set -euo pipefail
+[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
 : "${TA_WIN_HOST:?set TA_WIN_HOST}"
 : "${TA_WIN_USER:?set TA_WIN_USER}"
 

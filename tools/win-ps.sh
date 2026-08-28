@@ -18,7 +18,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 : "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
 : "${TA_WIN_USER:?set TA_WIN_USER}"
 
-SRC="$(if [ $# -gt 0 ] && [ -f "$1" ]; then cat "$1"; else cat; fi)"
+# An argument that is not a file is a mistake, not a script: the old form fell through to reading
+# stdin, which under a heredoc-less caller is empty, and an empty script runs fine and prints
+# nothing. That is indistinguishable from "the machine did not answer" — the exact failure this
+# whole file exists to stop (trap 11). Say so instead.
+if [ $# -gt 0 ]; then
+  [ -f "$1" ] || { echo "win-ps.sh: '$1' is not a file. Pass a .ps1 path, or pipe the script on stdin:" >&2
+                   echo "  tools/win-ps.sh <<'EOF'" >&2; echo "  Get-Process | Select-Object -First 3" >&2
+                   echo "  EOF" >&2; exit 2; }
+  SRC="$(cat "$1")"
+else
+  SRC="$(cat)"
+fi
 # PowerShell's progress stream arrives as a CLIXML blob on stderr and reads like corruption.
 SRC="\$ProgressPreference='SilentlyContinue'
 $SRC"

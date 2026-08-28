@@ -17,7 +17,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 : "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
 : "${TA_WIN_USER:?set TA_WIN_USER}"
 
-EXE='C:\ta\repo\tools\winagent\bin\Release\net10.0-windows\winagent.exe'
+# The agent RUNS from outside the repo, and that is load-bearing rather than tidiness.
+#
+# It used to run straight out of C:\ta\repo\tools\winagent\bin. win-push.sh deletes
+# C:\ta\repo\tools recursively before unpacking, so every push tried to delete the agent that was
+# driving the machine. Windows refuses to delete a RUNNING .exe, so winagent.exe and winagent.dll
+# survived — but winagent.runtimeconfig.json and winagent.deps.json are not locked by anything and
+# were deleted, and the Remove-Item ran with -EA 0, so the push reported success.
+#
+# Nothing failed at that point: the agent was already loaded and kept working perfectly. The damage
+# only appeared at the NEXT REBOOT, when the apphost had no runtimeconfig.json to read and the task
+# died with 0x80008083 (CoreHostLibMissingFailure) — a code the Task Scheduler shows as an opaque
+# hex number and nothing anywhere connects back to "somebody pushed the repo three hours ago".
+#
+# Measured on 2026-08-28: the machine came back from its first unattended reboot with autologon
+# working, the desktop live, and NO WAY TO DRIVE IT. Building into the repo and running from
+# C:\ta\agent\bin means a push can no longer reach the agent at all.
+SRC_OUT='C:\ta\repo\tools\winagent\bin\Release\net10.0-windows'
+RUN_DIR='C:\ta\agent\bin'
+EXE='C:\ta\agent\bin\winagent.exe'
 TASK='TradeAgentUiAgent'
 CMD="${1:-status}"
 
@@ -29,6 +47,18 @@ case "$CMD" in
     sleep 1
     "$HERE/win-run.sh" 'cd C:\ta\repo\tools\winagent && dotnet build -c Release --nologo' \
       | grep -E 'error|Build succeeded|Error\(s\)' || true
+    # Copy the whole output, not just the .exe: the apphost is useless without its
+    # runtimeconfig.json, and a half-copied agent fails only at the next reboot (see the EXE comment
+    # above). Fail loudly here if the runtimeconfig did not arrive, because this is the one moment
+    # where that is cheap to notice.
+    "$HERE/win-ps.sh" <<PS
+\$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path '$RUN_DIR' | Out-Null
+Copy-Item -Path '$SRC_OUT\*' -Destination '$RUN_DIR' -Recurse -Force
+\$rc = Join-Path '$RUN_DIR' 'winagent.runtimeconfig.json'
+if (Test-Path \$rc) { "deployed: $RUN_DIR (runtimeconfig present)" }
+else { throw "winagent.runtimeconfig.json is MISSING in $RUN_DIR - the agent would die at the next reboot with 0x80008083" }
+PS
     "$0" start >/dev/null 2>&1 || true
     sleep 2
     "$0" status

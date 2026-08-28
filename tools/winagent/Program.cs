@@ -183,6 +183,7 @@ static class Program
             {
                 "ping" => OpPing(),
                 "windows" => OpWindows(),
+                "close" => OpClose(req),
                 "shot" => OpShot(req),
                 "tree" => OpTree(req),
                 "find" => OpFind(req),
@@ -237,32 +238,124 @@ static class Program
         });
     }
 
+    /// <summary>
+    /// Every visible top-level window, enumerated window-first.
+    ///
+    /// It used to be process-first — `Process.GetProcesses()` and `p.MainWindowHandle` — which
+    /// reports exactly ONE window per process and therefore cannot see a modal dialog at all: a
+    /// dialog is a separate top-level window of the *same* process. That blindness cost a real
+    /// diagnosis. ATAS was asked to close three ways (UIA `Invoke` on `PART_CloseButton`, a
+    /// synthesised click on it, ALT+F4), stayed running every time, and there was no way to tell
+    /// "a save-workspace prompt is sitting in front of it eating the request" from "the close was
+    /// simply ignored". Those are different facts with different fixes, and screen capture was
+    /// unavailable (trap 19), so UI Automation was the only sense left — and the one thing it most
+    /// needed to show, it could not.
+    ///
+    /// **Reading the result for that question:** a row whose `enabled` is false, together with a row
+    /// whose `owner` is that row's `hwnd` and whose `enabled` is true, is an ACTIVE MODAL DIALOG.
+    /// Windows disables the owner for the life of a modal loop, so that pair is the signature, and
+    /// it is the single most useful thing this op reports.
+    ///
+    /// What it still cannot see: a WPF "dialog" drawn inside its parent as an adorner or overlay is
+    /// not a top-level window and never appears here. If `windows` shows no owned row and ATAS is
+    /// still refusing to close, `tree` is the next instrument, not this one.
+    /// </summary>
     static string OpWindows()
     {
-        var arr = new JsonArray();
+        // Process name and MainWindowHandle for every pid, read once. Going window-first makes the
+        // process a lookup rather than the loop.
+        var byPid = new Dictionary<uint, (string? Name, IntPtr Main)>();
         foreach (var p in Process.GetProcesses())
         {
-            IntPtr h;
-            string title;
+            try { byPid[(uint)p.Id] = (p.ProcessName, p.MainWindowHandle); }
+            catch (Exception) { /* pid 0 and protected processes refuse both, and own no windows */ }
+            finally { p.Dispose(); }   // a resident agent must not leak a handle per process per call
+        }
+
+        var arr = new JsonArray();
+
+        bool Visit(IntPtr hwnd, IntPtr _)
+        {
+            // Nothing may throw across the native boundary: an exception escaping an EnumWindows
+            // callback tears the process down instead of failing the request, and the agent would
+            // simply be gone — with the queue loop's catch never seeing it.
             try
             {
-                h = p.MainWindowHandle;
-                if (h == IntPtr.Zero) continue;
-                title = p.MainWindowTitle;
-            }
-            catch (Exception) { continue; }
+                if (!IsWindowVisible(hwnd)) return true;
 
-            GetWindowRect(h, out var r);
-            arr.Add(new JsonObject
-            {
-                ["process"] = p.ProcessName,
-                ["pid"] = p.Id,
-                ["title"] = title,
-                ["hwnd"] = h.ToInt64(),
-                ["visible"] = IsWindowVisible(h),
-                ["rect"] = $"{r.Left},{r.Top},{r.Right - r.Left}x{r.Bottom - r.Top}"
-            });
+                var owner = GetWindow(hwnd, GW_OWNER);
+
+                // GetWindowText does NOT send WM_GETTEXT across a process boundary — it reads the
+                // cached caption — so enumerating a hung or modal-blocked ATAS cannot hang the agent.
+                var title = TitleOf(hwnd);
+
+                // The old form filtered this noise implicitly by only ever seeing main windows.
+                // An untitled top-level window is normally a tooltip host, an IME window or a
+                // WorkerW — except when it is owned, and then it may be the very modal being hunted,
+                // so an owned window is kept whatever it is called.
+                if (title.Length == 0 && owner == IntPtr.Zero) return true;
+
+                // A window that cannot report a rectangle went away between the enumeration and this
+                // line; a zero-sized one is a message-only or placeholder window. Neither is a thing
+                // that can be sitting in front of ATAS.
+                if (!GetWindowRect(hwnd, out var r)) return true;
+                var w = r.Right - r.Left;
+                var h = r.Bottom - r.Top;
+                if (w <= 0 || h <= 0) return true;
+
+                GetWindowThreadProcessId(hwnd, out var pid);
+                if (!byPid.TryGetValue(pid, out var proc))
+                {
+                    // Started between the snapshot above and this line. Rare — but an empty process
+                    // name in a diagnostic gets chased instead of read.
+                    try
+                    {
+                        using var late = Process.GetProcessById((int)pid);
+                        proc = (late.ProcessName, late.MainWindowHandle);
+                    }
+                    catch (Exception) { proc = ("<unknown>", IntPtr.Zero); }
+                    byPid[pid] = proc;
+                }
+
+                arr.Add(new JsonObject
+                {
+                    ["process"] = proc.Name ?? "<unknown>",
+                    ["pid"] = (int)pid,
+                    ["title"] = title,
+                    ["hwnd"] = hwnd.ToInt64(),
+                    // Always true now, because invisible windows are filtered above. Kept because
+                    // callers read the field and dropping it would break them for nothing.
+                    ["visible"] = true,
+                    ["rect"] = $"{r.Left},{r.Top},{w}x{h}",
+                    // 0 for a main window, the owner's hwnd for a dialog. This is the field that
+                    // answers "is something sitting in front of ATAS".
+                    ["owner"] = owner.ToInt64(),
+                    // Which row the agent's other window-taking ops will act on: `shot --window`,
+                    // `front`, `wait` and `tree --window` all resolve through MainWindowHandle, so a
+                    // row with isMain=false is reachable only by its hwnd.
+                    ["isMain"] = proc.Main == hwnd,
+                    // False on a main window whose modal child is up: Windows disables the owner for
+                    // the life of the modal loop. Paired with an enabled owned window, that is the
+                    // signature of an active modal dialog — the whole reason this op was rewritten.
+                    ["enabled"] = IsWindowEnabled(hwnd),
+                    ["class"] = ClassOf(hwnd)
+                });
+            }
+            catch (Exception) { /* one unreadable window must not hide the rest */ }
+            return true;   // returning false would stop the enumeration early
         }
+
+        // EnumWindows walks the desktop's top-level windows front to back in Z-order. That ordering
+        // is observed rather than documented, so do not build a proof on it — but it is worth
+        // preserving as it comes, because the question this op exists to answer is "what is IN FRONT
+        // of ATAS", and the answer is usually the row above it.
+        var callback = new EnumWindowsProc(Visit);
+        EnumWindows(callback, IntPtr.Zero);
+        // Native code is the only thing referencing the delegate during the call above, and a
+        // collected callback is an access violation no catch block can see: it would present as the
+        // agent dying at random under load, not as a bug in this method.
+        GC.KeepAlive(callback);
+
         return Ok(arr);
     }
 
@@ -477,6 +570,105 @@ static class Program
         };
         var p = Process.Start(psi) ?? throw new AgentException("process did not start");
         return Ok(new JsonObject { ["pid"] = p.Id, ["note"] = $"launched {Path.GetFileName(path)}" });
+    }
+
+    /// <summary>
+    /// Posts WM_CLOSE to one exact window.
+    ///
+    /// This exists because there was no reliable programmatic way to close ATAS. UIA `Invoke` on its
+    /// title-bar `PART_CloseButton` does nothing, a synthesised click on the same button does
+    /// nothing, ALT+F4 is ignored, and ATAS refuses a cross-session `taskkill` ("can only be
+    /// terminated forcefully"). What was actually wanted every one of those times is a real WM_CLOSE
+    /// posted from inside the interactive session, and the agent had no way to send one.
+    ///
+    /// **Posted, not sent.** SendMessage would block this thread inside the target's message pump,
+    /// and the case this op is for is exactly the case where that pump is in a modal loop with
+    /// nobody to dismiss it: the agent would sit there for the whole request timeout and the failure
+    /// would read as "the agent is dead" rather than "ATAS is asking a question".
+    ///
+    /// **There is deliberately no force-kill here, and there must not be one.** ATAS holds an
+    /// unsaved workspace, and killing it destroys the very thing every ATAS test is trying to
+    /// preserve. If WM_CLOSE raises a "save workspace?" prompt, that is this op working: run
+    /// `windows` and the prompt is the row whose `owner` is the hwnd closed here.
+    /// </summary>
+    static string OpClose(JsonObject req)
+    {
+        IntPtr target;
+        string resolvedBy;
+        var raw = Long(req, "hwnd");
+        if (raw is not null)
+        {
+            target = new IntPtr(raw.Value);
+            resolvedBy = "hwnd";
+        }
+        else if (Str(req, "window") is { } window)
+        {
+            // Resolved exactly as front/shot/wait resolve it, so `close --window ATAS` closes the
+            // same window `front --window ATAS` would have fronted — and never a different one.
+            // Note this can only ever reach a MAIN window; a dialog has to be closed by its hwnd,
+            // which is what `windows` now prints.
+            var proc = FindWindowProcess(window) ?? throw new AgentException($"no visible window matching '{window}'");
+            target = proc.MainWindowHandle;
+            resolvedBy = $"window '{window}' -> [{proc.ProcessName}] {proc.MainWindowTitle}";
+        }
+        else throw new AgentException("close needs either 'hwnd' or 'window'");
+
+        if (target == IntPtr.Zero || !IsWindow(target))
+            throw new AgentException($"hwnd {target.ToInt64()} is not a window (it may already have closed)");
+
+        // Read BEFORE the post: once the window is destroyed there is nothing left to identify it
+        // with, and "which window did I actually close" is the first question anyone asks of this op.
+        var title = TitleOf(target);
+        var cls = ClassOf(target);
+        GetWindowThreadProcessId(target, out var pid);
+
+        var posted = PostMessage(target, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        if (!posted)
+        {
+            // ERROR_ACCESS_DENIED here is not a bad handle. It is UIPI refusing a message from a
+            // lower-integrity process to a higher one — meaning the target runs elevated and this
+            // agent does not. Nothing about the window is wrong and retrying can never help, so say
+            // which of the two it is rather than handing back a bare number.
+            var err = Marshal.GetLastWin32Error();
+            throw new AgentException(
+                $"WM_CLOSE was refused for hwnd {target.ToInt64()} (win32 error {err})" +
+                (err == ERROR_ACCESS_DENIED
+                    ? " — access denied. That window belongs to a process at a higher integrity level " +
+                      "than this agent: it is running elevated and the agent is not. Restart the agent " +
+                      "elevated, or close that window some other way."
+                    : ""));
+        }
+
+        var waitMs = Math.Clamp(Int(req, "waitMs") ?? 1500, 0, 30_000);
+        if (waitMs > 0) Thread.Sleep(waitMs);
+
+        // Three genuinely different outcomes, and collapsing them into one boolean is how this op
+        // would end up as blind as the one it was written to fix.
+        var stillOpen = IsWindow(target);
+        var stillVisible = stillOpen && IsWindowVisible(target);
+
+        return Ok(new JsonObject
+        {
+            ["hwnd"] = target.ToInt64(),
+            ["pid"] = (int)pid,
+            ["title"] = title,
+            ["class"] = cls,
+            ["resolvedBy"] = resolvedBy,
+            ["posted"] = true,
+            ["waitedMs"] = waitMs,
+            // A reading taken waitMs after the post, not a verdict. Nothing here says the
+            // application exited — only what became of this one window.
+            ["stillOpen"] = stillOpen,
+            ["stillVisible"] = stillVisible,
+            ["note"] = !stillOpen
+                ? "WM_CLOSE posted; the window is gone. That is not proof the process exited — check 'windows'."
+                : stillVisible
+                    ? $"WM_CLOSE posted; the window was still open {waitMs} ms later. It may be saving, " +
+                      "asking, or ignoring the message. Run 'windows': a row whose owner is this hwnd is a " +
+                      "prompt waiting to be answered, and this window showing enabled=false confirms it."
+                    : $"WM_CLOSE posted; {waitMs} ms later the window still exists but is hidden — the " +
+                      "application hid it rather than destroying it (minimise-to-tray behaves this way)."
+        });
     }
 
     static string OpFront(JsonObject req)
@@ -715,6 +907,30 @@ static class Program
                 p.ProcessName.Contains(match, StringComparison.OrdinalIgnoreCase) ||
                 p.MainWindowTitle.Contains(match, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// The caption of one exact window. `Process.MainWindowTitle` cannot be used any more: it
+    /// answers for the process's main window, which is precisely the window that is NOT interesting
+    /// when a modal dialog is the thing being looked for.
+    /// </summary>
+    static string TitleOf(IntPtr h)
+    {
+        var len = GetWindowTextLength(h);
+        if (len <= 0) return "";                  // 0 means empty and failure alike; both are "no title"
+        var sb = new StringBuilder(len + 1);      // +1 for the terminator GetWindowText writes
+        return GetWindowText(h, sb, sb.Capacity) > 0 ? sb.ToString() : "";
+    }
+
+    /// <summary>
+    /// The window class. It is what identifies a window whose caption is empty or unhelpful —
+    /// `#32770` is the standard dialog class, and seeing it in front of ATAS answers the question
+    /// outright.
+    /// </summary>
+    static string ClassOf(IntPtr h)
+    {
+        var sb = new StringBuilder(260);          // a class name is capped at 256 characters
+        return GetClassName(h, sb, sb.Capacity) > 0 ? sb.ToString() : "";
+    }
+
     // ------------------------------------------------------------------ environment
 
     static bool CanDriveUi()
@@ -801,12 +1017,29 @@ static class Program
     static int? Int(JsonObject o, string k) => o[k] is { } n ? n.GetValue<int>() : null;
     static bool Bool(JsonObject o, string k) => o[k]?.GetValue<bool>() ?? false;
 
+    /// <summary>
+    /// A window handle, however it was written. win-ui.sh emits a bare digit string as a JSON
+    /// number, but a hand-written `raw` request quotes it as often as not, and refusing that would
+    /// read as "close is not implemented" rather than "that hwnd arrived as a string".
+    /// </summary>
+    static long? Long(JsonObject o, string k)
+    {
+        var n = o[k];
+        if (n is null) return null;
+        try { return n.GetValue<long>(); } catch (Exception) { }
+        try { if (long.TryParse(n.GetValue<string>(), out var v)) return v; } catch (Exception) { }
+        return null;
+    }
+
     // ------------------------------------------------------------------ interop
 
     const int SW_RESTORE = 9;
     const int SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77, SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79;
     const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     const int UOI_NAME = 2;
+    const uint GW_OWNER = 4;
+    const uint WM_CLOSE = 0x0010;
+    const int ERROR_ACCESS_DENIED = 5;
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002, MOUSEEVENTF_LEFTUP = 0x0004;
     const uint MOUSEEVENTF_RIGHTDOWN = 0x0008, MOUSEEVENTF_RIGHTUP = 0x0010;
     const uint KEYEVENTF_KEYUP = 0x0002, KEYEVENTF_UNICODE = 0x0004;
@@ -840,6 +1073,26 @@ static class Program
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+
+    // Window-first enumeration. EnumWindows is the only way to see a modal dialog: it is a separate
+    // top-level window of the same process, and Process.MainWindowHandle reports one window per
+    // process, so it is invisible to anything built on that.
+    delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+    // The W entry points are named outright rather than left to CharSet probing: this agent must not
+    // have a text-encoding question anywhere near a window title it is about to act on.
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowTextW")]
+    static extern int GetWindowText(IntPtr h, StringBuilder text, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowTextLengthW")]
+    static extern int GetWindowTextLength(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
+    static extern int GetClassName(IntPtr h, StringBuilder name, int max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "PostMessageW", SetLastError = true)]
+    static extern bool PostMessage(IntPtr h, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] static extern IntPtr GetThreadDesktop(uint threadId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

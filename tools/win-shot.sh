@@ -6,6 +6,7 @@
 # desktop must also be UNLOCKED — a locked session captures blank white, which reads as a broken app
 # rather than a locked screen.
 set -euo pipefail
+[ -f "$HOME/.tradeagent/win.env" ] && source "$HOME/.tradeagent/win.env"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-${TMPDIR:-/tmp}/tradeagent-windows.png}"
 : "${TA_WIN_HOST:?set TA_WIN_HOST}"

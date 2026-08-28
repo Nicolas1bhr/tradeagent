@@ -12,6 +12,7 @@
 #   tools/win-ui.sh key    --keys "CTRL+a"
 #   tools/win-ui.sh setvalue --ref e12 --value "ES"
 #   tools/win-ui.sh launch --path 'C:\Program Files (x86)\ATAS Platform\OFT.Platform.exe'
+#   tools/win-ui.sh close  --hwnd 591968 | --window ATAS   # posts WM_CLOSE; never force-kills
 #   tools/win-ui.sh wait   --window ATAS [--timeoutMs 60000]
 #   tools/win-ui.sh raw '<json>'          # anything, including {"op":"batch","items":[...]}
 #
@@ -26,7 +27,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 : "${TA_WIN_HOST:?set TA_WIN_HOST, or create ~/.tradeagent/win.env}"
 : "${TA_WIN_USER:?set TA_WIN_USER}"
 
-[ $# -ge 1 ] || { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 OP="$1"; shift
 TIMEOUT=90

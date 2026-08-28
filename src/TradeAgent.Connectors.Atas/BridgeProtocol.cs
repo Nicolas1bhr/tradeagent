@@ -70,6 +70,21 @@ public sealed class BridgeHello
     /// <inheritdoc cref="ClientOrderIdAttempts"/>
     [JsonPropertyName("client_order_id_checks")] public int? ClientOrderIdChecks { get; set; }
     [JsonPropertyName("supports_order_history")] public bool SupportsOrderHistory { get; set; }
+    /// <summary>
+    /// Which ATAS surface the adapter actually bound to at runtime, in plain words, plus what it
+    /// found there. Free text, diagnostic only, and nothing derives a capability from it.
+    ///
+    /// It exists because of the defect that cost a whole live run: ChartStrategy.Connector EXISTS,
+    /// has the right type, compiles, and is null — so every read failed with "this chart has no
+    /// trading connection attached yet" on a chart that was demonstrably attached to a portfolio.
+    /// A capability boolean cannot say "I looked at the wrong object"; this can. When a read fails,
+    /// this is the field that says whether the adapter had anything to read from in the first place.
+    ///
+    /// Null — not empty — when the bridge does not report it, so an older bridge does not read as
+    /// one that bound to nothing.
+    /// </summary>
+    [JsonPropertyName("trading_surface")] public string? TradingSurface { get; set; }
+
     [JsonPropertyName("supports_modify")] public bool SupportsModify { get; set; }
     [JsonPropertyName("supports_close_position")] public bool SupportsClosePosition { get; set; }
 }
