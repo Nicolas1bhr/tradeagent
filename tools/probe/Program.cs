@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -13,6 +14,9 @@ using TradeAgent.Core;
 //   probe chat    <runtime>   a real conversation happens, and no window opens
 //   probe atas                what Describe() reports on a live ATAS bridge, and what that means
 //                             for autonomy — step 3 of docs/RESUME-HERE.md
+//   probe atas --place-test-order --yes
+//                             the same, and then ONE resting order on a provably simulated account,
+//                             so the client-order-id round trip is MEASURED instead of inferred
 //
 // Point TRADEAGENT_HOME at a scratch directory first, or it will install into the real one.
 // See tools/README.md.
@@ -109,9 +113,17 @@ static int VisibleWindows() =>
 /// consumer of either value was <c>TradingGateway</c>, internally — so the single most expensive,
 /// hardest-to-repeat event in the project produced no record.
 ///
-/// Read-only by construction. It places no order, modifies none, cancels none, and asks the bridge
-/// for nothing but a handshake, an account list and an order list. Every line is labelled so the
-/// whole run survives being pasted into BUILD-STATUS.md.
+/// Read-only unless it is asked twice. Left alone it places no order, modifies none, cancels none,
+/// and asks the bridge for nothing but a handshake, an account list and an order list. Every line is
+/// labelled so the whole run survives being pasted into BUILD-STATUS.md.
+///
+/// The one exception is <c>--place-test-order</c>, which needs <c>--yes</c> beside it and exists
+/// because the round trip rule 1 asks about cannot be observed without an order. With nothing ever
+/// submitted, <c>SupportsClientOrderId</c> reports false for a reason that says nothing whatever
+/// about ATAS — and that is the reading this project has been stuck on. It places ONE resting buy
+/// limit far below the market on a provably simulated account, reads it back, reports what the
+/// read-back found, and cancels it. It refuses outright, without submitting anything, when it cannot
+/// prove the account is simulated. See <see cref="PlaceTestOrder"/>.
 ///
 /// Two design points worth knowing before changing anything here:
 ///
@@ -138,18 +150,31 @@ static class AtasProbe
     {
         var wait = TimeSpan.FromSeconds(60);
         var waitAnyway = false;
+        var place = false;
+        var yes = false;
 
         for (var i = 0; i < rest.Length; i++)
         {
             if (rest[i] == "--wait" && i + 1 < rest.Length && int.TryParse(rest[i + 1], out var secs) && secs >= 0)
             { wait = TimeSpan.FromSeconds(secs); i++; continue; }
             if (rest[i] == "--wait-anyway") { waitAnyway = true; continue; }
+            if (rest[i] == "--place-test-order") { place = true; continue; }
+            if (rest[i] == "--yes") { yes = true; continue; }
 
-            Console.WriteLine("usage: probe atas [--wait <seconds>] [--wait-anyway]");
-            Console.WriteLine($"  unrecognised argument '{rest[i]}'");
-            Console.WriteLine("  --wait <seconds>   how long to wait for the bridge to dial in (default 60)");
-            Console.WriteLine("  --wait-anyway      wait for the pipe even though ATAS was not detected;");
-            Console.WriteLine("                     only useful when driving the pipe with a stand-in bridge");
+            Usage($"unrecognised argument '{rest[i]}'");
+            return 2;
+        }
+
+        // Refused here, before the pipe is even opened: waiting sixty seconds for a bridge and then
+        // declining to use it wastes the one thing this run is for. There is no prompt — this verb
+        // runs unattended over ssh, and a prompt would hang forever with nobody to answer it.
+        if (place && !yes)
+        {
+            Usage("--place-test-order needs --yes beside it.");
+            Console.WriteLine();
+            Console.WriteLine("  It PLACES A REAL ORDER on the connected ATAS account — simulated, resting,");
+            Console.WriteLine("  and cancelled again at the end, but real as far as ATAS is concerned. Two");
+            Console.WriteLine("  flags rather than one so that it cannot be reached by editing a --wait.");
             return 2;
         }
 
@@ -162,10 +187,32 @@ static class AtasProbe
         Line("BRIDGE PIPE NAME", Paths.BridgePipeName);
         Line("EXPECTED PROTOCOL", $"{Versions.BridgeProtocolVersion}  (Versions.BridgeProtocolVersion)");
         Line("WAIT FOR BRIDGE", $"{wait.TotalSeconds:0}s{(waitAnyway ? "   --wait-anyway: the ATAS detection gate is off" : "")}");
-        Line("THIS RUN WILL", "read only. No order is placed, modified or cancelled by this verb.");
+
+        if (place)
+        {
+            Line("THIS RUN WILL", "PLACE ONE ORDER — a buy limit, quantity 1, on the chart's own");
+            Cont($"instrument, {Pct(FarBelowBid)} below the live bid so that it rests and cannot");
+            Cont("fill — read it back, report what came back, and then cancel it.");
+            Cont("It refuses to submit anything at all unless the account it is about");
+            Cont("to trade is provably simulated, and no flag can override that.");
+            Cont("--place-test-order --yes were both given, which is what unlocked it.");
+        }
+        else
+        {
+            Line("THIS RUN WILL", "read only. No order is placed, modified or cancelled by this verb.");
+            if (yes)
+                Cont("--yes was given without --place-test-order, so it authorised nothing.");
+        }
+
         Line("EXIT CODES", "0 = the bridge answered and the answer below is the record");
         Cont("1 = could not reach the bridge    2 = bad arguments");
         Cont("A capability reading of false is a valid answer and still exits 0.");
+        if (place)
+        {
+            Cont("3 = --place-test-order refused to place. NOTHING WAS SUBMITTED.");
+            Cont("4 = an order was placed and this run could NOT prove the book was left");
+            Cont("    clean afterwards. Go and look at ATAS before doing anything else.");
+        }
 
         // ------------------------------------------------------------------ ATAS on this machine
 
@@ -433,6 +480,12 @@ static class AtasProbe
         Line("READ FROM", handshake
             ? "AtasConnector.Capabilities on a live connection"
             : "the raw hello frame above (the connector handshake did not complete)");
+        if (place)
+        {
+            Line("READ WHEN", "BEFORE the test order. This is the 'before' picture and it is");
+            Cont("about to be superseded: the reading that answers rule 1 is the one");
+            Cont("under THE TEST ORDER below. Do not quote this one as the answer.");
+        }
 
         // ------------------------------- narrowing what a false SupportsClientOrderId actually means
 
@@ -550,10 +603,38 @@ static class AtasProbe
             Cont("purpose. Do not hard-code it true.");
         }
 
+        // ------------------------------------------------------------------ the test order
+
+        // Placed here, between the readings and the conclusion, on purpose. Everything above is the
+        // BEFORE picture; autonomy is a conclusion and must be drawn from the newest reading there
+        // is, which — if an order has just been placed — is the one taken after it.
+        var test = place ? await PlaceTestOrder(connector, handshake, orders) : (TestOrderOutcome?)null;
+
         // ------------------------------------------------------------------ autonomy
 
+        // Re-read rather than reusing `caps`. SupportsClientOrderId can only ever turn true after an
+        // order has proved it, so on a --place-test-order run the capability block above is stale by
+        // exactly the event this verb exists to cause.
+        var final = handshake ? connector.Capabilities : caps;
+
         Section("WHAT THIS MEANS FOR AUTONOMY");
-        if (caps.ReconciliationProvable)
+        if (test is { Placed: true })
+        {
+            Line("READ WHEN", "AFTER the test order above. This is the current answer.");
+            if (final.SupportsClientOrderId != caps.SupportsClientOrderId
+                || final.SupportsOrderHistory != caps.SupportsOrderHistory)
+                Cont($"It MOVED: SupportsClientOrderId {Yn(caps.SupportsClientOrderId)}->{Yn(final.SupportsClientOrderId)}, " +
+                     $"SupportsOrderHistory {Yn(caps.SupportsOrderHistory)}->{Yn(final.SupportsOrderHistory)}.");
+            else
+                Cont("It did not move: the test order changed neither capability.");
+        }
+        else if (test is not null)
+        {
+            Line("READ WHEN", "the test order was refused before anything was submitted, so");
+            Cont("nothing below was influenced by it. This is the same reading as above.");
+        }
+
+        if (final.ReconciliationProvable)
         {
             Line("AUTONOMY", "PERMITTED BY THE GATEWAY — both halves are proven on this connection.");
             Cont("TradingGateway stops refusing TradingMode.LIVE_AUTONOMOUS on this");
@@ -586,11 +667,807 @@ static class AtasProbe
         Section("ONE-LINE SUMMARY");
         Console.WriteLine(
             $"atas={detection.Version ?? Blank(hello.AtasVersion)} bridge={Blank(hello.BridgeVersion)} proto={hello.BridgeProtocolVersion} " +
-            $"| SupportsClientOrderId={Yn(caps.SupportsClientOrderId)} SupportsOrderHistory={Yn(caps.SupportsOrderHistory)} " +
-            $"IsSimulated={Yn(caps.IsPaper)} | ReconciliationProvable={Yn(caps.ReconciliationProvable)} " +
-            $"| autonomy={(caps.ReconciliationProvable ? "permitted" : "refused")}");
+            $"| SupportsClientOrderId={Yn(final.SupportsClientOrderId)} SupportsOrderHistory={Yn(final.SupportsOrderHistory)} " +
+            $"IsSimulated={Yn(final.IsPaper)} | ReconciliationProvable={Yn(final.ReconciliationProvable)} " +
+            $"| autonomy={(final.ReconciliationProvable ? "permitted" : "refused")}" +
+            (test is { } t ? $" | test-order={t.Summary}" : ""));
 
-        return 0;
+        // Repeated last because last is what a person sees on a terminal they scrolled away from,
+        // and because this one line is the difference between a tidy run and an order left resting.
+        if (test is { ExitCode: 4 } unclean)
+        {
+            Console.WriteLine();
+            Console.WriteLine(new string('!', 80));
+            Console.WriteLine($"THIS RUN PLACED AN ORDER AND COULD NOT PROVE THE BOOK WAS LEFT CLEAN: {unclean.Summary}");
+            Console.WriteLine("Read THE TEST ORDER — CLEANING UP above, then look at ATAS. Exit code 4.");
+            Console.WriteLine(new string('!', 80));
+        }
+
+        return test?.ExitCode ?? 0;
+    }
+
+    // -------------------------------------------------------------------------------- test order
+
+    /// <summary>
+    /// How far below the bid the resting limit is placed, as a FRACTION OF THE LIVE BID and never as
+    /// a price. A hard-coded price is the exact failure this is shaped to avoid: a constant that is
+    /// safely far below the market today is above it the day the contract rolls or the market halves,
+    /// and then the order that was supposed to rest fills the instant it is submitted.
+    ///
+    /// Large enough that no ordinary move reaches it; small enough that a venue is unlikely to refuse
+    /// it for sitting outside a price band. If a run comes back with a definite refusal that names a
+    /// price limit, this is the one line to change.
+    /// </summary>
+    const decimal FarBelowBid = 0.10m;
+
+    /// <summary>How long to keep re-reading ATAS's order collection while waiting for the order to
+    /// appear. ATAS assigns its own order id asynchronously, so a single read taken straight after
+    /// the place call reports "no broker id" for an order that is about to get one — a different
+    /// finding, and the wrong one.</summary>
+    static readonly TimeSpan ReadBackLimit = TimeSpan.FromSeconds(15);
+
+    /// <summary>The same, waiting for the cancel to show up in the collection.</summary>
+    static readonly TimeSpan CleanupLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Exit code, the fragment this contributes to the one-line summary, and whether anything was
+    /// actually submitted.
+    ///
+    /// <paramref name="Placed"/> is not decoration: a run the guard refused took its readings before
+    /// any order existed, and a later section that described them as "after the test order" would be
+    /// claiming a measurement that never happened.
+    /// </summary>
+    readonly record struct TestOrderOutcome(int ExitCode, string Summary, bool Placed);
+
+    /// <summary>One round of re-reading the order collection: what came back, and how hard we looked.</summary>
+    readonly record struct OrderPoll(IReadOnlyList<OrderInfo>? Orders, string? Error, int Reads, TimeSpan Took);
+
+    /// <summary>
+    /// <c>--place-test-order</c> — the only part of this harness that writes anything.
+    ///
+    /// It exists because rule 1 cannot be observed without an order. Until one is placed,
+    /// <c>SupportsClientOrderId</c> is false for a reason that says nothing at all about ATAS
+    /// ("NOTHING WAS EVER ATTEMPTED"), and that non-answer is what has been blocking the product's
+    /// single most important question: may this ever trade unattended.
+    ///
+    /// The shape of it:
+    ///
+    ///   * Through <see cref="AtasConnector"/>, the product's own connector — the same call
+    ///     TradingGateway makes. Hand-rolling a bridge frame would measure a path nothing uses.
+    ///   * ONE buy limit, quantity 1, on the chart's own instrument, priced off the LIVE BID and
+    ///     rounded DOWN, so it rests instead of filling. No quote means no order: an order at a
+    ///     price nobody measured is the thing this codebase refuses to send.
+    ///   * A guard that refuses to submit anything unless the account is PROVABLY simulated, from
+    ///     two independent readings, with no flag to override it.
+    ///   * A cancel at the end, on every path including the failures, and then a re-read to find out
+    ///     whether the cancel actually took.
+    ///
+    /// Note what is NOT here: the gateway. This goes straight at the connector, so the risk policy,
+    /// the approval queue, the kill switch and the trading mode are all absent. The guard below is
+    /// not a second line of defence behind those — it is the only one.
+    /// </summary>
+    static async Task<TestOrderOutcome> PlaceTestOrder(AtasConnector connector, bool handshake,
+                                                       IReadOnlyList<OrderInfo>? ordersBefore)
+    {
+        Section("THE TEST ORDER — THE GUARD");
+        Line("WHAT THIS GUARD IS", "the only thing standing between this harness and a real account.");
+        Cont("There is deliberately no --force, no --account and no --symbol: every");
+        Cont("check below either passes on evidence read from the live connection, or");
+        Cont("nothing is submitted at all. A probe that CAN place an order on a real");
+        Cont("account is a probe that eventually WILL — the override gets added for a");
+        Cont("good reason on a bad day, and then it is in the shell history forever.");
+
+        if (!handshake)
+            return Refuse("THE CONNECTOR HANDSHAKE NEVER COMPLETED.",
+                "The capabilities above could only be derived from the raw hello frame, and a",
+                "hello is not a live connection. An order placed onto a bridge that is not",
+                "answering could be neither read back nor cancelled, which is the one thing",
+                "this verb must never do.");
+
+        // Read at the moment of the decision rather than inherited from the capability block above.
+        // Heartbeats carry a fresh Describe() every five seconds, so that reading is already seconds
+        // old, and a guard has to act on the newest answer there is rather than a remembered one.
+        var live = connector.Bridge;
+        if (live is null)
+            return Refuse("THE BRIDGE IS NO LONGER ON THE PIPE.",
+                "AtasConnector.Bridge is null, so the connection dropped somewhere between the",
+                "capability block above and this line.");
+
+        Line("IsSimulated (hello)", $"{Yn(live.IsSimulated)}   read off the live handshake, at this moment");
+        if (!live.IsSimulated)
+            return Refuse("THE ACCOUNT IS NOT REPORTED AS SIMULATED.",
+                "The bridge's own handshake says is_simulated=false. That is either a real",
+                "account or one whose nature ATAS did not report, and here those two are the",
+                "same answer: neither is proof of a simulated account. This harness places",
+                "orders on proven simulation and on nothing else.");
+
+        var wanted = live.AccountId;
+        Line("ACCOUNT ID (hello)", Blank(wanted));
+        if (string.IsNullOrWhiteSpace(wanted))
+            return Refuse("THE BRIDGE REPORTS NO ACCOUNT ID.",
+                "is_simulated is true, but about nothing in particular. With no account id in",
+                "the handshake there is no way to check that the account an order would land",
+                "on is the account that boolean is describing. Unknown is not simulated.");
+
+        // Read again here rather than reusing the list from the section above, so that the guard
+        // rests on nothing it did not fetch itself.
+        IReadOnlyList<AccountInfo>? accounts = null;
+        string? accountsError = null;
+        try { accounts = await connector.GetAccountsAsync(); }
+        catch (Exception ex) { accountsError = $"{ex.GetType().Name}: {ex.Message}"; }
+
+        if (accounts is null)
+            return Refuse("THE ACCOUNT LIST COULD NOT BE READ.",
+                accountsError ?? "GetAccounts returned nothing.",
+                "The hello's is_simulated cannot be corroborated against ATAS's own portfolio,",
+                "so it stands alone — and one unverifiable boolean is not proof of anything.");
+
+        var account = accounts.FirstOrDefault(a => string.Equals(a.Id, wanted, StringComparison.Ordinal));
+        if (account is null)
+            return Refuse("NO ACCOUNT MATCHES THE ONE THE HANDSHAKE NAMED.",
+                $"The hello says '{wanted}'. ATAS reports: " +
+                (accounts.Count == 0 ? "no account at all." : string.Join(", ", accounts.Select(a => a.Id))),
+                "The is_simulated flag describes the account the hello named, so it says",
+                "nothing about an account that is not in that list. An order placed now would",
+                "be placed onto something nothing in this run has vouched for.");
+
+        Line("ACCOUNT MATCHED", $"{account.Id} — {account.Name} ({account.Currency})");
+        Line("IsSimulated (account)", $"{Yn(account.IsSimulated)}   read off ATAS's own portfolio — a second, " +
+                                      "independent source");
+        if (!account.IsSimulated)
+            return Refuse("THE TWO SOURCES DISAGREE ABOUT THIS ACCOUNT.",
+                $"The handshake says is_simulated=true for '{wanted}'; ATAS's own portfolio object",
+                "for that same account says false. One of the two is wrong and this run cannot",
+                "tell which. A disagreement about whether an account is real is not a thing to",
+                "resolve by picking the more convenient answer.");
+
+        Line("TradingEnabled", $"{Yn(account.TradingEnabled)}" + (account.TradingEnabled
+            ? ""
+            : "   — ATAS reports this account cannot trade. Proceeding anyway:"));
+        if (!account.TradingEnabled)
+        {
+            Cont("a refusal from ATAS is itself a reading, and refusing to ask would");
+            Cont("produce no reading at all. Expect the placement below to fail.");
+        }
+
+        // ------------------------------------------------------------------------------ the price
+
+        Section("THE TEST ORDER — THE PRICE");
+
+        IReadOnlyList<InstrumentInfo>? instruments = null;
+        string? instrumentsError = null;
+        try { instruments = await connector.GetInstrumentsAsync(); }
+        catch (Exception ex) { instrumentsError = $"{ex.GetType().Name}: {ex.Message}"; }
+
+        if (instruments is null || instruments.Count == 0)
+            return Refuse("THERE IS NO INSTRUMENT TO TRADE.",
+                instrumentsError ?? "ATAS reported an empty instrument list.",
+                "The adapter returns the chart's own instrument first because that is the one a",
+                "chart strategy can trade. With nothing in the list there is nothing to name in",
+                "an order, and naming one anyway would be inventing it.");
+
+        // Deliberately instruments[0] and not a search by name: the adapter documents that the
+        // chart's own instrument comes first, and a --symbol flag would be one more way to point
+        // this at something nobody intended.
+        var instrument = instruments[0];
+        Line("INSTRUMENT", $"{instrument.Symbol} — {instrument.Description} ({instrument.Exchange})");
+        Cont($"tick={Num(instrument.TickSize)} tick_value={Num(instrument.TickValue)}" +
+             $"{(instruments.Count > 1 ? $"   ({instruments.Count} instruments visible; the chart's own comes first)" : "")}");
+
+        QuoteInfo? quote = null;
+        string? quoteError = null;
+        try { quote = await connector.GetQuoteAsync(instrument.Symbol); }
+        catch (Exception ex) { quoteError = $"{ex.GetType().Name}: {ex.Message}"; }
+
+        if (quote is null)
+            return Refuse("THERE IS NO QUOTE FOR THIS INSTRUMENT.",
+                quoteError ?? "GetQuote returned nothing.",
+                "The resting price is derived from the live bid and from nothing else. With no",
+                "quote there is no bid, and the only way to continue would be to invent a",
+                "number — which is precisely what makes an order dangerous. Check that the",
+                "chart is receiving data, and run this again.");
+
+        Line("QUOTE (raw)", "as the bridge answered, one line:");
+        Console.WriteLine(Json.Write(quote));
+
+        if (quote.Bid is not { } bid || bid <= 0m)
+            return Refuse("THE QUOTE CARRIES NO USABLE BID.",
+                $"bid={(quote.Bid is { } b ? Num(b) : "<none>")}. The adapter reports a zero bid as",
+                "null rather than as a price, so this is ATAS saying it does not have one. The",
+                "ask and the last trade are NOT substituted for it: an order priced off a",
+                "different side than the one this was designed around is a different order.");
+
+        Line("QUOTE TIMESTAMP", quote.At == DateTimeOffset.MinValue
+            ? "MinValue — the bridge has never watched this quote move."
+            : $"{quote.At:O}   ({(DateTimeOffset.UtcNow - quote.At).TotalSeconds:0}s ago)");
+        if (quote.At == DateTimeOffset.MinValue)
+        {
+            Cont("That is the adapter being honest rather than a fault: it stamps a quote");
+            Cont("with the moment it was OBSERVED to move, and it has seen no tick here");
+            Cont("yet. The prices themselves are read off ATAS's security object at the");
+            Cont("instant of the call, so they are current — but nothing in this run proves");
+            Cont("the feed is live, and the offset below is what carries that risk.");
+        }
+
+        var price = SnapDown(bid * (1m - FarBelowBid), instrument.TickSize);
+        Line("RESTING PRICE", instrument.TickSize > 0m
+            ? $"{Num(price)}  =  bid {Num(bid)} less {Pct(FarBelowBid)}, rounded DOWN to the {Num(instrument.TickSize)} tick."
+            : $"{Num(price)}  =  bid {Num(bid)} less {Pct(FarBelowBid)}, not rounded here.");
+        if (instrument.TickSize > 0m)
+        {
+            Cont("Down, and never to nearest: a rounding error has to move the price");
+            Cont("further from the market, never closer to it.");
+        }
+        else
+        {
+            Cont("ATAS reports no tick size for this instrument, so there is nothing to");
+            Cont("round to. The bridge's own ShrinkPrice rounds it on the way out, and");
+            Cont("whatever that does is smaller than one tick either way.");
+        }
+
+        // The offset above is arithmetic. This is the check on it — a price that is not strictly
+        // below every price in the quote is not a resting order, whatever the arithmetic said.
+        if (price <= 0m)
+            return Refuse("THE DERIVED PRICE IS NOT A POSITIVE NUMBER.",
+                $"bid {Num(bid)} less {Pct(FarBelowBid)}, snapped, came to {Num(price)}.");
+
+        var notBelow = new List<string>();
+        if (price >= bid) notBelow.Add($"bid {Num(bid)}");
+        if (quote.Ask is { } ask && price >= ask) notBelow.Add($"ask {Num(ask)}");
+        if (quote.Last is { } last && price >= last) notBelow.Add($"last {Num(last)}");
+        if (notBelow.Count > 0)
+            return Refuse("THE DERIVED PRICE IS NOT BELOW THE MARKET.",
+                $"{Num(price)} is at or above {string.Join(" and ", notBelow)}.",
+                "A buy limit at or above the market fills immediately, which is the one",
+                "outcome this order is shaped to avoid. The arithmetic says it should be",
+                "below; the quote says it is not. Nothing was submitted, and the",
+                "disagreement is the finding — do not place anything here until it is",
+                "explained.");
+        Line("PRICE CHECKED", $"{Num(price)} is strictly below the bid" +
+                              $"{(quote.Ask is not null ? ", the ask" : "")}" +
+                              $"{(quote.Last is not null ? " and the last trade" : "")}. It rests.");
+
+        // ----------------------------------------------------------------------------- placing it
+
+        // Unique per run, and unmistakably ours: the read-back must not be satisfiable by somebody
+        // else's order that happens to carry a comment. That was a real defect once — see the note
+        // on ProveClientOrderId — and this is the harness end of the same discipline.
+        var clientOrderId = $"TA-PROBE-{DateTimeOffset.Now:yyyyMMddHHmmss}";
+
+        Section("THE TEST ORDER — PLACING IT");
+        Line("CLIENT ORDER ID", clientOrderId);
+        Line("THE ORDER", $"BUY LIMIT 1 {instrument.Symbol} @ {Num(price)}  TIF=Day  on {account.Id}");
+        Cont("TIF=Day is the last line of defence: if every cleanup path below fails,");
+        Cont("a Day order still expires with the session instead of resting for weeks.");
+        Line("PATH", "AtasConnector.PlaceOrderAsync — the product's own connector, the");
+        Cont("same call TradingGateway makes. Nothing is hand-rolled onto the wire");
+        Cont("here, so what this measures is the path that would actually be traded.");
+
+        var attemptsBefore = connector.Bridge?.ClientOrderIdAttempts;
+        var checksBefore = connector.Bridge?.ClientOrderIdChecks;
+
+        var cmd = new PlaceOrderCommand(clientOrderId, account.Id, instrument.Symbol, OrderSide.Buy,
+            OrderType.Limit, 1m, price, null, TimeInForce.Day,
+            // Comment stays null on purpose. The adapter puts the CLIENT ORDER ID on Order.Comment —
+            // the only client-settable string ATAS offers — and deliberately does not merge this
+            // field in, so anything put here would be silently dropped rather than carried.
+            null);
+
+        OrderInfo? placed = null;
+        string? placeError = null;
+        var rejected = false;
+        var reading = "unknown";
+        var everSeen = false;
+        TestOrderOutcome cleanup;
+
+        // try/finally, not a linear path: the cancel below must happen even if the reporting between
+        // here and there throws for a reason nobody predicted. An order that was placed and then not
+        // cleaned up is the single outcome this verb is not allowed to produce.
+        try
+        {
+            try
+            {
+                placed = await connector.PlaceOrderAsync(cmd);
+                Line("PLACE CALL", "RETURNED — ATAS took the order without a definite refusal.");
+            }
+            catch (ConnectorRejectedException ex)
+            {
+                rejected = true;
+                placeError = $"{ex.GetType().Name}: {ex.Message}";
+                Line("PLACE CALL", "DEFINITELY REFUSED.");
+                Cont(placeError);
+                Cont("That is the bridge's AtasRejectedException arriving as the wire's");
+                Cont("rejected:true, and rule 3 reserves it for a definite broker refusal and");
+                Cont("nothing else. Taken at its word, nothing is live at the broker — and the");
+                Cont("cancel below runs anyway, because a word is not a reading.");
+            }
+            catch (Exception ex)
+            {
+                placeError = $"{ex.GetType().Name}: {ex.Message}";
+                Line("PLACE CALL", "FAILED, AND THE OUTCOME IS UNKNOWN.");
+                Cont(placeError);
+                Cont("Not a rejection: the bridge did not say the broker refused. Under rule 3");
+                Cont("this means the order MAY BE LIVE — a timeout or a dropped connection");
+                Cont("looks exactly like this and neither one un-places an order. Everything");
+                Cont("below proceeds on the assumption that it might be resting.");
+            }
+
+            try
+            {
+                (reading, everSeen) = await ReportReadBack(connector, clientOrderId, placed, rejected,
+                                                           ordersBefore, attemptsBefore, checksBefore);
+            }
+            catch (Exception ex)
+            {
+                Line("READ-BACK", $"COULD NOT BE REPORTED — {ex.GetType().Name}: {ex.Message}");
+                Cont("The cleanup below still runs; it does not depend on any of this.");
+            }
+        }
+        finally
+        {
+            cleanup = await CleanUp(connector, clientOrderId, placed, rejected, everSeen);
+        }
+
+        return new TestOrderOutcome(cleanup.ExitCode, $"{reading}/{cleanup.Summary}", Placed: true);
+    }
+
+    /// <summary>
+    /// What came back, reported as separate facts rather than as one verdict.
+    ///
+    /// The read-back searches on TWO keys — this run's client order id, and the connector order id
+    /// the place call returned — because the case where the order is in ATAS's collection under a
+    /// broker id but WITHOUT the client identifier is the single most important thing this verb can
+    /// discover. Searching only on the client id would report that as "nothing came back", which is
+    /// a completely different fact and the reassuring one.
+    /// </summary>
+    static async Task<(string Summary, bool EverSeen)> ReportReadBack(AtasConnector connector, string clientOrderId,
+        OrderInfo? placed, bool rejected, IReadOnlyList<OrderInfo>? ordersBefore, int? attemptsBefore, int? checksBefore)
+    {
+        Section("THE TEST ORDER — READING IT BACK");
+
+        if (placed is not null)
+        {
+            Line("ORDER (raw)", "as PlaceOrderAsync handed it back, one line:");
+            Console.WriteLine(Json.Write(placed));
+            Line("ORDER (pretty)", "the same, re-indented for reading:");
+            Console.WriteLine(Json.Write(placed, pretty: true));
+        }
+
+        var placedId = placed is { ConnectorOrderId.Length: > 0 } ? placed.ConnectorOrderId : null;
+
+        // A definite refusal means nothing was submitted, so nothing is on its way and waiting out
+        // the full budget only delays the report. The look still happens — rule 3 is trusted, and
+        // trusting it is still not the same act as checking it.
+        var limit = rejected ? TimeSpan.FromSeconds(2) : ReadBackLimit;
+        var poll = await PollOrders(connector,
+            list => list.Any(o => Mine(o, clientOrderId)) || (placedId is not null && list.Any(o => o.ConnectorOrderId == placedId)),
+            limit);
+
+        Line("ORDERS BEFORE", ordersBefore is null ? "COULD NOT BE READ" : ordersBefore.Count.ToString());
+        Line("ORDERS AFTER", poll.Orders is null
+            ? $"COULD NOT BE READ — {poll.Error}"
+            : poll.Orders.Count.ToString());
+        Cont($"re-read {poll.Reads} time(s) over {poll.Took.TotalSeconds:0.0}s, with account_id=\"\" and");
+        Cont("include_inactive=true — the same reading as the section above, so the two");
+        Cont("counts are directly comparable.");
+        if (rejected)
+        {
+            Cont("A short budget, because the placement was definitively refused: nothing");
+            Cont("is on its way, and this look is a check rather than a wait.");
+        }
+
+        var byClientId = poll.Orders?.Where(o => Mine(o, clientOrderId)).ToList();
+        var byPlacedId = placedId is null ? null : poll.Orders?.Where(o => o.ConnectorOrderId == placedId).ToList();
+        var found = byClientId is { Count: > 0 } ? byClientId[0] : byPlacedId is { Count: > 0 } ? byPlacedId[0] : null;
+        var everSeen = found is not null;
+
+        Line("CAME BACK AT ALL", poll.Orders is null
+            ? "UNKNOWN — the order collection could not be read"
+            : found is null
+                ? "NO — nothing in ATAS's collection matches this run, on either key"
+                : $"YES — matched on {(byClientId is { Count: > 0 } ? "this run's client order id" : "the connector order id the place call returned")}");
+
+        if (found is not null)
+        {
+            Line("READ BACK (raw)", "the order as it came back off ATAS's own collection, one line:");
+            Console.WriteLine(Json.Write(found));
+            Line("READ BACK (pretty)", "the same, re-indented for reading:");
+            Console.WriteLine(Json.Write(found, pretty: true));
+        }
+
+        Line("CARRIES OUR ID", poll.Orders is null
+            ? "UNKNOWN — the collection could not be read"
+            : byClientId is { Count: > 0 }
+                ? $"YES — client_order_id = {byClientId[0].ClientOrderId}"
+                : found is not null
+                    ? $"NO — the order is there and its client_order_id is {Blank(found.ClientOrderId)}"
+                    : "NOT ANSWERED — nothing came back to carry it");
+
+        var broker = found is null ? null : found.ConnectorOrderId;
+        Line("CARRIES A BROKER ID", found is null
+            ? "NOT ANSWERED — nothing came back to carry it"
+            : BrokerAssigned(broker)
+                ? $"YES — connector_order_id = {broker}"
+                : $"NO — connector_order_id = {Blank(broker)}");
+        if (found is not null && !BrokerAssigned(broker))
+        {
+            Cont("An id beginning 'ext:' is the adapter's own synthetic handle, produced by");
+            Cont("OrderKey when ATAS has not assigned Order.Id yet. It is not broker-assigned,");
+            Cont("and the bridge's own read-back skips an order without a real Order.Id — so");
+            Cont("an 'ext:' id cannot satisfy rule 1 either. Re-run in a moment if the broker");
+            Cont("was simply slow to acknowledge.");
+        }
+
+        // The counters ride on the heartbeat, once every five seconds, so a reading taken the instant
+        // after the place call can legitimately still show the old numbers. Wait for them rather than
+        // reporting "the bridge did not count it" about a frame that had not arrived yet.
+        if (attemptsBefore is { } ab)
+            await Until(() => connector.Bridge?.ClientOrderIdAttempts is { } now && now > ab, TimeSpan.FromSeconds(15));
+
+        var attemptsAfter = connector.Bridge?.ClientOrderIdAttempts;
+        var checksAfter = connector.Bridge?.ClientOrderIdChecks;
+        Line("SUBMITTED WITH AN ID", Counter(attemptsBefore, attemptsAfter));
+        Line("READ-BACKS PERFORMED", Counter(checksBefore, checksAfter));
+        Cont("the bridge's own counters, reported by it rather than inferred here.");
+
+        var after = connector.Capabilities;
+        Line("SupportsClientOrderId", $"{Yn(after.SupportsClientOrderId)}   AFTER the attempt — this is the reading that " +
+                                      "counts.");
+
+        // ------------------------------------------------------------------------- what it proves
+
+        Section("THE TEST ORDER — WHAT THIS PROVES");
+
+        if (poll.Orders is null)
+        {
+            Line("RULE 1", "NOT ANSWERED — the order collection could not be read after the");
+            Cont($"placement ({poll.Error}).");
+            Cont("This says nothing about ATAS and nothing about the identifier. It is the");
+            Cont("read that failed, not the round trip. Do not record it as either.");
+            return ("read-failed", everSeen);
+        }
+
+        if (found is null)
+        {
+            if (rejected)
+            {
+                Line("RULE 1", "NOT ANSWERED — the order was definitely refused, so no round trip");
+                Cont("ever happened and there was nothing to read back. Nothing is live at");
+                Cont("the broker. The refusal itself is the finding: read the PLACE CALL");
+                Cont($"message above. If it names a price band or a price limit, the {Pct(FarBelowBid)}");
+                Cont("offset is further from the market than this venue accepts, and");
+                Cont("FarBelowBid in this file is the one line to change. Any other message");
+                Cont("is about the order, the account or the instrument — and either way");
+                Cont("rule 1 is still unmeasured.");
+                return ("place-rejected", everSeen);
+            }
+
+            Line("RULE 1", "UNKNOWN — AND UNKNOWN IS NOT A FAILURE.");
+            Cont("The placement was not refused, yet nothing carrying this run's client");
+            Cont("order id, and nothing carrying the connector id the place call returned,");
+            Cont("is in ATAS's collection. The order may have reached the broker and be");
+            Cont("invisible to the collection this bridge can read; it may never have");
+            Cont("landed. Those are different facts and this run cannot separate them.");
+            Cont("Record UNKNOWN — and read the cleanup section below before walking away.");
+            return ("unknown", everSeen);
+        }
+
+        if (byClientId is not { Count: > 0 })
+        {
+            Line("RULE 1", "NOT SATISFIED — AND THIS IS GENUINE EVIDENCE ABOUT ATAS.");
+            Cont("The order IS in ATAS's own order collection — it was matched by the");
+            Cont("connector order id the place call returned — and it does NOT carry the");
+            Cont("client order id TradeAgent submitted with it. That is the round trip");
+            Cont("failing, observed, not inferred from an empty book.");
+            Cont("");
+            Cont("What follows from it: SupportsClientOrderId must stay false, the gateway");
+            Cont("must go on refusing LIVE_AUTONOMOUS on this connection, and THIS PRODUCT");
+            Cont("CANNOT TRADE UNATTENDED ON THIS BACKEND. After a dropped connection there");
+            Cont("is no identifier to reconcile by, so 'did my order land' has no answer.");
+            Cont("Do not repair this by hard-coding the boolean true — that would not make");
+            Cont("the state provable, only make the gateway believe it is.");
+            Cont("");
+            Cont("Before recording it as final: confirm it is repeatable, and check the raw");
+            Cont("order above for where the identifier went. The bridge writes it to");
+            Cont("Order.Comment, which is the only client-settable string on an ATAS order.");
+            return ("no-client-id", everSeen);
+        }
+
+        if (!BrokerAssigned(broker))
+        {
+            Line("RULE 1", "NOT YET SATISFIED — THE ROUND TRIP IS INCOMPLETE, NOT FAILED.");
+            Cont("The client order id came back off ATAS's own collection, so the");
+            Cont("identifier reaches ATAS and survives being stored. What is missing is a");
+            Cont("broker-assigned order id on the same order, and the bridge requires both");
+            Cont("before it will report true.");
+            Cont("");
+            Cont("Two different futures: the broker has not acknowledged yet, in which case");
+            Cont("re-running this in a moment answers it — or it never assigns an id ATAS");
+            Cont("surfaces, in which case false is the permanent and correct answer. This");
+            Cont("run does not distinguish them. Do not record either as settled.");
+            return ("no-broker-id", everSeen);
+        }
+
+        if (!after.SupportsClientOrderId)
+        {
+            Line("RULE 1", "THE EVIDENCE IS PRESENT AND THE BRIDGE STILL SAYS false — INVESTIGATE.");
+            Cont("The order in ATAS's collection carries BOTH this run's client order id");
+            Cont("and a broker-assigned order id, which is exactly the pair the bridge");
+            Cont("says it needs, and SupportsClientOrderId is still false. That is not a");
+            Cont("round-trip failure and it is not a fresh-session reading — it is the two");
+            Cont("sources disagreeing, and the disagreement IS the finding. Believe");
+            Cont("neither until it is explained, and do not go near autonomous trading on");
+            Cont("this connection meanwhile.");
+            return ("disagreement", everSeen);
+        }
+
+        Line("RULE 1", "SATISFIED, AND MEASURED HERE FOR THE FIRST TIME.");
+        Cont($"TradeAgent submitted '{clientOrderId}', and that identifier came back off");
+        Cont($"ATAS's own order collection alongside the broker-assigned id {broker},");
+        Cont("on an order this run placed. That is what rule 1 asks for. It was");
+        Cont("observed, not assumed, and the bridge now reports SupportsClientOrderId");
+        Cont("= true from the same observation rather than from this harness.");
+        Cont("");
+        Cont("What it still does NOT prove: that the identifier survives ATAS itself");
+        Cont("being restarted. Nothing observable from inside a strategy can prove");
+        Cont("that. And it says nothing about order history — ReconciliationProvable");
+        Cont("needs both halves, and the other half is reported above.");
+        return ("round-trip-proven", everSeen);
+    }
+
+    /// <summary>
+    /// The cancel, and then the only thing that settles whether it took: another read.
+    ///
+    /// This runs on every path, including the ones where the placement threw and the ones where
+    /// nothing came back. "The read failed" is not evidence that nothing landed, and an order that
+    /// was placed but never seen is exactly the one that must not be left resting.
+    /// </summary>
+    static async Task<TestOrderOutcome> CleanUp(AtasConnector connector, string clientOrderId,
+                                                OrderInfo? placed, bool rejected, bool everSeen)
+    {
+        Section("THE TEST ORDER — CLEANING UP");
+        Line("WHY THIS ALWAYS RUNS", "a resting order left behind is the one outcome nobody should discover");
+        Cont("later, from ATAS, on another day. So the cancel is attempted even when");
+        Cont("the placement was refused, even when it threw, and even when the");
+        Cont("read-back found nothing at all to cancel.");
+
+        var placedId = placed is { ConnectorOrderId.Length: > 0 } ? placed.ConnectorOrderId : null;
+        var target = placedId ?? clientOrderId;
+        Line("CANCELLING", target);
+        if (placedId is null)
+        {
+            Cont("— the CLIENT order id, because the place call returned no connector id.");
+            Cont("The bridge resolves a cancel by client order id as well: it keeps the");
+            Cont("orders it submitted keyed by the id it submitted them with, and it does");
+            Cont("so BEFORE handing anything to ATAS. That is what makes cleanup possible");
+            Cont("after a placement that told us nothing at all.");
+        }
+        else Cont("— the connector order id the place call returned.");
+
+        var sent = false;
+        string? lastError = null;
+        var poll = default(OrderPoll);
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            try
+            {
+                await connector.CancelOrderAsync(target);
+                sent = true;
+                lastError = null;
+                Line($"CANCEL {attempt}", "SENT — the bridge returned without an error.");
+            }
+            catch (ConnectorRejectedException ex)
+            {
+                lastError = $"{ex.GetType().Name}: {ex.Message}";
+                Line($"CANCEL {attempt}", $"DEFINITELY REFUSED — {ex.Message}");
+                Cont("Usually 'this order is not cancellable' — already finished, or never");
+                Cont("known to ATAS at all. Neither is taken as proof here: the re-read");
+                Cont("below is what settles whether anything is still on the book.");
+            }
+            catch (Exception ex)
+            {
+                lastError = $"{ex.GetType().Name}: {ex.Message}";
+                Line($"CANCEL {attempt}", $"FAILED, OUTCOME UNKNOWN — {lastError}");
+                Cont("The cancel may or may not have reached ATAS. Same as above: the");
+                Cont("re-read decides, not this.");
+            }
+
+            poll = await PollOrders(connector, list => !list.Any(o => Mine(o, clientOrderId) && !Terminal(o)), CleanupLimit);
+            var stillResting = poll.Orders?.Where(o => Mine(o, clientOrderId) && !Terminal(o)).ToList();
+            if (stillResting is not { Count: > 0 } || attempt == 2) break;
+
+            // One more go. Where ATAS has since assigned an id, use it: the first cancel may have
+            // gone out before the order had a broker id to be cancelled by, which is a real and
+            // recoverable reason for it not to have taken. Where it has not, retry the same id
+            // anyway — an order that was not cancellable a moment ago can be cancellable now, and a
+            // redundant cancel is harmless in a way that a resting order is not. Cancelling twice
+            // cannot fill anything; that asymmetry is the whole argument for trying again.
+            var better = stillResting[0].ConnectorOrderId;
+            if (!string.IsNullOrEmpty(better) && better != target)
+            {
+                Line("RETRYING", $"still resting. Trying again with the id it now carries: {better}");
+                target = better;
+            }
+            else Line("RETRYING", "still resting, and no newer id to try. Sending the cancel again.");
+        }
+
+        var book = poll.Orders;
+        if (book is null)
+        {
+            Line("BOOK RE-READ", $"COULD NOT BE READ — {poll.Error}");
+            return Loud("CLEANUP-NOT-CONFIRMED", "THE CANCEL COULD NOT BE CONFIRMED — THE BOOK COULD NOT BE RE-READ.",
+                $"The cancel was {(sent ? "sent without error" : "not accepted")}" +
+                $"{(lastError is null ? "" : $" ({lastError})")}, and then the order",
+                "collection could not be read to check it. Whether anything of this run's is",
+                "still resting is UNKNOWN. Open ATAS and look at the order book for an order",
+                $"whose comment is '{clientOrderId}' before doing anything else.");
+        }
+
+        var mine = book.Where(o => Mine(o, clientOrderId)).ToList();
+        Line("BOOK RE-READ", $"{book.Count} order(s) in the collection, {mine.Count} carrying this run's id" +
+                             $"   (read {poll.Reads} time(s) over {poll.Took.TotalSeconds:0.0}s)");
+        foreach (var o in mine)
+            Cont($"  {o.State}  filled={Num(o.FilledQuantity)}/{Num(o.Quantity)}  id={Blank(o.ConnectorOrderId)}");
+
+        var resting = mine.Where(o => !Terminal(o)).ToList();
+        if (resting.Count > 0)
+            return Loud("STILL-RESTING", "AN ORDER FROM THIS RUN IS STILL ON THE BOOK.",
+                $"{resting.Count} order(s) carrying '{clientOrderId}' are in a non-terminal state" ,
+                $"after {(sent ? "a cancel that returned without error" : "the cancel could not be sent")}:",
+                string.Join(", ", resting.Select(o => $"{o.ConnectorOrderId} {o.State}")),
+                "",
+                "CANCEL IT BY HAND IN ATAS NOW. It is a simulated account and a resting buy",
+                "limit far below the market, so it is not going to do anything — but it is",
+                "there, this run put it there, and nothing else is going to remove it.");
+
+        var filled = mine.Where(o => o.State == ExecutionState.FILLED || o.FilledQuantity > 0m).ToList();
+        if (filled.Count > 0)
+            return Loud("FILLED", "THE TEST ORDER FILLED. IT WAS PRICED SO THAT IT COULD NOT.",
+                string.Join(", ", filled.Select(o => $"{o.ConnectorOrderId} {o.State} filled={Num(o.FilledQuantity)}")),
+                "",
+                "There is now a position on this account that this run opened. Flatten it in",
+                "ATAS. Then find out why: a buy limit placed a long way below the bid does not",
+                $"fill unless the price this run derived was wrong ({Pct(FarBelowBid)} below the quoted bid),",
+                "or the quote it derived it from did not describe the market. Either one",
+                "matters far more than the client-order-id reading above, and neither should",
+                "be left unexplained before anything else is placed.");
+
+        if (mine.Count > 0)
+        {
+            Line("CLEANUP VERDICT", $"CONFIRMED — the order is finished: {string.Join(", ", mine.Select(o => o.State.ToString()))}.");
+            Cont("Observed in ATAS's own collection after the cancel, not inferred from the");
+            Cont("cancel returning without an error. Nothing from this run is resting.");
+            return new TestOrderOutcome(0, "cancelled", Placed: true);
+        }
+
+        if (rejected && !everSeen)
+        {
+            Line("CLEANUP VERDICT", "CONFIRMED — nothing was ever submitted, so there was nothing to cancel.");
+            Cont("The placement was definitively refused and nothing carrying this run's id");
+            Cont("has been in the collection at any point. The cancel was attempted anyway.");
+            return new TestOrderOutcome(0, "nothing-placed", Placed: true);
+        }
+
+        if (everSeen)
+        {
+            Line("CLEANUP VERDICT", "CONFIRMED, THOUGH WEAKLY — nothing of this run's is on the book now.");
+            Cont("The order was visible in the collection before the cancel and is not");
+            Cont("visible now. That is consistent with the cancel having taken and ATAS");
+            Cont("having dropped the finished order from the live collection — but it is");
+            Cont("NOT the same as observing it in CANCELLED, and this run cannot tell the");
+            Cont("two apart. What it does say is the thing that matters: nothing carrying");
+            Cont("this run's identifier is resting.");
+            return new TestOrderOutcome(0, "gone", Placed: true);
+        }
+
+        return Loud("CLEANUP-NOT-CONFIRMED", "THE CANCEL COULD NOT BE CONFIRMED — NOTHING OF THIS RUN'S WAS EVER VISIBLE.",
+            "The placement was not definitively refused, so it may have reached the",
+            "broker; and nothing carrying this run's client order id has appeared in",
+            "ATAS's collection at any point, before or after the cancel. So the book",
+            "cannot say whether an order is resting — the same empty reading is produced",
+            "by 'it never landed' and by 'it landed somewhere this bridge cannot see'.",
+            "",
+            $"Open ATAS and look for an order whose comment is '{clientOrderId}'. It is a",
+            "Day order, so it expires with the session even if it is missed — that is a",
+            "backstop, not a reason to skip looking.");
+    }
+
+    // ------------------------------------------------------------------------- test-order pieces
+
+    /// <summary>Prints a refusal that names its reason, and returns the exit code for one.</summary>
+    static TestOrderOutcome Refuse(string headline, params string[] why)
+    {
+        Line("REFUSED TO PLACE", headline);
+        foreach (var l in why) Cont(l);
+        Cont("");
+        Cont("NOTHING WAS SUBMITTED. No order was placed, so there is nothing resting on");
+        Cont("the book as a result of this run and nothing to cancel.");
+        return new TestOrderOutcome(3, "refused", Placed: false);
+    }
+
+    /// <summary>A cleanup outcome nobody should be able to scroll past.</summary>
+    static TestOrderOutcome Loud(string summary, string headline, params string[] lines)
+    {
+        Console.WriteLine();
+        Console.WriteLine(new string('!', 80));
+        Line("CLEANUP VERDICT", headline);
+        foreach (var l in lines) Cont(l);
+        Console.WriteLine(new string('!', 80));
+        return new TestOrderOutcome(4, summary, Placed: true);
+    }
+
+    /// <summary>
+    /// Re-reads ATAS's live order collection until <paramref name="until"/> is satisfied or the time
+    /// runs out, and reports how hard it looked.
+    ///
+    /// account_id="" for the same reason the section above uses it: a blank account id means "every
+    /// account" AND stops the adapter consulting the history cache, so what comes back is exactly
+    /// ATAS's live order collection — the collection that can settle rule 1.
+    /// </summary>
+    static async Task<OrderPoll> PollOrders(AtasConnector connector, Func<IReadOnlyList<OrderInfo>, bool> until, TimeSpan limit)
+    {
+        var sw = Stopwatch.StartNew();
+        IReadOnlyList<OrderInfo>? last = null;
+        string? error = null;
+        var reads = 0;
+        while (true)
+        {
+            try { last = await connector.GetOrdersAsync("", includeInactive: true, since: null); error = null; }
+            catch (Exception ex) { last = null; error = $"{ex.GetType().Name}: {ex.Message}"; }
+            reads++;
+            if (last is not null && until(last)) break;
+            if (sw.Elapsed >= limit) break;
+            await Task.Delay(500);
+        }
+        return new OrderPoll(last, error, reads, sw.Elapsed);
+    }
+
+    static bool Mine(OrderInfo o, string clientOrderId) =>
+        string.Equals(o.ClientOrderId, clientOrderId, StringComparison.Ordinal);
+
+    static bool Terminal(OrderInfo o) => OrderStateMachine.IsTerminal(o.State);
+
+    /// <summary>
+    /// Whether an id is one the BROKER assigned, as opposed to one the adapter made up.
+    ///
+    /// OrderKey falls back to "ext:&lt;ExtId&gt;" when ATAS has not set Order.Id yet, so an id with
+    /// that prefix is the bridge's own synthetic handle. It must not be read as a broker-assigned
+    /// id: the bridge's own read-back requires a non-empty Order.Id, so an order carrying only an
+    /// "ext:" handle cannot satisfy rule 1 — and reporting it as though it could would fake exactly
+    /// the proof rule 1 says not to fake.
+    /// </summary>
+    static bool BrokerAssigned(string? connectorOrderId) =>
+        !string.IsNullOrEmpty(connectorOrderId) && !connectorOrderId.StartsWith("ext:", StringComparison.Ordinal);
+
+    static string Counter(int? before, int? after) =>
+        after is null ? "NOT REPORTED — this bridge predates the attempt counters"
+        : before is null ? $"{after}   (nothing to compare against: no reading before the order)"
+        : after == before ? $"{after}   UNCHANGED from before the order"
+        : $"{after}   (was {before} before the order, +{after - before})";
+
+    /// <summary>Rounds DOWN to a tick, never to nearest: every rounding error must move a resting buy
+    /// further from the market rather than closer to it.</summary>
+    static decimal SnapDown(decimal price, decimal tick) =>
+        tick <= 0m ? price : Math.Floor(price / tick) * tick;
+
+    static string Num(decimal d) => d.ToString("0.##########", CultureInfo.InvariantCulture);
+    static string Pct(decimal fraction) => $"{fraction * 100m:0.##}%";
+
+    static void Usage(string problem)
+    {
+        Console.WriteLine("usage: probe atas [--wait <seconds>] [--wait-anyway] [--place-test-order --yes]");
+        Console.WriteLine($"  {problem}");
+        Console.WriteLine("  --wait <seconds>      how long to wait for the bridge to dial in (default 60)");
+        Console.WriteLine("  --wait-anyway         wait for the pipe even though ATAS was not detected;");
+        Console.WriteLine("                        only useful when driving the pipe with a stand-in bridge");
+        Console.WriteLine("  --place-test-order    PLACES A REAL ORDER: one buy limit, quantity 1, on the");
+        Console.WriteLine("                        chart's own instrument, priced far below the live bid so");
+        Console.WriteLine("                        that it rests and cannot fill. It is read back and then");
+        Console.WriteLine("                        cancelled. Refuses to submit anything unless the account");
+        Console.WriteLine("                        is provably simulated; needs --yes as a second, separate");
+        Console.WriteLine("                        act. This is how rule 1 gets measured instead of guessed.");
+        Console.WriteLine("  --yes                 authorises --place-test-order. Does nothing on its own.");
     }
 
     // ------------------------------------------------------------------------------------ pieces
