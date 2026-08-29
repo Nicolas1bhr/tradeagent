@@ -1,18 +1,30 @@
 # BUILD-STATUS
 
-**Milestone:** the bridge runs inside ATAS and its reads work. The adapter was wired to a surface
-ATAS never fills for a chart strategy (`ChartStrategy.Connector` is null); rewired onto
-`ITradingManager`, accounts and orders now read back off the live platform where an hour earlier
-both said `COULD NOT READ`. Separately, the machine took its first unattended reboot: it logged
-itself in, and came back **unable to drive its own desktop** because a repo push had silently
-half-deleted the UI agent hours earlier. Both are fixed and both are quoted below.
+**Milestone:** the bridge runs inside ATAS, its reads work, and one order has been placed through it.
+Both capability verdicts are now false **for known reasons rather than for want of looking**, which
+is the difference between a gap and an answer:
 
-The two capability verdicts are still false, and the two falses are no longer the same kind of
-thing: `SupportsOrderHistory` now means "looked, and the call threw", while `SupportsClientOrderId`
-still means "nothing has ever been placed". **The one fact the product waits on — whether ATAS
-carries a client order id onto a live order — remains unmeasured.** The product's two defining
-promises — *no terminal, ever* and *it installs what it needs itself* — remain verified by running
-them on real Windows 11.
+- `SupportsOrderHistory` — false because `IIndicatorDataProvider.GetService<T>()` throws
+  `NotSupportedException` for *every* type, including one reachable as a property on the same
+  interface. Every cache route is dead. Shippable.
+- `SupportsClientOrderId` — false because the one measurement taken came back `proven-sameref`:
+  ATAS handed back the very `Order` instance we submitted, so the identifier came back because it
+  never left. **This used to read `true`.** The capability latched on any match, so the product
+  reported rule 1 satisfied on a proof this file already called worthless. Corrected 2026-08-29.
+
+**The one fact the product waits on is whether ATAS carries a client order id onto something this
+adapter did not write**, and nothing observable from inside a chart strategy can settle it. The
+route designed for it is a fresh ATAS session; the trap in that route is recorded below, because
+the obvious implementation of it produces an automatic `true` rather than a proof.
+
+`ReconciliationProvable` is false and `TradingGateway` refuses `LIVE_AUTONOMOUS`. That is correct.
+
+**Open and unfixed: the bridge pipe authenticates nobody**, while the agent-facing gateway pipe
+demands an ACL and a token. A process that wins the pipe name receives the bridge's connection and
+can place orders in ATAS around every operator control. Detail in the 2026-08-29 section.
+
+The product's two defining promises — *no terminal, ever* and *it installs what it needs itself* —
+remain verified by running them on real Windows 11.
 
 **Built and verified on:** macOS 26 / arm64 locally, `windows-latest` / `ubuntu-latest` /
 `macos-latest` in CI (.NET 10), and a real Windows 11 Pro 26200 machine.
@@ -791,6 +803,201 @@ The same op later showed the three-deep stack raised by activating a strategy
 **Tests:** 107/107 green on macOS after the rewrite (43 unit, 28 integration, 36 fault).
 
 ---
+
+## macOS only, 2026-08-29 — the test machine was offline for the whole session
+
+`tailscale status` reported the test machine `offline, last seen 9h ago` at the start of the
+session and again at the end. **Nothing in this section has been run against real ATAS**, and
+`AtasStrategyAdapter.cs` is `<Compile Remove>`d on macOS, so the adapter edits below have not been
+through a compiler at all. What was available was the half that compiles everywhere, and the reading
+of code — which is where the session's two largest findings came from.
+
+Baseline re-verified before anything was touched: **107/107 green**. At the end: **141/141**.
+
+### Rule 1 was reporting satisfied on the proof that had already been called worthless
+
+The 2026-08-28 run measured `coid=proven-sameref` and recorded, correctly, that the match proves
+nothing. The capability was a separate `bool` that latched on **any** match, so `Describe()` went on
+reporting `SupportsClientOrderId = true` from it. The adapter's own comment said the wiring was
+deferred *"One live reading first"*. That reading existed and was vacuous, so the deferred change is
+now made: `SupportsClientOrderId` is `ProvesRoundTrip(proof)`, true for `Distinct` alone.
+
+The separate bool is deleted rather than corrected. Two variables for one fact is how a capability
+and the `coid=` token printed beside it come to disagree, and the live run had them disagreeing
+already: the token said the match was worthless and the boolean said the capability held.
+
+**The latch is the part that would have gone wrong quietly.** `ProveClientOrderId` opens with an
+early return so it stops rescanning the book once the answer is final. Had `SameRef` kept setting it,
+the reading this platform actually produces would have frozen the proof for the life of the process —
+a genuinely `Distinct` match arriving later could never be observed — and **nothing would have looked
+wrong**, because the diagnostic would go on truthfully printing `proven-sameref` forever. The latch
+now means "nothing stronger can be observed", which is a different question from "the capability is
+true", so they are separate predicates that happen to agree today.
+
+A second hole was found in the same method: the latch check and the proof write are separate lock
+acquisitions with a full enumeration between them, and it is called from `Place` on the pipe thread
+and from the order-event fan on ATAS's. Two passes can both clear the latch, so a straggling `SameRef`
+could overwrite a `Distinct` just established. The write is now monotonic.
+
+The decision moved out of the ATAS-only file into `ClientOrderIdProof.cs`, which every machine
+compiles — the predicate that gates autonomous live trading was sitting where no test on any machine
+but the ATAS box could reach it. 26 cases now cover it, including the latch hazard by name.
+
+### A wedged ATAS call could silence the bridge while the heartbeat said READY
+
+`Block()` waited forever. `BridgeServer` awaits `HandleFrame` before reading the next frame, so one
+call that never returns means **no further frame is ever read off the pipe** — including the
+operator's cancel-all, which is how the book gets cleared. The heartbeat runs on its own task and
+keeps beating throughout, so the connector goes on reporting `READY`. A wedged bridge that reports
+healthy defeats the one check meant to catch it.
+
+`AtasCall.Block` now carries a deadline, and expiry is emphatically **not** a rejection:
+`WaitAsync` ends our wait and cannot recall a request already handed to the platform, so the order may
+be resting at the broker. `AtasCallTimeoutException` is not derived from `AtasRejectedException` and
+says the outcome is unknown and must be reconciled — rule 3, in the direction that costs a reconcile
+rather than the direction that loses money.
+
+Five seconds is **arithmetic, not a measurement**: `Place` costs the call plus `WaitFor(AckTimeout)`,
+5 + 3 = 8, and `AtasConnector`'s RPC timeout is 10. Above about 6s the connector gives up before the
+bridge answers and the bridge is still wedged when the next frame arrives.
+
+`BridgeServer`'s `catch` was right about the shape the adapter throws today and wrong about the shape
+a task-based path produces: `.Wait()` or `.Result` wraps a refusal in an `AggregateException` and the
+bare catch would miss it, sending `rejected=false` for a definite broker "no". It now unwraps
+single-fault wrappers only — several failures are ambiguous by definition.
+
+**The tests were proven to bite.** Each of seven wrong implementations was applied to the real source
+and the suite run: `.Wait()` instead of the awaiter, no timeout, a timeout turned into a rejection, the
+call left unawaited, and three variants of the wire classifier. Every one failed at least one named
+test. The two pre-existing rejection tests —
+`A_definite_rejection_survives_the_crossing_as_a_rejection` and
+`Losing_the_bridge_surfaces_as_indefinite_rather_than_as_a_rejection` — **did not appear in a single
+failure list across all seven**, so their blindness to this change is measured rather than asserted.
+
+### Step 3's premise was wrong, and the correction changes what the switch is for
+
+`docs/RESUME-HERE.md` said switching to the `...Async` overloads "moves every refusal from thrown out
+of the call to faulted task", and that rule 3's classification is built on the first shape.
+
+**There is no `catch` in the adapter's write path at all.** Not one `AtasRejectedException` after
+submission comes out of an order call; every one is manufactured from `_failures`, which is written
+only by `OnFailurePayload`, fed only by ATAS's `OrderRegisterFailed` / `OrderCancelFailed` /
+`OrderModifyFailed` events — a path the sync/async choice does not touch. So the switch does not move
+the refusal path, and rule 3's classification is not what is at stake in it.
+
+What is at stake is timing, and separately a hole the switch would close: **the new deadline covers
+one of five write paths**. `AtasCall.Block` is reached only for `feed.RegisterOrderAsync`. The other
+four writes are synchronous calls into ATAS that cannot be given a deadline from this side at all, so
+if any of them blocks the pipe loop still stops and the heartbeat still reports `READY`. Flipping them
+to the Async overloads would put all four under the deadline. That is an argument for the switch that
+was not previously recorded.
+
+Signatures, quoted from the dump rather than guessed — all four return plain `Task`, so the
+"`false` means refused" hazard does not exist, and none takes a `CancellationToken`:
+
+```
+Task CancelOrderAsync(Order order, Boolean askConfirmation, Boolean checkOrderStates)
+Task ClosePositionAsync(Position position, Boolean askConfirmation, Boolean checkOrderStates)
+Task ModifyOrderAsync(Order order, Order newOrder, Boolean askConfirmation, Boolean checkOrderStates)
+Task OpenOrderAsync(Order order, Boolean setDefaultQuantity, Boolean askConfirmation, Boolean checkOrderStates)
+```
+
+**NOT VERIFIED, and it is the gate on the switch: whether `OpenOrderAsync`'s task completes on
+submission or only on broker acknowledgement.** If the latter, blocking on it puts `Place` past the
+connector's 10s deadline and turns every order into UNKNOWN. Only the Windows machine can answer it.
+
+**Correction to the record:** `RESUME-HERE` states the 2026-08-28 order "placed cleanly from the
+bridge's pipe thread and returned in under two seconds". **That figure is not quotable from any
+instrument in this repository** — nothing times the place call; the probe's only `Stopwatch` on that
+path times the read-back. What the run proves is that `Place` returned inside the connector's 10s RPC
+timeout without a rejection.
+
+### The probe would have accused the bridge of a defect it does not have
+
+Three verdicts in `tools/probe` were written when any match set the capability, so "the book shows
+both ids and the bridge says false" could only mean something was broken. It is now the **correct**
+reading on ATAS. Worst of the three: the disagreement branch sits above the `proven-sameref` branch
+and returns first, so the accurate sameref explanation written directly beneath it was dead code on
+precisely the run it was written for. Both verdict functions now take the `coid=` token, and the
+harness's own order-book reading says outright that it is the weaker of the two here — object identity
+is a thing the bridge can see and the order book cannot.
+
+### The ATAS API dump existed only in a temp directory
+
+Every ATAS identifier the bridge uses — 125 of them — was checked against a 6,581-line reflection dump
+that lived nowhere but session scratchpads under `/private/tmp`, which macOS clears. There is no ATAS
+NuGet package and no vendor documentation at that depth. It is now `docs/atas-api-8.0.14.397.txt`.
+Public type and member names only; scanned before committing, and the password/secret hits are all
+ATAS member names (`SecureString Secret`, `ILoginPasswordConnectorSettings`).
+
+### SAFETY: the bridge pipe authenticates nobody
+
+Found by reading, and verified against both files. **Not a regression — it has been true since the
+bridge existed.**
+
+The agent-facing gateway pipe is defended twice: `GatewayPipeServer.CreateServer` builds a Windows
+`PipeSecurity` limited to the current user and creates the pipe through `NamedPipeServerStreamAcl`,
+and `Serve` demands `IpcToken.Matches` on `Hello`, with one chance per connection.
+
+The bridge pipe — the one that places orders — has neither:
+
+```csharp
+// AtasConnector.AcceptLoop
+_pipeStream = new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+```
+
+No ACL, no token, no handshake. The app is the **server**; `BridgeServer` inside ATAS is the client
+that dials in; `HandleFrame` dispatches `BridgeOps.Place` to `adapter.Place(...)` with no
+authentication of the peer.
+
+**The attack is impersonation, not connection.** `maxNumberOfServerInstances` is 1, so whichever
+process creates that pipe name first owns it and the bridge connects to whatever is listening. A
+process that wins the name receives the bridge's connection and can place orders directly in ATAS —
+around the mode, the kill switch, the approvals, the risk limits and the autonomy gate, every one of
+which lives in `TradingGateway`, which is no longer in the path. `AcceptLoop` retries every second
+after a drop, so a squatter needs one moment when the app is not holding the name, not a boot race.
+`tools/probe` creates that pipe as a stand-in app by design, so the technique is proven in-repo.
+
+This matters because of who the adversary is. `CliAgentRuntime` and `AgentSession` start the AI
+runtime with `Process.Start` **as the same OS user**, and containing it is the whole point of the
+in-process operator authority CLAUDE.md protects. A per-user ACL does not exclude a same-user process,
+and neither does a secret in a file that user can read — so any fix here must say plainly what it
+stops and what it does not.
+
+### SAFETY: two routes to a `Distinct` the adapter manufactured against itself
+
+Now that `Distinct` alone gates the capability, both of these matter:
+
+- **`Modify`'s clone.** `var replacement = order.Clone();` copies `Comment`, so the replacement is an
+  object this adapter constructed carrying our client order id, while `_submitted[id]` holds the
+  *original*. If ATAS's collection ever contains the replacement, `ProveClientOrderId` matches it,
+  finds it reference-distinct, and records a round trip the adapter performed against itself.
+  **NOT VERIFIED: whether ATAS's collection ever holds that clone** — the dump carries public members
+  only and cannot answer it, which is exactly why the guard must not depend on the answer.
+- **`ClosePosition`** writes `created.Comment = clientOrderId` onto an order ATAS created. Safe today
+  only because that id never enters `_submitted` — incidental rather than designed.
+
+### The rule-1 restart proof: designed, with the trap named
+
+The cheapest real proof is a fresh ATAS session — anything surviving a process restart cannot be our
+object. The obstacle is that after a restart `_submitted` is empty and `ProveClientOrderId` refuses any
+id not in it, which is the deliberate 2026-08-27 safety fix.
+
+**The trap, and it is the finding: relaxing that guard does not give a proof, it gives an automatic
+`true`.** After a restart this process has constructed no `Order` at all, so *every* match is
+reference-distinct by construction — and `Distinct` now sets the capability. A reading true by
+construction, dressed as a measurement, is precisely the vacuity `SameRef` was invented to expose,
+re-imported one level up.
+
+So the mechanism needs a reading of its own (`CrossSession`), with the latch following it rather than
+`Distinct`, and a durable write-ahead record of which ids this product submitted — written *before* the
+order exists, by a process that is gone by the time it is read, and carrying the broker id that
+process saw ATAS assign. Designed, not built: it cannot be exercised while the machine is offline.
+
+**And what it would prove is bounded.** A cross-session match cannot distinguish ATAS rebuilding the
+order from the *broker's* answer on reconnect from ATAS rehydrating it from its own local store. Both
+survive a restart, both look identical from inside a chart strategy. Only the broker's own report
+separates them, and that is not a source the software can read at runtime during an outage.
 
 ## Defects found and fixed on 2026-08-26
 
