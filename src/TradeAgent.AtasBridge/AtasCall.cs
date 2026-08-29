@@ -23,6 +23,13 @@ public sealed class AtasCallTimeoutException(string message) : Exception(message
 public static class AtasCall
 {
     /// <summary>
+    /// The default consequence, and it is the one that matters: an expiry on a write path means an
+    /// order may be resting at the broker with nobody watching it. Rule 3 in one sentence.
+    /// </summary>
+    public const string OrderConsequence =
+        "The outcome is UNKNOWN — the order may be live at the broker — and must be reconciled, never assumed failed.";
+
+    /// <summary>
     /// Runs <paramref name="task"/> to completion on the calling thread, or gives up after
     /// <paramref name="timeout"/> and reports the outcome as unknown.
     ///
@@ -101,7 +108,12 @@ public static class AtasCall
     /// <param name="task">The ATAS call already in flight.</param>
     /// <param name="timeout">How long to wait before declaring the outcome unknown.</param>
     /// <param name="operation">Named in the message, so a log says which call went unanswered.</param>
-    public static void Block(Task task, TimeSpan timeout, string operation)
+    /// <param name="consequence">What an expiry MEANS for this particular caller, appended to the
+    /// message. Defaults to <see cref="OrderConsequence"/>, which is right for every write path and
+    /// wrong for anything else — the default was written when the only caller placed orders, and a
+    /// message that tells a reader to reconcile an order that does not exist is worse than a vague
+    /// one. Pass your own on any call that is not placing, modifying or cancelling.</param>
+    public static void Block(Task task, TimeSpan timeout, string operation, string? consequence = null)
     {
         ArgumentNullException.ThrowIfNull(task);
 
@@ -117,8 +129,7 @@ public static class AtasCall
             Observe(task);
             throw new AtasCallTimeoutException(
                 $"ATAS did not answer '{operation}' within {timeout.TotalSeconds:0.##}s. We stopped waiting; " +
-                "ATAS did not. The outcome is UNKNOWN — the order may be live at the broker — and must be " +
-                "reconciled, never assumed failed.");
+                $"ATAS did not, so whatever it was doing may still complete. {consequence ?? OrderConsequence}");
         }
 
         if (task.IsFaulted && task.Exception is { InnerExceptions.Count: > 1 } several) throw several;

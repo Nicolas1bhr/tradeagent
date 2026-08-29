@@ -132,6 +132,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// exists to prevent. Change either number and redo the sum.</summary>
     public TimeSpan CallTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long <see cref="StopBridge"/> waits for the bridge's frame loop to end before
+    /// abandoning it. Runs on ATAS's OWN THREAD, which is what makes an unbounded wait here a hang
+    /// of the platform rather than of us.
+    ///
+    /// DERIVED, NOT CHOSEN, and computed rather than stored so the sum cannot drift when either
+    /// term is changed. <c>BridgeServer.DisposeAsync</c> awaits the frame loop, and the loop awaits
+    /// <c>HandleFrame</c>; the longest a HEALTHY frame can take is one order call plus its
+    /// acknowledgement wait, which is <see cref="CallTimeout"/> + <see cref="AckTimeout"/> = 8s.
+    /// Two seconds of slack on top makes this a detector of a WEDGED loop rather than a race against
+    /// a slow one: a stop that arrives while an order is genuinely in flight still waits for the
+    /// reply to reach the gateway, and only a loop that is never going to finish is abandoned.
+    /// A shorter deadline would abandon healthy shutdowns; a longer one just holds ATAS's thread.</summary>
+    TimeSpan StopTimeout => CallTimeout + AckTimeout + TimeSpan.FromSeconds(2);
+
     readonly Lock _gate = new();
     readonly ManualResetEventSlim _pulse = new(false);
 
@@ -141,6 +155,32 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     /// <summary>Orders we submitted, by client order id, so Place can watch the exact instance.</summary>
     readonly Dictionary<string, AtasOrder> _submitted = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// EVERY ORDER OBJECT THIS ADAPTER TOUCHED, and therefore every object that can never be rule
+    /// 1's proof. Deliberately WIDER than <see cref="_submitted"/>, which is keyed by client order
+    /// id and holds only what <see cref="Place"/> built.
+    ///
+    /// The two it misses are the two that matter, and both are objects the adapter itself produces
+    /// carrying our identifier:
+    ///
+    ///   * <see cref="Modify"/>'s <c>order.Clone()</c> — Clone copies Comment, so the replacement is
+    ///     an object WE constructed holding OUR client order id, while <c>_submitted[id]</c> still
+    ///     points at the original. A read-back that asked only "is this the instance I submitted"
+    ///     answered no for it and recorded Distinct: a round trip the adapter performed against
+    ///     itself, on which SupportsClientOrderId flips true.
+    ///   * <see cref="ClosePosition"/>'s <c>created.Comment = clientOrderId</c> — our identifier
+    ///     written by hand onto an order ATAS created.
+    ///
+    /// Whether ATAS's own order collection ever contains the Modify replacement is NOT VERIFIED and
+    /// cannot be settled from the API dump, which lists public members only. That is exactly why the
+    /// guard is unconditional: rule 1 is not allowed to rest on an unverified platform behaviour.
+    ///
+    /// Under <see cref="_gate"/> like every other side table here, trimmed by <see cref="Trim"/>,
+    /// and its whole decision — including what a trimmed-away entry does to a proof — lives in
+    /// <see cref="AdapterTouchedOrders"/>, in a file that compiles and is tested on every machine.
+    /// </summary>
+    readonly AdapterTouchedOrders _touched = new();
 
     /// <summary>What is known about each symbol's book, per SIDE, and where each side came from. A
     /// quote is stamped with the time the price was true — never with "now" for a price that was
@@ -307,11 +347,52 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         bridge.Start();
     }
 
+    /// <summary>
+    /// Takes the bridge down, ON ATAS'S OWN THREAD, and therefore under a deadline.
+    ///
+    /// WHY THERE IS A DEADLINE AT ALL. <c>BridgeServer.DisposeAsync</c> cancels and then awaits the
+    /// frame-reading loop, and that loop awaits <c>HandleFrame</c> — so a wedged write, or any frame
+    /// handler that never returns, means this method never returns either. It runs from
+    /// <see cref="OnStopping"/> and from the StateChanged fan, both of which are ATAS calling us:
+    /// an unbounded wait here stops the PLATFORM, not the strategy. This is the same
+    /// unbounded-wait shape <see cref="AtasCall"/> was extracted to remove from the write path, so
+    /// it is the same helper, for the same reason.
+    ///
+    /// WHAT A TIMEOUT DURING SHUTDOWN MEANS, WHICH IS NOT WHAT ONE MEANS DURING A WRITE. Nothing is
+    /// pending on it and there is nothing to reconcile: no order outcome is being decided, the pipe
+    /// is being closed deliberately, and the gateway learns the bridge is gone the way it always
+    /// does — the heartbeat stops. So <see cref="AtasCallTimeoutException"/>'s message, which is
+    /// written for an order that may be live at the broker, describes nothing that is true here.
+    /// That is why it is caught rather than logged or propagated: the mechanism fits, the words
+    /// do not.
+    ///
+    /// WHY IT CATCHES EVERYTHING, AND WHY THE CATCH IS HERE RATHER THAN LEFT TO <see cref="Guard"/>.
+    /// Both call sites are already inside Guard, so nothing escapes into ATAS's dispatch either way
+    /// — but Guard catches ONE level up, which would skip <see cref="UntrackSecurities"/> and leave
+    /// this adapter subscribed to ATAS security events for the rest of the session, with the bridge
+    /// it feeds already discarded. Teardown must finish; catching here is what finishes it.
+    ///
+    /// WHAT ABANDONING THE WAIT LEAVES BEHIND. DisposeAsync has already requested cancellation
+    /// before it awaits, so the abandoned loop cannot start another connection cycle and its
+    /// heartbeat token is cancelled with it — it stops where it is stuck and stops speaking. It
+    /// still holds its pipe client until whatever wedged it returns, so a strategy restarted inside
+    /// that window can find TradeAgent already holding a connection it will never hear from again.
+    /// That is a visibly dead bridge, which the heartbeat timeout already handles, and it is
+    /// strictly better than holding ATAS's thread forever.
+    /// </summary>
     void StopBridge()
     {
         BridgeServer? bridge;
         lock (_gate) { bridge = _bridge; _bridge = null; }
-        bridge?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+        if (bridge is not null)
+        {
+            try { AtasCall.Block(bridge.DisposeAsync().AsTask(), StopTimeout, "BridgeServer.DisposeAsync",
+                    "ATAS is taking this strategy down either way, so there is nothing to reconcile — but the "
+                    + "frame loop did not end, which is what a wedged write into ATAS looks like from here."); }
+            catch (Exception) { /* see above: nothing is pending on this, and teardown must finish */ }
+        }
+
         UntrackSecurities();
     }
 
@@ -1085,6 +1166,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             ClearFailures(order);
             _failures.Remove(cmd.ClientOrderId);
             _submitted[cmd.ClientOrderId] = order;
+            // BEFORE ATAS is handed this object, and inside the same lock that records it in
+            // _submitted. The order-event fan runs on ATAS's thread and reaches ProveClientOrderId
+            // the instant the order becomes visible there, so registering afterwards would leave a
+            // window in which our own object is the proof.
+            _touched.Add(order);
             // Counted here rather than after the round trip, because the question this answers is
             // "was anything ever put to ATAS carrying an id" — and an order that failed on the way
             // out was still an attempt.
@@ -1163,7 +1249,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // later modify of it was submitted to the broker and unconditionally reported as a definite
         // refusal on the strength of a reason that belonged to a cancel that had already happened.
         // Rule 3: AtasRejectedException is for a definite refusal of THIS request and nothing else.
-        lock (_gate) ClearFailures(order);
+        lock (_gate)
+        {
+            ClearFailures(order);
+            // RULE 1, AND IT IS NOT DEFENSIVE. Clone() copied Comment, so `replacement` is an object
+            // THIS ADAPTER CONSTRUCTED carrying OUR client order id — and _submitted still holds the
+            // original under that id, so a read-back asking only "is this the instance I submitted"
+            // sees a different object with our identifier on it and records Distinct. That is the
+            // adapter proving rule 1 against itself, and the capability that gates autonomous live
+            // trading turns true on it. Registered here, before ModifyOrder can put it anywhere ATAS
+            // enumerates.
+            _touched.Add(replacement);
+        }
 
         // Same flag reasoning as Place: askConfirmation: false is rule 4, not a preference.
         // ChartStrategy.ModifyOrder(order, newOrder) is not used for the same reason its OpenOrder is
@@ -1385,7 +1482,25 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         // Best effort only, and never counted as proof of a round trip: label the order ATAS created
         // so reconciliation has something of ours to match on.
-        if (string.IsNullOrEmpty(created.Comment)) created.Comment = clientOrderId;
+        //
+        // THIS IS THE ONE PLACE THE ADAPTER WRITES ITS OWN IDENTIFIER ONTO AN OBJECT ATAS BUILT, and
+        // that is precisely the shape rule 1 forbids as evidence — a comment we typed on, read back
+        // as though ATAS had carried it. Two things keep it honest, and only one of them was ever
+        // designed:
+        //
+        //   * incidental: `clientOrderId` never enters _submitted, so ProveClientOrderId refuses it
+        //     at its first guard and never even looks. Anyone who "fixes" that asymmetry — making
+        //     the closing order findable by client id, or counting it as an attempt — hands the
+        //     proof a comment the adapter wrote by hand onto ATAS's own object;
+        //   * designed: `created` is registered as touched BEFORE the Comment is written, so from
+        //     the instant it carries our identifier it is already refused as evidence, whatever
+        //     _submitted later comes to hold. Registering after the write would leave a window in
+        //     which the order-event fan, on ATAS's thread, could read the label as ATAS's own work.
+        if (string.IsNullOrEmpty(created.Comment))
+        {
+            lock (_gate) _touched.Add(created);
+            created.Comment = clientOrderId;
+        }
         return ToOrder(created, null);
     }
 
@@ -2519,16 +2634,24 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     }
 
     /// <summary>
-    /// This bridge is expected to stay loaded for weeks, so the two side tables cannot grow forever.
-    /// Both are caches over data whose real home is ATAS's own order collection, so dropping them
-    /// wholesale costs a reject reason on very old orders and nothing else — the caller holds the
-    /// lock. Deliberately not a leak the user discovers as a slow memory climb months from now.
+    /// This bridge is expected to stay loaded for weeks, so the side tables cannot grow forever.
+    /// The first two are caches over data whose real home is ATAS's own order collection, so dropping
+    /// them wholesale costs a reject reason on very old orders and nothing else — the caller holds
+    /// the lock. Deliberately not a leak the user discovers as a slow memory climb months from now.
+    ///
+    /// THE THIRD IS NOT A CACHE AND DOES NOT DROP QUIETLY. <see cref="_touched"/> is what stops the
+    /// adapter's own order objects being read back as ATAS's, so an entry silently forgotten would
+    /// not cost a diagnostic — it would let the next read-back record Distinct against an object we
+    /// built, which is rule 1 faked. <see cref="AdapterTouchedOrders.Trim"/> therefore records the
+    /// drop and refuses every proof from then on rather than inventing one; the full reasoning, and
+    /// what the permanence costs, is on that method.
     /// </summary>
     void Trim()
     {
         const int cap = 4096;
         if (_submitted.Count > cap) _submitted.Clear();
         if (_failures.Count > cap) _failures.Clear();
+        _touched.Trim(cap);
     }
 
     /// <summary>
@@ -2554,10 +2677,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// identifier would not have been shown to survive anything.
     ///
     /// This cannot be settled from here, so it is MEASURED instead: the match records whether the
-    /// order it matched is reference-equal to the instance we submitted, and Describe reports it as
+    /// order it matched is an object THIS ADAPTER TOUCHED, and Describe reports it as
     /// coid=proven-sameref (vacuous) or coid=proven-distinct (a real round trip). A whole pass is
     /// scanned rather than stopping at the first hit, so that a distinct match anywhere in the book
-    /// is not missed because our own instance happened to be enumerated first.
+    /// is not missed because one of our own objects happened to be enumerated first.
+    ///
+    /// "TOUCHED" IS WIDER THAN "SUBMITTED", AND HAS TO BE. The test was once reference-equality
+    /// against <c>_submitted[clientOrderId]</c>, which is only the instance Place built. The adapter
+    /// produces two other order objects carrying our identifier — Modify's <c>Clone()</c>, which
+    /// copies Comment, and the order ClosePosition labels by hand — and each of them is a DIFFERENT
+    /// object holding OUR id, so the narrow test would have called either one Distinct and flipped
+    /// the capability true on a round trip the adapter performed against itself. See
+    /// <see cref="_touched"/> and <see cref="AdapterTouchedOrders"/>; the rule is stated there,
+    /// where a test on any machine can reach it.
     ///
     /// THE LIVE READING HAS BEEN TAKEN AND IT WAS SAMEREF, so SupportsClientOrderId now reads the
     /// distinction: proven-distinct alone reports true. See ClientOrderIdProofs.ProvesRoundTrip for
@@ -2614,20 +2746,35 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         lock (_gate) _clientOrderIdChecks++;
 
         AtasOrder? match = null;
+        // Starts true and only a genuinely untouched match can clear it, so every path that fails to
+        // establish whose object this is leaves the reading vacuous. Refuse a proof, never invent one.
+        var matchIsOurs = true;
         foreach (var o in LiveOrders())
         {
             if (!string.Equals(o.Comment, clientOrderId, StringComparison.Ordinal)) continue;
             if (string.IsNullOrEmpty(o.Id)) continue;
             match = o;
-            // A different object carrying our identifier is the reading worth having, so keep looking
-            // while the only match so far is the instance we handed in ourselves.
-            if (!ReferenceEquals(o, mine)) break;
+
+            // WHOSE OBJECT IS THIS? The only question that separates a round trip from the adapter
+            // reading its own field back off its own object.
+            //
+            // Both tests, and the second subsumes the first. _touched contains `mine` by
+            // construction — Place registers it in the same lock that writes _submitted — so the
+            // ReferenceEquals is a floor: if that registration is ever lost, what breaks is the
+            // WIDENED guard, not the original one that has already been measured on real ATAS.
+            //
+            // Under the gate because _touched is written by Place and Modify on the pipe thread
+            // while this loop runs on ATAS's. Asked only after the two cheap filters above, so it is
+            // a handful of uncontended acquisitions per pass, not one per order in the book.
+            bool ours;
+            lock (_gate) ours = ReferenceEquals(o, mine) || !_touched.CountsAsEvidence(o);
+            // An object we never touched carrying our identifier is the reading worth having, so
+            // keep looking while every match so far is one of ours.
+            if (!ours) { matchIsOurs = false; break; }
         }
         if (match is null) return;
 
-        // ReferenceEquals, not Equals: Order does not override equality anywhere in the dump, and
-        // the question here is literally "is this the same object", not "does it look the same".
-        var observed = ClientOrderIdProofs.Observed(ReferenceEquals(match, mine));
+        var observed = ClientOrderIdProofs.Observed(matchIsOurs);
 
         lock (_gate)
         {

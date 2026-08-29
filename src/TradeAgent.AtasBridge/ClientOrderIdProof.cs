@@ -11,12 +11,21 @@ namespace TradeAgent.AtasBridge;
 ///   NotProven  nothing carrying an id THIS adapter submitted has been found in ATAS's own order
 ///              collection with a broker-assigned Id on it. On its own that is three different
 ///              facts, not one — see <see cref="ClientOrderIdProofs.Token"/>.
-///   SameRef    a match was found, and it is REFERENCE-EQUAL to the Order instance the adapter
-///              constructed, set Comment on, and handed to ATAS. The identifier came back because
-///              it never left: the adapter read its own field off its own object. The only thing
-///              established is that ATAS assigned an Order.Id. NOT a round trip.
-///   Distinct   a genuinely different object carried our identifier. ATAS put the id onto something
-///              this adapter did not write, which is the round trip rule 1 asks about, observed.
+///   SameRef    a match was found, and the object carrying our identifier is one THIS ADAPTER
+///              TOUCHED. The identifier came back because it never left: the adapter read its own
+///              field off its own object. The only thing established is that ATAS assigned an
+///              Order.Id. NOT a round trip.
+///
+///              The measured reading was literally the instance Place submitted, which is where
+///              both the name and the proven-sameref token come from. The state deliberately
+///              covers a WIDER family than that one instance — every object this adapter
+///              constructed or wrote a Comment onto, tracked by <see cref="AdapterTouchedOrders"/>
+///              — because every member of that family carries our identifier for exactly the same
+///              reason, and telling them apart would be a distinction without a difference: none
+///              of them proves anything about ATAS.
+///   Distinct   a genuinely different object carried our identifier — different, and one this
+///              adapter never touched. ATAS put the id onto something we did not write, which is
+///              the round trip rule 1 asks about, observed.
 ///
 /// The live reading on real ATAS 8.0.14.397, taken 2026-08-28 with a resting limit order on a sim
 /// account, was <see cref="SameRef"/>. That is why this type exists.
@@ -103,16 +112,22 @@ public static class ClientOrderIdProofs
         candidate > standing;
 
     /// <summary>
-    /// The reading, from the one measurement the adapter can make: was the order that carried our
-    /// identifier back the very instance we handed to ATAS?
+    /// The reading, from the one measurement the adapter can make: is the order that carried our
+    /// identifier back an object THIS ADAPTER TOUCHED?
+    ///
+    /// It used to ask the narrower question — "is it the very instance we handed to ATAS?" — and
+    /// narrow was wrong, because the adapter builds and labels order objects in two other places.
+    /// <see cref="AdapterTouchedOrders"/> holds the whole family and says which. The mapping is
+    /// unchanged: ours means <see cref="ClientOrderIdProof.SameRef"/>, and only an object we never
+    /// touched can be <see cref="ClientOrderIdProof.Distinct"/>.
     ///
     /// Reference identity, never equality — ATAS's Order does not override equality anywhere in the
-    /// API dump, and the question is literally "is this the same object", not "does it look the
-    /// same". The caller does the <c>ReferenceEquals</c>; this turns its answer into a proof state
-    /// so the mapping is not written out longhand at the one call site that matters.
+    /// API dump, and the question is literally "is this an object we touched", not "does it look
+    /// like one". The caller does the identity test; this turns its answer into a proof state so
+    /// the mapping is not written out longhand at the one call site that matters.
     /// </summary>
-    public static ClientOrderIdProof Observed(bool sameInstance) =>
-        sameInstance ? ClientOrderIdProof.SameRef : ClientOrderIdProof.Distinct;
+    public static ClientOrderIdProof Observed(bool adapterTouched) =>
+        adapterTouched ? ClientOrderIdProof.SameRef : ClientOrderIdProof.Distinct;
 
     /// <summary>
     /// The rule-1 read-back in one token, for <c>BridgeHello.TradingSurface</c>'s <c>coid=</c>
@@ -141,4 +156,121 @@ public static class ClientOrderIdProofs
         ClientOrderIdProof.SameRef => "proven-sameref",
         _ => attempts == 0 ? "unattempted" : checks == 0 ? "unchecked" : "notfound"
     };
+}
+
+/// <summary>
+/// EVERY ORDER OBJECT THE ADAPTER TOUCHED, BY REFERENCE IDENTITY — the set of objects that can
+/// never be evidence of a round trip, because our identifier is on them for a reason that has
+/// nothing whatever to do with ATAS.
+///
+/// WHY THIS EXISTS WHEN THE ADAPTER ALREADY HAS <c>_submitted</c>.
+///
+/// <c>_submitted</c> is keyed by client order id and holds only what <c>Place</c> built, so the
+/// question it can answer is "is this THE instance I handed in for this id". That is narrower than
+/// the question rule 1 needs answered, which is "did ATAS put my identifier onto this object, or
+/// did I?". Two objects the adapter itself produces slip straight through the narrow test, and
+/// both would have been recorded as <see cref="ClientOrderIdProof.Distinct"/> — a round trip the
+/// adapter performed against itself, with <c>SupportsClientOrderId</c> flipping true on it:
+///
+///   * <c>Modify</c>'s <c>order.Clone()</c>. Clone copies Comment, so the replacement is an object
+///     THIS ADAPTER CONSTRUCTED carrying OUR client order id, and <c>_submitted[id]</c> still holds
+///     the original — so <c>ReferenceEquals(candidate, mine)</c> is false for it. Whether ATAS's
+///     own order collection ever contains that replacement is NOT VERIFIED: the API dump at
+///     docs/atas-api-8.0.14.397.txt lists public members only and cannot answer it. The guard must
+///     not depend on the answer. A proof that turns on an unverified platform behaviour is rule 1
+///     faked with extra steps.
+///   * <c>ClosePosition</c>'s <c>created.Comment = clientOrderId</c>, written by hand onto an order
+///     ATAS created. Safe today only because that id never enters <c>_submitted</c>, so the read-back
+///     refuses it at its first guard — incidental safety, not designed safety. Registered here so
+///     that the guard survives anyone who later makes <c>_submitted</c> symmetric.
+///
+/// REFERENCE IDENTITY, NEVER EQUALITY. ATAS's Order does not override equality anywhere in the
+/// dump, so <c>Equals</c> would be identity today and could silently become value equality in any
+/// future SDK — at which point two different orders that merely looked alike would be conflated,
+/// in the one place where being wrong reads as a proof. <see cref="ReferenceEqualityComparer"/>
+/// makes the intent explicit and immune to that.
+///
+/// NOT THREAD-SAFE, ON PURPOSE. It is written by <c>Place</c> and <c>Modify</c> on the bridge's
+/// pipe thread and read by the order-event fan on ATAS's, and every caller holds the adapter's
+/// <c>_gate</c> — the same lock every other side table in that file is under. A second lock in
+/// here would be a second lock ordering to reason about for no gain.
+/// </summary>
+public sealed class AdapterTouchedOrders
+{
+    readonly HashSet<object> _touched = new(ReferenceEqualityComparer.Instance);
+    bool _forgotten;
+
+    /// <summary>How many objects are being remembered. For diagnostics and for <see cref="Trim"/>.</summary>
+    public int Count => _touched.Count;
+
+    /// <summary>
+    /// Whether this set has ever dropped an entry, and therefore whether it can still be trusted to
+    /// say that an object is one the adapter did NOT touch. Latches true and never clears.
+    /// </summary>
+    public bool HasForgotten => _forgotten;
+
+    /// <summary>
+    /// Record that the adapter constructed this order object, or wrote a Comment onto it.
+    ///
+    /// CALL IT BEFORE THE OBJECT CAN BE SEEN BY ANYONE ELSE — before handing it to ATAS, and before
+    /// writing the Comment onto an order ATAS already owns. The order-event fan runs on ATAS's
+    /// thread and can reach the read-back the instant the object becomes visible, so registering
+    /// afterwards leaves a window in which our own object is the proof.
+    ///
+    /// Null is accepted and ignored rather than throwing: this is called from write paths whose
+    /// failure mode must never be an exception raised by bookkeeping.
+    /// </summary>
+    public void Add(object? order)
+    {
+        if (order is not null) _touched.Add(order);
+    }
+
+    /// <summary>
+    /// MAY THIS OBJECT COUNT AS EVIDENCE THAT ATAS CARRIED OUR IDENTIFIER? True only for an object
+    /// the adapter never touched, on a set that has never forgotten anything.
+    ///
+    /// The two false cases are different facts and both must answer the same way:
+    ///
+    ///   * we touched it — then our identifier is on it because we put it there, and the reading is
+    ///     <see cref="ClientOrderIdProof.SameRef"/>: a real match that proves nothing;
+    ///   * the set has forgotten (see <see cref="Trim"/>) — then we cannot show that we did NOT
+    ///     touch it, and an unprovable negative is not a proof.
+    ///
+    /// A null candidate is not evidence. Nothing in the adapter can produce one, and answering true
+    /// for the absence of an object would be the wrong direction to be defensive in.
+    /// </summary>
+    public bool CountsAsEvidence(object? candidate) =>
+        candidate is not null && !_forgotten && !_touched.Contains(candidate);
+
+    /// <summary>
+    /// Same discipline as the adapter's <c>Trim()</c>: this bridge stays loaded for weeks, so the
+    /// set cannot grow forever. Over <paramref name="cap"/>, drop the lot.
+    ///
+    /// WHAT HAPPENS TO A PROOF AFTER AN ENTRY HAS BEEN TRIMMED AWAY — the whole reason this is not
+    /// a bare <c>Clear()</c>. Dropping quietly would leave a forgotten clone looking exactly like an
+    /// object of ATAS's own, and the very next read-back would record it as
+    /// <see cref="ClientOrderIdProof.Distinct"/>: trimming would MANUFACTURE the proof this type
+    /// exists to prevent. So the drop is recorded, and from that moment
+    /// <see cref="CountsAsEvidence"/> answers false for every object, permanently — the set can no
+    /// longer demonstrate that anything is untouched, so it refuses every proof instead of
+    /// inventing one. That is the direction to fail in.
+    ///
+    /// WHAT THE PERMANENCE COSTS, WHICH IS ALMOST NOTHING. The proof latches on the first
+    /// <see cref="ClientOrderIdProof.Distinct"/> reading (see <see cref="ClientOrderIdProofs.IsSettled"/>),
+    /// so the only session that can ever reach the cap is one that has already answered "not proven"
+    /// <paramref name="cap"/> times over. Refusing the cap-plus-first is refusing a reading that has
+    /// failed thousands of times running. The comparison is <c>_submitted</c>, which clears the same
+    /// way and whose documented cost is that "a very old id stops being provable".
+    ///
+    /// Retention is bounded by <paramref name="cap"/> strong references to Order objects, which is
+    /// the bound <c>_submitted</c> already carries — not a new class of retention.
+    /// </summary>
+    /// <returns>Whether anything was dropped by this call.</returns>
+    public bool Trim(int cap)
+    {
+        if (_touched.Count <= cap) return false;
+        _touched.Clear();
+        _forgotten = true;
+        return true;
+    }
 }
