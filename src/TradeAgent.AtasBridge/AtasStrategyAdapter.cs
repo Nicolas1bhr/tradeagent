@@ -96,8 +96,9 @@ namespace TradeAgent.AtasBridge;
 ///      <see cref="ProveClientOrderId"/>). It is false until then. What that observation is WORTH
 ///      depends on whose object came back: Place hands ATAS the instance it constructed, so a match
 ///      against that same instance proves only that ATAS assigned an Id. TradingSurface reports
-///      which of the two happened, as coid=proven-distinct or coid=proven-sameref. Nothing keys off
-///      it yet, deliberately — one live reading first.
+///      which of the two happened, as coid=proven-distinct or coid=proven-sameref, and ONLY
+///      proven-distinct reports SupportsClientOrderId = true — a same-reference match is a real
+///      match that proves nothing, and reporting true from it is the "do not fake it" rule 1 names.
 ///   2. SupportsOrderHistory is ANSWERED AT RUNTIME. The one order-history query in the whole ATAS
 ///      surface lives on <see cref="IAtasCache"/>; <see cref="ProbeCache"/> tries every route to one
 ///      that exists on this platform and reports which route answered, so a false is legible as
@@ -194,11 +195,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// the same thing does not spam the gateway. Null means nothing has been said yet.</summary>
     bool? _lastConnected;
 
-    bool _clientOrderIdProven;
-
     /// <summary>
     /// WHAT THE RULE-1 READ-BACK ACTUALLY OBSERVED — which is not the same question as whether it
-    /// matched.
+    /// matched. THE ONLY STATE BEHIND SupportsClientOrderId; there is no separate "proven" flag.
     ///
     /// <see cref="Place"/> hands ATAS the very Order instance it constructed and set Comment on, and
     /// the rest of Place assumes ATAS mutates that same instance. If ATAS's own collection simply
@@ -211,14 +210,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///
     /// So the proof records WHICH object carried the id back. Reference-equal to the one we
     /// submitted: vacuous. A different object: ATAS really did carry our identifier onto something
-    /// this adapter did not write. Surfaced in BridgeHello.TradingSurface as coid=..., and
-    /// deliberately NOT yet wired into SupportsClientOrderId — one live reading first, and one
-    /// variable at a time.
+    /// this adapter did not write. Surfaced in BridgeHello.TradingSurface as coid=... either way.
+    ///
+    /// THE ONE LIVE READING THAT THIS WAS WAITING FOR HAS NOW BEEN TAKEN, and it was SameRef — real
+    /// ATAS 8.0.14.397, a resting limit order on a sim account, 2026-08-28. So the deferred wiring
+    /// is done: <see cref="Describe"/> reports SupportsClientOrderId = ProvesRoundTrip(this), which
+    /// is true for Distinct alone. The bool that used to hold that answer alongside this field is
+    /// gone on purpose — two variables for one fact is exactly how a capability boolean and the
+    /// coid= token beside it come to disagree, and a boolean contradicted by the diagnostic printed
+    /// next to it is worse than either on its own.
+    ///
+    /// Every judgement made from this value lives in <see cref="ClientOrderIdProofs"/>, in a file
+    /// that compiles and is tested on every machine, because this one is not.
     /// </summary>
-    CoidProof _clientOrderIdProof;
-
-    /// <inheritdoc cref="_clientOrderIdProof"/>
-    enum CoidProof { NotProven, SameRef, Distinct }
+    ClientOrderIdProof _clientOrderIdProof;
 
     /// <summary>
     /// What a false <c>SupportsClientOrderId</c> is actually saying. Attempts counts the orders we
@@ -378,9 +383,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         var portfolio = BoundPortfolio;
         var cache = ProbeCache(portfolio?.AccountID);
 
-        bool proven;
+        ClientOrderIdProof proof;
         int attempts, checks;
-        lock (_gate) { proven = _clientOrderIdProven; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
+        lock (_gate) { proof = _clientOrderIdProof; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
 
         return new BridgeHello
         {
@@ -395,8 +400,12 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // account is the guess that costs money.
             IsSimulated = portfolio is not null && !portfolio.IsRealAccount,
             // Rule 1. False until a placed order has been seen coming back out of ATAS's own order
-            // collection carrying our client id AND a broker-assigned id. Never hard-coded true.
-            SupportsClientOrderId = proven,
+            // collection carrying our client id AND a broker-assigned id — ON AN OBJECT THIS ADAPTER
+            // DID NOT HAND IN. Never hard-coded true, and deliberately not true for the match that
+            // ATAS actually produces here: a same-reference match is our own object being read back
+            // to us, so it proves only that Order.Id was assigned. ProvesRoundTrip is the whole of
+            // the decision and it lives in ClientOrderIdProofs, which every machine can test.
+            SupportsClientOrderId = proof.ProvesRoundTrip(),
             // Why it is false, when it is. Diagnostic only — see BridgeHello.ClientOrderIdAttempts.
             ClientOrderIdAttempts = attempts,
             ClientOrderIdChecks = checks,
@@ -492,20 +501,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///   proven-distinct  a genuinely different object carried our identifier. That is the round trip
     ///                    rule 1 asks about, actually observed.
     ///
-    /// Diagnostic only, on purpose: SupportsClientOrderId does not read this yet. The two proven
-    /// readings are being measured live before anything is allowed to branch on them.
+    /// The five strings are unchanged and are not free text: tools/probe switches on them verbatim
+    /// and BUILD-STATUS.md quotes them as evidence. SupportsClientOrderId now reads the same field —
+    /// proven-distinct is the only one of the five it reports true from — so the boolean and this
+    /// token can no longer contradict each other. The word is still the more informative of the two:
+    /// proven-sameref says "a match happened AND it was worthless", which no boolean can say.
     /// </summary>
     string ClientOrderIdToken()
     {
-        CoidProof proof;
+        ClientOrderIdProof proof;
         int attempts, checks;
         lock (_gate) { proof = _clientOrderIdProof; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
-        return proof switch
-        {
-            CoidProof.Distinct => "proven-distinct",
-            CoidProof.SameRef => "proven-sameref",
-            _ => attempts == 0 ? "unattempted" : checks == 0 ? "unchecked" : "notfound"
-        };
+        return ClientOrderIdProofs.Token(proof, attempts, checks);
     }
 
     // ---------------------------------------------------------------- reads
@@ -2539,8 +2546,10 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// scanned rather than stopping at the first hit, so that a distinct match anywhere in the book
     /// is not missed because our own instance happened to be enumerated first.
     ///
-    /// SupportsClientOrderId deliberately does NOT read the distinction yet. One live reading first;
-    /// changing the surface and the capability in the same run would leave neither measured.
+    /// THE LIVE READING HAS BEEN TAKEN AND IT WAS SAMEREF, so SupportsClientOrderId now reads the
+    /// distinction: proven-distinct alone reports true. See ClientOrderIdProofs.ProvesRoundTrip for
+    /// the decision, and the latch note in the body for why "we have an answer" is not the same
+    /// condition as "stop looking".
     /// </summary>
     void ProveClientOrderId(string clientOrderId)
     {
@@ -2548,7 +2557,27 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         AtasOrder? mine;
         lock (_gate)
         {
-            if (_clientOrderIdProven) return;
+            // THE LATCH, AND IT MEANS "NOTHING STRONGER CAN BE OBSERVED" — not "something was".
+            //
+            // It exists so the read-back stops rescanning ATAS's whole order book on every order
+            // event once the answer is final, and it used to fire on ANY match. That was safe only
+            // while any match set the capability. It is not safe now: a SameRef match is the reading
+            // this platform actually produces, and if it latched, the scan would never run again and
+            // a genuinely Distinct match arriving later in the same session — the exact reading the
+            // product is waiting for — could never be observed. Worse, nothing would look wrong: the
+            // diagnostic would go on truthfully reporting proven-sameref forever. Latching on the
+            // vacuous reading is how the real proof becomes permanently unreachable in silence.
+            //
+            // So the latch follows the STRONGEST reading rather than the capability, and IsSettled
+            // says which that is. The two coincide today (Distinct is both) and are deliberately
+            // separate methods, because they would part company the moment a stronger reading is
+            // added and the latch must track that one, not the boolean.
+            //
+            // The cost of not latching on SameRef is one extra pass over the live order book per
+            // order event that names an id we submitted. That is the same scan this method already
+            // ran on every such event before any match at all, so it is not a new kind of work — and
+            // it is the price of the proof staying reachable, which outranks it.
+            if (_clientOrderIdProof.IsSettled()) return;
 
             // Rule 1 is that the adapter reads back ITS OWN identifier, and this is what makes that
             // literally true. Without it, OnOrderPayload handed in the Comment of every order that
@@ -2583,12 +2612,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         }
         if (match is null) return;
 
+        // ReferenceEquals, not Equals: Order does not override equality anywhere in the dump, and
+        // the question here is literally "is this the same object", not "does it look the same".
+        var observed = ClientOrderIdProofs.Observed(ReferenceEquals(match, mine));
+
         lock (_gate)
         {
-            _clientOrderIdProven = true;
-            // ReferenceEquals, not Equals: Order does not override equality anywhere in the dump, and
-            // the question here is literally "is this the same object", not "does it look the same".
-            _clientOrderIdProof = ReferenceEquals(match, mine) ? CoidProof.SameRef : CoidProof.Distinct;
+            // Only ever strengthen. The latch above and this write are separate lock acquisitions
+            // with a whole enumeration of ATAS's collection between them, and this method is called
+            // from Place on the pipe thread AND from the order-event fan on ATAS's — so two passes
+            // can both get past the latch, and without this the slower one could write SameRef over
+            // a Distinct the faster one had just established, demoting a real proof to a vacuous one.
+            if (observed.Supersedes(_clientOrderIdProof)) _clientOrderIdProof = observed;
         }
     }
 
