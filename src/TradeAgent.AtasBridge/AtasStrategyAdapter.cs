@@ -119,6 +119,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// non-terminal state and the gateway keeps tracking it.</summary>
     public TimeSpan AckTimeout { get; init; } = TimeSpan.FromSeconds(3);
 
+    /// <summary>How long <see cref="AtasCall.Block"/> waits on one of ATAS's async calls before
+    /// declaring the outcome unknown. Expiry is NOT a rejection — see
+    /// <see cref="AtasCallTimeoutException"/>.
+    ///
+    /// FIVE SECONDS IS ARITHMETIC, NOT A MEASUREMENT. Nothing here has been timed. Place costs the
+    /// call plus WaitFor(AckTimeout), so the worst case a caller waits is CallTimeout + AckTimeout =
+    /// 5 + 3 = 8s. AtasConnector's RPC timeout defaults to 10s, and 8 &lt; 10, so the bridge answers
+    /// first and the connector reports the bridge's own account of what happened. Above about 6s the
+    /// order reverses: the connector gives up before the bridge replies, both ends time out, and the
+    /// bridge is still wedged when the next frame arrives — which is the whole failure this deadline
+    /// exists to prevent. Change either number and redo the sum.</summary>
+    public TimeSpan CallTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
     readonly Lock _gate = new();
     readonly ManualResetEventSlim _pulse = new(false);
 
@@ -1106,7 +1119,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // call that MIGHT ask for confirmation is exactly the rule 4 hazard the flags above exist to
         // remove. There is no situation where it is reachable and the flagged overload is not: both
         // require a trading manager, and RequireTrading() has already thrown without one.
-        if (feed is not null) Block(feed.RegisterOrderAsync(order));
+        if (feed is not null) AtasCall.Block(feed.RegisterOrderAsync(order), CallTimeout, "RegisterOrderAsync");
         else trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false, checkOrderStates: true);
 
         WaitFor(() => Failure(cmd.ClientOrderId, order) is not null
@@ -2629,38 +2642,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     // ---------------------------------------------------------------- plumbing
 
-    /// <summary>
-    /// Waits for one of ATAS's async calls from a synchronous adapter method.
-    ///
-    /// Only the CONNECTOR path needs this: it is asked for work through its Async methods, and the
-    /// adapter's own methods are synchronous. The ITradingManager path calls the synchronous
-    /// overloads directly, which also sidesteps blocking on a task that may be marshalled to ATAS's
-    /// GUI thread.
-    ///
-    /// THOSE SYNCHRONOUS OVERLOADS ARE OBSOLETE. This comment used to claim they were not. Building
-    /// against the real ATAS 8.0.14.397 SDK says otherwise, verbatim:
-    ///
-    ///     warning CS0618: 'ITradingManager.OpenOrder(Order, bool, bool, bool)' is obsolete:
-    ///                     'Use OpenOrderAsync instead.'
-    ///     warning CS0618: 'ITradingManager.ModifyOrder(Order, Order, bool, bool)' is obsolete:
-    ///                     'Use ModifyOrderAsync instead.'
-    ///     warning CS0618: 'ITradingManager.CancelOrder(Order, bool, bool)' is obsolete:
-    ///                     'Use CancelOrderAsync instead.'
-    ///     warning CS0618: 'ITradingManager.ClosePosition(Position, bool, bool)' is obsolete:
-    ///                     'Use ClosePositionAsync instead.'
-    ///
-    /// They are still what this adapter calls, deliberately, for now. Moving to the Async overloads
-    /// moves every refusal from "thrown out of the call" to "faulted task unwrapped here", and rule
-    /// 3's classification — a definite broker refusal versus anything ambiguous — is built on exactly
-    /// where and how those failures arrive. Changing the surface and the error path in the same run
-    /// would leave neither measured, so: one live measurement of the current path first, then the
-    /// switch as its own change. An obsolete call on the path that places real money is not something
-    /// to leave sitting there afterwards.
-    ///
-    /// Blocking here is safe because every caller is on the bridge's pipe-handling thread, never
-    /// ATAS's UI thread, and ConfigureAwait(false) keeps it off any captured context.
-    /// </summary>
-    static void Block(Task task) => task.ConfigureAwait(false).GetAwaiter().GetResult();
+    // The blocking-wait helper that used to live here is now AtasCall.Block, and the move is the
+    // point rather than tidying. This file is <Compile Remove>d on every machine without ATAS, so
+    // while the helper lived here no test on the dev Mac or in CI could reach it — and what it got
+    // wrong (waiting with no deadline, which wedges the bridge's whole command loop while the
+    // heartbeat goes on reporting READY) was therefore unreachable by any test that could have
+    // caught it. AtasCall.cs sits outside #if ATAS_SDK; its doc comment carries the reasoning that
+    // used to be here, including the correction to what it said about where refusals arrive.
 
     /// <summary>Waits for a definite answer, and treats not getting one as exactly that — no
     /// exception, no rejection, just the order returned in whatever state it is really in.</summary>

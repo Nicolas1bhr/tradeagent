@@ -494,6 +494,308 @@ public class BridgeRoundTripTests
         Assert.Equal(40, IncompatibleBridge.Clean(new string('x', 500)).Length);
     }
 
+    // ------------------------------------------------------------------- the blocking wait
+    //
+    // WHAT THE TESTS BELOW CATCH THAT THE TWO OLDER ONES DO NOT.
+    //
+    // A_definite_rejection_survives_the_crossing_as_a_rejection and
+    // Losing_the_bridge_surfaces_as_indefinite_rather_than_as_a_rejection are the two tests that
+    // look like they already cover this ground. They do not. Both run against
+    // LoopbackAtasAdapter, which is wholly synchronous: it throws instantly from a method body and
+    // never hands the bridge a Task at all. So they exercise the half of HandleFrame that cannot
+    // break here — a naked exception out of a call that always returns — and they pass unchanged
+    // against every wrong implementation listed in these comments, including a helper with no
+    // deadline that wedges the command loop forever. Before these tests, nothing in the suite put a
+    // faulted or a slow Task through HandleFrame. That is trap 9 in its exact form: a double that
+    // answers immediately is not testing the thing that makes the real one hard.
+
+    /// <summary>
+    /// A definite refusal carried by a faulted Task must arrive as itself.
+    ///
+    /// CATCHES: waiting with .Wait() or .Result instead of GetAwaiter().GetResult(). Those wrap the
+    /// fault in an AggregateException, and the reason the broker gave is replaced by "One or more
+    /// errors occurred." A refusal that reaches the wire in that shape is classified indefinite, so
+    /// the gateway records UNKNOWN and goes reconciling an order the broker never accepted — and the
+    /// operator is left with no text saying why. Also catches a helper that does not wait at all:
+    /// then there is no exception whatsoever and a refusal is reported as a placed order.
+    /// </summary>
+    [Fact]
+    public void A_refusal_carried_by_a_faulted_task_keeps_its_type_and_its_reason()
+    {
+        var refused = Task.FromException(new AtasRejectedException("margin exceeded"));
+
+        var ex = Record.Exception(() => AtasCall.Block(refused, TimeSpan.FromSeconds(5), "OpenOrderAsync"));
+
+        Assert.NotNull(ex);                                   // not waiting swallows the fault entirely
+        Assert.IsType<AtasRejectedException>(ex);             // .Wait()/.Result give AggregateException
+        Assert.Equal("margin exceeded", ex.Message);          // and degrade this to a generic sentence
+        Assert.Same(ex, BridgeServer.Refusal(ex));            // the wire agrees it is definite
+    }
+
+    /// <summary>
+    /// A call that never answers must end the wait by itself, and the answer must be "unknown".
+    ///
+    /// CATCHES: no timeout at all — the defect this whole change exists for. BridgeServer.RunAsync
+    /// awaits HandleFrame before reading the next frame, so a write that never returns means no
+    /// further frame is ever read off the pipe, including the operator's cancel-all. The heartbeat
+    /// is a separate Task.Run and keeps beating throughout, so the connector goes on reporting
+    /// READY: a wedged bridge that looks healthy defeats the one check meant to catch it.
+    ///
+    /// ALSO CATCHES: converting the deadline into a rejection. That is rule 3 broken in the fatal
+    /// direction — the deadline stopped US waiting, not ATAS working, so the order may be resting at
+    /// the broker right now and calling it refused writes off a live position.
+    /// </summary>
+    [Fact]
+    public async Task A_call_that_never_answers_ends_the_wait_and_reports_the_outcome_as_unknown()
+    {
+        var never = new TaskCompletionSource();
+        // The wait runs on another thread so the test can outlive an implementation that never comes
+        // back: without this, "no timeout at all" HANGS the run rather than failing it, and a hung
+        // suite is not a red test.
+        var call = Task.Run(() => AtasCall.Block(never.Task, TimeSpan.FromMilliseconds(200), "OpenOrderAsync"));
+
+        var ex = await Record.ExceptionAsync(() => call.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.NotNull(ex);
+        Assert.IsType<AtasCallTimeoutException>(ex);
+        Assert.IsNotType<AtasRejectedException>(ex);
+        Assert.Null(BridgeServer.Refusal(ex));                // indefinite on the wire, not rejected
+        Assert.Contains("UNKNOWN", ex.Message);
+        Assert.Contains("reconciled", ex.Message);
+        Assert.Contains("OpenOrderAsync", ex.Message);        // says which call went unanswered
+
+        never.SetResult();
+    }
+
+    /// <summary>
+    /// Two failures are ambiguous, and stay ambiguous.
+    ///
+    /// CATCHES: leaning on GetAwaiter().GetResult() alone. It throws the FIRST of several faults and
+    /// silently drops the rest, so a task that failed two ways — say a refusal AND a dropped link —
+    /// would present to the wire as one definite AtasRejectedException. The second failure is
+    /// exactly the case where an order may still be live, so collapsing the two is rule 3 broken
+    /// while looking like it is being obeyed.
+    /// </summary>
+    [Fact]
+    public void A_task_that_failed_two_ways_is_not_read_as_a_refusal()
+    {
+        var two = new TaskCompletionSource();
+        two.SetException([new AtasRejectedException("margin exceeded"), new TimeoutException("and the link dropped")]);
+
+        var ex = Record.Exception(() => AtasCall.Block(two.Task, TimeSpan.FromSeconds(5), "OpenOrderAsync"));
+
+        var agg = Assert.IsType<AggregateException>(ex);
+        Assert.Equal(2, agg.InnerExceptions.Count);
+        Assert.Null(BridgeServer.Refusal(agg));
+    }
+
+    /// <summary>The wire classifier sees through wrappers, one fault deep, and no further.</summary>
+    [Fact]
+    public void The_wire_classifier_sees_through_a_single_fault_wrapper_and_no_further()
+    {
+        var refusal = new AtasRejectedException("margin exceeded");
+
+        Assert.Same(refusal, BridgeServer.Refusal(refusal));
+        Assert.Same(refusal, BridgeServer.Refusal(new AggregateException(refusal)));
+        Assert.Same(refusal, BridgeServer.Refusal(new AggregateException(new AggregateException(refusal))));
+
+        // Ambiguous at any layer means ambiguous overall.
+        Assert.Null(BridgeServer.Refusal(new AggregateException(refusal, new TimeoutException())));
+        Assert.Null(BridgeServer.Refusal(new AggregateException(new AggregateException(refusal, new TimeoutException()))));
+        Assert.Null(BridgeServer.Refusal(new ConnectorTransportException("the pipe went away")));
+    }
+
+    /// <summary>
+    /// An adapter shaped like the real one's write path: Place routes through
+    /// <see cref="AtasCall.Block"/> on a Task the test controls, so the bridge's frame loop is really
+    /// blocked for the duration. <see cref="LoopbackAtasAdapter"/> cannot stand in for this — it
+    /// returns instantly, and a double that does not wait cannot test waiting.
+    /// </summary>
+    sealed class PlacesVia(LoopbackAtasAdapter inner, Func<PlaceOrderCommand, OrderInfo> place) : IAtasAdapter
+    {
+        public OrderInfo Place(PlaceOrderCommand cmd) => place(cmd);
+
+        public BridgeHello Describe() => inner.Describe();
+        public IReadOnlyList<AccountInfo> GetAccounts() => inner.GetAccounts();
+        public IReadOnlyList<InstrumentInfo> GetInstruments() => inner.GetInstruments();
+        public QuoteInfo? GetQuote(string symbol) => inner.GetQuote(symbol);
+        public IReadOnlyList<PositionInfo> GetPositions(string a) => inner.GetPositions(a);
+        public IReadOnlyList<OrderInfo> GetOrders(string a, bool i, DateTimeOffset? s) => inner.GetOrders(a, i, s);
+        public IReadOnlyList<ExecutionInfo> GetExecutions(string a, DateTimeOffset? s) => inner.GetExecutions(a, s);
+        public OrderInfo Modify(ModifyOrderCommand cmd) => inner.Modify(cmd);
+        public void Cancel(string id) => inner.Cancel(id);
+        public IReadOnlyList<string> CancelAll(string a) => inner.CancelAll(a);
+        public OrderInfo? ClosePosition(string a, string sym, string cid) => inner.ClosePosition(a, sym, cid);
+
+        public event Action<bool>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+    }
+
+    static async Task<(AtasConnector Conn, BridgeServer Bridge)> PairWith(IAtasAdapter adapter, TimeSpan rpcTimeout)
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, rpcTimeout);
+        await connector.ConnectAsync();
+        var bridge = new BridgeServer(adapter, pipe) { HeartbeatInterval = TimeSpan.FromMilliseconds(150) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+        return (connector, bridge);
+    }
+
+    /// <summary>
+    /// A write that never answers must give the pipe back, and the bridge must be the one that says
+    /// so.
+    ///
+    /// THE TRAP IN WRITING THIS TEST: with AtasConnector's default 10s RPC timeout, the CONNECTOR's
+    /// own deadline answers first and the test passes against a bridge that is still wedged — it
+    /// would be measuring the wrong end. The connector is given 30s here so that only the bridge's
+    /// own 300ms deadline can possibly answer in time, and the assertions are on the BRIDGE's
+    /// wording, so the test cannot pass for the wrong reason.
+    ///
+    /// CATCHES: no timeout in AtasCall.Block (the connector answers instead, with different text,
+    /// and the frame after the wedged one never gets read); the deadline converted into a rejection
+    /// (ConnectorRejectedException instead of ConnectorTransportException — a live order written off
+    /// as refused); and a helper that does not wait at all (the place succeeds silently).
+    /// </summary>
+    [Fact]
+    public async Task A_write_that_never_answers_gives_the_command_loop_back()
+    {
+        var never = new TaskCompletionSource();
+        var loop = new LoopbackAtasAdapter();
+        var (conn, bridge) = await PairWith(
+            new PlacesVia(loop, cmd =>
+            {
+                AtasCall.Block(never.Task, TimeSpan.FromMilliseconds(300), "OpenOrderAsync");
+                return loop.Place(cmd);
+            }),
+            TimeSpan.FromSeconds(30));
+        try
+        {
+            var ex = await Record.ExceptionAsync(() => conn.PlaceOrderAsync(new PlaceOrderCommand(
+                "wedge-1", "ATAS-LOOPBACK", "ES", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+
+            // Indefinite, never a rejection: we stopped waiting, ATAS did not stop working.
+            Assert.NotNull(ex);
+            Assert.IsType<ConnectorTransportException>(ex);
+            // The BRIDGE's account of it, not the connector's. The connector's own timeout message
+            // names the wire op ("place") and says nothing about reconciling, so these two lines are
+            // what stop this passing against a bridge that never answered at all.
+            Assert.Contains("OpenOrderAsync", ex.Message);
+            Assert.Contains("reconciled", ex.Message);
+
+            // AND THE LOOP IS STILL ALIVE. This is the assertion the whole change is for: the frame
+            // after a wedged write is read and answered. WaitAsync bounds it so a wedged loop fails
+            // the test in five seconds instead of hanging the suite.
+            Assert.Equal("ATAS-LOOPBACK", (await conn.GetAccountsAsync().WaitAsync(TimeSpan.FromSeconds(5))).Single().Id);
+
+            // And the reason the bridge has to police its own deadline: the heartbeat runs on its own
+            // task and never stopped, so health said READY throughout. Nothing outside would have
+            // noticed a bridge that could not answer another frame.
+            Assert.Equal(HealthState.READY, await conn.GetHealthAsync());
+        }
+        finally
+        {
+            // Release the wedge BEFORE tearing down, always. BridgeServer.DisposeAsync awaits
+            // RunAsync, and a frame loop still blocked inside Place never completes it — so against
+            // an implementation with no deadline this teardown would HANG the run instead of leaving
+            // one red test, and a hung suite reports nothing at all.
+            never.SetResult();
+            await conn.DisposeAsync();
+            await bridge.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// A refusal that reaches HandleFrame wrapped must still cross the wire as a refusal.
+    ///
+    /// AtasCall.Block unwraps a single fault at source, which is the right place for it. This is the
+    /// wire declining to depend on that being true of every caller forever: anything that ever waits
+    /// with .Wait() or .Result — here, or in a future call site — delivers the refusal inside an
+    /// AggregateException, and a bare catch(AtasRejectedException) misses it completely. The broker's
+    /// definite "no" would then arrive as rejected=false and the gateway would reconcile an order
+    /// that does not exist.
+    ///
+    /// CATCHES: reverting BridgeServer to the bare catch.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_wrapped_by_a_task_still_crosses_the_wire_as_a_refusal()
+    {
+        var loop = new LoopbackAtasAdapter();
+        var (conn, bridge) = await PairWith(
+            new PlacesVia(loop, _ => throw new AggregateException(new AtasRejectedException("margin exceeded"))),
+            TimeSpan.FromSeconds(10));
+        await using var _1 = conn;
+        await using var _2 = bridge;
+
+        var ex = await Record.ExceptionAsync(() => conn.PlaceOrderAsync(new PlaceOrderCommand(
+            "wrapped-1", "ATAS-LOOPBACK", "ES", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+
+        Assert.IsType<ConnectorRejectedException>(ex);
+        // Off the refusal, not off the wrapper: AggregateException.Message alone would reach the
+        // operator as "One or more errors occurred."
+        Assert.Equal("margin exceeded", ex.Message);
+    }
+
+    /// <summary>
+    /// Two failures wrapped together are ambiguous, and the wire must say so.
+    ///
+    /// CATCHES: unwrapping the first inner exception unconditionally. That is the tempting one-line
+    /// version of the fix above, and it turns "the broker refused AND the link dropped" into a
+    /// definite refusal — the reading under which an order that may be live is written off.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_alongside_a_second_failure_crosses_the_wire_as_indefinite()
+    {
+        var loop = new LoopbackAtasAdapter();
+        var (conn, bridge) = await PairWith(
+            new PlacesVia(loop, _ => throw new AggregateException(
+                new AtasRejectedException("margin exceeded"), new TimeoutException("and the link dropped"))),
+            TimeSpan.FromSeconds(10));
+        await using var _1 = conn;
+        await using var _2 = bridge;
+
+        var ex = await Record.ExceptionAsync(() => conn.PlaceOrderAsync(new PlaceOrderCommand(
+            "wrapped-2", "ATAS-LOOPBACK", "ES", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+
+        Assert.IsType<ConnectorTransportException>(ex);
+    }
+
+    /// <summary>
+    /// The whole path, in the shape the real adapter has: a refusal arrives as a faulted Task, goes
+    /// through AtasCall.Block inside a synchronous Place, and reaches the gateway as a rejection.
+    ///
+    /// CATCHES: a helper that leaves the call unawaited. Then Place returns an order, ok=true crosses
+    /// the wire, and a broker refusal is recorded as a placed order — the failure with no downstream
+    /// check behind it, because nothing ever asks again about an order it believes was accepted.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_on_a_faulted_task_reaches_the_gateway_as_a_rejection()
+    {
+        var loop = new LoopbackAtasAdapter();
+        var (conn, bridge) = await PairWith(
+            new PlacesVia(loop, cmd =>
+            {
+                AtasCall.Block(Task.FromException(new AtasRejectedException("margin exceeded")),
+                    TimeSpan.FromSeconds(5), "OpenOrderAsync");
+                return loop.Place(cmd);
+            }),
+            TimeSpan.FromSeconds(10));
+        await using var _1 = conn;
+        await using var _2 = bridge;
+
+        var ex = await Record.ExceptionAsync(() => conn.PlaceOrderAsync(new PlaceOrderCommand(
+            "faulted-1", "ATAS-LOOPBACK", "ES", OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+
+        Assert.IsType<ConnectorRejectedException>(ex);
+        Assert.Equal("margin exceeded", ex.Message);
+        // Nothing was placed behind the refusal.
+        Assert.Empty(loop.GetOrders("ATAS-LOOPBACK", true, null));
+    }
+
     static async Task Wait(Func<Task<bool>> condition, int timeoutMs = 10_000)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);

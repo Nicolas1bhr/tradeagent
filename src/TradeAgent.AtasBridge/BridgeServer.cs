@@ -122,11 +122,14 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
             var data = Invoke(f);
             await SendRaw(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data }, ct);
         }
-        catch (AtasRejectedException ex)
+        catch (Exception ex) when (Refusal(ex) is not null)
         {
             // Definite refusal. The 'rejected' flag is what stops the gateway from reconciling
-            // something the broker already declined.
-            await SendRaw(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = false, rejected = true, error = ex.Message }, ct);
+            // something the broker already declined. The message is taken off the REFUSAL, not off
+            // the wrapper: an AggregateException's own message is "One or more errors occurred.",
+            // which tells an operator nothing about why the broker said no.
+            var refusal = Refusal(ex)!;
+            await SendRaw(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = false, rejected = true, error = refusal.Message }, ct);
         }
         catch (Exception ex)
         {
@@ -134,6 +137,31 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
             await SendRaw(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = false, rejected = false, error = ex.Message }, ct);
         }
     }
+
+    /// <summary>
+    /// The definite refusal inside <paramref name="ex"/>, or null if there is not exactly one.
+    ///
+    /// A plain <c>catch (AtasRejectedException)</c> was right about the shape the adapter throws
+    /// today and wrong about the shape a task-based call path produces. Anything that waits with
+    /// <c>.Wait()</c> or <c>.Result</c> — ours or a future caller's — delivers the refusal wrapped in
+    /// an <see cref="AggregateException"/>, and the bare catch would miss it: the broker's definite
+    /// "no" would cross the wire as <c>rejected=false</c>, the gateway would record UNKNOWN and go
+    /// reconciling an order that was never accepted. <see cref="AtasCall"/> unwraps this at source,
+    /// which is the right place; this is the wire refusing to depend on that being true everywhere.
+    ///
+    /// SINGLE-FAULT ONLY, AND THAT IS THE LINE. A task carrying several failures is ambiguous by
+    /// definition — one of them being a refusal does not make the whole outcome a refusal, and the
+    /// others may be exactly the timeout or disconnect that means an order is still live. Rule 3
+    /// reserves 'rejected' for a definite broker refusal and nothing else, so a multi-fault
+    /// AggregateException falls through to the indefinite path and gets reconciled. Recursing keeps
+    /// that true through nesting: every layer has to be single-fault or the answer is null.
+    /// </summary>
+    public static AtasRejectedException? Refusal(Exception ex) => ex switch
+    {
+        AtasRejectedException r => r,
+        AggregateException { InnerExceptions.Count: 1 } a => Refusal(a.InnerExceptions[0]),
+        _ => null
+    };
 
     object? Invoke(BridgeFrame f)
     {
