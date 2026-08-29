@@ -19,9 +19,10 @@ the obvious implementation of it produces an automatic `true` rather than a proo
 
 `ReconciliationProvable` is false and `TradingGateway` refuses `LIVE_AUTONOMOUS`. That is correct.
 
-**Open and unfixed: the bridge pipe authenticates nobody**, while the agent-facing gateway pipe
-demands an ACL and a token. A process that wins the pipe name receives the bridge's connection and
-can place orders in ATAS around every operator control. Detail in the 2026-08-29 section.
+**Closed 2026-08-29: the bridge pipe authenticated nobody.** A process that won the pipe name received
+the bridge's connection and could place orders in ATAS around every operator control, while the
+agent-facing pipe demanded an ACL and a token. Both halves now enforce — and the residual against a
+same-user adversary is written down rather than claimed away. Detail in the 2026-08-29 section.
 
 The product's two defining promises — *no terminal, ever* and *it installs what it needs itself* —
 remain verified by running them on real Windows 11.
@@ -812,7 +813,10 @@ session and again at the end. **Nothing in this section has been run against rea
 through a compiler at all. What was available was the half that compiles everywhere, and the reading
 of code — which is where the session's two largest findings came from.
 
-Baseline re-verified before anything was touched: **107/107 green**. At the end: **141/141**.
+Baseline re-verified before anything was touched: **107/107 green**. At the end: **169/169** — 43 unit,
+36 fault, 90 integration. Every block of new tests in this section was proven to bite by breaking its own
+implementation and recording which test failed, because a test that passes against the broken version is
+worth nothing.
 
 ### Rule 1 was reporting satisfied on the proof that had already been called worthless
 
@@ -930,52 +934,86 @@ NuGet package and no vendor documentation at that depth. It is now `docs/atas-ap
 Public type and member names only; scanned before committing, and the password/secret hits are all
 ATAS member names (`SecureString Secret`, `ILoginPasswordConnectorSettings`).
 
-### SAFETY: the bridge pipe authenticates nobody
+### SAFETY: the bridge pipe authenticated nobody — found, and closed
 
-Found by reading, and verified against both files. **Not a regression — it has been true since the
-bridge existed.**
+Found by reading, verified against both files before any fix was dispatched. **Not a regression: true
+since the bridge existed.**
 
-The agent-facing gateway pipe is defended twice: `GatewayPipeServer.CreateServer` builds a Windows
-`PipeSecurity` limited to the current user and creates the pipe through `NamedPipeServerStreamAcl`,
-and `Serve` demands `IpcToken.Matches` on `Hello`, with one chance per connection.
-
-The bridge pipe — the one that places orders — has neither:
+The agent-facing gateway pipe is defended twice — a Windows `PipeSecurity` limited to the current user,
+and an `IpcToken` demanded on `Hello`, one chance per connection. The bridge pipe, the one that reaches
+`IAtasAdapter.Place`, had neither:
 
 ```csharp
-// AtasConnector.AcceptLoop
 _pipeStream = new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
 ```
 
-No ACL, no token, no handshake. The app is the **server**; `BridgeServer` inside ATAS is the client
-that dials in; `HandleFrame` dispatches `BridgeOps.Place` to `adapter.Place(...)` with no
-authentication of the peer.
+**The attack is impersonation, not connection.** A pipe *name* is not access-controlled and the instance
+limit is 1, so whichever process creates that name first owns it and the bridge inside ATAS connects to
+whatever is listening — then takes orders from it, around the mode, the kill switch, the approvals, the
+risk limits and the autonomy gate, all of which live in `TradingGateway`. `AcceptLoop` retried every
+second after a drop, so a squatter needed one moment, not a boot race. `tools/probe` does exactly this
+by design, so the technique was already proven in-repo.
 
-**The attack is impersonation, not connection.** `maxNumberOfServerInstances` is 1, so whichever
-process creates that pipe name first owns it and the bridge connects to whatever is listening. A
-process that wins the name receives the bridge's connection and can place orders directly in ATAS —
-around the mode, the kill switch, the approvals, the risk limits and the autonomy gate, every one of
-which lives in `TradingGateway`, which is no longer in the path. `AcceptLoop` retries every second
-after a drop, so a squatter needs one moment when the app is not holding the name, not a boot race.
-`tools/probe` creates that pipe as a stand-in app by design, so the technique is proven in-repo.
+**Both halves now enforce.** The bridge proves the pipe's owner *before* the hello, so an unproved peer
+learns nothing — not the ATAS version, not the account id, not what the platform can prove. The
+connector refuses an unproved hello the way it refuses an incompatible one: `_hello` stays null, so
+`Capabilities` keeps reporting nothing supported.
 
-This matters because of who the adversary is. `CliAgentRuntime` and `AgentSession` start the AI
-runtime with `Process.Start` **as the same OS user**, and containing it is the whole point of the
-in-process operator authority CLAUDE.md protects. A per-user ACL does not exclude a same-user process,
-and neither does a secret in a file that user can read — so any fix here must say plainly what it
-stops and what it does not.
+**Refusing the hello alone would have been worth nothing, and this is the part that matters.**
+`BridgeOps.Heartbeat` carries a whole `BridgeHello` — that is how a capability proved after the
+handshake reaches the connector, added 2026-08-27 — and the branch assigned it unconditionally. A peer
+that never says hello is never refused for saying one, so it could set both capabilities on a heartbeat
+instead: **the same unlock, one frame to the left.** Guarded, with a test that names the property. The
+event branch is guarded too, so an unproved peer cannot feed the gateway fabricated fills either.
 
-### SAFETY: two routes to a `Distinct` the adapter manufactured against itself
+`BridgeProtocolVersion` went 1 → 2. The wire contract genuinely changed, and it makes a stale bridge get
+named by `IncompatibleBridge` rather than surfacing as an authentication failure.
 
-Now that `Distinct` alone gates the capability, both of these matter:
+**What it does not stop, stated plainly because an overclaimed boundary is worse than a documented
+gap.** The adversary named in the threat model is the AI runtime, and `CliAgentRuntime` starts it with
+`Process.Start` **as the same OS user**. It can read the secret file — which is why that file is
+deliberately *not* DPAPI-protected: `CurrentUser` unprotects for the same user, so it would be ceremony.
+The peer-image check is the only rule that can bite a same-user squatter, and it refuses anything under
+the managed tools directory by a rule not derived from the recorded image, so a runtime that rewrote the
+record to name itself is still refused. **That is tamper-evidence, not a boundary.** What the change
+buys against that adversary is that a squat must now be targeted — read the secret, tamper with the
+state directory, race the rewrite — rather than "open the name and send `place`".
 
-- **`Modify`'s clone.** `var replacement = order.Clone();` copies `Comment`, so the replacement is an
-  object this adapter constructed carrying our client order id, while `_submitted[id]` holds the
-  *original*. If ATAS's collection ever contains the replacement, `ProveClientOrderId` matches it,
-  finds it reference-distinct, and records a round trip the adapter performed against itself.
-  **NOT VERIFIED: whether ATAS's collection ever holds that clone** — the dump carries public members
-  only and cannot answer it, which is exactly why the guard must not depend on the answer.
-- **`ClosePosition`** writes `created.Comment = clientOrderId` onto an order ATAS created. Safe today
-  only because that id never enters `_submitted` — incidental rather than designed.
+Every refusal is a sentence reaching `StatusDetail`, and it says in as many words that this is **not**
+trap 12, 7 or 24, because all three of those present as *no answer at all* and this is something
+answering wrongly.
+
+**NOT VERIFIED: every Windows-only path** — `GetNamedPipeServerProcessId`, `QueryFullProcessImageName`,
+the `PipeSecurity` ACL — has never executed. The *rules* they feed are tested directly; the kernel calls
+supplying their arguments are not. **NOT VERIFIED: any of it against the real ATAS bridge.**
+
+### SAFETY: two routes to a `Distinct` the adapter manufactured against itself — closed
+
+Making `Distinct` the gate turned two existing behaviours into ways of manufacturing the proof, both on
+the honest path with no attacker involved:
+
+- **`Modify`'s clone.** `order.Clone()` copies `Comment`, so the replacement is an object this adapter
+  constructed carrying our client order id while `_submitted` holds the *original*. A read-back asking
+  only "is this the instance I submitted" sees a different object with our identifier on it.
+- **`ClosePosition`** writes our identifier by hand onto an order ATAS created — safe only because that
+  id never enters `_submitted`. Incidental, not designed.
+
+`AdapterTouchedOrders` holds every order object the adapter constructed or labelled, by reference
+identity. All three registration sites record the object **before** it becomes visible to anyone else:
+the order-event fan runs on ATAS's thread and can reach the read-back the instant an object appears
+there.
+
+**The trim is the part that would have gone wrong quietly.** A bare `Clear()` leaves a forgotten clone
+looking exactly like an order of ATAS's own, and the next read-back records `Distinct` — **trimming
+would have manufactured the proof the type exists to prevent.** It latches instead, and refuses every
+proof from that point. The permanence costs almost nothing: the proof latches on the first `Distinct`,
+so only a session that has already answered "not proven" 4096 times can reach the cap.
+
+`StopBridge` had the same unbounded wait removed from the write path — `DisposeAsync` awaits the frame
+loop, so a wedged write blocked strategy teardown on ATAS's own thread forever.
+
+**NOT VERIFIED: whether ATAS's collection ever holds the `Modify` clone.** The dump carries public
+members only. The guard deliberately does not depend on the answer — that was the point.
 
 ### The rule-1 restart proof: designed, with the trap named
 

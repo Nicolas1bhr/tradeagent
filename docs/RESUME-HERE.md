@@ -31,8 +31,10 @@ Where the two autonomy gates stand:
 
 `ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. That is correct.
 
-**The largest open item is not rule 1.** It is that the bridge pipe authenticates nobody while the
-agent-facing gateway pipe demands an ACL and a token — see step 1 below.
+**The largest thing this product got wrong was not rule 1.** The bridge pipe — the one that reaches
+`Place` — authenticated nobody, while the agent-facing pipe demanded an ACL and a token. Anything that
+won that pipe name placed orders around every operator control. Closed 2026-08-29, both directions, with
+the residual against a same-user adversary written down rather than claimed away.
 
 ## The rule that shapes every design decision
 
@@ -66,12 +68,16 @@ than assuming:
 - **Nothing was resting and there was no position:** `orders=0 strategyorders=0 mytrades=0 position=0`.
 - The quote-timestamp fix was deployed and confirmed: `age=1383s` where it had been `8544s`.
 
-**The bridge deployed there is now several commits behind** — the rule-1 capability change, the call
-deadline and the wire classifier all postdate it. A redeploy is required before any reading from that
-machine means anything, and swapping the bridge DLL means closing ATAS (traps 22, 23, 24). The
-reliable route is a reboot: it force-closes ATAS, releases the DLL, and re-verifies the
-unattended-recovery path in one go, at about 70 seconds — but a force-close does **not** save the
-workspace, so save it first or the strategy does not come back at all.
+**The bridge deployed there will be REFUSED by this build, and that is expected.**
+`BridgeProtocolVersion` went 1 → 2 on 2026-08-29 and the pipe now authenticates, so the DLL sitting in
+`%APPDATA%\ATAS\Strategies` speaks a protocol this connector rejects and holds no secret it can prove.
+The probe names both cases rather than timing out. Nine commits of adapter and protocol changes postdate
+it and **none has been through a compiler** — rebuild first, redeploy, then read.
+
+Swapping the bridge DLL means closing ATAS (traps 22, 23, 24). The reliable route is a reboot: it
+force-closes ATAS, releases the DLL, and re-verifies the unattended-recovery path in one go, at about
+70 seconds — but a force-close does **not** save the workspace, so save it first or the strategy does
+not come back at all.
 
 Check it in two commands before assuming any of it:
 
@@ -82,26 +88,25 @@ tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --w
 
 ## What to do next, in order
 
-1. **Close the bridge pipe.** This is the largest open safety item in the product and it needs no
-   hardware. The agent-facing gateway pipe builds a Windows `PipeSecurity` and demands an `IpcToken`
-   on `Hello`. The bridge pipe — the one that places orders — is
-   `new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, ...)` with no ACL, no token and no
-   handshake, and `HandleFrame` dispatches `BridgeOps.Place` straight to `adapter.Place(...)`.
+**Nothing below can be started until somebody wakes the machine.** Everything that could be done
+without it was done on 2026-08-29.
 
-   **The attack is impersonation, not connection.** Instance limit 1 means whichever process creates
-   that name first owns it, and the bridge inside ATAS connects to whatever is listening — then takes
-   orders from it, around the mode, the kill switch, the approvals, the risk limits and the autonomy
-   gate, all of which live in `TradingGateway`. `AcceptLoop` retries every second after a drop, so a
-   squatter needs one moment, not a boot race. `tools/probe` does exactly this by design.
+1. **Rebuild and redeploy the bridge before believing any reading from that machine.** Nine commits of
+   adapter and protocol changes have never been through a compiler — `AtasStrategyAdapter.cs` is
+   `<Compile Remove>`d off Windows — and `BridgeProtocolVersion` went 1 → 2, so **the bridge deployed
+   there will be refused by this build**. That is expected and the probe now says so by name rather than
+   timing out.
 
-   **Read the threat model before designing a fix.** `CliAgentRuntime` and `AgentSession` start the AI
-   runtime with `Process.Start` as the **same OS user**, so a per-user ACL does not exclude it and
-   neither does a secret in a file that user can read. What catches a same-user squatter is peer
-   identity — the bridge checking *who* it connected to. Whatever ships must state what it stops and
-   what it does not; an overclaimed boundary is worse than a documented gap.
+   ```
+   dotnet build src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj -p:AtasBridgeBuild=true -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"
+   ```
 
-2. **Settle rule 1 from a source that cannot be our own object** — and read the trap first, because
-   the obvious implementation produces an automatic `true` rather than a proof.
+   Assert the artifact's identity rather than trusting the build (trap 8), checking type names as ASCII
+   and string literals as UTF-16 (trap 27). Swapping the DLL means closing ATAS; the reliable route is a
+   reboot, but save the workspace first or the strategy does not come back at all (traps 22, 23, 24).
+
+2. **Settle rule 1 from a source that cannot be our own object** — and read the trap first, because the
+   obvious implementation produces an automatic `true` rather than a proof.
 
    The cheapest real source is a **fresh ATAS session**: place a resting order, restart ATAS, read the
    book. Anything surviving a process restart cannot be our instance. The obstacle is that after a
@@ -109,44 +114,44 @@ tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --w
    deliberate 2026-08-27 safety fix and must not be weakened.
 
    **THE TRAP: after a restart this process has constructed no `Order` at all, so every match is
-   reference-distinct by construction — and `Distinct` now sets the capability.** Relax the guard and
-   you do not get a proof, you get a reading that is true by construction dressed as a measurement:
-   exactly the vacuity `SameRef` was invented to expose, re-imported one level up.
+   reference-distinct by construction — and `Distinct` is what sets the capability.** Relax the guard and
+   you do not get a proof, you get a reading true by construction dressed as a measurement: exactly the
+   vacuity `SameRef` was invented to expose, one level up.
 
    So it needs a reading of its own — `CrossSession` — with the latch following it rather than
-   `Distinct`, and a durable write-ahead record of which ids this product submitted: written *before*
-   the order exists, by a process that is gone by the time it is read, carrying the broker id that
-   process saw ATAS assign. The full design, including the probe command shapes and the exact text
-   that is proof versus disproof, is in the 2026-08-29 section of `BUILD-STATUS.md`.
+   `Distinct`, and a durable write-ahead record of which ids this product submitted: written *before* the
+   order exists, by a process gone by the time it is read, carrying the broker id that process saw ATAS
+   assign. Full design, including probe command shapes and the exact text that is proof versus disproof,
+   in the 2026-08-29 section of `BUILD-STATUS.md`. **It cannot use the gateway's SQLite store — see
+   trap 34.**
 
    **And bound what it would prove.** A cross-session match cannot separate ATAS rebuilding the order
    from the *broker's* answer on reconnect from ATAS rehydrating it out of its own local store. Both
-   survive a restart and both look identical from inside a chart strategy. Only the broker's own report
+   survive a restart and look identical from inside a chart strategy. Only the broker's own report
    separates them, and that is not a source the software can read at runtime during an outage.
 
-3. **Redeploy the bridge and re-read everything.** Several commits of adapter changes have never been
-   through a compiler, let alone run — `AtasStrategyAdapter.cs` is `<Compile Remove>`d off Windows.
-   The first Windows session must build it before believing anything:
+3. **Measure whether `OpenOrderAsync` completes on submission or on broker acknowledgement.** The single
+   gate on flipping the four obsolete order calls. If acknowledgement, blocking on it puts `Place` past
+   `AtasConnector`'s 10s RPC timeout and turns **every** order into UNKNOWN.
 
-   ```
-   dotnet build src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj -p:AtasBridgeBuild=true -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"
-   ```
-
-4. **Measure whether `OpenOrderAsync` completes on submission or on broker acknowledgement.** This is
-   the single gate on flipping the four obsolete call sites. If it completes only on acknowledgement,
-   blocking on it puts `Place` past `AtasConnector`'s 10s RPC timeout and turns **every** order into
-   UNKNOWN. Nothing off Windows can answer it.
-
-   Note the reason to want the switch has changed: it is not rule 3's classification, which the switch
-   does not touch at all. It is that **the new call deadline covers one of five write paths** — the
+   The reason to want the switch is not what this file used to say. It is not rule 3's classification,
+   which the switch does not touch. It is that **the call deadline covers one of five write paths** — the
    other four are synchronous and cannot be given a deadline from this side, so a block in any of them
    still stops the pipe loop while the heartbeat reports READY.
 
-5. **Walk the setup journey and look at it.** Captures work. Nothing in the app itself has ever been
-   seen on Windows.
+4. **Look at the Windows GUI, finally.** Captures work; nothing in the app itself has ever been seen on
+   Windows. Two specific things now want eyes: the setup journey end to end, and the new bridge-refusal
+   sentence on the dashboard status row — it is around 450 characters, longer than any `StatusDetail`
+   before it, and no truncation was found in the UI but nobody has looked at it on a screen.
 
-6. Only then the staged live trial: paper → extended paper run → one tiny live order →
+5. Only then the staged live trial: paper → extended paper run → one tiny live order →
    disconnect/recovery test → autonomous live permission.
+
+**Done on 2026-08-29, so do not redo it:** the bridge pipe now authenticates in both directions and an
+unproved peer can no longer unlock autonomy through a hello, a heartbeat or an event; `SupportsClientOrderId`
+no longer reports true on a same-reference match; an object the adapter built can no longer pass for one
+ATAS built; ATAS calls and bridge teardown have deadlines; and the probe explains a refusal instead of
+timing out.
 
 ## Driving ATAS from here
 
@@ -500,7 +505,7 @@ names as ASCII, string literals as UTF-16 (trap 27).
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
-dotnet test TradeAgent.sln        # 141 tests: 43 unit, 62 integration, 36 fault
+dotnet test TradeAgent.sln        # 169 tests: 43 unit, 90 integration, 36 fault
 ```
 
 Start any Windows session by asking whether the machine can do the work at all — see
