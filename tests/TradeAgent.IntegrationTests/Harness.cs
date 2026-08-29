@@ -64,13 +64,22 @@ public static class Build
 /// Stands in for the component loaded inside ATAS, speaking the real bridge protocol over a real
 /// pipe. It cannot prove ATAS itself works, but it does prove the protocol, the RPC plumbing, the
 /// capability handshake and the version gate are correct.
+///
+/// IT AUTHENTICATES FOR REAL, and there is no way to make it skip that. It reads the same
+/// <c>bridge.auth</c> the real bridge reads (<see cref="BridgePipeAuth.ReadForClient"/>), challenges
+/// the pipe owner over a nonce it chose, and checks the answer before it says hello — because the
+/// connector now refuses a hello from a peer that presented no proof. The alternative was a
+/// test-only way past that refusal, and an escape hatch in an authentication path is exactly the
+/// kind of thing that ships.
 /// </summary>
 public sealed class StubBridge : IAsyncDisposable
 {
     readonly string _pipe;
     readonly BridgeHello _hello;
+    readonly BridgeCredential? _fixedCredential;
     readonly CancellationTokenSource _cts = new();
     NamedPipeClientStream? _client;
+    StreamReader? _r;
     StreamWriter? _w;
     Task? _loop;
 
@@ -78,9 +87,10 @@ public sealed class StubBridge : IAsyncDisposable
     public List<OrderInfo> Book { get; } = [];
     public bool AnswerRpcs { get; set; } = true;
 
-    public StubBridge(string pipe, BridgeHello? hello = null)
+    public StubBridge(string pipe, BridgeHello? hello = null, BridgeCredential? credential = null)
     {
         _pipe = pipe;
+        _fixedCredential = credential;
         _hello = hello ?? new BridgeHello
         {
             BridgeProtocolVersion = Versions.BridgeProtocolVersion,
@@ -95,15 +105,63 @@ public sealed class StubBridge : IAsyncDisposable
         _client = new NamedPipeClientStream(".", _pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
         await _client.ConnectAsync(10_000, ct);
         _w = new StreamWriter(_client, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        // ONE READER for the whole connection, held in a field and shared with Loop(). The peer
+        // answers the challenge and then sits waiting, so a second reader created for the command
+        // loop would silently discard whatever the first had already buffered — the same trap
+        // BridgeServer and tools/probe both carry a comment about.
+        _r = new StreamReader(_client, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+
+        await Authenticate(ct);
         await Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = _hello });
         _loop = Task.Run(() => Loop(_cts.Token));
+    }
+
+    /// <summary>
+    /// The bridge's half of the handshake, done the way BridgeServer does it: challenge the pipe
+    /// owner over a nonce chosen here, then require the matching server-role proof back. A stub that
+    /// merely sent the challenge and carried on would let a connector which never answered look
+    /// authenticated, which is the one thing this must not be able to do.
+    /// </summary>
+    async Task Authenticate(CancellationToken ct)
+    {
+        var cred = _fixedCredential ?? BridgePipeAuth.ReadForClient()
+            ?? throw new InvalidOperationException(
+                $"no bridge credential at {BridgePipeAuth.CredentialFile}; the pipe owner publishes " +
+                "it before it accepts a connection, so reaching this means it never did");
+
+        var nonce = BridgePipeAuth.NewNonce();
+        await Send(new
+        {
+            v = Versions.BridgeProtocolVersion,
+            op = BridgePipeAuth.Challenge,
+            data = new { nonce, proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce) }
+        });
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        string? line;
+        while ((line = await _r!.ReadLineAsync(deadline.Token)) is not null)
+        {
+            BridgeFrame? f;
+            try { f = Json.Read<BridgeFrame>(line); } catch (JsonException) { continue; }
+            if (f?.Op == BridgePipeAuth.Refused)
+                throw new InvalidOperationException($"the pipe owner refused this stub bridge: {f.Error}");
+            if (f?.Op != BridgePipeAuth.Response) continue;
+
+            var proof = f.Data.HasValue && f.Data.Value.TryGetProperty("proof", out var p) ? p.GetString() : null;
+            if (!BridgePipeAuth.ProofMatches(cred.Secret, BridgePipeAuth.ServerRole, nonce, proof))
+                throw new InvalidOperationException("the pipe owner answered the challenge with the wrong proof");
+            return;
+        }
+        throw new InvalidOperationException("the pipe owner closed the connection without authenticating");
     }
 
     Task Send(object o) => _w!.WriteLineAsync(Json.Write(o));
 
     async Task Loop(CancellationToken ct)
     {
-        var reader = new StreamReader(_client!, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var reader = _r!;
         string? line;
         while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
         {
@@ -140,6 +198,7 @@ public sealed class StubBridge : IAsyncDisposable
     {
         await _cts.CancelAsync();
         if (_w is not null) await _w.DisposeAsync();
+        _r?.Dispose();
         if (_client is not null) await _client.DisposeAsync();
         _cts.Dispose();
     }

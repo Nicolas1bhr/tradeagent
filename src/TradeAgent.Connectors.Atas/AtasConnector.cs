@@ -58,20 +58,29 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     /// <summary>
     /// Set when the peer on the bridge pipe has not proved it holds this installation's bridge
-    /// secret, and null once it has. Display only, exactly like <see cref="Incompatible"/>.
+    /// secret, and null once it has. Display only, exactly like <see cref="Incompatible"/> — nothing
+    /// derives a capability from it, and nothing here is what refuses the peer.
     ///
-    /// TWO DIFFERENT PEERS END UP HERE AND THEY ARE NOT THE SAME NEWS.
-    ///   - One presented a proof and it was wrong. That peer is refused: the connection is dropped
-    ///     and nothing it claimed is kept. In practice this is a stale or mismatched
+    /// THREE DIFFERENT PEERS END UP HERE AND THEY ARE NOT THE SAME NEWS.
+    ///   - One presented a proof and it was wrong. Refused in <see cref="Answer"/>: the connection is
+    ///     dropped and nothing it claimed is kept. In practice this is a stale or mismatched
     ///     <c>bridge.auth</c> — two installations, or a copied profile.
-    ///   - One presented no proof at all within <see cref="AuthGrace"/>. That is what an ATAS bridge
-    ///     older than this build looks like, and it is NOT refused here — see the class remarks on
-    ///     <see cref="BridgePipeAuth"/> for exactly how far this connector's half goes and where it
-    ///     deliberately stops.
+    ///   - One said hello having never presented a proof at all. Refused in <see cref="Dispatch"/>:
+    ///     <c>_hello</c> stays null, so <see cref="Capabilities"/> keeps reporting nothing supported
+    ///     and the gateway cannot trade on a single thing that peer claimed. That refusal turns on
+    ///     <c>_authenticated</c> at the instant the hello lands, NOT on <see cref="AuthGrace"/>.
+    ///   - One connected and has said nothing whatever — no challenge, no hello — for longer than
+    ///     <see cref="AuthGrace"/>. That is the only reading below that is derived from a clock, and
+    ///     it is the only one that refuses nothing: there is nothing yet to refuse.
     /// </summary>
     public UnauthenticatedBridge? Unauthenticated =>
-        _unauthenticated ?? (_hello is not null && !_authenticated && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
-            ? UnauthenticatedBridge.NeverPresented
+        // An explicit refusal always wins; the derived reading below exists only for a peer that has
+        // given us nothing to name it by. It is deliberately blind to a peer already explained by
+        // _incompatible or already refused into _unauthenticated, so the two readings can never both
+        // be live and disagree about what is wrong.
+        _unauthenticated ?? (_incompatible is null && _hello is null && !_authenticated
+                             && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
+            ? UnauthenticatedBridge.Silent
             : null);
 
     /// <summary>
@@ -90,9 +99,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
-    /// How long after a peer introduces itself we wait for its authentication frame before saying
-    /// on screen that it never sent one. The real bridge authenticates BEFORE it says hello, so any
-    /// value above zero is slack rather than a race.
+    /// How long a peer may sit on the pipe saying nothing at all before the status row says so.
+    ///
+    /// IT GOVERNS A SENTENCE ON A SCREEN AND NOTHING ELSE. No refusal depends on it, and none may:
+    /// the refusal of an unproved hello is decided by whether the proof arrived, which is a fact
+    /// this end already holds by the time the hello is read, not by how long anything took.
     /// </summary>
     public TimeSpan AuthGrace { get; set; } = TimeSpan.FromSeconds(3);
 
@@ -210,8 +221,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // here erased the reason microseconds after setting it, and the dashboard was left showing
         // FAILED with nothing on it while the bridge redialled every two seconds. Answer() clears
         // this the moment a peer proves itself, which is the only event that actually ends it.
-        // (The "never presented a proof" reading is derived from _hello, which IS cleared above, so
-        // that one does leave with the bridge — correctly, since it is a fact about the peer.)
+        //
+        // The refusal of an unproved hello is kept for the same reason and it is the sharper case:
+        // that refusal is itself what closes the connection, so clearing it here would erase the
+        // reason microseconds after writing it and leave the dashboard reading FAILED with nothing
+        // on it — while the thing on the pipe redials. It is not a fact about the peer that leaves
+        // with the peer; it is "something that is not this build's bridge has the pipe", which is
+        // still true after it hangs up, and which a proved peer ends by proving itself.
+        //
+        // The silent-peer reading is the one that does leave with the peer: it is derived from
+        // _peerArrived, reset below, so a pipe with nobody on it stops claiming anybody is there.
         _authenticated = false;
         _peerArrived = DateTimeOffset.MaxValue;
         _peerImage = null;
@@ -245,7 +264,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             return false;
         }
 
-        if (f.Event is not null) { HandleEvent(f); return true; }
+        // NOTHING BELOW THIS LINE IS SERVED TO A PEER THAT HAS NOT PROVED ITSELF. The two frames
+        // below are the ones that reach outside this class — an event is raised at TradingGateway,
+        // and a heartbeat carries a whole BridgeHello — so both are gated on the same fact the hello
+        // is. Ignored rather than refused: unlike a wrong proof, a frame arriving before the
+        // challenge has been answered is not evidence of anything, and dropping the connection for
+        // it would add a disconnect path that buys nothing. Discarding the frame already leaves the
+        // peer with no effect on this process at all, and the status row still names it.
+        if (f.Event is not null) { if (_authenticated) HandleEvent(f); return true; }
 
         if (f.Op == BridgeOps.Hello)
         {
@@ -265,6 +291,44 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 ConnectionChanged?.Invoke(HealthState.FAILED);
                 return true;
             }
+
+            // AN UNPROVED HELLO IS REFUSED, AND THIS IS THE HALF THAT USED TO BE LEFT OPEN.
+            //
+            // Capabilities is derived from _hello; ConnectorCapabilities.ReconciliationProvable is
+            // SupportsClientOrderId && SupportsOrderHistory; and TradingGateway consults exactly
+            // that before it will permit LIVE_AUTONOMOUS. So keeping an unproved peer's hello let
+            // anything holding this pipe assert both capabilities and unlock autonomous live
+            // trading — operator authority reachable from a pipe, which is precisely what the
+            // product forbids. Same treatment as the version mismatch above: _hello stays null so
+            // nothing can be traded on what this peer claimed, and its identity is kept in a
+            // different field, where it cannot be mistaken for a capability.
+            //
+            // DECIDED ON A FACT, NOT ON A CLOCK. AuthGrace is display-only and must stay that way.
+            // The bridge authenticates BEFORE it says hello (BridgeServer.RunAsync sends the hello
+            // only inside `if (await Authenticate(...))`), and this connector reads frames one at a
+            // time, so by the time a hello is in hand the challenge has either been answered — and
+            // _authenticated set, in this same loop — or was never sent at all. There is no window
+            // in which a legitimate bridge's hello can arrive early and lose a race; a hello with
+            // _authenticated false is not this build's bridge.
+            //
+            // AFTER the version check, deliberately. A peer that speaks an older protocol is named
+            // by version, which is the true fault and the repairable one; routing it here instead
+            // would send the next reader hunting a secret problem that does not exist. Nothing is
+            // conceded by that order: both paths keep _hello null and leave Capabilities empty, so
+            // claiming an old version buys an impostor nothing at all.
+            if (!_authenticated)
+            {
+                _unauthenticated = UnauthenticatedBridge.PresentedNoProof(hello.BridgeVersion, hello.AtasVersion);
+                _hello = null;
+                _connected = false;
+                // Told on the wire too, exactly as Answer() tells a peer whose proof was wrong. A
+                // bridge of this build never reaches here, so this reaches only something that is
+                // not one — but a refusal nobody can read is how a session gets spent.
+                await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = _unauthenticated.Reason });
+                ConnectionChanged?.Invoke(HealthState.FAILED);
+                return false;
+            }
+
             _hello = hello;
             _incompatible = null;
             _connected = true;
@@ -275,6 +339,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
         if (f.Op == BridgeOps.Heartbeat)
         {
+            // THE HELLO REFUSAL IS WORTH NOTHING WITHOUT THIS ONE. A heartbeat carries a whole
+            // BridgeHello — that is how a capability proved after the handshake reaches this end —
+            // and the branch below assigns it to _hello. So an unproved peer that simply never sends
+            // a hello could set SupportsClientOrderId and SupportsOrderHistory here instead, and
+            // ReconciliationProvable with them: the same unlock, one frame to the left.
+            if (!_authenticated) return true;
+
             _lastHeartbeat = DateTimeOffset.UtcNow;
 
             // A heartbeat now carries the bridge's current answer, because capabilities are not
@@ -515,13 +586,34 @@ public sealed record BridgeAuthFailure(string Reason, DateTimeOffset When)
 public sealed record UnauthenticatedBridge(string Reason)
 {
     /// <summary>
-    /// What an ATAS bridge older than this build looks like: a hello and then nothing. It is worth
-    /// its own instance because the repair is a specific one, and because "connected, then silence"
-    /// is the exact shape of three separate traps that have each cost a session.
+    /// A peer that took the pipe and then said nothing at all — no challenge, no hello. Display
+    /// only and derived from a clock, which is why it is a different thing from
+    /// <see cref="PresentedNoProof"/>: there is nothing here to refuse yet, only a silence to name.
     /// </summary>
-    public static readonly UnauthenticatedBridge NeverPresented = new(
-        "it never presented the shared secret. A bridge older than this build does not know how — " +
-        "reinstall the add-on from TradeAgent so the DLL in the ATAS Strategies folder is this one");
+    public static readonly UnauthenticatedBridge Silent = new(
+        "a program is holding the far end of the bridge pipe and has neither proved itself nor said " +
+        "hello. If ATAS is running with the TradeAgent strategy started, reinstall the add-on from " +
+        "TradeAgent so the DLL in the ATAS Strategies folder is this one");
+
+    /// <summary>
+    /// A peer that said hello without ever proving it holds this installation's bridge secret. It is
+    /// REFUSED, not merely named: nothing it claimed is kept, so it cannot unlock anything.
+    ///
+    /// THE SENTENCE HAS TO SEPARATE THIS FROM THE SILENCES, and that is most of why it is this long.
+    /// A bridge DLL built without the ATAS reference (trap 12), a strategies folder ATAS is not
+    /// watching (trap 7) and a chart strategy restored stopped (trap 24) all present identically —
+    /// as nothing on the pipe at all — and each has already cost a session. This is the opposite
+    /// shape: something IS on the pipe and it is answering wrongly. Anyone reading this line must be
+    /// able to stop looking for the three that it is not.
+    /// </summary>
+    public static UnauthenticatedBridge PresentedNoProof(string? bridgeVersion, string? atasVersion) => new(
+        $"a peer claiming to be bridge {IncompatibleBridge.Clean(bridgeVersion)} on ATAS " +
+        $"{IncompatibleBridge.Clean(atasVersion)} said hello without ever presenting the shared " +
+        "secret, so everything it claimed was discarded and it was disconnected. Something is " +
+        "answering on this pipe, so this is not a bridge that failed to load, not the wrong ATAS " +
+        "Strategies folder and not a strategy restored stopped — all three of those are silence. " +
+        "The repair is to reinstall the add-on from TradeAgent; if this line survives that, another " +
+        "program has taken the pipe name and TradeAgent will not trade through it");
 
     public override string ToString() => $"the ATAS bridge did not authenticate — {Reason}";
 }
@@ -566,12 +658,20 @@ public sealed record UnauthenticatedBridge(string Reason)
 /// <see cref="EnsureForServer"/>, and it is entitled to nothing that any other same-user process is
 /// not.
 ///
-/// HOW FAR EACH END GOES. The BRIDGE enforces: an unproved peer is refused and never reaches
-/// IAtasAdapter. The CONNECTOR answers the challenge, refuses a peer whose proof is wrong, and
-/// NAMES a peer that presents none — but does not drop it. That asymmetry is deliberate and it is a
-/// documented gap, not an oversight: the order-placing authority is on the bridge's side of the
-/// pipe, and closing the connector's half means refusing a hello that carries no proof, which is
-/// what an ATAS bridge older than this build sends.
+/// HOW FAR EACH END GOES. BOTH ENDS ENFORCE, and they enforce different things.
+///
+///   - The BRIDGE refuses an unproved peer before Describe(): nothing reaches IAtasAdapter, so
+///     nothing places an order. That is the authority half.
+///   - The CONNECTOR refuses an unproved peer's HELLO: _hello stays null, so ConnectorCapabilities
+///     reports nothing supported and ReconciliationProvable — the property TradingGateway consults
+///     before permitting LIVE_AUTONOMOUS — cannot be made true by anything a peer asserts. That is
+///     the permission half, and until protocol 2 it was open: a peer that presented no proof at all
+///     was named on the status row and then served, so it could claim SupportsClientOrderId and
+///     SupportsOrderHistory and unlock autonomous live trading from the pipe.
+///
+/// The compatibility that kept the second half open — an ATAS bridge older than this build sends a
+/// hello with no proof — is gone, and gone by construction rather than by decision: such a bridge
+/// speaks protocol 1, this build speaks 2, and it is refused by version with a message naming both.
 /// </summary>
 public static class BridgePipeAuth
 {

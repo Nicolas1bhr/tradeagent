@@ -1,3 +1,5 @@
+using System.IO.Pipes;
+using System.Text;
 using System.Text.Json;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
@@ -291,6 +293,136 @@ public class AtasProtocolTests
         Assert.Equal(HealthState.FAILED, await connector.GetHealthAsync());
         // And it must be refused as indefinite-but-unusable, not silently half-trusted.
         await Assert.ThrowsAsync<ConnectorTransportException>(() => connector.GetAccountsAsync());
+    }
+
+    /// <summary>
+    /// THE HOLE THIS CLOSES: a peer on the bridge pipe that has proved nothing must not be able to
+    /// grant itself autonomous live trading by describing itself favourably.
+    ///
+    /// <c>Capabilities</c> is derived from the hello; <c>ReconciliationProvable</c> is
+    /// <c>SupportsClientOrderId &amp;&amp; SupportsOrderHistory</c>; and TradingGateway consults exactly
+    /// that property before it will permit LIVE_AUTONOMOUS. So a hello KEPT from an unproved peer is
+    /// operator authority reachable from a pipe, which the product forbids outright. The assertion
+    /// on <c>ReconciliationProvable</c> by name is the point of the test: one that only checked that
+    /// the hello was discarded would go on passing a refactor that kept the capabilities elsewhere.
+    ///
+    /// AND IT MUST NOT TURN ON A CLOCK. <c>AuthGrace</c> is set to half an hour here, so a refusal
+    /// that waited for it could not possibly land inside this test — only one decided at the hello
+    /// can, which is the whole difference between a refusal and a display-only reading.
+    ///
+    /// CATCHES: keeping <c>_hello</c> before the authentication check; checking authentication only
+    /// on the heartbeat's refreshed frame; and any grace period smuggled into the refusal.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_proved_nothing_cannot_unlock_autonomy_however_it_describes_itself()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            AuthGrace = TimeSpan.FromMinutes(30)
+        };
+        await connector.ConnectAsync();
+
+        await using var rogue = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await rogue.ConnectAsync(10_000);
+        await using var w = new StreamWriter(rogue, new UTF8Encoding(false)) { AutoFlush = true };
+
+        // Everything an over-trusting connector could be talked into believing, at the exact
+        // protocol version this build speaks so that the version gate cannot be what refuses it —
+        // sent by something that has offered no proof of anything at all.
+        await w.WriteLineAsync(Json.Write(new BridgeFrame
+        {
+            Op = BridgeOps.Hello,
+            Data = JsonSerializer.SerializeToElement(new BridgeHello
+            {
+                BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+                BridgeVersion = "9.9.9-rogue", AtasVersion = "8.0.14.397", AccountId = "ATAS-SIM",
+                IsSimulated = false,          // a LIVE account, which is the case that matters
+                SupportsClientOrderId = true,
+                SupportsOrderHistory = true,
+                SupportsModify = true,
+                SupportsClosePosition = true
+            }, Json.Options)
+        }));
+
+        // Wait until the hello has been PROCESSED, whichever way it was decided — connected means it
+        // was served, a named peer means it was refused. Waiting only for the refusal would make a
+        // build that serves an unproved peer fail with "condition was not met in time", which says
+        // nothing about autonomy; this way such a build fails on the assertion below, with the
+        // capability it granted written into the message.
+        await WaitUntil(async () => await connector.IsConnectedAsync() || connector.Unauthenticated is not null);
+
+        // The gate itself, named. Not one of the four claims got through.
+        Assert.False(connector.Capabilities.ReconciliationProvable,
+            "a peer that proved nothing made ReconciliationProvable true, which is the property " +
+            "TradingGateway consults before permitting LIVE_AUTONOMOUS: anything holding this pipe " +
+            "can now unlock autonomous live trading by claiming two booleans");
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.SupportsOrderHistory);
+        Assert.Null(connector.Bridge);
+        Assert.False(await connector.IsConnectedAsync());
+        Assert.Equal(HealthState.FAILED, await connector.GetHealthAsync());
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => connector.GetAccountsAsync());
+
+        // A refusal nobody can read costs a session every time. It has to be a sentence on the
+        // status row, it has to name what claimed to be there, and it has to say which failures
+        // this is NOT: a bridge DLL built without ATAS support, the wrong Strategies folder and a
+        // chart strategy restored stopped are all SILENCE on this pipe — and this pipe answered.
+        var said = connector.StatusDetail!;
+        Assert.Contains("did not authenticate", said);
+        Assert.Contains("9.9.9-rogue", said);
+        Assert.Contains("failed to load", said);
+        Assert.Contains("Strategies folder", said);
+        Assert.Contains("restored stopped", said);
+        Assert.Contains("reinstall the add-on", said);
+    }
+
+    /// <summary>
+    /// The same unlock, one frame to the left — and the reason refusing only the hello is not enough.
+    ///
+    /// A heartbeat carries a whole BridgeHello: that is how a capability proved after the handshake
+    /// reaches this end at all (see BridgeRoundTripTests). So a peer that never says hello, and is
+    /// therefore never refused for saying one, can offer the capabilities on a heartbeat instead. If
+    /// that frame is adopted, ReconciliationProvable goes true and autonomous live trading is
+    /// unlocked by something that proved nothing — with the connector still reporting FAILED, which
+    /// is what makes it easy to miss.
+    ///
+    /// CATCHES: gating the hello on authentication and forgetting the refresh frame.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_proved_nothing_cannot_unlock_autonomy_through_a_heartbeat_either()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5));
+        await connector.ConnectAsync();
+
+        await using var rogue = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        await rogue.ConnectAsync(10_000);
+        await using var w = new StreamWriter(rogue, new UTF8Encoding(false)) { AutoFlush = true };
+
+        // No hello at any point, so the hello refusal never gets a chance to fire.
+        for (var i = 0; i < 5; i++)
+            await w.WriteLineAsync(Json.Write(new BridgeFrame
+            {
+                Op = BridgeOps.Heartbeat,
+                Data = JsonSerializer.SerializeToElement(new BridgeHello
+                {
+                    BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+                    BridgeVersion = "9.9.9-rogue", AtasVersion = "8.0.14.397", AccountId = "ATAS-SIM",
+                    IsSimulated = false,
+                    SupportsClientOrderId = true,
+                    SupportsOrderHistory = true
+                }, Json.Options)
+            }));
+
+        // Long enough that every frame above has certainly been read and dispatched.
+        await Task.Delay(500);
+
+        Assert.False(connector.Capabilities.ReconciliationProvable,
+            "a peer that proved nothing made ReconciliationProvable true through the heartbeat's " +
+            "refreshed capability frame, so the hello refusal can simply be walked around");
+        Assert.Null(connector.Bridge);
+        Assert.False(await connector.IsConnectedAsync());
     }
 
     [Fact]
