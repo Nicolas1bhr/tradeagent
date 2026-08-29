@@ -292,6 +292,22 @@ static class AtasProbe
 
         Section("THE BRIDGE HANDSHAKE");
 
+        // The bridge will not serve a single operation to a process that cannot prove it holds this
+        // installation's bridge secret, and this probe is such a process. It gets the secret the
+        // same way the app does — by asking for it — and that call also records THIS executable as
+        // the program entitled to own the bridge pipe.
+        //
+        // SAY SO OUT LOUD, BECAUSE IT IS THE RESIDUAL WEAKNESS ITSELF. Nothing here was granted to
+        // the probe that is not equally available to any other program running as this user,
+        // including the AI runtime TradeAgent starts. The authentication keeps out other accounts
+        // and anything that merely knows the pipe name; it does not keep out this user. See the
+        // class comment on BridgePipeAuth.
+        var credential = BridgePipeAuth.EnsureForServer();
+        Line("BRIDGE SECRET", $"published at {BridgePipeAuth.CredentialFile}");
+        Cont($"this run recorded itself as the pipe's owner: {Environment.ProcessPath ?? "<unknown>"}");
+        Cont("A same-user process can do exactly this, which is the honest limit of the");
+        Cont("defence. It is not a boundary against anything running as you.");
+
         NamedPipeServerStream server;
         try
         {
@@ -310,6 +326,7 @@ static class AtasProbe
 
         string? raw;
         BridgeFrame? frame;
+        string auth;
         var dialledIn = false;
         var elapsed = Stopwatch.StartNew();
         try
@@ -322,7 +339,12 @@ static class AtasProbe
                 await server.WaitForConnectionAsync(deadline.Token);
                 dialledIn = true;
                 Line("BRIDGE PIPE", $"ANSWERED after {elapsed.Elapsed:mm\\:ss}");
-                (raw, frame) = await ReadHello(server, deadline.Token);
+                Line("WHO DIALLED IN", BridgePipeAuth.ClientImagePath(server) is { } who
+                    ? who
+                    : OperatingSystem.IsWindows()
+                        ? "NOT REPORTED — Windows would not name the process on the other end"
+                        : "not asked — this is a Windows-only question");
+                (raw, frame, auth) = await Handshake(server, credential, deadline.Token);
             }
             finally { ticking.Cancel(); await ticker; }
         }
@@ -333,9 +355,9 @@ static class AtasProbe
             if (dialledIn)
             {
                 Line("HELLO FRAME", $"NOT SENT within {wait.TotalSeconds:0}s of connecting.");
-                Cont("Something dialled in to the pipe and then said nothing. BridgeServer sends");
-                Cont("the hello as its first act, so whatever connected is not a bridge this");
-                Cont("build can talk to.");
+                Cont("Something dialled in to the pipe and then said nothing. A bridge from this");
+                Cont("build authenticates and then says hello, both immediately, so whatever");
+                Cont("connected is not a bridge this build can talk to.");
             }
             else
             {
@@ -356,11 +378,39 @@ static class AtasProbe
             return 1;
         }
 
+        // The authentication verdict comes FIRST, before anything the bridge claimed about itself,
+        // because it decides how much of the rest is worth reading.
+        Line("BRIDGE AUTH", auth);
+        if (auth.StartsWith("NOT PRESENTED", StringComparison.Ordinal))
+        {
+            Cont("");
+            Cont("This is what an ATAS bridge older than this build looks like: it does not know");
+            Cont("how to authenticate, so it never offered a proof. The DLL in the ATAS Strategies");
+            Cont("folder is not the one this repository builds. Reinstall the add-on from");
+            Cont("TradeAgent's setup step, restart the strategy, and run this again.");
+            Cont("");
+            Cont("It is NOT a hang and it is NOT trap 12, 7 or 24 — those all present as no answer");
+            Cont("at all. Something answered; it is the wrong build.");
+        }
+
+        if (auth.StartsWith("REFUSED", StringComparison.Ordinal) || auth.StartsWith("MISMATCH", StringComparison.Ordinal))
+        {
+            Cont("");
+            Cont("The bridge is loaded, running, and talking — it declined THIS process. That is a");
+            Cont("credential problem, not a missing bridge: the copy of TradeAgent that published");
+            Cont($"{BridgePipeAuth.CredentialFile}");
+            Cont("is not the one whose secret the bridge read. Two installations, a copied profile,");
+            Cont("or a TRADEAGENT_HOME pointing somewhere else than the app's. Nothing below can be");
+            Cont("answered, and nothing about ATAS is in question.");
+            server.Dispose();
+            return 1;
+        }
+
         if (raw is null || frame is null)
         {
             Line("HELLO FRAME", "NONE — something connected to the pipe and then said nothing,");
             Cont("or it closed the connection before sending a hello. That is not a bridge");
-            Cont("TradeAgent can use: BridgeServer sends the hello as its first act.");
+            Cont("TradeAgent can use: a bridge from this build authenticates and then says hello.");
             server.Dispose();
             return 1;
         }
@@ -432,6 +482,18 @@ static class AtasProbe
         {
             Line("CONNECTOR HANDSHAKE", "OK — AtasConnector accepted the same bridge, so the capability");
             Cont("lines below are the product's own reading, not this harness's.");
+
+            // Whether the CONNECTOR is satisfied with the peer, as opposed to whether this probe
+            // was. They are separate handshakes over separate connections, and on a machine whose
+            // deployed bridge is older than the repository they give different answers.
+            //
+            // A bridge that never authenticates is only NAMED as such once AuthGrace has run out,
+            // so reading this the instant the hello lands would report "fine" about every bridge.
+            await Until(() => connector.Unauthenticated is not null, connector.AuthGrace + TimeSpan.FromSeconds(1));
+            Line("CONNECTOR AUTH", connector.Unauthenticated is { } gap
+                ? $"NOT PROVED — {gap.Reason}"
+                : "OK — the bridge proved itself to AtasConnector as well");
+            if (connector.PeerImage is { } peer) Cont($"peer image, as Windows reports it: {peer}");
 
             // Describe() decides itself at runtime, and the answer it gives at the handshake is not
             // necessarily the answer a minute later — SupportsClientOrderId in particular can only
@@ -675,6 +737,7 @@ static class AtasProbe
             $"| SupportsClientOrderId={Yn(final.SupportsClientOrderId)} SupportsOrderHistory={Yn(final.SupportsOrderHistory)} " +
             $"IsSimulated={Yn(final.IsPaper)} | ReconciliationProvable={Yn(final.ReconciliationProvable)} " +
             $"| autonomy={(final.ReconciliationProvable ? "permitted" : "refused")}" +
+            $" | auth={AuthTag(auth)}" +
             (test is { } t ? $" | test-order={t.Summary}" : ""));
 
         // Repeated last because last is what a person sees on a terminal they scrolled away from,
@@ -1763,24 +1826,85 @@ static class AtasProbe
         Cont("  would have connected to it instead of to this probe.");
     }
 
-    static async Task<(string? Raw, BridgeFrame? Frame)> ReadHello(Stream pipe, CancellationToken ct)
+    /// <summary>
+    /// Stands in for TradeAgent for the length of one handshake: answers the bridge's
+    /// authentication challenge, then reads the hello it sends once it is satisfied.
+    ///
+    /// ONE READER, DELIBERATELY. The bridge sends the challenge and the hello back to back, so a
+    /// second StreamReader created for the hello would drop the bytes the first had already
+    /// buffered — and the symptom would be "the bridge never said hello", which is the same shape
+    /// as three traps that have each cost a session.
+    ///
+    /// The third element of the result is the verdict, in a form the caller prints verbatim. A
+    /// bridge that never offers a proof is reported and NOT refused: this verb's job is to say what
+    /// is on the pipe, and "the deployed DLL predates authentication" is the single most useful
+    /// thing it can say on a machine whose bridge is behind the repository.
+    /// </summary>
+    static async Task<(string? Raw, BridgeFrame? Frame, string Auth)> Handshake(
+        NamedPipeServerStream pipe, BridgeCredential credential, CancellationToken ct)
     {
         var reader = new StreamReader(pipe, new System.Text.UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var writer = new StreamWriter(pipe, new System.Text.UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+        var auth = "NOT PRESENTED — this bridge offered no proof at all before saying hello";
         var skipped = 0;
+
         string? line;
         while ((line = await reader.ReadLineAsync(ct)) is not null)
         {
             BridgeFrame? f = null;
             try { f = Json.Read<BridgeFrame>(line); } catch (JsonException) { }
-            if (f?.Op == BridgeOps.Hello) return (line, f);
+
+            if (f?.Op == BridgePipeAuth.Challenge)
+            {
+                var nonce = f.Data.HasValue && f.Data.Value.TryGetProperty("nonce", out var n) ? n.GetString() : null;
+                var proof = f.Data.HasValue && f.Data.Value.TryGetProperty("proof", out var pr) ? pr.GetString() : null;
+
+                if (!BridgePipeAuth.IsNonce(nonce) ||
+                    !BridgePipeAuth.ProofMatches(credential.Secret, BridgePipeAuth.BridgeRole, nonce!, proof))
+                {
+                    auth = "MISMATCH — the bridge presented a proof and it is not the one this " +
+                           "machine's bridge secret produces. Two installations, or a copied profile.";
+                    await writer.WriteLineAsync(Json.Write(new
+                    {
+                        v = Versions.BridgeProtocolVersion,
+                        op = BridgePipeAuth.Refused,
+                        error = "this probe holds a different bridge secret"
+                    }));
+                    continue;
+                }
+
+                auth = "OK — the bridge proved it holds this machine's bridge secret, and this probe " +
+                       "answered its challenge in TradeAgent's place";
+                await writer.WriteLineAsync(Json.Write(new
+                {
+                    v = Versions.BridgeProtocolVersion,
+                    op = BridgePipeAuth.Response,
+                    data = new { proof = BridgePipeAuth.Proof(credential.Secret, BridgePipeAuth.ServerRole, nonce!) }
+                }));
+                continue;
+            }
+
+            if (f?.Op == BridgePipeAuth.Refused)
+            {
+                // A mismatch we diagnosed ourselves is the more precise finding, and the bridge's
+                // refusal is only the echo of the refusal we just sent it. Do not let the echo
+                // overwrite the diagnosis.
+                if (!auth.StartsWith("MISMATCH", StringComparison.Ordinal))
+                    auth = $"REFUSED BY THE BRIDGE — {Truncate(f.Error ?? "no reason given")}";
+                return (null, null, auth);
+            }
+
+            if (f?.Op == BridgeOps.Hello) return (line, f, auth);
+
             skipped++;
             if (skipped == 1)
             {
-                Line("BEFORE THE HELLO", $"a frame arrived before the hello did: {Truncate(line)}");
-                Cont("BridgeServer sends the hello as its first act, so this is unexpected.");
+                Line("BEFORE THE HELLO", $"an unexpected frame arrived: {Truncate(line)}");
+                Cont("A bridge from this build sends the authentication challenge and then the");
+                Cont("hello, and nothing else, so this is unexpected.");
             }
         }
-        return (null, null);
+        return (null, null, auth);
     }
 
     static async Task Ticker(Stopwatch sw, TimeSpan limit, CancellationToken ct)
@@ -1795,6 +1919,13 @@ static class AtasProbe
         }
         catch (OperationCanceledException) { }
     }
+
+    /// <summary>The BRIDGE AUTH verdict as one grep-able token for the paste-ready summary.</summary>
+    static string AuthTag(string verdict) =>
+        verdict.StartsWith("OK", StringComparison.Ordinal) ? "ok"
+        : verdict.StartsWith("MISMATCH", StringComparison.Ordinal) ? "secret-mismatch"
+        : verdict.StartsWith("REFUSED", StringComparison.Ordinal) ? "refused-by-bridge"
+        : "not-presented";
 
     static async Task<bool> Until(Func<bool> condition, TimeSpan limit)
     {

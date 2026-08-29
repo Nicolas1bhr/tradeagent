@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 
@@ -17,10 +21,12 @@ namespace TradeAgent.Connectors.Atas;
 ///   - capabilities come from the bridge's handshake, so a bridge that cannot serve order history
 ///     will not be granted autonomous live trading by the gateway.
 /// </summary>
-public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout = null) : ITradingConnector, IConnectorStatusDetail
+public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout = null, BridgeCredential? credential = null)
+    : ITradingConnector, IConnectorStatusDetail
 {
     readonly string _pipe = pipeName ?? Paths.BridgePipeName;
     readonly TimeSpan _timeout = rpcTimeout ?? TimeSpan.FromSeconds(10);
+    readonly BridgeCredential? _fixedCredential = credential;
     readonly ConcurrentDictionary<string, TaskCompletionSource<BridgeFrame>> _pending = new();
     readonly CancellationTokenSource _cts = new();
     readonly SemaphoreSlim _sendGate = new(1, 1);
@@ -33,6 +39,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     IncompatibleBridge? _incompatible;
     DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
 
+    BridgeCredential? _credential;
+    volatile bool _authenticated;
+    DateTimeOffset _peerArrived = DateTimeOffset.MaxValue;
+    UnauthenticatedBridge? _unauthenticated;
+    string? _peerImage;
+
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;
@@ -44,12 +56,45 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     public IncompatibleBridge? Incompatible => _incompatible;
 
+    /// <summary>
+    /// Set when the peer on the bridge pipe has not proved it holds this installation's bridge
+    /// secret, and null once it has. Display only, exactly like <see cref="Incompatible"/>.
+    ///
+    /// TWO DIFFERENT PEERS END UP HERE AND THEY ARE NOT THE SAME NEWS.
+    ///   - One presented a proof and it was wrong. That peer is refused: the connection is dropped
+    ///     and nothing it claimed is kept. In practice this is a stale or mismatched
+    ///     <c>bridge.auth</c> — two installations, or a copied profile.
+    ///   - One presented no proof at all within <see cref="AuthGrace"/>. That is what an ATAS bridge
+    ///     older than this build looks like, and it is NOT refused here — see the class remarks on
+    ///     <see cref="BridgePipeAuth"/> for exactly how far this connector's half goes and where it
+    ///     deliberately stops.
+    /// </summary>
+    public UnauthenticatedBridge? Unauthenticated =>
+        _unauthenticated ?? (_hello is not null && !_authenticated && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
+            ? UnauthenticatedBridge.NeverPresented
+            : null);
+
+    /// <summary>
+    /// The full path of the program on the other end of the bridge pipe, as Windows reports it —
+    /// not as the peer describes itself. Null off Windows, and null when Windows would not say.
+    /// DIAGNOSTIC ONLY: this connector does not refuse a client on it. See
+    /// <see cref="BridgePipeAuth"/>.
+    /// </summary>
+    public string? PeerImage => _peerImage;
+
     /// <summary>One line explaining a FAILED trading connection, or null when there is nothing to
     /// add. Read by the gateway for the health detail the dashboard shows.</summary>
-    public string? StatusDetail => _incompatible?.ToString();
+    public string? StatusDetail => _incompatible?.ToString() ?? Unauthenticated?.ToString();
 
     /// <summary>Missing for longer than this and we treat the bridge as gone.</summary>
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long after a peer introduces itself we wait for its authentication frame before saying
+    /// on screen that it never sent one. The real bridge authenticates BEFORE it says hello, so any
+    /// value above zero is slack rather than a race.
+    /// </summary>
+    public TimeSpan AuthGrace { get; set; } = TimeSpan.FromSeconds(3);
 
     public ConnectorCapabilities Capabilities => _hello is null
         ? new ConnectorCapabilities(false, false, false, false, false, true)
@@ -73,17 +118,27 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         while (!ct.IsCancellationRequested)
         {
+            // Whether anything ever reached us this time round. It decides whether the loop pauses,
+            // and the pause is the point: see the comment at the bottom of the loop.
+            var accepted = false;
             try
             {
-                _pipeStream = new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                // Republished on every iteration so the record always names the program that is
+                // holding the pipe RIGHT NOW, and so the secret exists before anything can dial in.
+                _credential = _fixedCredential ?? BridgePipeAuth.EnsureForServer();
+
+                _pipeStream = CreateServer();
                 await _pipeStream.WaitForConnectionAsync(ct);
+                accepted = true;
+                _peerArrived = DateTimeOffset.UtcNow;
+                _peerImage = BridgePipeAuth.ClientImagePath(_pipeStream);
 
                 var reader = new StreamReader(_pipeStream, new UTF8Encoding(false), false, 8192, leaveOpen: true);
                 _writer = new StreamWriter(_pipeStream, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
 
                 string? line;
                 while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
-                    Dispatch(line);
+                    if (!await Dispatch(line)) break; // a peer we have refused gets no second frame
             }
             catch (OperationCanceledException) { break; }
             catch (Exception) { /* the bridge died or ATAS closed; fall through and wait for it again */ }
@@ -93,8 +148,44 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 _pipeStream?.Dispose();
                 _pipeStream = null;
             }
-            if (!ct.IsCancellationRequested) { try { await Task.Delay(1000, ct); } catch (OperationCanceledException) { break; } }
+
+            // The pause used to be unconditional, which left the pipe NAME unowned for a whole
+            // second after every disconnection — and whoever creates that name first owns it, since
+            // there is exactly one server instance. A second is long enough to be polled for. After
+            // a real session the name is retaken immediately; the pause is kept only for the case
+            // where nothing connected, which is the only way this loop could spin.
+            //
+            // This narrows the window. It does not close it: TradeAgent starting and stopping still
+            // leaves the name free, and a peer that got there first is what the authentication in
+            // BridgePipeAuth is for.
+            if (!accepted && !ct.IsCancellationRequested)
+            {
+                try { await Task.Delay(1000, ct); } catch (OperationCanceledException) { break; }
+            }
         }
+    }
+
+    /// <summary>
+    /// The bridge pipe, locked to this user account on Windows.
+    ///
+    /// Parity with <c>GatewayPipeServer.CreateServer</c>, and it buys one concrete thing: the
+    /// DEFAULT security descriptor for a named pipe grants read access to Everyone, so without this
+    /// any other account on the machine could open this pipe and read the order flow, the account
+    /// identifiers and the quotes off it. It does not decide who gets to CREATE the name — nothing
+    /// in a pipe's descriptor can, because the descriptor only exists once the pipe does.
+    /// </summary>
+    NamedPipeServerStream CreateServer()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var security = new PipeSecurity();
+            security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.ReadWrite, System.Security.AccessControl.AccessControlType.Allow));
+            security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.CreateNewInstance, System.Security.AccessControl.AccessControlType.Allow));
+            return NamedPipeServerStreamAcl.Create(_pipe, PipeDirection.InOut, 1,
+                PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+        }
+        return new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
     }
 
     void Drop(string why)
@@ -104,12 +195,26 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // dashboard would go on displaying "bridge 9.9.9 speaks protocol 2" about a bridge that is
         // no longer on the pipe. Clearing the reason without re-announcing the row leaves the model
         // and the screen disagreeing, which on a status display is the whole of the bug.
-        var wasExplained = _incompatible is not null;
+        var wasExplained = _incompatible is not null || Unauthenticated is not null;
         _connected = false;
         _hello = null;
         // The bridge is gone; "wrong version" stops being the live explanation the moment there is
         // nothing on the pipe to be the wrong version.
         _incompatible = null;
+
+        // A REFUSAL IS NOT CLEARED HERE, AND THAT IS THE DIFFERENCE BETWEEN THE TWO.
+        //
+        // A version mismatch is a fact about the peer, so it leaves with the peer. A refusal is a
+        // fact about THIS INSTALLATION'S CREDENTIALS, and it is repaired by repairing them, not by
+        // the peer hanging up. Worse, the refusal is what CAUSES the disconnection — so clearing it
+        // here erased the reason microseconds after setting it, and the dashboard was left showing
+        // FAILED with nothing on it while the bridge redialled every two seconds. Answer() clears
+        // this the moment a peer proves itself, which is the only event that actually ends it.
+        // (The "never presented a proof" reading is derived from _hello, which IS cleared above, so
+        // that one does leave with the bridge — correctly, since it is a fact about the peer.)
+        _authenticated = false;
+        _peerArrived = DateTimeOffset.MaxValue;
+        _peerImage = null;
         _writer = null;
         foreach (var kv in _pending)
             if (_pending.TryRemove(kv.Key, out var tcs))
@@ -117,18 +222,35 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         if (was || wasExplained) ConnectionChanged?.Invoke(HealthState.FAILED);
     }
 
-    void Dispatch(string line)
+    /// <summary>Handles one frame. False means this peer gets no further hearing.</summary>
+    async Task<bool> Dispatch(string line)
     {
         BridgeFrame? f;
-        try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { return; }
-        if (f is null) return;
+        try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { return true; }
+        if (f is null) return true;
 
-        if (f.Event is not null) { HandleEvent(f); return; }
+        // The authentication frames are handled before anything else so that a peer which is about
+        // to be refused cannot have its capabilities or its events read first.
+        if (f.Op == BridgePipeAuth.Challenge) return await Answer(f);
+        if (f.Op == BridgePipeAuth.Refused)
+        {
+            // The far end refused US. It is the bridge's own words, so it is clipped like any other
+            // untrusted string on its way to a label — but it is the only thing that turns
+            // "connected, then silence" into a sentence somebody can act on.
+            _unauthenticated = new UnauthenticatedBridge(
+                $"the ATAS bridge refused this copy of TradeAgent: {IncompatibleBridge.Clean(f.Error)}");
+            _connected = false;
+            _hello = null;
+            ConnectionChanged?.Invoke(HealthState.FAILED);
+            return false;
+        }
+
+        if (f.Event is not null) { HandleEvent(f); return true; }
 
         if (f.Op == BridgeOps.Hello)
         {
             var hello = f.Data.HasValue ? f.Data.Value.Deserialize<BridgeHello>(Json.Options) : null;
-            if (hello is null) return;
+            if (hello is null) return true;
             if (!Versions.BridgeCompatible(hello.BridgeProtocolVersion))
             {
                 // A mismatched bridge is refused outright rather than half-trusted: _hello stays
@@ -141,14 +263,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                     IncompatibleBridge.Clean(hello.BridgeVersion), IncompatibleBridge.Clean(hello.AtasVersion));
                 _connected = false;
                 ConnectionChanged?.Invoke(HealthState.FAILED);
-                return;
+                return true;
             }
             _hello = hello;
             _incompatible = null;
             _connected = true;
             _lastHeartbeat = DateTimeOffset.UtcNow;
             ConnectionChanged?.Invoke(HealthState.READY);
-            return;
+            return true;
         }
 
         if (f.Op == BridgeOps.Heartbeat)
@@ -161,7 +283,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // answer — but only a whole, version-compatible one. A half-read frame must leave the
             // latched handshake alone rather than silently widen or narrow what the gateway
             // believes this platform is able to prove.
-            if (!f.Data.HasValue) return;
+            if (!f.Data.HasValue) return true;
             try
             {
                 var refreshed = f.Data.Value.Deserialize<BridgeHello>(Json.Options);
@@ -169,10 +291,79 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                     _hello = refreshed;
             }
             catch (JsonException) { /* keep whatever the handshake established */ }
-            return;
+            return true;
         }
 
         if (f.Id is not null && _pending.TryRemove(f.Id, out var tcs)) tcs.TrySetResult(f);
+        return true;
+    }
+
+    /// <summary>
+    /// Answers the bridge's authentication challenge, and refuses a peer that got it wrong.
+    ///
+    /// The proof is over the nonce the BRIDGE chose, which is what stops a recording of an earlier
+    /// answer being replayed at it. The role string is in the message too, so the answer this end
+    /// produces can never be reused as the question the other end asked.
+    /// </summary>
+    async Task<bool> Answer(BridgeFrame f)
+    {
+        var cred = _credential;
+        var nonce = Field(f, "nonce");
+        var proof = Field(f, "proof");
+
+        if (cred is null || !BridgePipeAuth.IsSecret(cred.Secret))
+        {
+            // Our own credential is the broken one. Say that, rather than blaming the bridge for a
+            // proof it produced correctly against a secret we cannot read.
+            _unauthenticated = new UnauthenticatedBridge(
+                $"this copy of TradeAgent has no usable bridge secret to answer with " +
+                $"({BridgePipeAuth.CredentialFile})");
+            _authenticated = false;
+            return true;
+        }
+
+        if (!BridgePipeAuth.IsNonce(nonce) ||
+            !BridgePipeAuth.ProofMatches(cred.Secret, BridgePipeAuth.BridgeRole, nonce!, proof))
+        {
+            // Not merely unproven — PROVEN WRONG. Nothing that answers a challenge with the wrong
+            // proof is the bridge this installation published a secret for, so it is dropped rather
+            // than tolerated. In practice this is a stale bridge.auth, not an attack, which is why
+            // the reason names the file.
+            _unauthenticated = new UnauthenticatedBridge(
+                "the peer on the bridge pipe could not prove it holds this installation's bridge " +
+                $"secret ({BridgePipeAuth.CredentialFile})");
+            _authenticated = false;
+            _connected = false;
+            _hello = null;
+            await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = _unauthenticated.Reason });
+            ConnectionChanged?.Invoke(HealthState.FAILED);
+            return false;
+        }
+
+        _authenticated = true;
+        _unauthenticated = null;
+        await SendFrame(new
+        {
+            v = Versions.BridgeProtocolVersion,
+            op = BridgePipeAuth.Response,
+            data = new { proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.ServerRole, nonce!) }
+        });
+        return true;
+    }
+
+    static string? Field(BridgeFrame f, string name) =>
+        f.Data.HasValue && f.Data.Value.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() : null;
+
+    /// <summary>One frame out, sharing the gate with <see cref="Rpc"/> so writes cannot interleave.</summary>
+    async Task SendFrame(object frame)
+    {
+        var w = _writer;
+        if (w is null) return;
+        await _sendGate.WaitAsync(_cts.Token);
+        try { await w.WriteLineAsync(Json.Write(frame)); }
+        catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
+        finally { _sendGate.Release(); }
     }
 
     void HandleEvent(BridgeFrame f)
@@ -298,4 +489,315 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         _cts.Dispose();
         _sendGate.Dispose();
     }
+}
+
+/// <summary>
+/// What the two ends of the bridge pipe know about each other. Written by whichever process owns
+/// the pipe, read by the bridge inside ATAS.
+/// </summary>
+/// <param name="Secret">64 hex characters. The key both ends prove knowledge of.</param>
+/// <param name="ServerImage">
+/// The full path of the program that created the pipe, as it saw itself. The bridge compares this
+/// with the path Windows reports for the process actually holding the pipe.
+/// </param>
+public sealed record BridgeCredential(string Secret, string? ServerImage);
+
+/// <summary>What went wrong when the bridge declined to talk to the process holding the pipe.</summary>
+public sealed record BridgeAuthFailure(string Reason, DateTimeOffset When)
+{
+    public override string ToString() => $"bridge authentication failed — {Reason}";
+}
+
+/// <summary>
+/// A peer on the bridge pipe that has not proved it holds this installation's bridge secret.
+/// DISPLAY ONLY, exactly like <see cref="IncompatibleBridge"/>: nothing derives a capability from it.
+/// </summary>
+public sealed record UnauthenticatedBridge(string Reason)
+{
+    /// <summary>
+    /// What an ATAS bridge older than this build looks like: a hello and then nothing. It is worth
+    /// its own instance because the repair is a specific one, and because "connected, then silence"
+    /// is the exact shape of three separate traps that have each cost a session.
+    /// </summary>
+    public static readonly UnauthenticatedBridge NeverPresented = new(
+        "it never presented the shared secret. A bridge older than this build does not know how — " +
+        "reinstall the add-on from TradeAgent so the DLL in the ATAS Strategies folder is this one");
+
+    public override string ToString() => $"the ATAS bridge did not authenticate — {Reason}";
+}
+
+/// <summary>
+/// Authentication for the pipe the ATAS bridge talks to — the pipe that places orders.
+///
+/// WHAT THIS DEFENDS AGAINST, AND WHAT IT DOES NOT. Read this before adding to it, and before
+/// quoting it as a boundary anywhere.
+///
+/// THE ATTACK. There is exactly one server instance of the bridge pipe, so whichever process
+/// creates that name first owns it, and the bridge inside ATAS connects to whatever is listening.
+/// A process that wins the name receives the bridge's connection and can send it <c>place</c>
+/// directly — around the mode, the kill switch, the approvals, the risk limits and the autonomy
+/// gate, all of which live in TradingGateway, which would no longer be in the path. Nothing about
+/// this requires beating TradeAgent to a boot: it requires one moment when TradeAgent is not
+/// holding the name.
+///
+/// SO THE BRIDGE CHECKS WHO IT CONNECTED TO, before it will serve a single operation:
+///
+///   1. The peer must prove it holds the secret in <see cref="CredentialFile"/>, over a nonce the
+///      BRIDGE chose. This is the only thing that stops another user account on the machine, or any
+///      software that merely knows the pipe name — a pipe NAME is not access-controlled, so any
+///      account can create it.
+///
+///   2. On Windows the peer's process is identified by asking the kernel, not by asking the peer:
+///      <c>GetNamedPipeServerProcessId</c> then <c>QueryFullProcessImageName</c>. The image must be
+///      the one recorded in the credential file, and it must not sit under the managed AI-runtime
+///      folder no matter what the record says. This is the only rule that can catch a process
+///      running as the SAME user, which the secret cannot.
+///
+/// WHAT IT DOES NOT DEFEND AGAINST, STATED PLAINLY. TradeAgent starts the AI runtime with
+/// Process.Start as the same OS user as itself. That process can read this file, because the same
+/// user can. It can write it too, and thereby name itself as the expected image. DPAPI would not
+/// change that — CurrentUser protection unprotects for the same user — which is why this file is
+/// not DPAPI-protected and why nothing here is described as a boundary against a same-user
+/// adversary. Windows does not offer one; a same-user process can also inject into TradeAgent or
+/// replace it on disk. What rule 2 buys is that the squat must be TARGETED: an AI runtime that opens
+/// the pipe name and starts sending orders is refused by name, and to get past it a process has to
+/// tamper with TradeAgent's own state directory and race TradeAgent's rewrite of it. tools/probe
+/// demonstrates the residual weakness deliberately: it grants itself bridge authority by calling
+/// <see cref="EnsureForServer"/>, and it is entitled to nothing that any other same-user process is
+/// not.
+///
+/// HOW FAR EACH END GOES. The BRIDGE enforces: an unproved peer is refused and never reaches
+/// IAtasAdapter. The CONNECTOR answers the challenge, refuses a peer whose proof is wrong, and
+/// NAMES a peer that presents none — but does not drop it. That asymmetry is deliberate and it is a
+/// documented gap, not an oversight: the order-placing authority is on the bridge's side of the
+/// pipe, and closing the connector's half means refusing a hello that carries no proof, which is
+/// what an ATAS bridge older than this build sends.
+/// </summary>
+public static class BridgePipeAuth
+{
+    /// <summary>Bridge to pipe owner: "prove you are TradeAgent", and here is my own proof.</summary>
+    public const string Challenge = "ta-auth";
+
+    /// <summary>Pipe owner to bridge: the answer.</summary>
+    public const string Response = "ta-auth-ok";
+
+    /// <summary>Either end to the other: "I will not talk to you, and this is why."</summary>
+    public const string Refused = "ta-auth-failed";
+
+    /// <summary>Role labels, so neither end's proof can be replayed as the other's.</summary>
+    public const string BridgeRole = "bridge", ServerRole = "tradeagent";
+
+    const string Domain = "tradeagent-bridge-auth-v1";
+    const int SecretChars = 64, NonceChars = 32;
+
+    static readonly object Gate = new();
+
+    public static string CredentialFile => Path.Combine(Paths.State, "bridge.auth");
+
+    // ------------------------------------------------------------------ the credential on disk
+
+    /// <summary>
+    /// The credential for a process that is about to create the bridge pipe. The secret survives
+    /// across runs — the bridge may be mid-reconnect — but the image path is rewritten every time,
+    /// so the record always names the program holding the name right now.
+    /// </summary>
+    public static BridgeCredential EnsureForServer()
+    {
+        lock (Gate)
+        {
+            var existing = ReadFile()?.Secret;
+            var secret = IsSecret(existing) ? existing! : Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+            var cred = new BridgeCredential(secret, Environment.ProcessPath);
+            WriteFile(cred);
+            return cred;
+        }
+    }
+
+    /// <summary>The credential as the bridge sees it, or null when TradeAgent has published none.</summary>
+    public static BridgeCredential? ReadForClient() => ReadFile();
+
+    static BridgeCredential? ReadFile()
+    {
+        // WriteFile replaces atomically, but a replace can still make one open fail outright; a
+        // single retry covers it without turning a missing file into a spin.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(CredentialFile)) return null;
+                var c = Json.Read<BridgeCredential>(File.ReadAllText(CredentialFile));
+                return c is not null && IsSecret(c.Secret) ? c : null;
+            }
+            catch (JsonException) { return null; }
+            catch (IOException) { /* retry once */ }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+        return null;
+    }
+
+    static void WriteFile(BridgeCredential c)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(CredentialFile)!);
+        var tmp = $"{CredentialFile}.{Environment.ProcessId}.tmp";
+        File.WriteAllText(tmp, Json.Write(c));
+        Restrict(tmp);
+        File.Move(tmp, CredentialFile, overwrite: true);
+    }
+
+    /// <summary>
+    /// Owner-only where the filesystem has the concept. On Windows the ACL inherited from
+    /// %LOCALAPPDATA% already denies other accounts, and this is a no-op.
+    /// </summary>
+    static void Restrict(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); }
+        catch (Exception) { /* a filesystem without modes is a diagnostics problem, not a crash */ }
+    }
+
+    // ------------------------------------------------------------------ the proofs
+
+    public static string NewNonce() => Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+
+    public static bool IsSecret(string? s) => Hex(s, SecretChars);
+    public static bool IsNonce(string? s) => Hex(s, NonceChars);
+
+    static bool Hex(string? s, int length) =>
+        s is not null && s.Length == length && s.All(char.IsAsciiHexDigit);
+
+    /// <summary>HMAC over the role and the nonce. The role is what keeps the two halves distinct.</summary>
+    public static string Proof(string secret, string role, string nonce)
+    {
+        if (!IsSecret(secret)) throw new ArgumentException("not a bridge secret", nameof(secret));
+        return Convert.ToHexStringLower(HMACSHA256.HashData(
+            Convert.FromHexString(secret), Encoding.UTF8.GetBytes($"{Domain}|{role}|{nonce}")));
+    }
+
+    /// <summary>Constant-time, so a wrong proof cannot be walked towards a right one.</summary>
+    public static bool ProofMatches(string? secret, string role, string nonce, string? presented)
+    {
+        if (!IsSecret(secret) || !IsNonce(nonce) || presented is null) return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(Proof(secret!, role, nonce)), Encoding.UTF8.GetBytes(presented));
+    }
+
+    // ------------------------------------------------------------------ who is on the other end
+
+    /// <summary>
+    /// Whether a program at <paramref name="actual"/> may own the bridge pipe: null if it may, and
+    /// the reason it may not otherwise.
+    ///
+    /// Separated from the kernel call on purpose. The call only runs on Windows; this rule is what
+    /// decides, and it can be tested anywhere.
+    /// </summary>
+    public static string? ImageVerdict(string? actual, string? expected, string? toolsDir)
+    {
+        if (string.IsNullOrWhiteSpace(actual))
+            return "Windows would not say which program is holding the bridge pipe, so the peer " +
+                   "could not be identified at all";
+
+        // Ahead of the recorded-path rule, and deliberately not derived from the record: an AI
+        // runtime that had rewritten the record to name itself would satisfy that rule and still
+        // fail this one. TradeAgent never runs from its own managed tools folder; only the runtimes
+        // it installs do.
+        if (!string.IsNullOrWhiteSpace(toolsDir) && Inside(actual!, toolsDir!))
+            return $"the program holding the bridge pipe ({Show(actual)}) runs from the managed " +
+                   "AI-runtime folder. No AI runtime may own this pipe";
+
+        if (string.IsNullOrWhiteSpace(expected))
+            return "TradeAgent did not record which program owns the bridge pipe, so the peer could " +
+                   "not be checked";
+
+        if (!Same(actual!, expected!))
+            return $"the program holding the bridge pipe is {Show(actual)}, but TradeAgent recorded " +
+                   $"{Show(expected)}";
+
+        return null;
+    }
+
+    /// <summary>
+    /// The image path of the process that owns the pipe this client is connected to, as the kernel
+    /// reports it. Null off Windows and null when the query fails — both of which the caller must
+    /// treat as "not identified", never as "fine".
+    /// </summary>
+    public static string? ServerImagePath(NamedPipeClientStream pipe)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            return GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid) ? ImagePathOf(pid) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The mirror image, for diagnostics only: who dialled in to a pipe we own.</summary>
+    public static string? ClientImagePath(NamedPipeServerStream pipe)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            return GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var pid) ? ImagePathOf(pid) : null;
+        }
+        catch (Exception) { return null; }
+    }
+
+    [SupportedOSPlatform("windows")]
+    static string? ImagePathOf(uint pid)
+    {
+        // PROCESS_QUERY_LIMITED_INFORMATION, and QueryFullProcessImageName rather than
+        // Process.MainModule: ATAS is a 32-bit process ("Program Files (x86)"), so the bridge runs
+        // 32-bit and TradeAgent may not. Reading another process's module list across that boundary
+        // fails; this call does not care.
+        var h = OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return null;
+        try
+        {
+            var buf = new char[1024];
+            var size = (uint)buf.Length;
+            return QueryFullProcessImageName(h, 0, buf, ref size) && size > 0
+                ? new string(buf, 0, (int)size)
+                : null;
+        }
+        finally { CloseHandle(h); }
+    }
+
+    static string Norm(string p) => p.Trim().Replace('\\', '/').TrimEnd('/');
+
+    static bool Same(string a, string b) =>
+        string.Equals(Norm(a), Norm(b),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    static bool Inside(string path, string dir)
+    {
+        var d = Norm(dir);
+        if (d.Length == 0) return false;
+        var p = Norm(path);
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return p.StartsWith(d + "/", cmp);
+    }
+
+    /// <summary>A path on its way to a status line: one line, printable, and short.</summary>
+    static string Show(string? path) =>
+        string.IsNullOrWhiteSpace(path)
+            ? "'<unknown>'"
+            : "'" + new string(path.Where(c => !char.IsControl(c)).Take(120).ToArray()).Trim() + "'";
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint id);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint id);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool QueryFullProcessImageName(IntPtr process, uint flags, [Out] char[] name, ref uint size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseHandle(IntPtr handle);
 }

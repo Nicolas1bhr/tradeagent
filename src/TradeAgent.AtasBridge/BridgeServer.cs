@@ -13,19 +13,44 @@ namespace TradeAgent.AtasBridge;
 /// It dials out to TradeAgent rather than listening, so its presence is something TradeAgent can
 /// observe (a connection plus a heartbeat) instead of something the user has to confirm. It
 /// reconnects for as long as it is loaded, because ATAS restarting is normal, not exceptional.
+///
+/// DIALLING OUT IS ALSO THE WEAKNESS, AND IT IS WHY THIS CLASS AUTHENTICATES ITS PEER. There is one
+/// server instance of that pipe, so whichever process creates the name first owns it, and this
+/// class connects to whatever is listening. Everything past <see cref="HandleFrame"/> reaches
+/// <see cref="IAtasAdapter"/> — <c>place</c> included — with TradingGateway, and therefore the mode,
+/// the kill switch, the approvals, the risk limits and the autonomy gate, entirely out of the path.
+/// So nothing is served until the peer has proved who it is. What that proof does and does not buy
+/// is written out in full on <see cref="BridgePipeAuth"/>; read it before trusting it.
 /// </summary>
-public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) : IAsyncDisposable
+public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, BridgeCredential? credential = null)
+    : IAsyncDisposable
 {
     readonly string _pipe = pipeName ?? Paths.BridgePipeName;
+    readonly BridgeCredential? _fixedCredential = credential;
     readonly CancellationTokenSource _cts = new();
     readonly SemaphoreSlim _send = new(1, 1);
     NamedPipeClientStream? _client;
     StreamWriter? _writer;
     Task? _loop;
+    volatile bool _authenticated;
+    int _authFailures;
 
     public bool Connected { get; private set; }
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan ReconnectDelay { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long the peer gets to answer the authentication challenge. A deadline rather than a wait:
+    /// "connected, then nothing" is the shape of three separate traps that have each cost a session,
+    /// and an authentication failure must never be a fourth.
+    /// </summary>
+    public TimeSpan AuthTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Why the last refusal happened, or null if the peer has been accepted. Diagnostic.</summary>
+    public BridgeAuthFailure? LastAuthFailure { get; private set; }
+
+    /// <summary>How many peers have been refused since this bridge was loaded.</summary>
+    public int AuthFailures => Volatile.Read(ref _authFailures);
 
     public void Start() => _loop ??= Task.Run(() => RunAsync(_cts.Token));
 
@@ -39,21 +64,36 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
                 _client = new NamedPipeClientStream(".", _pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await _client.ConnectAsync(ct);
                 _writer = new StreamWriter(_client, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
-                Connected = true;
 
-                await SendRaw(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = adapter.Describe() }, ct);
-                using var heartbeat = StartHeartbeat(ct);
-
+                // ONE READER for the whole connection. Authenticate() reads the peer's answer off
+                // it, and a second reader here would silently drop whatever the first one had
+                // already buffered — which, with the peer answering immediately, is the hello's
+                // reply and every frame after it.
                 var reader = new StreamReader(_client, new UTF8Encoding(false), false, 8192, leaveOpen: true);
-                string? line;
-                while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
-                    await HandleFrame(line, ct);
+
+                // Before the hello, not after. An unproved peer learns nothing about this bridge:
+                // not the ATAS version, not the account, not what it can prove about client order
+                // ids. Connected stays false until this returns true, so Push() cannot leak an
+                // event to it either.
+                if (await Authenticate(reader, ct))
+                {
+                    _authenticated = true;
+                    Connected = true;
+
+                    await SendRaw(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = adapter.Describe() }, ct);
+                    using var heartbeat = StartHeartbeat(ct);
+
+                    string? line;
+                    while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
+                        await HandleFrame(line, ct);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception) { /* TradeAgent closed or is not running yet; keep trying */ }
             finally
             {
                 Connected = false;
+                _authenticated = false;
                 _writer = null;
                 _client?.Dispose();
                 _client = null;
@@ -62,6 +102,103 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
             if (ct.IsCancellationRequested) break;
             try { await Task.Delay(ReconnectDelay, ct); } catch (OperationCanceledException) { break; }
         }
+    }
+
+    /// <summary>
+    /// Decides whether the process holding the bridge pipe gets to drive this adapter.
+    ///
+    /// Two questions, in this order, and a no to either ends the connection with a named reason
+    /// rather than a silence:
+    ///   1. WHO IS IT? Asked of Windows, not of the peer — the peer cannot answer this one falsely.
+    ///   2. DOES IT HOLD THE SECRET? Over a nonce chosen here, so a recording of an earlier
+    ///      exchange cannot be replayed back at this bridge.
+    /// </summary>
+    async Task<bool> Authenticate(StreamReader reader, CancellationToken ct)
+    {
+        // A credential that is absent and one that is unusable are the same news and must produce
+        // the same sentence. Checking the shape here is not fussiness: Proof() throws on a malformed
+        // secret, and an exception thrown out of this method lands in RunAsync's catch-all, where it
+        // becomes a silent reconnect — an authentication failure that reports nothing at all, which
+        // is the exact outcome this whole design exists to prevent.
+        var cred = _fixedCredential ?? BridgePipeAuth.ReadForClient();
+        if (cred is null || !BridgePipeAuth.IsSecret(cred.Secret))
+            return await Refuse($"TradeAgent has published no usable bridge secret on this machine " +
+                                $"({BridgePipeAuth.CredentialFile} is missing, unreadable or malformed). " +
+                                "Start TradeAgent once", ct);
+
+        // Windows only, and a failure to identify the peer is a refusal, not a shrug: "could not
+        // check" is exactly the state an impersonator would engineer. Off Windows there is no ATAS
+        // and no product, so the rule is skipped rather than faked.
+        if (OperatingSystem.IsWindows() &&
+            BridgePipeAuth.ImageVerdict(BridgePipeAuth.ServerImagePath(_client!), cred.ServerImage, Paths.Tools) is { } wrongPeer)
+            return await Refuse(wrongPeer, ct);
+
+        var nonce = BridgePipeAuth.NewNonce();
+        await SendRaw(new
+        {
+            v = Versions.BridgeProtocolVersion,
+            op = BridgePipeAuth.Challenge,
+            data = new { nonce, proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce) }
+        }, ct);
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(AuthTimeout);
+        try
+        {
+            string? line;
+            while ((line = await reader.ReadLineAsync(deadline.Token)) is not null)
+            {
+                BridgeFrame? f;
+                try { f = Json.Read<BridgeFrame>(line); } catch (JsonException) { continue; }
+                if (f is null) continue;
+
+                if (f.Op == BridgePipeAuth.Refused)
+                    return await Refuse($"the process holding the bridge pipe refused this bridge: {Clip(f.Error)}", ct);
+
+                // Nothing else is even looked at before the answer arrives. An op sent ahead of it
+                // is not served, not queued and not acknowledged.
+                if (f.Op != BridgePipeAuth.Response) continue;
+
+                var proof = f.Data.HasValue && f.Data.Value.TryGetProperty("proof", out var p) ? p.GetString() : null;
+                if (!BridgePipeAuth.ProofMatches(cred.Secret, BridgePipeAuth.ServerRole, nonce, proof))
+                    return await Refuse("the process holding the bridge pipe answered the challenge with the " +
+                                        "wrong proof — it does not hold this installation's bridge secret", ct);
+
+                LastAuthFailure = null;
+                return true;
+            }
+            return await Refuse("the process holding the bridge pipe closed the connection without " +
+                                "answering the authentication challenge", ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return await Refuse($"the process holding the bridge pipe did not answer the authentication " +
+                                $"challenge within {AuthTimeout.TotalSeconds:0}s", ct);
+        }
+    }
+
+    async Task<bool> Refuse(string reason, CancellationToken ct)
+    {
+        LastAuthFailure = new BridgeAuthFailure(reason, DateTimeOffset.UtcNow);
+        Interlocked.Increment(ref _authFailures);
+        // Said out loud on the wire as well. A peer entitled to this pipe — a TradeAgent whose
+        // bridge.auth has gone stale, most likely — needs this sentence on screen; a peer that is
+        // not entitled learns only that it was refused, which it was about to find out anyway.
+        try { await SendRaw(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = reason }, ct); }
+        catch (Exception) { /* refusing a peer that has already gone is still a refusal */ }
+        return false;
+    }
+
+    /// <summary>
+    /// Untrusted text from a peer we are in the middle of declining, on its way into a diagnostic.
+    /// Same treatment as <see cref="IncompatibleBridge.Clean"/> and for the same reason, with more
+    /// room because a refusal has to explain itself and a version string does not.
+    /// </summary>
+    static string Clip(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "no reason given";
+        var kept = new string(raw.Where(c => !char.IsControl(c)).Take(200).ToArray()).Trim();
+        return kept.Length == 0 ? "no reason given" : kept;
     }
 
     CancellationTokenSource StartHeartbeat(CancellationToken ct)
@@ -112,6 +249,11 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null) 
 
     async Task HandleFrame(string line, CancellationToken ct)
     {
+        // Belt and braces. RunAsync does not reach this loop until Authenticate() said yes, so this
+        // can only fire if someone rearranges that — which is exactly when it needs to be here,
+        // because the next line but eight hands 'place' to a live broker.
+        if (!_authenticated) return;
+
         BridgeFrame? f;
         try { f = Json.Read<BridgeFrame>(line); }
         catch (JsonException) { return; }
