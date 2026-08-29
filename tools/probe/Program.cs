@@ -542,7 +542,12 @@ static class AtasProbe
         var reporting = connector.Bridge ?? hello;
         var attempts = reporting?.ClientOrderIdAttempts;
         var checks = reporting?.ClientOrderIdChecks;
-        var reported = ReportedClientIdVerdict(caps.SupportsClientOrderId, attempts, checks)?.ToList();
+        // The coid= token, because the boolean can no longer explain itself. Since the bridge
+        // stopped reporting true for a same-reference match, "the evidence is present and the flag
+        // is false" became the CORRECT reading on ATAS rather than a contradiction — and both
+        // verdicts below were written when that combination could only mean something was broken.
+        var coid = Token(reporting?.TradingSurface, "coid");
+        var reported = ReportedClientIdVerdict(caps.SupportsClientOrderId, attempts, checks, coid)?.ToList();
 
         Line("SUBMITTED WITH AN ID", attempts is null
             ? "NOT REPORTED — this bridge predates the attempt counters"
@@ -552,7 +557,7 @@ static class AtasProbe
             : $"{checks}   (times it then looked one of them up in ATAS's own order");
         if (checks is not null) Cont("collection — the check that can set the flag)");
 
-        var verdict = ClientIdVerdict(caps.SupportsClientOrderId, orders, ordersError, withClientId, withBothIds).ToList();
+        var verdict = ClientIdVerdict(caps.SupportsClientOrderId, orders, ordersError, withClientId, withBothIds, coid).ToList();
 
         if (reported is not null)
         {
@@ -1568,12 +1573,12 @@ static class AtasProbe
     /// nothing has not told us it attempted nothing. Returning "0 attempts" for a silent bridge
     /// would reintroduce, one field lower, the exact ambiguity these counters were added to remove.
     /// </summary>
-    static IEnumerable<string>? ReportedClientIdVerdict(bool proven, int? attempts, int? checks)
+    static IEnumerable<string>? ReportedClientIdVerdict(bool proven, int? attempts, int? checks, string? coid)
     {
         if (attempts is null || checks is null) return null;
-        return Lines(proven, attempts.Value, checks.Value);
+        return Lines(proven, attempts.Value, checks.Value, coid);
 
-        static IEnumerable<string> Lines(bool proven, int attempts, int checks)
+        static IEnumerable<string> Lines(bool proven, int attempts, int checks, string? coid)
         {
             if (proven)
             {
@@ -1609,6 +1614,23 @@ static class AtasProbe
                 yield break;
             }
 
+            if (coid == "proven-sameref")
+            {
+                yield return "false, AND THE READ-BACK FOUND THE PAIR — ON OUR OWN OBJECT. Not a failure.";
+                yield return $"{attempts} order(s) went out carrying a client order id and the bridge";
+                yield return $"performed {checks} read-back(s), which DID find the identifier alongside a";
+                yield return "broker-assigned id. The bridge reports false anyway, and that is it being";
+                yield return "CORRECT: the order it matched is reference-equal to the Order instance it";
+                yield return "constructed and handed to ATAS, so the comment came back because it never";
+                yield return "left. Nothing was carried anywhere, so nothing was proven.";
+                yield return "";
+                yield return "This is the EXPECTED reading on this platform. It is not a defect and it";
+                yield return "is not a round-trip failure — do not 'fix' it by trusting the boolean.";
+                yield return "What would settle rule 1: a source that cannot be our own object — a fresh";
+                yield return "ATAS session, the platform's order history, or the broker's own report.";
+                yield break;
+            }
+
             yield return "false, AND THE READ-BACK GENUINELY FAILED. This IS evidence about ATAS.";
             yield return $"{attempts} order(s) went out carrying a client order id and the bridge";
             yield return $"performed {checks} read-back(s) against ATAS's own order collection without";
@@ -1620,7 +1642,7 @@ static class AtasProbe
     }
 
     static IEnumerable<string> ClientIdVerdict(bool proven, IReadOnlyList<OrderInfo>? orders,
-        string? ordersError, int withClientId, int withBothIds)
+        string? ordersError, int withClientId, int withBothIds, string? coid)
     {
         if (proven)
         {
@@ -1672,6 +1694,21 @@ static class AtasProbe
             yield return "acknowledged those orders yet — re-run in a moment — or it never assigns an";
             yield return "id that ATAS surfaces, in which case the round trip cannot be completed on";
             yield return "this backend and false is the permanent, correct answer.";
+            yield break;
+        }
+
+        if (coid == "proven-sameref")
+        {
+            yield return "false WITH THE EVIDENCE PRESENT — AND THAT IS THE BRIDGE BEING RIGHT.";
+            yield return $"{withBothIds} order(s) in the live book carry BOTH a client order id and a";
+            yield return "broker-assigned order id, which from out here looks like exactly the pair";
+            yield return "rule 1 asks for. The bridge can see one thing this harness cannot: the order";
+            yield return "carrying that pair is the very Order instance it handed to ATAS. Reading our";
+            yield return "own field off our own object is not a round trip, so it reports false.";
+            yield return "";
+            yield return "The two sources are NOT disagreeing here. This reading is inferred from the";
+            yield return "order book, which cannot see object identity; the bridge's coid=proven-sameref";
+            yield return "above is the better-informed of the two. Believe that one.";
             yield break;
         }
 
