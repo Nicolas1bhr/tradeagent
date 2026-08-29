@@ -440,6 +440,19 @@ Each of these cost real time. None is obvious from the code.
     the filename after any ATAS upgrade — and note it records **no attributes**, so `[Obsolete]` does
     not appear in it and only a real build reports CS0618.
 
+34. **The bridge is deployed into ATAS by filename prefix, so a NuGet dependency vanishes silently.**
+    `AtasInstallation.InstallBridge` copies `Directory.GetFiles(bridgeSourceDir, "TradeAgent.*")` into
+    `%APPDATA%\ATAS\Strategies` and nothing else. Every first-party assembly matches, so the filter is
+    invisible until the day the bridge's dependency chain acquires a **third-party** one — a NuGet
+    package, or the native `e_sqlite3` that `Microsoft.Data.Sqlite` needs. That file is not copied, the
+    build is green, the install reports success, and the failure appears inside ATAS as a type load
+    with no message anywhere: which is, once again, indistinguishable from traps 12, 7 and 24.
+
+    This is not hypothetical. It is why the bridge-pipe authentication holds its secret in a plain
+    file rather than reaching for DPAPI, and why the rule-1 witness design cannot use the SQLite store
+    the gateway already has. **Before adding any package reference anywhere in the bridge's chain,
+    either widen this filter or confirm the dependency is first-party.**
+
 ## How the last session was run
 
 2026-08-29 was run entirely from the dev Mac with the test machine offline, as a manager dispatching
