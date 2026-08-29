@@ -277,13 +277,15 @@ Each of these cost real time. None is obvious from the code.
     tries. It cannot work, and there is no message anywhere to say so. This is deliberate on the
     build's part: `packaging/build.ps1` will not pretend to ATAS support it cannot have. The trap is
     that the *installed* app can be an older, ATAS-less build while the repo builds a real one.
-    Check the DLL for the string `AtasStrategyAdapter`, not the file's existence — step 0 above.
+    Check the DLL for the type name `AtasStrategyAdapter`, not the file's existence — and note trap 27:
+    check type names as ASCII, string literals as UTF-16, or a correct build reads as absent.
 
 13. **`ChartStrategy.Connector` is null, and nothing says so until runtime.** It exists, it has the
     right type, the code compiles, and every read through it throws "this ATAS chart has no trading
     connection attached yet" on a chart that is demonstrably attached to a portfolio. `Portfolio` on
     the same object is populated. The trading surface for a chart strategy is `ITradingManager`.
-    This cost the first live run and it is the reason step 1 above exists.
+    This cost the first live run, and it is why the rule-1 question in step 2 above is asked of
+    `ITradingManager` rather than of the connector.
 
 14. **A DPI-unaware process is handed virtualised coordinates, and every click lands near its
     target instead of on it.** On this machine `GetWindowRect` reported 2208x1533 for a window DWM
