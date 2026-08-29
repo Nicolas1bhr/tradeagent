@@ -487,11 +487,14 @@ static class AtasProbe
             // was. They are separate handshakes over separate connections, and on a machine whose
             // deployed bridge is older than the repository they give different answers.
             //
-            // A bridge that never authenticates is only NAMED as such once AuthGrace has run out,
-            // so reading this the instant the hello lands would report "fine" about every bridge.
-            await Until(() => connector.Unauthenticated is not null, connector.AuthGrace + TimeSpan.FromSeconds(1));
+            // No wait here any more, and the change is worth knowing about. The connector used to
+            // accept an unproved hello and merely NAME the peer once AuthGrace expired, so this had
+            // to sleep out the grace or it would report "fine" about every bridge. It now REFUSES an
+            // unproved hello, so reaching this line at all means the peer proved itself — Bridge is
+            // non-null only for an authenticated peer. The reading is immediate and it is a check on
+            // that invariant rather than a measurement.
             Line("CONNECTOR AUTH", connector.Unauthenticated is { } gap
-                ? $"NOT PROVED — {gap.Reason}"
+                ? $"NOT PROVED, YET THE HANDSHAKE COMPLETED — {gap.Reason}"
                 : "OK — the bridge proved itself to AtasConnector as well");
             if (connector.PeerImage is { } peer) Cont($"peer image, as Windows reports it: {peer}");
 
@@ -518,10 +521,43 @@ static class AtasProbe
         }
         else
         {
+            // WHY THIS BRANCH NOW HAS A REASON IN IT. The connector refuses a bridge that is the
+            // wrong protocol version or cannot prove the pipe secret, and a refused peer never sets
+            // Bridge — so this branch, which used to mean "nothing turned up in time", is now also
+            // where a bridge that turned up and was TURNED AWAY lands. Those want opposite actions,
+            // and the connector already knows which happened. Printing the timeout alone would send
+            // a reader hunting a bridge that is answering perfectly well.
             Line("CONNECTOR HANDSHAKE", $"NOT COMPLETED within {reconnectLimit.TotalSeconds:0}s.");
-            Cont("The hello above was still received, so the capability lines below are derived");
-            Cont("from it with the same expression AtasConnector.Capabilities uses. The order");
-            Cont("evidence further down could not be gathered.");
+            if (connector.Incompatible is { } bad)
+            {
+                Cont("");
+                Cont($"AND THE REASON IS KNOWN: {bad}");
+                Cont("The bridge answered and AtasConnector turned it away on the protocol version.");
+                Cont("This is the expected reading against a bridge built before the version bump —");
+                Cont("rebuild and redeploy the bridge, then run this again. It is NOT a bridge that");
+                Cont("failed to load, NOT the wrong Strategies folder and NOT a strategy restored");
+                Cont("stopped: all three of those are silence, and this is an answer.");
+            }
+            else if (connector.Unauthenticated is { } why)
+            {
+                Cont("");
+                Cont($"AND THE REASON IS KNOWN: {why.Reason}");
+                Cont("The bridge answered and AtasConnector turned it away over the pipe secret.");
+                Cont("Rebuild and redeploy the bridge if it predates authentication. If it does not,");
+                Cont("this is two installations or a copied profile — or a peer that is not the");
+                Cont("bridge at all, which is the case this refusal exists for.");
+            }
+            else
+            {
+                Cont("Nothing answered AtasConnector's pipe in time, and it has no complaint on");
+                Cont("record — so this is silence rather than a refusal. Traps 12, 7 and 24 all");
+                Cont("look exactly like this.");
+            }
+            Cont("");
+            Cont("The hello above was still received by THIS harness, so the capability lines below");
+            Cont("are derived from it with the same expression AtasConnector.Capabilities uses —");
+            Cont("note that means they are what the bridge CLAIMS, not what the product accepted.");
+            Cont("The order evidence further down could not be gathered.");
         }
 
         var caps = handshake
