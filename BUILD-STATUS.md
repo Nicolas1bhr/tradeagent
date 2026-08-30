@@ -7,18 +7,22 @@ is the difference between a gap and an answer:
 - `SupportsOrderHistory` — false because `IIndicatorDataProvider.GetService<T>()` throws
   `NotSupportedException` for *every* type, including one reachable as a property on the same
   interface. Every cache route is dead. Shippable.
-- `SupportsClientOrderId` — false because every measurement taken came back `proven-sameref`:
-  ATAS hands back the very `Order` instance we submitted, so the identifier comes back because it
-  never left. **This used to read `true`.** The capability latched on any match, so the product
-  reported rule 1 satisfied on a proof this file already called worthless. Corrected 2026-08-29 and
-  **confirmed on hardware 2026-08-30**, where the identical situation that once read `true` now reads
-  `false`. Measured on two different connectors, so it is how ATAS's collection works, not a quirk of
-  one backend.
+- `SupportsClientOrderId` — **TRUE, on evidence, since 2026-08-30.** An order was placed, ATAS was
+  shut down, and the identifier was found again on an order in the restarted platform's own
+  collection, alongside the broker id the dead run had recorded before it ended. The process doing
+  the reading had constructed no `Order` at all, so the match cannot be our own object — which is
+  exactly what made every earlier reading worthless. In-session the reading is still
+  `proven-sameref` and still reports false; that too was confirmed on hardware, on two different
+  connectors, so it is how ATAS's collection works rather than one backend's quirk.
 
-**The one fact the product waits on is whether ATAS carries a client order id onto something this
-adapter did not write**, and nothing observable from inside a chart strategy can settle it. The
-route designed for it is a fresh ATAS session; the trap in that route is recorded below, because
-the obvious implementation of it produces an automatic `true` rather than a proof.
+**The fact the product waited on from the beginning is settled.** The identifier survives ATAS being
+restarted. What that does *not* settle — and the verdict says so itself — is whether it ever reached
+the broker: ATAS rebuilding the order from the broker's answer and ATAS rehydrating it from its own
+store are indistinguishable from inside a chart strategy. Only the broker's own report separates them.
+
+The trap in that route is recorded below, because the obvious implementation of it produces an
+automatic `true` rather than a proof: after a restart every match is reference-distinct by
+construction, so it needed a reading of its own.
 
 `ReconciliationProvable` is false and `TradingGateway` refuses `LIVE_AUTONOMOUS`. That is correct.
 
@@ -877,6 +881,70 @@ Two further things this run establishes:
 - **The order path survived nine commits of change.** Place, read back three times, cancel, and a
   re-read showing `0 order(s) in the collection, 0 carrying this run's id`. `AdapterTouchedOrders` was
   live throughout and produced no false `Distinct`.
+
+### RULE 1 IS PROVEN — across a process restart, and this proof is not vacuous
+
+**The single fact this product has waited on since the beginning, answered.**
+
+Half 1 placed a resting order and deliberately left it, writing a witness record **before** the order
+was submitted:
+
+```
+CLIENT ORDER ID       : TA-PROBE-20260830120255
+THE ORDER             : BUY LIMIT 1 BTCUSDT @ 70155  TIF=Day  on CRYPTO5EB41
+CARRIES A BROKER ID   : YES — connector_order_id = 12007918
+ROUND TRIP, MEASURED  : proven-sameref — ATAS handed back AN OBJECT THIS ADAPTER TOUCHED.
+WITNESS RECORD        : session:bccb57cf,records:1,prior:0,io:ok
+```
+
+ATAS was then closed — saving the workspace — and confirmed gone from the process table, so the run
+that placed that order, and the `Order` instance it constructed, ceased to exist. ATAS was relaunched,
+signed in, and the strategy re-activated (it restores **stopped**, trap 24). Half 2 places nothing:
+
+```
+BRIDGE SESSION        : 1ce7ec65
+RECORD SESSION        : bccb57cf
+ORDERS IN LIVE BOOK   : 1
+ORDER SURVIVED        : YES — an order with broker id 12007918 is in the book
+IDENTIFIER SURVIVED   : YES — an order carries client_order_id = TA-PROBE-20260830120255
+
+{"connector_order_id":"12007918","client_order_id":"TA-PROBE-20260830120255",
+ "account_id":"CRYPTO5EB41","symbol":"BTCUSDT","side":"Buy","type":"Limit","quantity":1,
+ "filled_quantity":0,"limit_price":70155,"state":"WORKING","at":"2026-08-30T10:02:57.3913483+02:00"}
+
+RULE 1                : PROVEN ACROSS A PROCESS RESTART. THIS IS THE ANSWER.
+
+atas=8.0.14.397 | SupportsClientOrderId=true | coid=proven-crosssession | coid-restart=proof
+```
+
+**Why this one is not vacuous, where every previous one was.** The reading that made 2026-08-28
+worthless was that ATAS handed back the very object we submitted, so the comment matched by
+construction. Here **this process constructed no `Order` at all** — it placed nothing, and its
+`_submitted` map is empty. There is no object of ours for the collection to be holding. The claim
+"this product submitted this identifier" was written to disk before an order existed to fit it to, by
+a process that had ended before anything read it, and it is matched against **the half we did not
+choose**: the broker id ATAS assigned, recorded by that dead run, required to be equal on the order
+found now.
+
+**What it still does not prove, and this bound is real.** A cross-session match cannot separate ATAS
+rebuilding the order from *the broker's* answer on reconnect, from ATAS rehydrating it out of its own
+local store. All three survive a restart and are indistinguishable from inside a chart strategy. So:
+**the identifier demonstrably survives ATAS being restarted**, which is what reconciliation after a
+dropped connection needs. Whether it ever reached the broker is a different question, and only the
+broker's own report answers it. That distinction is printed in the verdict itself, not just recorded
+here.
+
+**Autonomy is still refused, and that is correct.** `ReconciliationProvable` is
+`SupportsClientOrderId && SupportsOrderHistory`; the second is false for a known reason
+(`GetService<T>` throws for every type). One of the two gates is now open on evidence. The other is
+shut on an answer.
+
+**The book was left clean**, verified from a separate run afterwards:
+
+```
+orders=0 strategyorders=0 mytrades=0 portfolio=CRYPTO5EB41 security=BTCUSDT position=0
+coid=proven-crosssession   witness=session:1ce7ec65,records:1,prior:1,io:ok
+```
 
 ### The quote guard refused to place, correctly, on a closed market
 

@@ -10,31 +10,37 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## The one sentence to carry
 
-**Rule 1 has been measured once, the answer was that the proof is worthless, and until 2026-08-29 the
-product was reporting the capability true anyway.**
+**Rule 1 is proven.** An order was placed, ATAS was shut down, and the identifier was found again on
+an order in the restarted platform's own collection — alongside the broker id the dead run had
+recorded before it ended.
 
-An order was placed on 2026-08-28. ATAS handed it back carrying our identifier and a broker id — and
-the object it handed back is the one we gave it. `Place` sets `Comment` on an `Order` and hands that
-instance to ATAS; ATAS's `Orders` collection then holds the same object, so "the id came back" is true
-by construction. It never left.
+```
+BRIDGE SESSION : 1ce7ec65        RECORD SESSION : bccb57cf
+ORDER SURVIVED : YES — broker id 12007918
+IDENTIFIER     : YES — client_order_id = TA-PROBE-20260830120255
+RULE 1         : PROVEN ACROSS A PROCESS RESTART. THIS IS THE ANSWER.
+```
 
-`SupportsClientOrderId` latched on any match, so it read **true** off that. It now reads true only for
-`ClientOrderIdProof.Distinct` — a genuinely different object carrying our identifier — and the live
-reading, `SameRef`, no longer counts. **Do not "fix" a false here by trusting a boolean.**
+The process that read it had constructed no `Order` at all, so the match cannot be our own object —
+which is exactly what made every earlier reading worthless. **In-session the reading is still
+`proven-sameref` and still reports false**, on two different connectors, so that is how ATAS's
+collection works rather than one backend's quirk.
+
+**The bound is real and is printed in the verdict itself:** a cross-session match cannot separate ATAS
+rebuilding the order from *the broker's* answer on reconnect, from ATAS rehydrating it out of its own
+local store. The identifier survives ATAS restarting, which is what reconciliation needs. Whether it
+ever reached the broker is a different question that only the broker's own report answers.
 
 Where the two autonomy gates stand:
 
-- `SupportsClientOrderId` — **false**, and for a reason: the one measurement taken was vacuous.
+- `SupportsClientOrderId` — **true, on evidence**, since 2026-08-30.
 - `SupportsOrderHistory` — **false, for a known reason.** `GetService<T>()` throws
   `NotSupportedException` for *every* type including one reachable as a property on the same
   interface, so no cache route exists. That is an answer, and a shippable one.
 
-`ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. That is correct.
-
-**The largest thing this product got wrong was not rule 1.** The bridge pipe — the one that reaches
-`Place` — authenticated nobody, while the agent-facing pipe demanded an ACL and a token. Anything that
-won that pipe name placed orders around every operator control. Closed 2026-08-29, both directions, with
-the residual against a same-user adversary written down rather than claimed away.
+`ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. **That is still correct:**
+one gate is now open on evidence, the other is shut on an answer. Do not "fix" the second by
+hard-coding it.
 
 ## The rule that shapes every design decision
 
