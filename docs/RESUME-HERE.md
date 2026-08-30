@@ -458,6 +458,37 @@ Each of these cost real time. None is obvious from the code.
     the gateway already has. **Before adding any package reference anywhere in the bridge's chain,
     either widen this filter or confirm the dependency is first-party.**
 
+35. **"No selected strategy" is the settings pane's placeholder, NOT the Selected list being empty —
+    and believing it is how you end up with two bridges on one pipe.** The Chart strategies dialog has
+    the Selected list on the left and a settings pane on the right; when no row is *highlighted*, the
+    right pane reads "No selected strategy". A UIA `find` returns that text with no indication of
+    which pane it came from, so it reads exactly like an empty list. Acting on it presses Add over a
+    list that already had a bridge in it, and trap 24's two-bridges-one-pipe follows. This happened on
+    2026-08-30. **Read the list area itself in a screenshot**; an empty list is blank space under the
+    "Selected strategies" header.
+
+36. **The row control is ▶ when stopped and ■ when running, and clicking it toggles — but clicking it
+    a second time may only deselect the row.** Confirmed 2026-08-30: ▶ → click → ■ and the chart
+    legend goes `[Stopped]` → `[Started]`. The reverse did not work the same way, and the honest
+    reading of the state is the **chart legend**, not the icon: it says `[Started]` or `[Stopped]` in
+    words. When in doubt, `Delete` the row and re-add — that button behaves predictably.
+
+37. **A window-relative screenshot and a click are in different coordinate spaces.**
+    `win-ui.sh shot --window ATAS` returns an image in the window's own pixels; `win-ui.sh click --x
+    --y` takes SCREEN pixels. Reading a coordinate off the first and passing it to the second lands
+    somewhere else entirely — on 2026-08-30 it opened the Windows *desktop* context menu, which looks
+    enough like a misfire inside the app to waste a while. Take `--full` when you need a coordinate,
+    and prefer `find` + `invoke --ref` over any coordinate at all: the chart's context menu has
+    `Sell Limit at ...` three rows from `Chart strategies`.
+
+38. **A market that is closed presents exactly like a bridge that has never seen a price.**
+    `quote=none(no-tick)` and `{"at":"0001-01-01T00:00:00+00:00"}` was a real wiring defect on
+    2026-08-28 and was simply Sunday on 2026-08-30. Check the day and the chart's last bar before
+    debugging the feed. **The workaround is in the workspace already:** the BTCUSDT chart runs on a
+    24/7 Binance feed against the simulated `CRYPTO5EB41` account, so order-path work does not have to
+    wait for CME to open. Move the bridge to that chart — and remove it from the other one first, or
+    see trap 24.
+
 ## How the last session was run
 
 2026-08-29 was run entirely from the dev Mac with the test machine offline, as a manager dispatching

@@ -7,10 +7,13 @@ is the difference between a gap and an answer:
 - `SupportsOrderHistory` — false because `IIndicatorDataProvider.GetService<T>()` throws
   `NotSupportedException` for *every* type, including one reachable as a property on the same
   interface. Every cache route is dead. Shippable.
-- `SupportsClientOrderId` — false because the one measurement taken came back `proven-sameref`:
-  ATAS handed back the very `Order` instance we submitted, so the identifier came back because it
+- `SupportsClientOrderId` — false because every measurement taken came back `proven-sameref`:
+  ATAS hands back the very `Order` instance we submitted, so the identifier comes back because it
   never left. **This used to read `true`.** The capability latched on any match, so the product
-  reported rule 1 satisfied on a proof this file already called worthless. Corrected 2026-08-29.
+  reported rule 1 satisfied on a proof this file already called worthless. Corrected 2026-08-29 and
+  **confirmed on hardware 2026-08-30**, where the identical situation that once read `true` now reads
+  `false`. Measured on two different connectors, so it is how ATAS's collection works, not a quirk of
+  one backend.
 
 **The one fact the product waits on is whether ATAS carries a client order id onto something this
 adapter did not write**, and nothing observable from inside a chart strategy can settle it. The
@@ -804,6 +807,147 @@ The same op later showed the three-deep stack raised by activating a strategy
 **Tests:** 107/107 green on macOS after the rewrite (43 unit, 28 integration, 36 fault).
 
 ---
+
+## Verified on real Windows 11 hardware, 2026-08-30
+
+Nine commits of adapter, protocol and security changes had never been through a compiler. All of it
+was built, deployed into ATAS, and run.
+
+### The adapter compiles against real ATAS — all of it, first attempt
+
+```
+  TradeAgent.AtasBridge -> C:\ta\repo\src\TradeAgent.AtasBridge\bin\Release\net10.0-windows\TradeAgent.AtasBridge.dll
+Build succeeded.
+    5 Warning(s)
+    0 Error(s)
+```
+
+The five warnings are the four known `CS0618` obsolete order calls and one pre-existing `MSB3277`
+WindowsBase unification. Identity asserted on the **deployed** artifact rather than the built one
+(trap 8), checking type names as ASCII and string literals as UTF-16 (trap 27):
+
+```
+  AtasStrategyAdapter        PRESENT      proven-sameref   PRESENT
+  AdapterTouchedOrders       PRESENT      proven-distinct  PRESENT
+  AtasCallTimeoutException   PRESENT
+  BridgePipeAuth             PRESENT
+```
+
+### The bridge pipe authentication works against real ATAS, in both directions
+
+```
+CONNECTOR AUTH        : OK — the bridge proved itself to AtasConnector as well
+                        peer image, as Windows reports it: C:\Program Files (x86)\ATAS Platform\OFT.Platform.exe
+```
+
+That second line matters more than the first. **The Windows-only peer-identity path executed** —
+`GetNamedPipeClientProcessId` and `QueryFullProcessImageName` — and named the platform correctly. It
+was NOT VERIFIED as recently as the previous session, on the grounds that the rule it feeds was tested
+but the kernel calls supplying its argument were not. They are now.
+
+`proto=2` throughout, so the version bump is live and the connector and bridge agree on it.
+
+### RULE 1: a vacuous match no longer sets the capability — measured, live
+
+The whole point of the previous session, confirmed on hardware. Simulated account `CRYPTO5EB41`, one
+buy limit priced ~10% under the bid and rounded down so it could not fill, read back, then cancelled:
+
+```
+CLIENT ORDER ID       : TA-PROBE-20260830113311
+THE ORDER             : BUY LIMIT 1 BTCUSDT @ 70191  TIF=Day  on CRYPTO5EB41
+PLACE CALL            : RETURNED — ATAS took the order without a definite refusal.
+ORDERS BEFORE         : 0            ORDERS AFTER        : 1
+CARRIES OUR ID        : YES — client_order_id = TA-PROBE-20260830113311
+CARRIES A BROKER ID   : YES — connector_order_id = 12007695
+SUBMITTED WITH AN ID  : 1            READ-BACKS PERFORMED : 3
+SupportsClientOrderId : false   AFTER the attempt — this is the reading that counts.
+ROUND TRIP, MEASURED  : proven-sameref — ATAS handed back THE VERY OBJECT we submitted.
+                        THE PROOF IS VACUOUS
+```
+
+**On 2026-08-28 that identical situation reported `SupportsClientOrderId : true`.** It now reports
+false, off the same evidence, because the evidence is worthless. That is the fix working where it
+matters.
+
+Two further things this run establishes:
+
+- **The same-reference behaviour is not one connector's quirk.** The 2026-08-28 order went through the
+  ATAS Sim connector on ES; this one went through a Binance crypto-sim connector on BTCUSDT. Both
+  return the submitted instance, so this is how ATAS's order collection works generally.
+- **The order path survived nine commits of change.** Place, read back three times, cancel, and a
+  re-read showing `0 order(s) in the collection, 0 carrying this run's id`. `AdapterTouchedOrders` was
+  live throughout and produced no false `Distinct`.
+
+### The quote guard refused to place, correctly, on a closed market
+
+The first attempt was on ES, and the machine's clock read `Sunday 2026-08-30 11:25 +02:00` — CME is
+shut, and the chart's last bar was Friday 22:55.
+
+```
+QUOTE (raw)           : {"symbol":"ES","at":"0001-01-01T00:00:00+00:00"}
+REFUSED TO PLACE      : THE QUOTE CARRIES NO USABLE BID.
+                        NOTHING WAS SUBMITTED.
+```
+
+`quote=none(no-tick)`. This is the same signature as the 2026-08-28 defect where the bridge had never
+seen a price — but there it was a wiring fault and here it is the market being closed, and the guard
+refuses either way rather than pricing an order off the ask or the last trade.
+
+Moving to a 24/7 instrument is what made the rest of this section possible on a Sunday.
+
+### A second feed answers the DateTimeKind question differently
+
+```
+ES  (dxFeed, 15-min delayed) : quote=... kind=unspecified
+BTCUSDT (Binance)            : quote=event(bid=77980.0,ask=77990.0,age=-0s,kind=utc)
+```
+
+The dxFeed path stamps `Unspecified` and was measured on 2026-08-28 to be UTC underneath. **This feed
+stamps `Utc` explicitly.** So `MarketDataArg.Time`'s kind is per-feed, not per-platform, and code that
+inferred a fixed convention from the ES measurement alone would have been generalising from one feed.
+The conversion handles both. `age=-0s` — a real-time feed, marginally ahead of this machine's clock,
+comfortably inside the 60s future-stamp guard.
+
+### The UI agent survives a reboot from its new location
+
+NOT VERIFIED since 2026-08-28, when the move to `C:\ta\agent\bin` was made *after* the reboot that
+would have tested it. Free measurement on a machine that had just been woken:
+
+```
+  uptime           : 0d 00:04
+  session          : 1  interactive=True
+  automation       : WORKS - read the tree, find and invoke elements
+  capture          : WORKS
+```
+
+### A defect in the probe, and a commit message that overclaimed
+
+The run above ended with the probe accusing the bridge of a fault it does not have:
+
+```
+RULE 1  : THE EVIDENCE IS PRESENT AND THE BRIDGE STILL SAYS false — INVESTIGATE.
+```
+
+The disagreement branch is still tested **before** the `proven-sameref` branch, so the accurate
+explanation written directly beneath it is unreachable on exactly the run it was written for.
+
+**Commit `1b352d6`'s message states that this reordering was the fix, and the diff does not contain
+it.** Only the two verdict functions received their sameref cases; this block was missed, and the
+message was written from intent rather than from the diff. Recorded here because the honest record is
+the point of this file, and a commit message that describes work it did not do is the same failure
+mode as a status claim that was never run.
+
+### What is still not answered
+
+**NOT VERIFIED: whether ATAS carries the identifier onto anything this adapter did not write.** The
+reading is `proven-sameref` on two different connectors now. The cross-session mechanism that would
+settle it is being built; nothing here settles it.
+
+**NOT VERIFIED: the four synchronous order calls off the GUI thread under load, and whether
+`OpenOrderAsync` completes on submission or acknowledgement.** Untouched today.
+
+**NOT VERIFIED: the app's own UI on Windows.** Still nobody has looked at TradeAgent itself here, only
+at ATAS.
 
 ## macOS only, 2026-08-29 — the test machine was offline for the whole session
 
