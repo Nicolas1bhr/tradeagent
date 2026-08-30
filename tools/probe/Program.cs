@@ -4,6 +4,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
+using TradeAgent.AtasBridge;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
@@ -17,6 +18,15 @@ using TradeAgent.Core;
 //   probe atas --place-test-order --yes
 //                             the same, and then ONE resting order on a provably simulated account,
 //                             so the client-order-id round trip is MEASURED instead of inferred
+//   probe atas --place-test-order --yes --leave-resting --yes-leave-it
+//                             half 1 of the restart experiment: the same order, NOT cancelled, so
+//                             it is still on the book after ATAS is restarted
+//   probe atas --coid-restart-check
+//                             half 2: places nothing, and reads the durable witness record against
+//                             the live book. Proof, disproof, or not-answered — step 2 of
+//                             docs/RESUME-HERE.md
+//   probe atas --cancel-resting <client-order-id>
+//                             removes what half 1 left behind
 //
 // Point TRADEAGENT_HOME at a scratch directory first, or it will install into the real one.
 // See tools/README.md.
@@ -152,6 +162,10 @@ static class AtasProbe
         var waitAnyway = false;
         var place = false;
         var yes = false;
+        var leaveResting = false;
+        var yesLeaveIt = false;
+        var restartCheck = false;
+        string? cancelResting = null;
 
         for (var i = 0; i < rest.Length; i++)
         {
@@ -160,6 +174,11 @@ static class AtasProbe
             if (rest[i] == "--wait-anyway") { waitAnyway = true; continue; }
             if (rest[i] == "--place-test-order") { place = true; continue; }
             if (rest[i] == "--yes") { yes = true; continue; }
+            if (rest[i] == "--leave-resting") { leaveResting = true; continue; }
+            if (rest[i] == "--yes-leave-it") { yesLeaveIt = true; continue; }
+            if (rest[i] == "--coid-restart-check") { restartCheck = true; continue; }
+            if (rest[i] == "--cancel-resting" && i + 1 < rest.Length && !rest[i + 1].StartsWith("--", StringComparison.Ordinal))
+            { cancelResting = rest[i + 1]; i++; continue; }
 
             Usage($"unrecognised argument '{rest[i]}'");
             return 2;
@@ -178,6 +197,59 @@ static class AtasProbe
             return 2;
         }
 
+        // The same shape again, one level further out, because --leave-resting removes the one
+        // safeguard --place-test-order still had: the cancel at the end. It is the difference
+        // between a run that borrows the book for fifteen seconds and a run that leaves something
+        // live on it, so it gets its own second act rather than riding on the first one's --yes.
+        if (leaveResting && !yesLeaveIt)
+        {
+            Usage("--leave-resting needs --yes-leave-it beside it.");
+            Console.WriteLine();
+            Console.WriteLine("  It LEAVES A LIVE ORDER RESTING on the account when the run finishes. Nothing");
+            Console.WriteLine("  cancels it afterwards — that is the entire point, because half 2 of the");
+            Console.WriteLine("  restart experiment needs an order that is still there after ATAS is");
+            Console.WriteLine("  restarted. A separate flag from --yes, so that authorising a test order that");
+            Console.WriteLine("  cleans up after itself cannot be turned into authorising one that does not.");
+            return 2;
+        }
+
+        if (leaveResting && !place)
+        {
+            Usage("--leave-resting only means anything with --place-test-order.");
+            Console.WriteLine();
+            Console.WriteLine("  On its own it authorises nothing and there is no order for it to leave. The");
+            Console.WriteLine("  full half-1 command is:");
+            Console.WriteLine();
+            Console.WriteLine("      probe atas --place-test-order --yes --leave-resting --yes-leave-it");
+            return 2;
+        }
+
+        // THE ONE COMBINATION THAT WOULD DESTROY THE READING IT IS TRYING TO TAKE. The cross-session
+        // branch is reached ONLY when the identifier is absent from the bridge's in-memory
+        // _submitted map — that absence is what makes the evidence come from the durable record
+        // written by a process that has ended. Placing an order in the same run puts an identifier
+        // back in _submitted, and any reading taken afterwards is an ordinary in-session one wearing
+        // the restart check's name.
+        if (restartCheck && place)
+        {
+            Usage("--coid-restart-check cannot be combined with --place-test-order.");
+            Console.WriteLine();
+            Console.WriteLine("  Half 2 places NOTHING, and that is not caution — it is the measurement. The");
+            Console.WriteLine("  cross-session reading requires the identifier to be absent from the bridge's");
+            Console.WriteLine("  in-memory map of what THIS session submitted. Place an order in the same run");
+            Console.WriteLine("  and the reading you get back is an in-session one under another name.");
+            Console.WriteLine();
+            Console.WriteLine("  Run half 1, restart ATAS, then run half 2 on its own.");
+            return 2;
+        }
+
+        if (cancelResting is not null && place)
+        {
+            Usage("--cancel-resting cannot be combined with --place-test-order.");
+            Console.WriteLine("  One run either puts something on the book or takes something off it.");
+            return 2;
+        }
+
         Console.WriteLine(new string('=', 80));
         Console.WriteLine("probe atas — step 3 of docs/RESUME-HERE.md: what Describe() actually reports");
         Console.WriteLine(new string('=', 80));
@@ -188,7 +260,20 @@ static class AtasProbe
         Line("EXPECTED PROTOCOL", $"{Versions.BridgeProtocolVersion}  (Versions.BridgeProtocolVersion)");
         Line("WAIT FOR BRIDGE", $"{wait.TotalSeconds:0}s{(waitAnyway ? "   --wait-anyway: the ATAS detection gate is off" : "")}");
 
-        if (place)
+        if (place && leaveResting)
+        {
+            Line("THIS RUN WILL", "PLACE ONE ORDER AND LEAVE IT RESTING — a buy limit, quantity 1, on");
+            Cont($"the chart's own instrument, {Pct(FarBelowBid)} below the live bid so that it rests");
+            Cont("and cannot fill. It is read back and reported, and then NOT CANCELLED.");
+            Cont("It refuses to submit anything at all unless the account it is about");
+            Cont("to trade is provably simulated, and no flag can override that.");
+            Cont("");
+            Cont("THIS IS HALF 1 OF THE RESTART EXPERIMENT. The order has to still be");
+            Cont("there after ATAS is restarted, which is why nothing cancels it. When");
+            Cont("this run ends it will print the exact command that removes it — and");
+            Cont("that command is the thing to run if the experiment is abandoned.");
+        }
+        else if (place)
         {
             Line("THIS RUN WILL", "PLACE ONE ORDER — a buy limit, quantity 1, on the chart's own");
             Cont($"instrument, {Pct(FarBelowBid)} below the live bid so that it rests and cannot");
@@ -197,21 +282,57 @@ static class AtasProbe
             Cont("to trade is provably simulated, and no flag can override that.");
             Cont("--place-test-order --yes were both given, which is what unlocked it.");
         }
+        else if (restartCheck)
+        {
+            Line("THIS RUN WILL", "PLACE NOTHING. It reads the durable witness record left by an");
+            Cont("earlier run against ATAS's live order book, and reports whether the");
+            Cont("client order id survived the restart.");
+            Cont("");
+            Cont("HALF 2 OF THE RESTART EXPERIMENT, and placing nothing is the");
+            Cont("measurement rather than the caution: the cross-session reading is");
+            Cont("only available for an identifier the RUNNING bridge session did not");
+            Cont("submit. Anything this run placed would be read back in-session.");
+        }
+        else if (cancelResting is not null)
+        {
+            Line("THIS RUN WILL", $"CANCEL ONE ORDER — the one carrying client order id");
+            Cont($"'{cancelResting}' — and then re-read the book to find out whether the");
+            Cont("cancel took. It places nothing and reads everything else as usual.");
+            Cont("One flag rather than two, unlike --place-test-order: this only ever");
+            Cont("REMOVES exposure, and it names its target explicitly, so it cannot");
+            Cont("be reached by accident. Making the cleanup harder to run than the");
+            Cont("thing it cleans up after would be the wrong way round.");
+        }
         else
         {
             Line("THIS RUN WILL", "read only. No order is placed, modified or cancelled by this verb.");
             if (yes)
                 Cont("--yes was given without --place-test-order, so it authorised nothing.");
+            if (yesLeaveIt)
+                Cont("--yes-leave-it was given without --leave-resting, so it authorised nothing.");
         }
 
         Line("EXIT CODES", "0 = the bridge answered and the answer below is the record");
         Cont("1 = could not reach the bridge    2 = bad arguments");
         Cont("A capability reading of false is a valid answer and still exits 0.");
-        if (place)
+        if (place || cancelResting is not null)
         {
             Cont("3 = --place-test-order refused to place. NOTHING WAS SUBMITTED.");
             Cont("4 = an order was placed and this run could NOT prove the book was left");
             Cont("    clean afterwards. Go and look at ATAS before doing anything else.");
+        }
+        if (place && leaveResting)
+        {
+            Cont("5 = an order was placed and DELIBERATELY LEFT RESTING, as asked. Not a");
+            Cont("    failure — but it is not a clean book either, and a script that");
+            Cont("    treats 0 as 'nothing was left behind' must not see a 0 here.");
+        }
+        if (restartCheck)
+        {
+            Cont("All three restart-check outcomes — proof, disproof and not-answered —");
+            Cont("exit 0. Two of them are real answers and the third is an honest");
+            Cont("absence of one; none of them is a failure of this harness, which is");
+            Cont("what the non-zero codes are for. Read the verdict, not the code.");
         }
 
         // ------------------------------------------------------------------ ATAS on this machine
@@ -711,7 +832,21 @@ static class AtasProbe
         // Placed here, between the readings and the conclusion, on purpose. Everything above is the
         // BEFORE picture; autonomy is a conclusion and must be drawn from the newest reading there
         // is, which — if an order has just been placed — is the one taken after it.
-        var test = place ? await PlaceTestOrder(connector, handshake, orders) : (TestOrderOutcome?)null;
+        var test = place ? await PlaceTestOrder(connector, handshake, orders, leaveResting) : (TestOrderOutcome?)null;
+
+        // Half 2, and the cleanup. Neither places anything, so neither disturbs the readings above.
+        //
+        // Kept in their own variables rather than folded into `test`: the autonomy section below
+        // reads test.Placed to decide whether its readings were taken before or after an order was
+        // submitted, and a cancel-only run would answer "after the test order" about a test order
+        // that never existed.
+        var restart = restartCheck ? await CoidRestartCheck(connector, handshake, hello) : (RestartCheckOutcome?)null;
+        TestOrderOutcome? cancelled = null;
+        if (cancelResting is not null)
+            cancelled = handshake
+                ? await CleanUp(connector, cancelResting, placed: null, rejected: false, everSeen: false,
+                                standalone: true)
+                : NoCancel(cancelResting);
 
         // ------------------------------------------------------------------ autonomy
 
@@ -774,20 +909,310 @@ static class AtasProbe
             $"IsSimulated={Yn(final.IsPaper)} | ReconciliationProvable={Yn(final.ReconciliationProvable)} " +
             $"| autonomy={(final.ReconciliationProvable ? "permitted" : "refused")}" +
             $" | auth={AuthTag(auth)}" +
-            (test is { } t ? $" | test-order={t.Summary}" : ""));
+            (test is { } t ? $" | test-order={t.Summary}" : "") +
+            (cancelled is { } c ? $" | cancel-resting={c.Summary}" : "") +
+            (restart is { } r ? $" | coid-restart={r.Verdict}" : ""));
 
         // Repeated last because last is what a person sees on a terminal they scrolled away from,
         // and because this one line is the difference between a tidy run and an order left resting.
-        if (test is { ExitCode: 4 } unclean)
+        if ((test ?? cancelled) is { ExitCode: 4 } unclean)
         {
             Console.WriteLine();
             Console.WriteLine(new string('!', 80));
-            Console.WriteLine($"THIS RUN PLACED AN ORDER AND COULD NOT PROVE THE BOOK WAS LEFT CLEAN: {unclean.Summary}");
+            Console.WriteLine(test is null
+                ? $"THIS RUN COULD NOT PROVE THE BOOK WAS LEFT CLEAN: {unclean.Summary}"
+                : $"THIS RUN PLACED AN ORDER AND COULD NOT PROVE THE BOOK WAS LEFT CLEAN: {unclean.Summary}");
             Console.WriteLine("Read THE TEST ORDER — CLEANING UP above, then look at ATAS. Exit code 4.");
             Console.WriteLine(new string('!', 80));
         }
 
-        return test?.ExitCode ?? 0;
+        // The same discipline for the order this run left on purpose. "On purpose" is a reason, not
+        // an excuse: something is live on the account and the person who runs this must leave with
+        // the command that removes it, not with a memory of having read one.
+        if (test is { ExitCode: 5 } left)
+        {
+            Console.WriteLine();
+            Console.WriteLine(new string('!', 80));
+            Console.WriteLine($"THIS RUN HAS LEFT A LIVE ORDER RESTING ON THE ACCOUNT: {left.Summary}");
+            if (left.RestingClientOrderId is { } id)
+            {
+                Console.WriteLine();
+                Console.WriteLine("  Next: restart ATAS, wait for the bridge to come back, then read it with");
+                Console.WriteLine("      probe atas --coid-restart-check");
+                Console.WriteLine();
+                Console.WriteLine("  To abandon the experiment and remove the order:");
+                Console.WriteLine($"      probe atas --cancel-resting {id}");
+                Console.WriteLine("  or cancel it by hand in ATAS's order book. It is a Day order, so it also");
+                Console.WriteLine("  expires with the session — that is a backstop, not a plan.");
+            }
+            Console.WriteLine(new string('!', 80));
+        }
+
+        return test?.ExitCode ?? cancelled?.ExitCode ?? restart?.ExitCode ?? 0;
+    }
+
+    // ------------------------------------------------------------------------- the restart check
+
+    /// <summary>What half 2 concluded, in one grep-able word, and the exit code that goes with it.</summary>
+    readonly record struct RestartCheckOutcome(int ExitCode, string Verdict);
+
+    /// <summary>
+    /// HALF 2 OF THE RESTART EXPERIMENT — <c>--coid-restart-check</c>. IT PLACES NOTHING.
+    ///
+    /// That is the measurement and not the caution. The bridge's cross-session reading is available
+    /// only for an identifier the RUNNING session did not submit: the whole claim is that the
+    /// evidence was written down by a process that has since ended, so an order placed by this
+    /// session would be read back in-session and the reading would be an ordinary one wearing this
+    /// verb's name. RunAsync refuses <c>--place-test-order</c> alongside it for that reason.
+    ///
+    /// THREE OUTCOMES, AND KEEPING THEM APART IS THE POINT:
+    ///
+    ///   PROOF        the bridge reports coid=proven-crosssession. An identifier a previous run
+    ///                wrote down BEFORE submitting is on an order in ATAS's book, carrying the
+    ///                broker id that run recorded. The identifier outlived the process that made it.
+    ///   DISPROOF     the ORDER survived and the IDENTIFIER did not — an order carrying the recorded
+    ///                broker order id is in the book, and its client order id is not ours. That is a
+    ///                real, negative, shippable answer about ATAS: on this platform the comment does
+    ///                not survive a restart, so rule 1 cannot be satisfied and the product may never
+    ///                trade unattended on this backend.
+    ///   NOT ANSWERED the order itself did not survive. This says NOTHING about the identifier, and
+    ///                recording it as a negative would be the worst mistake available here: it would
+    ///                look like evidence against ATAS produced by an experiment that never ran.
+    ///
+    /// The fourth case is the one that wastes an afternoon, so it is checked first: the bridge is
+    /// the SAME SESSION that wrote the record, which means ATAS was never restarted. The witness
+    /// token carries a session prefix precisely so that this is visible from out here.
+    /// </summary>
+    static async Task<RestartCheckOutcome> CoidRestartCheck(AtasConnector connector, bool handshake, BridgeHello hello)
+    {
+        Section("THE RESTART CHECK — THE WITNESS RECORD");
+        Line("WHAT THIS IS", "half 2 of the experiment that settles rule 1. It places nothing,");
+        Cont("modifies nothing and cancels nothing.");
+
+        // The bridge writes this file from inside ATAS; this process reads it from beside ATAS.
+        // They agree only because both resolve it through Paths, from the same TRADEAGENT_HOME —
+        // the same thing that makes the bridge pipe secret work. Printed rather than assumed,
+        // because a TRADEAGENT_HOME pointing at a scratch directory is the single most likely way
+        // for this verb to read an empty file and report "not answered" about a perfectly good
+        // experiment.
+        var witness = new CoidWitness(Path.Combine(Paths.BridgeDir, CoidWitness.FileName));
+        Line("WITNESS FILE", witness.Path ?? "<none>");
+        Cont("Written by the bridge inside ATAS and read here, both through Paths, so");
+        Cont("both depend on TRADEAGENT_HOME being the same for the two processes — the");
+        Cont("same requirement the bridge pipe secret has. If the path above is not the");
+        Cont("one the bridge uses, everything below reads as 'nothing was recorded'.");
+        Line("FILE EXISTS", witness.Path is not null && File.Exists(witness.Path) ? "YES" : "NO");
+
+        var records = witness.All();
+        Line("RECORDS ON FILE", records.Count.ToString());
+        if (records.Count == 0)
+        {
+            Line("VERDICT", "NOT ANSWERED — NO EXPERIMENT HAS BEEN SET UP.");
+            Cont("No run of this product has recorded submitting a client order id on this");
+            Cont("machine, so there is nothing to look for. This is not a reading about");
+            Cont("ATAS. Run half 1 first:");
+            Cont("");
+            Cont("    probe atas --place-test-order --yes --leave-resting --yes-leave-it");
+            return new RestartCheckOutcome(0, "no-record");
+        }
+
+        // The bridge's own view, which is the authoritative one: it can see object identity and the
+        // in-memory map of what THIS session submitted, and this harness can see neither.
+        var surface = connector.Bridge?.TradingSurface ?? hello.TradingSurface;
+        var witnessToken = Token(surface, "witness");
+        var coid = Token(surface, "coid");
+        Line("BRIDGE witness=", witnessToken ?? "NOT REPORTED — this bridge predates the witness record");
+        Line("BRIDGE coid=", coid ?? "NOT REPORTED — this bridge predates the coid reading");
+
+        // Newest last in the file, so the newest acknowledged record is the one half 1 left.
+        var candidate = records.LastOrDefault(r => !string.IsNullOrEmpty(r.BrokerOrderId));
+        if (candidate is null)
+        {
+            Line("VERDICT", "NOT ANSWERED — NOTHING ON FILE WAS EVER ACKNOWLEDGED.");
+            Cont($"{records.Count} record(s) exist and none carries a broker order id, so no run");
+            Cont("ever saw ATAS assign an id to what it submitted. Without that half — the");
+            Cont("half this product did not choose — a match on the comment alone is");
+            Cont("satisfiable by any order carrying that text, and the bridge refuses it.");
+            Cont("Re-run half 1 and check that it reports RESTING, CONFIRMED.");
+            return new RestartCheckOutcome(0, "never-acknowledged");
+        }
+
+        Line("THE RECORD", $"client_order_id = {candidate.ClientOrderId}");
+        Cont($"broker_order_id = {candidate.BrokerOrderId}");
+        Cont($"written_at      = {candidate.WrittenAt:O}   (BEFORE the order was submitted)");
+        Cont($"identified_at   = {candidate.IdentifiedAt:O}");
+        Cont($"order           = {Blank(candidate.Side)} {Num(candidate.Quantity)} {Blank(candidate.Symbol)}" +
+             $"{(candidate.Price is { } p ? $" @ {Num(p)}" : "")} on {Blank(candidate.AccountId)}");
+        Cont($"session_id      = {candidate.SessionId}");
+        Line("WHY IT IS EVIDENCE", "the written_at above is earlier than the order it describes. The claim");
+        Cont("'this product submitted this identifier' was made before there was an");
+        Cont("order to fit it to, by a process that has since ended — so it cannot be a");
+        Cont("story composed afterwards around an order somebody found in the book.");
+
+        // ------------------------------------------------------------------ did ATAS restart?
+
+        var bridgeSession = witnessToken is null ? null : Field(witnessToken, "session");
+        var recordSession = candidate.SessionId.Length >= 8 ? candidate.SessionId[..8] : candidate.SessionId;
+        Line("BRIDGE SESSION", bridgeSession ?? "UNKNOWN — the bridge reports no witness token");
+        Line("RECORD SESSION", recordSession);
+
+        if (bridgeSession is not null && string.Equals(bridgeSession, recordSession, StringComparison.Ordinal))
+        {
+            Line("VERDICT", "NOT ANSWERED — ATAS HAS NOT BEEN RESTARTED.");
+            Cont("The bridge answering right now is the SAME RUN that wrote that record.");
+            Cont("Nothing has crossed a process boundary, so there is no cross-session");
+            Cont("reading to take and there never will be from this state — the bridge");
+            Cont("still has that identifier in memory and will go on reading it back");
+            Cont("in-session, which is the vacuous reading this experiment exists to");
+            Cont("escape.");
+            Cont("");
+            Cont("Close ATAS (saving the workspace), start it again, ACTIVATE the");
+            Cont("TradeAgent Bridge strategy — it comes back stopped — and run this again.");
+            return new RestartCheckOutcome(0, "not-restarted");
+        }
+
+        // ------------------------------------------------------------------ the live book
+
+        Section("THE RESTART CHECK — THE LIVE BOOK");
+        if (!handshake)
+        {
+            Line("VERDICT", "NOT ANSWERED — THE CONNECTOR HANDSHAKE NEVER COMPLETED.");
+            Cont("The order book could not be read at all, so nothing was looked at. This");
+            Cont("is the read failing, not the identifier. Do not record it as either.");
+            return new RestartCheckOutcome(0, "no-connection");
+        }
+
+        IReadOnlyList<OrderInfo>? book = null;
+        string? bookError = null;
+        try { book = await connector.GetOrdersAsync("", includeInactive: true, since: null); }
+        catch (Exception ex) { bookError = $"{ex.GetType().Name}: {ex.Message}"; }
+
+        if (book is null)
+        {
+            Line("VERDICT", $"NOT ANSWERED — THE ORDER BOOK COULD NOT BE READ ({bookError}).");
+            Cont("The read failed. That says nothing about ATAS and nothing about the");
+            Cont("identifier.");
+            return new RestartCheckOutcome(0, "read-failed");
+        }
+
+        Line("ORDERS IN LIVE BOOK", book.Count.ToString());
+        Cont("account_id=\"\", include_inactive=true — ATAS's live order collection, the");
+        Cont("same collection the bridge's own read-back scans.");
+
+        var byBrokerId = book.Where(o => string.Equals(o.ConnectorOrderId, candidate.BrokerOrderId, StringComparison.Ordinal)).ToList();
+        var byClientId = book.Where(o => Mine(o, candidate.ClientOrderId)).ToList();
+
+        Line("ORDER SURVIVED", byBrokerId.Count > 0
+            ? $"YES — an order with broker id {candidate.BrokerOrderId} is in the book"
+            : $"NO — no order in the book carries broker id {candidate.BrokerOrderId}");
+        Line("IDENTIFIER SURVIVED", byClientId.Count > 0
+            ? $"YES — an order carries client_order_id = {candidate.ClientOrderId}"
+            : $"NO — nothing in the book carries '{candidate.ClientOrderId}'");
+
+        foreach (var o in byBrokerId.Concat(byClientId).DistinctBy(o => o.ConnectorOrderId))
+        {
+            Line("ORDER (raw)", "as it came off ATAS's own collection after the restart:");
+            Console.WriteLine(Json.Write(o));
+        }
+
+        // ------------------------------------------------------------------ the verdict
+
+        Section("THE RESTART CHECK — WHAT THIS PROVES");
+
+        if (coid == "proven-crosssession")
+        {
+            Line("RULE 1", "PROVEN ACROSS A PROCESS RESTART. THIS IS THE ANSWER.");
+            Cont($"'{candidate.ClientOrderId}' was written to the witness record BEFORE the order");
+            Cont("was submitted, by a run of this product that has since ended. It is now on");
+            Cont($"an order in ATAS's own collection carrying broker id {candidate.BrokerOrderId} —");
+            Cont("the half that run did not choose. Nothing in this reading can be an object");
+            Cont("this process constructed, because this process constructed no order at all.");
+            Cont("");
+            Cont("SupportsClientOrderId reports true from this, and unlike proven-sameref it");
+            Cont("should be believed: reconciliation after a dropped connection can resolve");
+            Cont("orders by client order id, because the identifier demonstrably survives");
+            Cont("whatever dropped it.");
+            Cont("");
+            Cont("WHAT IT STILL DOES NOT PROVE, and this bound is real. A cross-session match");
+            Cont("cannot separate ATAS rebuilding the order from THE BROKER'S own answer on");
+            Cont("reconnect from ATAS rehydrating it out of its own local store. All three");
+            Cont("survive a restart and look identical from inside a chart strategy. So the");
+            Cont("identifier survives ATAS being restarted; whether it ever reached the");
+            Cont("broker is a different question and only the broker's own report answers it.");
+            Cont("");
+            Cont("ReconciliationProvable still needs the other half — SupportsOrderHistory,");
+            Cont("which is false for a known reason. Autonomy stays refused on that.");
+            return new RestartCheckOutcome(0, "proof");
+        }
+
+        if (byBrokerId.Count > 0 && byClientId.Count == 0)
+        {
+            Line("RULE 1", "DISPROVEN. THE ORDER SURVIVED AND THE IDENTIFIER DID NOT.");
+            Cont($"The order this run went looking for IS in ATAS's collection — matched on");
+            Cont($"broker id {candidate.BrokerOrderId}, which a previous run of this product");
+            Cont("recorded before ATAS was restarted — and it does NOT carry the client order");
+            Cont($"id '{candidate.ClientOrderId}' that was submitted with it.");
+            Cont("");
+            Cont("THIS IS A REAL, NEGATIVE, SHIPPABLE ANSWER. It is not an absence of");
+            Cont("evidence: the control is present, because the order came back. On this");
+            Cont("platform the client order id does not survive an ATAS restart, so after a");
+            Cont("crash or a disconnect there is no identifier to reconcile by and 'did my");
+            Cont("order land' has no answer. SupportsClientOrderId must stay false and the");
+            Cont("gateway must go on refusing LIVE_AUTONOMOUS on this backend.");
+            Cont("");
+            Cont("Before recording it as final: confirm it is repeatable, and read the raw");
+            Cont("order above for where the identifier went. The bridge writes it to");
+            Cont("Order.Comment, the only client-settable string on an ATAS order.");
+            return new RestartCheckOutcome(0, "disproof");
+        }
+
+        if (byBrokerId.Count == 0)
+        {
+            Line("RULE 1", "NOT ANSWERED — THE ORDER ITSELF DID NOT SURVIVE.");
+            Cont($"Nothing in ATAS's collection carries broker id {candidate.BrokerOrderId}, so the");
+            Cont("order half 1 left resting is not there. It may have been cancelled, expired");
+            Cont("with the session (it is a Day order), filled, or been dropped from the live");
+            Cont("collection when the platform restarted.");
+            Cont("");
+            Cont("THIS SAYS NOTHING ABOUT THE IDENTIFIER AND MUST NOT BE RECORDED AS A");
+            Cont("NEGATIVE. The experiment needs an order to survive so that the question");
+            Cont("'did the comment survive with it' can be asked at all; with no order there");
+            Cont("is no question, only an empty book — which is exactly what a working");
+            Cont("platform looks like the morning after. Set it up again and read it sooner:");
+            Cont("");
+            Cont("    probe atas --place-test-order --yes --leave-resting --yes-leave-it");
+            return new RestartCheckOutcome(0, "not-answered");
+        }
+
+        // Both ids are in the book and the bridge has not reported the cross-session reading. That
+        // is the two sources disagreeing, and the disagreement is the finding.
+        Line("RULE 1", "THE EVIDENCE IS PRESENT AND THE BRIDGE HAS NOT READ IT — INVESTIGATE.");
+        Cont("An order in ATAS's collection carries BOTH the recorded broker id and the");
+        Cont($"recorded client order id, and the bridge reports coid={Blank(coid)} rather than");
+        Cont("proven-crosssession. This harness cannot see what the bridge can — object");
+        Cont("identity, and its own in-memory map — so it cannot tell you which is right.");
+        Cont("");
+        Cont("Two ordinary explanations before suspecting a defect: the read-back may not");
+        Cont("have run yet (it is driven by the handshake and every heartbeat, so wait a");
+        Cont("few seconds and re-run), or the bridge deployed in ATAS may predate the");
+        Cont("cross-session reading — check that BRIDGE witness= above is reported at all.");
+        Cont("Do not record a proof from this line: the bridge's reading is the one with");
+        Cont("the guards on it, and it has not been taken.");
+        return new RestartCheckOutcome(0, "unread");
+    }
+
+    /// <summary>
+    /// Pulls one "name:value" out of a comma-joined token such as the witness report. Same job as
+    /// <see cref="Token"/> one level down, and null when the field is absent — which is a real case
+    /// for a bridge older than the field.
+    /// </summary>
+    static string? Field(string token, string name)
+    {
+        foreach (var part in token.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (part.Length > name.Length + 1 && part[name.Length] == ':'
+                && part.AsSpan(0, name.Length).SequenceEqual(name))
+                return part[(name.Length + 1)..];
+        return null;
     }
 
     // -------------------------------------------------------------------------------- test order
@@ -820,8 +1245,14 @@ static class AtasProbe
     /// <paramref name="Placed"/> is not decoration: a run the guard refused took its readings before
     /// any order existed, and a later section that described them as "after the test order" would be
     /// claiming a measurement that never happened.
+    ///
+    /// <paramref name="RestingClientOrderId"/> is set only when this run DELIBERATELY left an order
+    /// on the book, and it exists so the banner at the very end of the run can print the exact
+    /// command that removes it. A person who has to reconstruct that identifier by scrolling back
+    /// through a thousand lines of output is a person who will not bother.
     /// </summary>
-    readonly record struct TestOrderOutcome(int ExitCode, string Summary, bool Placed);
+    readonly record struct TestOrderOutcome(int ExitCode, string Summary, bool Placed,
+                                            string? RestingClientOrderId = null);
 
     /// <summary>One round of re-reading the order collection: what came back, and how hard we looked.</summary>
     readonly record struct OrderPoll(IReadOnlyList<OrderInfo>? Orders, string? Error, int Reads, TimeSpan Took);
@@ -851,9 +1282,17 @@ static class AtasProbe
     /// not a second line of defence behind those — it is the only one.
     /// </summary>
     static async Task<TestOrderOutcome> PlaceTestOrder(AtasConnector connector, bool handshake,
-                                                       IReadOnlyList<OrderInfo>? ordersBefore)
+                                                       IReadOnlyList<OrderInfo>? ordersBefore,
+                                                       bool leaveResting)
     {
         Section("THE TEST ORDER — THE GUARD");
+        if (leaveResting)
+        {
+            Line("AND IT WILL REMAIN", "--leave-resting --yes-leave-it were both given, so the cancel at the");
+            Cont("end of this section DOES NOT RUN. Every guard below is unchanged and");
+            Cont("still refuses on anything but a provably simulated account — what");
+            Cont("changes is only what happens after the read-back.");
+        }
         Line("WHAT THIS GUARD IS", "the only thing standing between this harness and a real account.");
         Cont("There is deliberately no --force, no --account and no --symbol: every");
         Cont("check below either passes on evidence read from the live connection, or");
@@ -1109,10 +1548,104 @@ static class AtasProbe
         }
         finally
         {
-            cleanup = await CleanUp(connector, clientOrderId, placed, rejected, everSeen);
+            // The cancel is skipped ONLY when this run was asked twice to skip it, and only when
+            // something was actually submitted. A refusal or a rejection leaves nothing to leave
+            // behind, so those still go through the ordinary cleanup — which is what makes the
+            // "nothing was placed" cases exit 0 rather than 5.
+            cleanup = leaveResting && !rejected
+                ? await LeaveResting(connector, clientOrderId, placed, everSeen)
+                : await CleanUp(connector, clientOrderId, placed, rejected, everSeen);
         }
 
-        return new TestOrderOutcome(cleanup.ExitCode, $"{reading}/{cleanup.Summary}", Placed: true);
+        return cleanup with { Summary = $"{reading}/{cleanup.Summary}" };
+    }
+
+    /// <summary>
+    /// HALF 1's ENDING: do not cancel, and then prove that what was left behind is really there.
+    ///
+    /// The point of not cancelling is that half 2 needs an order to still exist after ATAS has been
+    /// restarted. So the one thing this must not do is announce "left resting" without checking —
+    /// an experiment set up on an order that was never on the book produces a "not answered" two
+    /// hours later, and nothing would say the setup was what failed.
+    ///
+    /// Three endings, and only the first is the experiment:
+    ///
+    ///   * RESTING, CONFIRMED. Read back off ATAS's own collection in a live state. Exit 5.
+    ///   * FINISHED ALREADY. It filled or was killed. Nothing is resting, so there is nothing for
+    ///     half 2 to find, and saying "left resting" would be false. Exit 4 — the book is not in
+    ///     the state this run intended and somebody should look.
+    ///   * NOT VISIBLE. It may be live and unreadable, or it may never have landed. Exit 4, loudly:
+    ///     this is the case where an order might be resting that nothing is tracking.
+    /// </summary>
+    static async Task<TestOrderOutcome> LeaveResting(AtasConnector connector, string clientOrderId,
+                                                     OrderInfo? placed, bool everSeen)
+    {
+        Section("THE TEST ORDER — LEAVING IT RESTING");
+        Line("NOT CANCELLING", "--leave-resting --yes-leave-it. The order below is meant to survive");
+        Cont("this run, an ATAS restart, and the gap in between.");
+
+        // Wait for it to be visibly live rather than reading once: ATAS assigns state and id
+        // asynchronously, and "not resting yet" a second after the place call is not an answer.
+        var poll = await PollOrders(connector,
+            list => list.Any(o => Mine(o, clientOrderId) && OrderStateMachine.IsLive(o.State)), CleanupLimit);
+
+        if (poll.Orders is null)
+            return Loud("LEFT-UNVERIFIED", "THE ORDER WAS NOT CANCELLED AND THE BOOK COULD NOT BE RE-READ.",
+                $"Nothing was cancelled, so whatever was placed is still there — but this run",
+                $"cannot show it ({poll.Error}). Open ATAS and look for an order whose comment",
+                $"is '{clientOrderId}' before starting half 2, because half 2 reads a 'not",
+                "answered' the same way whether the order vanished or was never there.");
+
+        var mine = poll.Orders.Where(o => Mine(o, clientOrderId)).ToList();
+        var resting = mine.Where(o => OrderStateMachine.IsLive(o.State)).ToList();
+        Line("BOOK RE-READ", $"{poll.Orders.Count} order(s) in the collection, {mine.Count} carrying this run's id" +
+                             $"   (read {poll.Reads} time(s) over {poll.Took.TotalSeconds:0.0}s)");
+        foreach (var o in mine)
+            Cont($"  {o.State}  filled={Num(o.FilledQuantity)}/{Num(o.Quantity)}  id={Blank(o.ConnectorOrderId)}");
+
+        if (resting.Count == 0)
+        {
+            if (mine.Count > 0)
+                return Loud("LEFT-BUT-FINISHED", "THE ORDER WAS NOT CANCELLED AND IS NOT RESTING EITHER.",
+                    $"It is in ATAS's collection carrying '{clientOrderId}' and it has finished:",
+                    string.Join(", ", mine.Select(o => $"{o.ConnectorOrderId} {o.State}")),
+                    "",
+                    "Half 2 has nothing to find, so do not run it against this — it would report",
+                    "'not answered', which is the correct reading of an order that is not there",
+                    "and says nothing whatever about the identifier. Find out why it finished",
+                    "first: a buy limit far below the bid should not have.");
+
+            return Loud("LEFT-UNVERIFIED", "THE ORDER WAS NOT CANCELLED AND NOTHING OF THIS RUN'S IS VISIBLE.",
+                "The placement was not refused, so it may have reached the broker, and nothing",
+                $"carrying '{clientOrderId}' is in ATAS's collection — before or now.",
+                everSeen ? "It WAS visible earlier in this run, which makes its absence now the finding."
+                         : "It has not been visible at any point in this run.",
+                "",
+                "Two different states share this reading: an order resting where this bridge",
+                "cannot see it, and an order that never landed. Look in ATAS before doing",
+                "anything else, and do not start half 2 until you know which.");
+        }
+
+        var it = resting[0];
+        Line("RESTING, CONFIRMED", $"{it.State}  id={Blank(it.ConnectorOrderId)}  filled={Num(it.FilledQuantity)}/{Num(it.Quantity)}");
+        Cont("Observed in ATAS's own order collection, not inferred from the place call");
+        Cont("having returned. This is the order half 2 goes looking for.");
+        Line("CLIENT ORDER ID", clientOrderId);
+        Cont("Written to the bridge's durable witness record BEFORE this order was");
+        Cont("submitted, together with the broker id above once ATAS assigned it. Half 2");
+        Cont("reads that record; you do not need to carry this identifier anywhere.");
+
+        Section("HALF 1 IS COMPLETE — WHAT TO DO NEXT");
+        Line("1. RESTART ATAS", "close it (saving the workspace, or the strategy does not come back)");
+        Cont("and start it again. The TradeAgent Bridge strategy comes back STOPPED —");
+        Cont("press Activate on it, or the bridge never dials in. (Traps 22-24.)");
+        Line("2. RUN HALF 2", "probe atas --coid-restart-check");
+        Cont("It places nothing. That is the measurement, not the caution.");
+        Line("IF YOU STOP HERE", $"probe atas --cancel-resting {clientOrderId}");
+        Cont("removes the order. Nothing else will: it is not cancelled by this run, by");
+        Cont("half 2, or by the bridge restarting.");
+
+        return new TestOrderOutcome(5, "left-resting", Placed: true, RestingClientOrderId: clientOrderId);
     }
 
     /// <summary>
@@ -1227,9 +1760,13 @@ static class AtasProbe
         var coid = Token(connector.Bridge?.TradingSurface, "coid");
         Line("ROUND TRIP, MEASURED", coid switch
         {
+            "proven-crosssession" => "proven-crosssession — an identifier a PREVIOUS run of this "
+                                   + "product recorded before submitting came back on an order in "
+                                   + "ATAS's book, with the broker id that run recorded. It "
+                                   + "outlived the process that made it. The strongest reading.",
             "proven-distinct" => "proven-distinct — a genuinely SEPARATE object came back carrying our "
-                               + "identifier. This is the real round trip.",
-            "proven-sameref"  => "proven-sameref — ATAS handed back THE VERY OBJECT we submitted. "
+                               + "identifier. This is the real round trip, within one session.",
+            "proven-sameref"  => "proven-sameref — ATAS handed back AN OBJECT THIS ADAPTER TOUCHED. "
                                + "THE PROOF IS VACUOUS; see below.",
             "notfound"        => "notfound — a read-back ran and no order carried our id with a broker id.",
             "unchecked"       => "unchecked — submitted, but no read-back ever ran.",
@@ -1237,6 +1774,18 @@ static class AtasProbe
             null or ""        => "NOT REPORTED — this bridge predates the coid reading.",
             _                 => coid
         });
+
+        // The witness record beside the reading it produced, so a run that reports a cross-session
+        // proof also shows the file that made it one — and a run that reports nothing shows whether
+        // there was anything on file to read.
+        var witnessToken = Token(connector.Bridge?.TradingSurface, "witness");
+        Line("WITNESS RECORD", witnessToken ?? "NOT REPORTED — this bridge predates the witness record");
+        if (witnessToken is not null)
+        {
+            Cont("session: which run of the bridge is answering. records/prior: what is on");
+            Cont("file, and how many of those a PREVIOUS run left acknowledged — the ones a");
+            Cont("cross-session reading could be taken from. io: whether the file is writable.");
+        }
 
         // ------------------------------------------------------------------------- what it proves
 
@@ -1312,50 +1861,89 @@ static class AtasProbe
             return ("no-broker-id", everSeen);
         }
 
-        if (!after.SupportsClientOrderId)
+        // THE ORDER OF THE THREE GUARDS BELOW IS THE WHOLE OF THEIR CORRECTNESS, AND IT WAS WRONG.
+        //
+        // Until 2026-08-30 the `!after.SupportsClientOrderId` disagreement branch stood FIRST, so on
+        // real ATAS — where the reading is proven-sameref and the boolean is therefore correctly
+        // false — this printed "THE EVIDENCE IS PRESENT AND THE BRIDGE STILL SAYS false —
+        // INVESTIGATE" and accused the bridge of a defect for behaving exactly as designed. The
+        // sameref branch written for precisely that run was unreachable on it. Measured on
+        // BTCUSDT / CRYPTO5EB41, 2026-08-30.
+        //
+        // The cause is that "the book shows both ids and the bridge says false" STOPPED being a
+        // contradiction when a same-reference match stopped setting the capability: from out here
+        // the pair looks complete, and only the bridge can see that the order carrying it is its own
+        // object. So the coid= reading — the better-informed source — has to be consulted before any
+        // verdict is drawn from the boolean, and the disagreement branch keeps only the case it was
+        // actually written for: evidence present, bridge says false, and coid explains nothing.
+        if (coid == "proven-crosssession")
         {
-            Line("RULE 1", "THE EVIDENCE IS PRESENT AND THE BRIDGE STILL SAYS false — INVESTIGATE.");
-            Cont("The order in ATAS's collection carries BOTH this run's client order id");
-            Cont("and a broker-assigned order id, which is exactly the pair the bridge");
-            Cont("says it needs, and SupportsClientOrderId is still false. That is not a");
-            Cont("round-trip failure and it is not a fresh-session reading — it is the two");
-            Cont("sources disagreeing, and the disagreement IS the finding. Believe");
-            Cont("neither until it is explained, and do not go near autonomous trading on");
-            Cont("this connection meanwhile.");
-            return ("disagreement", everSeen);
+            Line("RULE 1", "SATISFIED ACROSS A PROCESS RESTART — THE STRONGEST READING THERE IS.");
+            Cont($"'{clientOrderId}' came back off ATAS's collection with the broker id {broker},");
+            Cont("and the bridge reports the identifier it matched was recorded by an EARLIER");
+            Cont("run of this product — written down before that order existed, by a process");
+            Cont("that had ended by the time this one read it. That cannot be our own object:");
+            Cont("our own objects do not survive the process that made them.");
+            Cont("");
+            Cont("SupportsClientOrderId reads true from this and it SHOULD be believed. Note");
+            Cont("this is a surprising reading for a --place-test-order run, which submits in");
+            Cont("this session — it means the match was taken against a record from a previous");
+            Cont("one. Run --coid-restart-check for the reading in its proper setting.");
+            return ("proven-crosssession", everSeen);
         }
 
         if (coid == "proven-sameref")
         {
             Line("RULE 1", "NOT SATISFIED — THE MATCH IS REAL AND IT PROVES NOTHING.");
             Cont($"'{clientOrderId}' did come back off ATAS's collection with the broker id");
-            Cont($"{broker}. But the adapter reports the matched order is REFERENCE-EQUAL to the");
-            Cont("Order instance it constructed, set Comment on, and handed to ATAS. So the");
-            Cont("comment came back because it never left: the collection is holding our own");
-            Cont("object. The only thing actually observed is that ATAS assigned an Order.Id.");
+            Cont($"{broker}. But the adapter reports the matched order is an object THIS ADAPTER");
+            Cont("TOUCHED — the Order instance it constructed, set Comment on, and handed to");
+            Cont("ATAS, or a clone of one. So the comment came back because it never left: the");
+            Cont("collection is holding our own object. The only thing actually observed is");
+            Cont("that ATAS assigned an Order.Id.");
             Cont("");
-            Cont("SupportsClientOrderId reads true from this, and it should not be believed.");
-            Cont("Rule 1 asks whether ATAS CARRIES an identifier onto the broker order, and a");
-            Cont("same-reference match cannot answer that either way. Do not enable autonomous");
-            Cont("trading on this reading, and do not 'fix' it by trusting the boolean.");
+            Cont("SupportsClientOrderId reads FALSE from this, and that is the bridge being");
+            Cont("correct rather than a contradiction with the evidence above. From out here");
+            Cont("the pair of ids looks like exactly what rule 1 asks for; the bridge can see");
+            Cont("one thing this harness structurally cannot, which is whose object carried");
+            Cont("them. Believe the bridge. Do not 'fix' this by trusting the pair.");
             Cont("");
-            Cont("What would settle it: read the identifier back from a source that cannot be");
-            Cont("our own object — the platform's order history, a fresh ATAS session, or the");
-            Cont("broker's own report of the order.");
+            Cont("THIS IS THE EXPECTED READING ON THIS PLATFORM. It is not a defect and it is");
+            Cont("not a round-trip failure. What would settle rule 1: a source that cannot be");
+            Cont("our own object — which is what --leave-resting plus --coid-restart-check");
+            Cont("across an ATAS restart is for.");
             return ("proven-sameref", everSeen);
+        }
+
+        if (!after.SupportsClientOrderId)
+        {
+            Line("RULE 1", "THE EVIDENCE IS PRESENT AND THE BRIDGE STILL SAYS false — INVESTIGATE.");
+            Cont("The order in ATAS's collection carries BOTH this run's client order id");
+            Cont("and a broker-assigned order id, which is exactly the pair the bridge");
+            Cont("says it needs, and SupportsClientOrderId is still false — with the coid");
+            Cont($"reading ({Blank(coid)}) explaining neither. A same-reference match WOULD");
+            Cont("explain it and is handled above, so this is not that. It is the two");
+            Cont("sources disagreeing, and the disagreement IS the finding. Believe");
+            Cont("neither until it is explained, and do not go near autonomous trading on");
+            Cont("this connection meanwhile.");
+            return ("disagreement", everSeen);
         }
 
         Line("RULE 1", "SATISFIED, AND MEASURED HERE FOR THE FIRST TIME.");
         Cont($"TradeAgent submitted '{clientOrderId}', and that identifier came back off");
         Cont($"ATAS's own order collection alongside the broker-assigned id {broker},");
-        Cont("on an order this run placed. That is what rule 1 asks for. It was");
-        Cont("observed, not assumed, and the bridge now reports SupportsClientOrderId");
-        Cont("= true from the same observation rather than from this harness.");
+        Cont("on an order this run placed, ON AN OBJECT THE ADAPTER NEVER TOUCHED. That");
+        Cont("is what rule 1 asks for. It was observed, not assumed, and the bridge");
+        Cont("reports SupportsClientOrderId = true from the same observation rather than");
+        Cont("from this harness.");
         Cont("");
         Cont("What it still does NOT prove: that the identifier survives ATAS itself");
-        Cont("being restarted. Nothing observable from inside a strategy can prove");
-        Cont("that. And it says nothing about order history — ReconciliationProvable");
-        Cont("needs both halves, and the other half is reported above.");
+        Cont("being restarted. This reading is taken within one session, where the");
+        Cont("adapter's own objects are the thing being ruled out; it says nothing about");
+        Cont("what happens when there are no such objects left. --leave-resting plus");
+        Cont("--coid-restart-check is the reading that answers that. And it says nothing");
+        Cont("about order history — ReconciliationProvable needs both halves, and the");
+        Cont("other half is reported above.");
         return ("round-trip-proven", everSeen);
     }
 
@@ -1366,10 +1954,22 @@ static class AtasProbe
     /// nothing came back. "The read failed" is not evidence that nothing landed, and an order that
     /// was placed but never seen is exactly the one that must not be left resting.
     /// </summary>
+    /// <param name="standalone">
+    /// True for <c>--cancel-resting</c>, where this run placed nothing and is removing an order an
+    /// EARLIER run left behind. It changes exactly one branch — the final one — and it changes it
+    /// because the reasoning there does not hold for this case. In the place path, "nothing
+    /// carrying this id is on the book" is hedged, because the order may have landed somewhere the
+    /// bridge cannot see and never became visible. Here it never had to become visible in this run
+    /// at all: the target was confirmed resting by the run that placed it, read out of this same
+    /// collection, and it is not in it now. Reporting exit 4 for that would cry wolf on the ordinary
+    /// success of a cleanup verb, and the file's own note on STILL-RESTING says why that is the one
+    /// thing not to do with a banner that must never be ignored.
+    /// </param>
     static async Task<TestOrderOutcome> CleanUp(AtasConnector connector, string clientOrderId,
-                                                OrderInfo? placed, bool rejected, bool everSeen)
+                                                OrderInfo? placed, bool rejected, bool everSeen,
+                                                bool standalone = false)
     {
-        Section("THE TEST ORDER — CLEANING UP");
+        Section(standalone ? "CANCELLING A RESTING ORDER" : "THE TEST ORDER — CLEANING UP");
         Line("WHY THIS ALWAYS RUNS", "a resting order left behind is the one outcome nobody should discover");
         Cont("later, from ATAS, on another day. So the cancel is attempted even when");
         Cont("the placement was refused, even when it threw, and even when the");
@@ -1536,6 +2136,19 @@ static class AtasProbe
             return new TestOrderOutcome(0, "gone", Placed: true);
         }
 
+        if (standalone)
+        {
+            Line("CLEANUP VERDICT", $"CONFIRMED — nothing carrying '{clientOrderId}' is on the book.");
+            Cont("The cancel was sent and ATAS's live order collection — the same collection");
+            Cont("the run that placed it read it out of — no longer holds anything under that");
+            Cont("identifier. Nothing from it can still be acted on by the broker.");
+            Cont("");
+            Cont("What this does NOT say: whether it ended cancelled by this run, or had");
+            Cont("already gone before this run started. Both look identical from here and");
+            Cont("neither leaves anything resting, which is the question this verb answers.");
+            return new TestOrderOutcome(0, "gone", Placed: false);
+        }
+
         return Loud("CLEANUP-NOT-CONFIRMED", "THE CANCEL COULD NOT BE CONFIRMED — NOTHING OF THIS RUN'S WAS EVER VISIBLE.",
             "The placement was not definitively refused, so it may have reached the",
             "broker; and nothing carrying this run's client order id has appeared in",
@@ -1549,6 +2162,24 @@ static class AtasProbe
     }
 
     // ------------------------------------------------------------------------- test-order pieces
+
+    /// <summary>
+    /// <c>--cancel-resting</c> with no live connection. Deliberately NOT <see cref="Refuse"/>, whose
+    /// closing line is "nothing was placed, so there is nothing resting on the book as a result of
+    /// this run" — true here and exactly the wrong thing to leave a reader with, because the whole
+    /// reason to run this verb is that something IS resting from an earlier one.
+    /// </summary>
+    static TestOrderOutcome NoCancel(string clientOrderId)
+    {
+        Section("CANCELLING A RESTING ORDER");
+        Line("NOTHING WAS SENT", "THE CONNECTOR HANDSHAKE NEVER COMPLETED.");
+        Cont("There is no live connection to send a cancel over, so no cancel was");
+        Cont($"attempted. WHATEVER IS RESTING IS STILL RESTING — this run changed nothing.");
+        Cont("");
+        Cont("Get the bridge answering and run this again, or cancel it by hand in ATAS:");
+        Cont($"look for an order whose comment is '{clientOrderId}'.");
+        return new TestOrderOutcome(4, "not-sent", Placed: false);
+    }
 
     /// <summary>Prints a refusal that names its reason, and returns the exit code for one.</summary>
     static TestOrderOutcome Refuse(string headline, params string[] why)
@@ -1650,6 +2281,8 @@ static class AtasProbe
     static void Usage(string problem)
     {
         Console.WriteLine("usage: probe atas [--wait <seconds>] [--wait-anyway] [--place-test-order --yes]");
+        Console.WriteLine("                  [--leave-resting --yes-leave-it] [--coid-restart-check]");
+        Console.WriteLine("                  [--cancel-resting <client-order-id>]");
         Console.WriteLine($"  {problem}");
         Console.WriteLine("  --wait <seconds>      how long to wait for the bridge to dial in (default 60)");
         Console.WriteLine("  --wait-anyway         wait for the pipe even though ATAS was not detected;");
@@ -1661,6 +2294,31 @@ static class AtasProbe
         Console.WriteLine("                        is provably simulated; needs --yes as a second, separate");
         Console.WriteLine("                        act. This is how rule 1 gets measured instead of guessed.");
         Console.WriteLine("  --yes                 authorises --place-test-order. Does nothing on its own.");
+        Console.WriteLine();
+        Console.WriteLine("  THE RESTART EXPERIMENT — the only thing that can settle rule 1, in two halves.");
+        Console.WriteLine("  An in-session read-back can only ever show that ATAS carries our identifier on");
+        Console.WriteLine("  an object we did not build. It cannot show the identifier surviving the process");
+        Console.WriteLine("  that submitted it, because our objects do not survive it either.");
+        Console.WriteLine();
+        Console.WriteLine("  --leave-resting       with --place-test-order: do NOT cancel the order at the");
+        Console.WriteLine("                        end. It is left live on the account so that it is still");
+        Console.WriteLine("                        there after ATAS is restarted. Needs --yes-leave-it as a");
+        Console.WriteLine("                        second, separate act, exactly as --place-test-order needs");
+        Console.WriteLine("                        --yes. Exits 5, and prints the command that removes it.");
+        Console.WriteLine("  --yes-leave-it        authorises --leave-resting. Does nothing on its own.");
+        Console.WriteLine("  --coid-restart-check  HALF 2. PLACES NOTHING — that is the measurement, not the");
+        Console.WriteLine("                        caution: the cross-session reading is only available for");
+        Console.WriteLine("                        an identifier the running bridge session did not submit.");
+        Console.WriteLine("                        Reads the durable witness record against the live book and");
+        Console.WriteLine("                        reports proof, disproof, or not-answered. Cannot be");
+        Console.WriteLine("                        combined with --place-test-order.");
+        Console.WriteLine("  --cancel-resting <id> cancels the order carrying that client order id and");
+        Console.WriteLine("                        re-reads the book to confirm. One flag, not two: it only");
+        Console.WriteLine("                        ever removes exposure and it names its target.");
+        Console.WriteLine();
+        Console.WriteLine("      probe atas --place-test-order --yes --leave-resting --yes-leave-it");
+        Console.WriteLine("      # restart ATAS, re-activate the bridge strategy on the chart");
+        Console.WriteLine("      probe atas --coid-restart-check");
     }
 
     // ------------------------------------------------------------------------------------ pieces
@@ -1679,14 +2337,29 @@ static class AtasProbe
 
         static IEnumerable<string> Lines(bool proven, int attempts, int checks, string? coid)
         {
+            if (proven && coid == "proven-crosssession")
+            {
+                yield return "PROVEN ACROSS A PROCESS RESTART, AND THE BRIDGE SAYS SO ITSELF.";
+                yield return "It found an identifier a PREVIOUS run of this product recorded before";
+                yield return "submitting, on an order in ATAS's own collection, carrying the broker id";
+                yield return "that run recorded. The identifier outlived the process that made it, which";
+                yield return "is the reading reconciliation after a dropped pipe actually rests on.";
+                yield return "";
+                yield return "The bound that remains: it cannot separate ATAS rebuilding the order from";
+                yield return "the BROKER'S answer on reconnect from ATAS rehydrating it out of its own";
+                yield return "store. All three look identical from inside a chart strategy.";
+                yield break;
+            }
+
             if (proven)
             {
                 yield return "PROVEN, AND THE BRIDGE SAYS SO ITSELF.";
                 yield return $"It submitted {attempts} order(s) carrying a client order id, performed";
                 yield return $"{checks} read-back(s) against ATAS's own order collection, and one of them";
-                yield return "found the identifier alongside a broker-assigned id. Rule 1 is satisfied";
-                yield return "by observation. It still does not prove the id survives an ATAS restart —";
-                yield return "nothing observable from inside a strategy can prove that.";
+                yield return "found the identifier alongside a broker-assigned id, ON AN OBJECT IT NEVER";
+                yield return "TOUCHED. Rule 1 is satisfied by observation, within this session. It does";
+                yield return "not yet prove the id survives an ATAS restart — --leave-resting plus";
+                yield return "--coid-restart-check is the reading that answers that.";
                 yield break;
             }
 
@@ -1743,13 +2416,26 @@ static class AtasProbe
     static IEnumerable<string> ClientIdVerdict(bool proven, IReadOnlyList<OrderInfo>? orders,
         string? ordersError, int withClientId, int withBothIds, string? coid)
     {
+        if (proven && coid == "proven-crosssession")
+        {
+            yield return "PROVEN, AND ACROSS A PROCESS RESTART. The bridge has read a client order id";
+            yield return "that a PREVIOUS run of this product recorded before submitting, back off an";
+            yield return "order in ATAS's live collection, carrying the broker id that run recorded.";
+            yield return "That is rule 1 answered from a source that cannot be our own object.";
+            yield return "What it still does not prove: that the identifier ever reached the BROKER.";
+            yield return "ATAS rebuilding the order, the broker's answer on reconnect and ATAS";
+            yield return "rehydrating its own store all look identical from inside a chart strategy.";
+            yield break;
+        }
+
         if (proven)
         {
             yield return "PROVEN. The bridge has read one of its own client order ids back off an";
             yield return "order sitting in ATAS's live order collection, with a broker-assigned id";
-            yield return "on it. That is what rule 1 asks for, and it was observed, not assumed.";
-            yield return "What it still does not prove: that the identifier survives ATAS itself";
-            yield return "being restarted. Nothing observable from inside a strategy can prove that.";
+            yield return "on it, on an object it never touched. That is what rule 1 asks for, and it";
+            yield return "was observed, not assumed. What it still does not prove: that the identifier";
+            yield return "survives ATAS itself being restarted — that reading needs a separate run,";
+            yield return "with --leave-resting and then --coid-restart-check across a restart.";
             yield break;
         }
 

@@ -22,7 +22,10 @@ namespace TradeAgent.Tests.Integration;
 public class ClientOrderIdProofTests
 {
     static readonly ClientOrderIdProof[] All =
-        [ClientOrderIdProof.NotProven, ClientOrderIdProof.SameRef, ClientOrderIdProof.Distinct];
+    [
+        ClientOrderIdProof.NotProven, ClientOrderIdProof.SameRef,
+        ClientOrderIdProof.Distinct, ClientOrderIdProof.CrossSession
+    ];
 
     // ------------------------------------------------------------------ the capability
 
@@ -30,7 +33,8 @@ public class ClientOrderIdProofTests
     [InlineData(ClientOrderIdProof.NotProven, false)]
     [InlineData(ClientOrderIdProof.SameRef, false)]
     [InlineData(ClientOrderIdProof.Distinct, true)]
-    public void Only_a_distinct_object_counts_as_a_round_trip(ClientOrderIdProof proof, bool expected) =>
+    [InlineData(ClientOrderIdProof.CrossSession, true)]
+    public void Only_an_object_we_did_not_write_counts_as_a_round_trip(ClientOrderIdProof proof, bool expected) =>
         Assert.Equal(expected, proof.ProvesRoundTrip());
 
     /// <summary>
@@ -63,19 +67,28 @@ public class ClientOrderIdProofTests
     {
         Assert.False(ClientOrderIdProof.SameRef.IsSettled());
         Assert.False(ClientOrderIdProof.NotProven.IsSettled());
-        Assert.True(ClientOrderIdProof.Distinct.IsSettled());
     }
 
     /// <summary>
-    /// The latch tracks the STRONGEST reading; the capability tracks what counts as proof. Today
-    /// those are the same state, and they are separate methods because they would stop being the
-    /// same the moment a reading stronger than Distinct is added — at which point the latch must
-    /// follow that one and the capability must not be silently dragged along with it.
+    /// THE TWO PREDICATES HAVE PARTED COMPANY, AND THIS IS WHAT THEY WERE KEPT SEPARATE FOR.
+    ///
+    /// The note that used to stand here said they would stop coinciding "the moment a reading
+    /// stronger than Distinct is added — at which point the latch must follow that one and the
+    /// capability must not be silently dragged along with it". That reading is
+    /// <see cref="ClientOrderIdProof.CrossSession"/>. Distinct now proves the round trip and does
+    /// NOT settle the search, which is the whole safety of the restart experiment: after ATAS
+    /// restarts, the adapter has constructed no Order at all, so a Distinct reading is free — and
+    /// a free reading that latched would make the cross-session one unreachable in silence.
     /// </summary>
     [Fact]
-    public void Settling_the_search_and_proving_the_round_trip_coincide_for_now()
+    public void Settling_the_search_no_longer_follows_the_capability()
     {
-        foreach (var proof in All) Assert.Equal(proof.ProvesRoundTrip(), proof.IsSettled());
+        Assert.True(ClientOrderIdProof.Distinct.ProvesRoundTrip());
+        Assert.False(ClientOrderIdProof.Distinct.IsSettled());
+
+        // Exactly one reading settles it, and it is the strongest one.
+        Assert.Equal([ClientOrderIdProof.CrossSession], All.Where(p => p.IsSettled()).ToArray());
+        Assert.Equal(ClientOrderIdProof.CrossSession, All.Max());
     }
 
     // ------------------------------------------------------------------ monotonicity
@@ -87,12 +100,19 @@ public class ClientOrderIdProofTests
     [InlineData(ClientOrderIdProof.Distinct, ClientOrderIdProof.Distinct, false)]
     [InlineData(ClientOrderIdProof.NotProven, ClientOrderIdProof.SameRef, false)]
     [InlineData(ClientOrderIdProof.NotProven, ClientOrderIdProof.Distinct, false)]
+    [InlineData(ClientOrderIdProof.CrossSession, ClientOrderIdProof.CrossSession, false)]
     // The one that matters: a late SameRef pass must not demote a Distinct already established.
     [InlineData(ClientOrderIdProof.SameRef, ClientOrderIdProof.Distinct, false)]
+    // Nor may an in-session pass demote the cross-session reading, which is the strongest there is.
+    [InlineData(ClientOrderIdProof.Distinct, ClientOrderIdProof.CrossSession, false)]
+    [InlineData(ClientOrderIdProof.SameRef, ClientOrderIdProof.CrossSession, false)]
     // Strictly stronger, and only that.
     [InlineData(ClientOrderIdProof.SameRef, ClientOrderIdProof.NotProven, true)]
     [InlineData(ClientOrderIdProof.Distinct, ClientOrderIdProof.NotProven, true)]
     [InlineData(ClientOrderIdProof.Distinct, ClientOrderIdProof.SameRef, true)]
+    [InlineData(ClientOrderIdProof.CrossSession, ClientOrderIdProof.NotProven, true)]
+    [InlineData(ClientOrderIdProof.CrossSession, ClientOrderIdProof.SameRef, true)]
+    [InlineData(ClientOrderIdProof.CrossSession, ClientOrderIdProof.Distinct, true)]
     public void A_reading_replaces_only_a_weaker_one(
         ClientOrderIdProof candidate, ClientOrderIdProof standing, bool expected) =>
         Assert.Equal(expected, candidate.Supersedes(standing));
@@ -118,6 +138,7 @@ public class ClientOrderIdProofTests
     [InlineData(ClientOrderIdProof.NotProven, 7, 3, "notfound")]
     [InlineData(ClientOrderIdProof.SameRef, 1, 1, "proven-sameref")]
     [InlineData(ClientOrderIdProof.Distinct, 1, 1, "proven-distinct")]
+    [InlineData(ClientOrderIdProof.CrossSession, 1, 1, "proven-crosssession")]
     public void Each_reading_has_its_own_word(
         ClientOrderIdProof proof, int attempts, int checks, string expected) =>
         Assert.Equal(expected, ClientOrderIdProofs.Token(proof, attempts, checks));
@@ -131,6 +152,10 @@ public class ClientOrderIdProofTests
     {
         Assert.Equal("proven-sameref", ClientOrderIdProofs.Token(ClientOrderIdProof.SameRef, 0, 0));
         Assert.Equal("proven-distinct", ClientOrderIdProofs.Token(ClientOrderIdProof.Distinct, 0, 0));
+        // And it must for the cross-session reading above all: the counters describe THIS session,
+        // and the whole claim is about an order a previous one submitted. A fresh process that has
+        // attempted nothing and checked nothing can still take this reading.
+        Assert.Equal("proven-crosssession", ClientOrderIdProofs.Token(ClientOrderIdProof.CrossSession, 0, 0));
     }
 
     /// <summary>
@@ -142,11 +167,27 @@ public class ClientOrderIdProofTests
     [Fact]
     public void The_capability_and_the_word_reported_beside_it_cannot_disagree()
     {
+        string[] proving = ["proven-distinct", "proven-crosssession"];
         foreach (var proof in All)
             foreach (var attempts in new[] { 0, 1, 9 })
                 foreach (var checks in new[] { 0, 1, 9 })
                     Assert.Equal(proof.ProvesRoundTrip(),
-                                 ClientOrderIdProofs.Token(proof, attempts, checks) == "proven-distinct");
+                                 proving.Contains(ClientOrderIdProofs.Token(proof, attempts, checks)));
+    }
+
+    /// <summary>Six readings, six distinct words. A reading that shared a word with another would
+    /// be invisible on the wire, which is where every recorded measurement is read from.</summary>
+    [Fact]
+    public void No_two_readings_share_a_word()
+    {
+        var words = new List<string> { ClientOrderIdProofs.Token(ClientOrderIdProof.NotProven, 0, 0),
+                                       ClientOrderIdProofs.Token(ClientOrderIdProof.NotProven, 1, 0),
+                                       ClientOrderIdProofs.Token(ClientOrderIdProof.NotProven, 1, 1) };
+        words.AddRange(All.Where(p => p != ClientOrderIdProof.NotProven)
+                          .Select(p => ClientOrderIdProofs.Token(p, 1, 1)));
+
+        Assert.Equal(6, words.Count);
+        Assert.Equal(6, words.Distinct().Count());
     }
 
     // ------------------------------------------------------------------ the sequence
@@ -181,16 +222,50 @@ public class ClientOrderIdProofTests
         Assert.False(state.ProvesRoundTrip());
 
         // A separate object carries our identifier. THIS is the reading the latch had to stay open
-        // for, and the only one that may report the capability true.
+        // for, and it reports the capability true.
         Assert.True(Record(ref state, sameInstance: false));
         Assert.Equal(ClientOrderIdProof.Distinct, state);
         Assert.True(state.ProvesRoundTrip());
         Assert.Equal("proven-distinct", ClientOrderIdProofs.Token(state, 2, 2));
 
-        // Settled: the scan stops, and a straggling same-reference pass cannot undo it.
-        Assert.False(Record(ref state, sameInstance: true));
+        // AND THE SEARCH GOES ON, which is the change a fourth reading brought. A straggling
+        // same-reference pass cannot demote it, but it is not turned away either — because a
+        // stronger reading than Distinct now exists and the latch must stay open for it.
+        Assert.True(Record(ref state, sameInstance: true));
         Assert.Equal(ClientOrderIdProof.Distinct, state);
         Assert.True(state.ProvesRoundTrip());
+
+        // The identifier is found on an order a PREVIOUS process submitted. Only this settles it.
+        Assert.True(RecordCrossSession(ref state));
+        Assert.Equal(ClientOrderIdProof.CrossSession, state);
+        Assert.Equal("proven-crosssession", ClientOrderIdProofs.Token(state, 2, 2));
+
+        Assert.False(Record(ref state, sameInstance: false));
+        Assert.Equal(ClientOrderIdProof.CrossSession, state);
+        Assert.True(state.ProvesRoundTrip());
+    }
+
+    /// <summary>
+    /// The same three decisions from the other direction: a fresh session, where the in-session
+    /// reading is FREE. Nothing here was constructed by this process, so the object-identity test
+    /// answers "distinct" for anything at all — and that must not stop the scan before the
+    /// cross-session reading can be taken. This is trap 30 in docs/RESUME-HERE.md as a test.
+    /// </summary>
+    [Fact]
+    public void A_free_distinct_reading_in_a_fresh_session_does_not_block_the_restart_proof()
+    {
+        var state = ClientOrderIdProof.NotProven;
+
+        // Nothing in the book is an object this process built, so every match reads Distinct.
+        Assert.True(Record(ref state, sameInstance: false));
+        Assert.Equal(ClientOrderIdProof.Distinct, state);
+
+        // The scan MUST still run. If Distinct latched here, the line below would never execute in
+        // the adapter and the experiment could not be performed at all.
+        Assert.False(state.IsSettled());
+        Assert.True(RecordCrossSession(ref state));
+        Assert.Equal(ClientOrderIdProof.CrossSession, state);
+        Assert.True(state.IsSettled());
     }
 
     /// <summary>One read-back pass. Returns false when the latch turned it away.</summary>
@@ -199,6 +274,15 @@ public class ClientOrderIdProofTests
         if (state.IsSettled()) return false;
         var observed = ClientOrderIdProofs.Observed(sameInstance);
         if (observed.Supersedes(state)) state = observed;
+        return true;
+    }
+
+    /// <summary>The same pass down the witness branch, where the reading is fixed rather than
+    /// derived from object identity.</summary>
+    static bool RecordCrossSession(ref ClientOrderIdProof state)
+    {
+        if (state.IsSettled()) return false;
+        if (ClientOrderIdProof.CrossSession.Supersedes(state)) state = ClientOrderIdProof.CrossSession;
         return true;
     }
 }

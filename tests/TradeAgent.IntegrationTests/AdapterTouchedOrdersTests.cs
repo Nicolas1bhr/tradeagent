@@ -288,17 +288,42 @@ public class AdapterTouchedOrdersTests
     }
 
     /// <summary>
-    /// What the permanence actually costs, stated as a test rather than as a claim: a session that
-    /// reaches the cap is a session that has already failed to prove the round trip every time it
-    /// looked, because the proof LATCHES on the first Distinct and the read-back stops. So refusing
-    /// after a trim refuses a reading that has been negative thousands of times running.
+    /// WHAT THE PERMANENCE COSTS, AND THE ARGUMENT HAS CHANGED — the version recorded here before
+    /// was "a session that reaches the cap has already failed to prove the round trip every time it
+    /// looked, because the proof LATCHES on the first Distinct and the read-back stops". That is no
+    /// longer true: the latch is <see cref="ClientOrderIdProof.CrossSession"/> alone, so a session
+    /// can record a Distinct and go on scanning until it reaches the cap.
+    ///
+    /// The guarantee that actually holds is the monotonic one, and it is the one that matters: a
+    /// reading already RECORDED cannot be undone by a later trim. After a trim,
+    /// <see cref="AdapterTouchedOrders.CountsAsEvidence"/> answers false for everything, so every
+    /// subsequent pass reads <see cref="ClientOrderIdProof.SameRef"/> — and SameRef cannot
+    /// supersede a Distinct that is already standing. Trimming can stop a proof from being
+    /// obtained; it cannot demote one that has been.
     /// </summary>
     [Fact]
-    public void A_settled_proof_is_never_at_risk_from_a_later_trim()
+    public void A_trim_can_refuse_a_new_proof_but_can_never_demote_a_standing_one()
     {
-        Assert.True(ClientOrderIdProof.Distinct.IsSettled());
-        Assert.False(ClientOrderIdProof.SameRef.IsSettled());
-        Assert.False(ClientOrderIdProof.NotProven.IsSettled());
+        var touched = new AdapterTouchedOrders();
+        var submitted = new Ord(Coid);
+        touched.Add(submitted);
+
+        // The round trip is observed and recorded while the set still knows what it touched.
+        var atas = new Ord(Coid, id: "7968889");
+        var state = Advance(ClientOrderIdProof.NotProven, Scan(touched, submitted, [atas]));
+        Assert.Equal(ClientOrderIdProof.Distinct, state);
+        Assert.True(state.ProvesRoundTrip());
+
+        // And it is NOT settled, so the read-back goes on scanning — which is what exposes it to a
+        // trim in the first place.
+        Assert.False(state.IsSettled());
+        Assert.True(touched.Trim(cap: 0));
+
+        // Blind now: every later pass reads SameRef, and SameRef cannot displace what stands.
+        Assert.Equal(ClientOrderIdProof.SameRef, Scan(touched, submitted, [atas]));
+        state = Advance(state, Scan(touched, submitted, [atas]));
+        Assert.Equal(ClientOrderIdProof.Distinct, state);
+        Assert.True(state.ProvesRoundTrip());
     }
 
     // ------------------------------------------------------------------ the composed read-back

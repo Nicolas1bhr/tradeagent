@@ -15,5 +15,12 @@
          shapes and the capability derivation cannot drift away from the product's. Both projects
          target plain net10.0, so this harness still builds on the macOS dev machine. -->
     <ProjectReference Include="../../src/TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <!-- For CoidWitness, which the probe's coid-restart-check verb reads. Reusing the bridge's own
+         reader rather than re-parsing the file here is the same argument as the line above: the
+         half of the restart experiment that reads the record must not be able to drift away from
+         the half that writes it. The bridge project builds as plain net10.0 unless AtasBridgeBuild
+         is set true, so this still builds on the macOS dev machine: the ATAS-facing file is removed
+         from compilation off Windows, and nothing here needs it. -->
+    <ProjectReference Include="../../src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
   </ItemGroup>
 </Project>

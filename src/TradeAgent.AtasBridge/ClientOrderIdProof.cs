@@ -27,6 +27,18 @@ namespace TradeAgent.AtasBridge;
 ///              adapter never touched. ATAS put the id onto something we did not write, which is
 ///              the round trip rule 1 asks about, observed.
 ///
+///              WITHIN ONE SESSION that is real evidence, because the same-reference outcome was
+///              available and on real ATAS it is what happened. ACROSS a restart it is worth
+///              nothing: a fresh process has constructed no Order at all, so every match is
+///              reference-distinct by construction. That is why the reading below exists and why
+///              the latch follows it rather than this one.
+///   CrossSession
+///              an order carrying an identifier a PREVIOUS process of this product submitted was
+///              found in ATAS's collection, carrying the broker order id that previous process
+///              saw ATAS assign. The claim "we submitted this id" was written down before the
+///              order existed, by a process that is gone by the time the claim is read, so it
+///              cannot be a story composed afterwards to fit an order somebody found.
+///
 /// The live reading on real ATAS 8.0.14.397, taken 2026-08-28 with a resting limit order on a sim
 /// account, was <see cref="SameRef"/>. That is why this type exists.
 /// </summary>
@@ -34,7 +46,34 @@ public enum ClientOrderIdProof
 {
     NotProven = 0,
     SameRef = 1,
-    Distinct = 2
+    Distinct = 2,
+
+    /// <summary>
+    /// THE READING THE RESTART EXPERIMENT TAKES, and the strongest one obtainable from inside a
+    /// chart strategy.
+    ///
+    /// Established when an order in ATAS's own collection carries an identifier recorded in
+    /// <see cref="CoidWitness"/> by a DIFFERENT session of this product, alongside the broker order
+    /// id that session recorded ATAS assigning. Three things have to line up and each is written by
+    /// a different party: the identifier is one this product submitted (the write-ahead record), the
+    /// process that submitted it is not the one reading it back (the session id), and the order in
+    /// front of us is the order that record is about (the broker order id, which this product never
+    /// chose — see <see cref="CoidWitness.Identified"/>).
+    ///
+    /// WHAT IT DOES NOT PROVE, AND THE SENTENCE LIVES HERE RATHER THAN ONLY IN A DOC BECAUSE THIS
+    /// IS WHERE SOMEBODY WILL READ IT. A cross-session match cannot distinguish ATAS rebuilding the
+    /// order from the BROKER'S OWN ANSWER on reconnect, from ATAS rehydrating the order out of its
+    /// own local store. Both survive a process restart and both look identical from inside a chart
+    /// strategy: the same Order object, in the same collection, with the same Comment and the same
+    /// Id. Only the broker's own report of the order separates them, and that is not a source this
+    /// software can read at runtime. So this reading says the identifier survives ATAS being
+    /// restarted; it does not say the identifier reached the broker.
+    ///
+    /// That bound is why it reports the capability rather than settling the question of rule 1
+    /// forever: reconciliation after a dropped pipe needs the identifier to survive whatever killed
+    /// the pipe, which is exactly what this measures.
+    /// </summary>
+    CrossSession = 3
 }
 
 /// <summary>
@@ -58,7 +97,8 @@ public enum ClientOrderIdProof
 public static class ClientOrderIdProofs
 {
     /// <summary>
-    /// THE CAPABILITY. True for <see cref="ClientOrderIdProof.Distinct"/> and nothing else.
+    /// THE CAPABILITY. True for <see cref="ClientOrderIdProof.Distinct"/> and
+    /// <see cref="ClientOrderIdProof.CrossSession"/>, and nothing else.
     ///
     /// <see cref="ClientOrderIdProof.SameRef"/> is a real match — the comment is genuinely there,
     /// on an order genuinely in ATAS's collection, genuinely carrying a broker id — and it proves
@@ -66,12 +106,18 @@ public static class ClientOrderIdProofs
     /// from it would be rule 1 faked by the exact mechanism rule 1 names, and reconciliation after
     /// a dropped pipe would then be permitted on a round trip nobody has performed.
     ///
+    /// Two readings report the capability because two different observations each answer rule 1,
+    /// on different evidence: Distinct is "ATAS wrote our identifier onto an object we never
+    /// touched", within one session. CrossSession is "our identifier was still on an order after
+    /// the process that submitted it had gone", which is the stronger claim and the one
+    /// reconciliation after a dropped pipe actually rests on.
+    ///
     /// It is a predicate rather than a stored bool on purpose. A second variable holding "proven"
     /// alongside the observation is how the boolean and the <c>coid=</c> diagnostic drift apart,
     /// and a boolean that disagrees with the diagnostic beside it is worse than either alone.
     /// </summary>
     public static bool ProvesRoundTrip(this ClientOrderIdProof proof) =>
-        proof is ClientOrderIdProof.Distinct;
+        proof is ClientOrderIdProof.Distinct or ClientOrderIdProof.CrossSession;
 
     /// <summary>
     /// THE LATCH: may the adapter stop looking?
@@ -88,14 +134,23 @@ public static class ClientOrderIdProofs
     /// on reporting a perfectly truthful <c>proven-sameref</c>. Latching on the vacuous reading is
     /// how you make the real proof permanently unreachable and see nothing wrong.
     ///
-    /// So: settled means Distinct, which today is the same set as <see cref="ProvesRoundTrip"/>.
-    /// That tie is deliberate and asserted in the tests rather than assumed — the two would part
-    /// company the moment a stronger reading than Distinct is added (an id recovered from a source
-    /// outside this process, say), and the latch must follow the strongest reading, not the
-    /// capability.
+    /// THE TWO PREDICATES HAVE NOW PARTED COMPANY, WHICH IS WHAT THEY WERE KEPT SEPARATE FOR. The
+    /// note that used to sit here said they would separate "the moment a stronger reading than
+    /// Distinct is added (an id recovered from a source outside this process, say)". That reading
+    /// is <see cref="ClientOrderIdProof.CrossSession"/> and it is here, so:
+    ///
+    ///   * <see cref="ProvesRoundTrip"/> is true for Distinct AND CrossSession — both answer rule 1.
+    ///   * settled is CrossSession ALONE.
+    ///
+    /// A Distinct taken early in a fresh session must NOT latch, and that is the whole safety of
+    /// this method. After ATAS restarts, the adapter has constructed no Order at all, so an
+    /// in-session read-back of some unrelated id could reach Distinct trivially and stop the scan —
+    /// and the CrossSession reading the restart experiment exists to take would never be reached,
+    /// with nothing looking wrong because the diagnostic would go on truthfully saying
+    /// proven-distinct. That is exactly the freeze SameRef caused before, one reading up.
     /// </summary>
     public static bool IsSettled(this ClientOrderIdProof proof) =>
-        proof is ClientOrderIdProof.Distinct;
+        proof is ClientOrderIdProof.CrossSession;
 
     /// <summary>
     /// May <paramref name="candidate"/> replace <paramref name="standing"/>? Only if it is strictly
@@ -125,14 +180,21 @@ public static class ClientOrderIdProofs
     /// API dump, and the question is literally "is this an object we touched", not "does it look
     /// like one". The caller does the identity test; this turns its answer into a proof state so
     /// the mapping is not written out longhand at the one call site that matters.
+    ///
+    /// IT CANNOT PRODUCE <see cref="ClientOrderIdProof.CrossSession"/> AND MUST NOT BE MADE TO.
+    /// Object identity is a question about this process, and after a restart it has a free answer:
+    /// nothing here was constructed by us, so "untouched" is true of everything and this method
+    /// would hand back Distinct for any match at all. The cross-session reading is established from
+    /// <see cref="CoidWitness"/> — a durable record written before the order existed — and never
+    /// from what an object is or is not.
     /// </summary>
     public static ClientOrderIdProof Observed(bool adapterTouched) =>
         adapterTouched ? ClientOrderIdProof.SameRef : ClientOrderIdProof.Distinct;
 
     /// <summary>
     /// The rule-1 read-back in one token, for <c>BridgeHello.TradingSurface</c>'s <c>coid=</c>
-    /// field. Five readings, kept apart because they mean five different things and only one of
-    /// them is proof:
+    /// field. Six readings, kept apart because they mean six different things and only two of
+    /// them are proof:
     ///
     ///   unattempted      no order carrying a client order id has been submitted yet. Says nothing
     ///                    about ATAS.
@@ -144,14 +206,21 @@ public static class ClientOrderIdProofs
     ///                    adapter submitted. True by construction; proves nothing beyond Order.Id
     ///                    being assigned. MUST NOT be trusted as a round trip, and does not set
     ///                    SupportsClientOrderId.
-    ///   proven-distinct  a genuinely different object carried our identifier. The round trip.
+    ///   proven-distinct  a genuinely different object carried our identifier. The round trip,
+    ///                    within one session.
+    ///   proven-crosssession
+    ///                    an identifier a PREVIOUS process of this product wrote down before
+    ///                    submitting was found on an order in ATAS's collection, carrying the
+    ///                    broker id that process recorded. It survived the process that made it.
     ///
-    /// THESE FIVE STRINGS ARE A WIRE CONTRACT, not prose. tools/probe/Program.cs switches on them
+    /// THESE SIX STRINGS ARE A WIRE CONTRACT, not prose. tools/probe/Program.cs switches on them
     /// verbatim and BUILD-STATUS.md quotes them as evidence. Changing one silently turns a recorded
-    /// reading into an unrecognised one, so they are pinned by test.
+    /// reading into an unrecognised one, so they are pinned by test. The sixth joins the five that
+    /// were already on the wire; it does not replace any of them.
     /// </summary>
     public static string Token(ClientOrderIdProof proof, int attempts, int checks) => proof switch
     {
+        ClientOrderIdProof.CrossSession => "proven-crosssession",
         ClientOrderIdProof.Distinct => "proven-distinct",
         ClientOrderIdProof.SameRef => "proven-sameref",
         _ => attempts == 0 ? "unattempted" : checks == 0 ? "unchecked" : "notfound"

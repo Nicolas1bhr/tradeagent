@@ -96,9 +96,13 @@ namespace TradeAgent.AtasBridge;
 ///      <see cref="ProveClientOrderId"/>). It is false until then. What that observation is WORTH
 ///      depends on whose object came back: Place hands ATAS the instance it constructed, so a match
 ///      against that same instance proves only that ATAS assigned an Id. TradingSurface reports
-///      which of the two happened, as coid=proven-distinct or coid=proven-sameref, and ONLY
-///      proven-distinct reports SupportsClientOrderId = true — a same-reference match is a real
-///      match that proves nothing, and reporting true from it is the "do not fake it" rule 1 names.
+///      which happened, as coid=proven-sameref, coid=proven-distinct or coid=proven-crosssession,
+///      and only the last two report SupportsClientOrderId = true — a same-reference match is a
+///      real match that proves nothing, and reporting true from it is the "do not fake it" rule 1
+///      names. The strongest of the three is the cross-session reading, taken when an identifier a
+///      PREVIOUS run of this product wrote to <see cref="CoidWitness"/> before submitting is found
+///      on an order in ATAS's book carrying the broker id that run recorded. Only that one shows
+///      the identifier surviving the process that made it.
 ///   2. SupportsOrderHistory is ANSWERED AT RUNTIME. The one order-history query in the whole ATAS
 ///      surface lives on <see cref="IAtasCache"/>; <see cref="ProbeCache"/> tries every route to one
 ///      that exists on this platform and reports which route answered, so a false is legible as
@@ -181,6 +185,44 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <see cref="AdapterTouchedOrders"/>, in a file that compiles and is tested on every machine.
     /// </summary>
     readonly AdapterTouchedOrders _touched = new();
+
+    /// <summary>
+    /// THE DURABLE HALF OF <see cref="_submitted"/>, AND THE ONLY ROUTE TO SETTLING RULE 1.
+    ///
+    /// <see cref="_submitted"/> dies with this process, and the one experiment that can answer rule
+    /// 1 from a source that cannot be our own object — place a resting order, RESTART ATAS, read the
+    /// book — is precisely the experiment in which the process that submitted the order is gone.
+    /// <see cref="CoidWitness"/> writes the claim "we are about to submit this identifier" to disk
+    /// BEFORE the order exists, and later the broker order id ATAS assigned to it, so a later
+    /// process can ask the same question <see cref="_submitted"/> answers.
+    ///
+    /// Constructed here, in a field initialiser, so the session id is minted when ATAS constructs
+    /// the strategy and every record this run writes carries the same one.
+    ///
+    /// IT DOES NOT WEAKEN THE 2026-08-27 GUARD, and that is the point of it. The identifier must
+    /// still be one this PRODUCT submitted; the only change is that the evidence for that may have
+    /// been written down by an earlier process instead of held in memory by this one. Everything
+    /// else the guard requires is unchanged, and the cross-session branch requires strictly MORE:
+    /// the order must also carry the broker id that earlier process recorded — the half we did not
+    /// write. See <see cref="ProveClientOrderId"/>.
+    ///
+    /// Its own lock, not <see cref="_gate"/>: it performs file IO, and holding the adapter's gate
+    /// across a disk write would put every read of every side table here behind a spinning disk.
+    /// </summary>
+    readonly CoidWitness _witness = new();
+
+    /// <summary>
+    /// How many prior-session identifiers <see cref="Describe"/> re-checks per call.
+    ///
+    /// <see cref="OnOrderPayload"/> is a PUSH and nothing guarantees ATAS raises an order event for
+    /// an order that merely SITS THERE after a restart — which is exactly the order the experiment
+    /// is about. Describe runs on the handshake and on every heartbeat, so it pulls instead of
+    /// waiting to be told. Bounded because that is a five-second cadence and the witness file can
+    /// hold <see cref="CoidWitness.DefaultCap"/> records: unbounded, a stale file would rescan
+    /// ATAS's whole order book hundreds of times per heartbeat. Newest first, because the
+    /// experiment is always about the most recent order.
+    /// </summary>
+    const int WitnessSweep = 16;
 
     /// <summary>What is known about each symbol's book, per SIDE, and where each side came from. A
     /// quote is stamped with the time the price was true — never with "now" for a price that was
@@ -268,7 +310,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// THE ONE LIVE READING THAT THIS WAS WAITING FOR HAS NOW BEEN TAKEN, and it was SameRef — real
     /// ATAS 8.0.14.397, a resting limit order on a sim account, 2026-08-28. So the deferred wiring
     /// is done: <see cref="Describe"/> reports SupportsClientOrderId = ProvesRoundTrip(this), which
-    /// is true for Distinct alone. The bool that used to hold that answer alongside this field is
+    /// is true for Distinct and CrossSession. The bool that used to hold that answer alongside this field is
     /// gone on purpose — two variables for one fact is exactly how a capability boolean and the
     /// coid= token beside it come to disagree, and a boolean contradicted by the diagnostic printed
     /// next to it is worse than either on its own.
@@ -477,6 +519,15 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         var portfolio = BoundPortfolio;
         var cache = ProbeCache(portfolio?.AccountID);
 
+        // THE PULL, AND IT IS HERE BECAUSE THE PUSH IS NOT GUARANTEED TO ARRIVE.
+        //
+        // The read-back is normally driven by OnOrderPayload, which is ATAS telling us an order
+        // changed. Nothing says ATAS raises an order event for an order that merely SITS THERE
+        // after a restart — and that order is the entire experiment. Describe runs on the handshake
+        // and on every heartbeat, so it asks rather than waiting to be told. Guarded because a
+        // diagnostic must never be the thing that takes the handshake down.
+        Guard(SweepWitness);
+
         ClientOrderIdProof proof;
         int attempts, checks;
         lock (_gate) { proof = _clientOrderIdProof; attempts = _clientOrderIdAttempts; checks = _clientOrderIdChecks; }
@@ -495,10 +546,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             IsSimulated = portfolio is not null && !portfolio.IsRealAccount,
             // Rule 1. False until a placed order has been seen coming back out of ATAS's own order
             // collection carrying our client id AND a broker-assigned id — ON AN OBJECT THIS ADAPTER
-            // DID NOT HAND IN. Never hard-coded true, and deliberately not true for the match that
-            // ATAS actually produces here: a same-reference match is our own object being read back
-            // to us, so it proves only that Order.Id was assigned. ProvesRoundTrip is the whole of
-            // the decision and it lives in ClientOrderIdProofs, which every machine can test.
+            // DID NOT HAND IN, in this session or in an earlier one. Never hard-coded true, and
+            // deliberately not true for the match that ATAS actually produces here: a same-reference
+            // match is our own object being read back to us, so it proves only that Order.Id was
+            // assigned. ProvesRoundTrip is the whole of the decision and it lives in
+            // ClientOrderIdProofs, which every machine can test.
             SupportsClientOrderId = proof.ProvesRoundTrip(),
             // Why it is false, when it is. Diagnostic only — see BridgeHello.ClientOrderIdAttempts.
             ClientOrderIdAttempts = attempts,
@@ -516,6 +568,30 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             SupportsModify = true,
             SupportsClosePosition = true
         };
+    }
+
+    /// <summary>
+    /// Re-checks the identifiers PREVIOUS runs of this product submitted, against the live book.
+    ///
+    /// This is the pull half of the restart experiment. Half 1 places a resting order and leaves it;
+    /// ATAS is restarted; this adapter comes up with an empty <see cref="_submitted"/> and no reason
+    /// to look at anything — the order is just sitting in the book, generating no events. Without
+    /// this, the reading would depend on ATAS happening to raise an order event for it, which is not
+    /// a property anything has measured.
+    ///
+    /// Cheap when there is nothing to do: the latch is checked first, the witness returns an empty
+    /// list when no prior session left an acknowledged record, and ProveClientOrderId re-checks the
+    /// latch itself. Bounded by <see cref="WitnessSweep"/> — see the note there.
+    /// </summary>
+    void SweepWitness()
+    {
+        lock (_gate) { if (_clientOrderIdProof.IsSettled()) return; }
+        if (Trading is null) return;
+        foreach (var id in _witness.PriorSessionIds(WitnessSweep))
+        {
+            ProveClientOrderId(id);
+            lock (_gate) { if (_clientOrderIdProof.IsSettled()) return; }
+        }
     }
 
     /// <summary>
@@ -554,6 +630,16 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 $"quote={QuoteToken()}",
                 // Rule 1's reading, and the only token that says whether the proof is worth anything.
                 $"coid={ClientOrderIdToken()}",
+                // What the durable witness holds, and — through the session prefix — WHICH RUN of
+                // the bridge is reading it. That prefix is the difference between "the experiment
+                // has been performed" and "you are looking at the same process that wrote the
+                // record", which is otherwise invisible from outside and is the single easiest way
+                // to mistake a restart that did not happen for a proof that did not appear.
+                //
+                // CoidWitness.Token contains no space by contract, which this line depends on: the
+                // report is space-joined and tools/probe splits it on spaces, so a space here would
+                // silently turn one field into two.
+                $"witness={_witness.Token()}",
                 $"cache={cacheNote}");
         }
         catch (Exception ex)
@@ -579,8 +665,8 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     }
 
     /// <summary>
-    /// The rule-1 read-back, in one token, with the five readings kept apart because they mean five
-    /// different things and only one of them is proof:
+    /// The rule-1 read-back, in one token, with the six readings kept apart because they mean six
+    /// different things and only two of them are proof:
     ///
     ///   unattempted      no order carrying a client order id has been submitted yet. Says nothing
     ///                    about ATAS.
@@ -593,13 +679,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///                    true by construction and proves nothing beyond Order.Id being assigned.
     ///                    MUST NOT be trusted as a round trip.
     ///   proven-distinct  a genuinely different object carried our identifier. That is the round trip
-    ///                    rule 1 asks about, actually observed.
+    ///                    rule 1 asks about, actually observed — within one session.
+    ///   proven-crosssession
+    ///                    an identifier a PREVIOUS run of this product wrote down before submitting
+    ///                    was found on an order in ATAS's book carrying the broker id that run
+    ///                    recorded. The identifier outlived the process that made it, which is the
+    ///                    reading reconciliation after a dropped pipe actually rests on.
     ///
-    /// The five strings are unchanged and are not free text: tools/probe switches on them verbatim
-    /// and BUILD-STATUS.md quotes them as evidence. SupportsClientOrderId now reads the same field —
-    /// proven-distinct is the only one of the five it reports true from — so the boolean and this
-    /// token can no longer contradict each other. The word is still the more informative of the two:
-    /// proven-sameref says "a match happened AND it was worthless", which no boolean can say.
+    /// The six strings are not free text: tools/probe switches on them verbatim and BUILD-STATUS.md
+    /// quotes them as evidence. SupportsClientOrderId reads the same field — proven-distinct and
+    /// proven-crosssession are the two it reports true from — so the boolean and this token cannot
+    /// contradict each other. The word is still the more informative of the two: proven-sameref says
+    /// "a match happened AND it was worthless", which no boolean can say, and proven-crosssession
+    /// says "and it survived a restart", which no boolean can say either.
     /// </summary>
     string ClientOrderIdToken()
     {
@@ -1177,6 +1269,22 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             if (!string.IsNullOrEmpty(cmd.ClientOrderId)) _clientOrderIdAttempts++;
         }
 
+        // THE WRITE-AHEAD RECORD, AND IT GOES DOWN BEFORE THE ORDER DOES.
+        //
+        // That ordering is the whole evidential value of the file. The claim "this product is about
+        // to submit this identifier" is made while there is still no order to describe, by a process
+        // that will be gone by the time a later run reads it — so it cannot be a story composed
+        // afterwards to fit an order somebody found in ATAS's book. Written after the submission it
+        // would say exactly the same words and prove nothing, and nothing in the data would show
+        // which of the two happened. Do not move this below the OpenOrder call.
+        //
+        // GUARDED BECAUSE A DISK PROBLEM MUST NOT FAIL AN ORDER. CoidWitness swallows IO failure
+        // itself; this is the second belt, because an exception raised HERE — after _submitted has
+        // been written and before ATAS has been asked — would be read by the gateway as an
+        // ambiguous placement for an order that was never submitted. Rule 3 broken by bookkeeping.
+        Guard(() => _witness.Submitting(cmd.ClientOrderId, portfolio.AccountID, cmd.Symbol,
+                                        cmd.Side.ToString(), cmd.Quantity, cmd.LimitPrice));
+
         // Whether ITradingManager will place an order for an instrument or portfolio OTHER than its
         // own selected pair has NOT been measured. Where a connector exists it definitely will, so an
         // off-chart order prefers it; where one does not — the chart-strategy case — the trading
@@ -1214,6 +1322,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
         if (Failure(cmd.ClientOrderId, order) is { } refusal)
             throw new AtasRejectedException(refusal);
+
+        // THE HALF WE DID NOT WRITE. Order.Id as ATAS assigned it, recorded against the claim made
+        // above. A later process cannot accept a cross-session match on the identifier alone — any
+        // order carrying that comment would satisfy it — so this is what lets it require that the
+        // order in front of it is the order this run submitted. Guarded for the same reason the
+        // write-ahead call is: it runs after the order has been accepted, where an exception would
+        // turn a placed order into an UNKNOWN one.
+        //
+        // WaitFor above has already settled or timed out, so Order.Id is either assigned or is not
+        // coming promptly; Identified ignores an empty id, and OnOrderPayload records it later if
+        // ATAS assigns one after this returns.
+        Guard(() => _witness.Identified(cmd.ClientOrderId, order.Id));
 
         // GUARDED, and the guard is the whole point. This is a diagnostic, and it enumerates ATAS's
         // own order collection — which ATAS may be mutating on its own thread at precisely this
@@ -1658,7 +1778,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         _pulse.Set();
         foreach (var o in Fan<AtasOrder>(payload))
         {
-            if (!string.IsNullOrEmpty(o.Comment)) ProveClientOrderId(o.Comment);
+            if (!string.IsNullOrEmpty(o.Comment))
+            {
+                // ATAS assigns Order.Id asynchronously, so Place's own attempt at this can run
+                // before there is an id to record. This is the other place it can arrive.
+                //
+                // IT IS SAFE TO CALL IT FOR EVERY ORDER THAT CROSSES THE FEED, and the safety is
+                // CoidWitness.Identified's rather than this call site's: it writes only into a
+                // record belonging to the RUNNING session. An order carrying a PRIOR session's
+                // comment — restored from a workspace, or placed by hand with the same text — is a
+                // no-op here, which is exactly the guard that stops such an order writing its own
+                // id into the record and then matching itself on the next read-back.
+                _witness.Identified(o.Comment, o.Id);
+                ProveClientOrderId(o.Comment);
+            }
             OrderChanged?.Invoke(ToOrder(o, null));
         }
     }
@@ -2691,10 +2824,32 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <see cref="_touched"/> and <see cref="AdapterTouchedOrders"/>; the rule is stated there,
     /// where a test on any machine can reach it.
     ///
-    /// THE LIVE READING HAS BEEN TAKEN AND IT WAS SAMEREF, so SupportsClientOrderId now reads the
-    /// distinction: proven-distinct alone reports true. See ClientOrderIdProofs.ProvesRoundTrip for
-    /// the decision, and the latch note in the body for why "we have an answer" is not the same
-    /// condition as "stop looking".
+    /// THE LIVE READING HAS BEEN TAKEN AND IT WAS SAMEREF, so SupportsClientOrderId reads the
+    /// distinction rather than the match. See ClientOrderIdProofs.ProvesRoundTrip for the decision,
+    /// and the latch note in the body for why "we have an answer" is not the same condition as
+    /// "stop looking".
+    ///
+    /// THERE ARE NOW TWO ROUTES IN, AND THE SECOND IS THE ONE THAT CAN SETTLE RULE 1.
+    ///
+    ///   * IN-SESSION. The id is in <see cref="_submitted"/>; the reading is SameRef or Distinct
+    ///     depending on whose object carried it back. Unchanged in every respect.
+    ///   * CROSS-SESSION. The id is NOT in _submitted, and <see cref="CoidWitness"/> holds a record
+    ///     written by an EARLIER process of this product, before that order existed, carrying the
+    ///     broker order id that process saw ATAS assign. The reading is CrossSession, and it is the
+    ///     only one obtainable after a restart — which is the only experiment that can read the
+    ///     identifier off something that cannot be our own object, because our own objects do not
+    ///     survive the process that made them.
+    ///
+    /// The second route is NOT the 2026-08-27 guard relaxed. The identifier must still be one this
+    /// product submitted; the evidence for that may simply have been written down rather than
+    /// remembered. And it demands more than the first: the order must ALSO carry the broker id in
+    /// the record — the half this product did not choose — which is what stops a stray order that
+    /// merely carries the same comment from standing in for the one that was submitted.
+    ///
+    /// WHAT A CROSS-SESSION MATCH STILL DOES NOT PROVE: that the identifier reached the BROKER. It
+    /// cannot separate ATAS rebuilding the order from the broker's own answer on reconnect from
+    /// ATAS rehydrating it out of its own local store. All three survive a restart and look
+    /// identical from inside a chart strategy. See ClientOrderIdProof.CrossSession.
     /// </summary>
     void ProveClientOrderId(string clientOrderId)
     {
@@ -2714,14 +2869,17 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // vacuous reading is how the real proof becomes permanently unreachable in silence.
             //
             // So the latch follows the STRONGEST reading rather than the capability, and IsSettled
-            // says which that is. The two coincide today (Distinct is both) and are deliberately
-            // separate methods, because they would part company the moment a stronger reading is
-            // added and the latch must track that one, not the boolean.
+            // says which that is. THE TWO HAVE NOW PARTED COMPANY, which is what they were kept
+            // separate for: Distinct reports the capability and does NOT settle the search, because
+            // in a FRESH SESSION a Distinct reading is free. After ATAS restarts this adapter has
+            // constructed no Order at all, so every match is reference-distinct by construction —
+            // and if that latched, the cross-session reading the restart experiment exists to take
+            // would be unreachable, in silence, behind a truthful proven-distinct. That is trap 30.
             //
-            // The cost of not latching on SameRef is one extra pass over the live order book per
-            // order event that names an id we submitted. That is the same scan this method already
-            // ran on every such event before any match at all, so it is not a new kind of work — and
-            // it is the price of the proof staying reachable, which outranks it.
+            // The cost of not latching before CrossSession is one extra pass over the live order
+            // book per order event that names an id we can account for. That is the same scan this
+            // method already ran on every such event before any match at all, so it is not a new
+            // kind of work — and it is the price of the proof staying reachable, which outranks it.
             if (_clientOrderIdProof.IsSettled()) return;
 
             // Rule 1 is that the adapter reads back ITS OWN identifier, and this is what makes that
@@ -2735,7 +2893,27 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             //
             // Trim() can empty _submitted after 4096 orders, so a very old id stops being provable.
             // That refuses a proof rather than inventing one, which is the direction to fail in.
-            if (!_submitted.TryGetValue(clientOrderId, out mine)) return;
+            _submitted.TryGetValue(clientOrderId, out mine);
+        }
+
+        // THE CROSS-SESSION BRANCH, AND IT IS NOT A RELAXATION OF THE GUARD ABOVE.
+        //
+        // The identifier must still be one this PRODUCT submitted. The only thing that changes is
+        // WHERE that is established: in memory by this process, or on disk by an earlier one that
+        // wrote the claim down before the order existed and is gone by the time it is read. An id
+        // in neither place is refused exactly as it always was, so an order in ATAS's book carrying
+        // somebody else's comment still proves nothing.
+        //
+        // It requires strictly MORE than the in-session path, not less — see the Id test in the
+        // scan below. And it is reached only when the id is absent from _submitted, so an order
+        // THIS session placed can never take it: for those, _submitted is the authority and the
+        // in-session readings apply. That is what stops a fresh process reaching the strongest
+        // reading in the product for an order it placed itself thirty seconds ago.
+        CoidWitnessRecord? prior = null;
+        if (mine is null)
+        {
+            prior = _witness.PriorSession(clientOrderId);
+            if (prior is null) return;
         }
 
         // No trading surface means no collection to look in, so there is nothing to learn and this is
@@ -2753,6 +2931,16 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         {
             if (!string.Equals(o.Comment, clientOrderId, StringComparison.Ordinal)) continue;
             if (string.IsNullOrEmpty(o.Id)) continue;
+
+            // THE HALF WE DID NOT WRITE, and the reason the cross-session branch is stricter rather
+            // than looser. The comment is a string this product chose, so an order carrying it is
+            // satisfiable by anything that carries that text — a workspace-restored order, a hand
+            // placement, a copied comment. The broker order id is not ours: the earlier session read
+            // it off Order.Id after ATAS assigned it, and CoidWitness refuses to let any later
+            // session write one in. Requiring the two together is what makes this "the order that
+            // run submitted" rather than "an order with the same label on it".
+            if (prior is not null && !string.Equals(o.Id, prior.BrokerOrderId, StringComparison.Ordinal)) continue;
+
             match = o;
 
             // WHOSE OBJECT IS THIS? The only question that separates a round trip from the adapter
@@ -2774,7 +2962,25 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         }
         if (match is null) return;
 
-        var observed = ClientOrderIdProofs.Observed(matchIsOurs);
+        ClientOrderIdProof observed;
+        if (prior is null) observed = ClientOrderIdProofs.Observed(matchIsOurs);
+        else
+        {
+            // AN OBJECT THIS ADAPTER TOUCHED IS NEVER EVIDENCE, IN ANY SESSION — and this is not
+            // belt-and-braces, there is a live path to it. Modify() clones the order it is replacing
+            // and Clone() copies Comment, so a modify of an order left over from a PREVIOUS session
+            // (which is exactly what reconciliation after a restart does) produces an object THIS
+            // adapter constructed carrying a PRIOR session's identifier. Without this test that
+            // clone would be the cross-session proof, and it would be the adapter proving rule 1
+            // against its own object with extra steps.
+            //
+            // matchIsOurs starts true and only an untouched match clears it, so a _touched set that
+            // has forgotten (AdapterTouchedOrders.Trim) refuses this reading too. Refusing a proof
+            // is the direction to fail in; the restart experiment runs on a fresh session, where
+            // that set is empty.
+            if (matchIsOurs) return;
+            observed = ClientOrderIdProof.CrossSession;
+        }
 
         lock (_gate)
         {
