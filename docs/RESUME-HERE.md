@@ -240,6 +240,38 @@ object the adapter built cannot pass for one ATAS built; ATAS calls and bridge t
 deadlines; the whole adapter compiles and runs against real ATAS; and the probe explains a refusal
 instead of timing out.
 
+## Reading TradeAgent from here, when capture is unavailable
+
+The RDP session renders nothing most of the time (trap 19), and for a whole session that read as
+"the UI cannot be checked". It can. Two routes, both used on 2026-08-31 and both better evidence than
+a screenshot anyway, because they produce quotable data rather than a picture somebody has to read.
+
+**The app answers its own pipe.** `GatewayStatus` carries the whole health snapshot, so the trade CLI
+prints every row the dashboard shows:
+
+```bash
+tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'   # mode, account, health[], risk
+tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" orders'   # what is actually working
+tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" positions'
+```
+
+This is how the ATAS health rows were proved: the same command, before and after the fix, on the same
+machine and the same ATAS session.
+
+**UI Automation reads the tree without rendering it.** `find` returns names, types and — the useful
+part — `enabled`, which is where most state actually lives:
+
+```bash
+tools/win-ui.sh find --query 'Account in use'     # never pass --window (trap 39)
+tools/win-ui.sh find --query 'Use ATAS'           # enabled=False means "already the platform in use"
+tools/win-ui.sh invoke --ref <the nav button>     # switch pages, then read again
+```
+
+What neither route gives you is whether it *looks* right — colour, spacing, truncation, a label
+running off the end of a row. That still needs a reconnected session. Do not confuse "the state is
+correct" with "the screen is correct"; the ~450-character bridge-refusal sentence in step 3 is
+exactly the kind of thing only eyes will catch.
+
 ## Driving ATAS from here
 
 Re-performed end to end on 2026-08-30, unattended, and **corrected where the 2026-08-28 version was
