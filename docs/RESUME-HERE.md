@@ -10,14 +10,16 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The machine is working and the place path has been measured.** Two things are worth starting on,
-both in **The work queue**, and neither is blocked:
+**The machine is working, the place path is measured, and nothing is blocked.** Three things are
+ready to start, in **The work queue**. If you only do one, do task 2:
 
-- **task 1** — one sub-question left on `OpenOrderAsync`; needs a small piece of new code, not a new
-  run;
-- **task 2** — a defect found on 2026-09-01: every successful cancel strands its own request record
-  at `DISPATCHING`, so the Dashboard permanently over-counts open orders. Display only, bounded, and
-  it carries a second and more interesting half about a catch that mislabels a table gap as a race.
+- **task 2 — the one that matters.** On ATAS the first ambiguous order pauses trading permanently and
+  the human override has no button anywhere in the product. Five links, each read rather than
+  assumed, and it gates the staged live trial. Found 2026-09-01.
+- **task 3** — every successful cancel strands its own request at `DISPATCHING`. Display-only impact,
+  fully diagnosed, and **the fix is written out step by step** — it should be an hour, not a day.
+- **task 1** — the last sub-question on `OpenOrderAsync`; needs a small piece of new code rather than
+  a new run on the machine.
 
 Confirm the machine — two commands, neither disturbs anything:
 
@@ -106,9 +108,10 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
-## Where the machine is (2026-08-31, end of the later session)
+## Where the machine is (verified 2026-09-01)
 
-**Everything up and working, including screen capture for the first time in three sessions.**
+**Everything up and working, including screen capture. Re-checked on 2026-09-01 after 11 hours
+uptime — it survived the night unattended, in this exact state.**
 
 ```
 session : 1, on the CONSOLE, Active — moved there with `tscon 1 /dest:console`
@@ -122,7 +125,7 @@ health : every row READY except the three agent rows, blank until the AI is star
 ```
 
 **The Dashboard says "Open orders / unconfirmed: 1 / 0" and the book is genuinely empty.** That 1 is
-a stranded CANCEL record, not an order — work-queue task 2 explains it in full. Do not go looking for
+a stranded CANCEL record, not an order — work-queue task 3 explains it in full. Do not go looking for
 a phantom order; `trade orders` returns `[]` and the position is 0.
 
 **Two test orders were placed and cancelled** on the simulated `CRYPTO5EB41` account (broker ids
@@ -169,8 +172,8 @@ computed; the agent cannot write or edit one. `material_note` rows are the agent
 itself. Merging them, or letting a note touch a material row, turns a record into an assertion —
 which is the entire failure this was built to prevent.
 
-What is left on it is in **The work queue** — dragging a real file onto it is part of task 3, and
-watching an agent actually use it and the size cap are in task 5. It is listed there rather than here
+What is left on it is in **The work queue** — dragging a real file onto it is part of task 4, and
+watching an agent actually use it and the size cap are in task 6. It is listed there rather than here
 so there is one queue rather than two.
 
 ## The work queue
@@ -232,7 +235,50 @@ deserves its own change and its own reasoning.
 **Whatever you do: cancel anything left resting and verify the book from a separate run.** Both runs
 above did, and the probe says so (`CLEANUP VERDICT`).
 
-### 2. Every successful cancel strands its own request at DISPATCHING
+### 2. On ATAS, the first ambiguous order permanently disables trading, and the escape hatch has no button
+
+Found 2026-09-01 while checking whether the advice in task 3 was actionable. It was not, and that is
+the finding. Each link below was read, not assumed:
+
+1. An order whose outcome is ambiguous — a timeout, a disconnect — becomes `UNKNOWN` and is flagged
+   for reconciliation. That is rule 3 working correctly.
+2. `ReconcileAsync` refuses to guess on a backend that cannot prove its own history:
+   `if (!Connector.Capabilities.ReconciliationProvable) { inconclusive++; ...; continue; }` — and its
+   own message is *"cannot prove order state; needs a human to look"*.
+3. **`ReconciliationProvable` is false on ATAS** and will stay false: it needs `SupportsOrderHistory`,
+   which is false because `GetService<T>()` throws for every type. That is settled and is not a gap.
+4. `TryAuthorizeExecution` refuses while `NeedingReconciliation().Count > 0`
+   (`TradingGateway.cs:238`). So trading is paused.
+5. The human override the design points at — `TradingGateway.ForceResolve`, "the one place a person
+   asserts a fact the software could not prove" — **exists, is tested, and has no route into it.**
+   It appears in `TradingGateway.cs` and in one test, and nowhere else in the product.
+
+**So on the platform this ships for, the first ambiguous order pauses trading forever and there is no
+in-product way to clear it.** The no-terminal rule forbids the workaround as well: "edit the database"
+is not an answer this product is allowed to give.
+
+**Do not fix this by adding a `trade resolve` command.** Operator authority is in-process only and
+deliberately unreachable from the agent-facing pipe — an agent that wants more permission must have
+nowhere to ask. `ForceResolve` is *correctly* absent from `GatewayPipeServer` and the CLI. The route
+belongs in the app, and nowhere else.
+
+**Shape of the work:**
+
+- A card on the Dashboard, visible only when something needs reconciliation, listing each request with
+  what is known: instrument, side, quantity, client order id, broker id if there is one, when it was
+  dispatched, and what the last reconcile attempt said.
+- Two-press, because it widens what the software will believe: `Ui.Confirm`, worded as the assertion
+  it is — *"Confirm: I checked in ATAS and this order was filled / never placed"* — not as a tidy-up.
+- It must say plainly that the user is asserting a fact the software could not verify, and that
+  trading resumes on their word. `ForceResolve` already logs it loudly at `warn`; the screen should
+  match that tone.
+- `ForceResolve(requestId, finalState, note)` takes the note already. Make the UI require it.
+
+**This gates the staged live trial (task 5).** Running real money through a path whose first
+ambiguous outcome bricks the product, with no recovery that does not involve a database editor, is
+not a trial anybody should sign off.
+
+### 3. Every successful cancel strands its own request at DISPATCHING
 
 Found on 2026-09-01 while checking why the Dashboard had said "Open orders / unconfirmed: **1** / 0"
 since the `LIVE_CONFIRM` walk. It is not the walk's order — that closed correctly. It is the **cancel
@@ -260,23 +306,79 @@ check and no reconciliation depends on it — `needs_reconciliation` is 0 and `E
 untouched. So it is a dashboard that quietly asserts something untrue about the book, growing by one
 per cancel, and not a safety failure.
 
-**Two things to decide, and they are separate:**
+**The decision is made; what follows is the work, in order.** Both halves are small. Do the second
+one first — it is unambiguous, and it is what let the first one hide.
 
-1. **Is `DISPATCHING → CANCELLED` legal?** For the cancel path it plainly is —
-   `CancelOrderAsync` returning without an exception is the broker confirming. But adding it to the
-   table widens it for *every* intent and every future caller, and the table already allows `UNKNOWN`
-   from `DISPATCHING` precisely because a dispatch usually cannot know. Decide it deliberately; this
-   is the file whose header says it is the only place transitions are legal.
-2. **`Settle`'s catch mislabels a table gap as a benign race.** It exists for "somebody else already
-   settled this", and it logged `already_settled` about a record that was not settled at all. It can
-   tell the two apart — if the stored state is still the `from` state, nothing raced, the table
-   refused — and the second case should be loud. **That is arguably the more valuable half of this
-   fix**, because it is what let the first half hide for a fortnight.
+**Step 1 — make `Settle` stop calling a table gap a race.** `ILLEGAL_STATE_TRANSITION` is thrown from
+two different places and `Settle` treats them identically:
 
-Whatever is decided, a test should pin it: place, cancel, then assert the CANCEL record is terminal
-and `Open()` is empty. `PolicyGateTests` is where the comparable gates already live.
+- `OrderStateMachine.Require` — **the table forbids `from -> to`.** A defect in the caller.
+- `ExecutionRequestStore.Transition` — **the CAS check failed**, the record was not in `expectedFrom`.
+  A genuine race, and what this catch was written for.
 
-### 3. Look at TradeAgent's own UI on Windows — with eyes
+They are distinguishable without parsing a message: if the stored state is still `DISPATCHING`,
+nothing raced.
+
+```csharp
+catch (TradeAgentException ex) when (ex.Code == ErrorCode.ILLEGAL_STATE_TRANSITION)
+{
+    var actual = _requests.Get(requestId)!;
+
+    // TWO DIFFERENT FAILURES ARRIVE HERE AND THEY ARE NOT THE SAME NEWS. If the record is still
+    // where we left it, nobody raced us — the TABLE refused, which is a defect in this code and
+    // must never be filed as `already_settled`.
+    if (actual.State == ExecutionState.DISPATCHING)
+    {
+        _log.Engineering("Gateway", "illegal_settle", "error", requestId: requestId,
+            metadataJson: Json.Write(new { intended = to.ToString(), from = actual.State.ToString() }));
+        return actual;
+    }
+
+    _log.Engineering("Gateway", "already_settled", requestId: requestId, /* unchanged */);
+    return actual;
+}
+```
+
+**Log loudly; do NOT rethrow.** This runs on a write path that has already reached the broker.
+Turning a bookkeeping failure into a thrown error would report failure for an operation that
+succeeded — the wrong direction, and rule 3's own reasoning one level up. The loud log is what makes
+the next gap of this kind visible in minutes instead of a fortnight.
+
+**Step 2 — add `CANCELLED` to `Allowed[DISPATCHING]`,** with the reasoning in a comment beside it:
+
+- *Why it was excluded, and the exclusion was not an oversight:* a PLACE that is dispatching cannot
+  **know** it was cancelled, and forcing that case to `UNKNOWN -> RECONCILING` is the safe direction
+  to fail.
+- *Why it is safe to allow:* `Settle(..., CANCELLED)` has exactly one call site — `CancelAsync` —
+  and it is reached only after `Connector.CancelOrderAsync` returned without an exception, which is
+  a definite broker confirmation and not an inference.
+- *Why the widening is acceptable in a table that is deliberately intent-agnostic:* after step 1, any
+  other caller taking this edge wrongly appears in the engineering log at `error` severity on the
+  first occurrence. The table stays a pure readable function; the guard sits at the call site, which
+  is where it can see the broker's answer.
+
+*Considered and rejected:* making the table intent-aware (legal for `RequestIntent.CANCEL` only). Its
+whole value is being a small pure function anyone can read in one screen, and it is the wrong place to
+learn about intents.
+
+**Step 3 — pin it.** `PolicyGateTests` in `tests/TradeAgent.FaultTests/FaultTests.cs` is where the
+comparable gates live:
+
+- place a resting limit order, cancel it, then assert **both** that the CANCEL record is terminal and
+  that `Open()` is empty. Asserting only the record would pass on a state machine that stranded it
+  somewhere else non-terminal.
+- assert `OrderStateMachine.CanTransition(DISPATCHING, CANCELLED)` directly, so the table edge has a
+  test of its own rather than only being exercised through the gateway.
+- assert the existing terminal-state and `UNKNOWN`-never-redispatches rules still hold — `CoreTests`
+  already has them; just make sure they stay green, because this change edits that table.
+
+**Expected result:** the Dashboard reads `Open orders / unconfirmed: 0 / 0` on the machine, where it
+has read `1 / 0` since 2026-08-31. That stranded record is real data and will still be there — it is
+`lc-walk-001-cancel`, and nothing in the fix backfills it. Leave it and say so, or settle it through
+`ForceResolve` — **which currently has no route into it at all**; see task 2, which is that discovery.
+**Do not hand-edit the database**: that is the one move this record was created by resisting.
+
+### 4. Look at TradeAgent's own UI on Windows — with eyes
 
 **Started, and it immediately earned its place.** With capture working, the Dashboard and Settings
 pages were seen on Windows for the first time on 2026-08-31, and looking found a defect nothing else
@@ -301,14 +403,16 @@ renders as bare text with no border, so "Use ATAS" when ATAS is already in use r
 label than a disabled control (the `IN USE` pill carries the state, so it is not ambiguous); and the
 rail says "3 parts not checked yet" for the three agent rows until the AI is started.
 
-### 4. The staged live trial
+### 5. The staged live trial — GATED ON TASK 2
 
 paper → extended paper run → one tiny live order → disconnect/recovery test → autonomous live
-permission. `LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
+permission. **Do not start this before task 2.** The disconnect/recovery step is precisely the one
+that produces an ambiguous order, and today that outcome pauses trading with no in-product way to
+clear it. `LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
 `SupportsOrderHistory`, which is false because `GetService<T>()` throws for every type. Rule 1 opened
 one gate; the other is shut on an answer, not a gap.
 
-### 5. Small, real, and deliberately not smuggled into anything else
+### 6. Small, real, and deliberately not smuggled into anything else
 
 - **`Agent runtime`, `Agent process` and `Workspace` are blank `UNKNOWN` rows** until the AI is
   started, so a simulator user reads "3 parts not checked yet" in the rail forever. Unlike the ATAS
@@ -384,7 +488,7 @@ tools/win-ui.sh invoke --ref <the nav button>     # switch pages, then read agai
 What neither route gives you is whether it *looks* right — colour, spacing, truncation, a label
 running off the end of a row. That still needs a reconnected session. Do not confuse "the state is
 correct" with "the screen is correct"; the ~450-character bridge-refusal sentence in work-queue
-task 3 is exactly the kind of thing only eyes will catch.
+task 4 is exactly the kind of thing only eyes will catch.
 
 ## Driving ATAS from here
 

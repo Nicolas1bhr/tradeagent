@@ -192,7 +192,31 @@ it is the only place transitions are legal, and the second half of the defect is
 more valuable: `Settle`'s catch exists for "somebody else already settled this" and it reported
 `already_settled` about a record nothing had settled. It can distinguish the two — if the stored state
 is still the `from` state, nothing raced and the table refused — and that conflation is what let this
-hide. Both decisions are in `docs/RESUME-HERE.md`, work-queue task 2.
+hide. **The fix is now written out step by step** in `docs/RESUME-HERE.md`, work-queue task 3.
+
+### Found 2026-09-01, NOT FIXED: on ATAS the first ambiguous order pauses trading for good
+
+Found by checking whether a piece of advice in the handoff was actionable. It was not. Every link was
+read in the source, not inferred:
+
+1. An ambiguous outcome becomes `UNKNOWN` and is flagged for reconciliation — rule 3 working.
+2. `ReconcileAsync` will not guess on a backend that cannot prove its own history, and says so:
+   *"cannot prove order state; needs a human to look"*.
+3. `ReconciliationProvable` is false on ATAS and stays false — it needs `SupportsOrderHistory`, which
+   is false because `GetService<T>()` throws for every type. Settled, and not a gap.
+4. `TryAuthorizeExecution` refuses while anything needs reconciliation (`TradingGateway.cs:238`).
+5. `TradingGateway.ForceResolve` — the designed human override, "the one place a person asserts a fact
+   the software could not prove" — **exists, is tested, and has no route into it.** It appears in the
+   gateway and in one test, and nowhere else in the product.
+
+**So on the platform this ships for, the first ambiguous order pauses trading permanently and there is
+no in-product way to clear it** — and "edit the database" is a workaround the no-terminal rule
+forbids. It is correctly absent from the agent pipe and the CLI, because operator authority is
+in-process only; the missing route belongs in the app.
+
+Not fixed here: it wants a Dashboard surface, a two-press confirmation worded as the assertion it is,
+and a required note. Scoped in `docs/RESUME-HERE.md`, work-queue task 2, and it **gates the staged
+live trial**.
 
 ### Tests
 
@@ -1802,7 +1826,7 @@ ATAS bridge     connected · bridge
                 8.0.14, protocol 2
 ```
 
-Nothing but looking at it would have found this. It is the argument for work-queue task 2 in one
+Nothing but looking at it would have found this. It is the argument for work-queue task 4 in one
 screenshot.
 
 ### Trap 21 came back, with TradeAgent as the victim
