@@ -8,30 +8,51 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ---
 
-## The one sentence to carry
+## Do this first
 
-**`LIVE_CONFIRM` is walked, through ATAS, on hardware (2026-08-31).** An AI session proposed
+**The next task is one measurement, and it can only be taken on the Windows machine: does
+`ITradingManager.OpenOrderAsync` complete on SUBMISSION or on broker ACKNOWLEDGEMENT?** It is the
+last piece of adapter work with a known shape, and it is scoped to the point of being executable
+under **The work queue** below. Nothing else is waiting on a decision.
+
+Confirm the machine before planning anything. Two commands, about twenty seconds, and neither
+disturbs anything:
+
+```bash
+tools/win-state.sh
+tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'
+```
+
+Expect `automation : WORKS`, ATAS `running : True`, and in the status JSON
+`ATAS bridge: READY — connected · bridge 8.0.14, protocol 2` with `mode: LIVE_CONFIRM` and
+`live_activated: false`. That second command is new as of 2026-08-31 and it is the cheap way in:
+it reads the running app's own health snapshot, so it works even though the RDP session renders
+nothing. See "Reading TradeAgent from here".
+
+Three facts that will otherwise cost you time in the first ten minutes:
+
+- **`probe atas` needs TradeAgent STOPPED.** Both open a server on the bridge pipe and they compete
+  for it. `tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'` first.
+- **Stop TradeAgent before any push** — it runs from inside `C:\ta\repo\src\...`, which
+  `win-push.sh` deletes. The push now refuses rather than half-deleting it (trap 42).
+- **Screen capture does not work** and probably still will not; automation does. That is a rendering
+  limitation of a disconnected RDP session (trap 19), not a broken machine.
+
+Everything below is reference. Read **The work queue**, then the traps for whatever you are about to
+touch. You do not need the rest unless something surprises you.
+
+---
+
+## What is settled — carry these, do not re-prove them
+
+**`LIVE_CONFIRM` is walked, through ATAS, on hardware.** An AI session proposed
 `buy 1 BTCUSDT limit 70000`, the gateway refused it with `APPROVAL_REQUIRED` and parked it, a human
 approved it in the app (two presses), and it reached ATAS as broker order `12021602` before being
-cancelled and the book verified clean. That was the reachable milestone and it is done. The rule-1
-proof below still stands and still does not need re-proving.
+cancelled and the book verified clean. That was the reachable milestone and it is done.
 
-## The sentence added on 2026-08-31, later session
-
-**An account nobody chose could be traded, and now cannot.** `PlaceAsync` resolves its account through
-a helper that falls back to the platform's first account when nothing has been chosen — harmless for
-rendering a status screen, and it reached the broker. `TryAuthorizeExecution` now refuses with
-`ACCOUNT_NOT_FOUND`. The emergency controls sit outside that gate on purpose and must stay outside it.
-
-It was unreachable until the same session made the platform changeable after setup, because switching
-platform has to clear the chosen account. That is the shape worth carrying: **the feature did not
-cause the hole, it revealed one, and the fix belonged in the gateway rather than in the page.**
-
-## The older sentence, still true
-
-**Rule 1 is proven.** An order was placed, ATAS was shut down, and the identifier was found again on
-an order in the restarted platform's own collection — alongside the broker id the dead run had
-recorded before it ended.
+**Rule 1 is proven, across a process restart.** An order was placed, ATAS was shut down, and the
+identifier was found again on an order in the restarted platform's own collection, beside the broker
+id the dead run had recorded in advance.
 
 ```
 BRIDGE SESSION : 1ce7ec65        RECORD SESSION : bccb57cf
@@ -43,22 +64,29 @@ RULE 1         : PROVEN ACROSS A PROCESS RESTART. THIS IS THE ANSWER.
 The process that read it had constructed no `Order` at all, so the match cannot be our own object —
 which is exactly what made every earlier reading worthless. **In-session the reading is still
 `proven-sameref` and still reports false**, on two different connectors, so that is how ATAS's
-collection works rather than one backend's quirk.
+collection works rather than one backend's quirk. **The bound is real and printed in the verdict:** a
+cross-session match cannot separate ATAS rebuilding the order from *the broker's* answer on
+reconnect, from ATAS rehydrating it out of its own local store. The identifier survives ATAS
+restarting, which is what reconciliation needs. Whether it ever reached the broker is a different
+question, and only the broker's own report answers it.
 
-**The bound is real and is printed in the verdict itself:** a cross-session match cannot separate ATAS
-rebuilding the order from *the broker's* answer on reconnect, from ATAS rehydrating it out of its own
-local store. The identifier survives ATAS restarting, which is what reconciliation needs. Whether it
-ever reached the broker is a different question that only the broker's own report answers.
+**An account nobody chose could be traded, and now cannot.** `PlaceAsync` resolves its account
+through a helper that falls back to the platform's first account when none has been chosen —
+harmless for rendering a status screen, and it reached the broker. `TryAuthorizeExecution` now
+refuses with `ACCOUNT_NOT_FOUND`, and the emergency controls sit outside that gate on purpose. The
+shape worth carrying: it was unreachable until the same session made the platform changeable after
+setup, so **the feature did not cause the hole, it revealed one — and the fix belonged in the
+gateway, not in the page.**
 
-Where the two autonomy gates stand:
+**Where the two autonomy gates stand:**
 
 - `SupportsClientOrderId` — **true, on evidence**, since 2026-08-30.
 - `SupportsOrderHistory` — **false, for a known reason.** `GetService<T>()` throws
-  `NotSupportedException` for *every* type including one reachable as a property on the same
+  `NotSupportedException` for *every* type, including one reachable as a property on the same
   interface, so no cache route exists. That is an answer, and a shippable one.
 
-`ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. **That is still correct:**
-one gate is now open on evidence, the other is shut on an answer. Do not "fix" the second by
+`ReconciliationProvable` is false and the gateway refuses `LIVE_AUTONOMOUS`. **That is still
+correct:** one gate is open on evidence, the other is shut on an answer. Do not "fix" the second by
 hard-coding it.
 
 ## The rule that shapes every design decision
@@ -71,75 +99,49 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
-## Where the machine is right now (2026-08-31, later session)
+## Where the machine is (2026-08-31, later session)
 
-**UP, ATAS running with the bridge started, TradeAgent rebuilt and restarted from this tree.**
+**UP. ATAS running with the bridge started, TradeAgent rebuilt from this tree and restarted.**
+There is one description of this machine on purpose — the previous two drifted apart.
 
 ```
 session : Disc (id 1)   desktop : renders nothing (trap 19) — automation WORKS, capture does NOT
-ATAS : running, 8.0.14.397, bridge connected, protocol 2
-TradeAgent : rebuilt Release from this tree and relaunched (pid changed; it was stopped to push)
+ATAS       : running, 8.0.14.397, bridge connected, proto=2, auth=ok
+TradeAgent : Release, built from this tree, running from C:\ta\repo\src\TradeAgent.App\bin\Release\net10.0
 mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, correctly
-account : CRYPTO5EB41   book : orders [] · nothing unreconciled · 1 open request record
-health : every row READY except the three agent rows, which are blank until the AI is started
+account : CRYPTO5EB41   book : orders [] · position 0 · nothing unreconciled · 1 open request record
+health : every row READY except the three agent rows, blank until the AI is started
 ```
 
 **Real-money trading is OFF**, so nothing can dispatch even though the mode is still `LIVE_CONFIRM`.
 The mode is left there deliberately so the next session does not have to redo the setup.
 
-**The connector is `atas` and the account `CRYPTO5EB41`. Both can now be changed in the app** — there
-is a Settings page; the database no longer has to be edited by hand. The bridge strategy is started on
-the BTCUSDT chart; the ES chart still has no strategy, and it must stay that way (two bridges, one
-pipe).
-
-**Note on the ATAS account list:** it offers exactly one account — the portfolio the bridge's chart is
-bound to — because `ChartStrategy.Connector` is null (trap 13). Changing ATAS account means moving the
-strategy to a chart on the other account, not picking a different row in Settings.
-
-**Stop TradeAgent before pushing** (trap 42). `win-push.sh` now refuses rather than half-deleting it.
-
-The database is at schema 2 and was migrated in place from the machine's own schema-1 database. A
-copy of the pre-migration file is at `%LOCALAPPDATA%\TradeAgent\state\tradeagent.db.pre-schema2`.
-
-## Where the machine was on 2026-08-30
-
-**UP, with ATAS running and the bridge live and authenticated.** Left exactly as described here.
-
-```
-session : Disc (id 1)        desktop : LOCKED       uptime : 0d 01:42
-automation : WORKS           capture : NO - this session renders nothing
-```
-
-**It locked itself during the session.** UI automation, element invokes and the bridge all keep
-working; only screen capture stops (trap 19). So `find` / `invoke` still drive ATAS, and
-`win-ui.sh shot` will come back useless until somebody unlocks the console. Plan around that or
-unlock it first — several steps below want eyes.
-
-What is set up, and it is not the layout the previous handoff described:
+**The workspace layout, and it is load-bearing:**
 
 - **The bridge is on the BTCUSDT chart** (left panel), started, on the simulated `CRYPTO5EB41`
-  account. **The ES chart has no strategy at all** — it was deleted deliberately, because two
-  instances compete for one named pipe.
-- **Why crypto:** ES is a CME product and the session ran on a Sunday, so `quote=none(no-tick)` and
-  the probe correctly refused to price an order. BTCUSDT runs 24/7 on Binance. See trap 38.
+  account. **The ES chart has no strategy at all** — deleted deliberately, because two instances
+  compete for one named pipe. Keep it that way.
+- **Why crypto:** ES is a CME product, so out of hours `quote=none(no-tick)` and the probe correctly
+  refuses to price an order. BTCUSDT runs 24/7 on Binance (trap 38).
 - **Both accounts are simulated:** `CRYPTO5EB41` (USDT, Binance crypto-sim) and `DEMO15M440CE` (USD,
   ATAS Sim), 100,000 balance each.
-- **The bridge is current** — rebuilt from this repo, `proto=2`, `auth=ok`, and it carries the
-  witness. The DLL in `%APPDATA%\ATAS\Strategies` matches the tree.
-- **The witness file exists and holds the proof:**
-  `witness=session:1ce7ec65,records:1,prior:1,io:ok` with `coid=proven-crosssession`.
-- **The book is clean:** `orders=0 strategyorders=0 mytrades=0 position=0`, verified from a separate
-  run after the test orders were cancelled.
+- **The witness file holds the rule-1 proof:** `witness=session:1ce7ec65,records:1,prior:1,io:ok`
+  with `coid=proven-crosssession`.
+- **The ATAS account list offers exactly one account** — the portfolio the bridge's chart is bound
+  to — because `ChartStrategy.Connector` is null (trap 13). Changing ATAS account means moving the
+  strategy to a chart on the other account, not picking a different row in Settings.
 
-Check it in two commands before assuming any of it:
+**The connector is `atas` and the account `CRYPTO5EB41`. Both are now changeable in the app** — there
+is a Settings page, so the database no longer has to be edited by hand.
 
-```bash
-tools/win-state.sh
-tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
-```
+The database is at schema 2, migrated in place from this machine's own schema-1 database. A copy of
+the pre-migration file is at `%LOCALAPPDATA%\TradeAgent\state\tradeagent.db.pre-schema2`.
 
-The second should print `coid=proven-crosssession` and `auth=ok`. If it prints `auth=not-presented`
-or a protocol mismatch, the bridge DLL is older than the tree — rebuild and redeploy (recipe below).
+**Two commands to confirm all of the above** — see "Do this first". The deeper check is
+`probe atas --wait 60`, which should print `auth=ok` and `coid=proven-crosssession`; if it prints
+`auth=not-presented` or a protocol mismatch, the bridge DLL is older than the tree, so rebuild and
+redeploy (recipe under "Driving ATAS from here"). **Stop TradeAgent before running the probe** — they
+compete for the bridge pipe — **and before any push** (trap 42).
 
 ## New in scope since 2026-08-31: the AI inbox
 
@@ -157,88 +159,161 @@ computed; the agent cannot write or edit one. `material_note` rows are the agent
 itself. Merging them, or letting a note touch a material row, turns a record into an assertion —
 which is the entire failure this was built to prevent.
 
-The three things left on it, in the order they are worth doing:
+What is left on it is in **The work queue** — dragging a real file onto it is part of task 2, and
+watching an agent actually use it and the size cap are in task 4. It is listed there rather than here
+so there is one queue rather than two.
 
-1. **Watch a real agent use it.** Drop something in, ask the AI to work with it, and see whether it
-   runs `trade material ran ...` unprompted. If it does not, the notes half of the ledger is empty
-   forever and the AGENTS.md wording is what needs fixing — not the code.
-2. **Drag a file onto the window on Windows.** The drop handler, the file picker, the copy, the
-   collision suffix and the immediate rescan are compiled and unexercised. Fold this into step 3 below.
-3. **Decide whether `inbox/` should be size-capped.** Nothing stops a 60 GB drop today. The scanner
-   survives it (hashing is bounded per pass); the disk may not.
+## The work queue
 
-## What to do next, in order
+### 1. Measure `OpenOrderAsync`, then decide about the four call sites — THE NEXT TASK
 
-**Rule 1 is settled and the bridge is current.** Do not start by re-proving either.
+**The question.** `ITradingManager.OpenOrderAsync(order, setDefaultQuantity, askConfirmation,
+checkOrderStates)` exists with the same four flags as the synchronous overload the adapter calls
+today — `docs/atas-api-8.0.14.397.txt`, `interface ATAS.Indicators.ITradingManager` at line 1391,
+the async overload at 1421 directly under the obsolete synchronous one at 1420, same four flags.
+**Does the Task it returns complete when ATAS has submitted the order, or only when the broker has
+acknowledged it?**
 
-0. **DONE 2026-08-31 — do not redo it.** `LIVE_CONFIRM` is walked through ATAS end to end, and
-   TradeAgent's own UI has been seen on Windows for the first time. What is left on that path is a
-   *filling* order (today's rested and was cancelled), a **decline**, and the same walk against a real
-   broker. Read the 2026-08-31 section of `BUILD-STATUS.md` before touching any of it.
+**Why it decides anything.** Read the long comment on `AtasCall.Block` before starting — it already
+records the reasoning and it corrects an earlier version of this file that was wrong. In short:
 
-1. ~~**Fix the two gaps the walk exposed.**~~ **DONE 2026-08-31, later session, and verified on the
-   machine where both were seen.** Read that section of `BUILD-STATUS.md` before touching either.
-   - There is a **Settings** page now: platform and account are changeable after setup, two-press
-     where the change widens risk. Its UI was read on Windows through UI Automation.
-   - The two ATAS rows are written every health tick. `ATAS process: running · 8.0.14.397` and
-     `ATAS bridge: connected · bridge 8.0.14, protocol 2`, quoted off the machine. They were never
-     written by *anything* — the cause, not just the symptom.
-   - **A safety hole the new page exposed was closed with it.** Switching platform clears the chosen
-     account, which made "no account chosen, on a live platform" reachable — and `PlaceAsync` was
-     silently falling back to whichever account the platform listed first. `TryAuthorizeExecution`
-     now refuses. Do not "simplify" that gate away; the emergency controls are outside it on purpose.
+- It is **not** about rule 3's classification. There is no `catch` anywhere in the adapter's write
+  path; every `AtasRejectedException` after submission is manufactured from `_failures`, fed by
+  ATAS's `OrderRegisterFailed` events. The sync/async choice does not touch that path at all.
+- It **is** about deadlines. `AtasCall.Block` can put a deadline on a Task. It cannot put one on a
+  synchronous call. Today four of the five write paths — `OpenOrder`, `ModifyOrder`, `CancelOrder`,
+  `ClosePosition` — have **no deadline at all**, so a block in any of them stops `BridgeServer`'s
+  frame loop, including the operator's cancel-all, while the heartbeat goes on reporting READY
+  (trap 31).
 
-   **Two smaller things this left behind, both cosmetic and both real:**
-   - `Agent runtime`, `Agent process` and `Workspace` are blank `UNKNOWN` rows until the AI is
-     started, so a simulator user reads "3 parts not checked yet" in the rail forever. Unlike the
-     ATAS rows these *do* get written eventually, so it is a wording problem, not a missing writer.
-   - The rail counts a deliberately-not-in-use row as "not checked yet". Doing that properly wants a
-     `NOT_APPLICABLE` health state, which touches `Doctor.AllHealthy` and the `trade status` wire —
-     a contained piece of work, but its own piece. It was not smuggled into this one.
+**The numbers, so the risk is arithmetic rather than a feeling.** `AckTimeout` 3s, `CallTimeout` 5s,
+worst case a caller waits 8s; `AtasConnector`'s RPC timeout is 10s. So the switch trades *"a wedged
+pipe nobody can interrupt"* for *"every slow order becomes UNKNOWN at 5s"*. Which of those you get
+depends entirely on the answer above, which is why it is measured before anything is flipped.
 
-   *Kept for its detail:* `TradingMode` is `OBSERVE → PAPER → LIVE_CONFIRM → LIVE_AUTONOMOUS`. In
-   `LIVE_CONFIRM` a request from anyone who is not the operator lands in `AWAITING_APPROVAL` and
-   `TradingGateway` throws `request {id} is waiting for your approval` — so the AI proposes and the
-   human approves **in the app**, with no terminal. That path is the whole product in one line:
-   agent → gateway → risk limits → approval → bridge → ATAS. Do further work on it on the simulated
-   crypto account; it needs no live money and no rule change.
+**How to measure it.** At the instant the Task completes, capture three things and print them:
+elapsed ms, whether `order.Id` is assigned, and `order.State`. Then keep watching and print elapsed
+to Id-assignment and to the first state change.
 
-2. **Measure whether `OpenOrderAsync` completes on SUBMISSION or on broker ACKNOWLEDGEMENT**, then
-   flip the four obsolete call sites. This is the last piece of adapter work with a known shape.
-   If it completes on acknowledgement, blocking on it puts `Place` past `AtasConnector`'s 10s RPC
-   timeout and turns **every** order into UNKNOWN — which is why it is measured before it is changed.
+- Task completes with `Id` empty and `State == None`, clearly before the Id appears → **SUBMISSION**.
+- Task completes only once `Id` is assigned or `State` has moved → **ACKNOWLEDGEMENT**.
 
-   The reason to want the switch is not what an earlier version of this file said. It is not rule 3's
-   classification, which the switch does not touch at all. It is that **the call deadline covers one
-   of five write paths** — the other four are synchronous and cannot be given a deadline from this
-   side, so a block in any of them still stops the pipe loop while the heartbeat reports READY.
+**The trap in this measurement, and it is the whole difficulty.** The Binance crypto sim may
+acknowledge in under a millisecond, in which case submission and acknowledgement are *not separable*
+and a fast completion is NOT evidence for submission. Design the instrument to say
+`not-separable` rather than to produce a false green — the same discipline as `proven-sameref` and
+the `GetService` control probe. **Place a control order through the existing synchronous path in the
+same run and print both timelines side by side**; the sync call is known-good behaviour, so a
+difference between them is the reading, and no difference on a sim that answers instantly is an
+honest "this platform cannot separate them here".
 
-3. **Look at TradeAgent's own UI on Windows — with eyes.** Partly started: on 2026-08-31 the
-   **Settings** page was read there through UI Automation (`find` returns its labels, and the two
-   buttons that should be disabled are), which proves it renders and is in the right state. That is
-   not the same as seeing it, and the RDP session renders nothing (trap 19), so **reconnect or unlock
-   the console first** or captures come back useless.
+**Where to put it.** A probe-only route, not a second branch in the live write path — a second way to
+place an order inside `Place` is exactly where a misclassification would hide. Keep the probe's
+existing refusal to place unless the account is provably simulated from two independent sources;
+there is deliberately no `--force` and no `--account`, and that stays.
 
-   Three things still specifically want eyes: the setup journey end to end, the **Inbox** page —
-   drag a real file onto it, which has never been done on any platform — and the bridge-refusal
-   sentence on the dashboard status row, which is ~450 characters and got longer when the `witness=`
-   token was added; no truncation was found in the UI but nobody has seen it render.
+**The physical loop.** Every line below is copied from one that has run; the detail and the
+corrections are under "Driving ATAS from here", which is the section to read before doing it.
 
-   `find` + `invoke --ref` is the substitute when capture is unavailable, and it is a good one:
-   `tools/win-ui.sh find --query 'Account in use'` reads the real tree. Never pass `--window`
-   (trap 39).
+```bash
+tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'     # frees the bridge pipe AND unblocks the push
+tools/win-push.sh
+# close ATAS SAVING the workspace — it holds the bridge DLL
+tools/win-run.sh 'cd C:\ta\repo && dotnet build src\TradeAgent.AtasBridge\TradeAgent.AtasBridge.csproj -c Release -p:AtasBridgeBuild=true -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"'
+# copy TradeAgent.* into %APPDATA%\ATAS\Strategies, then assert the DEPLOYED dll (trap 8, trap 27)
+# relaunch ATAS, sign in, RE-ACTIVATE the strategy — it always comes back stopped (trap 24, trap 40)
+tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
+```
 
-4. Then the staged live trial: paper → extended paper run → one tiny live order → disconnect/recovery
-   test → autonomous live permission. Note `LIVE_AUTONOMOUS` is still refused and correctly so —
-   `ReconciliationProvable` needs `SupportsOrderHistory`, which is false because `GetService<T>()`
-   throws for every type. Rule 1 opened one gate; the other is shut on an answer, not a gap.
+**Traps that apply to this specific task:** 12 (a bridge built without `AtasBridgeBuild=true` is a
+stub that looks identical), 8 and 27 (assert the deployed DLL, names as ASCII and literals as
+UTF-16), 34 (**add no NuGet package anywhere in the bridge's chain** — the deploy filter drops
+third-party files silently), 24 and 40 (the strategy returns stopped; `PART_ActivateButton` is real
+and does not need the row expanded), 35 ("No selected strategy" is the right-hand pane's placeholder,
+not an empty list — check before pressing Add or you get two bridges on one pipe), 39 (never pass
+`--window` to `find`).
 
-**Done on 2026-08-29 and 2026-08-30, so do not redo it:** rule 1 is proven across a process restart;
-the bridge pipe authenticates in both directions and an unproved peer cannot unlock autonomy through
-a hello, a heartbeat or an event; a same-reference match no longer reports the capability true; an
-object the adapter built cannot pass for one ATAS built; ATAS calls and bridge teardown have
-deadlines; the whole adapter compiles and runs against real ATAS; and the probe explains a refusal
-instead of timing out.
+**Whatever the reading, always:** cancel anything left resting and verify the book from a *separate*
+run. `probe atas --cancel-resting <client-order-id>`, then `trade orders` should print `[]`.
+
+**What to do with each answer.**
+
+- SUBMISSION → flip the four call sites to the Async overloads wrapped in `AtasCall.Block(...,
+  CallTimeout, "<name>")`, as its own commit, and say in `BUILD-STATUS.md` what was measured.
+- ACKNOWLEDGEMENT → **do not flip.** Either raise `CallTimeout` above the observed ack latency and
+  the connector's 10s with it, or leave the synchronous calls and record that the four undeadlined
+  write paths are a known, measured limitation. Both are honest; guessing is not.
+- NOT SEPARABLE on this platform → record that, and leave the call sites alone. An unanswerable
+  question answered "no" is how the `SupportsOrderHistory` mistake would have been made.
+
+### 2. Look at TradeAgent's own UI on Windows — with eyes
+
+Partly started: on 2026-08-31 the **Settings** page was read there through UI Automation (its labels
+come back, and the two buttons that should be disabled are), which proves it renders and holds the
+right state. That is not the same as seeing it. The RDP session renders nothing (trap 19), so
+**reconnect or unlock the console first** or captures come back useless.
+
+Three things specifically want eyes, and none of them can be settled by automation:
+
+- the setup journey end to end;
+- the **Inbox** page — drag a real file onto it, which has never been done on any platform. The drop
+  handler, the file picker, the copy, the collision suffix and the immediate rescan are all compiled
+  and unexercised;
+- the bridge-refusal sentence on the dashboard status row. It is ~450 characters and got longer when
+  the `witness=` token was added. No truncation was found in the UI, but nobody has watched it render.
+
+### 3. The staged live trial
+
+paper → extended paper run → one tiny live order → disconnect/recovery test → autonomous live
+permission. `LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
+`SupportsOrderHistory`, which is false because `GetService<T>()` throws for every type. Rule 1 opened
+one gate; the other is shut on an answer, not a gap.
+
+### 4. Small, real, and deliberately not smuggled into anything else
+
+- **`Agent runtime`, `Agent process` and `Workspace` are blank `UNKNOWN` rows** until the AI is
+  started, so a simulator user reads "3 parts not checked yet" in the rail forever. Unlike the ATAS
+  rows these *do* get written eventually — a wording problem, not a missing writer.
+- **The rail counts a deliberately-not-in-use row as "not checked yet".** Doing it properly wants a
+  `NOT_APPLICABLE` health state, which touches `Doctor.AllHealthy` (it would otherwise never report
+  all-clear on the simulator) and the `trade status` wire. Contained, but its own piece of work.
+- **Is `inbox/` size-capped?** Nothing stops a 60 GB drop. The scanner survives it — hashing is
+  bounded per pass — the disk may not.
+- **Watch a real agent use the inbox.** Drop something in, ask the AI to work with it, and see
+  whether it runs `trade material ran ...` unprompted. If it does not, the notes half of the ledger
+  is empty forever and `AGENTS.md`'s wording is what needs fixing, not the code.
+
+## Do not redo any of this
+
+A scan list. The detail is in `BUILD-STATUS.md` under each date, and the headline facts are under
+"What is settled" above.
+
+**2026-08-31, later session**
+- The two ATAS health rows are written every health tick. They had *no writer at all* — that was the
+  cause under the symptom the earlier session recorded.
+- There is a **Settings** page: platform and account are changeable after setup.
+- `TryAuthorizeExecution` refuses when no account has been chosen. **Do not "simplify" that gate
+  away, and do not pull the emergency controls inside it** — they are outside `AuthorizeOrThrow` on
+  purpose, and a test pins that they are.
+- `ITradingManager.Orders` and `ChartStrategy.Orders` are not the same collection.
+- `win-push.sh` refuses to run while anything is running out of `C:\ta\repo` (trap 42).
+
+**2026-08-31, earlier**
+- `LIVE_CONFIRM` walked end to end through ATAS, broker order `12021602`.
+  *Still to do on that path:* a **filling** order (that one rested and was cancelled), a **decline**,
+  and the same walk against a real broker.
+- The AI inbox exists: `workspace/inbox/`, the Inbox page, the scanner, the two-table ledger,
+  and `trade material list|ran|used|derived|note`. Storage and wire tested; interaction is not.
+
+**2026-08-29 and 2026-08-30**
+- Rule 1 proven across a process restart.
+- The bridge pipe authenticates in both directions; an unproved peer cannot unlock autonomy through
+  a hello, a heartbeat or an event.
+- A same-reference match no longer reports the capability true, and an object the adapter built
+  cannot pass for one ATAS built.
+- ATAS calls and bridge teardown have deadlines.
+- The whole adapter compiles and runs against real ATAS, and the probe explains a refusal instead of
+  timing out.
 
 ## Reading TradeAgent from here, when capture is unavailable
 
@@ -269,8 +344,8 @@ tools/win-ui.sh invoke --ref <the nav button>     # switch pages, then read agai
 
 What neither route gives you is whether it *looks* right — colour, spacing, truncation, a label
 running off the end of a row. That still needs a reconnected session. Do not confuse "the state is
-correct" with "the screen is correct"; the ~450-character bridge-refusal sentence in step 3 is
-exactly the kind of thing only eyes will catch.
+correct" with "the screen is correct"; the ~450-character bridge-refusal sentence in work-queue
+task 2 is exactly the kind of thing only eyes will catch.
 
 ## Driving ATAS from here
 
@@ -459,7 +534,7 @@ Each of these cost real time. None is obvious from the code.
     right type, the code compiles, and every read through it throws "this ATAS chart has no trading
     connection attached yet" on a chart that is demonstrably attached to a portfolio. `Portfolio` on
     the same object is populated. The trading surface for a chart strategy is `ITradingManager`.
-    This cost the first live run, and it is why the rule-1 question in step 2 above is asked of
+    This cost the first live run, and it is why the rule-1 question was asked of
     `ITradingManager` rather than of the connector.
 
 14. **A DPI-unaware process is handed virtualised coordinates, and every click lands near its
