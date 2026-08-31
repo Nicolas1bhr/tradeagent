@@ -164,6 +164,36 @@ so an ordinary user sees no consent prompt at all.
 "PRESENT" is read out of the compiled assembly, not out of the build flag. The same bridge without
 the adapter is 36.5 KB.
 
+### Found 2026-09-01, NOT FIXED: every successful cancel strands its own request at DISPATCHING
+
+Found while checking why the Dashboard had reported "Open orders / unconfirmed: 1 / 0" since the
+`LIVE_CONFIRM` walk. The walk's own order is fine; the stranded record is the cancel request the
+gateway creates for itself. Read out of the live database and the engineering log:
+
+```
+execution_request : lc-walk-001         PLACE   CANCELLED     <- correct
+                    lc-walk-001-cancel  CANCEL  DISPATCHING   <- stranded
+engineering_log   : already_settled  lc-walk-001-cancel  {"intended":"CANCELLED","actual":"DISPATCHING"}
+```
+
+`CancelAsync` sets `DISPATCHING`, calls `CancelOrderAsync` (succeeded — the broker order was cancelled
+and the activity log says so), then calls `Settle(id, CANCELLED)`. `OrderStateMachine.Allowed[DISPATCHING]`
+does not contain `CANCELLED`, so the transition is refused, `Settle`'s `ILLEGAL_STATE_TRANSITION`
+catch logs `already_settled`, and the record never moves. Deterministic — it happens on every
+successful cancel.
+
+**Severity is bounded and was bounded by reading, not by feel.** `Open()` has exactly one production
+caller — `StatusAsync`, filling `GatewayStatus.OpenRequests` — which is display only. Nothing gates on
+it: `needs_reconciliation` is 0, `ExecutionTrustable` is untouched, trading is unaffected. It is a
+dashboard asserting something untrue about the book, growing by one per cancel.
+
+**Deliberately not fixed in this session.** The obvious repair widens the one table whose header says
+it is the only place transitions are legal, and the second half of the defect is subtler and probably
+more valuable: `Settle`'s catch exists for "somebody else already settled this" and it reported
+`already_settled` about a record nothing had settled. It can distinguish the two — if the stored state
+is still the `from` state, nothing raced and the table refused — and that conflation is what let this
+hide. Both decisions are in `docs/RESUME-HERE.md`, work-queue task 2.
+
 ### Tests
 
 `dotnet test TradeAgent.sln` after every change above — **91 passed, 0 failed** (34 unit,

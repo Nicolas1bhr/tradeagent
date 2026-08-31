@@ -10,9 +10,14 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The machine is working and the place path has been measured.** What is left of that task is one
-sub-question, and it needs a small piece of new code rather than a new run — see **The work queue**,
-task 1. Nothing else is blocked.
+**The machine is working and the place path has been measured.** Two things are worth starting on,
+both in **The work queue**, and neither is blocked:
+
+- **task 1** — one sub-question left on `OpenOrderAsync`; needs a small piece of new code, not a new
+  run;
+- **task 2** — a defect found on 2026-09-01: every successful cancel strands its own request record
+  at `DISPATCHING`, so the Dashboard permanently over-counts open orders. Display only, bounded, and
+  it carries a second and more interesting half about a catch that mislabels a table gap as a race.
 
 Confirm the machine — two commands, neither disturbs anything:
 
@@ -116,6 +121,10 @@ account : CRYPTO5EB41   book : orders=0 strategyorders=0 mytrades=0 position=0, 
 health : every row READY except the three agent rows, blank until the AI is started
 ```
 
+**The Dashboard says "Open orders / unconfirmed: 1 / 0" and the book is genuinely empty.** That 1 is
+a stranded CANCEL record, not an order — work-queue task 2 explains it in full. Do not go looking for
+a phantom order; `trade orders` returns `[]` and the position is 0.
+
 **Two test orders were placed and cancelled** on the simulated `CRYPTO5EB41` account (broker ids
 `12024794`, `12024817`) to take the place-path measurement. The book was verified clean afterwards
 from a separate probe run.
@@ -160,8 +169,8 @@ computed; the agent cannot write or edit one. `material_note` rows are the agent
 itself. Merging them, or letting a note touch a material row, turns a record into an assertion —
 which is the entire failure this was built to prevent.
 
-What is left on it is in **The work queue** — dragging a real file onto it is part of task 2, and
-watching an agent actually use it and the size cap are in task 4. It is listed there rather than here
+What is left on it is in **The work queue** — dragging a real file onto it is part of task 3, and
+watching an agent actually use it and the size cap are in task 5. It is listed there rather than here
 so there is one queue rather than two.
 
 ## The work queue
@@ -223,7 +232,51 @@ deserves its own change and its own reasoning.
 **Whatever you do: cancel anything left resting and verify the book from a separate run.** Both runs
 above did, and the probe says so (`CLEANUP VERDICT`).
 
-### 2. Look at TradeAgent's own UI on Windows — with eyes
+### 2. Every successful cancel strands its own request at DISPATCHING
+
+Found on 2026-09-01 while checking why the Dashboard had said "Open orders / unconfirmed: **1** / 0"
+since the `LIVE_CONFIRM` walk. It is not the walk's order — that closed correctly. It is the **cancel
+request the gateway created for itself**, and the cause is a gap in the transition table:
+
+```
+execution_request : lc-walk-001         PLACE   CANCELLED     <- correct
+                    lc-walk-001-cancel  CANCEL  DISPATCHING   <- stranded
+engineering_log   : already_settled  lc-walk-001-cancel
+                    {"intended":"CANCELLED","actual":"DISPATCHING"}
+```
+
+`CancelAsync` moves its record to `DISPATCHING`, calls `Connector.CancelOrderAsync`, logs
+`Cancelled order <id>` — all of which succeeded — and then calls
+`Settle(id, ExecutionState.CANCELLED)`. But `OrderStateMachine.Allowed[DISPATCHING]` is
+`[ACKNOWLEDGED, WORKING, PARTIALLY_FILLED, FILLED, REJECTED, UNKNOWN]` — **`CANCELLED` is not in it**.
+`Settle` catches `ILLEGAL_STATE_TRANSITION`, logs `already_settled`, and returns the record unchanged.
+
+**This is deterministic, not a one-off.** Every successful cancel through the gateway leaves one
+permanently "open" request, and `Open()` counts it forever.
+
+**Severity, bounded by reading rather than by feel:** `Open()` has exactly one production caller,
+`StatusAsync`, and it fills `GatewayStatus.OpenRequests`, which is **display only**. No gate, no risk
+check and no reconciliation depends on it — `needs_reconciliation` is 0 and `ExecutionTrustable` is
+untouched. So it is a dashboard that quietly asserts something untrue about the book, growing by one
+per cancel, and not a safety failure.
+
+**Two things to decide, and they are separate:**
+
+1. **Is `DISPATCHING → CANCELLED` legal?** For the cancel path it plainly is —
+   `CancelOrderAsync` returning without an exception is the broker confirming. But adding it to the
+   table widens it for *every* intent and every future caller, and the table already allows `UNKNOWN`
+   from `DISPATCHING` precisely because a dispatch usually cannot know. Decide it deliberately; this
+   is the file whose header says it is the only place transitions are legal.
+2. **`Settle`'s catch mislabels a table gap as a benign race.** It exists for "somebody else already
+   settled this", and it logged `already_settled` about a record that was not settled at all. It can
+   tell the two apart — if the stored state is still the `from` state, nothing raced, the table
+   refused — and the second case should be loud. **That is arguably the more valuable half of this
+   fix**, because it is what let the first half hide for a fortnight.
+
+Whatever is decided, a test should pin it: place, cancel, then assert the CANCEL record is terminal
+and `Open()` is empty. `PolicyGateTests` is where the comparable gates already live.
+
+### 3. Look at TradeAgent's own UI on Windows — with eyes
 
 **Started, and it immediately earned its place.** With capture working, the Dashboard and Settings
 pages were seen on Windows for the first time on 2026-08-31, and looking found a defect nothing else
@@ -248,14 +301,14 @@ renders as bare text with no border, so "Use ATAS" when ATAS is already in use r
 label than a disabled control (the `IN USE` pill carries the state, so it is not ambiguous); and the
 rail says "3 parts not checked yet" for the three agent rows until the AI is started.
 
-### 3. The staged live trial
+### 4. The staged live trial
 
 paper → extended paper run → one tiny live order → disconnect/recovery test → autonomous live
 permission. `LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
 `SupportsOrderHistory`, which is false because `GetService<T>()` throws for every type. Rule 1 opened
 one gate; the other is shut on an answer, not a gap.
 
-### 4. Small, real, and deliberately not smuggled into anything else
+### 5. Small, real, and deliberately not smuggled into anything else
 
 - **`Agent runtime`, `Agent process` and `Workspace` are blank `UNKNOWN` rows** until the AI is
   started, so a simulator user reads "3 parts not checked yet" in the rail forever. Unlike the ATAS
@@ -331,7 +384,7 @@ tools/win-ui.sh invoke --ref <the nav button>     # switch pages, then read agai
 What neither route gives you is whether it *looks* right — colour, spacing, truncation, a label
 running off the end of a row. That still needs a reconnected session. Do not confuse "the state is
 correct" with "the screen is correct"; the ~450-character bridge-refusal sentence in work-queue
-task 2 is exactly the kind of thing only eyes will catch.
+task 3 is exactly the kind of thing only eyes will catch.
 
 ## Driving ATAS from here
 
