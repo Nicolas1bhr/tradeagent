@@ -171,14 +171,14 @@ sealed class SettingsPage
 
     public void Update(GatewayStatus status)
     {
-        ApplyPlatform(status.ConnectorId, status.ConnectorName, status.ConnectorIsPaper);
+        ApplyPlatform(status.ConnectorId, Ui.PlatformLabel(status));
         EnsureAccounts();
         ApplyAccountSelection();
     }
 
-    void ApplyPlatform(string? id, string? name, bool isPaper)
+    void ApplyPlatform(string? id, string label)
     {
-        _platformValue.Text = Ui.PlatformLabel(name, isPaper);
+        _platformValue.Text = label;
 
         _switchBusy.IsVisible = _switching;
         _platformNote.IsVisible = !_switching;
@@ -428,7 +428,13 @@ sealed class SettingsPage
             var connector = _host.Connector;
             Dispatcher.UIThread.Post(() =>
             {
-                ApplyPlatform(connector.Id, connector.DisplayName, connector.Capabilities.IsPaper);
+                // A PLATFORM JUST SWITCHED TO HAS NOT ANSWERED YET, so its capabilities are the
+                // all-false placeholder and `IsPaper` false here means "no handshake", not "real
+                // money". This is the worst possible place to get that wrong — the owner is reading
+                // the label precisely because they just chose the platform. Say it has not answered;
+                // the next health tick replaces this with the real reading a few seconds later.
+                ApplyPlatform(connector.Id,
+                    Ui.PlatformLabel(connector.DisplayName, connector.Capabilities.IsPaper, platformAnswered: false));
                 ApplyAccountSelection();
             }, DispatcherPriority.Background);
         }

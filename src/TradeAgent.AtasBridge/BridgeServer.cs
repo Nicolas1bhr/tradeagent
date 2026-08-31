@@ -323,6 +323,12 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
             BridgeOps.Orders => adapter.GetOrders(Str("account_id"), Bool("include_inactive"), Since()),
             BridgeOps.Executions => adapter.GetExecutions(Str("account_id"), Since()),
             BridgeOps.Place => adapter.Place(Deserialize<PlaceOrderCommand>(d)),
+            // MEASUREMENT ONLY, and it places a real order — see BridgeOps.PlaceViaAsyncOverload.
+            // Deliberately a separate case rather than a flag read out of `d`: the payload is a
+            // PlaceOrderCommand deserialised from the wire, and a submission path selected by a
+            // field inside it would be one JSON property away from the ordinary place path. This
+            // way the route is chosen by the op name, which the product never sends.
+            BridgeOps.PlaceViaAsyncOverload => adapter.PlaceViaAsyncOverload(Deserialize<PlaceOrderCommand>(d)),
             BridgeOps.Modify => adapter.Modify(Deserialize<ModifyOrderCommand>(d)),
             BridgeOps.Cancel => Nothing(() => adapter.Cancel(Str("connector_order_id"))),
             BridgeOps.CancelAll => adapter.CancelAll(Str("account_id")),

@@ -1847,6 +1847,235 @@ win-push exit = 1        # and C:\ta\repo\src was intact afterwards
 `dotnet test TradeAgent.sln` — **235 passed, 0 failed** (38 fault, 67 unit, 130 integration), up from
 224. Solution build clean, 0 warnings.
 
+## Verified on real Windows 11 hardware, 2026-09-01 — `OpenOrderAsync` answered, and three gaps in the escape hatch
+
+**Context that bounds everything below, stated by the owner and not previously written down: the
+Windows machine's ATAS is signed in with a FREE ATAS account and has NO BROKER attached.** Both
+accounts are simulated. Every latency here is ATAS's own simulator answering, not a venue.
+Conclusions about *API semantics* transfer off this machine; **the numbers do not.**
+
+### `ITradingManager.OpenOrderAsync` completes on ACKNOWLEDGEMENT, not on submission
+
+The last open sub-question on the place path. Answered by an A/B on the same account minutes apart,
+through a probe-only route (`--via-async-overload`) built for the purpose. Both readings quoted from
+the run:
+
+```
+control  : PLACE TIMING : sync;call=16904us;atreturn=None/noid;settled=129433us;gap=112529us;now=Active/id
+           ROUTE ACTUALLY USED : sync — as asked.
+reading  : PLACE TIMING : asyncoverload;call=108500us;atreturn=Active/id;settled=108504us;gap=4us;now=Active/id
+           ROUTE ACTUALLY USED : asyncoverload — as asked.
+           READING — STATE : ACKNOWLEDGEMENT. atreturn=Active/id
+```
+
+**The decisive witness is categorical, not a duration, which is why it survives the no-broker bound.**
+The synchronous call returned `atreturn=None/noid` — the order had no state and no broker id yet. The
+async overload returned `atreturn=Active/id` — the order **already carried both**. The task did not
+complete until ATAS had acknowledged. `gap=4us` on the async run is the signature of that, not a
+failed measurement: settlement had already happened when the call returned, so there is nothing left
+to wait for. The probe prints `ACK LATENCY : NOT SEPARABLE` for that run and it is correct to; the
+control run is what establishes separability (`gap=112529us`), and it is why the control is required.
+
+Book verified clean from a **separate** run after each placement: `ORDERS IN LIVE BOOK : 0`.
+
+**What this changes about flipping the four obsolete synchronous call sites — and it argues for more
+caution, not less.** The four `CS0618` warnings are still present and the call sites were deliberately
+NOT flipped. The prior reasoning was that ~120 ms against a 5 s `CallTimeout` is a 40x margin, so
+blocking on the async call could not turn orders into UNKNOWN. **That margin is a simulator
+measurement and is not a property of the product.** Now that the async task is known to wait for
+acknowledgement, the flip moves the failure mode from "`WaitFor` gives up and returns the order in
+whatever state it truly is, with no exception" to "`AtasCallTimeoutException` — UNKNOWN", and the only
+thing standing between a slow venue and that outcome is a number obtained from a simulator with no
+broker behind it. **NOT VERIFIED and unverifiable here: what a real broker's acknowledgement latency
+is.** The flip still deserves its own change and its own reasoning.
+
+The measurement route cannot be reached by the product, and the audit is one line
+(`src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs:1261`):
+
+```csharp
+public OrderInfo Place(PlaceOrderCommand cmd) => Place(cmd, PlaceRoute.Default);
+```
+
+`PlaceRoute` is `internal` to the bridge assembly, and `grep` over `TradeAgent.Gateway`,
+`TradeAgent.App` and `TradeAgent.ConnectorSdk` for `PlaceViaAsyncOverload` returns **nothing** — the
+gateway holds an `ITradingConnector`, which cannot name the route at all. `LoopbackAtasAdapter`
+**refuses** the call rather than producing a timing, because an in-memory adapter would emit this
+process's scheduler latency wearing ATAS's name.
+
+### The bridge was rebuilt against real ATAS, and the deployed artifact asserted
+
+`AtasStrategyAdapter.cs` is `<Compile Remove>`d off Windows, so every change an agent made to it was
+**unverified by any compiler** until this build. It compiled with **0 errors**. The four `CS0618`
+obsolete warnings on `OpenOrder`/`ModifyOrder`/`CancelOrder`/`ClosePosition` are still there, which is
+the evidence that the live call sites were not flipped; `OpenOrderAsync` raises no CS0618.
+
+### Trap 27 has a hole, and it would send you rebuilding a correct DLL
+
+Trap 27 says to check assembly **string literals** as UTF-16. That is right and incomplete:
+**decoding the file as UTF-16 from offset 0 only finds literals that begin at an EVEN byte offset.**
+Measured on the freshly deployed bridge:
+
+```
+asyncoverload              even=False odd=True   PRESENT=True
+place-via-async-overload   even=True  odd=False  PRESENT=True
+connector                  even=False odd=True   PRESENT=True
+proven-sameref             even=True  odd=False  PRESENT=True
+```
+
+Roughly half of all literals read as **absent** on a perfectly good build. Trap 27's own worked
+example, `proven-sameref`, happens to land even — which is exactly why the gap survived being written
+down. Its stated failure mode is "that reads as *the build did not take*, and the natural next move is
+to rebuild and redeploy something that was already correct", and this is precisely the path there.
+**Check both alignments.**
+
+### Every successful cancel stranded its own request at DISPATCHING — fixed
+
+`CancelAsync` reached `Settle(id, CANCELLED)` after a confirmed broker cancel, but
+`Allowed[DISPATCHING]` had no `CANCELLED` entry, so `Settle` caught `ILLEGAL_STATE_TRANSITION`, filed
+it as `already_settled` and returned the record unchanged. Deterministic: one permanently "open"
+request per cancel. Display-only — `Open()`'s single production caller is `StatusAsync`, filling
+`GatewayStatus.OpenRequests`, and no gate or risk check reads it.
+
+Two changes, and the second is the one that let the first hide. `CANCELLED` was added to
+`Allowed[DISPATCHING]`, and `Settle` now **distinguishes the two failures that arrive at the same
+catch**: the table refusing `from -> to` is a defect in the caller, while the store's CAS check
+failing is a genuine race. They are separable without parsing a message — if the stored state is
+still `DISPATCHING`, nothing raced. A table refusal is now logged `illegal_settle` at `error`
+severity and is never filed as `already_settled`. It does **not** rethrow: this runs on a write path
+that has already reached the broker, and reporting failure for an operation that succeeded is the
+wrong direction.
+
+**NOT VERIFIED on hardware:** the fix is pinned by tests, not by driving a live cancel through the
+gateway on the Windows machine. **And nothing backfills the existing stranded record.**
+`lc-walk-001-cancel` is real data on that machine and `trade status` still reports
+`open_requests: 1  unreconciled_requests: 0` with `trade orders` returning `[]`. That is the honest
+expected result, not a regression. It was deliberately not hand-edited — resisting exactly that is
+what created the record.
+
+### Three gaps in the escape hatch, two of them opened or exposed by the fix above
+
+**1. `Decline` had no guard of its own, and the widening removed the one it was relying on.**
+`Decline` called `_requests.Transition(requestId, stored.State, CANCELLED)` with no state check —
+unlike `ApproveAsync` twelve lines above it, which refuses anything not `AWAITING_APPROVAL`. The state
+table was its only protection: before this change, declining a `DISPATCHING` record threw. After it,
+the same call **succeeds and writes CANCELLED over an order that may be live at the broker** — the
+software asserting an outcome nobody obtained. Unreachable from today's UI, which offers Decline on
+pending-approval rows only, but "unreachable today" is not a safety property. `Decline` now refuses
+anything not `CREATED` or `AWAITING_APPROVAL`.
+
+**2. `ForceResolve` threw on the records it most needed to open.** The human override for a request no
+machine can settle. Five links, each read rather than assumed:
+
+- `MarkNeedsReconciliation` is a bare `UPDATE ... SET needs_reconciliation=1` and **never touches the
+  state** (`src/TradeAgent.Core/Db/Stores.cs:127`).
+- `NeedingReconciliation()` is `Query("needs_reconciliation=1")` — **no state constraint**.
+- `SettleUnknown`'s catch calls it when the event stream already settled a record mid-dispatch, so a
+  record can be **`FILLED` and flagged at once**.
+- `TryAuthorizeExecution` counts the flag, not the state, so that record **pauses trading**.
+- `ForceResolve` computed `CanTransition(FILLED, anything)` = false, fell through to
+  `Transition(id, FILLED, RECONCILING)`, and the table refused it. **The only escape hatch threw.**
+
+So the feature as briefed would have shipped a button that throws on a reachable class of row.
+`ForceResolve` now clears the flag via `ClearReconciliation` when the person confirms the state the
+record already holds, and **refuses** to rewrite one settled terminal outcome as a different one —
+that is the stream and the platform disagreeing, and overwriting it would erase the only account of
+what the software was told.
+
+**3. `ForceResolve` clears the flag but does not by itself resume trading.** `TryAuthorizeExecution`
+has a second gate: `ExecutionTrustable` requires `Components.ExecutionCapability` to be `READY`, and
+**only `RefreshHealthAsync` recomputes it**. Without a refresh the owner presses the button and
+watches "AI paused" sit there until the next 5-second tick — a button that looks dead. The Dashboard
+card calls `RefreshHealthAsync` immediately after, and a test pins that the override alone leaves
+`TRADING_PERMISSION_UNAVAILABLE`. Two smaller consistency gaps went with it: `ForceResolve` was the
+only mutator on the class that never fired `StateChanged`, and `ReconcileAsync`'s `pending.Count == 0`
+path returned early **without** clearing the health row its own non-empty path clears — so "reconcile
+until clean" could not actually finish for any caller not also refreshing health.
+
+### The reconciliation override now has a route into it
+
+A Dashboard card, visible only when something is flagged, built once and updated in place with a
+rebuild gated on the request-id signature. It lists what is known per request — instrument, side,
+quantity, our client order id, the broker id if there is one, when it was dispatched, and what the
+last reconcile attempt said — with the facts wrapping rather than ellipsizing. Two-press via
+`Ui.Confirm`, worded as the assertion it is ("Confirm: I checked in ATAS and no such order exists"),
+above an amber paragraph saying the owner is asserting something TradeAgent could not check and that
+AI trading resumes on their word. The note `ForceResolve` already takes is **required**: the buttons
+stay disabled until one is typed, and editing it disarms a half-pressed confirmation, so a
+confirmation armed against one sentence cannot be completed against another.
+
+**Deliberately NOT reachable from the agent-facing pipe.** No `trade resolve` command was added and
+`GatewayPipeServer` was not touched. Operator authority is in-process only; an agent that wants more
+permission must have nowhere to ask.
+
+Only **FILLED** and **CANCELLED** are offered, and that is derived rather than chosen: they are the
+only outcomes reachable from every state a flagged record can hold. `WORKING` is the obvious third
+answer and the easiest to check in ATAS, and it is unreachable from `WORKING`, `PARTIALLY_FILLED` and
+`CANCEL_PENDING` — i.e. it would throw exactly where it is most likely to be true. The card tells the
+owner to cancel it in ATAS first instead, after which "no order exists" is literally true.
+
+**Verified with eyes on macOS** against records seeded by driving a real failed dispatch, so the
+client order id, parameters and error text are what the product actually writes.
+**NOT VERIFIED on Windows:** the card is correctly *absent* there (`unreconciled_requests: 0`), and it
+has never been seen rendering on that machine. `find --query 'COULD NOT CONFIRM'` returns 0 matches,
+which is the correct behaviour and is not the same as having watched it work.
+
+### The header asserted "real money" whenever the platform had not answered
+
+Found by looking at the running app, which is the only thing that finds this class of defect.
+`AtasConnector.Capabilities` reports an all-false capability set while its handshake is null —
+deliberately, so the trading gates fail closed (`TradingGateway.cs:274` leans on exactly that). But
+`Ui.PlatformLabel` read that same `IsPaper == false` as a positive assertion and rendered
+**"ATAS · real money"**, on screen beside a `Practice` badge and a simulated account: three labels
+contradicting each other about the only fact that matters. On the Windows machine, in
+`LIVE_CONFIRM`, it read "Real, ask me first · ATAS · real money · CRYPTO5EB41" — on a simulated
+account with no broker attached.
+
+Over-warning is not the safe direction here, it is a different failure: a header that cries "real
+money" through every practice session is one the owner has stopped reading by the day it is true.
+`PlatformLabel` now takes the platform's answered-ness and says "not connected" when it has none.
+**Verified on hardware in both reachable states:**
+
+```
+ATAS closed     : find 'not connected' -> 1 hit  "ATAS \u00b7 not connected"
+                  find 'real money'    -> 0 hits
+ATAS connected  : "ATAS \u00b7 simulation"
+```
+
+The third state — a genuine real-money account — **cannot be produced on this machine**, because
+there is no broker attached. NOT VERIFIED, and not verifiable here.
+
+**No automated test.** `TradeAgent.UnitTests` deliberately does not reference the Avalonia app
+project, and pulling Avalonia into the test host to pin one string is the wrong trade. The evidence
+is the two hardware readings above.
+
+### Tests
+
+`dotnet test TradeAgent.sln` — **256 passed, 0 failed** (45 fault, 67 unit, 144 integration), up from
+235. Solution build clean.
+
+Every new test was **proven to bite** by breaking its implementation and recording which test failed:
+
+| Break | Test that failed |
+|---|---|
+| Remove `CANCELLED` from `Allowed[DISPATCHING]` | `A_successful_cancel_settles_its_own_request_instead_of_stranding_it` |
+| Same | `The_table_lets_a_dispatching_cancel_reach_cancelled` |
+| `illegal_settle` logs `already_settled` instead | `A_settle_the_table_forbids_is_recorded_as_a_defect_rather_than_a_race` |
+| Remove the `Decline` state guard | `Decline_refuses_an_order_that_has_already_been_sent` |
+| Remove `ForceResolve`'s already-in-that-state branch | `A_flagged_record_the_stream_already_settled_can_still_be_resolved` |
+| Remove the terminal-conflict refusal | `Force_resolve_will_not_rewrite_a_settled_outcome_as_a_different_one` |
+| Remove the card's `RefreshHealthAsync` | all 4 cases of `Health_stays_paused_until_it_is_refreshed` |
+| Force-resolve to an unreachable target | all 4 cases, `ForceResolve` threw |
+
+### A process defect worth recording, because it destroyed work
+
+Three agents ran in parallel against one working tree. One of them ran `git stash push` to measure a
+pre-change test baseline, which **swept up the other two agents' uncommitted work**. Both recovered
+their own paths and the tree was verified intact afterwards, byte for byte — but nothing about that
+was guaranteed. **A whole-tree `git stash`/`reset` must not be reachable by an agent that does not own
+the whole tree.** The existing rule was "do not repeat: two actors in one file"; this is the same
+lesson one level out, and the file-ownership boundaries in the briefs did not cover it because a
+stash names no files at all.
+
 ## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in

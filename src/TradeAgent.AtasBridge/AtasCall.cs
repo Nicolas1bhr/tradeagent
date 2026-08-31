@@ -101,9 +101,32 @@ public static class AtasCall
     /// after its own RPC timeout. If OpenOrderAsync's task completes on SUBMISSION, blocking on it
     /// costs about what the synchronous call costs and the switch is safe. If it completes only on
     /// broker ACKNOWLEDGEMENT, blocking on it puts Place past the connector's deadline and turns
-    /// every order into UNKNOWN — the failure that is expensive to have and cheap to avoid. Which of
-    /// the two it is has not been measured, and cannot be measured off Windows. Measure it there,
-    /// then flip the four call sites as their own change.
+    /// every order into UNKNOWN — the failure that is expensive to have and cheap to avoid.
+    ///
+    /// THE INSTRUMENT THAT ANSWERS IT NOW EXISTS, and it is the only way to answer it: the completion
+    /// point of a task cannot be read out of a signature. <see cref="PlaceRoute.MeasureAsync"/>
+    /// submits one real order through OpenOrderAsync and blocks on it here, so the adapter's
+    /// <c>place=</c> token reports `call=` for that overload beside the `gap=` acknowledgement
+    /// latency of the ordinary path. It is reached by <c>BridgeOps.PlaceViaAsyncOverload</c>, which
+    /// nothing in the product sends, and is driven by
+    /// <c>probe atas --place-test-order --yes --via-async-overload</c> on the Windows machine.
+    ///
+    /// A `call=` alike to an ordinary run's means the task completes on SUBMISSION; a `call=` near
+    /// that run's `settled=` means it waits for ACKNOWLEDGEMENT.
+    ///
+    /// READ WHAT THAT READING LICENSES, AND WHAT IT DOES NOT. Which of the two the task waits for is
+    /// a fact about ATAS's API and travels to any account. The DURATIONS beside it do not: an ATAS
+    /// account with no broker attached is answered by ATAS's own simulator, and a real venue can be
+    /// materially slower. So "the acknowledgement lands far inside CallTimeout, therefore blocking on
+    /// the async call cannot turn orders into UNKNOWN" is an argument about the machine the reading
+    /// was taken on, not about this product, and it must not be carried forward as though it were.
+    ///
+    /// Take the reading there, then flip the four call sites as their own change — and weigh the
+    /// thing the reading does NOT settle:
+    /// today a slow acknowledgement ends in WaitFor giving up and returning the order in whatever
+    /// state it is really in, with no exception; after the switch the same slowness ends in
+    /// AtasCallTimeoutException, which is UNKNOWN. Arguably more correct under rule 3, and still a
+    /// behaviour change on the money path.
     /// </summary>
     /// <param name="task">The ATAS call already in flight.</param>
     /// <param name="timeout">How long to wait before declaring the outcome unknown.</param>

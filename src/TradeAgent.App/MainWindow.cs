@@ -442,7 +442,7 @@ public sealed class MainWindow : Window
             _modePillHost.Content = Ui.Pill(Ui.ModeLabel(status.Mode), Ui.ModeTone(status.Mode));
         }
 
-        _metaPlatform.Text = Ui.PlatformLabel(status.ConnectorName, status.ConnectorIsPaper);
+        _metaPlatform.Text = Ui.PlatformLabel(status);
         _metaAccount.Text = status.AccountId ?? "none";
 
         if (status.AiTradingStopped) { _metaAi.Text = "AI trading stopped"; _aiDot.Fill = Tokens.Danger; }

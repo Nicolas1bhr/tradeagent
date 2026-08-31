@@ -57,8 +57,13 @@ sealed class DashboardPage
     readonly Border _approvalsCard;
     readonly Button _agentButton;
 
+    readonly StackPanel _unconfirmed = new() { Spacing = Theme.S5 };
+    readonly Border _unconfirmedCard;
+    readonly List<UnconfirmedRow> _unconfirmedRows = [];
+
     string _healthSignature = "";
     string _approvalSignature = "";
+    string _unconfirmedSignature = "";
 
     public Control Root { get; }
 
@@ -103,7 +108,40 @@ sealed class DashboardPage
                 _approvals)
         };
 
+        // Orders TradeAgent could not confirm. This is the ONLY route into
+        // TradingGateway.ForceResolve anywhere in the product: operator authority is deliberately
+        // absent from the agent-facing pipe and from the trade CLI, so an agent that wants this
+        // permission has nowhere to ask. Without this card, on a backend that cannot prove its own
+        // order history — which is ATAS, permanently — the first ambiguous order pauses trading and
+        // nothing in the app can ever start it again.
+        //
+        // It sits above the approvals card because it outranks it: while anything is unconfirmed,
+        // TryAuthorizeExecution refuses, so approving an order below would fail anyway.
+        _unconfirmedCard = new Border
+        {
+            Background = Theme.DangerSoft,
+            BorderBrush = Theme.Danger,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Theme.Radius,
+            Padding = new Thickness(Theme.S5),
+            IsVisible = false,
+            Child = Ui.Col(Theme.S3,
+                Ui.With(Ui.Eyebrow("Orders TradeAgent could not confirm"), t => t.Foreground = Theme.Danger),
+                Ui.Body("An order was sent and no answer came back, so TradeAgent does not know whether it reached your broker. "
+                        + "It will not let the AI trade until that is settled."),
+                Ui.Body("Open ATAS, find the order, and tell TradeAgent what you see there. You are asserting something "
+                        + "TradeAgent could not check for itself, and AI trading resumes on your word — so look before you press.",
+                    Theme.Caution),
+                // Named no button: a record that is already in a terminal state gets only one, so
+                // pointing at "no order exists" would send that reader looking for a control that
+                // is not on their screen.
+                Ui.Micro("If the order is still working in ATAS, cancel it there first — then what you tell TradeAgent "
+                         + "below is true. Every answer here is written into the activity log with your note."),
+                Ui.With(_unconfirmed, p => p.Margin = new Thickness(0, Theme.S2, 0, 0)))
+        };
+
         var left = Ui.Col(Theme.S6,
+            _unconfirmedCard,
             _approvalsCard,
             Ui.Section("Right now", Ui.Col(0, facts, actions)));
 
@@ -122,8 +160,7 @@ sealed class DashboardPage
     public void Update(GatewayStatus status, IReadOnlyList<ExecutionRequest> waiting)
     {
         _values["Trading mode"].Text = Ui.ModeLabel(status.Mode);
-        _values["Platform"].Text =
-            Ui.PlatformLabel(status.ConnectorName, status.ConnectorIsPaper);
+        _values["Platform"].Text = Ui.PlatformLabel(status);
         _values["Account"].Text = status.AccountId ?? "not selected";
         _values["AI trading"].Text = status.AiTradingStopped ? "STOPPED"
             : status.ExecutionAvailable ? "allowed"
@@ -137,6 +174,10 @@ sealed class DashboardPage
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
         RefreshApprovals(waiting);
+        // Read straight from the store rather than from GatewayStatus, which carries only a count.
+        // NeedingReconciliation() is the same query TryAuthorizeExecution refuses on, so the card is
+        // showing exactly the records that are pausing trading — not an approximation of them.
+        RefreshUnconfirmed(_host.Gateway.Requests.NeedingReconciliation());
 
         var health = _host.Health.Snapshot();
         var hs = string.Join('|', health.Select(h => $"{h.Component}:{h.State}:{h.Detail}"));
@@ -184,10 +225,234 @@ sealed class DashboardPage
         }
     }
 
+    // ---- orders TradeAgent could not confirm ---------------------------------------------------
+
+    /// <summary>
+    /// One unconfirmed request on screen. The controls that CHANGE are held here so the card can be
+    /// updated in place: the background loop reconciles every five seconds while anything is
+    /// flagged, and a rebuild on that tick would wipe the note the user is halfway through typing
+    /// and silently disarm a half-pressed confirmation. Only the set of request ids can force a
+    /// rebuild — everything else is written into these fields.
+    /// </summary>
+    sealed class UnconfirmedRow
+    {
+        public required string RequestId { get; init; }
+        public required TextBlock State { get; init; }
+        public required TextBlock BrokerId { get; init; }
+        public required TextBlock LastCheck { get; init; }
+    }
+
+    void RefreshUnconfirmed(IReadOnlyList<ExecutionRequest> pending)
+    {
+        var signature = string.Join('|', pending.Select(p => p.RequestId));
+        if (signature != _unconfirmedSignature)
+        {
+            _unconfirmedSignature = signature;
+            _unconfirmed.Children.Clear();
+            _unconfirmedRows.Clear();
+            _unconfirmedCard.IsVisible = pending.Count > 0;
+
+            var first = true;
+            foreach (var p in pending)
+            {
+                if (!first) _unconfirmed.Children.Add(new Border { Height = 1, Background = Theme.Danger, Opacity = 0.35 });
+                first = false;
+                _unconfirmed.Children.Add(BuildUnconfirmedRow(p));
+            }
+        }
+
+        // In place, every tick: a reconcile pass moves UNKNOWN to RECONCILING and a late stream
+        // event can fill in the broker's id, and the user watching the card should see that happen.
+        foreach (var row in _unconfirmedRows)
+        {
+            var r = pending.FirstOrDefault(p => p.RequestId == row.RequestId);
+            if (r is null) continue;
+            row.State.Text = StateSentence(r.State);
+            row.BrokerId.Text = r.ConnectorOrderId ?? "none — the broker never sent one back";
+            row.LastCheck.Text = LastCheckSentence(r);
+        }
+    }
+
+    Control BuildUnconfirmedRow(ExecutionRequest r)
+    {
+        var id = r.RequestId;
+        var state = Fact("TradeAgent thinks", StateSentence(r.State), mono: false);
+        var brokerId = Fact("Broker reference", r.ConnectorOrderId ?? "none — the broker never sent one back", mono: true);
+        var lastCheck = Fact("Last check", LastCheckSentence(r), mono: false);
+
+        _unconfirmedRows.Add(new UnconfirmedRow
+        {
+            RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value
+        });
+
+        // Required. ForceResolve writes the note onto the record and logs it at warn, which is the
+        // only durable trace of a human overriding the machine — an empty one turns a loud log into
+        // a blank one, so the confirmations below stay disabled until something is typed.
+        var note = new TextBox
+        {
+            PlaceholderText = "What you saw in ATAS — required",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0, Theme.S2, 0, 0)
+        };
+
+        var buttons = new List<Button>();
+        if (OrderStateMachine.IsTerminal(r.State))
+        {
+            // A record the event stream already settled, flagged afterwards because the dispatch
+            // that wrote it never got an answer. Terminal states have no outgoing edges, so the
+            // ONLY answer that can be given about one is whether the state it already holds is
+            // true — ForceResolve takes that as finalState == current state and clears the flag
+            // without rewriting the record. Asserting a DIFFERENT outcome is refused there on
+            // purpose, and rightly: that is the stream and the platform disagreeing, which is
+            // something to investigate rather than to overwrite. So one button, not two.
+            var settled = r.State;
+            buttons.Add(Ui.Confirm($"Our record is right — it was {Word(settled)}",
+                $"Confirm: I checked in ATAS and this order was {Word(settled)}",
+                () => ResolveAsync(id, settled, note)));
+        }
+        else
+        {
+            // FILLED and CANCELLED, and nothing else, because they are the only two outcomes
+            // OrderStateMachine lets ForceResolve reach from EVERY state a flagged request can hold.
+            // "Still working" is the obvious third answer and is unreachable from WORKING,
+            // PARTIALLY_FILLED and CANCEL_PENDING — a button that throws on the states where it is
+            // most likely to be the true answer is worse than no button, so the card asks the user
+            // to cancel it in ATAS first instead.
+            buttons.Add(Ui.Confirm("It was filled", "Confirm: I checked in ATAS and this order was filled",
+                () => ResolveAsync(id, ExecutionState.FILLED, note)));
+            buttons.Add(Ui.Confirm("No order exists", "Confirm: I checked in ATAS and no such order exists",
+                () => ResolveAsync(id, ExecutionState.CANCELLED, note)));
+        }
+
+        // Stacked, not in a row. An armed two-step button carries its whole sentence — "Confirm: I
+        // checked in ATAS and this order was filled" is about 340px — and two of those beside each
+        // other overflow a card that shares its page with the 340px health column. A horizontal
+        // StackPanel does not wrap, it clips, so the second choice would simply not be there.
+        foreach (var b in buttons)
+        {
+            b.IsEnabled = false;
+            b.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+        note.TextChanged += (_, _) =>
+        {
+            var armed = !string.IsNullOrWhiteSpace(note.Text);
+            // Editing the note changes the assertion, so a confirmation armed against the old words
+            // must not survive to be completed against the new ones.
+            foreach (var b in buttons) { Ui.DisarmConfirm(b); b.IsEnabled = armed; }
+        };
+
+        var row = Ui.Col(Theme.S2,
+            new TextBlock
+            {
+                Text = TryDescribe(r), FontFamily = Theme.Mono, FontSize = Theme.Base,
+                FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap
+            },
+            Ui.With(Ui.Col(0,
+                    state.Root,
+                    Fact("Sent", (r.DispatchedAt ?? r.CreatedAt).ToLocalTime().ToString("d MMM, HH:mm:ss"), mono: true).Root,
+                    Fact("Our reference", r.ClientOrderId, mono: true).Root,
+                    brokerId.Root,
+                    lastCheck.Root),
+                c => c.Margin = new Thickness(0, Theme.S2, 0, 0)),
+            note,
+            Ui.With(Ui.Col(Theme.S2, [.. buttons]), c => c.Margin = new Thickness(0, Theme.S2, 0, 0)));
+
+        if (_unconfirmed.Children.Count > 0) row.Margin = new Thickness(0, Theme.S3, 0, 0);
+        return row;
+    }
+
+    /// <summary>
+    /// The override itself. RefreshHealthAsync is not decoration: ForceResolve clears the
+    /// needs-reconciliation flag and nothing else, while TryAuthorizeExecution ALSO requires the
+    /// ExecutionCapability health row to be READY — and that row was set PAUSED by the failed
+    /// dispatch and by the reconciler. Without this second call the user presses the button, sees
+    /// "AI trading — paused" stay on screen for up to five seconds until the background tick
+    /// recomputes health, and reasonably concludes the button does nothing.
+    /// </summary>
+    async Task ResolveAsync(string requestId, ExecutionState outcome, TextBox note)
+    {
+        var text = (note.Text ?? "").Trim();
+        if (text.Length == 0) { Ui.ReportError?.Invoke("Say what you saw in ATAS before confirming."); return; }
+
+        _host.Gateway.ForceResolve(requestId, outcome, text);
+        await _host.Gateway.RefreshHealthAsync();
+    }
+
+    static string StateSentence(ExecutionState s) => s switch
+    {
+        ExecutionState.UNKNOWN => "it does not know — the answer never came back",
+        ExecutionState.RECONCILING => "it does not know — it is still trying to find out",
+        ExecutionState.DISPATCHING => "the order was being sent when the connection went",
+        ExecutionState.FILLED => "filled, but never confirmed with the broker",
+        ExecutionState.CANCELLED => "cancelled, but never confirmed with the broker",
+        ExecutionState.REJECTED => "refused, but never confirmed with the broker",
+        _ => $"{s.ToString().ToLowerInvariant().Replace('_', ' ')}, but never confirmed with the broker"
+    };
+
+    /// <summary>
+    /// Why this is still on screen. On a backend that cannot prove its own order history — ATAS,
+    /// permanently, because it exposes no order lookup — the reconciler says so and stops, and the
+    /// user needs to read that rather than wait for a check that is never going to conclude.
+    /// </summary>
+    string LastCheckSentence(ExecutionRequest r)
+    {
+        var why = _host.Gateway.Connector.Capabilities.ReconciliationProvable
+            ? "TradeAgent is still asking the broker about this order."
+            : $"{_host.Gateway.Connector.DisplayName} cannot prove order state; this needs a human to look.";
+        return string.IsNullOrWhiteSpace(r.LastError) ? why : $"{why} What went wrong: {r.LastError}";
+    }
+
+    /// <summary>
+    /// A labelled fact whose value the caller keeps, so the card can be updated without rebuilding.
+    /// NOTHING HERE TRIMS. A client order id, a broker id and a reconcile message are all long, and
+    /// an ellipsis through the middle of the reference the user is about to search for in ATAS is
+    /// the failure StatusRow already carries a comment about.
+    /// </summary>
+    static (Control Root, TextBlock Value) Fact(string key, string value, bool mono)
+    {
+        var v = new TextBlock
+        {
+            Text = value, FontSize = Theme.Small, Foreground = Theme.Text,
+            TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Top,
+            [Grid.ColumnProperty] = 1
+        };
+        if (mono) v.FontFamily = Theme.Mono;
+
+        // 140 matches StatusRow: the longest label here is "Broker reference", and the pixels saved
+        // go to the half of the row that actually varies.
+        var root = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("140,*"),
+            Margin = new Thickness(0, 3),
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = key, FontSize = Theme.Small, Foreground = Theme.TextMuted,
+                    TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Top
+                },
+                v
+            }
+        };
+        return (root, v);
+    }
+
+    static string Word(ExecutionState s) => s switch
+    {
+        ExecutionState.FILLED => "filled",
+        ExecutionState.CANCELLED => "cancelled",
+        ExecutionState.REJECTED => "refused by the broker",
+        _ => s.ToString().ToLowerInvariant().Replace('_', ' ')
+    };
+
     static string TryDescribe(ExecutionRequest r)
     {
         try
         {
+            // Only a PLACE carries a PlaceIntent. A cancel or a modify stores a different shape, and
+            // reading one as the other produces a confident sentence about an order nobody asked for.
+            if (r.Intent != RequestIntent.PLACE) return $"{r.Intent} {r.Instrument}".Trim();
+
             var i = Json.Read<PlaceIntent>(r.ParametersJson);
             if (i is null) return $"{r.Intent} {r.Instrument}";
             var price = i.LimitPrice is { } lp ? $" at {lp}" : " at market";

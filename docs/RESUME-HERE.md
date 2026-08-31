@@ -10,16 +10,36 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The machine is working, the place path is measured, and nothing is blocked.** Three things are
-ready to start, in **The work queue**. If you only do one, do task 2:
+**Tasks 1, 2 and 3 are done and verified. The machine is working and nothing is blocked.** What is
+left is in **The work queue**; if you only do one, do task 4 — it is the only thing standing between
+the reconciliation override and having been watched to work.
 
-- **task 2 — the one that matters.** On ATAS the first ambiguous order pauses trading permanently and
-  the human override has no button anywhere in the product. Five links, each read rather than
-  assumed, and it gates the staged live trial. Found 2026-09-01.
-- **task 3** — every successful cancel strands its own request at `DISPATCHING`. Display-only impact,
-  fully diagnosed, and **the fix is written out step by step** — it should be an hour, not a day.
-- **task 1** — the last sub-question on `OpenOrderAsync`; needs a small piece of new code rather than
-  a new run on the machine.
+Settled on 2026-09-01, do not redo:
+
+- **`OpenOrderAsync` completes on ACKNOWLEDGEMENT, not submission.** Measured on hardware through a
+  probe-only route. The evidence is categorical rather than a duration, which is what makes it
+  survive the no-broker bound below: the sync call returned `atreturn=None/noid`, the async overload
+  returned `atreturn=Active/id`.
+- **The reconciliation override has a route into it** — a Dashboard card, two-press, required note.
+  Seen with eyes on macOS; **never seen on Windows** (task 4).
+- **Every successful cancel used to strand its own request.** Fixed. The pre-existing stranded record
+  is NOT backfilled, so the machine still reads `open_requests: 1` — expected, not a regression.
+- **Three gaps in the escape hatch**, two of them opened or exposed by that fix: `Decline` was
+  unguarded, `ForceResolve` threw on flagged terminal records, and clearing the flag does not by
+  itself resume trading. All fixed. `BUILD-STATUS.md`'s 2026-09-01 section has the five links.
+- **The header said "real money" whenever the platform had not answered.** Fixed and verified on
+  hardware in both reachable states.
+
+**THE CONSTRAINT THAT BOUNDS WHAT THIS MACHINE CAN PROVE, stated by the owner 2026-09-01 and easy to
+overclaim past: ATAS is signed in with a FREE ATAS account and has NO BROKER attached.** Both accounts
+are simulated. So:
+
+- Every latency measured here is ATAS's own simulator answering. **API-semantics conclusions transfer;
+  numbers do not.** Do not reuse "~120 ms against a 5 s `CallTimeout`, a 40x margin" without saying it
+  rests on simulator latency — it is the load-bearing number in the call-site flip decision.
+- "Did our client order id ever reach the broker" is not a pending question here, it is
+  **unanswerable until a broker is attached.** There is no broker to have answered.
+- **The staged live trial is gated on a broker existing**, on top of every other gate.
 
 Confirm the machine — two commands, neither disturbs anything:
 
@@ -30,8 +50,7 @@ tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'  # expect bo
 
 **If `capture : NO` and ATAS is not running, fix that before anything else** — ATAS cannot start
 without a rendering surface (trap 43). `tscon 1 /dest:console` moves the session onto the physical
-console and takes seconds; it is what was used on 2026-08-31 and it needs no reboot. Confirm with
-`tools/win-state.sh` before launching ATAS.
+console and takes seconds; it needs no reboot. Confirm with `tools/win-state.sh` before launching ATAS.
 
 Five facts that otherwise cost the first twenty minutes:
 
@@ -42,8 +61,8 @@ Five facts that otherwise cost the first twenty minutes:
 - **Do not close ATAS unless capture works** (trap 43). Closing it is the step that cannot be undone
   remotely.
 - **ATAS restores the bridge strategy STOPPED** (trap 24). `find --query 'Activ'` returns
-  `PART_ActivateButton` and `invoke --ref` starts it (trap 40). Read the chart **legend**, which says
-  `[Started]` or `[Stopped]` in words, not the row icon (trap 36).
+  `PART_ActivateButton` and `invoke --ref` starts it (trap 40). The health row says
+  `installed, but the strategy is not started on a chart` when this has happened — believe it.
 - **Look at the Selected strategies list before pressing Add** (trap 35), or two bridges end up on
   one pipe.
 
@@ -78,6 +97,13 @@ cross-session match cannot separate ATAS rebuilding the order from *the broker's
 reconnect, from ATAS rehydrating it out of its own local store. The identifier survives ATAS
 restarting, which is what reconciliation needs. Whether it ever reached the broker is a different
 question, and only the broker's own report answers it.
+
+**Sharpened 2026-09-01: there is no broker attached to this ATAS at all** (free ATAS account, both
+accounts simulated). So that question is not merely open, it is **unanswerable on this hardware** —
+and one of the two branches above is not even in play, since there is no broker to have answered on
+reconnect. What is proven is that the identifier survives ATAS's own restart via ATAS's own
+bookkeeping. That is what reconciliation needs and it is enough; it is just narrower than the
+sentence above reads on its own.
 
 **An account nobody chose could be traded, and now cannot.** `PlaceAsync` resolves its account
 through a helper that falls back to the platform's first account when none has been chosen —
@@ -125,8 +151,11 @@ health : every row READY except the three agent rows, blank until the AI is star
 ```
 
 **The Dashboard says "Open orders / unconfirmed: 1 / 0" and the book is genuinely empty.** That 1 is
-a stranded CANCEL record, not an order — work-queue task 3 explains it in full. Do not go looking for
-a phantom order; `trade orders` returns `[]` and the position is 0.
+a stranded CANCEL record, not an order. **The cause was fixed on 2026-09-01 so no new ones can be
+created, but nothing backfills this one** — it is `lc-walk-001-cancel` and it will read 1 forever
+unless somebody deals with the row deliberately. It is not flagged for reconciliation, so the
+override card correctly does not list it. Do not go looking for a phantom order; `trade orders`
+returns `[]` and the position is 0. **Do not hand-edit the database.**
 
 **Two test orders were placed and cancelled** on the simulated `CRYPTO5EB41` account (broker ids
 `12024794`, `12024817`) to take the place-path measurement. The book was verified clean afterwards
@@ -178,205 +207,45 @@ so there is one queue rather than two.
 
 ## The work queue
 
-### 1. Finish the `OpenOrderAsync` question — one sub-question, needs code not a run
+### 1. DONE 2026-09-01 — `OpenOrderAsync` completes on ACKNOWLEDGEMENT
 
-**Measured on hardware 2026-08-31, two orders on the simulated account:**
+Measured on hardware through `probe atas --place-test-order --yes --via-async-overload`, a probe-only
+route the product cannot reach (`PlaceRoute` is `internal`; the audit is one line at
+`AtasStrategyAdapter.cs:1261`). Evidence and the full reasoning are in `BUILD-STATUS.md`.
 
-```
-run 1   place=sync;call=16777us;atreturn=None/noid;settled=131666us;gap=114889us;now=Active/id
-run 2   place=sync;call=531us;  atreturn=None/noid;settled=125074us;gap=124543us;now=Active/id
-```
+**What is left, and it is now a decision rather than a measurement: whether to flip the four obsolete
+synchronous call sites.** They still emit `CS0618`. The reading makes the case *more* delicate, not
+less: the async task waits for acknowledgement, so flipping moves the failure mode from "`WaitFor`
+gives up and returns the order in whatever state it truly is, with no exception" to
+"`AtasCallTimeoutException` — UNKNOWN". The only thing between a slow venue and that is the
+`CallTimeout` margin, **and that margin was measured on a simulator with no broker behind it.** Its
+own change, its own reasoning, and honestly it wants a real broker first.
 
-- **The synchronous `ITradingManager.OpenOrder` completes on SUBMISSION.** It returned in **0.53 ms**
-  warm, with `State=None` and no `Order.Id`. Acknowledgement arrived **~120 ms later**.
-- **Acknowledgement latency here is ~120 ms, so the two ARE separable** — comfortably past the 20 ms
-  threshold the probe uses. That reading had to come first: on a venue that acknowledges instantly
-  the question is unanswerable, and a fast async completion would prove nothing.
+### 2. DONE 2026-09-01 — the reconciliation override has a route into it
 
-**What is left: what does `ITradingManager.OpenOrderAsync`'s task actually wait for?** ~0.5 ms
-(submission) or ~120 ms (acknowledgement)? It needs a submission through the async overload, and that
-needs a probe-only route into `Place`. **It was deliberately not smuggled into the instrumentation
-change** — a second way to submit an order inside `Place` is exactly where a rule-3 misclassification
-would hide.
+A Dashboard card, visible only when something is flagged, two-press, with a required note. No
+`trade resolve` command was added and `GatewayPipeServer` was not touched — operator authority stays
+in-process only.
 
-**The mechanism, designed and not yet built.** Give `Place` an internal route parameter; the public
-`Place(cmd)` the gateway reaches always passes `Default`, so the live path cannot select the async
-route, and that is auditable in one line:
+Fixing it turned up three gaps that made the original brief's plan insufficient; all are fixed and
+all are written up in `BUILD-STATUS.md`. The one worth carrying: **a flagged record is not necessarily
+an `UNKNOWN` one**, because `MarkNeedsReconciliation` is a bare `UPDATE` that never touches state, so
+a record can be `FILLED` *and* flagged, and the override used to throw on exactly that.
 
-```csharp
-public OrderInfo Place(PlaceOrderCommand cmd) => Place(cmd, PlaceRoute.Default);
-internal OrderInfo Place(PlaceOrderCommand cmd, PlaceRoute route)
-...
-if (feed is not null)                      AtasCall.Block(feed.RegisterOrderAsync(order), ...);
-else if (route == PlaceRoute.MeasureAsync) AtasCall.Block(trading.OpenOrderAsync(order, false, false, true),
-                                                          CallTimeout, "OpenOrderAsync");
-else                                       trading.OpenOrder(order, false, false, true);
-```
+**Still wanting eyes: it has never been seen rendering on Windows.** That is task 4.
 
-Reaching it costs a `BridgeOps` constant, a `BridgeServer` dispatch case, a method on `IAtasAdapter`
-(and therefore on `LoopbackAtasAdapter`), a call on `AtasConnector`, and a probe flag. The
-`place=` token already reports the route, so the existing `PLACE TIMING` / `ACK LATENCY` output reads
-the answer with no further work: **`call=` near 500us means SUBMISSION, `call=` near 120000us means
-ACKNOWLEDGEMENT.**
+### 3. DONE 2026-09-01 — the cancel-strands-DISPATCHING gap is closed
 
-**What the measurement already changed about the decision, and it is not what the old note said.**
-The recorded fear was that blocking on the async call would put `Place` past `CallTimeout` and turn
-every order into UNKNOWN. At ~120 ms against a 5 s `CallTimeout` that cannot happen here — a 40×
-margin — and `Place` **already** waits for acknowledgement in `WaitFor(AckTimeout)` on exactly the
-condition the async task would wait for. The switch moves where the time is spent, it does not add
-time.
+`CANCELLED` added to `Allowed[DISPATCHING]`, and `Settle` now distinguishes a table refusal (a defect,
+logged `illegal_settle` at `error`) from a genuine CAS race (`already_settled`). Pinned by four tests,
+each proven to bite.
 
-The real difference is subtler, and it is what to weigh when flipping the four call sites: **today a
-slow acknowledgement ends in `WaitFor` giving up and returning the order in whatever state it is
-really in, with no exception. After the switch it ends in `AtasCallTimeoutException` — UNKNOWN.**
-That is arguably more correct under rule 3, but it is a behaviour change on the money path and it
-deserves its own change and its own reasoning.
-
-**Whatever you do: cancel anything left resting and verify the book from a separate run.** Both runs
-above did, and the probe says so (`CLEANUP VERDICT`).
-
-### 2. On ATAS, the first ambiguous order permanently disables trading, and the escape hatch has no button
-
-Found 2026-09-01 while checking whether the advice in task 3 was actionable. It was not, and that is
-the finding. Each link below was read, not assumed:
-
-1. An order whose outcome is ambiguous — a timeout, a disconnect — becomes `UNKNOWN` and is flagged
-   for reconciliation. That is rule 3 working correctly.
-2. `ReconcileAsync` refuses to guess on a backend that cannot prove its own history:
-   `if (!Connector.Capabilities.ReconciliationProvable) { inconclusive++; ...; continue; }` — and its
-   own message is *"cannot prove order state; needs a human to look"*.
-3. **`ReconciliationProvable` is false on ATAS** and will stay false: it needs `SupportsOrderHistory`,
-   which is false because `GetService<T>()` throws for every type. That is settled and is not a gap.
-4. `TryAuthorizeExecution` refuses while `NeedingReconciliation().Count > 0`
-   (`TradingGateway.cs:238`). So trading is paused.
-5. The human override the design points at — `TradingGateway.ForceResolve`, "the one place a person
-   asserts a fact the software could not prove" — **exists, is tested, and has no route into it.**
-   It appears in `TradingGateway.cs` and in one test, and nowhere else in the product.
-
-**So on the platform this ships for, the first ambiguous order pauses trading forever and there is no
-in-product way to clear it.** The no-terminal rule forbids the workaround as well: "edit the database"
-is not an answer this product is allowed to give.
-
-**Do not fix this by adding a `trade resolve` command.** Operator authority is in-process only and
-deliberately unreachable from the agent-facing pipe — an agent that wants more permission must have
-nowhere to ask. `ForceResolve` is *correctly* absent from `GatewayPipeServer` and the CLI. The route
-belongs in the app, and nowhere else.
-
-**Shape of the work:**
-
-- A card on the Dashboard, visible only when something needs reconciliation, listing each request with
-  what is known: instrument, side, quantity, client order id, broker id if there is one, when it was
-  dispatched, and what the last reconcile attempt said.
-- Two-press, because it widens what the software will believe: `Ui.Confirm`, worded as the assertion
-  it is — *"Confirm: I checked in ATAS and this order was filled / never placed"* — not as a tidy-up.
-- It must say plainly that the user is asserting a fact the software could not verify, and that
-  trading resumes on their word. `ForceResolve` already logs it loudly at `warn`; the screen should
-  match that tone.
-- `ForceResolve(requestId, finalState, note)` takes the note already. Make the UI require it.
-
-**This gates the staged live trial (task 5).** Running real money through a path whose first
-ambiguous outcome bricks the product, with no recovery that does not involve a database editor, is
-not a trial anybody should sign off.
-
-### 3. Every successful cancel strands its own request at DISPATCHING
-
-Found on 2026-09-01 while checking why the Dashboard had said "Open orders / unconfirmed: **1** / 0"
-since the `LIVE_CONFIRM` walk. It is not the walk's order — that closed correctly. It is the **cancel
-request the gateway created for itself**, and the cause is a gap in the transition table:
-
-```
-execution_request : lc-walk-001         PLACE   CANCELLED     <- correct
-                    lc-walk-001-cancel  CANCEL  DISPATCHING   <- stranded
-engineering_log   : already_settled  lc-walk-001-cancel
-                    {"intended":"CANCELLED","actual":"DISPATCHING"}
-```
-
-`CancelAsync` moves its record to `DISPATCHING`, calls `Connector.CancelOrderAsync`, logs
-`Cancelled order <id>` — all of which succeeded — and then calls
-`Settle(id, ExecutionState.CANCELLED)`. But `OrderStateMachine.Allowed[DISPATCHING]` is
-`[ACKNOWLEDGED, WORKING, PARTIALLY_FILLED, FILLED, REJECTED, UNKNOWN]` — **`CANCELLED` is not in it**.
-`Settle` catches `ILLEGAL_STATE_TRANSITION`, logs `already_settled`, and returns the record unchanged.
-
-**This is deterministic, not a one-off.** Every successful cancel through the gateway leaves one
-permanently "open" request, and `Open()` counts it forever.
-
-**Severity, bounded by reading rather than by feel:** `Open()` has exactly one production caller,
-`StatusAsync`, and it fills `GatewayStatus.OpenRequests`, which is **display only**. No gate, no risk
-check and no reconciliation depends on it — `needs_reconciliation` is 0 and `ExecutionTrustable` is
-untouched. So it is a dashboard that quietly asserts something untrue about the book, growing by one
-per cancel, and not a safety failure.
-
-**The decision is made; what follows is the work, in order.** Both halves are small. Do the second
-one first — it is unambiguous, and it is what let the first one hide.
-
-**Step 1 — make `Settle` stop calling a table gap a race.** `ILLEGAL_STATE_TRANSITION` is thrown from
-two different places and `Settle` treats them identically:
-
-- `OrderStateMachine.Require` — **the table forbids `from -> to`.** A defect in the caller.
-- `ExecutionRequestStore.Transition` — **the CAS check failed**, the record was not in `expectedFrom`.
-  A genuine race, and what this catch was written for.
-
-They are distinguishable without parsing a message: if the stored state is still `DISPATCHING`,
-nothing raced.
-
-```csharp
-catch (TradeAgentException ex) when (ex.Code == ErrorCode.ILLEGAL_STATE_TRANSITION)
-{
-    var actual = _requests.Get(requestId)!;
-
-    // TWO DIFFERENT FAILURES ARRIVE HERE AND THEY ARE NOT THE SAME NEWS. If the record is still
-    // where we left it, nobody raced us — the TABLE refused, which is a defect in this code and
-    // must never be filed as `already_settled`.
-    if (actual.State == ExecutionState.DISPATCHING)
-    {
-        _log.Engineering("Gateway", "illegal_settle", "error", requestId: requestId,
-            metadataJson: Json.Write(new { intended = to.ToString(), from = actual.State.ToString() }));
-        return actual;
-    }
-
-    _log.Engineering("Gateway", "already_settled", requestId: requestId, /* unchanged */);
-    return actual;
-}
-```
-
-**Log loudly; do NOT rethrow.** This runs on a write path that has already reached the broker.
-Turning a bookkeeping failure into a thrown error would report failure for an operation that
-succeeded — the wrong direction, and rule 3's own reasoning one level up. The loud log is what makes
-the next gap of this kind visible in minutes instead of a fortnight.
-
-**Step 2 — add `CANCELLED` to `Allowed[DISPATCHING]`,** with the reasoning in a comment beside it:
-
-- *Why it was excluded, and the exclusion was not an oversight:* a PLACE that is dispatching cannot
-  **know** it was cancelled, and forcing that case to `UNKNOWN -> RECONCILING` is the safe direction
-  to fail.
-- *Why it is safe to allow:* `Settle(..., CANCELLED)` has exactly one call site — `CancelAsync` —
-  and it is reached only after `Connector.CancelOrderAsync` returned without an exception, which is
-  a definite broker confirmation and not an inference.
-- *Why the widening is acceptable in a table that is deliberately intent-agnostic:* after step 1, any
-  other caller taking this edge wrongly appears in the engineering log at `error` severity on the
-  first occurrence. The table stays a pure readable function; the guard sits at the call site, which
-  is where it can see the broker's answer.
-
-*Considered and rejected:* making the table intent-aware (legal for `RequestIntent.CANCEL` only). Its
-whole value is being a small pure function anyone can read in one screen, and it is the wrong place to
-learn about intents.
-
-**Step 3 — pin it.** `PolicyGateTests` in `tests/TradeAgent.FaultTests/FaultTests.cs` is where the
-comparable gates live:
-
-- place a resting limit order, cancel it, then assert **both** that the CANCEL record is terminal and
-  that `Open()` is empty. Asserting only the record would pass on a state machine that stranded it
-  somewhere else non-terminal.
-- assert `OrderStateMachine.CanTransition(DISPATCHING, CANCELLED)` directly, so the table edge has a
-  test of its own rather than only being exercised through the gateway.
-- assert the existing terminal-state and `UNKNOWN`-never-redispatches rules still hold — `CoreTests`
-  already has them; just make sure they stay green, because this change edits that table.
-
-**Expected result:** the Dashboard reads `Open orders / unconfirmed: 0 / 0` on the machine, where it
-has read `1 / 0` since 2026-08-31. That stranded record is real data and will still be there — it is
-`lc-walk-001-cancel`, and nothing in the fix backfills it. Leave it and say so, or settle it through
-`ForceResolve` — **which currently has no route into it at all**; see task 2, which is that discovery.
-**Do not hand-edit the database**: that is the one move this record was created by resisting.
+**The pre-existing stranded record is NOT backfilled and must not be.** `lc-walk-001-cancel` is still
+`DISPATCHING` on the machine, so `trade status` still reports `open_requests: 1` with `trade orders`
+returning `[]`. That is the honest expected result. It is *not* flagged for reconciliation, so task 2's
+card correctly does not list it — a stranded-but-unflagged record has no in-product route, which is
+acceptable for one legacy row that can no longer be created. **Do not hand-edit the database**: that is
+the one move this record exists by resisting.
 
 ### 4. Look at TradeAgent's own UI on Windows — with eyes
 
@@ -403,12 +272,18 @@ renders as bare text with no border, so "Use ATAS" when ATAS is already in use r
 label than a disabled control (the `IN USE` pill carries the state, so it is not ambiguous); and the
 rail says "3 parts not checked yet" for the three agent rows until the AI is started.
 
-### 5. The staged live trial — GATED ON TASK 2
+### 5. The staged live trial — GATED ON A BROKER EXISTING, and on task 4
 
-paper → extended paper run → one tiny live order → disconnect/recovery test → autonomous live
-permission. **Do not start this before task 2.** The disconnect/recovery step is precisely the one
-that produces an ambiguous order, and today that outcome pauses trading with no in-product way to
-clear it. `LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
+paper -> extended paper run -> one tiny live order -> disconnect/recovery test -> autonomous live
+permission. **This cannot start at all until a broker is attached to ATAS.** As of 2026-09-01 the
+platform runs on a free ATAS account with none and both accounts are simulated, so "one tiny live
+order" has nowhere to go. That is a fact about the machine, not a gate in the software.
+
+Task 2's blocker is cleared — the reconciliation override has a route into it and is tested — but it
+has **never been watched working on Windows**, and the disconnect/recovery step is precisely the one
+that produces the ambiguous order it exists to clear. Do task 4 first.
+
+`LIVE_AUTONOMOUS` is still refused and correctly so: `ReconciliationProvable` needs
 `SupportsOrderHistory`, which is false because `GetService<T>()` throws for every type. Rule 1 opened
 one gate; the other is shut on an answer, not a gap.
 
@@ -582,9 +457,15 @@ one onto a list-row toggle inside a modal dialog.
   from *the broker's* answer on reconnect from ATAS rehydrating it out of its own local store. The
   identifier survives ATAS restarting — which is what reconciliation needs. **Whether it ever reached
   the broker is still unanswered**, and only the broker's own report answers it.
-- **Does `OpenOrderAsync`'s task complete on SUBMISSION or on broker ACKNOWLEDGEMENT?** The gate on
-  flipping the four obsolete order calls, and unanswerable off Windows. If acknowledgement, blocking on
-  it puts `Place` past the connector's 10s RPC timeout and turns every order into UNKNOWN.
+- ~~**Does `OpenOrderAsync`'s task complete on SUBMISSION or on broker ACKNOWLEDGEMENT?**~~
+  **Answered 2026-09-01: ACKNOWLEDGEMENT.** An A/B on the same account minutes apart: the synchronous
+  call returned `atreturn=None/noid`, the async overload returned `atreturn=Active/id` — the order
+  already carried a state and a broker id when the task completed. The witness is categorical rather
+  than a duration, which is why it holds despite every latency here coming from a simulator.
+  **What is still open is the decision it informs**, not the fact: flipping the four call sites moves
+  a slow acknowledgement from "`WaitFor` returns the real state, no exception" to
+  "`AtasCallTimeoutException` — UNKNOWN", and the margin protecting against that was measured with no
+  broker attached.
 - ~~**Are `ITradingManager.Orders` and `ChartStrategy.Orders` the same list?**~~ **Answered in full,
   2026-08-31. No — and `ChartStrategy.Orders` is empty even for orders this strategy placed.**
   With one resting order live, `orders=1 strategyorders=0` from a single instant inside
@@ -960,6 +841,34 @@ Each of these cost real time. None is obvious from the code.
     24/7 Binance feed against the simulated `CRYPTO5EB41` account, so order-path work does not have to
     wait for CME to open. Move the bridge to that chart — and remove it from the other one first, or
     see trap 24.
+
+44. **Checking an assembly's string literals as UTF-16 only finds the ones at EVEN byte offsets, so
+    half of a correct build reads as absent.** This is trap 27 one level deeper, and it lands you in
+    exactly the place trap 27 warns about: "the build did not take", followed by rebuilding and
+    redeploying something that was already right. Decoding a `Byte[]` with
+    `[Text.Encoding]::Unicode.GetString($b)` starts at offset 0, so a literal beginning on an odd
+    byte is shredded across code-unit boundaries and never matches. Measured on the deployed bridge,
+    2026-09-01:
+
+    ```
+    asyncoverload              even=False odd=True   PRESENT=True
+    place-via-async-overload   even=True  odd=False  PRESENT=True
+    connector                  even=False odd=True   PRESENT=True
+    proven-sameref             even=True  odd=False  PRESENT=True
+    ```
+
+    Trap 27's own worked example, `proven-sameref`, happens to land even — which is precisely why
+    this survived being written down. **Check both alignments:**
+    `[Text.Encoding]::Unicode.GetString($b, 1, $b.Length - 1)` for the odd one.
+
+45. **An agent running `git stash` destroys every other agent's uncommitted work, and no
+    file-ownership rule prevents it — because a stash names no files.** On 2026-09-01 three agents
+    ran in parallel against one tree; one stashed to measure a pre-change test baseline and swept up
+    the other two. Both recovered their own paths and the tree was verified intact byte for byte,
+    but nothing guaranteed that. The existing rule was "do not repeat: two actors in one file"; this
+    is the same lesson one level out. **Say it explicitly in every parallel brief: no whole-tree
+    operations — no `git stash`, no `git reset`, no `git checkout .`, no branch switching.** An agent
+    that needs a clean baseline should build one in a scratch copy, or ask the manager for it.
 
 ## How the last session was run
 

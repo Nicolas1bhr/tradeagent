@@ -38,6 +38,35 @@ public interface IAtasAdapter
     /// </summary>
     OrderInfo Place(PlaceOrderCommand cmd);
 
+    /// <summary>
+    /// The same placement as <see cref="Place"/>, submitted through the platform's ASYNCHRONOUS
+    /// order call so that the completion point of that call can be timed. MEASUREMENT ONLY.
+    ///
+    /// It answers one question, and it is the last one blocking a decision that has been deferred
+    /// three times: does <c>ITradingManager.OpenOrderAsync</c>'s task complete on SUBMISSION or on
+    /// broker ACKNOWLEDGEMENT? Nothing in the ATAS documentation or the API dump says, and no amount
+    /// of reading will — the two answers are indistinguishable except by a stopwatch on a venue whose
+    /// acknowledgement is measurably slower than its submission.
+    ///
+    /// EVERY SAFETY RULE APPLIES HERE UNCHANGED, and rule 3 most of all. This is a real order on a
+    /// real account. The pre-flight refusals, the write-ahead witness record, the acknowledgement
+    /// wait and the classification of what comes back are the same code as <see cref="Place"/> —
+    /// deliberately, because a second submission path with its own error handling is precisely where
+    /// a timeout would get mistaken for a refusal. An expiry inside the async call raises
+    /// <see cref="AtasCallTimeoutException"/> and propagates: UNKNOWN, reconcile, never REJECTED.
+    ///
+    /// AN IMPLEMENTATION THAT CANNOT TAKE THIS MEASUREMENT MUST REFUSE, NOT IMPROVISE. The default
+    /// below does that, and it is the right default rather than a stub: an adapter with no
+    /// asynchronous submission path has no completion point to time, and a number produced by
+    /// anything other than the platform's own call answers a different question while wearing this
+    /// one's name. The refusal happens before anything is submitted, so REJECTED is the truthful
+    /// classification of it — nothing can be live at a broker that was never asked.
+    /// </summary>
+    OrderInfo PlaceViaAsyncOverload(PlaceOrderCommand cmd) =>
+        throw new AtasRejectedException(
+            $"this bridge ({GetType().Name}) has no asynchronous submission path to measure, so there " +
+            "is no completion point to time. NOTHING WAS SUBMITTED.");
+
     OrderInfo Modify(ModifyOrderCommand cmd);
     void Cancel(string connectorOrderId);
     IReadOnlyList<string> CancelAll(string accountId);
@@ -56,3 +85,35 @@ public interface IAtasAdapter
 /// disconnect would tell the gateway an order failed when it may in fact be live.
 /// </summary>
 public sealed class AtasRejectedException(string reason) : Exception(reason);
+
+/// <summary>
+/// WHICH PLATFORM CALL AN ADAPTER'S PLACE PATH SUBMITS THROUGH. Not a mode, not a setting, and not
+/// reachable from the wire — a parameter on one internal overload, and the only reason it exists.
+///
+/// The safety argument is meant to be performed by reading a single line, and that line is the
+/// public entry point in <c>AtasStrategyAdapter</c>:
+///
+///     public OrderInfo Place(PlaceOrderCommand cmd) =&gt; Place(cmd, PlaceRoute.Default);
+///
+/// <see cref="MeasureAsync"/> is unreachable from it. TradingGateway holds an
+/// <c>ITradingConnector</c>, whose only placement is <c>PlaceOrderAsync</c>, which sends
+/// <c>BridgeOps.Place</c>, which <c>BridgeServer</c> dispatches to <c>adapter.Place(cmd)</c> — the
+/// line above. There is no flag, no configuration file and no environment variable anywhere in that
+/// chain, because each of those would turn a one-line audit into a search.
+///
+/// INTERNAL ON PURPOSE. Widening this to public would let a caller outside the bridge assembly
+/// select the measurement route, which is the whole thing being prevented.
+/// </summary>
+internal enum PlaceRoute
+{
+    /// <summary>What every caller in the product gets: the ordinary submission path.</summary>
+    Default,
+
+    /// <summary>
+    /// Submit through the platform's asynchronous overload and block on its task, so the task's
+    /// completion point can be compared against the acknowledgement the wait after it observes.
+    /// Selected only by <see cref="IAtasAdapter.PlaceViaAsyncOverload"/>, which is reached only by
+    /// <c>BridgeOps.PlaceViaAsyncOverload</c>, which is sent only by <c>tools/probe</c>.
+    /// </summary>
+    MeasureAsync
+}

@@ -86,6 +86,38 @@ public sealed class LoopbackAtasAdapter : IAtasAdapter
         return order;
     }
 
+    /// <summary>
+    /// REFUSES, AND THE REFUSAL IS THE HONEST ANSWER — not a gap waiting to be filled in.
+    ///
+    /// Every other method on this class is a worked example the real adapter is written against.
+    /// This one cannot be, and pretending otherwise would produce the most convincing wrong number
+    /// in the project. What <see cref="IAtasAdapter.PlaceViaAsyncOverload"/> measures is the moment
+    /// <c>ITradingManager.OpenOrderAsync</c>'s task completes, relative to the moment the broker
+    /// acknowledges. There is no ITradingManager here and no broker: an in-memory adapter completes
+    /// both in the same statement, so any reading it produced would be the .NET scheduler's latency
+    /// wearing ATAS's name — a plausible small number, in the right units, on the right line of the
+    /// probe's output, meaning nothing whatever.
+    ///
+    /// That shape has already cost this project real sessions. A capability that is true from a test
+    /// double's first frame never has to travel, so the test passes without exercising the thing it
+    /// claims to cover; SupportsClientOrderId was read as proven off exactly that kind of reading
+    /// for weeks. A fabricated timing here would be the same mistake with a stopwatch attached, and
+    /// it would be worse, because the number it produced would look like evidence in a document.
+    ///
+    /// Refusing rather than throwing something indefinite is deliberate and is the truthful
+    /// classification under rule 3: this method submits nothing, so nothing can be live anywhere,
+    /// which is the definite-and-nothing-is-live test the rule sets. It reaches the wire as
+    /// rejected=true and the harness records NOTHING WAS SUBMITTED, which is exactly what happened.
+    /// Reporting it as indefinite would tell a caller to go reconciling an order that does not and
+    /// cannot exist.
+    /// </summary>
+    public OrderInfo PlaceViaAsyncOverload(PlaceOrderCommand cmd) =>
+        throw new AtasRejectedException(
+            "the loopback adapter has no ITradingManager and no broker, so there is no asynchronous " +
+            "submission whose completion point could be timed. Any latency it reported would be this " +
+            "process's own scheduling, not ATAS's — a plausible number that answers a different " +
+            "question. This measurement is only available on a real ATAS bridge. NOTHING WAS SUBMITTED.");
+
     void Apply(OrderInfo o, decimal qty, decimal price)
     {
         var signed = o.Side == OrderSide.Buy ? qty : -qty;

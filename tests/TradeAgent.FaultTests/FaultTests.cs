@@ -677,4 +677,219 @@ public class PolicyGateTests
         Assert.Equal(ExecutionState.FILLED, replay.State);
         Assert.Equal(2, conn.Broker.Orders.Count);
     }
+
+    // ------------------------------------------------ the cancel that never settled its own record
+
+    /// <summary>
+    /// Every successful cancel used to strand its own CANCEL request at DISPATCHING forever:
+    /// DISPATCHING -> CANCELLED was missing from the transition table, and Settle filed the table's
+    /// refusal as `already_settled` — indistinguishable in the log from a harmless race. The open
+    /// request count the dashboard shows therefore grew by one on every cancel, permanently.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_cancel_settles_its_own_request_instead_of_stranding_it()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "cx-open",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        Assert.Equal(ExecutionState.WORKING, placed.State);
+
+        var cancel = await gw.CancelAsync(new AgentContext("a"), "cx-open-cancel", placed.ConnectorOrderId!);
+        Assert.Equal(ExecutionState.CANCELLED, conn.Broker.Orders.Single().State);
+
+        // BOTH halves are load-bearing. "the record says CANCELLED" alone would still pass on a state
+        // machine that stranded it in some other non-terminal state, and the open book is the thing
+        // that was actually wrong: the record has to be off it.
+        Assert.Equal(ExecutionState.CANCELLED, cancel.State);
+        Assert.True(OrderStateMachine.IsTerminal(gw.GetRequest("cx-open-cancel")!.State));
+
+        // Not Assert.Empty: the open book still holds "cx-open:WORKING", the PLACE record. That is a
+        // SEPARATE, PRE-EXISTING harness gap — FakeConnector.CancelOrderAsync raises no OrderChanged,
+        // so OnOrderChanged is never told the resting order died and the PLACE record is never moved
+        // to CANCELLED. Measured, not assumed. Asserting emptiness here would fail for that reason
+        // rather than for this one, so the assertion names the record this test is actually about.
+        Assert.DoesNotContain(new ExecutionRequestStore(db).Open(), r => r.RequestId == "cx-open-cancel");
+    }
+
+    /// <summary>
+    /// The edge itself, pinned away from the gateway. If CancelAsync is ever rewritten, this still
+    /// fails for the right reason — and it records that the widening stops at exactly one entry.
+    /// </summary>
+    [Fact]
+    public void The_table_lets_a_dispatching_cancel_reach_cancelled()
+    {
+        Assert.True(OrderStateMachine.CanTransition(ExecutionState.DISPATCHING, ExecutionState.CANCELLED));
+
+        // ...and nothing else moved. A dispatching record still may not walk backwards, and it still
+        // may not claim a cancel is merely pending.
+        Assert.False(OrderStateMachine.CanTransition(ExecutionState.DISPATCHING, ExecutionState.CREATED));
+        Assert.False(OrderStateMachine.CanTransition(ExecutionState.DISPATCHING, ExecutionState.CANCEL_PENDING));
+        Assert.False(OrderStateMachine.CanTransition(ExecutionState.DISPATCHING, ExecutionState.RECONCILING));
+    }
+
+    /// <summary>
+    /// Settle catches ILLEGAL_STATE_TRANSITION from two sources and they are not the same news: the
+    /// table refusing from -> to is a defect here, the store's CAS check failing is a real race. This
+    /// pins the discrimination — a table refusal must never be filed as `already_settled` again.
+    /// </summary>
+    [Fact]
+    public async Task A_settle_the_table_forbids_is_recorded_as_a_defect_rather_than_a_race()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var store = new ExecutionRequestStore(db);
+        store.TryCreate(Dispatching("illegal-settle-1"));
+        store.Transition("illegal-settle-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+
+        // No production caller can reach this branch — being unreachable is the whole point of it —
+        // so the private method is called directly. A production seam that manufactured an illegal
+        // settle would widen the gateway's surface for the sake of a test, which is the wrong trade.
+        var result = InvokeSettle(gw, "illegal-settle-1", ExecutionState.CANCEL_PENDING);
+
+        // Loud, not thrown: this path has already reached the broker, so a bookkeeping failure must
+        // not be reported as a failed operation. And the record is left exactly where it was.
+        Assert.Equal(ExecutionState.DISPATCHING, result.State);
+
+        var events = Engineering(db, "illegal-settle-1");
+        Assert.Contains(("illegal_settle", "error"), events);
+        Assert.DoesNotContain(events, e => e.Event == "already_settled");
+    }
+
+    /// <summary>
+    /// The other half of the same catch, and the control for the test above: when something really
+    /// did move the record out from under us, that is a race and must stay `already_settled` at info.
+    /// </summary>
+    [Fact]
+    public async Task A_record_that_moved_underneath_us_is_still_recorded_as_a_race()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var store = new ExecutionRequestStore(db);
+        store.TryCreate(Dispatching("raced-settle-1"));
+        store.Transition("raced-settle-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition("raced-settle-1", ExecutionState.DISPATCHING, ExecutionState.FILLED);
+
+        // DISPATCHING -> WORKING is perfectly legal, so the table passes it; the CAS check is what
+        // refuses, because the record is already FILLED. That is the failure this catch was written
+        // for, and the stored state wins.
+        var result = InvokeSettle(gw, "raced-settle-1", ExecutionState.WORKING);
+        Assert.Equal(ExecutionState.FILLED, result.State);
+
+        var events = Engineering(db, "raced-settle-1");
+        Assert.Contains(events, e => e.Event == "already_settled");
+        Assert.DoesNotContain(events, e => e.Event == "illegal_settle");
+    }
+
+    static ExecutionRequest Dispatching(string id) => new()
+    {
+        RequestId = id, ConnectorId = "fake", AccountId = "SIM-001", Instrument = "ES",
+        Intent = RequestIntent.PLACE, ParametersJson = "{}", ClientOrderId = $"TA-{id}",
+        CreatedAt = DateTimeOffset.UtcNow, State = ExecutionState.CREATED, Mode = TradingMode.PAPER
+    };
+
+    static ExecutionRequest InvokeSettle(TradingGateway gw, string requestId, ExecutionState to)
+    {
+        var settle = typeof(TradingGateway).GetMethod("Settle",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("TradingGateway.Settle was renamed; this test guards it");
+        return (ExecutionRequest)settle.Invoke(gw, [requestId, to, null, null, null])!;
+    }
+
+    static List<(string Event, string Severity)> Engineering(Database db, string requestId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT event,severity FROM engineering_log WHERE request_id=$r ORDER BY id", ("$r", requestId));
+        using var r = c.ExecuteReader();
+        var rows = new List<(string, string)>();
+        while (r.Read()) rows.Add((r.GetString(0), r.GetString(1)));
+        return rows;
+    });
+
+    /// <summary>
+    /// THE ESCAPE HATCH ON THE RECORD IT WAS LEAST ABLE TO OPEN. A flagged record is not necessarily
+    /// an UNKNOWN one: MarkNeedsReconciliation sets the flag with a bare UPDATE and leaves the state
+    /// alone, so SettleUnknown's catch — taken when the event stream settles a record while a
+    /// dispatch is in flight — produces a record that is FILLED *and* flagged. It pauses trading,
+    /// and ForceResolve used to compute CanTransition(FILLED, anything) = false, fall through to
+    /// Transition(id, FILLED, RECONCILING) and throw. The only override for a request no machine can
+    /// settle threw on it.
+    /// </summary>
+    [Fact]
+    public async Task A_flagged_record_the_stream_already_settled_can_still_be_resolved()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var store = new ExecutionRequestStore(db);
+
+        store.TryCreate(Dispatching("stream-settled"));
+        store.Transition("stream-settled", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition("stream-settled", ExecutionState.DISPATCHING, ExecutionState.FILLED);
+        store.MarkNeedsReconciliation("stream-settled", "connection lost mid-dispatch");
+
+        // The flag alone pauses trading, whatever state the record is in.
+        Assert.False(gw.TryAuthorizeExecution(AgentContext.Operator, out _, out var before));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, before);
+
+        gw.ForceResolve("stream-settled", ExecutionState.FILLED, "checked ATAS: it filled");
+
+        // The state was already right; what was stale was the flag. Both halves matter — clearing
+        // the flag without unblocking would leave the button looking like it worked.
+        Assert.Equal(ExecutionState.FILLED, store.Get("stream-settled")!.State);
+        Assert.Empty(store.NeedingReconciliation());
+        gw.TryAuthorizeExecution(AgentContext.Operator, out _, out var after);
+        Assert.NotEqual(ErrorCode.TRADING_PAUSED_UNRECONCILED, after);
+    }
+
+    /// <summary>
+    /// The override widens what the software will believe, so it has a floor. A terminal record holds
+    /// a definite outcome written from a broker answer; a person asserting a DIFFERENT one is not a
+    /// stuck record needing a nudge, it is the stream and the platform disagreeing. Overwriting it
+    /// would erase the only account of what the software was told.
+    /// </summary>
+    [Fact]
+    public async Task Force_resolve_will_not_rewrite_a_settled_outcome_as_a_different_one()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var store = new ExecutionRequestStore(db);
+
+        store.TryCreate(Dispatching("settled-conflict"));
+        store.Transition("settled-conflict", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        store.Transition("settled-conflict", ExecutionState.DISPATCHING, ExecutionState.FILLED);
+        store.MarkNeedsReconciliation("settled-conflict", "connection lost mid-dispatch");
+
+        var ex = Assert.Throws<GatewayDeniedException>(() =>
+            gw.ForceResolve("settled-conflict", ExecutionState.CANCELLED, "I think it was cancelled"));
+        Assert.Contains("already recorded as FILLED", ex.Message);
+
+        // Refusing must not quietly half-apply: the record and the flag are both untouched, so the
+        // conflict is still visible to whoever looks next.
+        Assert.Equal(ExecutionState.FILLED, store.Get("settled-conflict")!.State);
+        Assert.Single(store.NeedingReconciliation());
+    }
+
+    /// <summary>
+    /// Decline had NO guard of its own — the state table was its only one, and adding
+    /// DISPATCHING -> CANCELLED for CancelAsync (which reaches it only after the broker confirmed)
+    /// took that guard away from a caller that has confirmed nothing. Without this check, declining
+    /// a request already on the wire writes CANCELLED over an order that may be live at the broker.
+    /// </summary>
+    [Fact]
+    public async Task Decline_refuses_an_order_that_has_already_been_sent()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var store = new ExecutionRequestStore(db);
+
+        store.TryCreate(Dispatching("already-sent"));
+        store.Transition("already-sent", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+
+        var ex = Assert.Throws<GatewayDeniedException>(() => gw.Decline("already-sent"));
+        Assert.Contains("has not been sent", ex.Message);
+
+        // The record must be left exactly as the wire left it — a refused decline that still moved
+        // the record would be the very misclassification this guard exists to prevent.
+        Assert.Equal(ExecutionState.DISPATCHING, store.Get("already-sent")!.State);
+    }
 }

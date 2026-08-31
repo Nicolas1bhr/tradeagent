@@ -390,6 +390,28 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (TradeAgentException ex) when (ex.Code == ErrorCode.ILLEGAL_STATE_TRANSITION)
         {
             var actual = _requests.Get(requestId)!;
+
+            // TWO DIFFERENT FAILURES ARRIVE HERE AND THEY ARE NOT THE SAME NEWS.
+            //
+            //   OrderStateMachine.Require  — the TABLE forbids from -> to. A defect in this code.
+            //   ExecutionRequestStore CAS  — the record was not in DISPATCHING. A genuine race, and
+            //                                the only thing this catch was ever written for.
+            //
+            // They are distinguishable without parsing a message: Require runs before the UPDATE, so
+            // a table refusal leaves the record exactly where we left it. If it is still DISPATCHING,
+            // nobody raced us, and filing that as `already_settled` is how a table gap stayed hidden
+            // long enough to strand every cancel this gateway ever made.
+            //
+            // Loud, but NOT thrown. This runs on a write path that has already reached the broker;
+            // turning a bookkeeping failure into a thrown error would report failure for an operation
+            // that succeeded, which is the wrong direction to fail.
+            if (actual.State == ExecutionState.DISPATCHING)
+            {
+                _log.Engineering("Gateway", "illegal_settle", "error", requestId: requestId,
+                    metadataJson: Json.Write(new { intended = to.ToString(), from = actual.State.ToString() }));
+                return actual;
+            }
+
             _log.Engineering("Gateway", "already_settled", requestId: requestId,
                 metadataJson: Json.Write(new { intended = to.ToString(), actual = actual.State.ToString() }));
             return actual;
@@ -478,6 +500,20 @@ public sealed class TradingGateway : IAsyncDisposable
     public ExecutionRequest Decline(string requestId)
     {
         var stored = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
+
+        // DECLINING IS ONLY MEANINGFUL BEFORE THE ORDER WAS SENT. Until 2026-09-01 the state table
+        // was this method's only guard: it had none of its own, and a Decline on a DISPATCHING
+        // record was refused by `Allowed[DISPATCHING]` not containing CANCELLED. Adding that edge —
+        // correct for `CancelAsync`, which reaches it only after the broker confirmed a cancel —
+        // took the guard away from here, where nothing has confirmed anything. Without this check a
+        // decline would write CANCELLED over an order that is live at the broker: the software
+        // asserting an outcome nobody obtained, which is exactly what rule 3 exists to prevent.
+        // The explicit check is the right home for it anyway; the table is deliberately
+        // intent-agnostic and cannot know that this caller has no broker answer behind it.
+        if (stored.State is not (ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"request is {stored.State}; only an order that has not been sent can be declined");
+
         _log.Activity("You declined an order the AI asked for");
         return _requests.Transition(requestId, stored.State, ExecutionState.CANCELLED, error: "declined by user");
     }
@@ -631,7 +667,18 @@ public sealed class TradingGateway : IAsyncDisposable
     public async Task<ReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
         var pending = _requests.NeedingReconciliation();
-        if (pending.Count == 0) return new ReconcileResult(0, 0, []);
+        if (pending.Count == 0)
+        {
+            // NOTHING PENDING IS AN OUTCOME, NOT A REASON TO SKIP THE ROW. The all-resolved path
+            // below clears ExecutionCapability; returning early without doing the same left
+            // "reconcile until clean" unable to actually finish — a caller that only ever calls
+            // ReconcileAsync watched execution stay PAUSED on a book with nothing left to confirm.
+            // In the app the background health tick hid this; anything driving the gateway directly
+            // saw it. Same two lines the sibling path uses, so the two cannot drift apart again.
+            _health.Set(Components.ExecutionCapability, HealthState.READY);
+            StateChanged?.Invoke();
+            return new ReconcileResult(0, 0, []);
+        }
 
         if (!await Connector.IsConnectedAsync(ct))
             return new ReconcileResult(0, pending.Count, ["connector is offline; cannot reconcile yet"]);
@@ -770,11 +817,54 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var req = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
         var from = req.State;
+
+        // A FLAGGED RECORD IS NOT NECESSARILY AN UNKNOWN ONE, and that is what made this method
+        // throw on the case it most needed to handle. `MarkNeedsReconciliation` sets the flag with
+        // a bare UPDATE and never touches the state, and `NeedingReconciliation()` queries the flag
+        // alone — so `SettleUnknown`'s catch, taken when the event stream already settled a record
+        // while a dispatch was in flight, leaves a record that is FILLED *and* flagged. It pauses
+        // trading (`TryAuthorizeExecution` counts the flag), and every route below used to end in
+        // `Transition(id, FILLED, RECONCILING)`, which the table refuses. The one override designed
+        // for a request no machine can settle threw on it. Verified by reading all five links,
+        // 2026-09-01.
+        if (from == finalState)
+        {
+            // The person checked, and the record already says what they found. There is nothing to
+            // transition and rewriting a terminal state would only destroy the timestamp on it;
+            // what is actually stale is the flag. This is the common ending for the race above.
+            var confirmed = _requests.ClearReconciliation(requestId);
+            _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
+            _log.Engineering("Gateway", "force_resolve_confirmed", "warn", requestId: requestId,
+                metadataJson: Json.Write(new { state = finalState.ToString(), note }));
+            StateChanged?.Invoke();
+            return confirmed;
+        }
+
+        if (OrderStateMachine.IsTerminal(from))
+        {
+            // The record holds a DEFINITE outcome, written from a broker answer, and the person is
+            // asserting a different one. That is not a stuck record needing a nudge — it is the
+            // stream and the platform disagreeing, and silently overwriting it would erase the only
+            // account of what the software was told. Refuse, and name both sides so the conflict is
+            // the thing the operator investigates.
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"this order is already recorded as {from}; it cannot be re-resolved as {finalState}. " +
+                "If ATAS disagrees with that, the two records genuinely conflict and need looking at, not overriding.");
+        }
+
         if (!OrderStateMachine.CanTransition(from, finalState))
             _requests.Transition(requestId, from, ExecutionState.RECONCILING);
         var result = _requests.Transition(requestId, _requests.Get(requestId)!.State, finalState,
             needsReconciliation: false, markReconciled: true, error: $"resolved by user: {note}");
         _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
+
+        // Every other mutator on this class announces itself and this one did not, so the screen that
+        // pressed the button was the last thing to learn the record had moved. NOTE the row this does
+        // NOT touch: ExecutionCapability is recomputed only by RefreshHealthAsync, so clearing the
+        // last flagged record does not by itself resume trading. That is deliberate — this method
+        // cannot know what else is wrong with the connection — but it means any caller wanting
+        // trading to resume must refresh health afterwards, and the Dashboard card does exactly that.
+        StateChanged?.Invoke();
         return result;
     }
 

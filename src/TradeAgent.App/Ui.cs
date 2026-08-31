@@ -4,6 +4,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Layout;
 using Avalonia.Media;
 using TradeAgent.Core;
+using TradeAgent.Gateway;
 
 namespace TradeAgent.App;
 
@@ -250,6 +251,14 @@ static class Ui
         if (!b.Classes.Contains("secondary")) b.Classes.Add("secondary");
     }
 
+    /// <summary>
+    /// Takes a two-step button back to its resting state from outside. Needed where the thing being
+    /// confirmed can change under a button that is already armed — the unconfirmed-orders card ties
+    /// each confirmation to a note the user is still typing, and a confirmation armed against one
+    /// sentence must not be completable against a different one.
+    /// </summary>
+    public static void DisarmConfirm(Button b) => Disarm(b);
+
     /// <summary>Changes what a two-step button says without rebuilding it, disarming it as it goes.</summary>
     public static void Relabel(Button b, string label, string confirmLabel)
     {
@@ -446,9 +455,27 @@ static class Ui
     /// backend is called "Simulator (built in)", and "Simulator (built in) (simulation)" is the kind
     /// of line that makes a product look like nobody read it. Real money is never dropped.
     /// </summary>
-    public static string PlatformLabel(string? name, bool isPaper)
+    /// <summary>
+    /// The platform line. THE THIRD STATE IS THE ONE THAT MATTERS: `IsPaper` is false *before the
+    /// platform has answered*, not only when the money is real. `AtasConnector.Capabilities` reports
+    /// an all-false set while its handshake is null — deliberately, so the trading gates fail closed
+    /// (`TradingGateway.cs:274` leans on exactly that). Rendering that same false as "real money"
+    /// turned "I do not know yet" into the most alarming claim this product can make, and it was on
+    /// screen beside a "Practice" badge and a simulated account: three labels, contradicting each
+    /// other about the only fact that matters. Found by looking at the running app, 2026-09-01.
+    ///
+    /// Over-warning is not the safe direction here, it is just a different failure. A header that
+    /// cries "real money" through every practice session is one the owner has stopped reading by the
+    /// day it is true. So when the platform has not answered, say that, and assert neither.
+    /// </summary>
+    public static string PlatformLabel(GatewayStatus status) =>
+        PlatformLabel(status.ConnectorName, status.ConnectorIsPaper,
+            status.Health.FirstOrDefault(h => h.Component == Components.TradingConnection)?.State == HealthState.READY);
+
+    public static string PlatformLabel(string? name, bool isPaper, bool platformAnswered = true)
     {
         if (string.IsNullOrWhiteSpace(name)) return "not connected";
+        if (!platformAnswered) return $"{name} \u00b7 not connected";
         if (!isPaper) return $"{name} \u00b7 real money";
         return name.Contains("simulat", StringComparison.OrdinalIgnoreCase) ? name : $"{name} \u00b7 simulation";
     }

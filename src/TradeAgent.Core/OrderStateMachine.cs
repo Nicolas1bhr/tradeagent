@@ -13,7 +13,22 @@ public static class OrderStateMachine
     {
         [ExecutionState.CREATED]           = [ExecutionState.AWAITING_APPROVAL, ExecutionState.DISPATCHING, ExecutionState.REJECTED, ExecutionState.CANCELLED],
         [ExecutionState.AWAITING_APPROVAL] = [ExecutionState.DISPATCHING, ExecutionState.CANCELLED, ExecutionState.REJECTED],
-        [ExecutionState.DISPATCHING]       = [ExecutionState.ACKNOWLEDGED, ExecutionState.WORKING, ExecutionState.PARTIALLY_FILLED, ExecutionState.FILLED, ExecutionState.REJECTED, ExecutionState.UNKNOWN],
+        // CANCELLED was deliberately absent here, and it is worth saying why it is now present.
+        //
+        // Why it was excluded: a PLACE that is still DISPATCHING cannot KNOW it was cancelled. It has
+        //   not heard back from the broker at all, so "cancelled" would be an inference, and forcing
+        //   that case down UNKNOWN -> RECONCILING instead is the safe direction to fail.
+        // Why it is safe to allow: the only caller that settles a DISPATCHING record as CANCELLED is
+        //   TradingGateway.CancelAsync (verified: one call site of Settle(..., CANCELLED)), and it is
+        //   reached only after Connector.CancelOrderAsync returned without an exception — a definite
+        //   broker confirmation, not an inference. Without this edge every successful cancel stranded
+        //   its own CANCEL request at DISPATCHING forever.
+        // Why widening a deliberately intent-agnostic table is acceptable: any OTHER caller that takes
+        //   this edge wrongly is not silent — TradingGateway.Settle now files `illegal_settle` at error
+        //   severity the first time a table refusal happens. The table stays a small pure function
+        //   anyone can read in one screen; the guard that knows the broker's answer sits at the call
+        //   site, which is the only place that can see it.
+        [ExecutionState.DISPATCHING]       = [ExecutionState.ACKNOWLEDGED, ExecutionState.WORKING, ExecutionState.PARTIALLY_FILLED, ExecutionState.FILLED, ExecutionState.CANCELLED, ExecutionState.REJECTED, ExecutionState.UNKNOWN],
         [ExecutionState.ACKNOWLEDGED]      = [ExecutionState.WORKING, ExecutionState.PARTIALLY_FILLED, ExecutionState.FILLED, ExecutionState.CANCEL_PENDING, ExecutionState.CANCELLED, ExecutionState.REJECTED, ExecutionState.UNKNOWN],
         [ExecutionState.WORKING]           = [ExecutionState.PARTIALLY_FILLED, ExecutionState.FILLED, ExecutionState.CANCEL_PENDING, ExecutionState.CANCELLED, ExecutionState.REJECTED, ExecutionState.UNKNOWN],
         [ExecutionState.PARTIALLY_FILLED]  = [ExecutionState.PARTIALLY_FILLED, ExecutionState.FILLED, ExecutionState.CANCEL_PENDING, ExecutionState.CANCELLED, ExecutionState.UNKNOWN],

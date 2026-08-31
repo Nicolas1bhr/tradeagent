@@ -17,6 +17,30 @@ public static class BridgeOps
     public const string Accounts = "accounts", Instruments = "instruments", Quote = "quote";
     public const string Positions = "positions", Orders = "orders", Executions = "executions";
     public const string Place = "place", Modify = "modify", Cancel = "cancel", CancelAll = "cancel-all", Close = "close";
+
+    /// <summary>
+    /// MEASUREMENT ONLY, and it places a real order to take the measurement.
+    ///
+    /// Identical to <see cref="Place"/> in every respect a broker can see — same command, same
+    /// pre-flight refusals, same acknowledgement wait, same write-ahead record — except that the
+    /// bridge submits it through <c>ITradingManager.OpenOrderAsync</c> instead of the obsolete
+    /// synchronous <c>OpenOrder</c>. It exists to answer one question that cannot be answered by
+    /// reading anything: does that task complete on SUBMISSION or on broker ACKNOWLEDGEMENT? The
+    /// four obsolete synchronous call sites cannot be given a deadline, so a block inside one wedges
+    /// the bridge's frame loop; flipping them to the Async overloads is what lets
+    /// <c>AtasCall.Block</c> reach them, and whether that is safe turns entirely on this answer.
+    ///
+    /// WHY IT IS A SEPARATE OP RATHER THAN A FLAG ON <see cref="Place"/>. A flag would put a second
+    /// way to submit an order inside the one method the gateway calls, reachable from the wire, on
+    /// the money path — which is exactly where a rule-3 misclassification hides. As a separate op it
+    /// is reachable only by a caller that names it, and the adapter's public <c>Place(cmd)</c> can go
+    /// on being auditable in a single line.
+    ///
+    /// NOTHING IN THE PRODUCT SENDS THIS. <see cref="AtasConnector.PlaceOrderAsync"/> — the only
+    /// placement <c>ITradingConnector</c> exposes, and therefore the only one TradingGateway can
+    /// reach — sends <see cref="Place"/>. This op is sent by <c>tools/probe</c> and by nothing else.
+    /// </summary>
+    public const string PlaceViaAsyncOverload = "place-via-async-overload";
 }
 
 public static class BridgeEvents

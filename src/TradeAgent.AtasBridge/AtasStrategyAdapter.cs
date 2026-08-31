@@ -336,6 +336,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// How the last order this adapter placed actually behaved in time, for
     /// <c>BridgeHello.TradingSurface</c>'s <c>place=</c> token. See the block in <c>Place</c>.
     ///
+    /// IT NAMES THE ROUTE FIRST BECAUSE THE ROUTE IS WHAT MAKES THE NUMBERS MEAN ANYTHING.
+    /// <c>sync</c>, <c>connector</c> and <c>asyncoverload</c> are three different platform calls, and
+    /// a <c>call=</c> reading is only comparable with another taken through the same one.
+    ///
+    /// IT IS ONLY WRITTEN ON A PATH THAT REACHED THE ACKNOWLEDGEMENT WAIT, and the boundary is
+    /// exactly the submission call. A pre-flight refusal, or an exception out of the submission
+    /// itself — an <see cref="AtasCallTimeoutException"/> from the async route being the one that
+    /// route newly makes possible — leaves the PREVIOUS order's reading standing, because the write
+    /// is below the throw and this path has no catch. A refusal ATAS reports through its order-failure
+    /// event does NOT: that one is detected after the write, so its reading is this order's.
+    ///
+    /// So an unchanged token is not this run's answer, and the difference is not visible from the
+    /// token. A harness has to compare it against the one it read before placing; tools/probe does.
+    ///
     /// DIAGNOSTIC ONLY. Nothing derives a capability, a state or a decision from it, and nothing may:
     /// it is a stopwatch reading, and a stopwatch reading is not a round trip.
     /// </summary>
@@ -656,6 +670,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // How the last order behaved in time. `gap` is this platform's acknowledgement
                 // latency measured through the path actually in use, and it is what decides whether
                 // the OpenOrderAsync question is answerable here at all. Space-free by construction.
+                //
+                // THE FIRST FIELD IS THE ROUTE, AND NOTHING IS READABLE WITHOUT IT. `sync` is
+                // ITradingManager.OpenOrder, `connector` is IDataFeedConnector.RegisterOrderAsync,
+                // `asyncoverload` is ITradingManager.OpenOrderAsync — three different calls whose
+                // `call=` readings mean three different things. A run that asked for one route and
+                // reads a token saying another measured something else; check the route before
+                // believing the number.
                 $"place={_lastPlace}",
                 $"cache={cacheNote}");
         }
@@ -1226,7 +1247,31 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     // ---------------------------------------------------------------- writes
 
-    public OrderInfo Place(PlaceOrderCommand cmd)
+    /// <summary>
+    /// THE PLACEMENT THE PRODUCT MAKES, AND THE ONLY ONE IT CAN MAKE.
+    ///
+    /// This one line is the entire safety argument for the measurement route below it. TradingGateway
+    /// is handed an <c>ITradingConnector</c>; its only placement is <c>PlaceOrderAsync</c>, which
+    /// sends <c>BridgeOps.Place</c>, which <c>BridgeServer</c> dispatches here — and this passes
+    /// <see cref="PlaceRoute.Default"/> unconditionally. There is no overload of it that takes a
+    /// route, no setting, no environment variable and no wire field that changes it, deliberately:
+    /// each of those would turn an audit that is one line long into a search, and a second way to
+    /// submit an order is exactly where a rule-3 misclassification would hide.
+    /// </summary>
+    public OrderInfo Place(PlaceOrderCommand cmd) => Place(cmd, PlaceRoute.Default);
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// MEASUREMENT ONLY, and it places a real order to take the measurement. Reached from
+    /// <c>BridgeOps.PlaceViaAsyncOverload</c>, which nothing in the product sends. Everything about
+    /// the order — the pre-flight refusals, the write-ahead witness record, the acknowledgement wait,
+    /// the classification of what comes back — is the same code path as the line above; the single
+    /// difference is which <c>ITradingManager</c> overload submits it, and that difference is the
+    /// whole experiment.
+    /// </remarks>
+    public OrderInfo PlaceViaAsyncOverload(PlaceOrderCommand cmd) => Place(cmd, PlaceRoute.MeasureAsync);
+
+    internal OrderInfo Place(PlaceOrderCommand cmd, PlaceRoute route)
     {
         // Pre-flight. Every throw below happens before anything is submitted, so nothing can be live
         // at the broker and REJECTED is the truthful record. That is exactly the test rule 3 sets:
@@ -1330,36 +1375,73 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // call that MIGHT ask for confirmation is exactly the rule 4 hazard the flags above exist to
         // remove. There is no situation where it is reachable and the flagged overload is not: both
         // require a trading manager, and RequireTrading() has already thrown without one.
-        // ---- THE MEASUREMENT, AND IT CHANGES NOTHING ABOUT THE SUBMISSION ----
+        // ---- THE MEASUREMENT, AND ON THE DEFAULT ROUTE IT CHANGES NOTHING ABOUT THE SUBMISSION ----
         //
-        // A stopwatch and two property reads. The submission below is what it always was.
+        // A stopwatch and two property reads. On PlaceRoute.Default — the only route the gateway can
+        // reach, see the one-line public Place above — the submission below is what it always was.
         //
         // What it is for: the four synchronous order calls are obsolete and cannot be given a
         // deadline, so a block in any of them wedges BridgeServer's frame loop — including the
         // operator's cancel-all — while the heartbeat goes on reporting READY (trap 31). Switching
         // them to the Async overloads is what lets AtasCall.Block reach them. Whether that is safe
-        // turns on ONE unmeasured fact: does OpenOrderAsync's task complete on SUBMISSION or on
-        // broker ACKNOWLEDGEMENT? On acknowledgement, blocking on it puts Place past CallTimeout and
-        // turns every order into UNKNOWN. See the long comment on AtasCall.Block.
+        // turns on ONE fact: does OpenOrderAsync's task complete on SUBMISSION or on broker
+        // ACKNOWLEDGEMENT? See the long comment on AtasCall.Block.
         //
-        // WHY THIS MEASURES IT WITHOUT CALLING THE ASYNC OVERLOAD AT ALL. The WaitFor below already
-        // waits for exactly the condition that separates the two answers — a state change or an
-        // assigned Id, which is acknowledgement arriving. So the gap between the call returning and
-        // that condition holding IS this platform's acknowledgement latency, measured through the
-        // path actually in use:
+        // IT TAKES TWO RUNS, AND THIS IS THE FIRST OF THEM. The WaitFor below already waits for
+        // exactly the condition that separates the two answers — a state change or an assigned Id,
+        // which is acknowledgement arriving. So the gap between the call returning and that condition
+        // holding IS this platform's acknowledgement latency, measured through the path actually in
+        // use, and it decides whether the question is answerable here at all:
         //
-        //   gap large  -> submission and acknowledgement ARE separable here, and a follow-up run
-        //                 through OpenOrderAsync will say which of the two its task waits for.
+        //   gap large  -> submission and acknowledgement ARE separable here, so a run through
+        //                 PlaceRoute.MeasureAsync will say which of the two its task waits for.
         //   gap ~zero  -> they are NOT separable on this platform, so a fast async completion would
         //                 be no evidence at all. Report that; do not round it to a green.
         //
+        // The second run is the branch further down. It reports the same token, so `call=` under
+        // place=asyncoverload is read against `call=` under place=sync from an ordinary run: alike
+        // means the task completed on submission, near `settled=` means it waited for the broker.
+        //
         // Microseconds as an integer, deliberately: this machine formats decimals with a comma, and
         // a comma would be indistinguishable from a separator in this token.
-        var placeRoute = feed is not null ? "connector" : "sync";
+        //
+        // ---- AND THE ONE SUBMISSION THAT IS NOT THE ORDINARY ONE ----
+        //
+        // route == MeasureAsync submits through ITradingManager.OpenOrderAsync and blocks on the
+        // task, which is the only way to observe what that task actually waits for. `call=` then
+        // times the ASYNC call rather than the synchronous one, and the answer is read straight off
+        // the token: near the synchronous reading means the task completes on SUBMISSION and the four
+        // obsolete call sites can be flipped; near `settled=` means it completes on ACKNOWLEDGEMENT.
+        //
+        // WHY THE `feed` BRANCH STILL WINS. An off-chart order needs the connector to reach an
+        // instrument or portfolio the trading manager has not selected — that is a correctness
+        // requirement for the ORDER, and a measurement does not get to override one. The reading is
+        // subordinate: when the connector route is taken, `place=connector` says so and the run
+        // simply did not answer the question. Reading that token before believing a number is the
+        // harness's job, and tools/probe does it.
+        //
+        // RULE 3 IS UNCHANGED BY THIS BRANCH, and that is the point of routing it through
+        // AtasCall.Block rather than giving it its own error handling. There is no catch here — the
+        // whole write path has none — so an expiry raises AtasCallTimeoutException and PROPAGATES,
+        // the wire reads it as indefinite, the gateway records UNKNOWN and reconciles. A definite
+        // refusal still arrives the only way it ever does: through the _failures dictionary, fed by
+        // ATAS's own OrderRegisterFailed event, which the sync/async choice does not touch.
+        //
+        // Blocking is safe here for the same reason it is safe on the connector branch above: this
+        // runs on BridgeServer's pipe thread, never on ATAS's GUI thread, so a call that marshals
+        // itself to the GUI thread is not waiting on the thread that is waiting for it.
+        var placeRoute = feed is not null ? "connector"
+                       : route == PlaceRoute.MeasureAsync ? "asyncoverload"
+                       : "sync";
         var placeClock = System.Diagnostics.Stopwatch.StartNew();
 
-        if (feed is not null) AtasCall.Block(feed.RegisterOrderAsync(order), CallTimeout, "RegisterOrderAsync");
-        else trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false, checkOrderStates: true);
+        if (feed is not null)
+            AtasCall.Block(feed.RegisterOrderAsync(order), CallTimeout, "RegisterOrderAsync");
+        else if (route == PlaceRoute.MeasureAsync)
+            AtasCall.Block(trading.OpenOrderAsync(order, setDefaultQuantity: false, askConfirmation: false,
+                                                  checkOrderStates: true), CallTimeout, "OpenOrderAsync");
+        else
+            trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false, checkOrderStates: true);
 
         var placeCallUs = (long)(placeClock.Elapsed.TotalMilliseconds * 1000);
         // Guarded like every other diagnostic in this method: reading an ATAS object the platform is

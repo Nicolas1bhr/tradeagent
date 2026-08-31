@@ -535,6 +535,23 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default) =>
         Rpc<OrderInfo>(BridgeOps.Place, cmd, ct);
 
+    /// <summary>
+    /// MEASUREMENT ONLY, and it places a real order. Asks the bridge to submit through ATAS's
+    /// ASYNCHRONOUS order call instead of the obsolete synchronous one, so that the completion point
+    /// of that call can be timed — see <see cref="BridgeOps.PlaceViaAsyncOverload"/> for the question
+    /// this exists to answer and why it is a separate op.
+    ///
+    /// DELIBERATELY NOT ON <c>ITradingConnector</c>, and that is the point of it being here rather
+    /// than one line higher. TradingGateway is handed an <c>ITradingConnector</c>; the only placement
+    /// on that interface is <see cref="PlaceOrderAsync"/> above, which sends
+    /// <see cref="BridgeOps.Place"/>. So the measurement route is not merely unused by the gateway,
+    /// it is not expressible through the type the gateway holds. The only caller is
+    /// <c>tools/probe --place-test-order --via-async-overload</c>, which is not part of the product
+    /// and is not in <c>TradeAgent.sln</c>.
+    /// </summary>
+    public Task<OrderInfo> PlaceOrderViaAsyncOverloadAsync(PlaceOrderCommand cmd, CancellationToken ct = default) =>
+        Rpc<OrderInfo>(BridgeOps.PlaceViaAsyncOverload, cmd, ct);
+
     public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default) =>
         Rpc<OrderInfo>(BridgeOps.Modify, cmd, ct);
 

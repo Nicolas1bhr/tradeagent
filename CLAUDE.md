@@ -61,7 +61,7 @@ them and do not let a note touch a material row — a record the observed party 
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # 235 tests; green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # 256 tests; green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```

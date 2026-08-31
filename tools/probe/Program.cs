@@ -25,6 +25,11 @@ using TradeAgent.Core;
 //                             half 2: places nothing, and reads the durable witness record against
 //                             the live book. Proof, disproof, or not-answered — step 2 of
 //                             docs/RESUME-HERE.md
+//   probe atas --place-test-order --yes --via-async-overload
+//                             the same order, submitted through ITradingManager.OpenOrderAsync
+//                             instead of the synchronous OpenOrder, so that what that task waits
+//                             for — submission or broker acknowledgement — is measured rather
+//                             than argued about. Needs an ordinary run as its control.
 //   probe atas --cancel-resting <client-order-id>
 //                             removes what half 1 left behind
 //
@@ -165,6 +170,7 @@ static class AtasProbe
         var leaveResting = false;
         var yesLeaveIt = false;
         var restartCheck = false;
+        var viaAsync = false;
         string? cancelResting = null;
 
         for (var i = 0; i < rest.Length; i++)
@@ -177,6 +183,7 @@ static class AtasProbe
             if (rest[i] == "--leave-resting") { leaveResting = true; continue; }
             if (rest[i] == "--yes-leave-it") { yesLeaveIt = true; continue; }
             if (rest[i] == "--coid-restart-check") { restartCheck = true; continue; }
+            if (rest[i] == "--via-async-overload") { viaAsync = true; continue; }
             if (rest[i] == "--cancel-resting" && i + 1 < rest.Length && !rest[i + 1].StartsWith("--", StringComparison.Ordinal))
             { cancelResting = rest[i + 1]; i++; continue; }
 
@@ -250,6 +257,23 @@ static class AtasProbe
             return 2;
         }
 
+        // ONE FLAG, NOT TWO, AND THE ASYMMETRY WITH --leave-resting IS THE REASON. That one needs a
+        // second act because it REMOVES the safeguard --place-test-order still had: the cancel at the
+        // end. This one removes nothing. It is the same order, the same simulated-account guard, the
+        // same read-back and the same cleanup — the only difference is which ITradingManager overload
+        // the bridge submits it through, which is invisible to the broker and to the book. Requiring
+        // a second --yes for it would say the exposure had changed, and it has not.
+        if (viaAsync && !place)
+        {
+            Usage("--via-async-overload only means anything with --place-test-order.");
+            Console.WriteLine();
+            Console.WriteLine("  It does not place anything on its own — it changes HOW the test order is");
+            Console.WriteLine("  submitted, so there has to be a test order. The full command is:");
+            Console.WriteLine();
+            Console.WriteLine("      probe atas --place-test-order --yes --via-async-overload");
+            return 2;
+        }
+
         Console.WriteLine(new string('=', 80));
         Console.WriteLine("probe atas — step 3 of docs/RESUME-HERE.md: what Describe() actually reports");
         Console.WriteLine(new string('=', 80));
@@ -310,6 +334,27 @@ static class AtasProbe
                 Cont("--yes was given without --place-test-order, so it authorised nothing.");
             if (yesLeaveIt)
                 Cont("--yes-leave-it was given without --leave-resting, so it authorised nothing.");
+        }
+
+        if (viaAsync)
+        {
+            Line("AND BY WHICH CALL", "ITradingManager.OpenOrderAsync, NOT the synchronous OpenOrder the");
+            Cont("product uses. Same order, same guard, same cleanup — a different");
+            Cont("overload inside the bridge, and that difference is the whole point.");
+            Cont("");
+            Cont("WHAT IT MEASURES. The four synchronous order calls are obsolete and");
+            Cont("cannot be given a deadline, so a block inside one wedges the bridge's");
+            Cont("frame loop while the heartbeat goes on reporting READY. Flipping them");
+            Cont("to the Async overloads is what lets AtasCall.Block reach them, and");
+            Cont("whether that is safe turns on ONE fact: does OpenOrderAsync's task");
+            Cont("complete on SUBMISSION or on broker ACKNOWLEDGEMENT? Read it off the");
+            Cont("PLACE TIMING line below: call= alike to an ordinary run's is");
+            Cont("SUBMISSION, call= near this run's own settled= is ACKNOWLEDGEMENT.");
+            Cont("");
+            Cont("THE ROUTE IS UNPROVEN, WHICH IS WHY IT IS BEING RUN. If the task");
+            Cont("never completes, AtasCall.Block gives up and the outcome is UNKNOWN —");
+            Cont("not refused. An order may be resting. The cleanup below runs on every");
+            Cont("path and verifies the book afterwards; read CLEANUP VERDICT.");
         }
 
         Line("EXIT CODES", "0 = the bridge answered and the answer below is the record");
@@ -832,7 +877,7 @@ static class AtasProbe
         // Placed here, between the readings and the conclusion, on purpose. Everything above is the
         // BEFORE picture; autonomy is a conclusion and must be drawn from the newest reading there
         // is, which — if an order has just been placed — is the one taken after it.
-        var test = place ? await PlaceTestOrder(connector, handshake, orders, leaveResting) : (TestOrderOutcome?)null;
+        var test = place ? await PlaceTestOrder(connector, handshake, orders, leaveResting, viaAsync) : (TestOrderOutcome?)null;
 
         // Half 2, and the cleanup. Neither places anything, so neither disturbs the readings above.
         //
@@ -1283,7 +1328,7 @@ static class AtasProbe
     /// </summary>
     static async Task<TestOrderOutcome> PlaceTestOrder(AtasConnector connector, bool handshake,
                                                        IReadOnlyList<OrderInfo>? ordersBefore,
-                                                       bool leaveResting)
+                                                       bool leaveResting, bool viaAsync)
     {
         Section("THE TEST ORDER — THE GUARD");
         if (leaveResting)
@@ -1482,9 +1527,23 @@ static class AtasProbe
         Line("THE ORDER", $"BUY LIMIT 1 {instrument.Symbol} @ {Num(price)}  TIF=Day  on {account.Id}");
         Cont("TIF=Day is the last line of defence: if every cleanup path below fails,");
         Cont("a Day order still expires with the session instead of resting for weeks.");
-        Line("PATH", "AtasConnector.PlaceOrderAsync — the product's own connector, the");
-        Cont("same call TradingGateway makes. Nothing is hand-rolled onto the wire");
-        Cont("here, so what this measures is the path that would actually be traded.");
+        if (viaAsync)
+        {
+            Line("PATH", "AtasConnector.PlaceOrderViaAsyncOverloadAsync — the MEASUREMENT route.");
+            Cont("Still the product's own connector and still the real wire, but it sends");
+            Cont("BridgeOps.PlaceViaAsyncOverload, which nothing in the product sends and");
+            Cont("which TradingGateway cannot reach: the only placement on");
+            Cont("ITradingConnector is PlaceOrderAsync, and that sends BridgeOps.Place.");
+            Cont("Inside the bridge this is the only thing that selects PlaceRoute.");
+            Cont("MeasureAsync, and it submits through ITradingManager.OpenOrderAsync.");
+            Cont("Everything else about the order is the same code as the ordinary path.");
+        }
+        else
+        {
+            Line("PATH", "AtasConnector.PlaceOrderAsync — the product's own connector, the");
+            Cont("same call TradingGateway makes. Nothing is hand-rolled onto the wire");
+            Cont("here, so what this measures is the path that would actually be traded.");
+        }
 
         var attemptsBefore = connector.Bridge?.ClientOrderIdAttempts;
         var checksBefore = connector.Bridge?.ClientOrderIdChecks;
@@ -1511,7 +1570,9 @@ static class AtasProbe
         {
             try
             {
-                placed = await connector.PlaceOrderAsync(cmd);
+                placed = viaAsync
+                    ? await connector.PlaceOrderViaAsyncOverloadAsync(cmd)
+                    : await connector.PlaceOrderAsync(cmd);
                 Line("PLACE CALL", "RETURNED — ATAS took the order without a definite refusal.");
             }
             catch (ConnectorRejectedException ex)
@@ -1539,7 +1600,8 @@ static class AtasProbe
             try
             {
                 (reading, everSeen) = await ReportReadBack(connector, clientOrderId, placed, rejected,
-                                                           ordersBefore, attemptsBefore, checksBefore, surfaceBefore);
+                                                           ordersBefore, attemptsBefore, checksBefore, surfaceBefore,
+                                                           viaAsync);
             }
             catch (Exception ex)
             {
@@ -1660,7 +1722,7 @@ static class AtasProbe
     /// </summary>
     static async Task<(string Summary, bool EverSeen)> ReportReadBack(AtasConnector connector, string clientOrderId,
         OrderInfo? placed, bool rejected, IReadOnlyList<OrderInfo>? ordersBefore, int? attemptsBefore, int? checksBefore,
-        string? surfaceBefore)
+        string? surfaceBefore, bool viaAsync)
     {
         Section("THE TEST ORDER — READING IT BACK");
 
@@ -1756,15 +1818,90 @@ static class AtasProbe
         // acknowledgement latency, and it decides whether the question can be answered here at all.
         // A platform that acknowledges instantly cannot separate "the task completed on submission"
         // from "the task completed on acknowledgement", and a fast reading on it proves nothing.
+        // WAIT FOR THE TOKEN, DO NOT JUST READ IT. The surface report rides on the heartbeat, once
+        // every five seconds, so the reading taken the instant after a place call is very often the
+        // one from BEFORE it — which the freshness check below would then correctly, and uselessly,
+        // report as "not this run's". Waiting for it to change turns that from a coin toss into an
+        // answer. Bounded, and a timeout is not fatal: the check below still says what happened.
+        //
+        // It is deliberately its own wait rather than a lean on the counter wait above. That one is
+        // conditioned on the bridge reporting attempt counters at all, so on a bridge that does not,
+        // this section would silently go back to reading whatever had arrived by then.
+        var placeBefore = Token(surfaceBefore, "place");
+        await Until(() => Token(connector.Bridge?.TradingSurface, "place") is { } now && now != placeBefore,
+                    TimeSpan.FromSeconds(15));
+
         var place = Token(connector.Bridge?.TradingSurface, "place");
         Line("PLACE TIMING", place ?? "not reported — the bridge is older than this probe");
         Cont("route;call=<submission call>;atreturn=<state/id when it returned>;");
         Cont("settled=<when ATAS acknowledged>;gap=settled-call;now=<state/id since>");
 
+        // IS THIS TOKEN THIS RUN'S, OR THE LAST ORDER'S? The bridge writes it BELOW its submission
+        // and that path has no catch, so an exception raised at or before the submission — a
+        // pre-flight refusal, or an AtasCallTimeoutException out of the async route — leaves the
+        // PREVIOUS order's reading standing. (A refusal ATAS reports through its order-failure event
+        // is detected after the write, so that one IS this order's reading. The token cannot tell
+        // the two apart, which is the point.)
+        //
+        // Reading a stale token as this run's answer is the one way this section can lie, and it is
+        // the likeliest failure of the async route specifically: a task that never completes is
+        // exactly the outcome the measurement exists to rule out, and it is the case that produces
+        // no reading at all. Comparing against the token read before placing settles it, at no cost.
+        var fresh = place is not null && place != placeBefore;
+        if (place is not null)
+        {
+            Line("IS IT THIS RUN'S?", fresh
+                ? "YES — the token CHANGED across the placement, so it describes this order."
+                : "NO — THE TOKEN IS UNCHANGED FROM BEFORE THIS RUN PLACED ANYTHING.");
+            if (!fresh)
+            {
+                Cont($"before: {Blank(placeBefore)}");
+                Cont("The bridge writes this below its submission and there is no catch on that");
+                Cont("path, so an exception at or before the submission leaves the previous");
+                Cont("order's reading in place. Read PLACE CALL above for what happened, and do");
+                Cont("not read a single number below as this run's. (It can also be a heartbeat");
+                Cont("that has not arrived yet — heartbeats carry the surface every five");
+                Cont("seconds. Re-running is the cheapest way to tell those two apart.)");
+            }
+        }
+
+        // WHICH CALL WAS TIMED. Three routes report through this one token and their call= readings
+        // mean three different things: sync is ITradingManager.OpenOrder, connector is
+        // IDataFeedConnector.RegisterOrderAsync, asyncoverload is ITradingManager.OpenOrderAsync.
+        // The bridge chooses the connector route for an off-chart order regardless of what was
+        // asked — correctness for the ORDER outranks a measurement — so asking for the async
+        // overload does not guarantee getting it, and the token is the only thing that says.
+        var routeToken = PlaceField(place, route: true);
+        var wantedRoute = viaAsync ? "asyncoverload" : "sync";
+        if (place is not null && fresh)
+        {
+            var got = routeToken ?? "unreadable";
+            Line("ROUTE ACTUALLY USED", got == wantedRoute
+                ? $"{got} — as asked."
+                : $"{got} — NOT the {wantedRoute} route this run asked for.");
+            if (got != wantedRoute && viaAsync)
+            {
+                Cont("THIS RUN DID NOT MEASURE THE QUESTION. 'connector' means the bridge took");
+                Cont("the off-chart route and timed RegisterOrderAsync instead, which is a");
+                Cont("different call and says nothing about OpenOrderAsync. Place on the");
+                Cont("chart's own instrument and portfolio — the ones the surface report's");
+                Cont("security= and portfolio= tokens name — and run it again.");
+            }
+        }
+
         if (PlaceGapUs(place) is { } gapUs)
         {
             Line("ACK LATENCY", $"{gapUs} us  ({gapUs / 1000.0:0.0} ms)");
-            if (gapUs >= 20_000)
+            // WHOSE LATENCY IS THIS, ACTUALLY. Every use of this number downstream turns on the
+            // answer, and the output cannot tell: a simulated account with no broker attached is
+            // answered by ATAS's own simulator, and one attached to a broker's demo is answered
+            // over the wire. Those differ by orders of magnitude and the token looks identical.
+            // Naming the ambiguity is the only honest thing this line can do about it.
+            Cont("WHOSE LATENCY: this account's, whatever it is. An ATAS account with no broker");
+            Cont("attached is answered by ATAS's own simulator, not by a venue — and a real one");
+            Cont("can be materially slower. Use this to decide whether the two events are");
+            Cont("SEPARABLE here. Do not carry it off this machine as a product characteristic.");
+            if (gapUs >= 20_000 && !viaAsync)
             {
                 Cont("SEPARABLE. Submission and acknowledgement are far enough apart on this");
                 Cont("platform to tell them apart. A follow-up run that submits through");
@@ -1772,6 +1909,16 @@ static class AtasProbe
                 Cont("completes near call= it waits for SUBMISSION and the four obsolete call");
                 Cont("sites can be flipped; if it completes near settled= it waits for");
                 Cont("ACKNOWLEDGEMENT and flipping them puts Place past CallTimeout.");
+                Cont("");
+                Cont("    probe atas --place-test-order --yes --via-async-overload");
+            }
+            else if (gapUs >= 20_000)
+            {
+                Cont("SEPARABLE, and on this route that is the CONTROL rather than the reading:");
+                Cont("call= above timed OpenOrderAsync, so gap= is what remained between its");
+                Cont("task completing and the acknowledgement landing. A gap this size means");
+                Cont("the two did not happen together. OPENORDERASYNC below draws the");
+                Cont("conclusion; this line is the evidence it rests on.");
             }
             else
             {
@@ -1783,6 +1930,105 @@ static class AtasProbe
                 Cont("it needs a venue whose acknowledgement is measurably slower than its");
                 Cont("submission — a real broker, or a connection deliberately degraded.");
             }
+        }
+
+        // ---- and on a --via-async-overload run, the answer itself ----
+        //
+        // TWO WITNESSES, AND THEY ARE INDEPENDENT OF EACH OTHER.
+        //
+        //   TIMING. On this route call= times OpenOrderAsync. gap = settled - call, and settled is
+        //     the same acknowledgement the ordinary route waits for. So a LARGE gap means the task
+        //     finished long before the acknowledgement did — SUBMISSION. A gap near zero means the
+        //     task and the acknowledgement finished together — ACKNOWLEDGEMENT.
+        //   STATE. atreturn= is the order's state and id at the instant the call returned, read
+        //     rather than timed. None/noid means nothing had come back yet, so the task completed
+        //     on SUBMISSION; a state or an id already assigned means it waited for the broker.
+        //
+        // The timing witness alone is not conclusive and this says so: a gap near zero is also what
+        // a platform that acknowledges instantly produces, whatever the task waited for. That is
+        // what the ACK LATENCY reading from an ordinary place=sync run is the control for. The state
+        // witness does not have that weakness — it is categorical — which is why both are printed
+        // and why they are printed separately rather than reduced to one verdict.
+        if (viaAsync && fresh && routeToken == "asyncoverload")
+        {
+            var callUs = PlaceUs(place, "call");
+            var atReturn = PlaceField(place, "atreturn");
+            Line("OPENORDERASYNC", "THE QUESTION THIS RUN EXISTS TO ANSWER: does its task complete on");
+            Cont("SUBMISSION or on broker ACKNOWLEDGEMENT?");
+
+            if (callUs is { } cu)
+                Cont($"call={cu} us ({cu / 1000.0:0.0} ms) — this is OpenOrderAsync, not OpenOrder.");
+
+            if (PlaceGapUs(place) is { } g && callUs is not null)
+            {
+                Line("READING — TIMING", g >= 20_000
+                    ? "SUBMISSION. The task completed well before the acknowledgement did."
+                    : "ACKNOWLEDGEMENT, OR AN INSTANT VENUE. The task and the acknowledgement");
+                if (g >= 20_000)
+                {
+                    Cont("Blocking on it therefore costs about what the synchronous call costs,");
+                    Cont("and AtasCall.Block can be given the four obsolete call sites.");
+                }
+                else
+                {
+                    Cont("finished together. That is what waiting for the broker looks like — but");
+                    Cont("it is ALSO what an instantly-acknowledging venue looks like. It is only");
+                    Cont("evidence against a place=sync run on this same account whose ACK LATENCY");
+                    Cont("was well above 20 ms. Find that run before concluding anything.");
+                }
+            }
+
+            Line("READING — STATE", atReturn is null
+                ? "NOT REPORTED — the bridge did not record the order's shape at return."
+                : atReturn.StartsWith("None/noid", StringComparison.Ordinal)
+                    ? $"SUBMISSION. atreturn={atReturn} — the order had no state and no broker id"
+                    : $"ACKNOWLEDGEMENT. atreturn={atReturn} — the order already carried a state");
+            if (atReturn is not null)
+                Cont(atReturn.StartsWith("None/noid", StringComparison.Ordinal)
+                    ? "when the task completed, so nothing had come back from the broker yet."
+                    : "or an id when the task completed, so it had waited for the broker.");
+            Cont("This witness is categorical rather than a duration, so it does not need the");
+            Cont("control run the timing one does. When the two disagree, that disagreement is");
+            Cont("the finding — do not average them.");
+
+            // WHICH HALF OF THIS TRANSFERS OFF THIS MACHINE, AND WHICH DOES NOT. The line above is
+            // an API-semantics fact about ATAS and it travels: what OpenOrderAsync's task waits for
+            // is a property of the platform, the same on any account. The DURATIONS do not travel.
+            // They are whatever answered here, and an account with no broker attached is answered by
+            // ATAS's own simulator — so a margin computed from them is a fact about this machine and
+            // not a characteristic of the product. Saying so here rather than in a document is
+            // deliberate: this output is what gets pasted into the decision.
+            Line("WHAT TRANSFERS", "the ANSWER does; the DURATIONS do not.");
+            Cont("\"OpenOrderAsync waits for submission\" (or for acknowledgement) is a fact about");
+            Cont("ATAS's API and holds wherever this bridge runs. Every microsecond above is a");
+            Cont("fact about THIS account on THIS machine. If there is no broker attached, they");
+            Cont("are the simulator's latency, and a real venue can be materially slower.");
+            Cont("Quote the answer. Do not quote the numbers as a property of the product.");
+
+            Line("WHAT IT DOESN'T SETTLE", "the flip itself, and one tempting argument for it is");
+            Cont("unsound. \"The acknowledgement lands far inside CallTimeout, so blocking on the");
+            Cont("async call cannot turn orders into UNKNOWN\" is computed from the latency");
+            Cont("measured above — so it is only ever true of the venue that produced it. Do not");
+            Cont("carry that margin forward as a property of the product; it is not one.");
+            Cont("");
+            Cont("What IS structural: Place ALREADY waits for acknowledgement in");
+            Cont("WaitFor(AckTimeout), on the same condition the async task would wait for. So");
+            Cont("the switch moves where the time is spent rather than adding any, whatever the");
+            Cont("venue. The real difference is what a SLOW acknowledgement does: today WaitFor");
+            Cont("gives up and returns the order in whatever state it is really in, with no");
+            Cont("exception; after the switch the same slowness raises AtasCallTimeoutException");
+            Cont("and the gateway records UNKNOWN. Arguably more correct under rule 3, and still");
+            Cont("a behaviour change on the money path. Its own change, its own reasoning.");
+        }
+        else if (viaAsync)
+        {
+            Line("OPENORDERASYNC", "NOT ANSWERED BY THIS RUN.");
+            Cont(!fresh
+                ? "The place= token is not this run's, so there is no reading to interpret."
+                : $"The bridge reported route '{Blank(routeToken)}', not 'asyncoverload', so what");
+            Cont(!fresh
+                ? "See PLACE CALL and IS IT THIS RUN'S above for what happened instead."
+                : "was timed is not OpenOrderAsync. See ROUTE ACTUALLY USED above.");
         }
 
         // Are ITradingManager.Orders and ChartStrategy.Orders the same list? The counts have always
@@ -2311,16 +2557,41 @@ static class AtasProbe
     /// unreadable. Parsed with InvariantCulture on purpose: the machine this runs on formats numbers
     /// with a comma, and a silently mis-parsed latency is worse than an absent one.
     /// </summary>
-    static long? PlaceGapUs(string? place)
+    static long? PlaceGapUs(string? place) => PlaceUs(place, "gap");
+
+    /// <summary>
+    /// One microsecond field out of the `place=` token, or null when it is absent or unreadable.
+    ///
+    /// Parsed with InvariantCulture on purpose: the machine this runs on formats numbers with a
+    /// comma, and a silently mis-parsed latency is worse than an absent one. The bridge writes these
+    /// as integers for the same reason — a comma would be indistinguishable from a separator.
+    /// </summary>
+    static long? PlaceUs(string? place, string key)
+    {
+        if (PlaceField(place, key) is not { } raw) return null;
+        var digits = raw.TrimEnd('u', 's');
+        return long.TryParse(digits, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+    }
+
+    /// <summary>
+    /// One field out of the bridge's semicolon-joined `place=` token, as text.
+    ///
+    /// The ROUTE is the exception and is why <paramref name="route"/> exists: it is the FIRST field
+    /// and it is a bare value with no `key=` in front of it, because it is what every other field in
+    /// the token has to be read against. `sync`, `connector` and `asyncoverload` are three different
+    /// platform calls, and a `call=` reading is only comparable with another taken through the same
+    /// one — so a caller that reads a duration without reading this first is reading a number whose
+    /// meaning it does not know.
+    /// </summary>
+    static string? PlaceField(string? place, string key = "", bool route = false)
     {
         if (string.IsNullOrWhiteSpace(place)) return null;
-        foreach (var part in place.Split(';', StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (!part.StartsWith("gap=", StringComparison.Ordinal)) continue;
-            var digits = part[4..].TrimEnd('u', 's');
-            return long.TryParse(digits, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
-        }
+        var parts = place.Split(';', StringSplitOptions.RemoveEmptyEntries);
+        if (route) return parts.Length > 0 && !parts[0].Contains('=') ? parts[0] : null;
+        foreach (var part in parts)
+            if (part.Length > key.Length + 1 && part[key.Length] == '=' && part.AsSpan(0, key.Length).SequenceEqual(key))
+                return part[(key.Length + 1)..];
         return null;
     }
 
@@ -2362,8 +2633,8 @@ static class AtasProbe
     static void Usage(string problem)
     {
         Console.WriteLine("usage: probe atas [--wait <seconds>] [--wait-anyway] [--place-test-order --yes]");
-        Console.WriteLine("                  [--leave-resting --yes-leave-it] [--coid-restart-check]");
-        Console.WriteLine("                  [--cancel-resting <client-order-id>]");
+        Console.WriteLine("                  [--leave-resting --yes-leave-it] [--via-async-overload]");
+        Console.WriteLine("                  [--coid-restart-check] [--cancel-resting <client-order-id>]");
         Console.WriteLine($"  {problem}");
         Console.WriteLine("  --wait <seconds>      how long to wait for the bridge to dial in (default 60)");
         Console.WriteLine("  --wait-anyway         wait for the pipe even though ATAS was not detected;");
@@ -2393,6 +2664,17 @@ static class AtasProbe
         Console.WriteLine("                        Reads the durable witness record against the live book and");
         Console.WriteLine("                        reports proof, disproof, or not-answered. Cannot be");
         Console.WriteLine("                        combined with --place-test-order.");
+        Console.WriteLine("  --via-async-overload  with --place-test-order: submit through ATAS's");
+        Console.WriteLine("                        ITradingManager.OpenOrderAsync instead of the obsolete");
+        Console.WriteLine("                        synchronous OpenOrder the product uses, so that the");
+        Console.WriteLine("                        completion point of that task can be timed. Same order,");
+        Console.WriteLine("                        same simulated-account guard, same cleanup. One flag and");
+        Console.WriteLine("                        not two, unlike --leave-resting: it removes no safeguard");
+        Console.WriteLine("                        and changes no exposure — only which overload submits.");
+        Console.WriteLine("                        Read PLACE TIMING and OPENORDERASYNC in the output; it");
+        Console.WriteLine("                        needs an ordinary place=sync run on the same account as");
+        Console.WriteLine("                        its control, because a fast completion on an instantly-");
+        Console.WriteLine("                        acknowledging venue is evidence for neither answer.");
         Console.WriteLine("  --cancel-resting <id> cancels the order carrying that client order id and");
         Console.WriteLine("                        re-reads the book to confirm. One flag, not two: it only");
         Console.WriteLine("                        ever removes exposure and it names its target.");
@@ -2400,6 +2682,10 @@ static class AtasProbe
         Console.WriteLine("      probe atas --place-test-order --yes --leave-resting --yes-leave-it");
         Console.WriteLine("      # restart ATAS, re-activate the bridge strategy on the chart");
         Console.WriteLine("      probe atas --coid-restart-check");
+        Console.WriteLine();
+        Console.WriteLine("  THE OpenOrderAsync MEASUREMENT — the control run first, then the reading.");
+        Console.WriteLine("      probe atas --place-test-order --yes                       # place=sync");
+        Console.WriteLine("      probe atas --place-test-order --yes --via-async-overload  # place=asyncoverload");
     }
 
     // ------------------------------------------------------------------------------------ pieces
