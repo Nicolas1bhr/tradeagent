@@ -653,8 +653,25 @@ sealed class ActivityPage
 
         _empty.IsVisible = activity.Count == 0;
         _rows.Children.Clear();
+        DateTime? lastDay = null;
         foreach (var (at, level, text) in activity)
         {
+            // A DAY SEPARATOR, BECAUSE EVERY ROW SHOWS A TIME AND NOTHING ELSE. This log spans days,
+            // and on the one screen whose whole job is "what happened, and when", `16:00 Cancelled
+            // order 12021602` could be an hour ago or last week. Seen on Windows 2026-09-01 with
+            // three days of entries running together. A separator is preferred to a date on every
+            // row: it keeps the narrow mono time column that makes the list scannable, and it puts
+            // the anchor where the reader's eye already stops.
+            var day = at.ToLocalTime().Date;
+            if (lastDay != day)
+            {
+                if (lastDay is not null) _rows.Children.Add(Ui.With(Ui.Divider(),
+                    d => d.Margin = new Thickness(0, Theme.S3, 0, Theme.S2)));
+                _rows.Children.Add(Ui.With(Ui.Micro(DayLabel(day)),
+                    t => t.Margin = new Thickness(0, lastDay is null ? 0 : 0, 0, Theme.S2)));
+                lastDay = day;
+            }
+
             var warn = level == "warn";
             _rows.Children.Add(new Grid
             {
@@ -674,6 +691,21 @@ sealed class ActivityPage
         }
 
         if (follow) Dispatcher.UIThread.Post(_scroll.ScrollToEnd, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Plain language first, because this page is the one a non-technical owner reads. "Today" and
+    /// "Yesterday" are what a person actually wants; the full date carries the year only when it is
+    /// not the current one, so the common case stays short.
+    /// </summary>
+    static string DayLabel(DateTime day)
+    {
+        var today = DateTime.Now.Date;
+        if (day == today) return "Today";
+        if (day == today.AddDays(-1)) return "Yesterday";
+        return day.Year == today.Year
+            ? day.ToString("dddd, d MMMM")
+            : day.ToString("dddd, d MMMM yyyy");
     }
 }
 
@@ -748,9 +780,29 @@ sealed class ChecksPage
         if (report.AllHealthy) { Say("Everything looks healthy.", Theme.Positive); return; }
 
         Say(string.Join('\n', report.Problems.Select(p =>
-            $"• {p.Name}{(string.IsNullOrWhiteSpace(p.Detail) ? "" : $": {p.Detail}")}" +
+            $"• {p.Name}: {(string.IsNullOrWhiteSpace(p.Detail) ? StateWords(p.State) : p.Detail)}" +
             (string.IsNullOrWhiteSpace(p.UserAction) ? "" : $"\n    what to do: {p.UserAction}"))), Theme.Text);
     }
+
+    /// <summary>
+    /// A row with no detail still has to SAY something. The three agent rows carry no detail until
+    /// the AI has been started, so they used to render as a bare "• Agent runtime" followed straight
+    /// by "what to do: ...", which names a problem without ever stating one — worse than the
+    /// dashboard, which at least prints "unknown". Seen on Windows 2026-09-01.
+    ///
+    /// This is the wording half only. The proper fix is a NOT_APPLICABLE health state so a component
+    /// nobody is using stops being counted as a fault at all, and that touches `Doctor.AllHealthy`
+    /// and the `trade status` wire — its own piece of work, still in the queue.
+    /// </summary>
+    static string StateWords(HealthState state) => state switch
+    {
+        HealthState.UNKNOWN  => "not checked yet",
+        HealthState.STARTING => "starting up",
+        HealthState.DEGRADED => "working, but not fully",
+        HealthState.FAILED   => "not working",
+        HealthState.PAUSED   => "paused",
+        _                    => "ready"
+    };
 
     void CreatePackage()
     {

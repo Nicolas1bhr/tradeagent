@@ -262,6 +262,34 @@ static class Theme
             }
         });
 
+        // A NumericUpDown's steppers are RepeatButtons, and NOTHING above reaches them: Avalonia's
+        // `OfType<T>()` is an EXACT-type selector, so the global `Button:disabled` rule never
+        // matched a `RepeatButton` and Fluent's own disabled paint won by default. On this dark
+        // theme that paint is LIGHTER than the resting control, so the one stepper the owner cannot
+        // press — a limit already sat at its minimum — rendered as a raised, rounded, pale box while
+        // its enabled neighbours stayed flat and dark. The single most prominent control in the
+        // group was the dead one. Seen on Windows 2026-09-01; this is trap 4 for the fourth time,
+        // and the lesson is unchanged: a state nobody writes a rule for gets the theme's idea of it.
+        Fill(styles, x => x.OfType<RepeatButton>(), Brushes.Transparent);
+        Fill(styles, x => x.OfType<RepeatButton>().Class(":disabled"), Brushes.Transparent);
+        Fill(styles, x => x.OfType<RepeatButton>().Class(":pointerover"), BgHover);
+        Fill(styles, x => x.OfType<RepeatButton>().Class(":pressed"), BgActive);
+        styles.Add(new Style(x => x.OfType<RepeatButton>())
+        {
+            Setters =
+            {
+                S(TemplatedControl.BackgroundProperty, Brushes.Transparent),
+                S(TemplatedControl.BorderBrushProperty, Brushes.Transparent),
+                S(TemplatedControl.ForegroundProperty, TextMuted),
+                S(TemplatedControl.CornerRadiusProperty, new CornerRadius(0))
+            }
+        });
+        styles.Add(new Style(x => x.OfType<RepeatButton>().Class(":disabled"))
+        {
+            // Dimmer than the enabled chevrons and nothing else. "Not available" should recede.
+            Setters = { S(Visual.OpacityProperty, 0.3) }
+        });
+
         // ---- progress ------------------------------------------------------------------
         styles.Add(new Style(x => x.OfType<ProgressBar>())
         {

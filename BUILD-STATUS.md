@@ -2048,6 +2048,62 @@ there is no broker attached. NOT VERIFIED, and not verifiable here.
 project, and pulling Avalonia into the test host to pin one string is the wrong trade. The evidence
 is the two hardware readings above.
 
+### Task 4, part one — every page has now been seen on Windows, and looking found three more
+
+Dashboard, Safety, Settings, Inbox, Checks, Activity and Chat were each opened and photographed on
+the Windows machine. Most of it renders correctly: the ATAS bridge health detail **wraps** rather
+than ellipsizing (the 2026-08-31 truncation fix holding), the three `unknown` health rows carry grey
+dots and not green ones, the Checks output wraps multi-line paragraphs cleanly, and the Inbox page
+renders the ledger's central distinction in the owner's own language — "Measured by TradeAgent" over
+one list, "Reported by the AI as it worked. Its account, not a measurement." over the other.
+
+Three defects that only looking could have found. All three fixed and re-photographed on Windows.
+
+**1. The Activity page showed a time on every row and no date anywhere.** The log spans days; entries
+from three different ones ran together with nothing between them, so on the single screen whose whole
+job is "a plain-language record of what TradeAgent, the AI and you have done", `16:00 Cancelled order
+12021602` could have been an hour ago or last week. It now carries day separators — "Today",
+"Yesterday", then a weekday and date, with the year only when it is not the current one. A separator
+rather than a date per row, so the narrow mono time column that makes the list scannable survives.
+Verified: the `LIVE_CONFIRM` walk now sits unambiguously under **Yesterday**.
+
+**2. A disabled stepper was the most prominent control on the Safety page.** `Ui.NumberField`'s
+down-stepper on a limit already at its minimum rendered as a raised, pale, rounded box while its
+enabled neighbours were flat and dark — on a dark theme, *lighter* reads as hovered or active, so the
+one control the owner cannot press drew the eye first.
+
+The cause is trap 4 for the fourth time, with a new twist worth writing down: **Avalonia's
+`OfType<T>()` is an EXACT-type selector, so the global `Button:disabled` rule never matched a
+`RepeatButton` at all.** The steppers were not styled by any rule in `Theme.cs`; Fluent's own disabled
+paint won by default. Fixed by giving `RepeatButton` its resting, hover, pressed and disabled fills
+explicitly, through the same `Fill(... .Template().OfType<ContentPresenter>())` route the button
+variants already use, because setting `Background` on the control alone does nothing.
+
+**Residue, honestly recorded: the disabled cell's right-hand corner is still rounded** where the
+enabled rows are square, so something in Fluent's disabled template still paints a radius the new
+rule does not reach. Cosmetic, no longer misleading, not chased further.
+
+**3. Three Checks rows named a problem without stating one.** `Agent runtime`, `Agent process` and
+`Workspace` carry no `Detail` until the AI has been started, and the renderer omitted the whole
+`": {Detail}"` clause when it was blank — producing `• Agent runtime` followed straight by
+"what to do: See the activity history for what happened." Worse than the Dashboard, which at least
+prints "unknown". They now fall back to plain words for the state itself: `• Agent runtime: not
+checked yet`.
+
+**This is the wording half only.** The proper fix is still a `NOT_APPLICABLE` health state so a
+component nobody is using stops being counted as a fault, which touches `Doctor.AllHealthy` and the
+`trade status` wire. Still in the queue, and the rail still reads "3 parts not checked yet".
+
+**NOT VERIFIED, and still open in task 4:** the setup journey end to end has never been watched on
+Windows; the Inbox drop handler, file picker, copy, collision suffix and rescan have never been
+exercised **on any platform**; the bridge-refusal sentence has not been seen rendering in a refusing
+state; and the reconciliation card has still never been seen on Windows, because nothing there is
+flagged (`find --query 'COULD NOT CONFIRM'` returns 0 matches, which is correct behaviour and is not
+the same as having watched it work).
+
+**No automated tests were added for any of these three.** The app project has no test project by
+design, and all three are visual. The evidence is the before/after photographs on the Windows machine.
+
 ### Tests
 
 `dotnet test TradeAgent.sln` — **256 passed, 0 failed** (45 fault, 67 unit, 144 integration), up from

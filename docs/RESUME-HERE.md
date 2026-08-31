@@ -249,28 +249,38 @@ the one move this record exists by resisting.
 
 ### 4. Look at TradeAgent's own UI on Windows — with eyes
 
-**Started, and it immediately earned its place.** With capture working, the Dashboard and Settings
-pages were seen on Windows for the first time on 2026-08-31, and looking found a defect nothing else
-would have: `Ui.StatusRow` trimmed the detail column with an ellipsis in a 340px card, so the two
-ATAS health rows rendered as `running · 8.0....` and `connected · ...` — correct and unreadable.
-**That also answers the old worry about the ~450-character bridge-refusal sentence: yes, it
-truncated, and it would have displayed as approximately nothing.** The detail wraps now, verified on
-Windows.
+**Every page has now been seen on Windows** (2026-09-01): Dashboard, Safety, Settings, Inbox, Checks,
+Activity and Chat. It has earned its place three times over now — the truncation defect on
+2026-08-31, and three more this time, all fixed and re-photographed:
 
-Still wanting eyes, and none of it settleable by automation:
+- **Activity showed a time on every row and no date at all.** Entries from three days ran together on
+  the one screen whose job is "what happened, and when". Day separators now: Today / Yesterday /
+  weekday and date.
+- **A disabled stepper was the most prominent control on the Safety page** — pale and raised where its
+  enabled neighbours were flat and dark. Trap 4 again, with a new twist: **Avalonia's `OfType<T>()` is
+  an EXACT-type selector, so the global `Button:disabled` rule never matched `RepeatButton`.** Nothing
+  in `Theme.cs` was styling the steppers at all.
+- **Three Checks rows named a problem without stating one** — `• Agent runtime` with no status, then
+  "what to do: ...". They now say "not checked yet".
 
-- **the setup journey end to end** — never once watched on Windows;
-- **the Inbox page** — drag a real file onto it, which has never been done on any platform. The drop
-  handler, the file picker, the copy, the collision suffix and the immediate rescan are all compiled
-  and unexercised;
-- **the bridge-refusal sentence rendering**, now that it can wrap — put the bridge in a refusing
-  state and look at the Dashboard;
-- **the Safety and Activity pages and the Chat view**, none of which have been seen on Windows.
+**What still wants eyes, and none of it is settleable by automation:**
 
-Two cosmetic things noticed and deliberately not fixed: a disabled `Ui.Confirm`/`Ui.Secondary` button
-renders as bare text with no border, so "Use ATAS" when ATAS is already in use reads more like a
-label than a disabled control (the `IN USE` pill carries the state, so it is not ambiguous); and the
-rail says "3 parts not checked yet" for the three agent rows until the AI is started.
+- **the reconciliation card has never been seen on Windows.** It is correctly *absent* there because
+  nothing is flagged, and `find --query 'COULD NOT CONFIRM'` returning 0 matches is right behaviour,
+  not evidence. Seeing it needs a flagged record on that machine — the honest route is a scratch
+  `TRADEAGENT_HOME` on the practice simulator rather than seeding the real database.
+- **the Inbox interaction, never exercised on ANY platform.** The drop handler, the file picker, the
+  copy, the collision suffix and the immediate rescan are all compiled and unrun. The "Choose files…"
+  button is the easier half and needs no drag simulation.
+- **the setup journey end to end** — never once watched on Windows. `C:\ta\reset-tradeagent.cmd`
+  wipes the setup database so it can be walked again.
+- **the bridge-refusal sentence rendering** — put the bridge in a refusing state and look.
+
+Two cosmetic things noticed and deliberately not fixed: the disabled stepper's right-hand corner is
+still rounded where the enabled ones are square (Fluent's template paints a radius the new rule does
+not reach — no longer misleading, just inconsistent); and a disabled `Ui.Confirm`/`Ui.Secondary`
+renders as bare text with no border, so "Use ATAS" when ATAS is already in use reads more like a label
+than a disabled control. The `IN USE` pill carries the state, so it is not ambiguous.
 
 ### 5. The staged live trial — GATED ON A BROKER EXISTING, and on task 4
 
