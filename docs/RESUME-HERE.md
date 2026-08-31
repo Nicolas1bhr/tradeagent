@@ -10,46 +10,35 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The machine needs a rendering surface before anything else can happen.** ATAS is DOWN and will not
-restart without one: it signs in, opens its main window, and dies ~40 s later in
-`glfwGetVideoMode` while building its OpenGL chart panels (trap 43). That is a property of a
-disconnected RDP session, not a fault — and it is new knowledge, because ATAS had been *running*
-across the disconnect for days, which it tolerates perfectly well.
+**The machine is working and the place path has been measured.** What is left of that task is one
+sub-question, and it needs a small piece of new code rather than a new run — see **The work queue**,
+task 1. Nothing else is blocked.
 
-**So step one is: reconnect the RDP session, or reboot into the console (autologon is on).** Then
-launch ATAS, sign in, and re-activate the bridge strategy on the BTCUSDT chart — it always comes back
-stopped (traps 24 and 40). Only then is the machine in the state the rest of this file assumes.
-
-**Then take the reading, because everything else for it is already in place.** The instrument for
-"does `OpenOrderAsync` complete on SUBMISSION or on broker ACKNOWLEDGEMENT?" is written, compiles
-against the real SDK, and **is already deployed in `%APPDATA%\ATAS\Strategies` and asserted
-present**. It has simply never placed an order. One probe run takes it:
+Confirm the machine — two commands, neither disturbs anything:
 
 ```bash
-tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'
-tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --place-test-order --yes'
+tools/win-state.sh                                                     # expect capture : WORKS
+tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'  # expect both ATAS rows READY
 ```
 
-Read `PLACE TIMING` and `ACK LATENCY` in its output; the probe prints the verdict itself, including
-`NOT SEPARABLE`, which is a real possible answer and must not be rounded to a green. Full reasoning
-in **The work queue**, task 1. **Cancel anything left resting and verify from a separate run.**
+**If `capture : NO` and ATAS is not running, fix that before anything else** — ATAS cannot start
+without a rendering surface (trap 43). `tscon 1 /dest:console` moves the session onto the physical
+console and takes seconds; it is what was used on 2026-08-31 and it needs no reboot. Confirm with
+`tools/win-state.sh` before launching ATAS.
 
-Confirm the machine first — two commands, and neither disturbs anything:
-
-```bash
-tools/win-state.sh
-tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'
-```
-
-Four facts that otherwise cost the first twenty minutes:
+Five facts that otherwise cost the first twenty minutes:
 
 - **`probe atas` needs TradeAgent STOPPED.** Both open a server on the bridge pipe.
-- **Stop TradeAgent before any push** (trap 42) — and then **rebuild it**, because the push deletes
-  `C:\ta\repo\src`, which is where its Release build lives:
+- **Stop TradeAgent before any push** (trap 42) — then **rebuild it**, because the push deletes
+  `C:\ta\repo\src`, where its Release build lives:
   `dotnet build src\TradeAgent.App\TradeAgent.App.csproj -c Release`.
-- **Do not close ATAS unless you have a rendering surface** (trap 43). Closing it is the step that
-  cannot be undone remotely.
-- **Screen capture does not work; automation does.** A rendering surface fixes both.
+- **Do not close ATAS unless capture works** (trap 43). Closing it is the step that cannot be undone
+  remotely.
+- **ATAS restores the bridge strategy STOPPED** (trap 24). `find --query 'Activ'` returns
+  `PART_ActivateButton` and `invoke --ref` starts it (trap 40). Read the chart **legend**, which says
+  `[Started]` or `[Stopped]` in words, not the row icon (trap 36).
+- **Look at the Selected strategies list before pressing Add** (trap 35), or two bridges end up on
+  one pipe.
 
 Everything below is reference. Read **The work queue**, then the traps for whatever you are about to
 touch.
@@ -114,44 +103,43 @@ The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
 ## Where the machine is (2026-08-31, end of the later session)
 
-**ATAS is DOWN and cannot be restarted until the session has a rendering surface (trap 43).**
-TradeAgent is up and reporting that honestly. Nothing can trade; nothing is at risk.
+**Everything up and working, including screen capture for the first time in three sessions.**
 
 ```
-session : Disc (id 1)   desktop : renders nothing — automation WORKS, capture does NOT, ATAS CANNOT START
-ATAS       : NOT RUNNING. Closed deliberately to swap the bridge DLL; two relaunches crashed in
-             glfwGetVideoMode ~40s after sign-in. The workspace was SAVED on the way down.
-bridge DLL : CURRENT and deployed — carries the place-timing instrument, asserted present in the
-             deployed file (OrderShape, _lastPlace, AtasStrategyAdapter as ASCII metadata)
-TradeAgent : Release, rebuilt from this tree after the push, running
-mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, twice over
-book : orders [] · position 0 · nothing unreconciled  (verified before ATAS was closed)
-health : ATAS process DEGRADED "not running", ATAS bridge FAILED "installed — waiting for ATAS to start"
+session : 1, on the CONSOLE, Active — moved there with `tscon 1 /dest:console`
+          automation WORKS · capture WORKS · ATAS can start
+ATAS       : running, 8.0.14.397, bridge STARTED on the BTCUSDT chart, legend reads [Started]
+bridge DLL : current, carries the place-timing instrument, asserted present in the deployed file
+TradeAgent : Release, rebuilt from this tree, running
+mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, correctly
+account : CRYPTO5EB41   book : orders=0 strategyorders=0 mytrades=0 position=0, from a separate run
+health : every row READY except the three agent rows, blank until the AI is started
 ```
 
-**To get back to a working machine:** restore a rendering surface, launch ATAS, sign in, then
-re-activate the bridge strategy on the BTCUSDT chart — the workspace was saved, so it will be listed
-under "Selected strategies", **stopped** (trap 24). `find --query 'Activ'` returns
-`PART_ActivateButton` directly and `invoke --ref` starts it (trap 40). **Check the Selected list
-before pressing Add**, or two bridges end up on one pipe (trap 35).
+**Two test orders were placed and cancelled** on the simulated `CRYPTO5EB41` account (broker ids
+`12024794`, `12024817`) to take the place-path measurement. The book was verified clean afterwards
+from a separate probe run.
+
+**The session lives on the console now, not on RDP.** That is what makes ATAS startable and captures
+work. If somebody RDPs in, the session moves back and both stop; `tscon 1 /dest:console` puts it
+back.
 
 **The workspace layout, and it is load-bearing:**
 
-- **The bridge belongs on the BTCUSDT chart** (left panel), on the simulated `CRYPTO5EB41` account.
-  **The ES chart has no strategy at all** — deleted deliberately, because two instances compete for
-  one named pipe. Keep it that way.
+- **The bridge is on the BTCUSDT chart** (left panel), started, on the simulated `CRYPTO5EB41`
+  account. **The ES chart has no strategy at all** — deleted deliberately, because two instances
+  compete for one named pipe. Keep it that way.
 - **Why crypto:** ES is a CME product, so out of hours `quote=none(no-tick)` and the probe correctly
   refuses to price an order. BTCUSDT runs 24/7 on Binance (trap 38).
 - **Both accounts are simulated:** `CRYPTO5EB41` (USDT, Binance crypto-sim) and `DEMO15M440CE` (USD,
   ATAS Sim), 100,000 balance each.
-- **The witness file holds the rule-1 proof:** `witness=session:1ce7ec65,records:1,prior:1,io:ok`
-  with `coid=proven-crosssession`.
 - **The ATAS account list offers exactly one account** — the portfolio the bridge's chart is bound
   to — because `ChartStrategy.Connector` is null (trap 13). Changing ATAS account means moving the
   strategy to a chart on the other account, not picking a different row in Settings.
 
-**The connector is `atas` and the account `CRYPTO5EB41`. Both are now changeable in the app** — there
-is a Settings page, so the database no longer has to be edited by hand.
+**The connector is `atas` and the account `CRYPTO5EB41`. Both are changeable in the app** — there is
+a Settings page, so the database no longer has to be edited by hand. It has been seen rendering on
+Windows.
 
 The database is at schema 2, migrated in place from this machine's own schema-1 database. A copy of
 the pre-migration file is at `%LOCALAPPDATA%\TradeAgent\state\tradeagent.db.pre-schema2`.
@@ -178,102 +166,87 @@ so there is one queue rather than two.
 
 ## The work queue
 
-### 1. Measure `OpenOrderAsync`, then decide about the four call sites — THE NEXT TASK
+### 1. Finish the `OpenOrderAsync` question — one sub-question, needs code not a run
 
-**The question.** `ITradingManager.OpenOrderAsync(order, setDefaultQuantity, askConfirmation,
-checkOrderStates)` exists with the same four flags as the synchronous overload the adapter calls
-today — `docs/atas-api-8.0.14.397.txt`, `interface ATAS.Indicators.ITradingManager` at line 1391,
-the async overload at 1421 directly under the obsolete synchronous one at 1420, same four flags.
-**Does the Task it returns complete when ATAS has submitted the order, or only when the broker has
-acknowledged it?**
+**Measured on hardware 2026-08-31, two orders on the simulated account:**
 
-**Why it decides anything.** Read the long comment on `AtasCall.Block` before starting — it already
-records the reasoning and it corrects an earlier version of this file that was wrong. In short:
-
-- It is **not** about rule 3's classification. There is no `catch` anywhere in the adapter's write
-  path; every `AtasRejectedException` after submission is manufactured from `_failures`, fed by
-  ATAS's `OrderRegisterFailed` events. The sync/async choice does not touch that path at all.
-- It **is** about deadlines. `AtasCall.Block` can put a deadline on a Task. It cannot put one on a
-  synchronous call. Today four of the five write paths — `OpenOrder`, `ModifyOrder`, `CancelOrder`,
-  `ClosePosition` — have **no deadline at all**, so a block in any of them stops `BridgeServer`'s
-  frame loop, including the operator's cancel-all, while the heartbeat goes on reporting READY
-  (trap 31).
-
-**The numbers, so the risk is arithmetic rather than a feeling.** `AckTimeout` 3s, `CallTimeout` 5s,
-worst case a caller waits 8s; `AtasConnector`'s RPC timeout is 10s. So the switch trades *"a wedged
-pipe nobody can interrupt"* for *"every slow order becomes UNKNOWN at 5s"*. Which of those you get
-depends entirely on the answer above, which is why it is measured before anything is flipped.
-
-**How to measure it.** At the instant the Task completes, capture three things and print them:
-elapsed ms, whether `order.Id` is assigned, and `order.State`. Then keep watching and print elapsed
-to Id-assignment and to the first state change.
-
-- Task completes with `Id` empty and `State == None`, clearly before the Id appears → **SUBMISSION**.
-- Task completes only once `Id` is assigned or `State` has moved → **ACKNOWLEDGEMENT**.
-
-**The trap in this measurement, and it is the whole difficulty.** The Binance crypto sim may
-acknowledge in under a millisecond, in which case submission and acknowledgement are *not separable*
-and a fast completion is NOT evidence for submission. Design the instrument to say
-`not-separable` rather than to produce a false green — the same discipline as `proven-sameref` and
-the `GetService` control probe. **Place a control order through the existing synchronous path in the
-same run and print both timelines side by side**; the sync call is known-good behaviour, so a
-difference between them is the reading, and no difference on a sim that answers instantly is an
-honest "this platform cannot separate them here".
-
-**Where to put it.** A probe-only route, not a second branch in the live write path — a second way to
-place an order inside `Place` is exactly where a misclassification would hide. Keep the probe's
-existing refusal to place unless the account is provably simulated from two independent sources;
-there is deliberately no `--force` and no `--account`, and that stays.
-
-**The physical loop.** Every line below is copied from one that has run; the detail and the
-corrections are under "Driving ATAS from here", which is the section to read before doing it.
-
-```bash
-tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'     # frees the bridge pipe AND unblocks the push
-tools/win-push.sh
-# close ATAS SAVING the workspace — it holds the bridge DLL
-tools/win-run.sh 'cd C:\ta\repo && dotnet build src\TradeAgent.AtasBridge\TradeAgent.AtasBridge.csproj -c Release -p:AtasBridgeBuild=true -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"'
-# copy TradeAgent.* into %APPDATA%\ATAS\Strategies, then assert the DEPLOYED dll (trap 8, trap 27)
-# relaunch ATAS, sign in, RE-ACTIVATE the strategy — it always comes back stopped (trap 24, trap 40)
-tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
+```
+run 1   place=sync;call=16777us;atreturn=None/noid;settled=131666us;gap=114889us;now=Active/id
+run 2   place=sync;call=531us;  atreturn=None/noid;settled=125074us;gap=124543us;now=Active/id
 ```
 
-**Traps that apply to this specific task:** 12 (a bridge built without `AtasBridgeBuild=true` is a
-stub that looks identical), 8 and 27 (assert the deployed DLL, names as ASCII and literals as
-UTF-16), 34 (**add no NuGet package anywhere in the bridge's chain** — the deploy filter drops
-third-party files silently), 24 and 40 (the strategy returns stopped; `PART_ActivateButton` is real
-and does not need the row expanded), 35 ("No selected strategy" is the right-hand pane's placeholder,
-not an empty list — check before pressing Add or you get two bridges on one pipe), 39 (never pass
-`--window` to `find`).
+- **The synchronous `ITradingManager.OpenOrder` completes on SUBMISSION.** It returned in **0.53 ms**
+  warm, with `State=None` and no `Order.Id`. Acknowledgement arrived **~120 ms later**.
+- **Acknowledgement latency here is ~120 ms, so the two ARE separable** — comfortably past the 20 ms
+  threshold the probe uses. That reading had to come first: on a venue that acknowledges instantly
+  the question is unanswerable, and a fast async completion would prove nothing.
 
-**Whatever the reading, always:** cancel anything left resting and verify the book from a *separate*
-run. `probe atas --cancel-resting <client-order-id>`, then `trade orders` should print `[]`.
+**What is left: what does `ITradingManager.OpenOrderAsync`'s task actually wait for?** ~0.5 ms
+(submission) or ~120 ms (acknowledgement)? It needs a submission through the async overload, and that
+needs a probe-only route into `Place`. **It was deliberately not smuggled into the instrumentation
+change** — a second way to submit an order inside `Place` is exactly where a rule-3 misclassification
+would hide.
 
-**What to do with each answer.**
+**The mechanism, designed and not yet built.** Give `Place` an internal route parameter; the public
+`Place(cmd)` the gateway reaches always passes `Default`, so the live path cannot select the async
+route, and that is auditable in one line:
 
-- SUBMISSION → flip the four call sites to the Async overloads wrapped in `AtasCall.Block(...,
-  CallTimeout, "<name>")`, as its own commit, and say in `BUILD-STATUS.md` what was measured.
-- ACKNOWLEDGEMENT → **do not flip.** Either raise `CallTimeout` above the observed ack latency and
-  the connector's 10s with it, or leave the synchronous calls and record that the four undeadlined
-  write paths are a known, measured limitation. Both are honest; guessing is not.
-- NOT SEPARABLE on this platform → record that, and leave the call sites alone. An unanswerable
-  question answered "no" is how the `SupportsOrderHistory` mistake would have been made.
+```csharp
+public OrderInfo Place(PlaceOrderCommand cmd) => Place(cmd, PlaceRoute.Default);
+internal OrderInfo Place(PlaceOrderCommand cmd, PlaceRoute route)
+...
+if (feed is not null)                      AtasCall.Block(feed.RegisterOrderAsync(order), ...);
+else if (route == PlaceRoute.MeasureAsync) AtasCall.Block(trading.OpenOrderAsync(order, false, false, true),
+                                                          CallTimeout, "OpenOrderAsync");
+else                                       trading.OpenOrder(order, false, false, true);
+```
+
+Reaching it costs a `BridgeOps` constant, a `BridgeServer` dispatch case, a method on `IAtasAdapter`
+(and therefore on `LoopbackAtasAdapter`), a call on `AtasConnector`, and a probe flag. The
+`place=` token already reports the route, so the existing `PLACE TIMING` / `ACK LATENCY` output reads
+the answer with no further work: **`call=` near 500us means SUBMISSION, `call=` near 120000us means
+ACKNOWLEDGEMENT.**
+
+**What the measurement already changed about the decision, and it is not what the old note said.**
+The recorded fear was that blocking on the async call would put `Place` past `CallTimeout` and turn
+every order into UNKNOWN. At ~120 ms against a 5 s `CallTimeout` that cannot happen here — a 40×
+margin — and `Place` **already** waits for acknowledgement in `WaitFor(AckTimeout)` on exactly the
+condition the async task would wait for. The switch moves where the time is spent, it does not add
+time.
+
+The real difference is subtler, and it is what to weigh when flipping the four call sites: **today a
+slow acknowledgement ends in `WaitFor` giving up and returning the order in whatever state it is
+really in, with no exception. After the switch it ends in `AtasCallTimeoutException` — UNKNOWN.**
+That is arguably more correct under rule 3, but it is a behaviour change on the money path and it
+deserves its own change and its own reasoning.
+
+**Whatever you do: cancel anything left resting and verify the book from a separate run.** Both runs
+above did, and the probe says so (`CLEANUP VERDICT`).
 
 ### 2. Look at TradeAgent's own UI on Windows — with eyes
 
-Partly started: on 2026-08-31 the **Settings** page was read there through UI Automation (its labels
-come back, and the two buttons that should be disabled are), which proves it renders and holds the
-right state. That is not the same as seeing it. The RDP session renders nothing (trap 19), so
-**reconnect or unlock the console first** or captures come back useless.
+**Started, and it immediately earned its place.** With capture working, the Dashboard and Settings
+pages were seen on Windows for the first time on 2026-08-31, and looking found a defect nothing else
+would have: `Ui.StatusRow` trimmed the detail column with an ellipsis in a 340px card, so the two
+ATAS health rows rendered as `running · 8.0....` and `connected · ...` — correct and unreadable.
+**That also answers the old worry about the ~450-character bridge-refusal sentence: yes, it
+truncated, and it would have displayed as approximately nothing.** The detail wraps now, verified on
+Windows.
 
-Three things specifically want eyes, and none of them can be settled by automation:
+Still wanting eyes, and none of it settleable by automation:
 
-- the setup journey end to end;
-- the **Inbox** page — drag a real file onto it, which has never been done on any platform. The drop
+- **the setup journey end to end** — never once watched on Windows;
+- **the Inbox page** — drag a real file onto it, which has never been done on any platform. The drop
   handler, the file picker, the copy, the collision suffix and the immediate rescan are all compiled
   and unexercised;
-- the bridge-refusal sentence on the dashboard status row. It is ~450 characters and got longer when
-  the `witness=` token was added. No truncation was found in the UI, but nobody has watched it render.
+- **the bridge-refusal sentence rendering**, now that it can wrap — put the bridge in a refusing
+  state and look at the Dashboard;
+- **the Safety and Activity pages and the Chat view**, none of which have been seen on Windows.
+
+Two cosmetic things noticed and deliberately not fixed: a disabled `Ui.Confirm`/`Ui.Secondary` button
+renders as bare text with no border, so "Use ATAS" when ATAS is already in use reads more like a
+label than a disabled control (the `IN USE` pill carries the state, so it is not ambiguous); and the
+rail says "3 parts not checked yet" for the three agent rows until the AI is started.
 
 ### 3. The staged live trial
 
@@ -455,20 +428,15 @@ one onto a list-row toggle inside a modal dialog.
 - **Does `OpenOrderAsync`'s task complete on SUBMISSION or on broker ACKNOWLEDGEMENT?** The gate on
   flipping the four obsolete order calls, and unanswerable off Windows. If acknowledgement, blocking on
   it puts `Place` past the connector's 10s RPC timeout and turns every order into UNKNOWN.
-- ~~**Are `ITradingManager.Orders` and `ChartStrategy.Orders` the same list?**~~ **Answered
-  2026-08-31, out of the captures already on the machine: NO, they are not the same collection.**
-  With one resting order live in ATAS, `probe-half2.txt`, `probe-clean.txt` all report
-  `orders=1 strategyorders=0`, and `probe-verify.txt` reports `orders=0 strategyorders=0` after the
-  cancel — so the 1 was tracking the real order. Both counts are built inside one `SurfaceReport`
-  call, i.e. from a single instant, and a shared list cannot report two lengths at once.
-  **The narrower half is still open and the captures cannot answer it:** every `trading_surface`
-  reading ever taken was at the hello, *before* anything was placed, so `strategyorders=0` has never
-  been observed in the one situation that would give it meaning — an order this strategy instance
-  placed in this session. The probe now takes the reading again after the place and prints
-  `ORDER COLLECTIONS   before: ... after: ...`, so the next run on hardware closes it.
-  Either way `LiveOrders`' de-duplication stays: it is defensive rather than load-bearing on the
-  evidence, it costs one `HashSet`, and what it prevents is `FilledOf` double-counting a partial
-  fill into a FILLED.
+- ~~**Are `ITradingManager.Orders` and `ChartStrategy.Orders` the same list?**~~ **Answered in full,
+  2026-08-31. No — and `ChartStrategy.Orders` is empty even for orders this strategy placed.**
+  With one resting order live, `orders=1 strategyorders=0` from a single instant inside
+  `SurfaceReport`, which disproves a shared list. The narrower half is now closed too: two orders
+  placed by this strategy instance in this session gave
+  `before: orders=0 strategyorders=0  after: orders=1 strategyorders=0`. `strategyorders` has been 0
+  in every reading ever taken. So `LiveOrders()`'s reference de-duplication is **defensive, not
+  load-bearing** — and both it and the second collection read stay: "has never contained anything" is
+  not "can never contain anything", and the cost is one enumeration.
 - **Does ATAS's order collection ever contain `Modify`'s cloned replacement?** Unanswerable from the
   API dump, which carries public members only. It decides whether trap 32 is live or merely possible;
   the guard against it does not depend on the answer, and must not be "simplified" until it is known.

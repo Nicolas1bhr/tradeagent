@@ -301,26 +301,50 @@ static class Ui
         Width = 7, Height = 7, Fill = tone, VerticalAlignment = VerticalAlignment.Center
     };
 
+    /// <summary>
+    /// One component's state: a coloured dot, its name, and what it has to say for itself.
+    ///
+    /// THE DETAIL WRAPS, AND IT USED TO BE TRIMMED. In a 340px card, 16 + 180 left about a hundred
+    /// pixels for the detail, and `TextTrimming.CharacterEllipsis` then silently ate everything past
+    /// a few words. Seen on Windows on 2026-08-31, where the two ATAS rows — whose whole purpose is
+    /// to say WHICH half of the trading chain is missing — rendered as `running · 8.0....` and
+    /// `connected · ...`. The rows were right and unreadable, which is the worse failure of the two:
+    /// a wrong row invites a second look and a truncated one does not.
+    ///
+    /// The dashboard's bridge-refusal detail is ~450 characters, so under the old rule it displayed
+    /// as approximately nothing. Nobody had seen it render, which is exactly why it survived.
+    ///
+    /// Everything is top-aligned because a wrapped row is two or three lines tall and a centred dot
+    /// beside three lines of text reads as belonging to the middle one.
+    /// </summary>
     public static Control StatusRow(ComponentHealth h)
     {
         var tone = Tone(h.State);
         return new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("16,180,*"),
+            // 140, not 180: "Execution capability" is the longest component name there is, and the
+            // pixels saved go to the half of the row that actually varies.
+            ColumnDefinitions = new ColumnDefinitions("16,140,*"),
             Margin = new Thickness(0, 3),
             Children =
             {
-                Ui.With(Dot(tone), c => c.VerticalAlignment = VerticalAlignment.Center),
+                // Nudged down to sit on the first line's optical centre rather than the row's.
+                Ui.With(Dot(tone), c =>
+                {
+                    c.VerticalAlignment = VerticalAlignment.Top;
+                    c.Margin = new Thickness(0, 5, 0, 0);
+                }),
                 new TextBlock
                 {
                     Text = h.Component, FontSize = Theme.Small, Foreground = Theme.Text,
-                    VerticalAlignment = VerticalAlignment.Center, [Grid.ColumnProperty] = 1
+                    VerticalAlignment = VerticalAlignment.Top, TextWrapping = TextWrapping.Wrap,
+                    [Grid.ColumnProperty] = 1
                 },
                 new TextBlock
                 {
                     Text = Describe(h), FontSize = Theme.Small, Foreground = Theme.TextMuted,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis, [Grid.ColumnProperty] = 2
+                    VerticalAlignment = VerticalAlignment.Top, TextWrapping = TextWrapping.Wrap,
+                    [Grid.ColumnProperty] = 2
                 }
             }
         };

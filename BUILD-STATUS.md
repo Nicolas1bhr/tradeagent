@@ -1642,36 +1642,75 @@ situation that would give it meaning. The probe now takes the reading again afte
 `LiveOrders`' reference de-duplication stays either way — defensive on this evidence, and what it
 prevents is `FilledOf` double-counting a partial fill into a FILLED.
 
-### The `OpenOrderAsync` measurement: instrumented, deployed, and BLOCKED on a rendering surface
+### The place path, measured on hardware: the synchronous call completes on SUBMISSION
 
-**NOT VERIFIED — the reading has not been taken.** The instrument is written, compiles against the
-real ATAS 8.0.14.397 SDK, is deployed into `%APPDATA%\ATAS\Strategies`, and is asserted present in
-the deployed DLL (`OrderShape`, `_lastPlace`, `AtasStrategyAdapter` all found as ASCII metadata —
-traps 8, 12, 27). What it has not done is place an order, because ATAS will not restart on this
-machine in its current state. See the trap below.
+Two orders, on the simulated `CRYPTO5EB41` Binance crypto-sim account, through the real bridge:
 
-**What the instrument is, and why it does not touch the live path.** A stopwatch and two property
-reads around the existing submission in `Place`, both `Guard`ed like every other diagnostic there.
-The submission itself is unchanged. It works because `Place`'s existing `WaitFor` already waits for
-exactly the condition that separates the two answers — a state change or an assigned `Order.Id`,
-which *is* acknowledgement arriving. So the gap between the call returning and that condition holding
-is this platform's acknowledgement latency, measured through the path actually in use, and it decides
-whether the question is answerable here at all:
+```
+run 1   place=sync;call=16777us;atreturn=None/noid;settled=131666us;gap=114889us;now=Active/id
+        broker id 12024794
+run 2   place=sync;call=531us;  atreturn=None/noid;settled=125074us;gap=124543us;now=Active/id
+        broker id 12024817
+```
 
-- gap large → submission and acknowledgement are separable, and a follow-up run through
-  `OpenOrderAsync` says which its task waits for;
-- gap ~zero → they are **not separable on this platform**, a fast async completion would be evidence
-  for neither answer, and the four call sites must not be flipped on the strength of it.
+**`ITradingManager.OpenOrder` returns before the broker has acknowledged anything.** On the warm run
+it returned in **0.53 ms**, with the order still at `State=None` and **no `Order.Id` assigned**.
+Acknowledgement — the state change and the broker id — arrived **124.5 ms later**. Run 1's 16.8 ms
+call is the same call cold; the shape of the reading is identical in both.
 
-The probe prints the token and the verdict (`PLACE TIMING`, `ACK LATENCY`, with the 20 ms threshold
-that decides between `SEPARABLE` and `NOT SEPARABLE`). Nothing derives a capability from any of it —
-a stopwatch reading is not a round trip.
+**Acknowledgement latency on this venue is ~120 ms, so submission and acknowledgement ARE separable
+here.** That was not a foregone conclusion and it is the reading that had to come first: a platform
+that acknowledges in under a millisecond cannot distinguish the two answers at all, and a fast
+`OpenOrderAsync` completion on such a venue would have been evidence for neither. The probe prints
+the verdict itself (`SEPARABLE` / `NOT SEPARABLE`, thresholded at 20 ms).
+
+**NOT VERIFIED — what `ITradingManager.OpenOrderAsync`'s task waits for.** That still needs a
+submission through the async overload, which needs a probe-only route into `Place`; it was not
+smuggled into this change, because a second way to submit an order inside `Place` is exactly where a
+rule-3 misclassification would hide. The mechanism is designed in `docs/RESUME-HERE.md`, work-queue
+task 1.
+
+**What the measurement changes about the decision, and it is not what was expected.** The recorded
+fear was that blocking on `OpenOrderAsync` would put `Place` past `CallTimeout` and turn every order
+into UNKNOWN. At ~120 ms against a 5 s `CallTimeout` that cannot happen on this venue whichever
+answer is true — a 40× margin. And `Place` *already* waits for acknowledgement, in
+`WaitFor(AckTimeout)`, on exactly the condition the async task would be waiting for; so the switch
+moves where that time is spent rather than adding to it.
+
+The real difference is subtler and is the thing to weigh when the switch is made: **today a slow
+acknowledgement ends in `WaitFor` giving up and returning the order in whatever state it is really
+in — no exception. After the switch it ends in `AtasCallTimeoutException`, i.e. UNKNOWN.** That is
+arguably more correct under rule 3, but it is a behaviour change on the money path and it deserves
+its own change and its own reasoning, not a footnote to a timing measurement.
+
+### `ChartStrategy.Orders` is empty even for orders this strategy placed
+
+The open half of the collections question, closed. Both runs above:
+
+```
+ORDER COLLECTIONS   before: orders=0 strategyorders=0   after: orders=1 strategyorders=0
+```
+
+The earlier reading (2026-08-30) showed the two counts differing across a restart, which proved they
+are not the same collection but left open whether an order placed by *this* strategy instance in
+*this* session would appear in `ChartStrategy.Orders`. It does not. `strategyorders` has now been 0
+in every reading ever taken, including immediately after this strategy successfully placed an order
+that `ITradingManager.Orders` counted.
+
+So `LiveOrders()` reading both collections is not redundancy — `ITradingManager.Orders` is the one
+that carries anything, and the reference de-duplication is defensive. **Both stay.** "It has never
+contained anything" is not "it can never contain anything", and the cost of reading it is one
+enumeration.
+
+Book verified clean from a separate run after both orders:
+`orders=0 strategyorders=0 mytrades=0 position=0`.
 
 ### ATAS will not restart on a disconnected RDP session
 
-Found by hitting it. ATAS was closed to swap the bridge DLL — the normal redeploy step — and would
-not come back: it signs in, opens its main window, starts building the workspace's chart panels, and
-dies ~40 s later. Deterministic, reproduced twice, and the stack has no TradeAgent frame in it:
+Found by hitting it, and it cost the middle of the session. ATAS was closed to swap the bridge DLL —
+the normal redeploy step — and would not come back: it signs in, opens its main window, starts
+building the workspace's chart panels, and dies ~40 s later. Deterministic, reproduced twice, and
+there is no TradeAgent frame anywhere in the stack:
 
 ```
 Faulting application name: OFT.Platform.exe   Faulting module: coreclr.dll   Exception: 0xc0000005
@@ -1681,18 +1720,24 @@ Faulting application name: OFT.Platform.exe   Faulting module: coreclr.dll   Exc
 ```
 
 ATAS draws its charts through an OpenGL control; GLFW cannot enumerate a video mode in a session with
-no rendering surface. An existing GL context survives a disconnect, which is why ATAS ran for hours
-in this state — creating one fresh does not. **This refines trap 19 rather than repeating it:**
-a disconnected session loses only rendering for TradeAgent, UI Automation and the bridge, and loses
-*ATAS itself* the moment ATAS is restarted.
+no rendering surface, and the null it returns is dereferenced. An existing GL context survives a
+disconnect — which is why ATAS had been running for days in that state — but a new one cannot be
+made. **This refines trap 19 rather than repeating it:** a disconnected session costs TradeAgent, UI
+Automation and the bridge only their rendering, and costs ATAS its ability to start at all.
 
-It is recorded as trap 43 with the exact event-log command, because the crash presents as "the bridge
-DLL you just deployed broke ATAS" — it happens on the first launch after a redeploy, while the
-workspace and its strategies load.
+Recorded as trap 43 with the event-log command that identifies it, because it presents as *"the
+bridge DLL you just deployed broke ATAS"* — it happens on the first launch after a redeploy, exactly
+when the workspace and its strategies load.
+
+**The fix, and it needed no reboot.** Session 1 was a disconnected RDP session; the physical console
+(session 2) was connected and idle at the logon screen. `tscon 1 /dest:console` moved the session onto
+the console, and `tools/win-state.sh` went from `capture : NO` to `capture : WORKS`. ATAS then
+launched, signed in and stayed up past 120 s where it had died at 40 s twice. That is the confirmation
+of the diagnosis as well as the repair.
 
 ### The ATAS-down health branch, verified by accident
 
-The outage proved the branch that this session's other fix exists to expose, on hardware, which a
+The outage proved on hardware the branch that this session's other fix exists to expose, which a
 healthy machine could not have shown:
 
 ```
@@ -1704,6 +1749,31 @@ Account                UNKNOWN   no connection
 
 `Trading connection: FAILED` with an empty detail is the entire diagnosis a user got before. The two
 rows above it now say which half is missing and what to press.
+
+### Seen on Windows, and the looking is what found it: the health details were being trimmed away
+
+`Ui.StatusRow` laid out `16,180,*` in a 340px card and trimmed the detail with an ellipsis. The two
+ATAS rows added this session — whose entire purpose is to say which half of the trading chain is
+missing — rendered as:
+
+```
+ATAS process    running · 8.0....
+ATAS bridge     connected · ...
+```
+
+Correct, and unreadable, which is the worse of the two failures: a wrong row invites a second look
+and a truncated one does not. The dashboard's bridge-refusal detail is ~450 characters and would have
+displayed as approximately nothing — the previous handoff wondered whether it truncated, and this is
+the answer. The detail now wraps and the component column is 140. Verified on Windows:
+
+```
+ATAS process    running · 8.0.14.397
+ATAS bridge     connected · bridge
+                8.0.14, protocol 2
+```
+
+Nothing but looking at it would have found this. It is the argument for work-queue task 2 in one
+screenshot.
 
 ### Trap 21 came back, with TradeAgent as the victim
 
