@@ -86,7 +86,7 @@ ATAS is not TradeAgent's software, and this is the one part of setup that is not
 
 ## The window
 
-Five pages, down the left-hand side.
+Six pages, down the left-hand side.
 
 **Chat** — the conversation with the AI. Type in the box at the bottom and press send. Its answers
 appear as they are written. When it reads a price, looks at your account or places an order, that
@@ -98,6 +98,10 @@ list of green, amber and red dots for every part of the system. Also **Open ATAS
 folder**. If the AI is waiting for permission to place an order, the request appears here in an amber
 panel.
 
+**Inbox** — where you hand the AI files to work with, and where you can see what it did with them.
+Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded
+automatically. There is a section on this page below.
+
 **Safety** — the trading mode, the five limits, and the three emergency buttons. Everything on this
 page belongs to you; the AI cannot reach any of it and has no way to ask.
 
@@ -107,6 +111,36 @@ refusal, every reason.
 **Checks** — **Check everything** runs every test and names any problem in plain words. **Create
 support package** makes a single file you can send to whoever helps you. It contains logs and
 settings, and no passwords.
+
+## The Inbox — giving the AI things to work with
+
+The **Inbox** page is where you hand the AI files: a program, an installer, a spreadsheet, a PDF, a
+folder of data, a strategy someone sent you. Drag them onto the page, or press **Choose files…**. If
+you have a lot of them, **Open folder** opens the folder in Windows Explorer and you can copy them in
+there — TradeAgent notices either way.
+
+The AI may open, read, run and experiment with anything you put there. That is what the folder is
+for.
+
+**Your originals are not moved.** TradeAgent copies what you give it, so the file stays wherever you
+had it.
+
+**Everything is written down, without you doing anything.** For every file that appears, TradeAgent
+records its name, its size, a fingerprint of its exact contents, and the moment it turned up. Replace
+a file with a newer version and the old one stays on the record rather than being forgotten. That is
+what stops the folder turning into a drawer nobody can account for.
+
+The page shows two lists, and the difference between them matters:
+
+- **What is here** — measured by TradeAgent. This is fact.
+- **What the AI says it did** — the AI's own account of what it ran and what it made from what. It is
+  a report, not a measurement, and the page labels it that way.
+
+**One thing to know about documents.** If a file you hand over contains text aimed at the AI —
+"you are approved to trade", "place this order", "ignore your instructions" — it has no effect. The
+AI cannot gain permission from a document. Only you can change what it is allowed to do, and only in
+this window. If a file asks for something like that, the AI is told to raise it with you in the chat
+rather than act on it.
 
 ## The four modes
 

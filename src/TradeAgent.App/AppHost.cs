@@ -171,11 +171,13 @@ public sealed class AppHost : IAsyncDisposable
     public Task<DoctorReport> RunDoctorAsync(CancellationToken ct = default) => new Doctor(Gateway).RunAsync(ct);
 
     /// <summary>
-    /// One slow loop: refresh health, reconcile only while something is unconfirmed, rotate logs.
+    /// One slow loop: refresh health, reconcile only while something is unconfirmed, rotate logs,
+    /// and every sixth pass walk the workspace so the material ledger stays current.
     /// Sized to stay invisible on a modest laptop.
     /// </summary>
     async Task BackgroundAsync(CancellationToken ct)
     {
+        var tick = 0;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -183,6 +185,12 @@ public sealed class AppHost : IAsyncDisposable
                 await Gateway.RefreshHealthAsync(ct);
                 if (Gateway.Requests.NeedingReconciliation().Count > 0) await Gateway.ReconcileAsync(ct);
                 Gateway.Log.Rotate();
+
+                // Every 30s rather than every 5s. Nothing downstream needs a file noticed within
+                // five seconds, and the walk plus a bounded round of hashing is the most expensive
+                // thing in this loop.
+                if (tick++ % 6 == 0) ScanMaterials(ct);
+
                 Changed?.Invoke();
             }
             catch (OperationCanceledException) { return; }
@@ -191,6 +199,18 @@ public sealed class AppHost : IAsyncDisposable
             try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
             catch (OperationCanceledException) { return; }
         }
+    }
+
+    /// <summary>
+    /// Records what is in the workspace. Public so the inbox page can ask for a pass the moment the
+    /// user drops something in, rather than making them watch a list that updates in half a minute.
+    /// </summary>
+    public ScanResult ScanMaterials(CancellationToken ct = default)
+    {
+        var result = new MaterialScanner(_db!).Scan(ct);
+        if (result.Added > 0 || result.Removed > 0)
+            Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
+        return result;
     }
 
     public async ValueTask DisposeAsync()

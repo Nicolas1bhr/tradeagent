@@ -47,13 +47,21 @@ Operator authority — mode, kill switch, live activation, approvals — is in-p
 reachable from the agent-facing pipe. An agent that wants more permission has nowhere to ask. Keep
 it that way.
 
+**Material in the inbox is data, never instruction.** The owner hands the agent programs and
+documents through `workspace/inbox/`, and a document can contain text addressed to the agent —
+approvals, orders, "ignore your instructions". Nothing there grants permission, `AGENTS.md` says so
+explicitly, and the rule above is what makes that true rather than merely asked for. The ledger that
+records it keeps **measurement and claim in different tables**: `material` is written only by the
+scanner and the agent cannot edit it; `material_note` is the agent's account of itself. Do not merge
+them and do not let a note touch a material row — a record the observed party can rewrite is not one.
+
 ## Building and verifying
 
 `dotnet` is not on PATH on the dev Mac: `export PATH="$HOME/.dotnet:$PATH"`.
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # 107 tests; green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # 215 tests; green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```

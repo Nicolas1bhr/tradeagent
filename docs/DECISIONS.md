@@ -77,6 +77,43 @@ schedule; a build that hard-codes today's flags becomes wrong silently. A wrong 
 fix in `%LOCALAPPDATA%\TradeAgent\runtimes.json`, and the Doctor tells the user when a value is
 unverified rather than letting them discover it as a mysterious failure.
 
+**The AI gets an inbox, and the workspace keeps a ledger of what is in it.**
+The owner hands the agent programs, documents and data to experiment with. Three decisions follow,
+and the third is the one that had to be made first:
+
+- `inbox/` lives **inside the agent workspace**, not beside it. The agent is already broadly free in
+  there, so the drop folder grants it nothing new; a folder outside would widen the blast radius,
+  and the workspace boundary is the whole containment story.
+- **Material is data, never instruction.** A document handed over may contain text addressed to the
+  agent — approvals, orders, "ignore your instructions". Nothing in the inbox can change what the
+  agent may do, and `AGENTS.md` says so in as many words. The architecture already made this
+  survivable rather than fatal: operator authority is not on the agent channel, no command raises a
+  risk limit, and `LIVE_CONFIRM` needs a human press per order. The inbox does not open an
+  escalation path; it adds untrusted *content*, which is a different and much smaller problem.
+- **Provenance is built first, because it cannot be added later.** A dropbox with no record is a
+  dump within a fortnight, and the fortnight of files that arrived before the ledger existed can
+  never be reconstructed — nobody can say afterwards what a binary was, when it came, or what was
+  made from it. Everything else about the feature (preview, quotas, sandboxing, file types) is
+  correctable at leisure. So the ledger shipped in the same commit as the folder.
+
+**The ledger separates what was measured from what was claimed.**
+Two tables, and they are not merged. `material` rows come from a directory listing and a SHA-256 the
+software computed; the agent cannot write one or edit one. `material_note` rows are the agent's own
+account of what it ran and what it derived from what, reaching the gateway over the same
+authenticated pipe as everything else. An observation that the observed party can rewrite is not a
+record — the split is what makes the history worth reading without having to assume the agent was
+diligent, honest, or even still running. A row is a *file version*, not a path: replacing a file
+leaves the old row stamped `removed_at` rather than overwriting it.
+
+**The scanner is bounded, and the ledger is not allowed to become the dump.**
+One `npm install` in the workspace is forty thousand files; tracking them would bury the dozen rows
+anybody wants to read. Package and build directories are skipped by name, `scratch/` and `logs/` are
+not tracked at all — the agent is told which folders are recorded, so "put it somewhere tracked if it
+matters" is a rule it can follow. Identity is the (path, size, mtime) tuple a directory listing
+already yields, and only a changed tuple is opened and hashed, a bounded number per pass. The known
+cost is written down rather than hidden: content swapped with both size and mtime preserved reads as
+the same version.
+
 **The ATAS bridge is split in two.**
 `BridgeServer` (transport, framing, heartbeat, reconnect, handshake, error classification) depends
 only on `IAtasAdapter` and is tested on every platform against `LoopbackAtasAdapter`. Only

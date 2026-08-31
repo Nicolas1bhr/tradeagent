@@ -25,7 +25,12 @@ public static class Versions
     /// </summary>
     public const int BridgeProtocolVersion = 2;
 
-    public const int DatabaseSchemaVersion = 1;
+    /// <summary>
+    /// 1 -&gt; 2: the material ledger. Everything the account owner hands the agent, and everything
+    /// the agent produces, is recorded with a hash and a timestamp. Purely additive — two new
+    /// tables, nothing existing altered — so an older database opens and is migrated in place.
+    /// </summary>
+    public const int DatabaseSchemaVersion = 2;
 
     public static string App =>
         Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)

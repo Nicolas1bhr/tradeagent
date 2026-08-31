@@ -34,7 +34,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Dashboard, Safety, Activity, Checks }
+    enum Page { Chat, Dashboard, Inbox, Safety, Activity, Checks }
 
     readonly AppHost _host;
 
@@ -113,6 +113,7 @@ public sealed class MainWindow : Window
     ChatView? _chat;
     DashboardPage? _dashboard;
     SafetyPage? _safety;
+    InboxPage? _inbox;
     ActivityPage? _activity;
     ChecksPage? _checks;
 
@@ -330,6 +331,7 @@ public sealed class MainWindow : Window
     {
         AddNav(Page.Chat, "Chat");
         AddNav(Page.Dashboard, "Dashboard");
+        AddNav(Page.Inbox, "Inbox");
         AddNav(Page.Safety, "Safety");
         AddNav(Page.Activity, "Activity");
         AddNav(Page.Checks, "Checks");
@@ -390,12 +392,14 @@ public sealed class MainWindow : Window
     {
         _chat = new ChatView(_host, StartOrStopAgentAsync);
         _dashboard = new DashboardPage(_host, StartOrStopAgentAsync);
+        _inbox = new InboxPage(_host);
         _safety = new SafetyPage(_host);
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
 
         Add(Page.Chat, _chat.Root);
         Add(Page.Dashboard, _dashboard.Root);
+        Add(Page.Inbox, _inbox.Root);
         Add(Page.Safety, _safety.Root);
         Add(Page.Activity, _activity.Root);
         Add(Page.Checks, _checks.Root);
@@ -457,6 +461,7 @@ public sealed class MainWindow : Window
 
         _chat?.Update();
         _dashboard?.Update(status, waiting);
+        _inbox?.Update();
         _safety?.Update(status);
         _activity?.Update();
         _checks?.Update();

@@ -1249,6 +1249,84 @@ settle it is being built; nothing here settles it.
 **NOT VERIFIED: the app's own UI on Windows.** Still nobody has looked at TradeAgent itself here, only
 at ATAS.
 
+## macOS only, 2026-08-31 — the AI inbox and the material ledger
+
+Scope addition: the account owner can hand the AI programs, documents and data to experiment with.
+Built on the dev Mac in one session; **the Windows machine was not touched, and nothing below speaks
+for it.**
+
+### The ledger, which is the half that could not be added later
+
+A dropbox with no provenance is a dump within a fortnight, and the files that arrive before the
+record exists can never be accounted for afterwards. So the record shipped first and the folder was
+built around it. Two tables, deliberately not one:
+
+- `material` — what TradeAgent **observed**: relative path, origin, size, SHA-256 it computed itself,
+  first seen, last seen, removed. Written only by the scanner. The agent cannot write or edit a row.
+- `material_note` — what somebody **claimed**: ran it, used it, derived this from that. Written by the
+  agent over the authenticated pipe, and stored apart so it can never alter an observation.
+
+A row is a file version, not a path. Database schema 1 → 2, purely additive.
+
+### Verified by running it
+
+Full suite, after every change:
+
+```
+Passed!  - Failed: 0, Passed:  36, Skipped: 0, Total:  36  TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed:  54, Skipped: 0, Total:  54  TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed: 130, Skipped: 0, Total: 130  TradeAgent.IntegrationTests.dll
+```
+
+215 tests, up from 204: 11 unit tests on the ledger and scanner, 5 integration tests driving the two
+new operations over a real named pipe with a real handshake.
+
+**The tests were proven to bite**, by breaking the implementation and recording which test failed:
+
+| Break | Result |
+|---|---|
+| Stop skipping `node_modules` / `obj` / `.git` | `Package_and_build_directories_are_not_tracked` FAILED |
+| Let a changed file overwrite its predecessor instead of versioning | `Replacing_a_file_keeps_the_version_it_replaced` FAILED |
+| Remove the truncated-pass guard entirely | `A_scan_that_ran_out_of_budget_never_reports_a_file_as_removed` FAILED |
+
+**And one break did NOT bite, which is recorded because it changes what the code may claim.** The
+guard reads `if (complete && !truncated)`. Removing only `!truncated` breaks nothing: `complete`
+already covers every case the tests produce. `!truncated` is belt-and-braces for a later origin whose
+walk comes back empty after an earlier one ran out of budget — a state no test currently reaches. It
+is kept, and the comment on it says plainly that it is not covered. **Do not read that line as tested.**
+
+### Seen rendering, on macOS
+
+The Inbox page was looked at with three files in the inbox, one file produced by the agent, and three
+seeded notes. Screenshots taken and read. What was confirmed by eye:
+
+- The list separates "you gave this to the AI" from "the AI made this", inbox first.
+- An `.exe` carries a `runs` badge; sizes, arrival times, path and short hash all render on two lines.
+- The notes section renders as its own block under "What the AI says it did", with the derivation
+  chain visible as `04bb01a6c112 ← 25931da0389d`.
+- The drop zone, "Choose files…" and "Open folder" render and are laid out on the theme's tokens.
+
+**NOT VERIFIED: any of the interaction.** No file was ever dragged onto the window, the file picker
+was never opened, and "Open folder" was never pressed — the macOS harness can screenshot this app but
+cannot click it. The drop path, the picker path, the copy, the collision-suffixing and the
+immediate-rescan are **compiled and unexercised**. This is the largest untested surface added today.
+
+**NOT VERIFIED: the whole feature on Windows**, which is where it will be used. Nobody has seen
+TradeAgent's own UI on Windows at all — the inbox inherits that gap rather than creating it.
+
+**NOT VERIFIED: the agent actually using it.** No AI runtime has been pointed at `trade material` and
+asked to record its work. The commands answer correctly over the pipe and appear in
+`trade schema --json`; whether an agent reads the AGENTS.md section and complies is unmeasured, and
+is the thing that decides whether the notes half of the ledger has any content at all.
+
+### A latent argument-parsing defect, found and fixed on the way
+
+`trade`'s positional list was built by filtering out anything starting with `--`, which also kept
+every flag's *value* as a positional. Harmless while no command read past its second positional;
+wrong the moment one takes a flag between positionals, which `trade material derived <sha> --from
+<sha> <text>` does. Positionals are now parsed by walking the argument list and skipping each flag's
+value. Existing commands read only positions 0 and 1 and are unaffected.
+
 ## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in
@@ -1368,6 +1446,10 @@ It is now session-aware, and says so.
   restart, not inferred. `SupportsClientOrderId` is true on evidence.
 - **The bridge pipe authenticates in both directions**, with the residual against a same-user
   adversary written down rather than claimed away.
+- **The AI inbox and the material ledger.** The owner can hand the agent programs, documents and data;
+  every file that appears in the inbox or in the agent's tracked folders is recorded with a hash and a
+  timestamp, and the agent records what it ran and what it derived from what. Measurement and claim are
+  stored apart. Green and screenshotted on macOS; see the 2026-08-31 section for what that does not cover.
 
 ## What does not work yet
 
@@ -1402,6 +1484,10 @@ It is now session-aware, and says so.
   witness record. Documented in code.
 - **The installer is unsigned.** Every user will see "Windows protected your PC". On a program that
   places trades, that wants a certificate.
+- **The inbox has never been used by a human or an AI.** The page renders and the operations answer
+  over the pipe, but no file has been dragged onto the window, the file picker has never been opened,
+  and no agent has been asked to record its work with `trade material`. The drop, pick and copy paths
+  are compiled and unexercised.
 - **Live money has never been touched.** Correct for this stage.
 
 ## Current blockers

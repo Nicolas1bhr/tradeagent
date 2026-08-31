@@ -46,6 +46,10 @@ Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap.
 
 - The first frame **must** be `hello` carrying the token. Anything else closes the connection.
 - Reads and order operations only. Operator authority is not on this channel.
+- `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
+  this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
+  scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
+  hash matches nothing in the ledger is refused rather than stored.
 - Every mutating op takes `request_id`. Reusing one returns the original outcome and dispatches nothing.
 - `trade schema --json` serves this contract at runtime, so an agent discovers capabilities instead of
   relying on a prompt that drifts.

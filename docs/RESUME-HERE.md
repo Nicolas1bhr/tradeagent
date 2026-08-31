@@ -92,6 +92,32 @@ tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --w
 The second should print `coid=proven-crosssession` and `auth=ok`. If it prints `auth=not-presented`
 or a protocol mismatch, the bridge DLL is older than the tree — rebuild and redeploy (recipe below).
 
+## New in scope since 2026-08-31: the AI inbox
+
+The owner can hand the agent programs, documents and data to experiment with. Built on the Mac,
+green, screenshotted — **and never touched on Windows, never dragged onto with a real mouse, and
+never used by an actual agent.** `BUILD-STATUS.md`'s 2026-08-31 section is precise about which is
+which; the short version is that the storage and the wire are tested and the *interaction* is not.
+
+What exists: `workspace/inbox/`, an **Inbox** page in the shell, a bounded scanner, a two-table
+ledger (schema 2), and `trade material list|ran|used|derived|note` on the agent channel.
+
+**The rule that shaped it, and that must not be softened:** what is measured and what is claimed are
+stored in different tables. `material` rows come from a directory listing and a hash the software
+computed; the agent cannot write or edit one. `material_note` rows are the agent's own account of
+itself. Merging them, or letting a note touch a material row, turns a record into an assertion —
+which is the entire failure this was built to prevent.
+
+The three things left on it, in the order they are worth doing:
+
+1. **Watch a real agent use it.** Drop something in, ask the AI to work with it, and see whether it
+   runs `trade material ran ...` unprompted. If it does not, the notes half of the ledger is empty
+   forever and the AGENTS.md wording is what needs fixing — not the code.
+2. **Drag a file onto the window on Windows.** The drop handler, the file picker, the copy, the
+   collision suffix and the immediate rescan are compiled and unexercised. Fold this into step 3 below.
+3. **Decide whether `inbox/` should be size-capped.** Nothing stops a 60 GB drop today. The scanner
+   survives it (hashing is bounded per pass); the disk may not.
+
 ## What to do next, in order
 
 **Rule 1 is settled and the bridge is current.** Do not start by re-proving either.
@@ -115,8 +141,9 @@ or a protocol mismatch, the bridge DLL is older than the tree — rebuild and re
    of five write paths** — the other four are synchronous and cannot be given a deadline from this
    side, so a block in any of them still stops the pipe loop while the heartbeat reports READY.
 
-3. **Look at TradeAgent's own UI on Windows. Nobody ever has.** Only ATAS has been looked at. Two
-   things specifically want eyes: the setup journey end to end, and the bridge-refusal sentence on
+3. **Look at TradeAgent's own UI on Windows. Nobody ever has.** Only ATAS has been looked at. Three
+   things specifically want eyes: the setup journey end to end, the new **Inbox** page — drag a real
+   file onto it, which has never been done on any platform — and the bridge-refusal sentence on
    the dashboard status row — it is ~450 characters and got longer when the `witness=` token was
    added, and no truncation was found in the UI but nobody has seen it render. **Unlock the console
    first** or captures come back useless.
@@ -566,7 +593,7 @@ the DLL.
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
-dotnet test TradeAgent.sln        # 204 tests: 43 unit, 125 integration, 36 fault
+dotnet test TradeAgent.sln        # 215 tests: 54 unit, 130 integration, 36 fault
 ```
 
 Start any Windows session by asking whether the machine can do the work at all — see

@@ -21,6 +21,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly Database _db;
     readonly ExecutionRequestStore _requests;
     readonly LogStore _log;
+    readonly MaterialStore _materials;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -32,6 +33,7 @@ public sealed class TradingGateway : IAsyncDisposable
     public HealthRegistry Health => _health;
     public ExecutionRequestStore Requests => _requests;
     public LogStore Log => _log;
+    public MaterialStore Materials => _materials;
 
     public event Action? StateChanged;
 
@@ -42,6 +44,7 @@ public sealed class TradingGateway : IAsyncDisposable
         Connector = connector;
         _requests = new ExecutionRequestStore(db);
         _log = new LogStore(db);
+        _materials = new MaterialStore(db);
         _health = health ?? new HealthRegistry();
         _opt = options ?? new GatewayOptions();
         Settings = LoadSettings();

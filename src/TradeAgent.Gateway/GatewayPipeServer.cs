@@ -156,6 +156,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Orders      => await gateway.OrdersAsync(req.Str("all") is "true", ct),
                 Core.Ops.Order       => await FindOrder(Require(req, "id"), ct),
                 Core.Ops.Executions  => await gateway.ExecutionsAsync(ct),
+                Core.Ops.MaterialList => MaterialList(req),
+                Core.Ops.MaterialNote => MaterialNote(ctx, req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -214,6 +216,83 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         foreach (var p in positions.Where(p => p.Quantity != 0))
             results.Add(await gateway.CloseAsync(ctx, $"{rid}-{i++}", p.Symbol, ct));
         return new { closed = results.Count, requests = results };
+    }
+
+    /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
+    object MaterialList(IpcRequest req)
+    {
+        MaterialOrigin? origin = req.Str("origin")?.ToLowerInvariant() switch
+        {
+            "inbox" => MaterialOrigin.Inbox,
+            "agent" => MaterialOrigin.Agent,
+            null or "" or "all" => null,
+            var other => throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"origin '{other}' is not one of: inbox, agent, all")
+        };
+
+        var items = gateway.Materials.Present(origin);
+        return new
+        {
+            count = items.Count,
+            note = "sha is the first 12 characters of sha256, and is what the material commands accept",
+            items = items.Select(m => new
+            {
+                path = m.RelPath,
+                origin = m.Origin.ToString().ToLowerInvariant(),
+                sha = m.ShortSha,
+                sha256 = m.Sha256,
+                size_bytes = m.SizeBytes,
+                runnable = m.Runnable,
+                first_seen = m.FirstSeenAt,
+                modified = m.ModifiedAt
+            }),
+            recent_notes = gateway.Materials.RecentNotes(20).Select(n => new
+            {
+                at = n.At, author = n.Author, kind = n.Kind.ToString().ToLowerInvariant(),
+                subject = n.SubjectSha?[..Math.Min(12, n.SubjectSha.Length)],
+                parent = n.ParentSha?[..Math.Min(12, n.ParentSha.Length)],
+                text = n.Text
+            })
+        };
+    }
+
+    /// <summary>
+    /// Record what the agent says it did with a file.
+    ///
+    /// An unresolvable hash is refused rather than stored. A note pointing at nothing looks like a
+    /// record and is not one, and the whole reason the ledger exists is that a record nobody can
+    /// follow back to a file is how the workspace becomes a pile.
+    /// </summary>
+    object MaterialNote(AgentContext ctx, IpcRequest req)
+    {
+        var kindText = req.Str("kind") ?? "note";
+        if (!Enum.TryParse<MaterialNoteKind>(kindText, true, out var kind))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"note kind '{kindText}' is not one of: {string.Join(", ", Enum.GetNames<MaterialNoteKind>()).ToLowerInvariant()}");
+
+        var text = Require(req, "text");
+        var subject = ResolveSha(req.Str("sha"), "sha");
+        var parent = ResolveSha(req.Str("from"), "from");
+
+        if (subject is null && kind != MaterialNoteKind.Note)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"a '{kind.ToString().ToLowerInvariant()}' note has to say which file it is about — pass its sha");
+        if (kind == MaterialNoteKind.Derived && parent is null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "a 'derived' note has to say what it was derived from — pass --from with the source sha");
+
+        var id = gateway.Materials.AddNote("agent", ctx.SessionId, kind, subject, parent, text, DateTimeOffset.UtcNow);
+        return new { recorded = true, id, kind = kind.ToString().ToLowerInvariant(), subject, parent };
+    }
+
+    string? ResolveSha(string? prefix, string argName)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) return null;
+        var found = gateway.Materials.ByShaPrefix(prefix.Trim().ToLowerInvariant())
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"no file in the ledger has a hash starting '{prefix}' — run 'trade material list' for what is there. " +
+                "A file only gets a hash once TradeAgent has read it, which can lag a large drop by a pass.");
+        return found.Sha256;
     }
 
     static string Require(IpcRequest r, string key) =>

@@ -18,7 +18,7 @@ if (argv.Count == 0 || argv[0] is "-h" or "--help" or "help")
 }
 
 var command = argv[0].ToLowerInvariant();
-var positional = argv.Skip(1).Where(a => !a.StartsWith("--")).ToList();
+var positional = Positional(argv);
 var flags = ParseFlags(argv);
 
 if (command is "schema" && flags.ContainsKey("offline"))
@@ -77,6 +77,20 @@ catch (TradeAgentException ex)
     Console.Error.WriteLine($"{ex.Code}: {ex.Info.UserMessage}");
     Console.Error.WriteLine($"  what to do: {ex.Info.Repair}");
     return 1;
+}
+
+// Everything that is neither a flag nor a flag's value. The earlier version filtered on "does not
+// start with --", which also kept the VALUE of every flag — harmless while no command read past its
+// second positional, and wrong the moment one takes a flag between positionals.
+static List<string> Positional(List<string> argv)
+{
+    var pos = new List<string>();
+    for (var i = 1; i < argv.Count; i++)
+    {
+        if (!argv[i].StartsWith("--")) { pos.Add(argv[i]); continue; }
+        if (i + 1 < argv.Count && !argv[i + 1].StartsWith("--")) i++;   // skip the flag's value
+    }
+    return pos;
 }
 
 static Dictionary<string, string> ParseFlags(List<string> argv)
@@ -139,6 +153,29 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         case "cancel":
             a["id"] = pos.ElementAtOrDefault(0) ?? "";
             return (Ops.Cancel, a);
+        case "material":
+        {
+            var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
+            if (sub is "list" or "ls")
+            {
+                Opt("origin");
+                return (Ops.MaterialList, a);
+            }
+
+            // trade material ran <sha> some words about it
+            // trade material derived <sha> --from <sha> some words
+            // trade material note "some words"            (a bare note needs no subject)
+            a["kind"] = sub;
+            var rest = pos.Skip(1).ToList();
+            var bare = sub == "note" && rest.Count == 1 && !flags.ContainsKey("sha");
+            if (!bare && rest.Count > 0) a["sha"] = flags.GetValueOrDefault("sha") ?? rest[0];
+            else Opt("sha");
+            a["text"] = flags.GetValueOrDefault("text")
+                        ?? string.Join(' ', bare ? rest : rest.Skip(1));
+            Opt("from");
+            return (Ops.MaterialNote, a);
+        }
+
         case "cancel-all": return (Ops.CancelAll, a);
         case "close":
             a["symbol"] = pos.ElementAtOrDefault(0) ?? "";
@@ -168,6 +205,12 @@ static void Usage()
       trade modify <id> [--quantity Q] [--limit P] [--stop P]
       trade cancel <id> | trade cancel-all
       trade close <symbol> | trade close-all
+
+      trade material list [--origin inbox|agent]     what the owner gave you, and what you made
+      trade material ran <sha> <what it did>         you executed it
+      trade material used <sha> <how you used it>    you read or worked from it
+      trade material derived <sha> --from <sha> <how>  this file came from that one
+      trade material note [<sha>] <anything>         anything else worth recording
 
     Add --json to any command for machine-readable output. That is the canonical interface.
 

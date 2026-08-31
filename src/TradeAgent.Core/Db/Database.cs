@@ -126,6 +126,60 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','1') ON CONFLICT(key) DO UPDATE SET value='1';");
         }
 
+        if (have < 2)
+        {
+            // The material ledger. Two tables and they are two different KINDS of knowledge, which is
+            // the entire reason this is worth having:
+            //
+            //   material      — what TradeAgent OBSERVED on disk. Written only by the scanner, from a
+            //                   directory listing and a hash. The agent cannot write here at all.
+            //   material_note — what somebody CLAIMED about it. The agent says it ran a program or
+            //                   derived one file from another; this is where that goes, labelled.
+            //
+            // Do not merge them, and do not let a note edit a material row. An observation that can be
+            // rewritten by the thing it observes is not a record, and the point of the ledger is that
+            // in three weeks nobody has to take the agent's word for what is in the workspace.
+            //
+            // A row is a FILE VERSION, not a file path. Replace inbox/model.onnx with a different build
+            // and the old row stays, stamped removed_at, and a new row appears. Provenance that forgets
+            // the thing it replaced is not provenance.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS material(
+              id            INTEGER PRIMARY KEY AUTOINCREMENT,
+              rel_path      TEXT NOT NULL,
+              origin        TEXT NOT NULL,
+              sha256        TEXT,
+              size_bytes    INTEGER NOT NULL,
+              modified_at   TEXT NOT NULL,
+              first_seen_at TEXT NOT NULL,
+              last_seen_at  TEXT NOT NULL,
+              removed_at    TEXT,
+              runnable      INTEGER NOT NULL DEFAULT 0
+            );
+            -- The observation key is the cheap tuple the scanner can read without opening the file.
+            -- Hashing every file on every pass is what the low-spec laptop budget forbids, so the
+            -- hash is filled in only when this tuple changes. The cost is a blind spot, recorded
+            -- rather than hidden: content swapped with size AND mtime both preserved reads as the
+            -- same version. Closing that means hashing unconditionally.
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_material_seen ON material(rel_path, size_bytes, modified_at);
+            CREATE INDEX IF NOT EXISTS ix_material_live ON material(removed_at);
+            CREATE INDEX IF NOT EXISTS ix_material_sha ON material(sha256);
+
+            CREATE TABLE IF NOT EXISTS material_note(
+              id          INTEGER PRIMARY KEY AUTOINCREMENT,
+              at          TEXT NOT NULL,
+              author      TEXT NOT NULL,
+              session     TEXT,
+              kind        TEXT NOT NULL,
+              subject_sha TEXT,
+              parent_sha  TEXT,
+              text        TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_note_subject ON material_note(subject_sha);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','2') ON CONFLICT(key) DO UPDATE SET value='2';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

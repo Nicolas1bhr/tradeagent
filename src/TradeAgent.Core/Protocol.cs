@@ -19,6 +19,14 @@ public static class Ops
     public const string Close = "close", CloseAll = "close-all";
     public const string Schema = "schema";
 
+    /// <summary>
+    /// The material ledger. <c>MaterialList</c> reads what TradeAgent observed on disk;
+    /// <c>MaterialNote</c> lets the agent record what it did with a file. A note is a CLAIM and is
+    /// stored as one — it can never alter an observation, so nothing an agent writes here can make
+    /// the record say a file was something it was not.
+    /// </summary>
+    public const string MaterialList = "material-list", MaterialNote = "material-note";
+
     public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }

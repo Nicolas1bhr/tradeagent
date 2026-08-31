@@ -9,6 +9,14 @@ public static class Paths
     public static string Home { get; } = ResolveHome();
     public static string Tools { get; } = Sub("tools");
     public static string Workspace { get; } = Sub("workspace");
+
+    /// <summary>
+    /// Where the account owner hands the agent material to work on. Deliberately *inside* the
+    /// workspace: the agent is already broadly free in there, so this grants it nothing it did not
+    /// already have. A drop folder outside the workspace would be a real widening of the blast
+    /// radius, and the workspace boundary is the whole containment story.
+    /// </summary>
+    public static string Inbox { get; } = SubOf(Workspace, "inbox");
     public static string Bin { get; } = Sub("bin");
     public static string Logs { get; } = Sub("logs");
     public static string State { get; } = Sub("state");
@@ -39,16 +47,18 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Bin, Logs, State, BridgeDir })
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, Bin, Logs, State, BridgeDir })
         {
             Directory.CreateDirectory(d);
             if (!Directory.Exists(d)) throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, $"cannot create {d}");
         }
     }
 
-    static string Sub(string name)
+    static string Sub(string name) => SubOf(Home, name);
+
+    static string SubOf(string parent, string name)
     {
-        var p = Path.Combine(Home, name);
+        var p = Path.Combine(parent, name);
         Directory.CreateDirectory(p);
         return p;
     }
