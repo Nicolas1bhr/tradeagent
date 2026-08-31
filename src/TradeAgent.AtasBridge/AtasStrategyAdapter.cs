@@ -332,6 +332,15 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// </summary>
     int _clientOrderIdAttempts, _clientOrderIdChecks;
 
+    /// <summary>
+    /// How the last order this adapter placed actually behaved in time, for
+    /// <c>BridgeHello.TradingSurface</c>'s <c>place=</c> token. See the block in <c>Place</c>.
+    ///
+    /// DIAGNOSTIC ONLY. Nothing derives a capability, a state or a decision from it, and nothing may:
+    /// it is a stopwatch reading, and a stopwatch reading is not a round trip.
+    /// </summary>
+    volatile string _lastPlace = "none";
+
     public AtasStrategyAdapter()
     {
         // Public, dump-verified path into the lifecycle: ChartStrategy exposes StateChanged
@@ -644,6 +653,10 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // report is space-joined and tools/probe splits it on spaces, so a space here would
                 // silently turn one field into two.
                 $"witness={_witness.Token()}",
+                // How the last order behaved in time. `gap` is this platform's acknowledgement
+                // latency measured through the path actually in use, and it is what decides whether
+                // the OpenOrderAsync question is answerable here at all. Space-free by construction.
+                $"place={_lastPlace}",
                 $"cache={cacheNote}");
         }
         catch (Exception ex)
@@ -1317,12 +1330,51 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // call that MIGHT ask for confirmation is exactly the rule 4 hazard the flags above exist to
         // remove. There is no situation where it is reachable and the flagged overload is not: both
         // require a trading manager, and RequireTrading() has already thrown without one.
+        // ---- THE MEASUREMENT, AND IT CHANGES NOTHING ABOUT THE SUBMISSION ----
+        //
+        // A stopwatch and two property reads. The submission below is what it always was.
+        //
+        // What it is for: the four synchronous order calls are obsolete and cannot be given a
+        // deadline, so a block in any of them wedges BridgeServer's frame loop — including the
+        // operator's cancel-all — while the heartbeat goes on reporting READY (trap 31). Switching
+        // them to the Async overloads is what lets AtasCall.Block reach them. Whether that is safe
+        // turns on ONE unmeasured fact: does OpenOrderAsync's task complete on SUBMISSION or on
+        // broker ACKNOWLEDGEMENT? On acknowledgement, blocking on it puts Place past CallTimeout and
+        // turns every order into UNKNOWN. See the long comment on AtasCall.Block.
+        //
+        // WHY THIS MEASURES IT WITHOUT CALLING THE ASYNC OVERLOAD AT ALL. The WaitFor below already
+        // waits for exactly the condition that separates the two answers — a state change or an
+        // assigned Id, which is acknowledgement arriving. So the gap between the call returning and
+        // that condition holding IS this platform's acknowledgement latency, measured through the
+        // path actually in use:
+        //
+        //   gap large  -> submission and acknowledgement ARE separable here, and a follow-up run
+        //                 through OpenOrderAsync will say which of the two its task waits for.
+        //   gap ~zero  -> they are NOT separable on this platform, so a fast async completion would
+        //                 be no evidence at all. Report that; do not round it to a green.
+        //
+        // Microseconds as an integer, deliberately: this machine formats decimals with a comma, and
+        // a comma would be indistinguishable from a separator in this token.
+        var placeRoute = feed is not null ? "connector" : "sync";
+        var placeClock = System.Diagnostics.Stopwatch.StartNew();
+
         if (feed is not null) AtasCall.Block(feed.RegisterOrderAsync(order), CallTimeout, "RegisterOrderAsync");
         else trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false, checkOrderStates: true);
+
+        var placeCallUs = (long)(placeClock.Elapsed.TotalMilliseconds * 1000);
+        // Guarded like every other diagnostic in this method: reading an ATAS object the platform is
+        // mutating on its own thread must never turn a placed order into an UNKNOWN one.
+        var placeAtReturn = "unread";
+        Guard(() => placeAtReturn = OrderShape(order));
 
         WaitFor(() => Failure(cmd.ClientOrderId, order) is not null
                       || order.State != AtasOrderStates.None
                       || !string.IsNullOrEmpty(order.Id));
+
+        var placeSettledUs = (long)(placeClock.Elapsed.TotalMilliseconds * 1000);
+        Guard(() => _lastPlace =
+            $"{placeRoute};call={placeCallUs}us;atreturn={placeAtReturn};" +
+            $"settled={placeSettledUs}us;gap={placeSettledUs - placeCallUs}us;now={OrderShape(order)}");
 
         if (Failure(cmd.ClientOrderId, order) is { } refusal)
             throw new AtasRejectedException(refusal);
@@ -3014,6 +3066,15 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     // heartbeat goes on reporting READY) was therefore unreachable by any test that could have
     // caught it. AtasCall.cs sits outside #if ATAS_SDK; its doc comment carries the reasoning that
     // used to be here, including the correction to what it said about where refusals arrive.
+
+    /// <summary>
+    /// An order's state and whether ATAS has assigned it an Id, as one space-free token.
+    ///
+    /// Those two together are exactly what <c>Place</c>'s WaitFor treats as "acknowledgement has
+    /// arrived", so they are what the timing token has to report at each instant it samples.
+    /// </summary>
+    static string OrderShape(AtasOrder order) =>
+        $"{order.State}/{(string.IsNullOrEmpty(order.Id) ? "noid" : "id")}";
 
     /// <summary>Waits for a definite answer, and treats not getting one as exactly that — no
     /// exception, no rejection, just the order returned in whatever state it is really in.</summary>

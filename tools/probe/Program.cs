@@ -1749,6 +1749,42 @@ static class AtasProbe
         Line("READ-BACKS PERFORMED", Counter(checksBefore, checksAfter));
         Cont("the bridge's own counters, reported by it rather than inferred here.");
 
+        // ---- the OpenOrderAsync question, measured through the path actually in use ----
+        //
+        // The bridge times its own submission and the wait that follows it. That wait ends on a state
+        // change or an assigned Id, which IS acknowledgement arriving — so `gap` is this platform's
+        // acknowledgement latency, and it decides whether the question can be answered here at all.
+        // A platform that acknowledges instantly cannot separate "the task completed on submission"
+        // from "the task completed on acknowledgement", and a fast reading on it proves nothing.
+        var place = Token(connector.Bridge?.TradingSurface, "place");
+        Line("PLACE TIMING", place ?? "not reported — the bridge is older than this probe");
+        Cont("route;call=<submission call>;atreturn=<state/id when it returned>;");
+        Cont("settled=<when ATAS acknowledged>;gap=settled-call;now=<state/id since>");
+
+        if (PlaceGapUs(place) is { } gapUs)
+        {
+            Line("ACK LATENCY", $"{gapUs} us  ({gapUs / 1000.0:0.0} ms)");
+            if (gapUs >= 20_000)
+            {
+                Cont("SEPARABLE. Submission and acknowledgement are far enough apart on this");
+                Cont("platform to tell them apart. A follow-up run that submits through");
+                Cont("ITradingManager.OpenOrderAsync answers the real question: if its task");
+                Cont("completes near call= it waits for SUBMISSION and the four obsolete call");
+                Cont("sites can be flipped; if it completes near settled= it waits for");
+                Cont("ACKNOWLEDGEMENT and flipping them puts Place past CallTimeout.");
+            }
+            else
+            {
+                Cont("NOT SEPARABLE. This platform acknowledged in under 20 ms, so submission and");
+                Cont("acknowledgement happen at effectively the same instant here. A fast");
+                Cont("OpenOrderAsync completion would be consistent with BOTH answers and is");
+                Cont("therefore no evidence at all. THE QUESTION CANNOT BE ANSWERED ON THIS");
+                Cont("ACCOUNT. Do not flip the four call sites on the strength of it. Answering");
+                Cont("it needs a venue whose acknowledgement is measurably slower than its");
+                Cont("submission — a real broker, or a connection deliberately degraded.");
+            }
+        }
+
         // Are ITradingManager.Orders and ChartStrategy.Orders the same list? The counts have always
         // been reported, but every capture ever taken read them at the HELLO — before anything was
         // placed — so `strategyorders=0` was consistent with both answers and settled nothing across
@@ -2270,6 +2306,24 @@ static class AtasProbe
     /// a bridge older than the token reports nothing rather than reporting a default, and those
     /// must not read the same.
     /// </summary>
+    /// <summary>
+    /// The `gap=` microseconds out of the bridge's `place=` token, or null when it is absent or
+    /// unreadable. Parsed with InvariantCulture on purpose: the machine this runs on formats numbers
+    /// with a comma, and a silently mis-parsed latency is worse than an absent one.
+    /// </summary>
+    static long? PlaceGapUs(string? place)
+    {
+        if (string.IsNullOrWhiteSpace(place)) return null;
+        foreach (var part in place.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!part.StartsWith("gap=", StringComparison.Ordinal)) continue;
+            var digits = part[4..].TrimEnd('u', 's');
+            return long.TryParse(digits, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+        }
+        return null;
+    }
+
     static string? Token(string? surface, string key)
     {
         if (string.IsNullOrWhiteSpace(surface)) return null;

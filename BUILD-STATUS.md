@@ -1642,6 +1642,69 @@ situation that would give it meaning. The probe now takes the reading again afte
 `LiveOrders`' reference de-duplication stays either way — defensive on this evidence, and what it
 prevents is `FilledOf` double-counting a partial fill into a FILLED.
 
+### The `OpenOrderAsync` measurement: instrumented, deployed, and BLOCKED on a rendering surface
+
+**NOT VERIFIED — the reading has not been taken.** The instrument is written, compiles against the
+real ATAS 8.0.14.397 SDK, is deployed into `%APPDATA%\ATAS\Strategies`, and is asserted present in
+the deployed DLL (`OrderShape`, `_lastPlace`, `AtasStrategyAdapter` all found as ASCII metadata —
+traps 8, 12, 27). What it has not done is place an order, because ATAS will not restart on this
+machine in its current state. See the trap below.
+
+**What the instrument is, and why it does not touch the live path.** A stopwatch and two property
+reads around the existing submission in `Place`, both `Guard`ed like every other diagnostic there.
+The submission itself is unchanged. It works because `Place`'s existing `WaitFor` already waits for
+exactly the condition that separates the two answers — a state change or an assigned `Order.Id`,
+which *is* acknowledgement arriving. So the gap between the call returning and that condition holding
+is this platform's acknowledgement latency, measured through the path actually in use, and it decides
+whether the question is answerable here at all:
+
+- gap large → submission and acknowledgement are separable, and a follow-up run through
+  `OpenOrderAsync` says which its task waits for;
+- gap ~zero → they are **not separable on this platform**, a fast async completion would be evidence
+  for neither answer, and the four call sites must not be flipped on the strength of it.
+
+The probe prints the token and the verdict (`PLACE TIMING`, `ACK LATENCY`, with the 20 ms threshold
+that decides between `SEPARABLE` and `NOT SEPARABLE`). Nothing derives a capability from any of it —
+a stopwatch reading is not a round trip.
+
+### ATAS will not restart on a disconnected RDP session
+
+Found by hitting it. ATAS was closed to swap the bridge DLL — the normal redeploy step — and would
+not come back: it signs in, opens its main window, starts building the workspace's chart panels, and
+dies ~40 s later. Deterministic, reproduced twice, and the stack has no TradeAgent frame in it:
+
+```
+Faulting application name: OFT.Platform.exe   Faulting module: coreclr.dll   Exception: 0xc0000005
+   at OpenTK.Windowing.GraphicsLibraryFramework.GLFWNative.glfwGetVideoMode(Monitor*)
+   at OpenTK.Windowing.Desktop.NativeWindow..ctor(NativeWindowSettings)
+   at OpenTK.WinForms.GLControl.CreateNativeWindow(GLControlSettings)
+```
+
+ATAS draws its charts through an OpenGL control; GLFW cannot enumerate a video mode in a session with
+no rendering surface. An existing GL context survives a disconnect, which is why ATAS ran for hours
+in this state — creating one fresh does not. **This refines trap 19 rather than repeating it:**
+a disconnected session loses only rendering for TradeAgent, UI Automation and the bridge, and loses
+*ATAS itself* the moment ATAS is restarted.
+
+It is recorded as trap 43 with the exact event-log command, because the crash presents as "the bridge
+DLL you just deployed broke ATAS" — it happens on the first launch after a redeploy, while the
+workspace and its strategies load.
+
+### The ATAS-down health branch, verified by accident
+
+The outage proved the branch that this session's other fix exists to expose, on hardware, which a
+healthy machine could not have shown:
+
+```
+ATAS process           DEGRADED  not running — press Open ATAS on the Dashboard
+ATAS bridge            FAILED    installed — waiting for ATAS to start
+Trading connection     FAILED
+Account                UNKNOWN   no connection
+```
+
+`Trading connection: FAILED` with an empty detail is the entire diagnosis a user got before. The two
+rows above it now say which half is missing and what to press.
+
 ### Trap 21 came back, with TradeAgent as the victim
 
 `win-push.sh` deletes `C:\ta\repo\src` before unpacking, and TradeAgent now runs from inside it.

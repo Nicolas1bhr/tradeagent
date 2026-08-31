@@ -10,36 +10,49 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The next task is one measurement, and it can only be taken on the Windows machine: does
-`ITradingManager.OpenOrderAsync` complete on SUBMISSION or on broker ACKNOWLEDGEMENT?** It is the
-last piece of adapter work with a known shape, and it is scoped to the point of being executable
-under **The work queue** below. Nothing else is waiting on a decision.
+**The machine needs a rendering surface before anything else can happen.** ATAS is DOWN and will not
+restart without one: it signs in, opens its main window, and dies ~40 s later in
+`glfwGetVideoMode` while building its OpenGL chart panels (trap 43). That is a property of a
+disconnected RDP session, not a fault — and it is new knowledge, because ATAS had been *running*
+across the disconnect for days, which it tolerates perfectly well.
 
-Confirm the machine before planning anything. Two commands, about twenty seconds, and neither
-disturbs anything:
+**So step one is: reconnect the RDP session, or reboot into the console (autologon is on).** Then
+launch ATAS, sign in, and re-activate the bridge strategy on the BTCUSDT chart — it always comes back
+stopped (traps 24 and 40). Only then is the machine in the state the rest of this file assumes.
+
+**Then take the reading, because everything else for it is already in place.** The instrument for
+"does `OpenOrderAsync` complete on SUBMISSION or on broker ACKNOWLEDGEMENT?" is written, compiles
+against the real SDK, and **is already deployed in `%APPDATA%\ATAS\Strategies` and asserted
+present**. It has simply never placed an order. One probe run takes it:
+
+```bash
+tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'
+tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --place-test-order --yes'
+```
+
+Read `PLACE TIMING` and `ACK LATENCY` in its output; the probe prints the verdict itself, including
+`NOT SEPARABLE`, which is a real possible answer and must not be rounded to a green. Full reasoning
+in **The work queue**, task 1. **Cancel anything left resting and verify from a separate run.**
+
+Confirm the machine first — two commands, and neither disturbs anything:
 
 ```bash
 tools/win-state.sh
 tools/win-run.sh '"%LOCALAPPDATA%\TradeAgent\bin\trade.exe" status'
 ```
 
-Expect `automation : WORKS`, ATAS `running : True`, and in the status JSON
-`ATAS bridge: READY — connected · bridge 8.0.14, protocol 2` with `mode: LIVE_CONFIRM` and
-`live_activated: false`. That second command is new as of 2026-08-31 and it is the cheap way in:
-it reads the running app's own health snapshot, so it works even though the RDP session renders
-nothing. See "Reading TradeAgent from here".
+Four facts that otherwise cost the first twenty minutes:
 
-Three facts that will otherwise cost you time in the first ten minutes:
-
-- **`probe atas` needs TradeAgent STOPPED.** Both open a server on the bridge pipe and they compete
-  for it. `tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'` first.
-- **Stop TradeAgent before any push** — it runs from inside `C:\ta\repo\src\...`, which
-  `win-push.sh` deletes. The push now refuses rather than half-deleting it (trap 42).
-- **Screen capture does not work** and probably still will not; automation does. That is a rendering
-  limitation of a disconnected RDP session (trap 19), not a broken machine.
+- **`probe atas` needs TradeAgent STOPPED.** Both open a server on the bridge pipe.
+- **Stop TradeAgent before any push** (trap 42) — and then **rebuild it**, because the push deletes
+  `C:\ta\repo\src`, which is where its Release build lives:
+  `dotnet build src\TradeAgent.App\TradeAgent.App.csproj -c Release`.
+- **Do not close ATAS unless you have a rendering surface** (trap 43). Closing it is the step that
+  cannot be undone remotely.
+- **Screen capture does not work; automation does.** A rendering surface fixes both.
 
 Everything below is reference. Read **The work queue**, then the traps for whatever you are about to
-touch. You do not need the rest unless something surprises you.
+touch.
 
 ---
 
@@ -99,28 +112,34 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
-## Where the machine is (2026-08-31, later session)
+## Where the machine is (2026-08-31, end of the later session)
 
-**UP. ATAS running with the bridge started, TradeAgent rebuilt from this tree and restarted.**
-There is one description of this machine on purpose — the previous two drifted apart.
+**ATAS is DOWN and cannot be restarted until the session has a rendering surface (trap 43).**
+TradeAgent is up and reporting that honestly. Nothing can trade; nothing is at risk.
 
 ```
-session : Disc (id 1)   desktop : renders nothing (trap 19) — automation WORKS, capture does NOT
-ATAS       : running, 8.0.14.397, bridge connected, proto=2, auth=ok
-TradeAgent : Release, built from this tree, running from C:\ta\repo\src\TradeAgent.App\bin\Release\net10.0
-mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, correctly
-account : CRYPTO5EB41   book : orders [] · position 0 · nothing unreconciled · 1 open request record
-health : every row READY except the three agent rows, blank until the AI is started
+session : Disc (id 1)   desktop : renders nothing — automation WORKS, capture does NOT, ATAS CANNOT START
+ATAS       : NOT RUNNING. Closed deliberately to swap the bridge DLL; two relaunches crashed in
+             glfwGetVideoMode ~40s after sign-in. The workspace was SAVED on the way down.
+bridge DLL : CURRENT and deployed — carries the place-timing instrument, asserted present in the
+             deployed file (OrderShape, _lastPlace, AtasStrategyAdapter as ASCII metadata)
+TradeAgent : Release, rebuilt from this tree after the push, running
+mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, twice over
+book : orders [] · position 0 · nothing unreconciled  (verified before ATAS was closed)
+health : ATAS process DEGRADED "not running", ATAS bridge FAILED "installed — waiting for ATAS to start"
 ```
 
-**Real-money trading is OFF**, so nothing can dispatch even though the mode is still `LIVE_CONFIRM`.
-The mode is left there deliberately so the next session does not have to redo the setup.
+**To get back to a working machine:** restore a rendering surface, launch ATAS, sign in, then
+re-activate the bridge strategy on the BTCUSDT chart — the workspace was saved, so it will be listed
+under "Selected strategies", **stopped** (trap 24). `find --query 'Activ'` returns
+`PART_ActivateButton` directly and `invoke --ref` starts it (trap 40). **Check the Selected list
+before pressing Add**, or two bridges end up on one pipe (trap 35).
 
 **The workspace layout, and it is load-bearing:**
 
-- **The bridge is on the BTCUSDT chart** (left panel), started, on the simulated `CRYPTO5EB41`
-  account. **The ES chart has no strategy at all** — deleted deliberately, because two instances
-  compete for one named pipe. Keep it that way.
+- **The bridge belongs on the BTCUSDT chart** (left panel), on the simulated `CRYPTO5EB41` account.
+  **The ES chart has no strategy at all** — deleted deliberately, because two instances compete for
+  one named pipe. Keep it that way.
 - **Why crypto:** ES is a CME product, so out of hours `quote=none(no-tick)` and the probe correctly
   refuses to price an order. BTCUSDT runs 24/7 on Binance (trap 38).
 - **Both accounts are simulated:** `CRYPTO5EB41` (USDT, Binance crypto-sim) and `DEMO15M440CE` (USD,
@@ -136,12 +155,6 @@ is a Settings page, so the database no longer has to be edited by hand.
 
 The database is at schema 2, migrated in place from this machine's own schema-1 database. A copy of
 the pre-migration file is at `%LOCALAPPDATA%\TradeAgent\state\tradeagent.db.pre-schema2`.
-
-**Two commands to confirm all of the above** — see "Do this first". The deeper check is
-`probe atas --wait 60`, which should print `auth=ok` and `coid=proven-crosssession`; if it prints
-`auth=not-presented` or a protocol mismatch, the bridge DLL is older than the tree, so rebuild and
-redeploy (recipe under "Driving ATAS from here"). **Stop TradeAgent before running the probe** — they
-compete for the bridge pipe — **and before any push** (trap 42).
 
 ## New in scope since 2026-08-31: the AI inbox
 
@@ -770,6 +783,50 @@ Each of these cost real time. None is obvious from the code.
     ```
 
     So: **stop TradeAgent before pushing.** `tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'`.
+
+    **And the corollary, which costs a minute every time it is forgotten:** stopping it means the
+    push *succeeds* in deleting `C:\ta\repo\src` — including
+    `src\TradeAgent.App\bin\Release\net10.0\TradeAgent.exe`, which is where the app runs from. So
+    every push destroys the installed app and it has to be rebuilt before it can be relaunched:
+    `dotnet build src\TradeAgent.App\TradeAgent.App.csproj -c Release`. The real fix is to run it
+    from outside the repo, the way the UI agent already is.
+
+43. **ATAS cannot be RESTARTED on a disconnected RDP session — it keeps running across a
+    disconnect, but it cannot come back up.** This is not trap 19 again. Trap 19 says a disconnected
+    session loses only *rendering*; that is true of TradeAgent, of UI Automation and of the bridge,
+    and it was true of ATAS too — while ATAS was already running. Relaunch it in that state and it
+    signs in, opens its main window, starts building the workspace's chart panels, and dies about
+    40 seconds later. Deterministic; reproduced twice on 2026-08-31.
+
+    ```
+    Faulting application name: OFT.Platform.exe   Faulting module: coreclr.dll
+    Exception code: 0xc0000005
+       at OpenTK.Windowing.GraphicsLibraryFramework.GLFWNative.glfwGetVideoMode(Monitor*)
+       at OpenTK.Windowing.Desktop.NativeWindow..ctor(NativeWindowSettings)
+       at OpenTK.WinForms.GLControl.CreateNativeWindow(GLControlSettings)
+    ```
+
+    ATAS renders its charts with an OpenGL control. GLFW cannot enumerate a video mode in a session
+    with no rendering surface, and the null it hands back is dereferenced. Once the GL context exists
+    it survives a disconnect; creating one fresh in a headless session cannot work.
+
+    **Why this is worth a trap of its own: the crash looks exactly like "the DLL you just deployed
+    broke ATAS".** It happens on the first launch after a bridge redeploy, at the moment the
+    workspace and its strategies load. Read the stack before believing that — a bridge fault has a
+    `TradeAgent` frame in it and this has none. The event log is the fastest route:
+
+    ```bash
+    tools/win-ps.sh <<'PS'
+    Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='.NET Runtime';
+      StartTime=(Get-Date).AddMinutes(-10)} | Select-Object -First 1 |
+      ForEach-Object { ($_.Message -split "`r?`n" | Select-Object -First 10) -join "`n" }
+    PS
+    ```
+
+    **The consequence for planning: any task that needs ATAS restarted needs a rendering surface
+    first.** That means reconnecting the RDP session, or rebooting into the console (autologon is
+    on). Anything that only *drives* an already-running ATAS is unaffected. Check which kind of task
+    you have before you close ATAS, because closing it is the step that cannot be undone remotely.
 
 38. **A market that is closed presents exactly like a bridge that has never seen a price.**
     `quote=none(no-tick)` and `{"at":"0001-01-01T00:00:00+00:00"}` was a real wiring defect on
