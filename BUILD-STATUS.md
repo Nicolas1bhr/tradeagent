@@ -1,6 +1,10 @@
 # BUILD-STATUS
 
-**Milestone:** the bridge runs inside ATAS, its reads work, and one order has been placed through it.
+**Milestone: `LIVE_CONFIRM` is walked end to end through ATAS.** An AI session proposed an order, the
+gateway parked it, a human approved it in the app, and it reached ATAS and came back with a broker
+order id — then was cancelled and the book verified clean. Detail in the 2026-08-31 Windows section.
+
+The bridge runs inside ATAS, its reads work, and orders have been placed through it.
 Both capability verdicts are now false **for known reasons rather than for want of looking**, which
 is the difference between a gap and an answer:
 
@@ -1249,6 +1253,178 @@ settle it is being built; nothing here settles it.
 **NOT VERIFIED: the app's own UI on Windows.** Still nobody has looked at TradeAgent itself here, only
 at ATAS.
 
+## Verified on real Windows 11 hardware, 2026-08-31 — LIVE_CONFIRM, end to end, through ATAS
+
+**The milestone the product was built around is walked.** An AI-side session proposed an order, the
+gateway refused it and parked it, a human approved it in the app, and it reached ATAS and came back
+with a broker order id. No terminal was shown at any point.
+
+### The walk
+
+Mode set to "Real, ask me first" and real-money trading switched on in the app (two presses each), on
+the provably simulated `CRYPTO5EB41` account (`is_simulated: true`, Binance crypto-sim, USDT 100,000).
+
+The agent proposes, as a non-operator session over the pipe:
+
+```
+== the AI proposes: buy 1 BTCUSDT limit 70000 (well below market, so it rests) ==
+{ "ok": false, "error": {
+    "code": "APPROVAL_REQUIRED",
+    "message": "request lc-walk-001 is waiting for your approval",
+    "user_message": "The AI is asking permission to place an order.",
+    "repair": "Approve or decline it in TradeAgent." } }
+exit code: 1
+```
+
+The app raised the banner "The AI is asking permission — 1 order waiting" in the shell chrome, with
+"Review the request"; the Dashboard showed `Buy 1 BTCUSDT at 70000 / asked at 15:57 / Approve · Decline`.
+Approve is itself two-press ("Confirm: place this order"). After confirming:
+
+```
+request_id        : lc-walk-001
+agent_session_id  : agent-liveconfirm-walk     <- proposed by a non-operator session
+connector_id      : atas
+account_id        : CRYPTO5EB41
+client_order_id   : TA-lc-walk-001
+created_at        : 2026-08-31T13:57:18        <- when the AI asked
+dispatched_at     : 2026-08-31T13:58:59        <- only after the human approved
+state             : WORKING
+connector_order_id: 12021602                   <- ATAS's own order id
+mode              : LIVE_CONFIRM
+```
+
+ATAS's own Trading Activity panel showed `CRYPTO5EB41 / BTCUSDT / FLAT / Long 1,00`, independently of
+our record. The order was then cancelled and the book verified clean from a separate run:
+`orders: []`, position `quantity: 0`, request `CANCELLED`, `filled_quantity: 0`,
+`needs_reconciliation: false`.
+
+The product's own activity log, which is what the account owner reads:
+
+```
+15:55  Trading mode set to LIVE_CONFIRM
+15:56  Real-money trading switched ON by the user
+15:57  AI is asking permission to Buy 1 BTCUSDT
+15:57  AI order refused: ... (request lc-walk-001 is waiting for your approval)
+15:58  You approved Buy 1 BTCUSDT
+15:59  Buy 1 BTCUSDT -> WORKING
+16:00  Cancelled order 12021602
+```
+
+**Precision about what is new.** The same log carries an earlier walk at 03:30 — `Filled 1 ES at
+109.74` — against the **built-in simulator**. So the approval flow itself had been exercised before.
+What had never been done, and was done today, is the whole path through the **ATAS bridge to a real
+platform**: agent → gateway → risk limits → approval → bridge → ATAS → broker order id → cancel.
+
+### SAFETY-ADJACENT DEFECT: the AI's only route to the gateway could not start — found and fixed
+
+`trade.exe` on this machine threw on every invocation:
+
+```
+Unhandled exception. System.IO.FileNotFoundException: Could not load file or assembly
+'TradeAgent.Core, Version=0.1.0.0, Culture=neutral, PublicKeyToken=null'.
+```
+
+`ToolDeployer.EnsureTradeCli` copied the launcher and its three side-cars (`trade.dll`,
+`trade.runtimeconfig.json`, `trade.deps.json`) and **none of the seven assemblies the CLI loads**. The
+deployed folder held one DLL where a working CLI needs eight. Its own comment said a
+framework-dependent build needs side-car files — and then stopped one step short of the referenced
+assemblies.
+
+**The severity is bounded, and the bound matters.** `packaging/build.ps1` publishes the CLI
+`--self-contained -p:PublishSingleFile=true`, so in a shipped installer `trade.exe` carries everything
+and the copy is a no-op. **The shipped product was not broken.** What was broken is every
+*non-packaged* run — a developer build, a CI run, or a machine running the app out of `bin/Release`,
+which is precisely the configuration anyone would use to test the agent path. It is why this survived
+to today: the one path that exercises it is the one nobody had run.
+
+**And the health row lied about it.** `Health.Set(Components.TradeCli, File.Exists(...) ? READY : FAILED)`
+asked only whether a file of that name existed, so the Dashboard reported `trade CLI: ready` about a
+binary that could not start. That is trap 9 again: a check that passes on a thing that cannot work.
+
+Fixed both: the deployer now copies the assemblies named in the CLI's own `deps.json` (read from the
+manifest, so a new package reference cannot silently reintroduce it), and `ToolDeployer.TradeCliReady`
+reports FAILED naming the missing files. Verified on the machine — the bin folder went from 1 DLL to
+8, and `trade accounts --json` returned `CRYPTO5EB41 ... "is_simulated": true`.
+
+Four tests, and three of them were proven to bite:
+
+| Break | Result |
+|---|---|
+| Copy only the launcher trio again | `The_cli_is_deployed_with_the_assemblies_it_actually_loads` and `A_cli_that_cannot_start_does_not_report_ready` FAILED |
+| Make the readiness check ignore missing assemblies | `A_cli_that_cannot_start_does_not_report_ready` FAILED |
+
+### The schema 1 → 2 migration ran on the real Windows database
+
+Not a fresh test database — the machine's own, with prior orders and settings in it:
+
+```
+schema_version : ('2',)
+has material   : True
+has note tbl   : True
+```
+
+### TradeAgent's own UI, seen on Windows for the first time
+
+Every screen visited rendered correctly at the default window size: Chat, Dashboard, Inbox, Safety,
+Activity. The nav, the header (mode pill, platform, account, AI-trading dot), the kill switch, the
+approval banner, the two-press confirmations and the activity log all read as intended, and no text
+was clipped or truncated on any of them.
+
+**The half-pressed confirmation survived two background refresh ticks** — the Approve button stayed
+armed as "Confirm: place this order" across a screenshot and a re-query. That is the build-once,
+update-in-place rule doing exactly the job the convention exists for.
+
+**NOT VERIFIED: the setup journey on Windows.** Onboarding is complete on this machine and there is no
+route back into it (see below), so the wizard screens were not seen.
+**NOT VERIFIED: the bridge-refusal sentence on the status row.** The bridge was healthy all session, so
+the ~450-character refusal string never rendered.
+**NOT VERIFIED: the Inbox page with real content on Windows, and every drag-and-drop path.** The page
+was seen empty only, and nothing was dragged onto it.
+
+### PRODUCT GAP: platform and account can only be chosen during setup
+
+`SwitchConnectorAsync` is called from `OnboardingView` and nowhere else; `SelectedAccountId` is
+likewise written only there. `MainWindow` enters the wizard on `if (!_host.Onboarding.IsComplete())`,
+so once setup finishes **there is no route back into it**. A user who set up against the practice
+simulator and later wants ATAS — or who wants a different account on the same platform — cannot do
+either from the running app.
+
+This blocked the walk. Both values were changed directly in the database to get past it, which is a
+harness action and not a product path, and is recorded as such. **Not fixed today**; it wants a
+deliberate design decision about where platform and account live in the shell.
+
+### Health rows that do not reflect reality
+
+`ATAS process` and `ATAS bridge` both read `unknown` for the whole session, while the bridge was
+demonstrably connected, serving live quotes and carrying an order to the broker. Nothing outside
+"Check everything" sets those rows. Not fixed; recorded.
+
+### Corrections to the ATAS recipe in `docs/RESUME-HERE.md`
+
+Two of them, and both matter because the recipe currently tells the next person to click raw
+coordinates:
+
+- **`PART_ActivateButton` exists, is enabled, and is findable without expanding the row.** The
+  2026-08-30 note says "there is no `PART_ActivateButton` step" and gives `click --x 1004 --y 641`.
+  Today `find --query 'Activ'` returned it directly and `invoke --ref` started the strategy. The
+  coordinate click is unnecessary and is exactly what trap 37 warns against.
+- **`find --window '<title>'` can kill the UI agent, not merely fail.** `find --window 'Authorization'
+  --query Connect` timed out at 90 s and left the agent dead (`NOT RUNNING`, stale heartbeat); the
+  same query without `--window` answered immediately. The older note recorded this as answering "no
+  visible window matching", which is a much milder failure than the one seen today.
+
+### Tests
+
+```
+Passed!  - Failed: 0, Passed:  36, Skipped: 0, Total:  36  TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed:  58, Skipped: 0, Total:  58  TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed: 130, Skipped: 0, Total: 130  TradeAgent.IntegrationTests.dll
+```
+
+224 tests. Windows `dotnet build TradeAgent.sln -c Release` clean; bridge rebuilt with
+`-p:AtasBridgeBuild=true` and redeployed, with the deployed artifact asserted rather than the built one
+(`MaterialScanner in deployed Core: True`, `AtasStrategyAdapter in deployed dll: True`).
+
 ## macOS only, 2026-08-31 — the AI inbox and the material ledger
 
 Scope addition: the account owner can hand the AI programs, documents and data to experiment with.
@@ -1453,10 +1629,12 @@ It is now session-aware, and says so.
 
 ## What does not work yet
 
-- **`LIVE_CONFIRM` has never been walked.** The mode exists and the gateway enforces it — a request
-  from a non-operator lands in `AWAITING_APPROVAL` and throws `waiting for your approval` — but the
-  path agent → gateway → risk limits → approval → bridge → ATAS has never been run end to end. It
-  needs no live money and nothing blocks it. This is the next milestone.
+- ~~**`LIVE_CONFIRM` has never been walked.**~~ **Walked 2026-08-31, through ATAS, on the simulated
+  crypto account.** Evidence in that section. What remains untested on that path is a *filling* order
+  (today's rested and was cancelled), a decline, and the same path against a real broker.
+- **Platform and account cannot be changed after setup.** Both are written only by the onboarding
+  wizard, and the wizard cannot be re-entered once complete. A real gap, found while walking
+  `LIVE_CONFIRM`, and worked around through the database rather than fixed.
 - **`LIVE_AUTONOMOUS` is refused, and correctly.** `ReconciliationProvable` is
   `SupportsClientOrderId && SupportsOrderHistory`. The first is now **true on evidence**; the second
   is **false for a known reason** — `IIndicatorDataProvider.GetService<T>()` throws
@@ -1497,7 +1675,8 @@ It is now session-aware, and says so.
    far is against two simulated accounts — `CRYPTO5EB41` on Binance crypto-sim and `DEMO15M440CE` on
    ATAS Sim.
 3. **Nothing else is blocked.** The machine is up, the bridge is current and authenticated, the
-   capabilities are measured, and the next three items of work all run on simulated accounts.
+   capabilities are measured, `LIVE_CONFIRM` is proven through ATAS, and the remaining work runs on
+   simulated accounts.
 
 ## Next integration target
 

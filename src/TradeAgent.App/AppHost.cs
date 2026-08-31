@@ -90,7 +90,7 @@ public sealed class AppHost : IAsyncDisposable
 
             ToolDeployer.EnsureTradeCli();
             Health.Set(Components.TradeCli,
-                File.Exists(Path.Combine(Paths.Bin, ToolDeployer.TradeCliName)) ? HealthState.READY : HealthState.FAILED);
+                ToolDeployer.TradeCliReady(out var cliReason) ? HealthState.READY : HealthState.FAILED, cliReason);
 
             // Which backend to talk to is a persisted choice; the simulator is the safe default.
             var chosen = _db.GetKv("connector") ?? "fake";

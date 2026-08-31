@@ -10,6 +10,14 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## The one sentence to carry
 
+**`LIVE_CONFIRM` is walked, through ATAS, on hardware (2026-08-31).** An AI session proposed
+`buy 1 BTCUSDT limit 70000`, the gateway refused it with `APPROVAL_REQUIRED` and parked it, a human
+approved it in the app (two presses), and it reached ATAS as broker order `12021602` before being
+cancelled and the book verified clean. That was the reachable milestone and it is done. The rule-1
+proof below still stands and still does not need re-proving.
+
+## The older sentence, still true
+
 **Rule 1 is proven.** An order was placed, ATAS was shut down, and the identifier was found again on
 an order in the restarted platform's own collection — alongside the broker id the dead run had
 recorded before it ended.
@@ -52,7 +60,31 @@ features, so before "just shell out to it" feels reasonable, read
 
 The rule also *creates* bugs that only exist because of it — see trap 1 below.
 
-## Where the machine is right now (2026-08-30, end of session)
+## Where the machine is right now (2026-08-31, end of session)
+
+**UP, desktop live and unlocked, ATAS running with the bridge started, TradeAgent running.**
+
+```
+session : Active (id 1, over RDP)    desktop : live
+ATAS : running, connected (ATAS Sim / Binance / Crypto Sim / dxFeed), maximized
+TradeAgent : running from C:\ta\repo\src\TradeAgent.App\bin\Release\net10.0\TradeAgent.exe
+mode : LIVE_CONFIRM   live_activated : FALSE   execution : blocked, correctly
+book : orders [] · position 0 · nothing unreconciled
+```
+
+**Real-money trading was switched back OFF before the session ended**, so nothing can dispatch even
+though the mode is still `LIVE_CONFIRM`. The mode was left there deliberately so the next session does
+not have to redo the setup.
+
+**The connector is now `atas` and the account `CRYPTO5EB41`, and both were set by writing the
+database directly** — see the product gap below; there is no UI route. The bridge strategy is started
+on the BTCUSDT chart; the ES chart still has no strategy, and it must stay that way (two bridges, one
+pipe).
+
+The database is at schema 2 and was migrated in place from the machine's own schema-1 database. A
+copy of the pre-migration file is at `%LOCALAPPDATA%\TradeAgent\state\tradeagent.db.pre-schema2`.
+
+## Where the machine was on 2026-08-30
 
 **UP, with ATAS running and the bridge live and authenticated.** Left exactly as described here.
 
@@ -122,7 +154,22 @@ The three things left on it, in the order they are worth doing:
 
 **Rule 1 is settled and the bridge is current.** Do not start by re-proving either.
 
-1. **Walk `LIVE_CONFIRM` end to end — this is the reachable milestone and nothing blocks it.**
+0. **DONE 2026-08-31 — do not redo it.** `LIVE_CONFIRM` is walked through ATAS end to end, and
+   TradeAgent's own UI has been seen on Windows for the first time. What is left on that path is a
+   *filling* order (today's rested and was cancelled), a **decline**, and the same walk against a real
+   broker. Read the 2026-08-31 section of `BUILD-STATUS.md` before touching any of it.
+
+1. **Fix the two gaps the walk exposed, both of which are small and both of which bite a real user.**
+   - **Platform and account can only be chosen during setup.** `SwitchConnectorAsync` and
+     `SelectedAccountId` are written only by `OnboardingView`, and `MainWindow` enters the wizard only
+     when onboarding is incomplete. After setup there is no way to change either. This blocked the
+     walk and was worked around by editing the database. It wants a real home in the shell — Safety,
+     or a settings surface that does not exist yet.
+   - **`ATAS process` and `ATAS bridge` health rows read `unknown`** for a whole session in which the
+     bridge was demonstrably serving quotes and carrying an order. Nothing outside "Check everything"
+     sets them.
+
+2. ~~**Walk `LIVE_CONFIRM` end to end.**~~ Done — see 0 above. The old text follows for its detail:
    `TradingMode` is `OBSERVE → PAPER → LIVE_CONFIRM → LIVE_AUTONOMOUS`. In `LIVE_CONFIRM` a request
    from anyone who is not the operator lands in `AWAITING_APPROVAL` and `TradingGateway` throws
    `request {id} is waiting for your approval` — so the AI agent proposes and the human approves
@@ -176,7 +223,8 @@ tools/win-ui.sh find --query 'TradeAgent Bridge'                # TreeItem in AV
 tools/win-ui.sh select --ref <that TreeItem>                    # this is what ENABLES Add
 tools/win-ui.sh find --query 'Add' --type Button                # confirm enabled=true now
 tools/win-ui.sh invoke --ref <Add>
-tools/win-ui.sh click --x 1004 --y 641                          # the ▶/■ toggle on the Selected row
+tools/win-ui.sh find --query 'Activ'                            # PART_ActivateButton — it IS there
+tools/win-ui.sh invoke --ref <PART_ActivateButton>              # ▶ becomes ■; legend goes [Started]
 tools/win-ui.sh find --query 'DialogButton'                     # the Cyrillic ОК — trap 16
 tools/win-ui.sh invoke --ref <PART_ОКDialogButton>
 ```
@@ -185,12 +233,14 @@ tools/win-ui.sh invoke --ref <PART_ОКDialogButton>
 
 - `--x 768 --y 768` is a **screen** coordinate. The old `770,607` was read off a window-relative
   screenshot and lands on the Windows desktop. See trap 37.
-- **There is no `PART_ActivateButton` step.** The control at `1004,641` is a direct ▶/■ toggle:
-  ▶ means stopped, click it and it becomes ■ and the chart legend goes `[Started]`. Searching for
-  `Activ` returns nothing. The old recipe's "expand the row, then find PART_ActivateButton" did not
-  reproduce.
-- **`find --window '<dialog title>'` does not work** for the Chart strategies dialog — it answers
-  `no visible window matching`. Search globally without `--window`.
+- **CORRECTED 2026-08-31: there IS a `PART_ActivateButton` step, and the coordinate click is not
+  needed.** With the dialog open, `find --query 'Activ'` returns it, enabled, without expanding the
+  row; `invoke --ref` starts the strategy and the row icon goes ▶ → ■. The 2026-08-30 claims that it
+  does not exist and that `Activ` finds nothing were both wrong. Prefer the named element — a raw
+  coordinate inside a modal is trap 37 waiting to happen.
+- **Never pass `--window` to `find`.** For the Chart strategies dialog it answers `no visible window
+  matching`; for the ATAS `Authorization` window it **killed the UI agent outright** (trap 39).
+  Search globally, always.
 
 **Read the state off the chart legend, not the icon.** The legend says `[Started]` or `[Stopped]` in
 words. `Selected strategies` on the left is the list; `No selected strategy` on the RIGHT is the
@@ -527,6 +577,33 @@ Each of these cost real time. None is obvious from the code.
     and prefer `find` + `invoke --ref` over any coordinate at all: the chart's context menu has
     `Sell Limit at ...` three rows from `Chart strategies`.
 
+39. **`find --window '<title>'` can KILL the UI agent, not merely fail — search globally instead.**
+    `find --window 'Authorization' --query Connect` on the ATAS sign-in window timed out at 90 s and
+    left the agent dead: `process: NOT RUNNING`, stale heartbeat, and the next call answering "the UI
+    agent is not running". The same query **without** `--window` answered instantly and correctly.
+    Trap 35's older note recorded the windowed form as answering "no visible window matching", which
+    is a far milder failure than losing the agent mid-sequence. Prefer the global `find` always; it
+    has never failed. And when the agent dies, `tools/win-agent.sh start` brings it back in seconds.
+
+40. **`PART_ActivateButton` is real, is enabled, and does NOT need the row expanded — the recipe's
+    coordinate click is unnecessary.** The 2026-08-30 recipe says "there is no `PART_ActivateButton`
+    step", that "searching for `Activ` returns nothing", and to click screen coordinate `1004,641`.
+    All three were contradicted on 2026-08-31: with the Chart strategies dialog open,
+    `find --query 'Activ'` returned `PART_ActivateButton` directly, and `invoke --ref` on it started
+    the strategy (▶ became ■). Clicking a raw coordinate inside a dialog is exactly what trap 37
+    warns against; use the named element. **Read the row icon or the chart legend to confirm**, and
+    note the strategy still comes back **stopped** after every ATAS restart (trap 24 stands).
+
+41. **The trade CLI can be deployed in a state where it cannot start, and the health row will still
+    say READY.** `ToolDeployer` copied `trade.exe` plus three side-cars and none of the seven
+    assemblies the CLI loads, so every invocation threw `FileNotFoundException` on `TradeAgent.Core` —
+    while the Dashboard said `trade CLI: ready`, because the check was `File.Exists`. Fixed
+    2026-08-31 (copy what `trade.deps.json` names; `TradeCliReady` reports what is missing). The trap
+    worth keeping is the shape: **the packaged build publishes self-contained single-file, so this
+    was invisible in a release and broken in every developer/CI run** — which is the only
+    configuration in which anybody exercises the agent path. When a defect can only appear outside
+    the packaging you ship, the packaging is not evidence.
+
 38. **A market that is closed presents exactly like a bridge that has never seen a price.**
     `quote=none(no-tick)` and `{"at":"0001-01-01T00:00:00+00:00"}` was a real wiring defect on
     2026-08-28 and was simply Sunday on 2026-08-30. Check the day and the chart's last bar before
@@ -593,7 +670,7 @@ the DLL.
 
 ```bash
 export PATH="$HOME/.dotnet:$PATH"
-dotnet test TradeAgent.sln        # 215 tests: 54 unit, 130 integration, 36 fault
+dotnet test TradeAgent.sln        # 224 tests: 58 unit, 130 integration, 36 fault
 ```
 
 Start any Windows session by asking whether the machine can do the work at all — see
