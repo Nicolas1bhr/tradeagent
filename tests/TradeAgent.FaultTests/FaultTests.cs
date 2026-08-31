@@ -524,6 +524,67 @@ public class PolicyGateTests
         Assert.Equal(ErrorCode.LIVE_NOT_ACTIVATED, denied.Code);
     }
 
+    /// <summary>
+    /// The account the AI trades must be one somebody chose, never one the platform happened to list
+    /// first. AccountAsync falls back to the first account so a status screen can render before
+    /// anything is configured; PlaceAsync goes through the same call, so without a gate that fallback
+    /// reached the broker. On a platform carrying both a practice and a real-money account, list
+    /// order would decide whose money it is.
+    ///
+    /// Unreachable until the platform could be changed after setup — switching clears the chosen
+    /// account, because an id issued by one platform does not exist on the other.
+    /// </summary>
+    [Fact]
+    public async Task An_account_nobody_chose_is_not_traded_even_though_one_is_available()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var dbh = db;
+
+        // The connector has an account and is perfectly healthy: the refusal below is about consent,
+        // not about availability.
+        Assert.NotEmpty(await gw.AccountsAsync());
+        Assert.NotNull(await gw.AccountAsync());
+
+        gw.Update(s => s.SelectedAccountId = null);
+        await gw.RefreshHealthAsync();
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "unchosen-1", TestEnv.Buy()));
+        Assert.Equal(ErrorCode.ACCOUNT_NOT_FOUND, denied.Code);
+        Assert.Empty(conn.Broker.Orders);
+
+        // And the dashboard says so rather than reporting the fallback as a healthy chosen account.
+        var account = gw.Health.Get(Components.Account);
+        Assert.Equal(HealthState.DEGRADED, account.State);
+        Assert.Contains("no account chosen", account.Detail);
+
+        // Choosing one lifts it, and nothing else had to change.
+        gw.Update(s => s.SelectedAccountId = conn.Broker.AccountId);
+        await gw.RefreshHealthAsync();
+        Assert.Equal(ExecutionState.FILLED,
+            (await gw.PlaceAsync(new AgentContext("a"), "unchosen-2", TestEnv.Buy())).State);
+    }
+
+    /// <summary>
+    /// The emergency controls are deliberately outside AuthorizeOrThrow, and the gate above must not
+    /// have quietly pulled them inside it. Taking authority away can never be blocked by a missing
+    /// configuration choice.
+    /// </summary>
+    [Fact]
+    public async Task The_emergency_controls_still_work_with_no_account_chosen()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(new AgentContext("a"), "emg-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        gw.Update(s => s.SelectedAccountId = null);
+
+        await gw.OperatorCancelAllAsync();
+        await gw.OperatorCloseAllAsync();
+        Assert.DoesNotContain(conn.Broker.Orders, o => o.State == ExecutionState.WORKING);
+    }
+
     [Fact]
     public async Task Autonomous_live_trading_is_refused_on_a_backend_that_cannot_prove_order_state()
     {

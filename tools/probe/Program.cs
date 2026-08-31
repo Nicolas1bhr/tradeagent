@@ -1488,6 +1488,7 @@ static class AtasProbe
 
         var attemptsBefore = connector.Bridge?.ClientOrderIdAttempts;
         var checksBefore = connector.Bridge?.ClientOrderIdChecks;
+        var surfaceBefore = connector.Bridge?.TradingSurface;
 
         var cmd = new PlaceOrderCommand(clientOrderId, account.Id, instrument.Symbol, OrderSide.Buy,
             OrderType.Limit, 1m, price, null, TimeInForce.Day,
@@ -1538,7 +1539,7 @@ static class AtasProbe
             try
             {
                 (reading, everSeen) = await ReportReadBack(connector, clientOrderId, placed, rejected,
-                                                           ordersBefore, attemptsBefore, checksBefore);
+                                                           ordersBefore, attemptsBefore, checksBefore, surfaceBefore);
             }
             catch (Exception ex)
             {
@@ -1658,7 +1659,8 @@ static class AtasProbe
     /// a completely different fact and the reassuring one.
     /// </summary>
     static async Task<(string Summary, bool EverSeen)> ReportReadBack(AtasConnector connector, string clientOrderId,
-        OrderInfo? placed, bool rejected, IReadOnlyList<OrderInfo>? ordersBefore, int? attemptsBefore, int? checksBefore)
+        OrderInfo? placed, bool rejected, IReadOnlyList<OrderInfo>? ordersBefore, int? attemptsBefore, int? checksBefore,
+        string? surfaceBefore)
     {
         Section("THE TEST ORDER — READING IT BACK");
 
@@ -1746,6 +1748,31 @@ static class AtasProbe
         Line("SUBMITTED WITH AN ID", Counter(attemptsBefore, attemptsAfter));
         Line("READ-BACKS PERFORMED", Counter(checksBefore, checksAfter));
         Cont("the bridge's own counters, reported by it rather than inferred here.");
+
+        // Are ITradingManager.Orders and ChartStrategy.Orders the same list? The counts have always
+        // been reported, but every capture ever taken read them at the HELLO — before anything was
+        // placed — so `strategyorders=0` was consistent with both answers and settled nothing across
+        // two sessions. The heartbeat waited on just above carries a fresh surface report, so this is
+        // the first reading in this harness taken AFTER an order this strategy instance placed.
+        //
+        // It matters because LiveOrders() reads both collections and de-duplicates by reference: if
+        // they are one list, a caller that SUMS per order would double-count a partial fill and read
+        // it as FILLED.
+        var ordersNow = Token(connector.Bridge?.TradingSurface, "orders");
+        var strategyNow = Token(connector.Bridge?.TradingSurface, "strategyorders");
+        Line("ORDER COLLECTIONS", $"before: orders={Blank(Token(surfaceBefore, "orders"))} " +
+                                  $"strategyorders={Blank(Token(surfaceBefore, "strategyorders"))}   " +
+                                  $"after: orders={Blank(ordersNow)} strategyorders={Blank(strategyNow)}");
+        Cont(ordersNow is null || strategyNow is null
+            ? "the bridge did not report both counts, so this run does not answer it."
+            : ordersNow == strategyNow
+                ? "the two counts AGREE. That is consistent with one shared list and with two lists"
+                : "the two counts DIFFER, so ITradingManager.Orders and ChartStrategy.Orders are NOT");
+        Cont(ordersNow is null || strategyNow is null
+            ? "Re-run once the bridge has sent a heartbeat."
+            : ordersNow == strategyNow
+                ? "that happen to hold the same orders — it does not separate them on its own."
+                : "the same collection. LiveOrders' de-duplication is defensive, not load-bearing.");
 
         var after = connector.Capabilities;
         Line("SupportsClientOrderId", $"{Yn(after.SupportsClientOrderId)}   AFTER the attempt — this is the reading that " +

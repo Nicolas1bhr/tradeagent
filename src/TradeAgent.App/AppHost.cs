@@ -19,6 +19,7 @@ public sealed class AppHost : IAsyncDisposable
 {
     SingleInstanceLock? _lock;
     Database? _db;
+    readonly AtasHealthReporter _atasHealth = new();
     GatewayPipeServer? _server;
     CancellationTokenSource? _loop;
 
@@ -108,6 +109,7 @@ public sealed class AppHost : IAsyncDisposable
 
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
+            ReportAtasHealth();
 
             _loop = new CancellationTokenSource();
             _ = Task.Run(() => BackgroundAsync(_loop.Token));
@@ -137,6 +139,13 @@ public sealed class AppHost : IAsyncDisposable
         _db.SetKv("connector", id);
         if (current == id && Gateway is not null) return;
 
+        // The chosen account belongs to the platform it was chosen on. Carrying it across turns
+        // every later lookup into a miss — AccountAsync asks the NEW backend for an id only the old
+        // one ever had, gets null, and the Account row reports FAILED on a connection that is
+        // perfectly healthy. Onboarding never hit this because it picks the platform first and the
+        // account afterwards; a settings surface that can switch afterwards hits it immediately.
+        if (Gateway is not null) Gateway.Update(s => s.SelectedAccountId = null);
+
         if (_server is not null) { await _server.DisposeAsync(); _server = null; }
         if (Gateway is not null)
         {
@@ -155,6 +164,7 @@ public sealed class AppHost : IAsyncDisposable
 
         try { await Connector.ConnectAsync(); } catch (Exception) { /* health reports it */ }
         await Gateway.RefreshHealthAsync();
+        ReportAtasHealth();
         Gateway.Log.Activity($"Trading platform set to {id}");
         Changed?.Invoke();
     }
@@ -183,6 +193,7 @@ public sealed class AppHost : IAsyncDisposable
             try
             {
                 await Gateway.RefreshHealthAsync(ct);
+                ReportAtasHealth();
                 if (Gateway.Requests.NeedingReconciliation().Count > 0) await Gateway.ReconcileAsync(ct);
                 Gateway.Log.Rotate();
 
@@ -200,6 +211,16 @@ public sealed class AppHost : IAsyncDisposable
             catch (OperationCanceledException) { return; }
         }
     }
+
+    /// <summary>
+    /// The two ATAS rows, written on the same tick as the rest of the health picture.
+    ///
+    /// It runs after <see cref="TradingGateway.RefreshHealthAsync"/> and reads that pass's answer for
+    /// the trading connection rather than asking the connector again: two readings of one pipe taken
+    /// a moment apart is how a dashboard ends up contradicting itself in the same frame.
+    /// </summary>
+    void ReportAtasHealth() =>
+        _atasHealth.Report(Health, Connector, Health.Get(Components.TradingConnection).State);
 
     /// <summary>
     /// Records what is in the workspace. Public so the inbox page can ask for a pass the moment the

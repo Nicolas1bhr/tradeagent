@@ -213,6 +213,26 @@ public sealed class TradingGateway : IAsyncDisposable
             }
         }
 
+        // AN ACCOUNT THAT WAS NEVER CHOSEN IS NOT A DEFAULT, IT IS A GUESS.
+        //
+        // AccountAsync falls back to whichever account the platform happens to list first, so that a
+        // status screen can render before anything is configured. That is fine for rendering a
+        // balance and unacceptable for placing an order: on a platform carrying both a practice and
+        // a real-money account, "first in the list" is what decides whose money it is, and nobody
+        // asked the owner. PlaceAsync goes through AccountAsync, so without this the fallback was
+        // reaching the broker.
+        //
+        // It became reachable the day the platform could be changed after setup: switching clears
+        // the chosen account, because an id issued by one platform does not exist on the other.
+        // Onboarding cannot finish without ACCOUNT_SELECTED, so nothing else opens this window —
+        // which is exactly why it went unnoticed until there was a Settings page.
+        if (Settings.SelectedAccountId is null)
+        {
+            (reason, code) = ("no account has been chosen — choose one on the Settings page",
+                ErrorCode.ACCOUNT_NOT_FOUND);
+            return false;
+        }
+
         // Unconfirmed work outranks a healthy-looking connection: check it before health, so the
         // refusal says "an earlier order is unconfirmed" rather than something vaguer.
         var unreconciled = _requests.NeedingReconciliation();
@@ -776,8 +796,17 @@ public sealed class TradingGateway : IAsyncDisposable
                 return;
             }
 
+            // The row is about the account the owner CHOSE, not about whichever one the platform
+            // lists first — reporting the fallback as READY is how "nothing is selected" stops being
+            // visible anywhere on screen.
             var account = await AccountAsync(ct);
-            _health.Set(Components.Account, account is null ? HealthState.FAILED : HealthState.READY, account?.Id ?? "no account");
+            _health.Set(Components.Account,
+                account is null ? HealthState.FAILED
+                : Settings.SelectedAccountId is null ? HealthState.DEGRADED
+                : HealthState.READY,
+                account is null ? "no account"
+                : Settings.SelectedAccountId is null ? "no account chosen yet — choose one on the Settings page"
+                : account.Id);
 
             var symbol = Settings.Risk.InstrumentAllowlist.FirstOrDefault()
                          ?? (await InstrumentsAsync(ct)).FirstOrDefault()?.Symbol;

@@ -34,7 +34,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Dashboard, Inbox, Safety, Activity, Checks }
+    enum Page { Chat, Dashboard, Inbox, Safety, Settings, Activity, Checks }
 
     readonly AppHost _host;
 
@@ -113,6 +113,7 @@ public sealed class MainWindow : Window
     ChatView? _chat;
     DashboardPage? _dashboard;
     SafetyPage? _safety;
+    SettingsPage? _settings;
     InboxPage? _inbox;
     ActivityPage? _activity;
     ChecksPage? _checks;
@@ -333,6 +334,9 @@ public sealed class MainWindow : Window
         AddNav(Page.Dashboard, "Dashboard");
         AddNav(Page.Inbox, "Inbox");
         AddNav(Page.Safety, "Safety");
+        // Between Safety and the diagnostic tail on purpose. Choosing the platform and the account
+        // is a configuration act adjacent to the limits, not a thing you go looking for among logs.
+        AddNav(Page.Settings, "Settings");
         AddNav(Page.Activity, "Activity");
         AddNav(Page.Checks, "Checks");
 
@@ -394,6 +398,7 @@ public sealed class MainWindow : Window
         _dashboard = new DashboardPage(_host, StartOrStopAgentAsync);
         _inbox = new InboxPage(_host);
         _safety = new SafetyPage(_host);
+        _settings = new SettingsPage(_host);
         _activity = new ActivityPage(_host);
         _checks = new ChecksPage(_host);
 
@@ -401,6 +406,7 @@ public sealed class MainWindow : Window
         Add(Page.Dashboard, _dashboard.Root);
         Add(Page.Inbox, _inbox.Root);
         Add(Page.Safety, _safety.Root);
+        Add(Page.Settings, _settings.Root);
         Add(Page.Activity, _activity.Root);
         Add(Page.Checks, _checks.Root);
 
@@ -463,6 +469,7 @@ public sealed class MainWindow : Window
         _dashboard?.Update(status, waiting);
         _inbox?.Update();
         _safety?.Update(status);
+        _settings?.Update(status);
         _activity?.Update();
         _checks?.Update();
     }

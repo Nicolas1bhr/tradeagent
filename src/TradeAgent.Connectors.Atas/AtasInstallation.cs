@@ -109,18 +109,39 @@ public static class AtasInstallation
             }
         }
 
-        var running = false;
-        foreach (var name in l.ProcessNames)
-        {
-            try { if (Process.GetProcessesByName(name).Length > 0) { running = true; break; } }
-            catch (Exception) { /* platform may not allow process enumeration */ }
-        }
+        var running = IsRunning(l);
 
         var bridgeInstalled = strategyDir is not null &&
                               File.Exists(Path.Combine(strategyDir, "TradeAgent.AtasBridge.dll"));
 
         return new AtasDetection(installDir is not null, installDir, strategyDir, version, running,
             bridgeInstalled, l.Verified, RuntimeTfm(installDir));
+    }
+
+    /// <summary>
+    /// Is a platform process up right now?
+    ///
+    /// Split out of <see cref="Detect"/> because the health tick asks this every five seconds while
+    /// the rest of a detection is filesystem work that does not change while the app runs. It also
+    /// DISPOSES what it is handed: <c>Process.GetProcessesByName</c> returns live Process objects
+    /// holding one OS handle each, and a loop that drops them on the floor every five seconds leaks
+    /// handles until a finalizer happens to run. Detect() did exactly that, harmlessly, because
+    /// nothing called it on a timer — and this is the change that puts it on one.
+    /// </summary>
+    public static bool IsRunning(AtasLayout? layout = null)
+    {
+        var l = layout ?? AtasLayout.Load();
+        foreach (var name in l.ProcessNames)
+        {
+            try
+            {
+                var found = Process.GetProcessesByName(name);
+                try { if (found.Length > 0) return true; }
+                finally { foreach (var proc in found) proc.Dispose(); }
+            }
+            catch (Exception) { /* platform may not allow process enumeration */ }
+        }
+        return false;
     }
 
     static string Expand(string p) => Environment.ExpandEnvironmentVariables(p);

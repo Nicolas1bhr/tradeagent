@@ -37,8 +37,24 @@ rm -f "$TARBALL"
 # The agent now runs from C:\ta\agent\bin (see win-agent.sh), so this can no longer hit it — but a
 # delete that silently leaves files behind is the wrong default whatever is holding them. Report the
 # survivors instead of hiding them: leftovers mean the unpack is landing on top of something.
+#
+# TRAP 21 AGAIN, WITH A NEW VICTIM. The UI agent was moved out of the repo to escape this, and then
+# TradeAgent itself moved IN: the 2026-08-31 session runs it from
+# C:\ta\repo\src\TradeAgent.App\bin\Release\net10.0\TradeAgent.exe, which is inside the very
+# tree deleted below. So refuse before deleting anything, rather than reporting the wreckage after.
 "$HERE/win-ps.sh" <<'PS'
 $ErrorActionPreference = 'Stop'
+$inRepo = @(Get-Process -EA SilentlyContinue | Where-Object {
+  $p = $null; try { $p = $_.Path } catch { }
+  $p -and $p -like 'C:\ta\repo\*'
+})
+if ($inRepo) {
+  foreach ($p in $inRepo) { "  RUNNING FROM THE REPO: $($p.ProcessName) - $($p.Path)" }
+  "REFUSING TO PUSH. Windows will not delete a running .exe but will happily delete the loose"
+  "files beside it, so this push would leave a half-deleted install that still looks built."
+  "Stop it first, e.g.  tools/win-run.sh 'taskkill /IM TradeAgent.exe /F'"
+  exit 1
+}
 $targets = 'C:\ta\repo\src', 'C:\ta\repo\tests', 'C:\ta\repo\packaging', 'C:\ta\repo\tools'
 foreach ($t in $targets) {
   if (Test-Path $t) { Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }

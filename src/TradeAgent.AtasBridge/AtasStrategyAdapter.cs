@@ -617,9 +617,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 $"TradingManager={(provider is null ? "unreachable" : trading is null ? "null" : "ok")}",
                 $"Connector={(connector is null ? "null" : "ok")}",
                 $"orders={Count(trading?.Orders)}",
-                // Reported separately from orders= on purpose: whether ChartStrategy.Orders and
-                // ITradingManager.Orders are the SAME list has never been measured, and these two
-                // numbers side by side are the cheapest reading that would settle it.
+                // Reported separately from orders= on purpose, and the reading is now taken:
+                // ITradingManager.Orders and ChartStrategy.Orders are NOT the same collection.
+                // On 2026-08-30, with one resting order live in ATAS, three separate probe runs
+                // reported `orders=1 strategyorders=0` — both counted inside this one method, so
+                // from one instant. A shared list cannot report two different lengths at once.
+                // (probe-half2.txt, probe-clean.txt; probe-verify.txt shows 0/0 after the cancel,
+                // so the 1 was tracking the real order.)
                 $"strategyorders={Count(Orders)}",
                 $"mytrades={Count(trading?.MyTrades)}",
                 $"portfolio={Token(portfolio?.AccountID)}",
@@ -2589,16 +2593,24 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <summary>
     /// Every order collection this adapter can see, most authoritative first.
     ///
-    /// Whether ITradingManager.Orders and ChartStrategy.Orders are the SAME list has NOT been
-    /// measured — BridgeHello.TradingSurface reports both counts so that one probe run settles it.
-    /// Until it is settled, reading both is the safe direction to be wrong in: an order missed by
-    /// reading only one of them would be an order hidden from reconciliation.
+    /// ITradingManager.Orders and ChartStrategy.Orders are NOT the same collection — measured
+    /// 2026-08-30, and the reason to read both is therefore still the original one: an order missed
+    /// by reading only one of them would be an order hidden from reconciliation. With one resting
+    /// order live, three probe runs reported `orders=1 strategyorders=0` from a single instant
+    /// inside SurfaceReport, and a shared list cannot report two lengths at once.
     ///
-    /// EACH ENTITY IS YIELDED ONCE. If those collections do turn out to be the same list, a caller
-    /// that SUMS per order — FilledOf adding up my-trade volumes — would otherwise report a fill of
-    /// twice the real size, which reads as FILLED on a half-filled order. Neither Order nor MyTrade
-    /// overrides Equals in the dump, so the set is reference identity, which is exactly the question
-    /// being asked: is this the same object arriving again.
+    /// WHAT IS STILL OPEN is narrower and does not change this method: whether an order placed by
+    /// THIS strategy instance in THIS session ever appears in ChartStrategy.Orders at all. Every
+    /// surface reading ever captured was taken at the hello, before anything was placed, so
+    /// `strategyorders=0` has never been observed in the one situation that would give it meaning.
+    /// The probe now takes the reading again after the place, so the next run on hardware settles it.
+    ///
+    /// EACH ENTITY IS YIELDED ONCE, and that guard stays whatever the second reading says. It is
+    /// defensive rather than load-bearing on the evidence above, but it costs one HashSet and what
+    /// it prevents is a caller that SUMS per order — FilledOf adding up my-trade volumes —
+    /// reporting a fill of twice the real size, which reads as FILLED on a half-filled order.
+    /// Neither Order nor MyTrade overrides Equals in the dump, so the set is reference identity,
+    /// which is exactly the question being asked: is this the same object arriving again.
     /// </summary>
     IEnumerable<AtasOrder> LiveOrders()
     {

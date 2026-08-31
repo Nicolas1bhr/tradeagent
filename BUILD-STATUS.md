@@ -4,6 +4,13 @@
 gateway parked it, a human approved it in the app, and it reached ATAS and came back with a broker
 order id — then was cancelled and the book verified clean. Detail in the 2026-08-31 Windows section.
 
+**Closed 2026-08-31, later session: an account nobody chose could be traded.** `PlaceAsync` resolves
+the account through a helper that falls back to whichever one the platform lists first when nothing
+has been chosen — fine for rendering a status screen, and it was reaching the broker. On a platform
+carrying both a practice and a real-money account, list order decided whose money it was. The gate is
+now in `TryAuthorizeExecution`. It became reachable the same day, because changing the platform after
+setup has to clear the chosen account; it is in the section for that day.
+
 The bridge runs inside ATAS, its reads work, and orders have been placed through it.
 Both capability verdicts are now false **for known reasons rather than for want of looking**, which
 is the difference between a gap and an answer:
@@ -1502,6 +1509,156 @@ every flag's *value* as a positional. Harmless while no command read past its se
 wrong the moment one takes a flag between positionals, which `trade material derived <sha> --from
 <sha> <text>` does. Positionals are now parsed by walking the argument list and skipping each flag's
 value. Existing commands read only positions 0 and 1 and are unaffected.
+
+## Verified on real Windows 11 hardware, 2026-08-31, later session — the two gaps the walk exposed
+
+The previous session walked `LIVE_CONFIRM` end to end and recorded two gaps it hit on the way. Both
+are closed. Neither needed a screenshot to prove: the app answers `trade status` over its own pipe,
+so the health rows can be quoted as data rather than described from a picture — which is fortunate,
+because the machine's RDP session is disconnected and renders nothing (trap 19).
+
+### Gap 1 — the two ATAS health rows were never written by anything
+
+`Components.AtasProcess` and `Components.AtasBridge` were declared in `Components.All` from the first
+build and **no code anywhere ever called `Health.Set` for either**. The previous session recorded the
+symptom ("`unknown` for a whole session in which the bridge was demonstrably serving quotes"); this is
+the cause, found by grepping every `Components.` reference: every other component has a writer, those
+two had none.
+
+Reproduced first, on the machine where it was seen, through the still-running pre-fix build:
+
+```
+BEFORE   (Windows, mode=LIVE_CONFIRM, connector=atas, bridge live)
+  ATAS process           UNKNOWN
+  ATAS bridge            UNKNOWN
+  Trading connection     READY
+  Account                READY     CRYPTO5EB41
+  Market data            READY
+```
+
+Then pushed, rebuilt Release on the machine, asserted the artifact carries `AtasHealthReporter` and
+`SettingsPage` as ASCII metadata names (trap 8, trap 27), relaunched, and asked again:
+
+```
+AFTER    (same machine, same ATAS session, same bridge)
+  ATAS process           READY     running · 8.0.14.397
+  ATAS bridge            READY     connected · bridge 8.0.14, protocol 2
+  Trading connection     READY
+  Account                READY     CRYPTO5EB41
+  Market data            READY
+```
+
+The rows are deliberately not a second opinion on `Trading connection`. That row answers "can the
+gateway talk to the backend"; these answer the question a user actually has when it says no — **which
+half is missing.** Three states that were indistinguishable on screen now read differently:
+
+```
+not installed in ATAS — press Install bridge on the Checks page
+installed — waiting for ATAS to start
+installed, but the strategy is not started on a chart in ATAS
+```
+
+The third is trap 24 — ATAS restores a chart strategy **stopped** after every restart — which until
+now looked identical to a bridge that failed to load.
+
+On the practice simulator both rows read `UNKNOWN — not in use — you are on the practice simulator`,
+verified against the running app on macOS. `UNKNOWN` and not `READY` is the honest state: nothing was
+checked, because nothing needed to be. Detection is skipped entirely there rather than enumerating
+processes every five seconds for somebody who has no ATAS.
+
+Nine unit tests pin the decision table (`tests/TradeAgent.UnitTests/AtasHealthTests.cs`), including the
+regression that started this: a reporter pass must leave neither row with nothing to say.
+
+**A real defect found on the way:** `AtasInstallation.Detect` called `Process.GetProcessesByName` and
+dropped every `Process` object it was handed. Harmless while nothing called it on a timer — and this
+change puts it on a five-second one. `IsRunning` now disposes them.
+
+### Gap 2 — platform and account could only be chosen during setup
+
+`SwitchConnectorAsync` and `SelectedAccountId` were written only by `OnboardingView`, and the wizard is
+only entered while setup is unfinished. After setup there was no way to change either; the previous
+session worked around it by editing the database by hand. Setup meanwhile tells the user
+*"You can switch later"* while asking the first of them.
+
+There is now a **Settings** page in the shell (`src/TradeAgent.App/SettingsView.cs`), between Safety and
+Activity. Read on Windows through UI Automation — the first time TradeAgent's own UI has been read on
+that machine at all — with ATAS selected and `CRYPTO5EB41` chosen:
+
+```
+Text    'Platform in use'                     Text   'Account in use'
+Button  'Use ATAS'                enabled=False     <- already the platform in use
+Button  'Use the practice simulator' enabled=True
+Button  'Use this account'        enabled=False     <- already the chosen account
+Button  'Look again'              enabled=True
+Text    'IN USE'      Text 'SIMULATION'      Text 'CRYPTO5EB41'
+```
+
+Widening risk is two-press and narrowing it is one: moving to ATAS and choosing a **real-money**
+account arm first (`Ui.Confirm`); moving back to the simulator and choosing a simulated account do
+not. Account cards carry onboarding's own `SIMULATION` / `REAL MONEY` pill treatment verbatim.
+
+**Note for whoever changes ATAS accounts:** the list offers exactly one — the portfolio the bridge's
+chart is bound to. `ChartStrategy.Connector` is null (trap 13), so the bridge can only see its own
+chart's portfolio. Changing ATAS account means moving the strategy to a chart on the other account,
+not picking from this list.
+
+### A safety hole the new page exposed, closed the same session
+
+Switching platform must clear `SelectedAccountId` — an id issued by one platform does not exist on the
+other, and carrying it across makes every later lookup a miss on a perfectly healthy connection. That
+clearing made a previously unreachable state reachable: **no account chosen, on a live platform.**
+
+`TradingGateway.AccountAsync` falls back to `GetAccountsAsync().FirstOrDefault()` when nothing is
+chosen, so a status screen can render before anything is configured. `PlaceAsync` goes through the
+same call — so the fallback reached the broker. **On a platform carrying both a practice and a
+real-money account, list order decided whose money it was, and nobody had asked the owner.**
+
+`TryAuthorizeExecution` now refuses with `ACCOUNT_NOT_FOUND` when nothing has been chosen, and the
+`Account` health row reports `DEGRADED — no account chosen yet` instead of presenting the fallback as
+a healthy chosen account. The emergency controls are deliberately outside `AuthorizeOrThrow` and stay
+outside it: taking authority away can never be blocked by a missing configuration choice. Both facts
+are pinned by tests (`PolicyGateTests.An_account_nobody_chose_is_not_traded_even_though_one_is_available`,
+`The_emergency_controls_still_work_with_no_account_chosen`).
+
+Seen in the running app on macOS, in the header, with nothing chosen:
+
+```
+AI paused — no account has been chosen — choose one on the Settings page
+```
+
+### `ITradingManager.Orders` and `ChartStrategy.Orders` are not the same collection
+
+Answered out of captures that were already on the machine and had never been read.
+`probe-half2.txt` and `probe-clean.txt` report `orders=1 strategyorders=0` with one resting order
+live; `probe-verify.txt` reports `orders=0 strategyorders=0` after the cancel, so the 1 was tracking
+the real order. Both counts are built inside one `SurfaceReport` call — a single instant — and a
+shared list cannot report two lengths at once.
+
+**NOT VERIFIED, and the captures cannot answer it:** whether an order placed by *this* strategy
+instance in *this* session ever appears in `ChartStrategy.Orders`. Every surface reading ever taken
+was at the hello, before anything was placed, so `strategyorders=0` has never been observed in the one
+situation that would give it meaning. The probe now takes the reading again after the place and prints
+`ORDER COLLECTIONS   before: … after: …`, so the next hardware run closes it.
+`LiveOrders`' reference de-duplication stays either way — defensive on this evidence, and what it
+prevents is `FilledOf` double-counting a partial fill into a FILLED.
+
+### Trap 21 came back, with TradeAgent as the victim
+
+`win-push.sh` deletes `C:\ta\repo\src` before unpacking, and TradeAgent now runs from inside it.
+Windows refuses to delete a running `.exe` and removes everything beside it, so a push would have left
+a half-deleted install that still looked built. The push now refuses before deleting anything.
+Verified against the real machine with the app running:
+
+```
+  RUNNING FROM THE REPO: TradeAgent - C:\ta\repo\src\TradeAgent.App\bin\Release\net10.0\TradeAgent.exe
+REFUSING TO PUSH. ...
+win-push exit = 1        # and C:\ta\repo\src was intact afterwards
+```
+
+### Tests
+
+`dotnet test TradeAgent.sln` — **235 passed, 0 failed** (38 fault, 67 unit, 130 integration), up from
+224. Solution build clean, 0 warnings.
 
 ## Defects found and fixed on 2026-08-26
 
