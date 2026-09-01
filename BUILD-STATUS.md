@@ -2271,6 +2271,62 @@ so Setup was launching them correctly and the measurement said "0 processes". **
 program is not a test fixture.** The stub that answered the question was three lines of C# compiled on
 the machine with `Add-Type -OutputType ConsoleApplication`, which depends on nothing.
 
+### Verified on the real Windows machine — the app itself, not just the parts
+
+The tree was pushed to the test machine, the app rebuilt in Release (`0 Warning(s) 0 Error(s)`) and
+run, and the Updates card was looked at with eyes on Windows:
+
+```
+This version              0.1.0
+Newest published version  could not be checked
+Automatic checks          on — once at startup, then every six hours
+
+TradeAgent could not check for a newer version — GitHub did not answer, or nothing has been
+published yet. Nothing changed. Last checked 1 September, 13:53.
+
+[Check for updates]  [Turn off automatic checks]
+Releases come from github.com/Nicolas1bhr/tradeagent. The download is checked against the checksum
+published beside it, which proves the file arrived intact — not who signed it.
+```
+
+**That is exactly the state a user has today**, and the check behind it was a real call to
+`api.github.com` made from that machine by pressing the button. **Install update** and **What's new**
+are correctly absent, no banner appears, and nothing lands in the red error strip — a repository with
+no releases is not an error, and the sentence says which of the three causes it might be rather than
+asserting one.
+
+**The bridge reconnected to the rebuilt app**, which is what proves the pipe-buffer change did not
+break the deployed add-on:
+
+```
+ATAS process             READY      running · 8.0.14.397
+ATAS bridge              READY      connected · bridge 8.0.14, protocol 2
+Trading connection       READY
+```
+
+Be precise about what that covers: the **TradeAgent-side** pipe change (the 8 KiB buffer) is in this
+build and is what the deployed bridge just connected through. The `BridgeServer` changes ship inside
+the bridge DLL, which is still the older deployed one — those are covered by the 146 integration
+tests on this machine, not by this connection.
+
+**CI is green on all three platforms for the first time in five commits, and the `package` job that
+its red had been blocking ran and produced an installer** — the modified `TradeAgent.iss`, compiled
+on a clean Windows runner rather than only on the test machine:
+
+```
+Compiler engine version: Inno Setup 6.7.1
+Successful compile (107.938 sec). Resulting Setup program filename is:
+D:\a\tradeagent\tradeagent\artifacts\TradeAgent-Setup-x64.exe
+   version           0.1.0
+   staged files      289 files, 405.9 MB
+   ATAS adapter      ABSENT  - this build CANNOT trade through ATAS
+   installer         artifacts\TradeAgent-Setup-x64.exe  (112.1 MB)
+Done. Artifacts in artifacts
+```
+
+The ABSENT line is correct and is why that artifact is labelled `NO-ATAS-ADAPTER` and must not be
+published as a release.
+
 ### NOT VERIFIED
 
 - **No TradeAgent release has ever existed.** `git tag` is empty and the repository has published no

@@ -372,8 +372,10 @@ it that can be found on this Mac, and nothing about it is proven either:
 
 Everything the updater does before that point — the check, the parse, the refusal to offer a draft, a
 pre-release, an older tag or a release with no installer in it — is covered by 40 tests and was seen
-rendering against a real GitHub release document. `BUILD-STATUS.md`'s 2026-09-01 update section has
-the evidence and the full NOT VERIFIED list.
+rendering against a real GitHub release document. The card has also been seen on Windows, on the test
+machine, with a live check run from it, and CI is green on all three platforms with the `package` job
+producing an installer from the modified `TradeAgent.iss`. `BUILD-STATUS.md`'s 2026-09-01 update
+section has the evidence and the full NOT VERIFIED list.
 
 ## Do not redo any of this
 
