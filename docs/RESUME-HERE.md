@@ -269,9 +269,19 @@ Activity and Chat. It has earned its place three times over now — the truncati
   nothing is flagged, and `find --query 'COULD NOT CONFIRM'` returning 0 matches is right behaviour,
   not evidence. Seeing it needs a flagged record on that machine — the honest route is a scratch
   `TRADEAGENT_HOME` on the practice simulator rather than seeding the real database.
-- **the Inbox interaction, never exercised on ANY platform.** The drop handler, the file picker, the
-  copy, the collision suffix and the immediate rescan are all compiled and unrun. The "Choose files…"
-  button is the easier half and needs no drag simulation.
+- **the Inbox drop/picker COPY path, still never exercised on any platform.** The scanner, the
+  ledger and the page are now proven on Windows (see `BUILD-STATUS.md`) — a file was handed over,
+  recorded with a hash matching one computed independently beforehand, rendered, then removed and
+  dropped from both. What remains unrun is the *copy*: the drop handler, the picker's copy and the
+  collision suffix. **The picker cannot be driven from this harness** — it opens correctly and goes
+  modal, but `setvalue` does not commit, it exposes no `IDOK` to invoke, and `type`/`key` never reach
+  it because the agent cannot foreground a native modal. Needs a person at the keyboard, or a
+  foreground capability in `winagent`. **Do not brute-force it with keystrokes while ATAS is on the
+  same desktop.**
+- **A timing fact worth knowing before you call anything broken: the inbox scan is not immediate.**
+  12 seconds after a file lands the page still said "Nothing handed over yet"; it appeared on the
+  next pass. Check `trade material list` — the same store the page reads — before believing an empty
+  Inbox screen.
 - **the setup journey end to end** — never once watched on Windows. `C:\ta\reset-tradeagent.cmd`
   wipes the setup database so it can be walked again.
 - **the bridge-refusal sentence rendering** — put the bridge in a refusing state and look.

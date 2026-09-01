@@ -2104,6 +2104,41 @@ the same as having watched it work).
 **No automated tests were added for any of these three.** The app project has no test project by
 design, and all three are visual. The evidence is the before/after photographs on the Windows machine.
 
+### Task 4, part two — material went through the ledger on Windows, and the measurement is provably right
+
+The first time anything has been handed to the Inbox on **any** platform. A file was created with a
+hash computed independently *before* it was copied, so the ledger's measurement could be checked
+rather than trusted:
+
+```
+sha256 computed before the copy : 8354f46600833f65d133ea25da500657982e36b277ad4ef465815c158a866b7c
+sha256 the ledger recorded      : 8354f46600833f65d133ea25da500657982e36b277ad4ef465815c158a866b7c
+{"path": "inbox/strategy-notes.txt", "origin": "inbox", "size_bytes": 93, "runnable": false}
+```
+
+The row renders on the Windows Inbox page in the owner's language — `strategy-notes.txt` /
+"you gave this to the AI · 93 B · arrived 1 Sep 01:59" / path and short sha in mono — and **"What the
+AI says it did" correctly stayed empty**, which is the two-table separation surviving all the way to
+the screen. Removing the file dropped it from both the ledger and the page. Nothing was left behind:
+inbox empty, ledger `count: 0`.
+
+**A timing fact that would otherwise cost a session, twice over: the inbox scan is NOT immediate.**
+A screenshot taken 12 seconds after a file lands shows "Nothing handed over yet" — and that is not a
+defect. It appeared on the next pass, and a removal likewise took longer than 25 seconds to clear.
+Both times the honest move was to check the CLI (`trade material list`, which reads the same store)
+before believing the screen, and both times the "defect" evaporated. **Do not report an empty Inbox
+page until `trade material list` agrees with it.**
+
+**Still NOT VERIFIED, and now with a reason rather than an omission: the drop handler and the file
+picker's copy path have never run.** The picker itself opens correctly — the dialog appears with the
+right title, "Choose files to hand to the AI", and the main window goes disabled behind it (trap 22's
+modal signature). But it could not be driven from here: `setvalue` through the ValuePattern does not
+commit, the dialog exposes no `IDOK` (`automationId` 1) to invoke, and `type`/`key` never reached it
+because the harness cannot bring a native modal to the FOREGROUND — so the keystrokes went somewhere
+unknown. The attempt was abandoned rather than escalated, because stray keystrokes with a live
+trading platform on the same desktop is not a risk worth a screenshot. The dialog was cancelled and
+the book, positions and ATAS were all confirmed undisturbed afterwards.
+
 ### Tests
 
 `dotnet test TradeAgent.sln` — **256 passed, 0 failed** (45 fault, 67 unit, 144 integration), up from
