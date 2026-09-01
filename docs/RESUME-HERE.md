@@ -77,6 +77,10 @@ Five facts that otherwise cost the first twenty minutes:
   `installed, but the strategy is not started on a chart` when this has happened — believe it.
 - **Look at the Selected strategies list before pressing Add** (trap 35), or two bridges end up on
   one pipe.
+- **`dotnet-stack` and `dotnet-dump` are installed on the machine** (`%USERPROFILE%\.dotnet\tools`).
+  `dotnet-dump collect -p <pid>` then `analyze --command dumpasync` is what found the bridge freeze on
+  2026-09-01 — thirteen threads, none of them ours, and the answer was a chain of pending awaits that
+  no thread stack could show. Reach for it the moment a hang has no CPU behind it.
 
 Everything below is reference. Read **The work queue**, then the traps for whatever you are about to
 touch.
