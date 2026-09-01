@@ -20,7 +20,8 @@ orders in it — with you holding every switch.
 
 ## Installing it
 
-One file. Download `TradeAgent-Setup-x64.exe` and double-click it.
+One file. Download `TradeAgent-Setup-x64.exe` from the
+[releases page](https://github.com/Nicolas1bhr/tradeagent/releases/latest) and double-click it.
 
 It installs for you alone, into your own account, so **Windows does not ask for an administrator
 password** and nothing outside your account is touched. There is no all-users-or-just-me question to

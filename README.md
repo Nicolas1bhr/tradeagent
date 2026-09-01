@@ -12,8 +12,15 @@ rules, and owns the emergency stop. The user never sees a console, and never ins
 
 > **This software can place real orders in a real brokerage account.** It is provided as is, with no
 > warranty of any kind, and nothing here is financial advice. Trading futures involves a genuine risk
-> of losing more than you deposit. Read [BUILD-STATUS.md](BUILD-STATUS.md) before pointing it at money:
-> the ATAS integration is not finished, so it cannot trade through ATAS yet.
+> of losing more than you deposit. Read [BUILD-STATUS.md](BUILD-STATUS.md) before pointing it at
+> money. It does trade through ATAS — orders have been placed, read back and cancelled on hardware,
+> and `LIVE_CONFIRM` has been walked end to end — but every account it has ever touched was
+> simulated, **no broker has ever been attached**, and fully automatic live trading is refused by
+> design on this platform because ATAS cannot serve order history.
+
+**Latest release: [v0.1.0](https://github.com/Nicolas1bhr/tradeagent/releases/tag/v0.1.0)** —
+`TradeAgent-Setup-x64.exe`, per-user, no administrator. Cut by hand from a machine with ATAS, because
+a release built without one cannot trade through it; see `docs/RESUME-HERE.md` task 7.
 
 **Current state: [BUILD-STATUS.md](BUILD-STATUS.md).** Read it before trusting anything here — it
 lists exactly what is verified, what is not, and what cannot trade yet.

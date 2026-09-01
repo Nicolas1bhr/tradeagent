@@ -10,9 +10,11 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Tasks 1, 2 and 3 are done and verified. The machine is working and nothing is blocked.** What is
-left is in **The work queue**; if you only do one, do task 4 — it is the only thing standing between
-the reconciliation override and having been watched to work.
+**Tasks 1–4 and 7 are done and verified. The machine is working, CI is green on all three platforms,
+and nothing is blocked.** What is left is in **The work queue**; if you only do one, finish task 7 —
+publish a release newer than the running build and watch an update actually install itself. It is the
+only untested half of a feature that is already live in front of a real user, and it cannot be tested
+without that release, because an app that is up to date never downloads anything.
 
 Settled on 2026-09-01, do not redo:
 
@@ -51,6 +53,9 @@ are simulated. So:
 - "Did our client order id ever reach the broker" is not a pending question here, it is
   **unanswerable until a broker is attached.** There is no broker to have answered.
 - **The staged live trial is gated on a broker existing**, on top of every other gate.
+
+**v0.1.0 is published** (`gh release view v0.1.0`), built by hand on the test machine so the ATAS
+adapter is in it. CI's artifact is `NO-ATAS-ADAPTER` and must never be published as a release.
 
 Confirm the machine — two commands, neither disturbs anything:
 

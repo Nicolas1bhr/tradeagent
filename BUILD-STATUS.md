@@ -2602,6 +2602,10 @@ It is now session-aware, and says so.
   restart, not inferred. `SupportsClientOrderId` is true on evidence.
 - **The bridge pipe authenticates in both directions**, with the residual against a same-user
   adversary written down rather than claimed away.
+- **It updates itself.** The app asks GitHub for newer releases, offers them in a banner and on the
+  Settings page, and installs only on two deliberate presses; the agent cannot reach any of it.
+  v0.1.0 is published with the ATAS adapter in it, and the check has been watched reading it on
+  Windows. What has never happened is an install — see the 2026-09-01 update section.
 - **The AI inbox and the material ledger.** The owner can hand the agent programs, documents and data;
   every file that appears in the inbox or in the agent's tracked folders is recorded with a hash and a
   timestamp, and the agent records what it ran and what it derived from what. Measurement and claim are
@@ -2612,9 +2616,9 @@ It is now session-aware, and says so.
 - ~~**`LIVE_CONFIRM` has never been walked.**~~ **Walked 2026-08-31, through ATAS, on the simulated
   crypto account.** Evidence in that section. What remains untested on that path is a *filling* order
   (today's rested and was cancelled), a decline, and the same path against a real broker.
-- **Platform and account cannot be changed after setup.** Both are written only by the onboarding
-  wizard, and the wizard cannot be re-entered once complete. A real gap, found while walking
-  `LIVE_CONFIRM`, and worked around through the database rather than fixed.
+- ~~**Platform and account cannot be changed after setup.**~~ **Fixed 2026-08-31: the Settings page.**
+  Widening risk is two-press, narrowing it is one, and switching platform clears the chosen account
+  because an account on one platform does not exist on the other. Seen rendering on Windows.
 - **`LIVE_AUTONOMOUS` is refused, and correctly.** `ReconciliationProvable` is
   `SupportsClientOrderId && SupportsOrderHistory`. The first is now **true on evidence**; the second
   is **false for a known reason** — `IIndicatorDataProvider.GetService<T>()` throws
@@ -2625,14 +2629,19 @@ It is now session-aware, and says so.
   restart, which is what reconciliation after a dropped connection needs. But ATAS rebuilding the
   order from the broker's answer and ATAS rehydrating it from its own local store are
   indistinguishable from inside a chart strategy. Only the broker's own report separates them.
-- **The four obsolete order calls are still synchronous.** Gated on one unmeasured fact: whether
-  `OpenOrderAsync` completes on submission or on broker acknowledgement. Until they are flipped, the
-  call deadline covers **one of five write paths** — the other four cannot be given a deadline from
-  this side, so a block in any of them stops the pipe loop while the heartbeat reports READY.
-- **TradeAgent's own UI has never been looked at on Windows.** Only ATAS has. Every visual judgement
-  is still one made against the app on macOS. The bridge-refusal sentence on the dashboard status row
-  is ~450 characters and has never been seen rendering.
-- **The system-check screen's two-line rows were not seen rendering.** NOT VERIFIED.
+- **The four obsolete order calls are still synchronous**, so the call deadline covers **one of five
+  write paths** — a block in any of the other four stops the pipe loop while the heartbeat reports
+  READY. **No longer gated on a measurement:** `OpenOrderAsync` was measured on 2026-09-01 and
+  completes on ACKNOWLEDGEMENT. It is a decision now, and the reading makes it more delicate rather
+  than less — flipping moves the failure mode from "WaitFor gives up and returns the true state" to
+  "AtasCallTimeoutException, therefore UNKNOWN", and the margin protecting that was measured against
+  a simulator with no broker behind it.
+- ~~**TradeAgent's own UI has never been looked at on Windows.**~~ **Every page has now been seen
+  there** (2026-09-01: Dashboard, Safety, Settings, Inbox, Checks, Activity, Chat, and the Updates
+  card). It found four defects across two sessions, all fixed and re-photographed. **What has still
+  never been seen on Windows is the reconciliation-override card** — correctly absent there, because
+  nothing on that machine is flagged, so seeing it needs a flagged record in a scratch
+  `TRADEAGENT_HOME` rather than a search that returns nothing and gets read as evidence.
 - **Neither AI runtime is `Verified = true`.** That flag means proven on Windows.
 - **The bridge pipe is not a boundary against a same-user adversary.** It authenticates in both
   directions now, and the AI runtime runs as the same OS user and can read the secret file. The
@@ -2642,10 +2651,11 @@ It is now session-aware, and says so.
   witness record. Documented in code.
 - **The installer is unsigned.** Every user will see "Windows protected your PC". On a program that
   places trades, that wants a certificate.
-- **The inbox has never been used by a human or an AI.** The page renders and the operations answer
-  over the pipe, but no file has been dragged onto the window, the file picker has never been opened,
-  and no agent has been asked to record its work with `trade material`. The drop, pick and copy paths
-  are compiled and unexercised.
+- **The inbox's COPY path has never run**, though the inbox itself has: a file was handed over on
+  Windows, recorded with a hash matching one computed independently beforehand, rendered, then removed
+  and dropped from both tables. What remains unexercised is the drop handler, the picker's copy and
+  the collision suffix — **and the picker cannot be driven from this harness**, so it needs a person
+  at the keyboard. No agent has been asked to record its own work with `trade material` yet either.
 - **Live money has never been touched.** Correct for this stage.
 - **The updater has never updated anything.** v0.1.0 is published and the check reads it correctly on
   Windows ("you have the newest one"), the installer script compiles, and `/relaunch=1` provably
@@ -2664,14 +2674,21 @@ It is now session-aware, and says so.
 
 ## Next integration target
 
-1. **Walk `LIVE_CONFIRM` end to end on the simulated crypto account** — agent proposes, request lands
-   in `AWAITING_APPROVAL`, human approves in the app, order reaches ATAS. No terminal anywhere.
-2. **Measure `OpenOrderAsync`'s completion point, then flip the four obsolete call sites**, closing
-   the four write paths that currently have no deadline.
-3. **Look at TradeAgent's own UI on Windows** — the setup journey end to end, and the status row.
-   Unlock the console first or captures come back useless.
-4. Then the staged live trial: paper → extended paper run → one tiny live order → disconnect/recovery
-   test → autonomous live permission.
+Rewritten 2026-09-01. The first three of the previous four are done — `LIVE_CONFIRM` is walked,
+`OpenOrderAsync` is measured, and every page has been seen on Windows.
+
+1. **Watch one update install itself.** Publish a release newer than the running build and watch the
+   whole act: banner, download, checksum, two-press install, Setup replacing a RUNNING TradeAgent,
+   relaunch. It is the only untested half of a feature that is now live in front of a user, and an
+   app that is up to date never downloads anything, so it cannot be tested without that release.
+2. **Decide the four obsolete call sites.** The measurement is in; the decision wants a real broker,
+   because the margin that makes it safe was measured against a simulator.
+3. **The two remaining pieces of eyes:** the reconciliation card on Windows (needs a flagged record in
+   a scratch home) and the inbox drop/picker copy path (needs a person at the keyboard).
+4. **Give `GatewayPipeServer` a buffer and its writes a deadline** — the same coupling that froze the
+   bridge, still standing on the agent-facing pipe.
+5. Then the staged live trial: paper → extended paper run → one tiny live order → disconnect/recovery
+   test → autonomous live permission. **Gated on a broker existing**, on top of every other gate.
 
 ## Decisions changed from the brief
 

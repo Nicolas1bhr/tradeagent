@@ -9,7 +9,14 @@ Prefer official docs, then official release notes/source, then maintained exampl
 
 ---
 
-## A1 — ATAS extension API  ·  BLOCKING for real trading
+## A1 — ATAS extension API  ·  LARGELY ANSWERED ON HARDWARE, read this first
+
+**Overtaken by evidence, 2026-08-27 → 2026-09-01.** The adapter compiles against real ATAS, runs
+inside it, and has placed, read back and cancelled orders on two simulated backends; `LIVE_CONFIRM`
+has been walked end to end. Do not work this table from scratch — read `BUILD-STATUS.md`'s dated
+sections first and treat anything not struck through below as still open. The two questions that
+decide how much autonomy is safe are both answered, one true and one false, and neither is to be
+re-litigated by hard-coding a capability.
 
 **File:** `src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs` (the only file in the product that cannot
 compile without ATAS). **Reference implementation:** `LoopbackAtasAdapter.cs` in the same folder shows
@@ -26,8 +33,8 @@ Confirm, from ATAS's own documentation and the assemblies in your install:
 | 5 | Security/instrument enumeration, with tick size, tick value and contract size. |
 | 6 | Best bid/ask access, and the timestamp of the last update (staleness detection depends on it). |
 | 7 | Position enumeration and the position-changed callback. |
-| 8 | **Order placement carrying a client-supplied identifier, readable back from the order list.** |
-| 9 | **Order history including finished orders, covering an arbitrary `since` timestamp.** |
+| 8 | ~~**Order placement carrying a client-supplied identifier, readable back from the order list.**~~ **ANSWERED 2026-08-30: YES.** An order was placed, ATAS was shut down, and the identifier was found again on an order in the restarted platform's own collection, beside the broker id the dead run had recorded in advance. `SupportsClientOrderId` is true **on evidence**. In-session the reading is still `proven-sameref` and still reports false, on two connectors, so that is how ATAS's collection works rather than one backend's quirk. |
+| 9 | ~~**Order history including finished orders, covering an arbitrary `since` timestamp.**~~ **ANSWERED 2026-08-28: NO, for a known reason.** `IIndicatorDataProvider.GetService<T>()` throws `NotSupportedException` for *every* type, including one reachable as a property on the same interface, so every cache route is dead. `SupportsOrderHistory` is false and the gateway refuses `LIVE_AUTONOMOUS` on that basis. Shippable. |
 | 10 | Modify, cancel, cancel-all, and programmatic position flattening. |
 | 11 | Execution/trade callbacks, and whether they carry the client identifier. |
 | 12 | Which failures are definite broker rejections versus ambiguous ones. |
