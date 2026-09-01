@@ -194,10 +194,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.ReadWrite, System.Security.AccessControl.AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.CreateNewInstance, System.Security.AccessControl.AccessControlType.Allow));
             return NamedPipeServerStreamAcl.Create(_pipe, PipeDirection.InOut, 1,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+                PipeTransmissionMode.Byte, PipeOptions.Asynchronous, Buffer, Buffer, security);
         }
-        return new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        return new NamedPipeServerStream(_pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous, Buffer, Buffer);
     }
+
+    /// <summary>
+    /// The pipe's buffer, and it was 0 until it was measured.
+    ///
+    /// A Windows named pipe created with no buffer completes a write only when the far end reads it,
+    /// however small the frame — so every response and every heartbeat the bridge sends was coupled
+    /// to this process reading promptly, with no slack at all. That is the same property that froze
+    /// the bridge in the deadlock recorded on 2026-09-01: it is not only an adversary who can stop
+    /// reading, a stalled reader does it too. 8 KiB is a hint to the kernel, not a contract, and it
+    /// changes nothing about the protocol — a frame that fits simply no longer waits for a reader.
+    /// The bridge's own write deadline stays the backstop for a peer that never reads at all.
+    /// </summary>
+    const int Buffer = 8192;
 
     void Drop(string why)
     {

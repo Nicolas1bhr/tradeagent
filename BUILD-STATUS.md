@@ -2304,6 +2304,92 @@ either is not offered at all rather than half-installed:
 release would push it to every user through the updater written above. A release is cut from a machine
 with ATAS or it is not cut.
 
+## Verified on real Windows 11 hardware, 2026-09-01, later session — the bridge could be frozen by the peer it was refusing
+
+**Found by measurement, not by reading.** CI had been red on `windows-latest` for four commits with
+four `BridgePipeAuthTests` failures. They were written on macOS, where the peer-identity half of the
+bridge handshake does not execute at all, so they handed the bridge a credential recording no image —
+which on Windows is a refusal at step 1, before the proof half those tests are about. That is correct
+product behaviour ("could not check" is the state an impersonator would engineer) and the wrong test.
+
+**Fixing the tests uncovered a real defect underneath them.** With the identity half satisfied, the
+handshake completed for the first time on Windows — and the test host hung. No thread was in our code
+at all; `dotnet-stack` showed thirteen threads, none of them ours, and no CPU. `dotnet-dump`'s
+`dumpasync` named it exactly:
+
+```
+System.IO.StreamWriter+<<FlushAsyncInternal>g__Core|79_0>d
+  System.IO.StreamWriter+<WriteAsyncInternal>d__71
+    TradeAgent.AtasBridge.BridgeServer+<SendRaw>d__46
+      TradeAgent.AtasBridge.BridgeServer+<Refuse>d__36
+        TradeAgent.AtasBridge.BridgeServer+<Authenticate>d__35
+          TradeAgent.AtasBridge.BridgeServer+<RunAsync>d__34
+            TradeAgent.AtasBridge.BridgeServer+<DisposeAsync>d__47
+              BridgePipeAuthTests+<A_pipe_owner_that_cannot_prove_the_secret_never_reaches_the_adapter>d__6
+```
+
+with the squatter pending in a write of its own. **Both ends were parked in a write that could never
+complete, and the bridge was frozen inside the refusal of the very peer that froze it.**
+
+**Why it was reachable, and it is not only an adversary.** `SendRaw` had no deadline — `AuthTimeout`
+covered the read and nothing covered the write — and a Windows named pipe created with no buffer
+completes a write only when the far end reads it, however small the frame. **TradeAgent's own
+bridge-facing pipe was created with no buffer** (`AtasConnector.cs`, `0, 0` on both branches), so
+every response and heartbeat the bridge sends was coupled to this process reading promptly, with no
+slack. A stalled reader does what a hostile one does.
+
+**The worst part is where it lands.** `BridgeServer.DisposeAsync` cancelled its token and then awaited
+the loop — but a token cannot recall a write the kernel has already accepted, only closing the handle
+can. `DisposeAsync` runs when ATAS unloads the strategy. Forever would have been ATAS's problem too.
+
+### Fixed
+
+- **`BridgeServer.WriteTimeout`** (default 10s), on every frame and on the queue behind it. A frame
+  that has not landed ends the connection by disposing the pipe, which fails the pending write and
+  returns the loop to reconnect. The abandoned task is observed rather than dropped.
+- **`DisposeAsync` closes the pipe BEFORE it waits on the loop**, and the wait is bounded at 5s. It
+  is also idempotent now.
+- **`Push` no longer touches a disposed token source.** Nothing unsubscribes from the adapter, so
+  ATAS can raise an event into a disposed bridge, and reading `_cts.Token` then threw straight back
+  into ATAS's own event raise.
+- **The bridge pipe is created with an 8 KiB buffer** on both branches, so a frame that fits no
+  longer waits for a reader at all. The deadline is the backstop, not the only defence.
+- **The four tests now record this process as the expected image**, which is what they meant, and the
+  squatter's pipe is buffered like a normal peer's. The hostile zero-buffer choice is made explicitly
+  by the one test that is about it.
+
+### Verified, on the hardware
+
+```
+Passed!  - Failed:     0, Passed:    13, Skipped:     0, Total:    13, Duration: 1 s   (BridgePipeAuthTests)
+Passed!  - Failed:     0, Passed:   146, Skipped:     0, Total:   146, Duration: 14 s  (IntegrationTests, whole project)
+```
+
+**And the new test was proven to bite.** With the pre-fix `BridgeServer` restored on the machine and
+nothing else changed, the same test does not fail — it hangs, and the run has to be killed by a
+watchdog:
+
+```
+Test Run Aborted.
+The test running when the crash occurred:
+TradeAgent.Tests.Integration.BridgePipeAuthTests.A_peer_that_accepts_the_connection_and_never_reads_cannot_freeze_the_bridge
+```
+
+The reproduction of the ORIGINAL four failures is recorded too, on the same machine, before any fix:
+`Failed: 4, Passed: 7`.
+
+### NOT VERIFIED, and one hazard left standing on purpose
+
+- **This was never observed in production.** No frozen bridge has been seen inside ATAS; the defect
+  was reached through a test double that stops reading. What is proven is that the path existed and
+  that it no longer does.
+- **`GatewayPipeServer` still creates its pipe with no buffer** (`0, 0`, both branches). That is the
+  same class of coupling on the agent-facing pipe, and it is deliberately left alone: it was not the
+  path measured here, and the agent IPC layer is not something to change on an inference the same
+  hour as a deployment. Its own piece of work.
+- **`Subscribe()` still has no unsubscribe.** The disposed check makes the event safe; it does not
+  make the subscription go away.
+
 ## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -28,20 +29,37 @@ namespace TradeAgent.Tests.Integration;
 /// have each cost a session, and an authentication failure must be distinguishable from all of them
 /// by reading one line.
 ///
-/// WHAT IS NOT TESTED HERE, AND CANNOT BE. The peer-identity half of the defence
-/// (<c>GetNamedPipeServerProcessId</c> into <c>QueryFullProcessImageName</c>) only executes on
-/// Windows. The RULE it feeds is tested — <see cref="The_image_rule_refuses_a_stranger_and_the_managed_runtime_folder"/>
-/// exercises <see cref="BridgePipeAuth.ImageVerdict"/> directly, which is where every decision is
-/// made — but the kernel calls that supply its argument do not run on the machine this suite runs on.
+/// THE PEER-IDENTITY HALF, AND THE ASSUMPTION THAT BROKE. The bridge asks Windows who owns the pipe
+/// BEFORE it asks the peer for anything, and refuses if the answer is not the program TradeAgent
+/// recorded — including when nothing was recorded, because "could not check" is the state an
+/// impersonator would engineer. That is correct, and it is why every credential below records THIS
+/// process: in these tests the peer is this test process, so a credential naming anything else (or
+/// naming nothing) refuses at step 1 and the proof half these tests are about is never reached.
+///
+/// This was written on macOS, where the identity half does not execute at all, so a credential that
+/// recorded no image was invisible here — and failed four of these tests on every Windows CI run for
+/// four commits. The rule itself is still tested directly and portably in
+/// <see cref="The_image_rule_refuses_a_stranger_and_the_managed_runtime_folder"/>; the kernel calls
+/// that feed it are now exercised on Windows by
+/// <see cref="A_peer_that_is_not_the_recorded_program_is_refused_before_the_secret_is_asked_for"/>.
 /// </summary>
 public class BridgePipeAuthTests
 {
     static string NewPipe() => "ta-auth-" + Guid.NewGuid().ToString("n")[..12];
 
-    static BridgeCredential Cred(string? image = "/opt/tradeagent/TradeAgent") =>
-        new(new string('a', 64), image);
+    static string Secret(char c) => new(c, 64);
 
-    static BridgeCredential OtherCred() => new(new string('b', 64), "/opt/tradeagent/TradeAgent");
+    /// <summary>
+    /// The program these tests expect to find on the other end of the pipe: this test process, which
+    /// is what the squatters and the connector below actually run inside. See the class comment —
+    /// recording anything else here refuses every peer on Windows before the proof is ever asked for.
+    /// </summary>
+    static string Self => Environment.ProcessPath ?? "";
+
+    static BridgeCredential Cred() => new(Secret('a'), Self);
+
+    /// <summary>The same peer, a different secret. Only the secret differs, so only the secret is on trial.</summary>
+    static BridgeCredential OtherCred() => new(Secret('b'), Self);
 
     // ---------------------------------------------------------------- the one that matters
 
@@ -64,7 +82,7 @@ public class BridgePipeAuthTests
         squatter.Start();
 
         var adapter = new CountingAdapter();
-        await using var bridge = new BridgeServer(adapter, pipe, Cred(null))
+        await using var bridge = new BridgeServer(adapter, pipe, Cred())
         {
             ReconnectDelay = TimeSpan.FromMilliseconds(200),
             AuthTimeout = TimeSpan.FromSeconds(2)
@@ -99,7 +117,7 @@ public class BridgePipeAuthTests
         squatter.Start();
 
         var adapter = new CountingAdapter();
-        await using var bridge = new BridgeServer(adapter, pipe, Cred(null))
+        await using var bridge = new BridgeServer(adapter, pipe, Cred())
         {
             ReconnectDelay = TimeSpan.FromMilliseconds(200),
             AuthTimeout = TimeSpan.FromMilliseconds(700)
@@ -125,7 +143,7 @@ public class BridgePipeAuthTests
         squatter.Start();
 
         var adapter = new CountingAdapter();
-        await using var bridge = new BridgeServer(adapter, pipe, Cred(null))
+        await using var bridge = new BridgeServer(adapter, pipe, Cred())
         {
             ReconnectDelay = TimeSpan.FromMilliseconds(100),
             AuthTimeout = TimeSpan.FromMilliseconds(700)
@@ -145,7 +163,7 @@ public class BridgePipeAuthTests
         await using var squatter = new SquattingPipeOwner(pipe, OtherCred());
         squatter.Start();
 
-        await using var bridge = new BridgeServer(new CountingAdapter(), pipe, Cred(null))
+        await using var bridge = new BridgeServer(new CountingAdapter(), pipe, Cred())
         {
             ReconnectDelay = TimeSpan.FromMilliseconds(200),
             AuthTimeout = TimeSpan.FromSeconds(2)
@@ -191,7 +209,7 @@ public class BridgePipeAuthTests
     public async Task The_real_pair_authenticate_each_other_and_then_trade()
     {
         var pipe = NewPipe();
-        var cred = Cred(Environment.ProcessPath);
+        var cred = Cred();
 
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), cred);
         await connector.ConnectAsync();
@@ -220,7 +238,7 @@ public class BridgePipeAuthTests
     public async Task A_bridge_holding_a_different_secret_is_refused_and_named_by_the_connector()
     {
         var pipe = NewPipe();
-        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5), Cred(Environment.ProcessPath));
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5), Cred());
         await connector.ConnectAsync();
 
         var adapter = new LoopbackAtasAdapter();
@@ -254,7 +272,7 @@ public class BridgePipeAuthTests
     public async Task A_bridge_that_predates_authentication_is_named_rather_than_left_silent()
     {
         var pipe = NewPipe();
-        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5), Cred(Environment.ProcessPath))
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5), Cred())
         {
             AuthGrace = TimeSpan.FromMilliseconds(300)
         };
@@ -280,6 +298,95 @@ public class BridgePipeAuthTests
         var named = connector.StatusDetail!;
         Assert.Contains("did not authenticate", named);
         Assert.Contains("reinstall the add-on", named);
+    }
+
+    /// <summary>
+    /// The peer-identity half through the REAL kernel calls, on the one OS where they run.
+    ///
+    /// The squatter here holds the RIGHT secret — only its identity is wrong — so a bridge that
+    /// asked for the proof first, or asked for it at all, would let it through. The refusal must
+    /// name the mismatch, and naming it is also the evidence that
+    /// <c>GetNamedPipeServerProcessId</c>/<c>QueryFullProcessImageName</c> actually answered: had
+    /// they failed, the reason would be "would not say which program", which is a refusal for a
+    /// different cause and would hide this one.
+    ///
+    /// Runs on Windows only, and returns rather than failing elsewhere: off Windows there is no ATAS
+    /// and no product, and <see cref="BridgePipeAuth.ImageVerdict"/> is covered portably below.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_is_not_the_recorded_program_is_refused_before_the_secret_is_asked_for()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var pipe = NewPipe();
+        await using var squatter = new SquattingPipeOwner(pipe, Cred());
+        squatter.Start();
+
+        var adapter = new CountingAdapter();
+        await using var bridge = new BridgeServer(adapter, pipe,
+            new BridgeCredential(Secret('a'), @"C:\Program Files\Somebody Else\Other.exe"))
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(200),
+            AuthTimeout = TimeSpan.FromSeconds(2)
+        };
+        bridge.Start();
+
+        await Wait(() => bridge.LastAuthFailure is not null);
+
+        var reason = bridge.LastAuthFailure!.Reason;
+        Assert.Contains("but TradeAgent recorded", reason);
+        Assert.DoesNotContain("would not say", reason);
+        Assert.Contains("Other.exe", reason);
+        Assert.Equal(0, adapter.Placed);
+        Assert.False(bridge.Connected);
+    }
+
+    /// <summary>
+    /// A peer that accepts the connection and then never reads a byte. It must not be able to stop
+    /// this bridge, and above all it must not be able to stop this bridge from being DISPOSED —
+    /// that call runs when ATAS unloads the strategy.
+    ///
+    /// FOUND BY MEASUREMENT, on Windows, 2026-09-01. The write side had no deadline, so the bridge
+    /// parked inside a frame that could never land, and the async chain in the dump ran
+    /// DisposeAsync -> RunAsync -> Authenticate -> Refuse -> SendRaw -> WriteAsyncInternal. Nothing
+    /// on any thread; nothing to time out; nothing to cancel, because a token cannot recall a write
+    /// the kernel has already accepted. Only closing the handle ends it, which is what
+    /// <see cref="BridgeServer.WriteTimeout"/> and the disposal order now do.
+    ///
+    /// The 0-byte buffer is the hostile choice a squatter is free to make: it blocks every write to
+    /// it, however small.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_accepts_the_connection_and_never_reads_cannot_freeze_the_bridge()
+    {
+        var pipe = NewPipe();
+        await using var squatter = new SquattingPipeOwner(pipe, credential: null)
+        {
+            Answer = false, Read = false, BufferBytes = 0
+        };
+        squatter.Start();
+
+        var adapter = new CountingAdapter();
+        await using var bridge = new BridgeServer(adapter, pipe, Cred())
+        {
+            ReconnectDelay = TimeSpan.FromMilliseconds(100),
+            AuthTimeout = TimeSpan.FromMilliseconds(500),
+            WriteTimeout = TimeSpan.FromMilliseconds(500)
+        };
+        bridge.Start();
+
+        // It got a connection, and the bridge is now trying to write a challenge into a peer that
+        // will never read one.
+        await Wait(() => Volatile.Read(ref squatter.Connections) >= 1);
+
+        var timer = Stopwatch.StartNew();
+        await bridge.DisposeAsync();
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(8),
+            $"DisposeAsync took {timer.Elapsed.TotalSeconds:0.0}s against a peer that never reads; it used to never return");
+        Assert.False(bridge.Connected);
+        Assert.Equal(0, adapter.Placed);
     }
 
     // ---------------------------------------------------------------- the rules themselves
@@ -373,7 +480,27 @@ public class BridgePipeAuthTests
         /// <summary>False makes it say nothing at all, which is the simpler squat.</summary>
         public bool Answer { get; init; } = true;
 
+        /// <summary>
+        /// False makes it accept the connection and then never read a byte — the peer that used to
+        /// freeze the bridge permanently. See
+        /// <see cref="A_peer_that_accepts_the_connection_and_never_reads_cannot_freeze_the_bridge"/>.
+        /// </summary>
+        public bool Read { get; init; } = true;
+
+        /// <summary>
+        /// The pipe's buffer, in bytes, and it is load-bearing rather than a detail.
+        ///
+        /// A Windows server pipe created with 0 blocks EVERY write until somebody reads it, however
+        /// small the frame. The five-argument NamedPipeServerStream constructor passes 0, which is
+        /// what this class used, and it is why four of these tests deadlocked on Windows the moment
+        /// they got far enough to exchange frames at all: both ends sat in a write that could never
+        /// complete. A peer that is only pretending to be TradeAgent behaves like a normal one here;
+        /// the hostile choice is made explicitly, by the one test that is about it.
+        /// </summary>
+        public int BufferBytes { get; init; } = 8192;
+
         public int PlaceAttempts;
+        public int Connections;
         public string? RefusalReason { get; private set; }
 
         public void Start() => _loop ??= Task.Run(() => Run(_cts.Token));
@@ -386,8 +513,15 @@ public class BridgePipeAuthTests
                 try
                 {
                     server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
-                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous, BufferBytes, BufferBytes);
                     await server.WaitForConnectionAsync(ct);
+                    Interlocked.Increment(ref Connections);
+
+                    if (!Read)
+                    {
+                        // Connected, and deaf. Hold the connection open and read nothing.
+                        try { await Task.Delay(Timeout.Infinite, ct); } catch (OperationCanceledException) { break; }
+                    }
 
                     var reader = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
                     var writer = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };

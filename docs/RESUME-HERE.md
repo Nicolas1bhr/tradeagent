@@ -29,6 +29,13 @@ Settled on 2026-09-01, do not redo:
   itself resume trading. All fixed. `BUILD-STATUS.md`'s 2026-09-01 section has the five links.
 - **The header said "real money" whenever the platform had not answered.** Fixed and verified on
   hardware in both reachable states.
+- **The bridge could be frozen forever by the peer it was refusing, and now cannot.** Found while
+  fixing four Windows CI failures that had stood for four commits: `SendRaw` had no write deadline,
+  and a Windows pipe with no buffer completes a write only when the far end reads it — so the bridge
+  parked inside the refusal of the peer that parked it, and `DisposeAsync` (which runs when ATAS
+  unloads the strategy) waited on that forever. Fixed, with the async chain from the dump quoted in
+  `BUILD-STATUS.md`. **CI is green on all three platforms again**, which also un-blocks the
+  `package` job that builds the installer.
 - **TradeAgent now updates itself from GitHub releases** — a banner, a Settings card, two-press
   install, checksum-checked download, silent Setup with a relaunch. Seen finding a real release
   against a stand-in GitHub feed on macOS; `TradeAgent.iss` compiles on Windows and `/relaunch=1`
@@ -322,6 +329,12 @@ one gate; the other is shut on an answer, not a gap.
   all-clear on the simulator) and the `trade status` wire. Contained, but its own piece of work.
 - **Is `inbox/` size-capped?** Nothing stops a 60 GB drop. The scanner survives it — hashing is
   bounded per pass — the disk may not.
+- **`GatewayPipeServer` creates its pipe with no buffer** (`0, 0`, both branches), which is the same
+  coupling that froze the bridge on 2026-09-01 — a write completes only when the far end reads it.
+  The bridge half is fixed and measured; this one was deliberately left alone rather than changed on
+  an inference. It wants the same treatment: a buffer, and a deadline on the write.
+- **`BridgeServer.Subscribe()` has no unsubscribe.** A disposed bridge can still be handed an adapter
+  event; the disposed check makes that safe rather than making it stop.
 - **Watch a real agent use the inbox.** Drop something in, ask the AI to work with it, and see
   whether it runs `trade material ran ...` unprompted. If it does not, the notes half of the ledger
   is empty forever and `AGENTS.md`'s wording is what needs fixing, not the code.

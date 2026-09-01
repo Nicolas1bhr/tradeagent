@@ -33,6 +33,7 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
     StreamWriter? _writer;
     Task? _loop;
     volatile bool _authenticated;
+    volatile bool _disposed;
     int _authFailures;
 
     public bool Connected { get; private set; }
@@ -45,6 +46,23 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
     /// and an authentication failure must never be a fourth.
     /// </summary>
     public TimeSpan AuthTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// How long ONE frame gets to reach the peer before the connection is declared dead.
+    ///
+    /// The read side had a deadline from the beginning and the write side had none, which left the
+    /// whole class open at the other end: a peer that accepts the connection and then simply stops
+    /// reading parks this bridge inside a write that can never complete. Windows named pipes make
+    /// that trivial — a server pipe created with no buffer blocks every write until somebody reads
+    /// it — and a squatter chooses its own buffer size.
+    ///
+    /// Measured, not reasoned: on Windows the refusal frame and the squatter's next frame pended
+    /// against each other forever, and the async chain from the dump was
+    /// DisposeAsync -> RunAsync -> Authenticate -> Refuse -> SendRaw -> WriteAsyncInternal. So the
+    /// bridge could be frozen by the very peer it was in the middle of refusing, and unloading the
+    /// strategy from ATAS would have hung with it.
+    /// </summary>
+    public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>Why the last refusal happened, or null if the peer has been accepted. Diagnostic.</summary>
     public BridgeAuthFailure? LastAuthFailure { get; private set; }
@@ -354,27 +372,84 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
         adapter.AccountChanged += a => Push(BridgeEvents.Account, a);
     }
 
+    /// <summary>
+    /// An adapter event on its way to the peer, fire and forget.
+    ///
+    /// The disposed check is not defensive noise: nothing unsubscribes from the adapter, so ATAS can
+    /// raise an event into this object after <see cref="DisposeAsync"/> has run, and reading
+    /// <c>_cts.Token</c> then throws straight back into ATAS's own event raise.
+    /// </summary>
     void Push(string name, object payload)
     {
-        if (!Connected) return;
-        _ = SendRaw(new { v = Versions.BridgeProtocolVersion, @event = name, data = payload }, _cts.Token);
+        if (!Connected || _disposed) return;
+        try { _ = SendRaw(new { v = Versions.BridgeProtocolVersion, @event = name, data = payload }, _cts.Token); }
+        catch (ObjectDisposedException) { /* disposed between the check and the read */ }
     }
 
+    /// <summary>
+    /// One frame to the peer, with a deadline on it.
+    ///
+    /// Cancellation cannot reach a write that Windows has already accepted — only closing the handle
+    /// can — so a frame that has not landed within <see cref="WriteTimeout"/> ends the connection by
+    /// disposing the pipe, which fails the pending write and returns the read loop to
+    /// <see cref="RunAsync"/> to reconnect. The abandoned task is observed rather than dropped: an
+    /// unhandled fault inside ATAS is not ours to leave lying around.
+    /// </summary>
     async Task SendRaw(object frame, CancellationToken ct)
     {
         var w = _writer;
         if (w is null) return;
-        await _send.WaitAsync(ct);
-        try { await w.WriteLineAsync(Json.Write(frame)); }
+
+        // The queue for the writer is bounded too. Without it, one stuck frame makes every later
+        // caller wait behind it for as long as the peer feels like — the heartbeat included, which
+        // is the signal TradeAgent uses to decide this bridge is alive.
+        if (!await _send.WaitAsync(WriteTimeout, ct)) { DropConnection(); return; }
+        try
+        {
+            var write = w.WriteLineAsync(Json.Write(frame));
+            try
+            {
+                await write.WaitAsync(WriteTimeout, ct);
+            }
+            catch (TimeoutException)
+            {
+                Observe(write);
+                DropConnection();
+            }
+        }
         catch (Exception) { Connected = false; }
         finally { _send.Release(); }
     }
 
+    /// <summary>Ends the connection now. The pending overlapped write dies with the handle.</summary>
+    void DropConnection()
+    {
+        Connected = false;
+        _authenticated = false;
+        try { _client?.Dispose(); } catch (Exception) { /* already gone */ }
+    }
+
+    static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
+
+    /// <summary>
+    /// Stops the bridge. THE PIPE IS CLOSED BEFORE THE LOOP IS WAITED ON, and the wait is bounded.
+    ///
+    /// The other order — cancel, await the loop, then close — is what was here, and it hangs
+    /// forever against a peer that has stopped reading: the loop is parked in a write, and a token
+    /// cannot cancel a write the kernel has already taken. This method runs when ATAS unloads the
+    /// strategy, so "forever" would have been ATAS's problem as much as ours.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;      // idempotent: disposing twice is not an error, it is a no-op
+        _disposed = true;
         await _cts.CancelAsync();
-        if (_loop is not null) { try { await _loop; } catch (Exception) { } }
-        _client?.Dispose();
+        try { _client?.Dispose(); } catch (Exception) { /* already gone */ }
+        if (_loop is not null)
+        {
+            try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception) { /* cancelled, faulted, or would not let go: either way we are done */ }
+        }
         _cts.Dispose();
         _send.Dispose();
     }
