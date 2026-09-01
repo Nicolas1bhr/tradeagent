@@ -10,8 +10,9 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Tasks 1–4 and 7 are done and verified. The machine is working, CI is green on all three platforms,
-and nothing is blocked.** What is left is in **The work queue**; if you only do one, finish task 7 —
+**Tasks 1, 2, 3 and 7 are done and verified; task 4 is done bar two things nobody can look at without
+setting them up first. The machine is working, CI is green on all three platforms, and nothing is
+blocked.** What is left is in **The work queue**; if you only do one, finish task 7 —
 publish a release newer than the running build and watch an update actually install itself. It is the
 only untested half of a feature that is already live in front of a real user, and it cannot be tested
 without that release, because an app that is up to date never downloads anything.
@@ -267,7 +268,7 @@ card correctly does not list it — a stranded-but-unflagged record has no in-pr
 acceptable for one legacy row that can no longer be created. **Do not hand-edit the database**: that is
 the one move this record exists by resisting.
 
-### 4. Look at TradeAgent's own UI on Windows — with eyes
+### 4. MOSTLY DONE 2026-09-01 — every page has been looked at on Windows, two things have not
 
 **Every page has now been seen on Windows** (2026-09-01): Dashboard, Safety, Settings, Inbox, Checks,
 Activity and Chat. It has earned its place three times over now — the truncation defect on
