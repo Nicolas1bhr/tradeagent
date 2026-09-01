@@ -2327,12 +2327,47 @@ Done. Artifacts in artifacts
 The ABSENT line is correct and is why that artifact is labelled `NO-ATAS-ADAPTER` and must not be
 published as a release.
 
+### v0.1.0 is published, and the check was watched to read it
+
+The installer was built on the test machine **with the ATAS adapter in it** — the artifact CI cannot
+produce — and published as the repository's first release:
+
+```
+   ATAS adapter      PRESENT - AtasStrategyAdapter is compiled into the bridge assembly
+   installer         artifacts\TradeAgent-Setup-x64.exe  (112.2 MB)
+f243bdcc5906e99a2e43dbe0ac517780a6597a71d0d3913871433e909fcc0a1b  artifacts/TradeAgent-Setup-x64.exe
+```
+
+The file was transferred and hashed again on the other machine before it was uploaded, and the two
+readings agree, so what is published is the file that was built. The release as the updater sees it:
+
+```
+tag       : v0.1.0 | draft: False | prerelease: False
+asset     : SHA256SUMS.txt                        497 bytes
+asset     : TradeAgent-Setup-x64.exe      117,641,311 bytes
+```
+
+**Then the app read it, on Windows, without being asked.** TradeAgent was restarted on the test
+machine and its startup check ran against the real release:
+
+```
+This version              0.1.0
+Newest published version  0.1.0 — you have the newest one
+Automatic checks          on — once at startup, then every six hours
+Last checked 1 September, 14:18.
+```
+
+No banner, no Install update button, and the note is muted rather than amber — the healthy state,
+reached from the live GitHub answer rather than from a fixture. All six health rows stayed READY
+across the restart, bridge included.
+
+**One precision about what the tag points at.** The staged build was compiled on the test machine
+from the tree as pushed there, which differs from the tagged commit `88df7da` in exactly two files —
+`BUILD-STATUS.md` and `docs/RESUME-HERE.md`. No file that reaches a binary differs. The tag is on
+`88df7da` deliberately, so the release points at the commit whose record describes it.
+
 ### NOT VERIFIED
 
-- **No TradeAgent release has ever existed.** `git tag` is empty and the repository has published no
-  releases, so on the real update source the check answers 404 and the app correctly reports that it
-  could not be checked. Everything above about *finding* an update was seen against a stand-in feed.
-  The first real release is what turns this from working code into a working feature.
 - **Setup has never replaced a RUNNING TradeAgent.** The relaunch test installed into an empty folder
   with nothing holding the files. The real update closes the app first and leans on
   `CloseApplications=yes` for the moment in between — that moment has been observed zero times.
@@ -2340,7 +2375,9 @@ published as a release.
   one continuous act is untested; each half is tested separately, which is not the same thing.
 - **The download and the checksum have never run against a real asset.** Both are exercised through
   an injected seam in the tests. `Downloader.DownloadAsync` itself is the same code the AI runtime
-  install already uses, which is proven on Windows, but this caller of it is not.
+  install already uses, which is proven on Windows, but this caller of it is not — and it stays that
+  way until a release exists that is NEWER than the running build, because an app that is up to date
+  never downloads anything. Cutting v0.1.1 is what exercises it.
 - **`UpdateVersion` is compared against `Versions.App`,** which reads the entry assembly's version
   (`0.1.0` today, from `Directory.Build.props`). A release tagged with anything that is not a
   1-to-3-part number is refused rather than guessed, on purpose — including four-part tags, which is
@@ -2610,10 +2647,10 @@ It is now session-aware, and says so.
   and no agent has been asked to record its work with `trade material`. The drop, pick and copy paths
   are compiled and unexercised.
 - **Live money has never been touched.** Correct for this stage.
-- **The updater has never updated anything.** Finding a release renders correctly (seen against a
-  stand-in feed), the installer script compiles, and `/relaunch=1` provably starts the new build on
-  Windows — but no TradeAgent release exists to install, Setup has never replaced a *running*
-  TradeAgent, and the press-to-restarted-app path has never been walked as one act.
+- **The updater has never updated anything.** v0.1.0 is published and the check reads it correctly on
+  Windows ("you have the newest one"), the installer script compiles, and `/relaunch=1` provably
+  starts the new build there — but nothing has ever been downloaded or installed by it, because
+  nothing newer than the running build has been published. That needs a second release.
 
 ## Current blockers
 
