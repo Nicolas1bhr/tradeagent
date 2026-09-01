@@ -22,6 +22,9 @@ public static class Paths
     public static string State { get; } = Sub("state");
     public static string BridgeDir { get; } = Sub("bridge");
 
+    /// <summary>Where a downloaded TradeAgent installer waits to be run. One release per subfolder.</summary>
+    public static string Updates { get; } = Sub("updates");
+
     public static string DatabaseFile => Path.Combine(State, "tradeagent.db");
     public static string IpcTokenFile => Path.Combine(State, "ipc.token");
     public static string InstanceLockFile => Path.Combine(State, "gateway.lock");
@@ -47,7 +50,7 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, Bin, Logs, State, BridgeDir })
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, Bin, Logs, State, BridgeDir, Updates })
         {
             Directory.CreateDirectory(d);
             if (!Directory.Exists(d)) throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, $"cannot create {d}");

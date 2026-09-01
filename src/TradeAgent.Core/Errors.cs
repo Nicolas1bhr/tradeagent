@@ -15,7 +15,8 @@ public enum ErrorCode
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, RISK_LIMIT_EXCEEDED, TRADING_PAUSED_UNRECONCILED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
-    INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION
+    INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
+    UPDATE_FAILED
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
@@ -60,6 +61,7 @@ public static class Errors
         [ErrorCode.INVALID_REQUEST]                = ("The AI sent a request TradeAgent did not understand.", "No action needed.", false),
         [ErrorCode.GATEWAY_ALREADY_RUNNING]        = ("TradeAgent is already running.", "Use the window that is already open.", false),
         [ErrorCode.ILLEGAL_STATE_TRANSITION]       = ("An internal safety check blocked an inconsistent update.", "Nothing was sent to the broker. Create a support package.", false),
+        [ErrorCode.UPDATE_FAILED]                  = ("The new version of TradeAgent could not be installed.", "Check your internet connection and press Install update again. The version you have is untouched.", true),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)

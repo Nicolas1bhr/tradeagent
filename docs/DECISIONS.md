@@ -125,6 +125,27 @@ Its presence becomes an observable fact — a connection plus a heartbeat — so
 continue by itself once the user starts the strategy inside ATAS, instead of asking them to confirm
 they did something the software can see for itself.
 
+**The app updates itself from GitHub releases, and never on its own.**
+A background check asks `api.github.com` for the newest release of this repository, compares the tag
+against the running assembly version, and lights a banner. That is the whole automatic half. Both
+routes to installing are two-press, because the thing being replaced is the program holding the user's
+open orders, and the armed label names what the second press interrupts. The download is verified
+against the release's own `SHA256SUMS.txt` — which proves the transfer, not the publisher; the
+installer is unsigned and the UI says as much rather than implying a chain of trust that does not
+exist. Setup is run `/SILENT /relaunch=1`: no console, and `TradeAgent.iss` starts the new build,
+since its ordinary `[Run]` entry is `skipifsilent`.
+
+**Updating is operator authority, so it is not on the agent channel.**
+`UpdateService` lives on `AppHost` beside the gateway and the kill switch. Nothing was added to
+`GatewayPipeServer` and no `trade` verb exists for it, so an AI cannot check for, download, or install
+a different build of its own supervisor. Same rule as mode, activation and approvals.
+
+**A release with no installer asset in it is not an update.**
+An assets-upload failure answers the API perfectly. Offering that release would put a button on screen
+whose only possible outcome is a failure after a download, so the release is skipped entirely — as are
+drafts, pre-releases, and any tag that is not a one-to-three-part version number. A tag that cannot be
+parsed is refused rather than guessed at: guessing is how an updater talks itself into a downgrade.
+
 ## Low-spec laptop budget
 
 The target is a modest laptop, not a workstation. These choices exist to keep it usable:

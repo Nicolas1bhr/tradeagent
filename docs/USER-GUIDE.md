@@ -42,6 +42,36 @@ opens the app.
 Windows 11 is required. Nothing else is — no .NET, no Node, no developer tools. TradeAgent brings
 what it needs.
 
+## Keeping it up to date
+
+TradeAgent looks for a newer version of itself when it starts, and once every six hours after that.
+When there is one, a blue strip appears under the top bar: *TradeAgent 0.2.0 is available*, with
+**What's new**, **Install update** and **Later**.
+
+**Nothing is ever installed without you.** The strip is the whole of what happens on its own. Pressing
+**Install update** asks a second time — the button changes to say exactly what the next press will do,
+including anything it would interrupt, like *Confirm: close TradeAgent and install 0.2.0, 1 order
+still working* — and only that second press starts anything.
+
+What then happens, in order: the new version downloads, TradeAgent checks the file is exactly the one
+that was published, TradeAgent closes, the update installs itself without asking you anything, and the
+new version opens on its own. You will see a small progress window from the installer. There is no
+black terminal at any point.
+
+**Later** puts the strip away until the next time you open TradeAgent. The offer does not disappear:
+the **Settings** page always shows which version you are running, which is the newest published one,
+and the same **Install update** button. If you would rather TradeAgent never went looking, **Turn off
+automatic checks** on that page stops it — you can still press **Check for updates** yourself whenever
+you like.
+
+Three things worth knowing:
+
+- **An update never touches your records, your settings or ATAS.** It replaces the program only.
+- **Your AI cannot update TradeAgent.** It cannot check, download or install anything — the same rule
+  that keeps it away from the mode switch and the kill switch.
+- **The check needs the internet, and that is all it needs it for.** If your machine is offline the
+  Settings page says it could not check, and nothing else changes.
+
 ## Setting it up
 
 The app walks you through it. Each screen explains itself, and the ones that can check their own work

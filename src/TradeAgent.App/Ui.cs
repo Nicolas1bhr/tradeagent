@@ -112,6 +112,26 @@ static class Ui
         return p;
     }
 
+    /// <summary>
+    /// A row that wraps instead of running off the edge of its card.
+    ///
+    /// Needed wherever a two-step button sits in a row of buttons: an armed confirmation says the
+    /// whole sentence — "Confirm: close TradeAgent and install 0.2.0" — so the row is wider AFTER the
+    /// first press than it was when it was laid out, and a plain <see cref="Row"/> clips the controls
+    /// to its right. Spacing is applied as a margin on each child rather than by the panel, which is
+    /// the version-proof way to do it; a caller's own margin on these children is overwritten.
+    /// </summary>
+    public static WrapPanel Wrap(double spacing, params Control[] kids)
+    {
+        var p = new WrapPanel();
+        foreach (var k in kids)
+        {
+            k.Margin = new Thickness(0, 0, spacing, spacing);
+            p.Children.Add(k);
+        }
+        return p;
+    }
+
     public static Border Card(Control inner) => new()
     {
         Padding = new Thickness(Theme.S5),

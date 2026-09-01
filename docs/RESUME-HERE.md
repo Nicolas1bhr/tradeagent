@@ -29,6 +29,11 @@ Settled on 2026-09-01, do not redo:
   itself resume trading. All fixed. `BUILD-STATUS.md`'s 2026-09-01 section has the five links.
 - **The header said "real money" whenever the platform had not answered.** Fixed and verified on
   hardware in both reachable states.
+- **TradeAgent now updates itself from GitHub releases** — a banner, a Settings card, two-press
+  install, checksum-checked download, silent Setup with a relaunch. Seen finding a real release
+  against a stand-in GitHub feed on macOS; `TradeAgent.iss` compiles on Windows and `/relaunch=1`
+  provably starts the new build there (and nothing starts without it). **No release exists yet, so
+  the feature is inert in the field** — task 7.
 
 **THE CONSTRAINT THAT BOUNDS WHAT THIS MACHINE CAN PROVE, stated by the owner 2026-09-01 and easy to
 overclaim past: ATAS is signed in with a FREE ATAS account and has NO BROKER attached.** Both accounts
@@ -320,6 +325,38 @@ one gate; the other is shut on an answer, not a gap.
 - **Watch a real agent use the inbox.** Drop something in, ask the AI to work with it, and see
   whether it runs `trade material ran ...` unprompted. If it does not, the notes half of the ledger
   is empty forever and `AGENTS.md`'s wording is what needs fixing, not the code.
+
+### 7. Cut the first release — the updater's other half
+
+The app now asks GitHub for a newer version of itself and offers to install it. Nothing is wrong with
+it that can be found on this Mac, and nothing about it is proven either:
+
+- **The installer half is already proven, so do not re-prove it.** `TradeAgent.iss` compiles with its
+  new `[Code]` section on the test machine, and a throwaway derivative of it showed `/relaunch=1`
+  starting the installed program in session 1 while a plain `/SILENT` started nothing. Setup's own
+  log agrees: one `-- Run entry --` with the flag, none without it.
+- **What is left is watching one real update happen.** Install build A, publish a release tagged
+  higher, press Install update, and watch: Setup's own progress window and no console, TradeAgent
+  closing, the new build opening by itself. **The one moment nobody has seen is Setup replacing a
+  RUNNING TradeAgent** — the relaunch test installed into an empty folder with nothing holding the
+  files. `CloseApplications=yes` is what is supposed to cover it.
+- **Do not test with a System32 program copied and renamed.** `winver.exe` and `charmap.exe` both die
+  instantly outside `System32` (their MUI resources stay behind), which reads as "Setup did not
+  launch it" and is not. A three-line `Add-Type -OutputType ConsoleApplication` stub depends on
+  nothing and answers the question.
+- **The release must contain `TradeAgent-Setup-x64.exe` and should contain `SHA256SUMS.txt`** —
+  `packaging/build.ps1` already produces both under those names. A release with no matching installer
+  asset is deliberately not offered at all, so an assets-upload failure is silent by design.
+- **Do not wire CI to publish releases.** `build.yml` builds
+  `TradeAgent-windows-x64-NO-ATAS-ADAPTER`; publishing that would push a build that cannot trade
+  through ATAS to every user through the updater. Releases are cut from a machine with ATAS.
+- **Still unsigned.** Every user still meets "Windows protected your PC", and now they meet it during
+  an update as well as during the first install. That is blocker 1, not a task-7 item.
+
+Everything the updater does before that point — the check, the parse, the refusal to offer a draft, a
+pre-release, an older tag or a release with no installer in it — is covered by 40 tests and was seen
+rendering against a real GitHub release document. `BUILD-STATUS.md`'s 2026-09-01 update section has
+the evidence and the full NOT VERIFIED list.
 
 ## Do not redo any of this
 

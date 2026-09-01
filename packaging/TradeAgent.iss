@@ -6,10 +6,11 @@
 ; SDKs, edit PATH, or touch ATAS. Anything that needs to happen inside ATAS is done by the app at
 ; runtime, where it can be verified and undone.
 ;
-; It also never opens a console. There is exactly one [Run] entry and it is the application itself;
-; no cmd.exe, no PowerShell, no post-install script. That is not an accident to be tidied away later
-; - a command window appearing during setup would be the first thing this product promises will
-; never happen to the user.
+; It also never opens a console. Both [Run] entries are the application itself; no cmd.exe, no
+; PowerShell, no post-install script. That is not an accident to be tidied away later - a command
+; window appearing during setup would be the first thing this product promises will never happen to
+; the user. The same rule is why the in-app updater runs this installer with /SILENT: Setup shows its
+; own progress window, and nothing else appears at all.
 
 #ifndef StageDir
   #define StageDir "..\artifacts\stage"
@@ -75,9 +76,10 @@ MinVersion=10.0.22000
 AppMutex=TradeAgent.SingleInstance
 CloseApplications=yes
 CloseApplicationsFilter=*.exe,*.dll
-; The [Run] entry below is the single, deliberate launch. Letting the Restart Manager also restart
-; what it closed would start the app twice, and two instances fighting over one gateway is exactly
-; what the app's single-instance guard exists to prevent.
+; The [Run] entries below are the only deliberate launches, and at most one of them ever fires.
+; Letting the Restart Manager also restart what it closed would start the app twice, and two
+; instances fighting over one gateway is exactly what the app's single-instance guard exists to
+; prevent.
 RestartApplications=no
 
 ; SetupIconFile, WizardImageFile and WizardSmallImageFile are deliberately absent: this repository
@@ -107,7 +109,23 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; Kept on one line: line continuation in an Inno section is not something this build can test here.
 Filename: "{app}\TradeAgent.exe"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
+; The in-app updater's relaunch. It runs Setup with /SILENT after closing TradeAgent, and skipifsilent
+; means the entry above deliberately does NOT fire then - so without this line an update would end
+; with the application gone and nothing on screen, which is indistinguishable from having uninstalled
+; it. Guarded by WizardSilent as well as the parameter, so a hand-run interactive Setup that happened
+; to be passed /relaunch=1 cannot start the app twice.
+Filename: "{app}\TradeAgent.exe"; Flags: nowait runasoriginaluser; Check: RelaunchAfterSilentInstall
+
 ; Uninstall leaves %LOCALAPPDATA%\TradeAgent in place on purpose: it holds the user's trading records
 ; and the AI's work. Removing an audit trail during an uninstall is not a decision an installer makes.
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bridge"
+
+; [Code] is last on purpose: everything inside it is Pascal, where a leading ';' is a statement
+; separator rather than a comment, so an ordinary Inno comment placed after this point would not
+; compile.
+[Code]
+function RelaunchAfterSilentInstall(): Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;

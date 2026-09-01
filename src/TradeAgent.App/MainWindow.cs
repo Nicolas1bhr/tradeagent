@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
+using TradeAgent.Provisioning;
 
 // Two aliases, both forced by name collisions rather than chosen.
 //   - `Window` inherits a `Theme` property from StyledElement, so inside a control subclass the
@@ -52,7 +54,7 @@ public sealed class MainWindow : Window
     // ---- shell -----------------------------------------------------------------------------
     readonly Grid _shellSurface = new()
     {
-        RowDefinitions = new RowDefinitions("Auto,Auto,Auto,*"), IsVisible = false
+        RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,*"), IsVisible = false
     };
 
     // header
@@ -94,6 +96,22 @@ public sealed class MainWindow : Window
         FontSize = Tokens.Small, Foreground = Tokens.Text, TextWrapping = TextWrapping.Wrap,
         VerticalAlignment = VerticalAlignment.Center
     };
+    readonly Border _updateBanner = new()
+    {
+        Background = Tokens.AccentSoft,
+        BorderBrush = Tokens.Accent,
+        BorderThickness = new Thickness(0, 0, 0, 1),
+        Padding = new Thickness(Tokens.S5, Tokens.S3),
+        IsVisible = false
+    };
+    readonly TextBlock _updateBannerText = new()
+    {
+        FontSize = Tokens.Small, FontWeight = FontWeight.SemiBold, Foreground = Tokens.Accent,
+        VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap
+    };
+    Button? _updateNotes;
+    Button? _updateInstall;
+    Button? _updateLater;
 
     // rail
     readonly StackPanel _navStack = new() { Spacing = 2 };
@@ -222,10 +240,13 @@ public sealed class MainWindow : Window
         _shellSurface.Children.Add(Ui.With(BuildHeader(), c => c[Grid.RowProperty] = 0));
         _shellSurface.Children.Add(Ui.With(BuildApprovalBanner(), c => c[Grid.RowProperty] = 1));
         _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 2));
+        // Last of the three strips on purpose. A waiting approval is money; a failed press is a
+        // broken button; a new version is neither, and must never sit above either of them.
+        _shellSurface.Children.Add(Ui.With(BuildUpdateBanner(), c => c[Grid.RowProperty] = 3));
 
         BuildPages();
 
-        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("210,*"), [Grid.RowProperty] = 3 };
+        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("210,*"), [Grid.RowProperty] = 4 };
         body.Children.Add(BuildRail());
         body.Children.Add(new Border
         {
@@ -326,6 +347,45 @@ public sealed class MainWindow : Window
 
         _errorBar.Child = grid;
         return _errorBar;
+    }
+
+    /// <summary>
+    /// The update prompt, and deliberately not a popup.
+    ///
+    /// A modal over a trading screen covers the position it is asking about, and this one arrives
+    /// unannounced because a background check happened to answer. So it is a strip, in the same
+    /// vocabulary as the two above it, and every button on it is refusable: What's new reads, Later
+    /// dismisses for this run, and Install is two presses because it closes the program holding the
+    /// user's open orders.
+    /// </summary>
+    Control BuildUpdateBanner()
+    {
+        _updateNotes = Ui.Ghost("What's new", () =>
+        {
+            var url = _host.Updates.Available?.ReleaseUrl;
+            if (!string.IsNullOrWhiteSpace(url)) Browser.TryOpen(url);
+        });
+        _updateInstall = Ui.Confirm("Install update", "Confirm: close TradeAgent and install",
+            () => InstallUpdateAsync(_host));
+        _updateLater = Ui.Ghost("Later", () => _host.Updates.Dismiss());
+
+        var actions = Ui.Row(Tokens.S2, _updateNotes, _updateInstall, _updateLater);
+        actions.VerticalAlignment = VerticalAlignment.Center;
+        actions[Grid.ColumnProperty] = 2;
+
+        var dot = new Ellipse
+        {
+            Width = 7, Height = 7, Fill = Tokens.Accent,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, Tokens.S3, 0)
+        };
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        grid.Children.Add(dot);
+        grid.Children.Add(Ui.With(_updateBannerText, t => t[Grid.ColumnProperty] = 1));
+        grid.Children.Add(actions);
+
+        _updateBanner.Child = grid;
+        return _updateBanner;
     }
 
     Control BuildRail()
@@ -463,6 +523,7 @@ public sealed class MainWindow : Window
                 ? "The AI is asking permission — 1 order waiting"
                 : $"The AI is asking permission — {waiting.Count} orders waiting";
 
+        RefreshUpdateBanner(status);
         UpdateRailHealth();
 
         _chat?.Update();
@@ -472,6 +533,71 @@ public sealed class MainWindow : Window
         _settings?.Update(status);
         _activity?.Update();
         _checks?.Update();
+    }
+
+    /// <summary>
+    /// The banner, in place. Nothing here is rebuilt on the five-second tick: a half-pressed
+    /// "Confirm: close TradeAgent" must survive a refresh that changed nothing.
+    /// </summary>
+    void RefreshUpdateBanner(GatewayStatus status)
+    {
+        var updates = _host.Updates;
+        var info = updates.Available;
+        var working = updates.Stage is UpdateStage.Downloading or UpdateStage.Installing;
+
+        // Downloading shows even after Later was pressed: the user asked for this from Settings and
+        // has to be able to see it happening from wherever they are.
+        _updateBanner.IsVisible = info is not null && (working || !updates.Dismissed);
+        if (info is null || !_updateBanner.IsVisible) return;
+
+        if (_updateNotes is not null) _updateNotes.IsVisible = !working;
+        if (_updateLater is not null) _updateLater.IsVisible = !working;
+        if (_updateInstall is not null) _updateInstall.IsVisible = !working;
+
+        if (working)
+        {
+            _updateBannerText.Text = updates.Message ?? $"Installing TradeAgent {info.Version}…";
+            return;
+        }
+
+        // The one hard stop. Everything else the user is allowed to decide, as long as the button
+        // says what they are deciding.
+        var unconfirmed = status.UnreconciledRequests > 0;
+        var size = string.IsNullOrEmpty(info.SizeLabel) ? "" : $" · {info.SizeLabel}";
+
+        _updateBannerText.Text = unconfirmed
+            ? $"TradeAgent {info.Version} is available. It can be installed once the unconfirmed order is settled."
+            : $"TradeAgent {info.Version} is available{size}. You are running {updates.CurrentVersion}.";
+
+        if (_updateInstall is null) return;
+        _updateInstall.IsEnabled = !unconfirmed;
+
+        // The armed label carries whatever the second press is actually going to interrupt. It is
+        // never the bare word "Confirm", and it is never quieter than the truth.
+        var cost =
+            status.OpenRequests > 0 ? $", {(status.OpenRequests == 1 ? "1 order" : $"{status.OpenRequests} orders")} still working"
+            : _host.Agent.Running ? ", stopping the AI"
+            : "";
+        Ui.Relabel(_updateInstall, "Install update", $"Confirm: close TradeAgent and install {info.Version}{cost}");
+    }
+
+    /// <summary>
+    /// Downloads, verifies and starts the installer, then closes TradeAgent so Setup can replace the
+    /// files it is running from. The new build starts itself: TradeAgent.iss is passed /relaunch=1.
+    /// </summary>
+    internal static async Task InstallUpdateAsync(AppHost host)
+    {
+        if (!await host.Updates.InstallAsync())
+        {
+            Ui.ReportError?.Invoke(host.Updates.Message ?? "The update could not be installed.");
+            return;
+        }
+
+        // Shutdown, not Close: it runs the lifetime's ShutdownRequested handler, which disposes the
+        // gateway, the pipe server and the database. Setup is about to replace the files this
+        // process is running from, and a half-closed database is not a thing to hand an installer.
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            desktop.Shutdown();
     }
 
     void UpdateRailHealth()

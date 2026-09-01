@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
+using TradeAgent.Provisioning;
 
 namespace TradeAgent.App;
 
@@ -60,6 +61,16 @@ sealed class SettingsPage
     readonly StackPanel _accountList = new() { Spacing = Theme.S3 };
     readonly Button _lookAgain;
     readonly List<(string Id, Border InUse, Button Choose)> _rows = [];
+
+    // ---- updates ----
+    readonly TextBlock _versionValue = Ui.Mono("—");
+    readonly TextBlock _newestValue = Ui.Mono("—");
+    readonly TextBlock _autoValue = Ui.Mono("—");
+    readonly TextBlock _updateNote = Ui.Muted("");
+    readonly Button _checkNow;
+    readonly Button _whatsNew;
+    readonly Button _installUpdate;
+    readonly Button _autoToggle;
 
     /// <summary>The platform's answer, or null while we are still waiting for it.</summary>
     IReadOnlyList<AccountInfo>? _accounts;
@@ -125,6 +136,35 @@ sealed class SettingsPage
             _accountList,
             Ui.With(_lookAgain, b => b.Margin = new Thickness(0, Theme.S2, 0, 0))));
 
+        // Updates are here rather than on Checks because this is where somebody looks for "what
+        // version am I on". Nothing on this card happens on its own: the automatic half is the
+        // asking, and installing is two presses, because it closes the program holding the open
+        // orders and starts a different build of it.
+        _checkNow = Ui.Secondary("Check for updates", () => _host.Updates.CheckAsync());
+        _whatsNew = Ui.Ghost("What's new", () =>
+        {
+            var url = _host.Updates.Available?.ReleaseUrl;
+            if (!string.IsNullOrWhiteSpace(url)) Browser.TryOpen(url);
+        });
+        _installUpdate = Ui.Confirm("Install update", "Confirm: close TradeAgent and install",
+            () => MainWindow.InstallUpdateAsync(_host));
+        _autoToggle = Ui.Ghost("Turn off automatic checks", ToggleAutomaticChecks);
+        _whatsNew.IsVisible = false;
+        _installUpdate.IsVisible = false;
+
+        var updates = Ui.Section("Updates", Ui.Col(Theme.S4,
+            Ui.KeyValueLive("This version", _versionValue),
+            Ui.KeyValueLive("Newest published version", _newestValue),
+            Ui.KeyValueLive("Automatic checks", _autoValue),
+            _updateNote,
+            Ui.Wrap(Theme.S2, _checkNow, _whatsNew, _installUpdate, _autoToggle),
+            Ui.Divider(),
+            Ui.Muted("TradeAgent never installs an update on its own, and the AI cannot ask it to. Installing " +
+                     "closes TradeAgent, replaces it, and opens the new version. Your records, your settings and " +
+                     "your ATAS installation are untouched."),
+            Ui.Micro($"Releases come from github.com/{_host.Updates.Repository}. The download is checked against " +
+                     "the checksum published beside it, which proves the file arrived intact — not who signed it.")));
+
         // The right-hand column answers the question this page raises and nothing else answers:
         // what does pressing one of these actually do to my money and my open orders?
         var explain = Ui.Section("What these change", Ui.Col(Theme.S3,
@@ -141,15 +181,16 @@ sealed class SettingsPage
         explain.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, updates)));
         grid.Children.Add(Pages.Column(1, explain));
 
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header("Settings",
-                "Which trading platform TradeAgent uses, and which account the AI is allowed to trade."),
+                "Which trading platform TradeAgent uses, which account the AI is allowed to trade, and which version you are running."),
             grid));
 
         EnsureAccounts();
+        ApplyUpdates();
     }
 
     /// <summary>
@@ -174,6 +215,7 @@ sealed class SettingsPage
         ApplyPlatform(status.ConnectorId, Ui.PlatformLabel(status));
         EnsureAccounts();
         ApplyAccountSelection();
+        ApplyUpdates();
     }
 
     void ApplyPlatform(string? id, string label)
@@ -438,6 +480,65 @@ sealed class SettingsPage
                 ApplyAccountSelection();
             }, DispatcherPriority.Background);
         }
+    }
+
+    // ---- updates -------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The update card, in place and on every tick. Nothing here is rebuilt and nothing is relabelled
+    /// unless the words actually changed: <see cref="Ui.Relabel"/> disarms the two-step button, and a
+    /// five-second refresh that disarms a half-pressed "Confirm: close TradeAgent" is the same defect
+    /// this whole page was written around.
+    /// </summary>
+    void ApplyUpdates()
+    {
+        var updates = _host.Updates;
+        var info = updates.Available;
+
+        _versionValue.Text = updates.CurrentVersion;
+        _newestValue.Text = updates.Stage switch
+        {
+            UpdateStage.Idle => "not checked yet",
+            UpdateStage.Checking => "asking GitHub…",
+            UpdateStage.UpToDate => $"{updates.CurrentVersion} — you have the newest one",
+            UpdateStage.Failed when info is null => "could not be checked",
+            _ => info?.Version ?? "not checked yet"
+        };
+
+        var auto = _host.AutoCheckForUpdates;
+        _autoValue.Text = auto ? "on — once at startup, then every six hours" : "off";
+        _autoToggle.Content = auto ? "Turn off automatic checks" : "Turn on automatic checks";
+
+        var checkedAt = updates.LastCheckedUtc is { } t
+            ? $"Last checked {t.ToLocalTime():d MMMM, HH:mm}."
+            : "Not checked yet.";
+        var message = updates.Message;
+        _updateNote.Text = string.IsNullOrWhiteSpace(message) ? checkedAt : $"{message} {checkedAt}";
+        _updateNote.Foreground = updates.Stage == UpdateStage.Failed ? Theme.Caution : Theme.TextMuted;
+
+        var busy = updates.Stage is UpdateStage.Checking or UpdateStage.Downloading or UpdateStage.Installing;
+        _checkNow.IsEnabled = !busy;
+        _whatsNew.IsVisible = info is not null;
+        _installUpdate.IsVisible = info is not null;
+        _installUpdate.IsEnabled = !busy;
+
+        if (info is not null)
+            Ui.Relabel(_installUpdate, "Install update", $"Confirm: close TradeAgent and install {info.Version}");
+    }
+
+    /// <summary>
+    /// One press, both ways. Turning the checks off risks nothing and turning them back on risks
+    /// nothing either — the thing that spends and restarts is the install, and that is still two
+    /// presses whatever this says.
+    /// </summary>
+    void ToggleAutomaticChecks()
+    {
+        var on = !_host.AutoCheckForUpdates;
+        _host.AutoCheckForUpdates = on;
+        _host.Gateway.Log.Activity(on
+            ? "You turned on automatic checks for new TradeAgent versions"
+            : "You turned off automatic checks for new TradeAgent versions");
+        ApplyUpdates();
     }
 
     /// <summary>The same reading <see cref="Ui.ReportError"/> gives a failed press: repair text included.</summary>

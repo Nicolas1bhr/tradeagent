@@ -2167,6 +2167,143 @@ the whole tree.** The existing rule was "do not repeat: two actors in one file";
 lesson one level out, and the file-ownership boundaries in the briefs did not cover it because a
 stash names no files at all.
 
+## 2026-09-01, later session — TradeAgent updates itself from GitHub (macOS, plus the installer half on Windows hardware)
+
+**What was built.** The app asks GitHub for the newest release of its own repository, and when one is
+newer than the running build it lights a strip under the header: *"TradeAgent 0.2.0 is available ·
+84.1 MB. You are running 0.1.0."* with **What's new**, **Install update** (two-press) and **Later**.
+The same offer, plus the version numbers, the last-checked time and an on/off switch for the
+automatic asking, is a card on the Settings page. Pressing install downloads the release's
+`TradeAgent-Setup-x64.exe`, checks it against the `SHA256SUMS.txt` published beside it, starts Setup
+with `/SILENT /NORESTART /SUPPRESSMSGBOXES /relaunch=1` and closes TradeAgent; `TradeAgent.iss` gained
+a second `[Run]` entry that starts the new build afterwards, because the existing one is
+`skipifsilent` and a silent install would otherwise end with the application simply gone.
+
+**Three properties it was built to have, and they are the feature rather than decoration:**
+
+- **It never installs anything on its own.** The background check lights a banner and nothing else.
+  Both routes to installing are two-press, and the armed label says what the second press interrupts
+  — "Confirm: close TradeAgent and install 0.2.0, 1 order still working".
+- **It is not reachable from the agent.** `UpdateService` is owned by `AppHost` beside the gateway and
+  the kill switch. `GatewayPipeServer` was not touched and no `trade` verb was added, so the AI can
+  neither check, download, nor replace its own supervisor.
+- **It says what the checksum proves.** The manifest comes from the same release as the installer, so
+  it catches a truncated or corrupted download and nothing else. The card says so in as many words:
+  *"which proves the file arrived intact — not who signed it."* The installer is still unsigned; that
+  remains blocker 1.
+
+### Verified
+
+**The whole check path, against real GitHub, seen on screen.** With the update source pointed at a
+stand-in repository that actually publishes a Windows installer
+(`TRADEAGENT_UPDATE_REPO=notepad-plus-plus/notepad-plus-plus`,
+`TRADEAGENT_UPDATE_ASSET='.*Installer\.exe$'`), the running app rendered:
+
+```
+TradeAgent 8.9.8 is available · 6.5 MB. You are running 0.1.0.     What's new  [Install update]  Later
+```
+
+and the Settings card showed `This version 0.1.0`, `Newest published version 8.9.8`,
+`Automatic checks  on — once at startup, then every six hours`, `Last checked 1 September, 12:44.`
+That is a real HTTP call to `api.github.com`, a real release document, our own parse of it, and our
+own two surfaces rendering the result — not a fixture.
+
+**A layout defect the screenshot found, and the fix was seen too.** The four buttons on the Settings
+card ran off the right edge of it, and would have run further off once the two-step button armed and
+started saying its whole sentence. `Ui.Wrap` was added for exactly this — a row that wraps instead of
+clipping — and the card was then photographed with the button rendering its widest (armed) wording:
+`Confirm: close TradeAgent and install 8.9.8` wrapped onto its own line, nothing clipped.
+
+**Tests.** 40 new cases, aimed at the four ways an updater does harm rather than at the happy path:
+offering something older than what is running, offering a release whose installer never uploaded,
+running a file that failed its checksum, and installing without being asked.
+
+```
+Passed!  - Failed:     0, Passed:    45, Skipped:     0, Total:    45 - TradeAgent.FaultTests.dll
+Passed!  - Failed:     0, Passed:   107, Skipped:     0, Total:   107 - TradeAgent.UnitTests.dll
+Passed!  - Failed:     0, Passed:   144, Skipped:     0, Total:   144 - TradeAgent.IntegrationTests.dll
+```
+
+296 total, up from 256. `dotnet build TradeAgent.sln` — `0 Warning(s) 0 Error(s)`.
+
+### Verified on real Windows 11 hardware — the installer half
+
+**`packaging/TradeAgent.iss` compiles, `[Code]` section and all.** Copied to the test machine and
+built with the same Inno Setup the packaging script uses:
+
+```
+Reading [Code] section
+Parsing [Run] section, line 110
+Parsing [Run] section, line 117
+Compiling [Code] section
+Successful compile (2,329 sec). Resulting Setup program filename is:
+C:\ta\isscheck\out\TradeAgent-Setup-x64.exe
+EXIT CODE: 0
+```
+
+Both `[Run]` entries parse, and the Pascal in `[Code]` compiles rather than merely looking right.
+
+**`/relaunch=1` starts the new build, and nothing else does.** A throwaway derivative of the same
+script — different `AppId`, different name, its own folder in `%LOCALAPPDATA%`, so it could not touch
+the real install — was built around a stub program and installed **from the interactive session**,
+twice:
+
+```
+WITH /relaunch=1 : 1 process(es) started by Setup
+                   pid 20448  session=1  C:\Users\Nicolas\AppData\Local\TradeAgentRelaunchTest\TradeAgent.exe
+WITHOUT /relaunch : 0 process(es) started by Setup
+run entries in the two logs:
+  with    /relaunch=1 : 1
+  without /relaunch   : 0
+```
+
+Setup's own log is the second witness: one `-- Run entry --` with the relaunch flag, none without it.
+So the new entry fires exactly when the updater asks and never on an ordinary silent install, and the
+existing `skipifsilent` entry is not double-firing.
+
+Everything was removed afterwards — install folder, uninstall registry entry, build folder — and the
+real TradeAgent and ATAS were still running, untouched, at the end.
+
+**Two false negatives worth recording, because they cost twenty minutes and would cost them again.**
+The first two stub programs were `winver.exe` and `charmap.exe` copied out of `System32` and renamed.
+Both exit immediately when run from anywhere else — MUI resources live in `System32\en-US\*.mui` —
+so Setup was launching them correctly and the measurement said "0 processes". **A copied System32 GUI
+program is not a test fixture.** The stub that answered the question was three lines of C# compiled on
+the machine with `Add-Type -OutputType ConsoleApplication`, which depends on nothing.
+
+### NOT VERIFIED
+
+- **No TradeAgent release has ever existed.** `git tag` is empty and the repository has published no
+  releases, so on the real update source the check answers 404 and the app correctly reports that it
+  could not be checked. Everything above about *finding* an update was seen against a stand-in feed.
+  The first real release is what turns this from working code into a working feature.
+- **Setup has never replaced a RUNNING TradeAgent.** The relaunch test installed into an empty folder
+  with nothing holding the files. The real update closes the app first and leans on
+  `CloseApplications=yes` for the moment in between — that moment has been observed zero times.
+- **The button has never been pressed end to end.** Download, checksum, launch, shutdown, relaunch as
+  one continuous act is untested; each half is tested separately, which is not the same thing.
+- **The download and the checksum have never run against a real asset.** Both are exercised through
+  an injected seam in the tests. `Downloader.DownloadAsync` itself is the same code the AI runtime
+  install already uses, which is proven on Windows, but this caller of it is not.
+- **`UpdateVersion` is compared against `Versions.App`,** which reads the entry assembly's version
+  (`0.1.0` today, from `Directory.Build.props`). A release tagged with anything that is not a
+  1-to-3-part number is refused rather than guessed, on purpose — including four-part tags, which is
+  a real shape (`v0.101.2362.0`) and was met while choosing the stand-in feed.
+
+### The release contract this depends on
+
+The updater looks for exactly what `packaging/build.ps1` already produces, and a release that omits
+either is not offered at all rather than half-installed:
+
+- an asset matching `^TradeAgent-Setup.*\.exe$` — that is `TradeAgent-Setup-x64.exe`;
+- optionally `SHA256SUMS.txt`, whose repository-relative paths (`artifacts/TradeAgent-Setup-x64.exe`)
+  are matched on file name alone, because that is not what the asset is called.
+
+**CI must not publish releases.** `build.yml` produces
+`TradeAgent-windows-x64-NO-ATAS-ADAPTER` — a build that cannot trade through ATAS. Wiring that to a
+release would push it to every user through the updater written above. A release is cut from a machine
+with ATAS or it is not cut.
+
 ## Defects found and fixed on 2026-08-26
 
 1. **The AI conversation hung forever, and looked like thinking.** `codex exec` reads stdin *in
@@ -2331,6 +2468,10 @@ It is now session-aware, and says so.
   and no agent has been asked to record its work with `trade material`. The drop, pick and copy paths
   are compiled and unexercised.
 - **Live money has never been touched.** Correct for this stage.
+- **The updater has never updated anything.** Finding a release renders correctly (seen against a
+  stand-in feed), the installer script compiles, and `/relaunch=1` provably starts the new build on
+  Windows — but no TradeAgent release exists to install, Setup has never replaced a *running*
+  TradeAgent, and the press-to-restarted-app path has never been walked as one act.
 
 ## Current blockers
 

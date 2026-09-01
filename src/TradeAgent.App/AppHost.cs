@@ -67,6 +67,32 @@ public sealed class AppHost : IAsyncDisposable
     IAgentConversation? _conversation;
     IAgentRuntime? _conversationOwner;
 
+    /// <summary>
+    /// Whether a newer TradeAgent has been published, and the machinery to install one.
+    ///
+    /// It lives here, beside the gateway and the kill switch, because installing a new build of the
+    /// program that holds the user's open orders is operator authority. Nothing on the agent-facing
+    /// pipe can reach it: the AI cannot check, cannot download, and cannot replace its own supervisor.
+    /// </summary>
+    public UpdateService Updates { get; } = new(Versions.App);
+
+    /// <summary>
+    /// Whether TradeAgent asks GitHub about new versions on its own.
+    ///
+    /// Off means never touching the network for this; it does not mean never updating. An update is
+    /// still two deliberate presses in Settings either way — the automatic half is the ASKING, never
+    /// the installing.
+    /// </summary>
+    public bool AutoCheckForUpdates
+    {
+        get => (_db?.GetKv("updates.auto") ?? "1") != "0";
+        set
+        {
+            _db?.SetKv("updates.auto", value ? "1" : "0");
+            Changed?.Invoke();
+        }
+    }
+
     public bool SingleInstance { get; private set; }
     public string? StartupProblem { get; private set; }
 
@@ -100,6 +126,7 @@ public sealed class AppHost : IAsyncDisposable
             Gateway = new TradingGateway(_db, Connector, Health);
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
+            Updates.Changed += () => Changed?.Invoke();
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();
@@ -197,10 +224,17 @@ public sealed class AppHost : IAsyncDisposable
                 if (Gateway.Requests.NeedingReconciliation().Count > 0) await Gateway.ReconcileAsync(ct);
                 Gateway.Log.Rotate();
 
+                var pass = tick++;
+
                 // Every 30s rather than every 5s. Nothing downstream needs a file noticed within
                 // five seconds, and the walk plus a bounded round of hashing is the most expensive
                 // thing in this loop.
-                if (tick++ % 6 == 0) ScanMaterials(ct);
+                if (pass % 6 == 0) ScanMaterials(ct);
+
+                // Once at startup, then every six hours. This only ever lights a banner: nothing in
+                // this loop downloads or installs anything, because a trading application that
+                // restarts itself while the owner is looking elsewhere is not a convenience.
+                if (pass % (12 * 60 * 6) == 0 && AutoCheckForUpdates) _ = Updates.CheckAsync(ct);
 
                 Changed?.Invoke();
             }
