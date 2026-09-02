@@ -16,6 +16,22 @@ public sealed class GatewayOptions
     public TimeSpan MaxQuoteAge { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// How long a parked LIVE_CONFIRM order stays approvable. An approval pressed after this is
+    /// refused with APPROVAL_EXPIRED and the request is declined for good; the AI has to propose it
+    /// again against the market as it is now. Fifteen minutes is a judgment, not a measurement:
+    /// long enough for a person to walk back to the screen, short enough that the price the
+    /// proposal was sized from is not history. Literal semantics — zero expires every approval;
+    /// there is deliberately no "0 = off" here, unlike the notional cap.
+    /// </summary>
+    public TimeSpan ApprovalTtl { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// The gateway's one source of time. Tests substitute a clock they can move, so a time-to-live
+    /// can be proved on both sides of its boundary without sleeping through it.
+    /// </summary>
+    public TimeProvider Clock { get; set; } = TimeProvider.System;
+
+    /// <summary>
     /// How long after dispatch we wait before "the broker has never heard of this order" is allowed
     /// to mean it never landed. Protects against reading a slow backend as an absent one.
     /// </summary>

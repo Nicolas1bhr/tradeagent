@@ -37,6 +37,9 @@ public sealed class TradingGateway : IAsyncDisposable
 
     public event Action? StateChanged;
 
+    /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>
+    DateTimeOffset Now => _opt.Clock.GetUtcNow();
+
     public TradingGateway(Database db, ITradingConnector connector, HealthRegistry? health = null,
         GatewayOptions? options = null)
     {
@@ -277,7 +280,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         lock (_recentDispatches)
         {
-            var cutoff = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1);
+            var cutoff = Now - TimeSpan.FromMinutes(1);
             _recentDispatches.RemoveAll(d => d < cutoff);
             if (_recentDispatches.Count >= r.MaxOrdersPerMinute)
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
@@ -342,7 +345,7 @@ public sealed class TradingGateway : IAsyncDisposable
             Intent = RequestIntent.PLACE,
             ParametersJson = Json.Write(intent),
             ClientOrderId = ClientOrderIdFor(requestId),
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = Now,
             State = Settings.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
                 ? ExecutionState.AWAITING_APPROVAL : ExecutionState.CREATED,
             Mode = Settings.Mode
@@ -444,7 +447,7 @@ public sealed class TradingGateway : IAsyncDisposable
             ? _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING)
             : stored;
 
-        lock (_recentDispatches) _recentDispatches.Add(DateTimeOffset.UtcNow);
+        lock (_recentDispatches) _recentDispatches.Add(Now);
 
         var cmd = new PlaceOrderCommand(stored.ClientOrderId, stored.AccountId, intent.Symbol, intent.Side,
             intent.Type, intent.Quantity, intent.LimitPrice, intent.StopPrice, intent.Tif, intent.Comment);
@@ -485,15 +488,90 @@ public sealed class TradingGateway : IAsyncDisposable
         }
     }
 
+    /// <summary>How long a parked order stays approvable. Shown beside the request so the person knows.</summary>
+    public TimeSpan ApprovalTtl => _opt.ApprovalTtl;
+
+    /// <summary>
+    /// AN APPROVAL IS A DISPATCH DECISION, AND IT IS AUTHORIZED AT THE MOMENT IT IS MADE.
+    ///
+    /// The order was parked after passing every gate — at that time. Minutes or hours later a person
+    /// presses Approve, and until 2026-09-02 this method went straight to the wire on that stale
+    /// verdict: kill switch pressed since, mode changed since, account cleared since, connection dead
+    /// since, quote stale since, limits consumed since — none of it was looked at. So the same gates
+    /// a fresh dispatch faces run again here, in the same order, and under the dispatch gate so that
+    /// "with whatever has been dispatched in between" is exact rather than approximate.
+    ///
+    /// Who is asking matters. The person pressing Approve is the operator, but the ORDER is the AI's
+    /// proposal, so it is authorized as the AI's own session — which is what makes the kill switch
+    /// bite: "stop AI trading" refuses the approval with AI_TRADING_STOPPED, and re-enabling and then
+    /// approving is two deliberate acts. The emergency controls are outside this gate and stay there.
+    ///
+    /// A refusal leaves the record AWAITING_APPROVAL for a human to decline deliberately — with one
+    /// exception. A request older than ApprovalTtl is declined here, through the state machine,
+    /// because a request nobody can ever dispatch must not sit on the Dashboard looking alive; the
+    /// AI proposes again against the market as it is now. Age is judged before anything else so a
+    /// dead request cannot hide behind a refusal the user could lift and then walk straight back into.
+    /// </summary>
     public async Task<ExecutionRequest> ApproveAsync(string requestId, CancellationToken ct = default)
     {
-        var stored = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
-        if (stored.State != ExecutionState.AWAITING_APPROVAL)
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"request is {stored.State}, not awaiting approval");
-        var intent = Json.Read<PlaceIntent>(stored.ParametersJson)!;
-        _log.Activity($"You approved {intent.Side} {intent.Quantity} {intent.Symbol}");
         await _dispatchGate.WaitAsync(ct);
-        try { return await DispatchPlaceAsync(stored, intent, ct); }
+        try
+        {
+            var stored = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
+            if (stored.State != ExecutionState.AWAITING_APPROVAL)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"request is {stored.State}, not awaiting approval");
+            var intent = Json.Read<PlaceIntent>(stored.ParametersJson)!;
+            var what = $"{intent.Side} {intent.Quantity} {intent.Symbol}";
+
+            var age = Now - stored.CreatedAt;
+            if (age > _opt.ApprovalTtl)
+            {
+                var minutes = _opt.ApprovalTtl.TotalMinutes.ToString("0");
+                _requests.Transition(requestId, ExecutionState.AWAITING_APPROVAL, ExecutionState.CANCELLED,
+                    error: $"approval expired: waited {age.TotalMinutes:0} minutes, the limit is {minutes}");
+                _log.Activity($"{what} waited more than {minutes} minutes for your approval and was declined. Nothing was sent; the AI can propose it again.", "warn");
+                _log.Engineering("Gateway", "approval_expired", "warn", requestId: requestId,
+                    metadataJson: Json.Write(new { age_minutes = age.TotalMinutes, ttl_minutes = _opt.ApprovalTtl.TotalMinutes }));
+                StateChanged?.Invoke();
+                throw new GatewayDeniedException(ErrorCode.APPROVAL_EXPIRED,
+                    $"this order waited {age.TotalMinutes:0} minutes for approval and the limit is {minutes}; it has been declined, and the AI has to propose it again");
+            }
+
+            try
+            {
+                // The mode it was proposed under is the only mode it may be approved in. PAPER would
+                // send a real-money proposal to the simulator, LIVE_AUTONOMOUS would dispatch a
+                // confirm-mode order under rules the person never chose for it, OBSERVE forbids all.
+                if (Settings.Mode != TradingMode.LIVE_CONFIRM)
+                    throw new GatewayDeniedException(ErrorCode.MODE_FORBIDS_EXECUTION,
+                        $"mode is now {Settings.Mode}; this order was proposed under {stored.Mode} and can only be approved in LIVE_CONFIRM");
+
+                // Authorized as the AI, never as the operator. A parked record always carries the
+                // agent's own session (operator orders are never parked); "agent" stands in if not.
+                var proposer = new AgentContext(stored.AgentSessionId ?? "agent");
+                if (proposer.IsOperator) proposer = new AgentContext("agent");
+                AuthorizeOrThrow(proposer);
+
+                // DispatchPlaceAsync sends to the account the RECORD names. If the owner changed
+                // accounts while this waited, that is no longer the chosen one.
+                var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");
+                if (account.Id != stored.AccountId)
+                    throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
+                        $"this order was proposed for account {stored.AccountId}, but {account.Id} is now the chosen account");
+
+                await RiskCheckOrThrow(intent, account, ct);
+            }
+            catch (GatewayDeniedException ex)
+            {
+                _log.Activity($"{what} was not approved: {ex.Info.UserMessage} ({ex.Message}). It is still waiting for your answer.", "warn");
+                _log.Engineering("Gateway", "approval_refused", "warn", requestId: requestId,
+                    metadataJson: Json.Write(new { code = ex.Code.ToString(), reason = ex.Message }));
+                throw;
+            }
+
+            _log.Activity($"You approved {what}");
+            return await DispatchPlaceAsync(stored, intent, ct);
+        }
         finally { _dispatchGate.Release(); }
     }
 
@@ -527,7 +605,7 @@ public sealed class TradingGateway : IAsyncDisposable
             RequestId = requestId, AgentSessionId = ctx.SessionId, ConnectorId = Connector.Id,
             AccountId = await RequireAccountId(ct), Instrument = "-", Intent = RequestIntent.CANCEL,
             ParametersJson = Json.Write(new { order = target }), ClientOrderId = ClientOrderIdFor(requestId),
-            CreatedAt = DateTimeOffset.UtcNow, State = ExecutionState.CREATED, Mode = Settings.Mode
+            CreatedAt = Now, State = ExecutionState.CREATED, Mode = Settings.Mode
         };
         var (created, stored) = _requests.TryCreate(record);
         if (!created && _opt.IdempotencyEnabled) return stored;
@@ -562,7 +640,7 @@ public sealed class TradingGateway : IAsyncDisposable
             RequestId = requestId, AgentSessionId = ctx.SessionId, ConnectorId = Connector.Id,
             AccountId = await RequireAccountId(ct), Instrument = "-", Intent = RequestIntent.MODIFY,
             ParametersJson = Json.Write(new { order = target, quantity, limitPrice, stopPrice }),
-            ClientOrderId = ClientOrderIdFor(requestId), CreatedAt = DateTimeOffset.UtcNow,
+            ClientOrderId = ClientOrderIdFor(requestId), CreatedAt = Now,
             State = ExecutionState.CREATED, Mode = Settings.Mode
         };
         var (created, stored) = _requests.TryCreate(record);
@@ -741,7 +819,17 @@ public sealed class TradingGateway : IAsyncDisposable
                     continue;
                 }
 
-                var age = DateTimeOffset.UtcNow - (req.DispatchedAt ?? req.CreatedAt);
+                // TWO CLOCKS MEET HERE, AND ONLY ONE OF THEM IS SUBSTITUTABLE. `Now` is
+                // GatewayOptions.Clock; `DispatchedAt` is written by ExecutionRequestStore.Transition
+                // from DateTimeOffset.UtcNow, which no option reaches. Under the default
+                // TimeProvider.System the two are the same clock and this reads exactly as it did
+                // before the seam existed. Under a substituted clock that has been moved forward,
+                // this age is inflated by however far it moved, so a test that both advances the
+                // clock and reconciles would see AbsenceGrace expire early. No test does both today
+                // (the clock is injected only by the approval time-to-live tests, which never
+                // reconcile). Giving the store the same clock is the real fix, and it is a change to
+                // Stores.cs, which this unit does not own.
+                var age = Now - (req.DispatchedAt ?? req.CreatedAt);
                 if (age >= _opt.AbsenceGrace)
                 {
                     // Absent from a backend that can prove its own history, long enough after dispatch.

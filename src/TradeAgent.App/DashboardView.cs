@@ -208,10 +208,11 @@ sealed class DashboardPage
                     Text = TryDescribe(w), FontFamily = Theme.Mono, FontSize = Theme.Base,
                     FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap
                 },
-                Ui.Micro($"asked at {w.CreatedAt.ToLocalTime():HH:mm}"),
+                Ui.Micro($"asked at {w.CreatedAt.ToLocalTime():HH:mm} — approve by "
+                         + $"{(w.CreatedAt + _host.Gateway.ApprovalTtl).ToLocalTime():HH:mm}, after that it is declined"),
                 Ui.With(Ui.Row(Theme.S2,
                         Ui.Confirm("Approve", "Confirm: place this order",
-                            async () => await _host.Gateway.ApproveAsync(id)),
+                            () => ApproveAsync(id)),
                         Ui.Secondary("Decline", () => _host.Gateway.Decline(id))),
                     r => r.Margin = new Thickness(0, Theme.S2, 0, 0)));
 
@@ -222,6 +223,23 @@ sealed class DashboardPage
             }
             first = false;
             _approvals.Children.Add(row);
+        }
+    }
+
+    /// <summary>
+    /// The gateway authorizes an approval at the moment it is given, so this press can be refused
+    /// for a reason that did not exist when the AI asked — the kill switch, a mode change, a dead
+    /// connection, a stale price, a limit used up, or the request simply being too old. The
+    /// two-step button's own catch shows only <c>ex.Message</c>, because GatewayDeniedException is
+    /// not a TradeAgentException; the plain-language explanation and the repair are what a
+    /// nontechnical owner actually needs, so they are reported here, with the detail after them.
+    /// </summary>
+    async Task ApproveAsync(string requestId)
+    {
+        try { await _host.Gateway.ApproveAsync(requestId); }
+        catch (GatewayDeniedException ex)
+        {
+            Ui.ReportError?.Invoke($"{ex.Info.UserMessage} {ex.Info.Repair} ({ex.Message})");
         }
     }
 

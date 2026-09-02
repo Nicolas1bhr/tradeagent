@@ -101,6 +101,14 @@ public class ApprovalReauthorizationTests
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ks-1"));
         AssertRefusedAndStillParked(denied, ErrorCode.AI_TRADING_STOPPED, gw, conn, "ks-1");
 
+        // The activity history says why in plain words, not in an error code, and does not claim
+        // the order was approved.
+        var last = gw.Log.RecentActivity().Last();
+        Assert.Contains("AI trading is stopped", last.Text);
+        Assert.DoesNotContain("AI_TRADING_STOPPED", last.Text);
+        Assert.DoesNotContain("You approved", last.Text);
+        Assert.Equal("warn", last.Level);
+
         // Two deliberate acts: re-enable, then approve. Both are the human's, and both are required.
         gw.EnableAiTrading();
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("ks-1"), conn, "ks-1");
@@ -305,6 +313,95 @@ public class ApprovalReauthorizationTests
 
         gw.Update(s => s.Risk.MaxOrderQuantity = 3m);
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("qty-1"), conn, "qty-1");
+    }
+
+    // ------------------------------------------------------------------ 2b. time-to-live
+
+    /// <summary>A clock the test moves by hand. The gateway reads no other.</summary>
+    sealed class TestClock : TimeProvider
+    {
+        DateTimeOffset _now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
+    }
+
+    [Fact]
+    public async Task An_approval_older_than_the_ttl_is_refused_and_the_request_is_declined_for_good()
+    {
+        var clock = new TestClock();
+        var (gw, conn, db) = await Parked("ttl-inside", options: new GatewayOptions { Clock = clock });
+        using var dbh = db;
+        await Park(gw, "ttl-outside");
+        var ttl = new GatewayOptions().ApprovalTtl;
+        Assert.Equal(TimeSpan.FromMinutes(15), ttl);   // the default the design note states
+
+        // One second inside the window: approvable.
+        clock.Advance(ttl - TimeSpan.FromSeconds(1));
+        AssertDispatchedExactlyOnce(await gw.ApproveAsync("ttl-inside"), conn, "ttl-inside");
+
+        // Two seconds later, one second past it: refused, and declined through the state machine.
+        clock.Advance(TimeSpan.FromSeconds(2));
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ttl-outside"));
+        Assert.Equal(ErrorCode.APPROVAL_EXPIRED, denied.Code);
+        Assert.Equal(0, conn.Broker.CountByClientOrderId(TradingGateway.ClientOrderIdFor("ttl-outside")));
+        Assert.Single(conn.Broker.Orders);
+
+        var record = gw.GetRequest("ttl-outside")!;
+        Assert.Equal(ExecutionState.CANCELLED, record.State);
+        Assert.True(OrderStateMachine.IsTerminal(record.State));
+        Assert.False(record.NeedsReconciliation);
+        Assert.Contains("expired", record.LastError!);
+
+        // Terminal means terminal: a second press cannot revive it.
+        var again = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ttl-outside"));
+        Assert.Equal(ErrorCode.INVALID_REQUEST, again.Code);
+        Assert.Single(conn.Broker.Orders);
+
+        // What the AI sees on the wire: a replay of its request id returns the declined record rather
+        // than "still waiting for approval", so it learns to propose again instead of waiting forever.
+        var replay = await gw.PlaceAsync(new AgentContext("agent-1"), "ttl-outside", TestEnv.Buy());
+        Assert.Equal(ExecutionState.CANCELLED, replay.State);
+        Assert.Single(conn.Broker.Orders);
+
+        // And the person is told in plain words, not in an error code.
+        var line = gw.Log.RecentActivity().Last(a => a.Text.Contains("ttl-outside") || a.Text.Contains("declined"));
+        Assert.DoesNotContain("APPROVAL_EXPIRED", line.Text);
+        Assert.Equal("warn", line.Level);
+    }
+
+    [Fact]
+    public async Task The_ttl_is_the_configured_option_not_a_constant()
+    {
+        var clock = new TestClock();
+        var (gw, conn, db) = await Parked("ttl-short",
+            options: new GatewayOptions { Clock = clock, ApprovalTtl = TimeSpan.FromMinutes(1) });
+        using var dbh = db;
+
+        clock.Advance(TimeSpan.FromSeconds(61));
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ttl-short"));
+        Assert.Equal(ErrorCode.APPROVAL_EXPIRED, denied.Code);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("ttl-short")!.State);
+    }
+
+    /// <summary>
+    /// Kill switch on AND expired. The useful answer is "this one is dead", not "re-enable AI trading
+    /// and try again" — which would walk the user straight back here for the same dead request, and
+    /// leave a request nobody can ever dispatch sitting on the Dashboard as if it were live.
+    /// </summary>
+    [Fact]
+    public async Task Expiry_is_judged_first_so_a_dead_request_is_not_left_parked_behind_another_refusal()
+    {
+        var clock = new TestClock();
+        var (gw, conn, db) = await Parked("ttl-ks", options: new GatewayOptions { Clock = clock });
+        using var dbh = db;
+        gw.StopAiTrading("test");
+        clock.Advance(TimeSpan.FromMinutes(16));
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ttl-ks"));
+        Assert.Equal(ErrorCode.APPROVAL_EXPIRED, denied.Code);
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("ttl-ks")!.State);
+        Assert.Empty(conn.Broker.Orders);
     }
 
     // ------------------------------------------------------------------ 3. gates the map listed as unpinned
