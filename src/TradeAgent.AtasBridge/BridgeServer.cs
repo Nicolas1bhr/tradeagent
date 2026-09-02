@@ -36,6 +36,16 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
     volatile bool _disposed;
     int _authFailures;
 
+    // The adapter subscription, held so it can be undone. See Subscribe().
+    readonly Lock _subscription = new();
+    bool _subscribed;
+    Action<bool>? _onConnection;
+    Action<QuoteInfo>? _onQuote;
+    Action<OrderInfo>? _onOrder;
+    Action<ExecutionInfo>? _onExecution;
+    Action<PositionInfo>? _onPosition;
+    Action<AccountInfo>? _onAccount;
+
     public bool Connected { get; private set; }
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan ReconnectDelay { get; init; } = TimeSpan.FromSeconds(2);
@@ -75,6 +85,21 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
     public async Task RunAsync(CancellationToken ct)
     {
         Subscribe();
+        try
+        {
+            await ConnectLoop(ct);
+        }
+        finally
+        {
+            // However this loop ended — the caller's token, disposal, or a throw — this bridge has
+            // no further use for the adapter's events. DisposeAsync awaits this task, so by the time
+            // it returns the subscription is provably gone.
+            Unsubscribe();
+        }
+    }
+
+    async Task ConnectLoop(CancellationToken ct)
+    {
         while (!ct.IsCancellationRequested)
         {
             try
@@ -362,22 +387,70 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
             ? d.Value.Deserialize<T>(Json.Options) ?? throw new InvalidOperationException("unreadable payload")
             : throw new InvalidOperationException("missing payload");
 
+    /// <summary>
+    /// Takes this bridge off the adapter's six invocation lists, and puts it back on.
+    ///
+    /// The handlers are held in fields rather than written inline because a lambda you did not keep
+    /// is a subscription you cannot remove: <c>Subscribe</c> used to attach six of them and keep
+    /// none, so a disposed bridge stayed on ATAS's lists for the life of the strategy and every
+    /// event ATAS raised was still handed to an object that had been torn down. Six handlers per
+    /// load, never removed, is also a leak that grows every time the strategy is reloaded.
+    ///
+    /// Both are guarded and idempotent because disposal races the loop's own start: whichever of
+    /// them runs second must still leave nothing subscribed. <see cref="RunAsync"/> unsubscribes in
+    /// a finally OUTSIDE its reconnect loop, so a reconnect — which is ordinary, not exceptional —
+    /// never drops the subscription.
+    /// </summary>
     void Subscribe()
     {
-        adapter.ConnectionChanged += c => Push(BridgeEvents.Connection, new { connected = c });
-        adapter.QuoteChanged += q => Push(BridgeEvents.Quote, q);
-        adapter.OrderChanged += o => Push(BridgeEvents.Order, o);
-        adapter.ExecutionReceived += e => Push(BridgeEvents.Execution, e);
-        adapter.PositionChanged += p => Push(BridgeEvents.Position, p);
-        adapter.AccountChanged += a => Push(BridgeEvents.Account, a);
+        lock (_subscription)
+        {
+            if (_subscribed || _disposed) return;
+
+            _onConnection = c => Push(BridgeEvents.Connection, new { connected = c });
+            _onQuote = q => Push(BridgeEvents.Quote, q);
+            _onOrder = o => Push(BridgeEvents.Order, o);
+            _onExecution = e => Push(BridgeEvents.Execution, e);
+            _onPosition = p => Push(BridgeEvents.Position, p);
+            _onAccount = a => Push(BridgeEvents.Account, a);
+
+            adapter.ConnectionChanged += _onConnection;
+            adapter.QuoteChanged += _onQuote;
+            adapter.OrderChanged += _onOrder;
+            adapter.ExecutionReceived += _onExecution;
+            adapter.PositionChanged += _onPosition;
+            adapter.AccountChanged += _onAccount;
+            _subscribed = true;
+        }
+    }
+
+    /// <summary>The other half of <see cref="Subscribe"/>. Safe to call twice, and on a bridge that never subscribed.</summary>
+    void Unsubscribe()
+    {
+        lock (_subscription)
+        {
+            if (!_subscribed) return;
+
+            adapter.ConnectionChanged -= _onConnection;
+            adapter.QuoteChanged -= _onQuote;
+            adapter.OrderChanged -= _onOrder;
+            adapter.ExecutionReceived -= _onExecution;
+            adapter.PositionChanged -= _onPosition;
+            adapter.AccountChanged -= _onAccount;
+
+            _onConnection = null; _onQuote = null; _onOrder = null;
+            _onExecution = null; _onPosition = null; _onAccount = null;
+            _subscribed = false;
+        }
     }
 
     /// <summary>
     /// An adapter event on its way to the peer, fire and forget.
     ///
-    /// The disposed check is not defensive noise: nothing unsubscribes from the adapter, so ATAS can
-    /// raise an event into this object after <see cref="DisposeAsync"/> has run, and reading
-    /// <c>_cts.Token</c> then throws straight back into ATAS's own event raise.
+    /// The disposed check is a backstop, not the defence — <see cref="Unsubscribe"/> is. It covers
+    /// the one window the subscription cannot: an event ATAS had already dispatched into this
+    /// handler when the removal ran. Without it, reading <c>_cts.Token</c> after disposal throws
+    /// straight back into ATAS's own event raise.
     /// </summary>
     void Push(string name, object payload)
     {
@@ -450,6 +523,11 @@ public sealed class BridgeServer(IAtasAdapter adapter, string? pipeName = null, 
             try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
             catch (Exception) { /* cancelled, faulted, or would not let go: either way we are done */ }
         }
+
+        // Belt and braces. RunAsync's finally is what normally does this, but that wait above is
+        // bounded and a loop that would not let go must not leave this bridge on ATAS's event lists.
+        Unsubscribe();
+
         _cts.Dispose();
         _send.Dispose();
     }

@@ -15,11 +15,52 @@ namespace TradeAgent.Gateway;
 public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null) : IAsyncDisposable
 {
     const int MaxFrameBytes = 1 << 20;
-    // RED-STAGE STUB: declared so the backpressure tests compile; read by nothing yet.
+
+    /// <summary>
+    /// The pipe's buffer, and it was 0 until this was measured.
+    ///
+    /// MEASURED, not arithmetic — but measured on the OTHER pipe. This is the same 8 KiB
+    /// <see cref="Connectors.Atas.AtasConnector"/> was given in bbcd36e after the bridge froze on
+    /// Windows on 2026-09-01, and it is here for the same reason: a Windows named pipe created with
+    /// no buffer completes a write only when the far end reads it, however small the frame, so every
+    /// reply this server sends was coupled to the agent reading promptly with no slack at all. It is
+    /// not only a hostile agent that stops reading — a CLI process that is suspended, swapped out or
+    /// stuck behind its own stdout does exactly the same thing.
+    ///
+    /// The number is a hint to the kernel, not a contract, and it changes nothing about the
+    /// protocol: a frame that fits simply no longer waits for a reader. It is deliberately NOT sized
+    /// to <see cref="MaxFrameBytes"/> — a reply near the frame cap should still be governed by
+    /// <see cref="WriteTimeout"/> rather than by however much the kernel felt like absorbing.
+    /// </summary>
+    const int PipeBuffer = 8192;
+
+    /// <summary>
+    /// How long ONE reply gets to reach the agent before that connection is declared dead.
+    ///
+    /// Same name, same default and same reasoning as <see cref="AtasBridge.BridgeServer.WriteTimeout"/>,
+    /// because it is the same defect on the other pipe: cancellation cannot recall a write the kernel
+    /// has already accepted, only closing the handle can. A reply that has not landed within this
+    /// ends that ONE connection — the peer that stopped reading pays, nobody else does.
+    ///
+    /// Measured here on macOS on 2026-09-02, before the deadline existed: an authenticated peer that
+    /// read one byte of a 960 KB material-list and then stopped left the handler parked in the write
+    /// with 960,527 bytes still owed and the connection still open, and shutdown walked away from it
+    /// rather than closing it.
+    /// </summary>
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
     readonly string _pipe = pipeName ?? Paths.PipeName;
     readonly CancellationTokenSource _cts = new();
+
+    /// <summary>
+    /// Every connection currently being served. The handlers are fire-and-forget tasks, so without
+    /// this <see cref="DisposeAsync"/> has no way to reach one: it awaited the ACCEPT loop, which is
+    /// not where a stalled writer is parked, and the connection outlived the server that owned it.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<NamedPipeServerStream, byte> _live = new();
+
     Task? _loop;
+    volatile bool _disposed;
 
     public string PipeName => _pipe;
 
@@ -36,6 +77,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 await server.WaitForConnectionAsync(ct);
                 var s = server;
                 server = null; // ownership moves to the handler
+                _live[s] = 0;
                 _ = Task.Run(() => Serve(s, ct), ct);
             }
             catch (OperationCanceledException) { server?.Dispose(); return; }
@@ -59,10 +101,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.ReadWrite, System.Security.AccessControl.AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(id.User!, PipeAccessRights.CreateNewInstance, System.Security.AccessControl.AccessControlType.Allow));
             return NamedPipeServerStreamAcl.Create(_pipe, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, security);
+                PipeTransmissionMode.Byte, PipeOptions.Asynchronous, PipeBuffer, PipeBuffer, security);
         }
         return new NamedPipeServerStream(_pipe, PipeDirection.InOut, NamedPipeServerStream.MaxAllowedServerInstances,
-            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous, PipeBuffer, PipeBuffer);
     }
 
     async Task Serve(NamedPipeServerStream pipe, CancellationToken ct)
@@ -82,34 +124,42 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
                 IpcRequest? req;
                 try { req = Json.Read<IpcRequest>(line); }
-                catch (Exception) { await Send(writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON")); continue; }
-                if (req is null) { await Send(writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame")); continue; }
+                catch (Exception)
+                {
+                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null)) return;
+                    continue;
+                }
+                if (req is null)
+                {
+                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame"), "", null)) return;
+                    continue;
+                }
 
                 if (req.Op == Core.Ops.Hello)
                 {
                     if (!Security.IpcToken.Matches(req.Token, token))
                     {
                         gateway.Log.Engineering("Ipc", "auth_rejected", "warn");
-                        await Send(writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"));
+                        await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session);
                         return; // one chance per connection
                     }
                     authenticated = true;
-                    await Send(writer, IpcResponse.Success(req.Id, new
+                    if (!await Send(pipe, writer, IpcResponse.Success(req.Id, new
                     {
                         protocol_version = Versions.ProtocolVersion,
                         app_version = Versions.App,
                         compatible = req.V == Versions.ProtocolVersion
-                    }));
+                    }), req.Op, req.Session)) return;
                     continue;
                 }
 
                 if (!authenticated)
                 {
-                    await Send(writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"));
+                    await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session);
                     return;
                 }
 
-                await Send(writer, await Handle(req, ct));
+                if (!await Send(pipe, writer, await Handle(req, ct), req.Op, req.Session)) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -119,6 +169,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         catch (Exception ex)
         {
             gateway.Log.Engineering("Ipc", "connection_failed", "error", ex: ex);
+        }
+        finally
+        {
+            _live.TryRemove(pipe, out _);
         }
     }
 
@@ -136,7 +190,39 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         }
     }
 
-    static Task Send(StreamWriter w, IpcResponse r) => w.WriteLineAsync(Json.Write(r));
+    /// <summary>
+    /// One reply to one peer, with a deadline on it. False means this connection is finished.
+    ///
+    /// A peer that authenticates, asks for something large and then stops reading used to park the
+    /// handler here forever: <c>WriteLineAsync</c> had no deadline and takes no cancellation token,
+    /// and no token could have helped anyway — a write the kernel has already accepted cannot be
+    /// recalled, only the handle can be closed. So the deadline closes the handle, which fails the
+    /// pending write and ends that ONE connection. Other agents are on other handlers and other
+    /// pipes and never notice; there is deliberately no lock here, because a lock shared across
+    /// connections would turn one stalled peer into an outage for everybody.
+    ///
+    /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
+    /// later as an unobserved task exception.
+    /// </summary>
+    async Task<bool> Send(NamedPipeServerStream pipe, StreamWriter w, IpcResponse r, string op, string? session)
+    {
+        var write = w.WriteLineAsync(Json.Write(r));
+        try
+        {
+            await write.WaitAsync(WriteTimeout);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            Observe(write);
+            gateway.Log.Engineering("Ipc", "peer_stopped_reading", "warn", session: session,
+                metadataJson: Json.Write(new { op, write_timeout_ms = (int)WriteTimeout.TotalMilliseconds }));
+            try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
+            return false;
+        }
+    }
+
+    static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
 
     async Task<IpcResponse> Handle(IpcRequest req, CancellationToken ct)
     {
@@ -328,10 +414,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new PlaceIntent(symbol, side, type, qty, limit, stop, tif, r.Str("comment"));
     }
 
+    /// <summary>
+    /// Stops the server. EVERY LIVE CONNECTION IS CLOSED BEFORE ANYTHING IS WAITED ON, and the wait
+    /// is bounded.
+    ///
+    /// What was here cancelled the token and awaited <c>_loop</c> — but <c>_loop</c> is the ACCEPT
+    /// loop, and the per-connection handlers are untracked <c>Task.Run</c>s nobody holds. So this
+    /// never hung; it did something quieter and worse. It returned promptly and LEFT THE CONNECTION
+    /// OPEN, with a handler still parked in a write to a peer that had stopped reading. Measured on
+    /// 2026-09-02: DisposeAsync returned in 21 ms and the abandoned connection still had the whole
+    /// 960 KB reply to give.
+    ///
+    /// Cancelling the token cannot fix that on its own — the handler is inside a write, which takes
+    /// no token — so the handles are closed here, which fails those writes and lets the handlers
+    /// unwind.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;      // idempotent: disposing twice is not an error, it is a no-op
+        _disposed = true;
         await _cts.CancelAsync();
-        if (_loop is not null) { try { await _loop; } catch (Exception) { } }
+
+        foreach (var connection in _live.Keys)
+        {
+            try { connection.Dispose(); } catch (Exception) { /* already gone */ }
+            _live.TryRemove(connection, out _);
+        }
+
+        if (_loop is not null)
+        {
+            try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception) { /* cancelled, faulted, or would not let go: either way we are done */ }
+        }
         _cts.Dispose();
     }
 }
