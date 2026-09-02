@@ -77,6 +77,55 @@ public sealed class TradingGateway : IAsyncDisposable
         Connector.ConnectionChanged += OnConnectionChanged;
         Connector.OrderChanged += OnOrderChanged;
         Connector.ExecutionReceived += OnExecutionReceived;
+
+        RecoverStrandedDispatches();
+    }
+
+    /// <summary>
+    /// A DISPATCHING RECORD IS BY DEFINITION ONE WHERE THE WIRE MAY HAVE BEEN TOUCHED. It is written
+    /// before the connector is called and overwritten by whatever the connector answered, so a
+    /// record still in DISPATCHING when a gateway is constructed over the store cannot be in flight:
+    /// the process that was flying it is gone. Its outcome is unknown, and until 2026-09-02 nothing
+    /// said so — every path that sets `needs_reconciliation` is inside a catch block, so a crash in
+    /// that window (or an unhandled exception on a non-task thread, which nothing in this app
+    /// catches) left the flag at 0, the gate passed, and the next start placed a second order on top
+    /// of one that may be live at the broker.
+    ///
+    /// It runs in the CONSTRUCTOR rather than in a Start method a caller must remember, because
+    /// there is no correct order in which a caller may read this store, authorize an order or
+    /// dispatch one before the sweep has run — and there are three construction sites (app startup,
+    /// the connector switch on the Settings page, and the dev host), which is precisely the shape of
+    /// defect this sweep exists to close.
+    ///
+    /// DISPATCHING → UNKNOWN is a transition the table already allows; nothing here widens it.
+    /// </summary>
+    void RecoverStrandedDispatches()
+    {
+        var stranded = _requests.Dispatching();
+        if (stranded.Count == 0) return;
+
+        foreach (var req in stranded)
+        {
+            try
+            {
+                _requests.Transition(req.RequestId, ExecutionState.DISPATCHING, ExecutionState.UNKNOWN,
+                    needsReconciliation: true,
+                    error: "TradeAgent stopped while this was being sent, so the platform's answer was never recorded");
+                _log.Engineering("Gateway", "startup_sweep_unknown", "warn", requestId: req.RequestId,
+                    metadataJson: Json.Write(new { intent = req.Intent.ToString(), instrument = req.Instrument }));
+            }
+            catch (TradeAgentException ex)
+            {
+                // The table cannot refuse DISPATCHING → UNKNOWN, so reaching here means the CAS lost
+                // to another writer moving the same row. Flag it anyway: the claim being made is
+                // "this record is not trusted", not "this line moved it".
+                _requests.MarkNeedsReconciliation(req.RequestId, ex.Message);
+            }
+        }
+
+        _log.Activity($"{stranded.Count} order(s) were still being sent when TradeAgent last stopped. " +
+                      "Trading is paused until you or the platform confirm what happened to them.", "warn");
+        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, $"{stranded.Count} request(s) unconfirmed");
     }
 
     // Named rather than inline so DisposeAsync can detach them again. A gateway that is torn down
@@ -156,7 +205,7 @@ public sealed class TradingGateway : IAsyncDisposable
             Versions.ProtocolVersion.ToString(), Versions.App, Settings.Mode, Settings.AiTradingStopped,
             Settings.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
             Connector.Capabilities.IsPaper, acct?.Id ?? Settings.SelectedAccountId, _health.Snapshot(),
-            _requests.Open().Count, _requests.NeedingReconciliation().Count, Settings.Risk);
+            _requests.Open().Count, Unreconciled().Count, Settings.Risk);
     }
 
     public Task<IReadOnlyList<AccountInfo>> AccountsAsync(CancellationToken ct = default) => Connector.GetAccountsAsync(ct);
@@ -184,6 +233,19 @@ public sealed class TradingGateway : IAsyncDisposable
         await Connector.GetExecutionsAsync(await RequireAccountId(ct), null, ct);
 
     public ExecutionRequest? GetRequest(string requestId) => _requests.Get(requestId);
+
+    /// <summary>
+    /// Unconfirmed work as this gateway counts it: the flagged records, PLUS any record still in
+    /// DISPATCHING longer than a dispatch can legitimately take
+    /// (<see cref="GatewayOptions.DispatchStrandedAfter"/>). Everything inside this class that asks
+    /// "is there unconfirmed work" asks this, so the refusal, the status field, the health row and
+    /// the reconciler cannot drift into three different answers.
+    ///
+    /// Public because the app's background loop decides whether to reconcile from it. Surfaces that
+    /// still read <c>Requests.NeedingReconciliation()</c> see the flag alone, which lags this by at
+    /// most one reconcile pass — the reconciler is what writes the flag onto an aged row.
+    /// </summary>
+    public List<ExecutionRequest> Unreconciled() => _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
 
     async Task<string> RequireAccountId(CancellationToken ct)
     {
@@ -275,7 +337,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // Unconfirmed work outranks a healthy-looking connection: check it before health, so the
         // refusal says "an earlier order is unconfirmed" rather than something vaguer.
-        var unreconciled = _requests.NeedingReconciliation();
+        var unreconciled = Unreconciled();
         if (unreconciled.Count > 0)
         {
             (reason, code) = ($"{unreconciled.Count} earlier request(s) are unconfirmed", ErrorCode.TRADING_PAUSED_UNRECONCILED);
@@ -463,18 +525,64 @@ public sealed class TradingGateway : IAsyncDisposable
     /// overwrite it, but we still flag it for reconciliation — an outcome we could not confirm is
     /// not an outcome we trust, whichever path wrote it.
     /// </summary>
-    ExecutionRequest SettleUnknown(string requestId, string error)
+    ExecutionRequest SettleUnknown(string requestId, string error, string? connectorOrderId = null)
     {
         try
         {
+            // The broker's own reference is worth keeping even when nothing else is known: it is what
+            // the reconciler matches on and what the unconfirmed card shows the person who has to go
+            // and look in ATAS.
             return _requests.Transition(requestId, ExecutionState.DISPATCHING, ExecutionState.UNKNOWN,
-                needsReconciliation: true, error: error);
+                connectorOrderId: connectorOrderId, needsReconciliation: true, error: error);
         }
         catch (TradeAgentException ex) when (ex.Code == ErrorCode.ILLEGAL_STATE_TRANSITION)
         {
             return _requests.MarkNeedsReconciliation(requestId, error);
         }
     }
+
+    /// <summary>
+    /// Records an indefinite outcome and takes trading down with it: one place for the four things
+    /// that must always happen together, because until 2026-09-02 they happened together on some
+    /// paths and not at all on others.
+    /// </summary>
+    ExecutionRequest RecordIndefinite(string requestId, string technical, string sentence,
+        Exception? ex = null, string? connectorOrderId = null)
+    {
+        var final = SettleUnknown(requestId, technical, connectorOrderId);
+        _log.Activity($"{sentence} AI trading is paused until it is confirmed.", "warn");
+        _log.Engineering("Gateway", "dispatch_unknown", "warn", requestId: requestId, ex: ex,
+            metadataJson: Json.Write(new { reason = technical, exception = ex?.GetType().FullName }));
+        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "an order is unconfirmed");
+        StateChanged?.Invoke();
+        return final;
+    }
+
+    /// <summary>
+    /// WHAT THE PLATFORM ANSWERED, TRANSLATED INTO WHAT WE MAY RECORD. Total over
+    /// <see cref="ExecutionState"/> on purpose: the catch-all this replaces mapped every state it did
+    /// not list onto ACKNOWLEDGED, which turned UNKNOWN — whose entire meaning is "we do not know" —
+    /// into "we do know, it is live, nothing to reconcile", and carried an order the broker had
+    /// killed as open forever.
+    ///
+    /// CANCEL_PENDING is the one answer that is honest in neither direction. It is a real thing a
+    /// platform can say, but DISPATCHING → CANCEL_PENDING is not a legal transition — the table
+    /// refuses to let a dispatch "claim a cancel is merely pending", and
+    /// FaultTests.The_table_lets_a_dispatching_cancel_reach_cancelled pins that refusal — so
+    /// recording it would file an `illegal_settle` and leave the record stranded in DISPATCHING,
+    /// which is the exact defect this map exists to close. UNKNOWN and a reconcile is the honest
+    /// destination for it, as it is for every answer that is not an outcome.
+    /// </summary>
+    static (ExecutionState To, bool Indefinite) MapDispatchOutcome(ExecutionState answered) => answered switch
+    {
+        ExecutionState.FILLED           => (ExecutionState.FILLED, false),
+        ExecutionState.PARTIALLY_FILLED => (ExecutionState.PARTIALLY_FILLED, false),
+        ExecutionState.WORKING          => (ExecutionState.WORKING, false),
+        ExecutionState.ACKNOWLEDGED     => (ExecutionState.ACKNOWLEDGED, false),
+        ExecutionState.REJECTED         => (ExecutionState.REJECTED, false),
+        ExecutionState.CANCELLED        => (ExecutionState.CANCELLED, false),
+        _                               => (ExecutionState.UNKNOWN, true)
+    };
 
     async Task<ExecutionRequest> DispatchPlaceAsync(ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
@@ -489,40 +597,47 @@ public sealed class TradingGateway : IAsyncDisposable
         var cmd = new PlaceOrderCommand(stored.ClientOrderId, stored.AccountId, intent.Symbol, intent.Side,
             intent.Type, intent.Quantity, intent.LimitPrice, intent.StopPrice, intent.Tif, intent.Comment);
 
+        // ONLY THE WIRE CALL IS INSIDE THE TRY, and that is deliberate. The catch below is a
+        // catch-all, so anything left in here would be read as "we do not know what the broker did"
+        // — including a log write against a locked database or a UI subscriber throwing out of
+        // StateChanged, neither of which is news about the broker at all.
+        OrderInfo order;
         try
         {
-            var order = await Connector.PlaceOrderAsync(cmd, ct);
-            var to = order.State switch
-            {
-                ExecutionState.FILLED => ExecutionState.FILLED,
-                ExecutionState.PARTIALLY_FILLED => ExecutionState.PARTIALLY_FILLED,
-                ExecutionState.REJECTED => ExecutionState.REJECTED,
-                ExecutionState.WORKING => ExecutionState.WORKING,
-                _ => ExecutionState.ACKNOWLEDGED
-            };
-            var final = Settle(current.RequestId, to, order.ConnectorOrderId, order.FilledQuantity);
-            _log.Activity($"{intent.Side} {intent.Quantity} {intent.Symbol} -> {to}");
-            StateChanged?.Invoke();
-            return final;
+            order = await Connector.PlaceOrderAsync(cmd, ct);
         }
         catch (ConnectorRejectedException ex)
         {
-            // Definitive: the broker said no. Nothing is working, so nothing needs reconciling.
-            var final = Settle(current.RequestId, ExecutionState.REJECTED, error: ex.Message);
+            // Definitive: the broker said no. Nothing is working, so nothing needs reconciling. This
+            // is the ONLY exception that may settle a record without flagging it.
+            var refused = Settle(current.RequestId, ExecutionState.REJECTED, error: ex.Message);
             _log.Activity($"Order refused by the broker: {ex.Message}", "warn");
             StateChanged?.Invoke();
-            return final;
+            return refused;
         }
-        catch (Exception ex) when (ex is ConnectorTransportException or TimeoutException or OperationCanceledException)
+        catch (Exception ex)
         {
-            // Indefinite. The order may be live. Record UNKNOWN, pause trading, reconcile — never retry.
-            var final = SettleUnknown(current.RequestId, ex.Message);
-            _log.Activity("Connection lost while sending an order. AI trading paused until the order is confirmed.", "warn");
-            _log.Engineering("Gateway", "dispatch_unknown", "warn", requestId: current.RequestId, ex: ex);
-            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "an order is unconfirmed");
-            StateChanged?.Invoke();
-            return final;
+            // EVERYTHING ELSE IS INDEFINITE, which is what docs/CONTRACTS.md always said and what
+            // the taxonomy did not do: it named ConnectorTransportException, TimeoutException and
+            // OperationCanceledException, and a JsonException or a NullReferenceException from a
+            // connector deserializing a frame AFTER the broker accepted walked straight out of here,
+            // past the settle, leaving the write-ahead row as the last word with trading still open.
+            // The order may be live. Record UNKNOWN, pause, reconcile — never retry.
+            return RecordIndefinite(current.RequestId, ex.Message,
+                "Something went wrong while sending an order and TradeAgent could not confirm what the platform did.", ex);
         }
+
+        var (to, indefinite) = MapDispatchOutcome(order.State);
+        if (indefinite)
+            return RecordIndefinite(current.RequestId,
+                $"the platform answered {order.State}, which is not an outcome this order can be recorded as",
+                $"The platform answered {order.State} for an order TradeAgent sent, which is not something it can record as done.",
+                connectorOrderId: order.ConnectorOrderId);
+
+        var final = Settle(current.RequestId, to, order.ConnectorOrderId, order.FilledQuantity);
+        _log.Activity($"{intent.Side} {intent.Quantity} {intent.Symbol} -> {to}");
+        StateChanged?.Invoke();
+        return final;
     }
 
     /// <summary>How long a parked order stays approvable. Shown beside the request so the person knows.</summary>
@@ -685,18 +800,22 @@ public sealed class TradingGateway : IAsyncDisposable
         try
         {
             await Connector.CancelOrderAsync(target, ct);
-            _log.Activity($"Cancelled order {target}");
-            return Settle(current.RequestId, ExecutionState.CANCELLED);
         }
         catch (ConnectorRejectedException ex)
         {
             return Settle(current.RequestId, ExecutionState.REJECTED, error: ex.Message);
         }
-        catch (ConnectorTransportException ex)
+        catch (Exception ex)
         {
-            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "a cancellation is unconfirmed");
-            return SettleUnknown(current.RequestId, ex.Message);
+            // Same taxonomy as a place, and it did not used to be: this path caught neither
+            // TimeoutException nor OperationCanceledException, so a cancel the broker CARRIED OUT
+            // could throw on the way home and the ledger would never say the order was cancelled.
+            return RecordIndefinite(current.RequestId, ex.Message,
+                "TradeAgent could not confirm whether an order was cancelled.", ex);
         }
+
+        _log.Activity($"Cancelled order {target}");
+        return Settle(current.RequestId, ExecutionState.CANCELLED);
     }
 
     public async Task<ExecutionRequest> ModifyAsync(AgentContext ctx, string requestId, string orderRef,
@@ -718,21 +837,53 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!created && _opt.IdempotencyEnabled) return stored;
 
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+        var command = new ModifyOrderCommand(target, quantity, limitPrice, stopPrice);
+        OrderInfo o;
         try
         {
-            var o = await Connector.ModifyOrderAsync(new ModifyOrderCommand(target, quantity, limitPrice, stopPrice), ct);
-            _log.Activity($"Modified order {target}");
-            return Settle(current.RequestId, ExecutionState.ACKNOWLEDGED, connectorOrderId: o.ConnectorOrderId);
+            o = await Connector.ModifyOrderAsync(command, ct);
         }
         catch (ConnectorRejectedException ex)
         {
             return Settle(current.RequestId, ExecutionState.REJECTED, error: ex.Message);
         }
-        catch (ConnectorTransportException ex)
+        catch (Exception ex)
         {
-            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "a modification is unconfirmed");
-            return SettleUnknown(current.RequestId, ex.Message);
+            return RecordIndefinite(current.RequestId, ex.Message,
+                "TradeAgent could not confirm whether an order was changed.", ex);
         }
+
+        // "IT RETURNED AN ORDER" IS NOT AN ANSWER. This settled ACKNOWLEDGED unconditionally without
+        // looking at what came back, so a platform that quietly ignored the request left the ledger
+        // saying a stop had been moved when it had not.
+        if (!ModificationApplied(command, o))
+            return RecordIndefinite(current.RequestId,
+                $"the platform returned the order as {o.State} qty={o.Quantity} limit={o.LimitPrice?.ToString() ?? "none"} " +
+                $"stop={o.StopPrice?.ToString() ?? "none"}, which does not show the change that was asked for",
+                "The platform did not show the change TradeAgent asked for on that order.",
+                connectorOrderId: o.ConnectorOrderId);
+
+        _log.Activity($"Modified order {target}");
+        return Settle(current.RequestId, ExecutionState.ACKNOWLEDGED, connectorOrderId: o.ConnectorOrderId);
+    }
+
+    /// <summary>
+    /// Did the platform actually do what the modification asked?
+    ///
+    /// Every field the command NAMED has to come back carrying the value asked for — a null field
+    /// asked for nothing and proves nothing — and the order has to still be in a state where a
+    /// working modification means anything. A terminal order (it filled, or was cancelled, while the
+    /// change was in flight) is not evidence that the change applied; it is evidence that we do not
+    /// know at what price the fill happened, which is precisely an UNKNOWN.
+    /// </summary>
+    static bool ModificationApplied(ModifyOrderCommand cmd, OrderInfo o)
+    {
+        if (o.State is not (ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING or ExecutionState.PARTIALLY_FILLED))
+            return false;
+        if (cmd.Quantity is { } q && o.Quantity != q) return false;
+        if (cmd.LimitPrice is { } limit && o.LimitPrice != limit) return false;
+        if (cmd.StopPrice is { } stop && o.StopPrice != stop) return false;
+        return true;
     }
 
     public async Task<ExecutionRequest?> CloseAsync(AgentContext ctx, string requestId, string symbol, CancellationToken ct = default)
@@ -757,29 +908,166 @@ public sealed class TradingGateway : IAsyncDisposable
 
     // ---------------------------------------------------------------- emergency controls (operator only)
 
-    /// <summary>Deliberately separate from the kill switch: stopping the AI must not move money.</summary>
-    public async Task<IReadOnlyList<string>> OperatorCancelAllAsync(CancellationToken ct = default)
+    /// <summary>
+    /// THE IDENTITY OF ONE PRESS. The screen mints one of these per CONFIRMED press and passes it
+    /// down, so every close and every cancel that press produces has a request id derived from it:
+    /// a retry of the SAME press finds its records already there and sends nothing, while a fresh
+    /// press is a fresh decision with fresh ids. Before this, `opclose-{new Guid}` was minted per
+    /// CALL, which made idempotency impossible by construction — a close that reached the broker and
+    /// then failed left no record at all, and the natural second press reversed the position instead
+    /// of flattening it.
+    ///
+    /// Random rather than sequential because an agent may create any request id it likes over the
+    /// pipe: a guessable operator id would let it pre-occupy one and turn the owner's emergency
+    /// press into a silent replay.
+    /// </summary>
+    public static string NewOperatorPressNonce() => Guid.NewGuid().ToString("n")[..16];
+
+    /// <summary>
+    /// Deliberately separate from the kill switch: stopping the AI must not move money.
+    ///
+    /// Outside AUTHORIZATION on purpose — this has to work while trading is paused, including while
+    /// it is paused by the very records this method writes. What it may NOT do any more is touch the
+    /// wire without leaving one.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> OperatorCancelAllAsync(string? pressNonce = null, CancellationToken ct = default)
     {
-        var ids = await Connector.CancelAllOrdersAsync(await RequireAccountId(ct), ct);
-        _log.Activity($"You cancelled all working orders ({ids.Count})", "warn");
-        return ids;
+        var nonce = pressNonce ?? NewOperatorPressNonce();
+        var accountId = await RequireAccountId(ct);
+
+        // What is on the book at the moment of the press, so each order can be written ahead by name.
+        // If the platform cannot say, the press is still carried out — an emergency control that
+        // refuses because a READ failed is not one — and a single umbrella record stands in for the
+        // orders that could not be named. Same when the book looks empty: the sweep is still sent,
+        // because "the list came back empty" is not proof there is nothing to cancel.
+        List<string>? listed = null;
+        try { listed = (await Connector.GetOrdersAsync(accountId, false, null, ct)).Select(o => o.ConnectorOrderId).ToList(); }
+        catch (Exception ex) { _log.Engineering("Gateway", "cancel_all_order_list_failed", "warn", ex: ex); }
+
+        var targets = listed is { Count: > 0 } ? listed.Select(id => (string?)id).ToList() : [null];
+        var open = new List<(string RequestId, string? Target)>();
+        foreach (var target in targets)
+        {
+            var rid = target is null ? $"op-cancel-{nonce}" : $"op-cancel-{nonce}-{target}";
+            var (created, stored) = _requests.TryCreate(OperatorRecord(rid, accountId,
+                target is null ? RequestIntent.CANCEL_ALL : RequestIntent.CANCEL, "-",
+                Json.Write(new { order = target, press = nonce })));
+            if (!created && _opt.IdempotencyEnabled) continue;      // the same press, pressed twice
+            _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+            open.Add((rid, target));
+        }
+
+        if (open.Count == 0)
+        {
+            _log.Engineering("Gateway", "operator_press_replayed", requestId: $"op-cancel-{nonce}");
+            return [];
+        }
+
+        IReadOnlyList<string> cancelled;
+        try
+        {
+            cancelled = await Connector.CancelAllOrdersAsync(accountId, ct);
+        }
+        catch (Exception ex)
+        {
+            foreach (var (rid, _) in open)
+                RecordIndefinite(rid, ex.Message, "TradeAgent could not confirm whether your cancel-all reached the platform.", ex);
+            throw;   // the person pressed this button and has to be told it failed
+        }
+
+        foreach (var (rid, target) in open)
+        {
+            if (target is null || cancelled.Contains(target)) Settle(rid, ExecutionState.CANCELLED);
+            else RecordIndefinite(rid, $"the platform did not list {target} among the orders it cancelled",
+                $"Order {target} was not among the ones the platform reported cancelling.");
+        }
+
+        _log.Activity($"You cancelled all working orders ({cancelled.Count})", "warn");
+        StateChanged?.Invoke();
+        return cancelled;
     }
 
-    /// <summary>Also deliberately separate: this one does move money, so it is never the same button.</summary>
-    public async Task<int> OperatorCloseAllAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Also deliberately separate: this one does move money, so it is never the same button.
+    ///
+    /// One write-ahead execution request per position, keyed by the press — the same machinery the
+    /// agent's own close goes through, which recorded UNKNOWN and paused while this button recorded
+    /// nothing at all.
+    /// </summary>
+    public async Task<int> OperatorCloseAllAsync(string? pressNonce = null, CancellationToken ct = default)
     {
+        var nonce = pressNonce ?? NewOperatorPressNonce();
         var accountId = await RequireAccountId(ct);
         var positions = await Connector.GetPositionsAsync(accountId, ct);
         var n = 0;
+
         foreach (var p in positions.Where(p => p.Quantity != 0))
         {
-            var rid = $"opclose-{Guid.NewGuid():n}";
-            await Connector.ClosePositionAsync(accountId, p.Symbol, ClientOrderIdFor(rid), ct);
+            var rid = $"op-close-{nonce}-{p.Symbol}";
+            var intent = new PlaceIntent(p.Symbol, p.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
+                OrderType.Market, Math.Abs(p.Quantity), null, null, TimeInForce.Day, "close position (you)");
+            var (created, stored) = _requests.TryCreate(OperatorRecord(rid, accountId,
+                RequestIntent.PLACE, p.Symbol, Json.Write(intent)));
+            if (!created && _opt.IdempotencyEnabled)
+            {
+                _log.Engineering("Gateway", "operator_press_replayed", requestId: rid);
+                continue;
+            }
+            var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+
+            OrderInfo? order;
+            try
+            {
+                order = await Connector.ClosePositionAsync(accountId, p.Symbol, current.ClientOrderId, ct);
+            }
+            catch (Exception ex)
+            {
+                RecordIndefinite(rid, ex.Message,
+                    $"TradeAgent could not confirm whether the close of {p.Symbol} reached the platform.", ex);
+                throw;   // as above: the person pressed this and has to be told
+            }
             n++;
+
+            if (order is null)
+            {
+                // No order came back. The one implementation that returns null means "there was no
+                // position to close", but a connector that submitted the close and could not read it
+                // back looks identical from here, and the SDK does not say which. Unknown it is.
+                RecordIndefinite(rid, "the platform returned no order for the close",
+                    $"TradeAgent could not confirm whether {p.Symbol} was closed.");
+                continue;
+            }
+
+            var (to, indefinite) = MapDispatchOutcome(order.State);
+            if (indefinite)
+                RecordIndefinite(rid, $"the platform answered {order.State} for the close",
+                    $"The platform answered {order.State} when closing {p.Symbol}, which is not something TradeAgent can record as done.",
+                    connectorOrderId: order.ConnectorOrderId);
+            else
+                Settle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
         }
+
         _log.Activity($"You closed all positions ({n})", "warn");
+        StateChanged?.Invoke();
         return n;
     }
+
+    /// <summary>The write-ahead row for one thing one press does. Always attributed to the operator.</summary>
+    ExecutionRequest OperatorRecord(string requestId, string accountId, RequestIntent intent,
+        string instrument, string parametersJson) => new()
+        {
+            RequestId = requestId,
+            AgentSessionId = AgentContext.Operator.SessionId,
+            ConnectorId = Connector.Id,
+            AccountId = accountId,
+            Instrument = instrument,
+            Intent = intent,
+            ParametersJson = parametersJson,
+            ClientOrderId = ClientOrderIdFor(requestId),
+            CreatedAt = Now,
+            State = ExecutionState.CREATED,
+            Mode = Settings.Mode
+        };
 
     // ---------------------------------------------------------------- reconciliation
 
@@ -815,7 +1103,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public async Task<ReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
-        var pending = _requests.NeedingReconciliation();
+        var pending = Unreconciled();
         if (pending.Count == 0)
         {
             // NOTHING PENDING IS AN OUTCOME, NOT A REASON TO SKIP THE ROW. The all-resolved path
@@ -1059,7 +1347,7 @@ public sealed class TradingGateway : IAsyncDisposable
                     q is null ? "no quote" : q.IsStale(_opt.MaxQuoteAge) ? $"last price is older than {_opt.MaxQuoteAge.TotalSeconds:0}s" : "");
             }
 
-            var unreconciled = _requests.NeedingReconciliation().Count;
+            var unreconciled = Unreconciled().Count;
             _health.Set(Components.ExecutionCapability,
                 unreconciled > 0 ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
