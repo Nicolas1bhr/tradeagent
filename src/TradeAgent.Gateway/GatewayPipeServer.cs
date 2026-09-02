@@ -15,6 +15,8 @@ namespace TradeAgent.Gateway;
 public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null) : IAsyncDisposable
 {
     const int MaxFrameBytes = 1 << 20;
+    // RED-STAGE STUB: declared so the backpressure tests compile; read by nothing yet.
+    public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
     readonly string _pipe = pipeName ?? Paths.PipeName;
     readonly CancellationTokenSource _cts = new();
     Task? _loop;

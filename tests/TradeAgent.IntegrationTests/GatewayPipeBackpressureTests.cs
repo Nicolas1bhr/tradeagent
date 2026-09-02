@@ -1,0 +1,292 @@
+using System.Diagnostics;
+using System.IO.Pipes;
+using System.Text;
+using System.Text.Json;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using TradeAgent.Security;
+using TradeAgent.TradeCli;
+using Xunit;
+
+namespace TradeAgent.Tests.Integration;
+
+/// <summary>
+/// The agent-facing pipe against a peer that stops reading.
+///
+/// Same class of coupling as the bridge freeze measured on Windows on 2026-09-01: a reply the far
+/// end never reads parks the handler inside a write with no deadline, and nothing can recall a
+/// write the kernel has already accepted except closing the handle. It is not only a hostile agent
+/// that stops reading — a CLI process that is suspended, swapped out or stuck behind its own stdout
+/// does exactly the same thing.
+///
+/// WHY THE REPLY HERE IS LARGE. On macOS a named pipe is a Unix domain socket and the kernel absorbs
+/// 16 KiB without a reader (net.local.stream.sendspace + recvspace, 8192 each — sysctl on the dev
+/// Mac), so a small reply lands and the stall is invisible. On Windows the pipe was created with no
+/// buffer at all, so the same stall happens on ANY reply, however small. A reply near the frame cap
+/// is the one shape that shows the defect on both, and it is a legal reply the product really
+/// produces: material-list carries the twenty most recent notes verbatim.
+/// </summary>
+public class GatewayPipeBackpressureTests
+{
+    static string NewPipe() => "ta-bp-" + Guid.NewGuid().ToString("n")[..12];
+
+    /// <summary>
+    /// Arithmetic, not measured: four notes of 240,000 characters make a material-list reply of
+    /// about 960 KB — under the 1 MiB (1 &lt;&lt; 20) cap the server puts on a frame it READS, and
+    /// sixty times the 16 KiB the macOS kernel will hold for a reader that never comes.
+    /// </summary>
+    const int Notes = 4, NoteChars = 240_000;
+
+    /// <summary>Any complete material-list reply here is at least this long; a shorter one was cut off.</summary>
+    const int FloorOfTheReply = Notes * NoteChars;
+
+    /// <summary>The engineering event the server records when it drops a peer that stopped reading.</summary>
+    const string DropEvent = "peer_stopped_reading";
+
+    static void PlantBigNotes(TradingGateway gw)
+    {
+        for (var i = 0; i < Notes; i++)
+            gw.Materials.AddNote("agent", "planted", MaterialNoteKind.Note, null, null,
+                new string((char)('a' + i), NoteChars), DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// A peer that takes one byte of its reply and then stops reading is dropped within the write
+    /// deadline, and the drop is on the record with the op and the session that caused it.
+    ///
+    /// The connection has to be REALLY gone, not just written about: after the drop the peer reaches
+    /// end of stream having received less than the reply it stopped reading.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_stops_reading_is_dropped_within_the_write_deadline()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { WriteTimeout = TimeSpan.FromSeconds(1) };
+        server.Start();
+
+        await using var stalled = await RawAgent.ConnectAndHello(pipe);
+        var timer = Stopwatch.StartNew();
+        await stalled.WriteAsync(new IpcRequest { Op = Ops.MaterialList, Session = "agent-stalled" });
+        // The reply has begun to arrive, so the handler is inside the write now. Then: nothing.
+        await stalled.ReadOneByteAsync(TimeSpan.FromSeconds(5));
+
+        var dropped = await WaitForDrop(db, TimeSpan.FromSeconds(4));
+        var droppedAfter = timer.Elapsed;
+        var drained = await stalled.DrainAsync(TimeSpan.FromSeconds(3));
+
+        Assert.True(dropped is not null,
+            $"no '{DropEvent}' engineering event within 4s against a 1s write deadline; draining afterwards saw {drained}");
+        Assert.True(droppedAfter < TimeSpan.FromSeconds(4),
+            $"dropped after {droppedAfter.TotalSeconds:0.00}s against a 1s deadline");
+        Assert.Equal(Ops.MaterialList, dropped.Value.Op);
+        Assert.Equal("agent-stalled", dropped.Value.Session);
+
+        Assert.True(drained.Ended, $"the stalled connection is still open after the drop was recorded: {drained}");
+        Assert.True(drained.Bytes < FloorOfTheReply, $"the reply was completed instead of cut off: {drained}");
+    }
+
+    /// <summary>
+    /// One stalled peer must cost nobody else anything: a second agent connects, says hello and is
+    /// answered while the first is parked, and is still answered after the first one's deadline has
+    /// passed — including for the very reply the first one choked on.
+    ///
+    /// Handlers are independent tasks, so this holds before the fix as well. It is here so the fix
+    /// cannot regress it: a deadline implemented with a shared lock, or by stalling the accept loop,
+    /// fails this test.
+    /// </summary>
+    [Fact]
+    public async Task A_second_agent_is_served_while_and_after_another_peer_is_stalled()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { WriteTimeout = TimeSpan.FromSeconds(1) };
+        server.Start();
+
+        await using var stalled = await RawAgent.ConnectAndHello(pipe);
+        await stalled.WriteAsync(new IpcRequest { Op = Ops.MaterialList, Session = "agent-stalled" });
+        await stalled.ReadOneByteAsync(TimeSpan.FromSeconds(5));
+
+        await using var healthy = new PipeClient();
+        await healthy.ConnectAsync(10_000, pipe).WaitAsync(TimeSpan.FromSeconds(5));
+        var status = await healthy.SendAsync(new IpcRequest { Op = Ops.Status }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(status.Ok, Json.Write(status.Error));
+
+        // Past the stalled peer's deadline now. Still served, and the big reply reaches a reader.
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        var again = await healthy.SendAsync(new IpcRequest { Op = Ops.Status }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(again.Ok, Json.Write(again.Error));
+        var big = await healthy.SendAsync(new IpcRequest { Op = Ops.MaterialList }).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(big.Ok, Json.Write(big.Error));
+        Assert.Equal(Notes, ((JsonElement)big.Data!).GetProperty("recent_notes").GetArrayLength());
+    }
+
+    /// <summary>
+    /// Shutdown neither waits on a stalled writer nor leaves it behind.
+    ///
+    /// The deadline is left at its default here ON PURPOSE: ten seconds is longer than every bound
+    /// below, so if the stalled connection ends, it was shutdown that ended it and not the deadline.
+    /// </summary>
+    [Fact]
+    public async Task Shutdown_does_not_wait_on_a_stalled_writer_and_does_not_leave_it_behind()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var stalled = await RawAgent.ConnectAndHello(pipe);
+        await stalled.WriteAsync(new IpcRequest { Op = Ops.MaterialList, Session = "agent-stalled" });
+        await stalled.ReadOneByteAsync(TimeSpan.FromSeconds(5));
+
+        var timer = Stopwatch.StartNew();
+        await server.DisposeAsync();
+        timer.Stop();
+        var drained = await stalled.DrainAsync(TimeSpan.FromSeconds(3));
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5),
+            $"DisposeAsync took {timer.Elapsed.TotalSeconds:0.0}s against a peer that never reads");
+        Assert.True(drained.Ended, $"after shutdown the stalled connection is still open: {drained}");
+        Assert.True(drained.Bytes < FloorOfTheReply,
+            $"shutdown let the stalled reply run to completion instead of dropping it: {drained}");
+    }
+
+    /// <summary>
+    /// The other direction: a reply near the frame cap still reaches a peer that reads it, intact
+    /// and in one piece, under the product's default deadline — and the connection is good for the
+    /// next request afterwards. A deadline that bites a healthy peer on a large reply, or a buffer
+    /// choice that truncates one, fails here.
+    /// </summary>
+    [Fact]
+    public async Task A_reply_near_the_frame_cap_still_round_trips_intact()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await agent.WriteAsync(new IpcRequest { Op = Ops.MaterialList });
+        var line = await agent.ReadLineAsync(TimeSpan.FromSeconds(10));
+
+        Assert.InRange(Encoding.UTF8.GetByteCount(line), FloorOfTheReply, (1 << 20) - 1);
+        var reply = Json.Read<IpcResponse>(line)!;
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var texts = ((JsonElement)reply.Data!).GetProperty("recent_notes").EnumerateArray()
+            .Select(n => n.GetProperty("text").GetString()!).OrderBy(t => t).ToList();
+        var planted = Enumerable.Range(0, Notes).Select(i => new string((char)('a' + i), NoteChars)).ToList();
+        Assert.Equal(planted, texts);
+
+        await agent.WriteAsync(new IpcRequest { Op = Ops.Status });
+        Assert.True(Json.Read<IpcResponse>(await agent.ReadLineAsync(TimeSpan.FromSeconds(5)))!.Ok);
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    static async Task<(string Op, string? Session, string Metadata)?> WaitForDrop(Database db, TimeSpan bound)
+    {
+        var deadline = DateTime.UtcNow + bound;
+        while (true)
+        {
+            var hit = db.Read(_ =>
+            {
+                using var c = db.Cmd(
+                    "SELECT session, metadata FROM engineering_log WHERE component='Ipc' AND event=$e ORDER BY id LIMIT 1",
+                    ("$e", DropEvent));
+                using var r = c.ExecuteReader();
+                if (!r.Read()) return ((string?, string)?)null;
+                return (r.IsDBNull(0) ? null : r.GetString(0), r.IsDBNull(1) ? "{}" : r.GetString(1));
+            });
+            if (hit is { } h)
+            {
+                using var doc = JsonDocument.Parse(h.Item2);
+                var op = doc.RootElement.TryGetProperty("op", out var o) ? o.GetString() ?? "" : "";
+                return (op, h.Item1, h.Item2);
+            }
+            if (DateTime.UtcNow >= deadline) return null;
+            await Task.Delay(50);
+        }
+    }
+
+    /// <summary>What a drain of the stalled peer's side of the pipe found.</summary>
+    sealed record Drained(bool Ended, long Bytes, string How);
+
+    /// <summary>
+    /// An agent that speaks bytes, not lines, so it can take exactly as much of a reply as the test
+    /// wants and no more. It authenticates for real: everything here happens on the far side of a
+    /// successful hello.
+    /// </summary>
+    sealed class RawAgent(string pipe) : IAsyncDisposable
+    {
+        readonly NamedPipeClientStream _p = new(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+
+        public static async Task<RawAgent> ConnectAndHello(string pipe)
+        {
+            var a = new RawAgent(pipe);
+            await a._p.ConnectAsync(10_000);
+            await a.WriteAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure() });
+            var hello = Json.Read<IpcResponse>(await a.ReadLineAsync(TimeSpan.FromSeconds(5)))!;
+            Assert.True(hello.Ok, "hello was refused: " + Json.Write(hello.Error));
+            return a;
+        }
+
+        public Task WriteAsync(IpcRequest r) =>
+            _p.WriteAsync(Encoding.UTF8.GetBytes(Json.Write(r) + "\n")).AsTask();
+
+        public async Task ReadOneByteAsync(TimeSpan bound)
+        {
+            var one = new byte[1];
+            var n = await _p.ReadAsync(one).AsTask().WaitAsync(bound);
+            Assert.Equal(1, n);
+        }
+
+        /// <summary>One whole frame. Nothing arrives on this pipe unasked, so reading past the newline cannot happen.</summary>
+        public async Task<string> ReadLineAsync(TimeSpan bound)
+        {
+            var buf = new byte[65536];
+            var ms = new MemoryStream();
+            while (true)
+            {
+                var n = await _p.ReadAsync(buf).AsTask().WaitAsync(bound);
+                if (n == 0) throw new IOException("the server closed the connection before the line ended");
+                var nl = Array.IndexOf(buf, (byte)'\n', 0, n);
+                if (nl >= 0) { ms.Write(buf, 0, nl); return Encoding.UTF8.GetString(ms.ToArray()); }
+                ms.Write(buf, 0, n);
+            }
+        }
+
+        /// <summary>
+        /// Reads everything the server still has for us and reports how it ended: end of stream or
+        /// a broken pipe means the server let go; a read that outlives the bound means it did not.
+        /// </summary>
+        public async Task<Drained> DrainAsync(TimeSpan bound)
+        {
+            var buf = new byte[65536];
+            long total = 0;
+            while (true)
+            {
+                var read = _p.ReadAsync(buf).AsTask();
+                int n;
+                try { n = await read.WaitAsync(bound); }
+                catch (TimeoutException) { Observe(read); return new Drained(false, total, $"still open: no end of stream within {bound.TotalSeconds:0}s"); }
+                catch (IOException ex) { return new Drained(true, total, "broken pipe: " + ex.Message); }
+                catch (ObjectDisposedException) { return new Drained(true, total, "pipe disposed"); }
+                if (n == 0) return new Drained(true, total, "end of stream");
+                total += n;
+            }
+        }
+
+        static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
+
+        public ValueTask DisposeAsync() => _p.DisposeAsync();
+    }
+}
