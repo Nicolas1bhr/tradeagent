@@ -18,16 +18,20 @@ public static class OrderStateMachine
         // Why it was excluded: a PLACE that is still DISPATCHING cannot KNOW it was cancelled. It has
         //   not heard back from the broker at all, so "cancelled" would be an inference, and forcing
         //   that case down UNKNOWN -> RECONCILING instead is the safe direction to fail.
-        // Why it is safe to allow: TWO callers settle a DISPATCHING record as CANCELLED, and both
-        //   hold a definite broker answer rather than an inference (verified 2026-09-02 by reading
-        //   every call site of Settle(..., CANCELLED)).
+        // Why it is safe to allow: THREE callers settle a DISPATCHING record as CANCELLED, and every
+        //   one of them holds a definite platform answer rather than an inference (verified
+        //   2026-09-02 by reading every call site of Settle(..., CANCELLED); if you add a fourth,
+        //   this comment is the thing to correct first).
         //     - TradingGateway.CancelAsync, reached only after Connector.CancelOrderAsync returned
         //       without an exception. Without this edge every successful cancel stranded its own
         //       CANCEL request at DISPATCHING forever.
-        //     - TradingGateway.MapDispatchOutcome, reached only when the platform answered CANCELLED
-        //       to a place — the ordinary answer for an unfilled immediate-or-cancel order. It used
-        //       to be recorded as ACKNOWLEDGED, i.e. an order the broker had killed carried as open
-        //       forever.
+        //     - TradingGateway.DispatchPlaceAsync via MapDispatchOutcome, reached only when the
+        //       platform answered CANCELLED to a place — the ordinary answer for an unfilled
+        //       immediate-or-cancel order. It used to be recorded as ACKNOWLEDGED, i.e. an order the
+        //       broker had killed carried as open forever.
+        //     - TradingGateway.OperatorCancelAllAsync, reached only after CancelAllOrdersAsync
+        //       returned and listed that order (or, for the record standing for the press itself,
+        //       after the sweep returned at all). An order the platform did NOT list goes to UNKNOWN.
         // Why widening a deliberately intent-agnostic table is acceptable: any OTHER caller that takes
         //   this edge wrongly is not silent — TradingGateway.Settle now files `illegal_settle` at error
         //   severity the first time a table refusal happens. The table stays a small pure function
