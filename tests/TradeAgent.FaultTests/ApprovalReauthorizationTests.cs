@@ -476,6 +476,57 @@ public class ApprovalReauthorizationTests
         Assert.Empty(conn.Broker.Orders);
     }
 
+    // ------------------------------------------------------------------ 2c. one clock
+
+    /// <summary>
+    /// BOTH ENDS OF A DURATION MUST COME FROM ONE CLOCK, OR THE SUBTRACTION MEANS NOTHING.
+    ///
+    /// `dispatched_at` is written by ExecutionRequestStore and the gateway subtracts it from its own
+    /// clock to decide whether an order has been missing long enough for absence to mean it never
+    /// landed. Until this unit the store wrote that timestamp from DateTimeOffset.UtcNow while the
+    /// gateway read GatewayOptions.Clock, so the two were only comparable by the accident of both
+    /// being the system clock. Substitute a clock — which the time-to-live tests must — and every
+    /// order looked as old as the gap between the clocks the instant it was dispatched, skipping the
+    /// grace window entirely. The clock here is moved hours away from the system clock BEFORE
+    /// anything is written, which is exactly the condition that made the old code wrong.
+    /// </summary>
+    [Fact]
+    public async Task The_reconcile_age_is_measured_on_the_gateways_clock_so_the_absence_grace_is_honoured()
+    {
+        var clock = new TestClock();
+        clock.Advance(TimeSpan.FromHours(3));
+        var (gw, conn, db) = await TestEnv.Ready(
+            options: new GatewayOptions { Clock = clock },
+            faults: new FaultProfile { DropBeforeBrokerAccept = 1 });
+        using var dbh = db;
+        var grace = new GatewayOptions().AbsenceGrace;
+        Assert.Equal(TimeSpan.FromSeconds(15), grace);
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "grace-1", TestEnv.Buy());
+        Assert.Equal(ExecutionState.UNKNOWN, placed.State);
+
+        // The store wrote the dispatch time on the gateway's clock, not the system one.
+        Assert.Equal(clock.GetUtcNow(), placed.DispatchedAt);
+        Assert.True(placed.DispatchedAt > DateTimeOffset.UtcNow.AddHours(2));
+
+        // Nothing has aged on that clock, so absence is not yet allowed to mean "never landed".
+        var early = await gw.ReconcileAsync();
+        Assert.False(early.Clean);
+        Assert.Equal(0, early.Resolved);
+        Assert.Contains(early.Details, d => d.Contains("grace window"));
+        Assert.Equal(ExecutionState.RECONCILING, gw.GetRequest("grace-1")!.State);
+        Assert.True(gw.GetRequest("grace-1")!.NeedsReconciliation);
+
+        // Past the window on the same clock, the same absence is conclusive.
+        clock.Advance(grace);
+        var late = await gw.ReconcileAsync();
+        Assert.True(late.Clean, string.Join("; ", late.Details));
+        Assert.Equal(1, late.Resolved);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("grace-1")!.State);
+        Assert.Contains("never reached", gw.GetRequest("grace-1")!.LastError!);
+    }
+
     // ------------------------------------------------------------------ 3. gates the map listed as unpinned
 
     [Theory]

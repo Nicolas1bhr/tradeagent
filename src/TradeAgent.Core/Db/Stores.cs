@@ -21,8 +21,20 @@ static class Sql
 /// duplicate request_id is collapsed onto the existing record. If this returns created=false, the
 /// gateway must not dispatch again — that is the whole duplicate-order defence.
 /// </summary>
-public sealed class ExecutionRequestStore(Database db)
+public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = null)
 {
+    /// <summary>
+    /// THE SAME CLOCK THE GATEWAY AGES REQUESTS ON, BECAUSE BOTH ENDS OF A DURATION MUST COME FROM ONE.
+    ///
+    /// `created_at` arrives on the record the caller hands to TryCreate, but `dispatched_at` is
+    /// written here, and TradingGateway subtracts it from its own clock to decide whether an order is
+    /// old enough for absence to mean it never landed. When those were two different clocks the
+    /// subtraction was only meaningful because both happened to be the system clock; substitute one
+    /// and the age silently became nonsense. Defaults to the system clock, so a caller that does not
+    /// care is unaffected.
+    /// </summary>
+    DateTimeOffset Now => (clock ?? TimeProvider.System).GetUtcNow();
+
     const string Cols = """
         request_id, agent_session_id, connector_id, account_id, instrument, intent, parameters,
         client_order_id, created_at, dispatched_at, execution_state, connector_order_id,
@@ -41,7 +53,7 @@ public sealed class ExecutionRequestStore(Database db)
                 ("$rid", r.RequestId), ("$sess", r.AgentSessionId), ("$conn", r.ConnectorId), ("$acct", r.AccountId),
                 ("$inst", r.Instrument), ("$intent", r.Intent.ToString()), ("$params", r.ParametersJson),
                 ("$coid", r.ClientOrderId), ("$created", Sql.T(r.CreatedAt)), ("$state", r.State.ToString()),
-                ("$mode", r.Mode.ToString()), ("$upd", Sql.T(DateTimeOffset.UtcNow)));
+                ("$mode", r.Mode.ToString()), ("$upd", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
 
@@ -106,7 +118,7 @@ public sealed class ExecutionRequestStore(Database db)
                 ("$coid", connectorOrderId), ("$fill", filled is null ? null : Sql.D(filled.Value)),
                 ("$avg", avgPrice is null ? null : Sql.D(avgPrice.Value)),
                 ("$nr", needsReconciliation is null ? null : (needsReconciliation.Value ? 1 : 0)),
-                ("$err", error), ("$mr", markReconciled ? 1 : 0), ("$now", Sql.T(DateTimeOffset.UtcNow)));
+                ("$err", error), ("$mr", markReconciled ? 1 : 0), ("$now", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
 
@@ -132,7 +144,7 @@ public sealed class ExecutionRequestStore(Database db)
                 UPDATE execution_request
                 SET needs_reconciliation=1, last_error=COALESCE($err, last_error), updated_at=$now
                 WHERE request_id=$rid
-                """, ("$rid", requestId), ("$err", error), ("$now", Sql.T(DateTimeOffset.UtcNow)));
+                """, ("$rid", requestId), ("$err", error), ("$now", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
         return Get(requestId) ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished");
@@ -151,7 +163,7 @@ public sealed class ExecutionRequestStore(Database db)
                 UPDATE execution_request
                 SET needs_reconciliation=0, last_reconciled_at=$now, updated_at=$now
                 WHERE request_id=$rid
-                """, ("$rid", requestId), ("$now", Sql.T(DateTimeOffset.UtcNow)));
+                """, ("$rid", requestId), ("$now", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
         return Get(requestId) ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished");
