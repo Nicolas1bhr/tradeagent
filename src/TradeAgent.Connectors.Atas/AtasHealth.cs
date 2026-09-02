@@ -75,18 +75,51 @@ public static class AtasHealth
 }
 
 /// <summary>
+/// The two machine facts the ATAS rows are read from, behind an interface.
+///
+/// It is a seam and not a convenience. Both questions are answered by asking the computer the app is
+/// running on — Program Files for the install, the process table for whether the platform is up —
+/// and a caller that cannot substitute those answers cannot be tested anywhere except on a machine
+/// that happens to be in the state the test wants. That is not a hypothetical: the reporter's own
+/// unit test passed on every machine without ATAS and failed on the one Windows box that had ATAS
+/// installed and running, because the verdict it asserted was a property of the build host.
+/// </summary>
+public interface IAtasProbe
+{
+    /// <summary>Everything: where it is installed, its version, whether the bridge file is there.</summary>
+    AtasDetection Detect();
+
+    /// <summary>Only whether a platform process is up right now — the one answer that goes stale.</summary>
+    bool IsRunning();
+}
+
+/// <summary>
+/// The real probe, and the default one: the actual filesystem and the actual process table, through
+/// <see cref="AtasInstallation"/>. The layout is read once when this is constructed, which is where
+/// the reporter used to read it.
+/// </summary>
+public sealed class AtasProbe(AtasLayout? layout = null) : IAtasProbe
+{
+    readonly AtasLayout _layout = layout ?? AtasLayout.Load();
+
+    public AtasDetection Detect() => AtasInstallation.Detect(_layout);
+
+    public bool IsRunning() => AtasInstallation.IsRunning(_layout);
+}
+
+/// <summary>
 /// Writes the two rows on the health tick.
 ///
 /// It is a class rather than a static call because it caches: the tick runs every five seconds for
 /// the life of the app, and a detection is filesystem work that cannot change while the app runs —
 /// except for whether the process is up, which is the one part re-probed every pass.
 /// </summary>
-public sealed class AtasHealthReporter
+public sealed class AtasHealthReporter(IAtasProbe? probe = null)
 {
     /// <summary>How long a filesystem detection is reused. The process check ignores this.</summary>
     public TimeSpan DetectionTtl { get; set; } = TimeSpan.FromMinutes(1);
 
-    readonly AtasLayout _layout = AtasLayout.Load();
+    readonly IAtasProbe _probe = probe ?? new AtasProbe();
     AtasDetection? _cached;
     DateTimeOffset _cachedAt = DateTimeOffset.MinValue;
 
@@ -114,12 +147,12 @@ public sealed class AtasHealthReporter
         var now = DateTimeOffset.UtcNow;
         if (_cached is null || now - _cachedAt > DetectionTtl)
         {
-            _cached = AtasInstallation.Detect(_layout);
+            _cached = _probe.Detect();
             _cachedAt = now;
             return _cached;
         }
         // Everything but "is it up" is reused; that one is asked afresh, because it is the answer
         // that changes while somebody is watching the screen.
-        return _cached with { Running = AtasInstallation.IsRunning(_layout) };
+        return _cached with { Running = _probe.IsRunning() };
     }
 }

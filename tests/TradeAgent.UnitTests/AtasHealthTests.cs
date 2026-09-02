@@ -32,7 +32,7 @@ public class AtasHealthTests
         Assert.Equal(HealthState.UNKNOWN, health.Get(Components.AtasProcess).State);
         Assert.Equal("", health.Get(Components.AtasProcess).Detail);
 
-        new AtasHealthReporter().Report(health, new FakeConnector(), HealthState.READY);
+        new AtasHealthReporter(new UntouchedProbe()).Report(health, new FakeConnector(), HealthState.READY);
 
         // Still UNKNOWN on the simulator — correctly, nothing was checked — but no longer silent.
         foreach (var c in new[] { Components.AtasProcess, Components.AtasBridge })
@@ -125,18 +125,88 @@ public class AtasHealthTests
         Assert.Equal(HealthState.DEGRADED, state);
     }
 
+    /// <summary>
+    /// The reporter's two verdicts, driven from the test rather than from whatever the build machine
+    /// happens to have installed and running.
+    ///
+    /// This is the whole reason <see cref="IAtasProbe"/> exists. Before it, this pair was one test
+    /// that constructed the reporter and asserted FAILED, which held on every machine without ATAS
+    /// and inverted to READY on the Windows box that had ATAS installed and running: the assertion
+    /// was about the host, not about the reporter.
+    /// </summary>
+    [Fact]
+    public void The_process_verdict_comes_from_the_probe_in_both_directions()
+    {
+        var connector = new AtasConnector();
+
+        var absent = new FakeProbe { Detection = Machine(installed: false, bridge: false), Running = false };
+        var health = new HealthRegistry();
+        new AtasHealthReporter(absent).Report(health, connector, HealthState.FAILED);
+        Assert.Equal(HealthState.FAILED, health.Get(Components.AtasProcess).State);
+        Assert.Contains("not installed", health.Get(Components.AtasProcess).Detail);
+
+        var up = new FakeProbe { Detection = Machine(), Running = true };
+        var running = new HealthRegistry();
+        new AtasHealthReporter(up).Report(running, connector, HealthState.FAILED);
+        Assert.Equal(HealthState.READY, running.Get(Components.AtasProcess).State);
+        Assert.Contains("8.0.14.397", running.Get(Components.AtasProcess).Detail);
+    }
+
     [Fact]
     public void The_reporter_asks_the_platform_afresh_but_not_the_filesystem()
     {
         // The tick runs every five seconds for the life of the app. Whether ATAS is up has to be
         // current; where it is installed cannot change underneath a running app.
-        var reporter = new AtasHealthReporter { DetectionTtl = TimeSpan.FromHours(1) };
+        var probe = new FakeProbe { Detection = Machine(), Running = false };
+        var reporter = new AtasHealthReporter(probe) { DetectionTtl = TimeSpan.FromHours(1) };
         var health = new HealthRegistry();
-        for (var i = 0; i < 3; i++) reporter.Report(health, new AtasConnector(), HealthState.FAILED);
+        var connector = new AtasConnector();
 
-        // No ATAS on the build host, so this is the honest answer and it must be reached without
-        // throwing on a machine that has never seen the platform.
-        Assert.Equal(HealthState.FAILED, health.Get(Components.AtasProcess).State);
-        Assert.Contains("not installed", health.Get(Components.AtasProcess).Detail);
+        reporter.Report(health, connector, HealthState.FAILED);
+        Assert.Equal(HealthState.DEGRADED, health.Get(Components.AtasProcess).State);
+
+        // ATAS is started. Two more ticks, all of them well inside the TTL.
+        probe.Running = true;
+        for (var i = 0; i < 2; i++) reporter.Report(health, connector, HealthState.FAILED);
+
+        // The new answer reached the row without the detection ever being taken a second time.
+        Assert.Equal(HealthState.READY, health.Get(Components.AtasProcess).State);
+        Assert.Equal(1, probe.Detects);
+        Assert.Equal(2, probe.RunningChecks);
+    }
+
+    /// <summary>
+    /// A probe that answers out of these two properties and never looks at the machine the tests are
+    /// running on. <see cref="Detect"/> folds <see cref="Running"/> in the way the real one does, so
+    /// the one knob is the one fact that changes while the app is up.
+    /// </summary>
+    sealed class FakeProbe : IAtasProbe
+    {
+        public AtasDetection Detection { get; set; } = Machine();
+        public bool Running { get; set; }
+        public int Detects { get; private set; }
+        public int RunningChecks { get; private set; }
+
+        public AtasDetection Detect()
+        {
+            Detects++;
+            return Detection with { Running = Running };
+        }
+
+        public bool IsRunning()
+        {
+            RunningChecks++;
+            return Running;
+        }
+    }
+
+    /// <summary>Fails the test if anything asks it, which on the simulator path nothing may.</summary>
+    sealed class UntouchedProbe : IAtasProbe
+    {
+        public AtasDetection Detect() =>
+            throw new Xunit.Sdk.XunitException("the simulator health tick detected an ATAS install");
+
+        public bool IsRunning() =>
+            throw new Xunit.Sdk.XunitException("the simulator health tick enumerated processes");
     }
 }
