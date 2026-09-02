@@ -118,6 +118,34 @@ public static class Downloader
     }
 
     /// <summary>
+    /// The same download, for a file this product is going to EXECUTE, where the hash is not
+    /// optional and a missing one is a defect rather than a lenient case.
+    ///
+    /// <see cref="DownloadAsync"/> deliberately accepts a null <c>sha256</c> and skips verification,
+    /// because two of its three callers have nothing to check against: the ATAS installer comes from
+    /// ATAS's own site (<c>Prerequisites.cs:118</c>) and a runtime plan may ship without a pinned
+    /// hash. That tolerance is correct there and was catastrophic on the update path, where the file
+    /// being fetched replaces the program holding the owner's open orders and the checksum is the
+    /// entire trust chain — there is no signature underneath it.
+    ///
+    /// So the update path uses this instead. It cannot be handed a null by accident: a caller that
+    /// loses its hash gets a refusal here even if every check upstream of it is one day removed.
+    /// </summary>
+    public static Task<string> DownloadVerifiedAsync(
+        string url,
+        string destFile,
+        string? sha256,
+        IProgress<ProvisionProgress>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sha256))
+            throw new TradeAgentException(ErrorCode.UPDATE_FAILED,
+                $"{Path.GetFileName(destFile)} was not downloaded because there is no published checksum to check it against");
+
+        return DownloadAsync(url, destFile, progress, ct, sha256);
+    }
+
+    /// <summary>
     /// Downloads an archive and unpacks it into <paramref name="destDir"/>, returning that directory.
     ///
     /// Understands <c>.zip</c> and <c>.tar.gz</c>/<c>.tgz</c>. Anything else is treated as the file
