@@ -374,10 +374,39 @@ public class AgedDispatchTests
         await gw.RefreshHealthAsync();
         Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
 
-        // And the reconciler picks it up: it is the thing that writes the flag, so a surface still
-        // reading needs_reconciliation=1 catches up within one background pass.
-        await gw.ReconcileAsync();
-        Assert.True(gw.GetRequest("stranded-live")!.NeedsReconciliation);
+        // And the reconciler picks it up rather than leaving it to a restart: the row leaves
+        // DISPATCHING on the next pass, which is what a surface still reading needs_reconciliation=1
+        // needs in order to catch up. Nothing was resubmitted; the broker never had this order, and
+        // after the absence grace that is a definite "it never landed".
+        var result = await gw.ReconcileAsync();
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("stranded-live")!.State);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// The other end of the same pass: on a platform that cannot prove its own history, the aged
+    /// record ends UNKNOWN and FLAGGED rather than resolved — which is what makes the flag-only
+    /// surfaces (the unconfirmed card, the doctor check) agree with the gate within one pass.
+    /// </summary>
+    [Fact]
+    public async Task An_aged_record_the_reconciler_cannot_settle_is_left_flagged()
+    {
+        var (gw, _, db) = await Recovery.Ready(new FaultProfile { HideOrderHistory = true });
+        using var dbh = db;
+        gw.Requests.TryCreate(Recovery.Row("stranded-unprovable"));
+        gw.Requests.Transition("stranded-unprovable", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        Recovery.Backdate(db, "stranded-unprovable", TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.False(result.Clean);
+        var row = gw.GetRequest("stranded-unprovable")!;
+        Assert.Equal(ExecutionState.RECONCILING, row.State);
+        Assert.True(row.NeedsReconciliation);
+        Assert.Single(gw.Requests.NeedingReconciliation());       // the flag-only view now agrees
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
     }
 
     /// <summary>

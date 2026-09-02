@@ -1,5 +1,6 @@
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Gateway;
 
@@ -36,6 +37,18 @@ public sealed class GatewayOptions
     /// to mean it never landed. Protects against reading a slow backend as an absent one.
     /// </summary>
     public TimeSpan AbsenceGrace { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// How long a record may stay in DISPATCHING before the gateway counts it as unconfirmed work
+    /// and refuses to trade over it, WITHOUT waiting for a restart to notice.
+    ///
+    /// 30 s = the connector's own 10 s RPC deadline (<c>AtasConnector</c>'s <c>rpcTimeout</c>; the
+    /// adapter's internal budget inside it is 8 s) plus 20 s of slack, which is also four passes of
+    /// <see cref="HealthInterval"/>. Under the deadline, "still DISPATCHING" is an ordinary order in
+    /// flight and must not pause anything; three times past it, the call has either returned or
+    /// thrown and something failed to write the outcome down.
+    /// </summary>
+    public TimeSpan DispatchStrandedAfter { get; set; } = ExecutionRequestStore.DefaultDispatchStrandedAfter;
 
     public TimeSpan HealthInterval { get; set; } = TimeSpan.FromSeconds(5);
 }

@@ -84,7 +84,43 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
         return list;
     });
 
-    public List<ExecutionRequest> NeedingReconciliation() => Query("needs_reconciliation=1");
+    /// <summary>
+    /// How long a record may sit in DISPATCHING before it counts as unconfirmed work rather than as
+    /// an order in flight. The connector gives every RPC a 10 s deadline
+    /// (<c>AtasConnector</c>'s <c>rpcTimeout</c>), so a record still DISPATCHING well past that
+    /// cannot be waiting for an answer — the call either returned or threw, and either way something
+    /// should have written the outcome. The margin above the deadline is deliberate slack for a slow
+    /// write or a descheduled continuation, not a guess at how long a broker takes.
+    /// </summary>
+    public static readonly TimeSpan DefaultDispatchStrandedAfter = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Work the gateway must not trade over.
+    ///
+    /// THE FLAG ALONE IS NOT ENOUGH, and that is the whole reason this takes an argument. Every path
+    /// that sets <c>needs_reconciliation</c> runs inside a catch block, so a process that dies
+    /// between the write-ahead DISPATCHING row and the settle leaves a record that may be live at
+    /// the broker with the flag still 0 — invisible to this query, and therefore to the gate that
+    /// reads it. A DISPATCHING record older than a dispatch can take is, by definition, one where
+    /// the wire may have been touched and nobody wrote down what happened.
+    ///
+    /// The caller passes an absolute instant rather than an age because this class deliberately owns
+    /// no clock: <c>dispatched_at</c> is written here from <see cref="DateTimeOffset.UtcNow"/> while
+    /// the gateway reads a substitutable <c>TimeProvider</c>. Passing the cutoff keeps the
+    /// comparison in one place instead of splitting it across two clocks. Omit it and the query is
+    /// exactly what it always was: the flag.
+    /// </summary>
+    public List<ExecutionRequest> NeedingReconciliation(DateTimeOffset? strandedDispatchBefore = null) =>
+        strandedDispatchBefore is { } cutoff
+            ? Query("needs_reconciliation=1 OR (execution_state='DISPATCHING' AND COALESCE(dispatched_at, created_at) <= $cut)",
+                ("$cut", Sql.T(cutoff)))
+            : Query("needs_reconciliation=1");
+
+    /// <summary>
+    /// Every record the wire may already have seen. Read at startup, where "still DISPATCHING" can
+    /// only mean the process that was flying it is gone.
+    /// </summary>
+    public List<ExecutionRequest> Dispatching() => Query("execution_state='DISPATCHING'");
 
     public List<ExecutionRequest> Open() =>
         Query("execution_state IN ('DISPATCHING','ACKNOWLEDGED','WORKING','PARTIALLY_FILLED','CANCEL_PENDING','UNKNOWN','RECONCILING')");
