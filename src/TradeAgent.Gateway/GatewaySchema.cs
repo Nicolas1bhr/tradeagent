@@ -18,6 +18,7 @@ public static class GatewaySchema
         app_version = Versions.App,
         transport = "newline-delimited JSON over a local named pipe; first frame must be 'hello' with the token",
         idempotency = "every mutating call takes request_id; repeating a request_id returns the original outcome and never places a second order",
+        approval = "in LIVE_CONFIRM a buy/sell is parked as AWAITING_APPROVAL and refused to you with APPROVAL_REQUIRED until a person approves it in TradeAgent. The approval is checked against every gate again at that moment, so an order that was allowed when you proposed it can still be refused when the person presses Approve. A request left waiting longer than the approval time limit is declined (CANCELLED) rather than sent, and that is decided before any other refusal; repeating its request_id returns that declined record, so if you still want the order, propose it again with a new request_id",
         execution_states = Enum.GetNames<ExecutionState>(),
         unknown_state_meaning = "UNKNOWN means TradeAgent cannot yet confirm the order. It never means the order failed. Trading pauses until it is reconciled.",
         trading_modes = Enum.GetNames<TradingMode>(),

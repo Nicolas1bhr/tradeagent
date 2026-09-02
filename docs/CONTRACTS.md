@@ -80,6 +80,21 @@ Ownership: whoever holds a request writes its outcome. The dispatcher owns `CREA
 may only update requests neither of them currently holds. Both races this rule prevents were real
 bugs found during the build.
 
+**An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
+agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
+`APPROVAL_REQUIRED`. When a person approves it, the gateway runs every gate again at that moment — the
+mode must still be `LIVE_CONFIRM`, then kill switch, live activation, the chosen account (and that it
+is the account the order was parked for), unreconciled work, the health chain, and every risk limit
+including quote freshness for an order without its own price — and only then dispatches. The order is
+authorized as the AI's proposal, so the kill switch refuses an approval; the person re-enables and
+approves, two acts. A refusal leaves the record parked. A request older than the approval
+time-to-live (`GatewayOptions.ApprovalTtl`, 15 minutes by default) is refused with `APPROVAL_EXPIRED`
+and declined through the state machine: `AWAITING_APPROVAL → CANCELLED`, `last_error` saying so. Age
+is judged before the other gates, so a request that is both expired and refusable for some other
+reason is declined rather than left parked behind a refusal the person could lift and then walk
+straight back into. An agent replaying that request id gets the `CANCELLED` record back rather than
+`APPROVAL_REQUIRED`, and proposes again with a new id if it still wants the order.
+
 ## Health and errors
 
 `HealthState`: `UNKNOWN · STARTING · READY · DEGRADED · FAILED · PAUSED`, per component.
