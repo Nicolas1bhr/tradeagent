@@ -3,6 +3,7 @@ using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
 using Xunit;
 
@@ -151,7 +152,8 @@ static class Recovery
     public static void Backdate(Database db, string requestId, TimeSpan by) => db.Write(_ =>
     {
         using var c = db.Cmd("UPDATE execution_request SET dispatched_at=$t WHERE request_id=$r",
-            ("$t", (DateTimeOffset.UtcNow - by).UtcDateTime.ToString("O")), ("$r", requestId));
+            ("$t", (DateTimeOffset.UtcNow - by).UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
+            ("$r", requestId));
         return c.ExecuteNonQuery();
     });
 
@@ -304,6 +306,39 @@ public class StartupSweepTests
             Assert.Empty(gw.Requests.NeedingReconciliation());
             await gw.RefreshHealthAsync();
             Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        }
+    }
+
+    /// <summary>
+    /// The surfaces that report the sweep to a person and to the agent. `trade status` is what an
+    /// agent reads before proposing anything, and the doctor is what the owner is told to run; both
+    /// have to say the same thing as the gate that refuses.
+    /// </summary>
+    [Fact]
+    public async Task Status_and_the_doctor_both_report_a_swept_record()
+    {
+        var file = Path.Combine(TestEnv.Home, $"sweep-status-{Guid.NewGuid():n}.db");
+        using (var db = new Database(file))
+        {
+            var store = new ExecutionRequestStore(db);
+            store.TryCreate(Recovery.Row("status-1"));
+            store.Transition("status-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        }
+
+        using (var db = new Database(file))
+        {
+            var (gw, _, _) = await Recovery.Ready(db: db);
+
+            var status = await gw.StatusAsync();
+            Assert.Equal(1, status.OpenRequests);
+            Assert.Equal(1, status.UnreconciledRequests);
+            Assert.False(status.ExecutionAvailable);
+            Assert.Contains("unconfirmed", status.ExecutionBlockedReason);
+
+            var report = await new Doctor(gw).RunAsync();
+            var check = Assert.Single(report.Checks, c => c.Name == "Order confirmation");
+            Assert.Equal(HealthState.DEGRADED, check.State);
+            Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, check.Code);
         }
     }
 
@@ -799,7 +834,7 @@ public class OperatorEmergencyRecordTests
         Assert.Contains(perOrder, r => r.ParametersJson.Contains(b.ConnectorOrderId!));
 
         // ...and the press itself, which is what a retry recognises.
-        Assert.Single(records.Where(r => r.Intent == RequestIntent.CANCEL_ALL));
+        Assert.Single(records, r => r.Intent == RequestIntent.CANCEL_ALL);
         Assert.Empty(gw.Requests.NeedingReconciliation());
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
@@ -843,7 +878,7 @@ public class OperatorEmergencyRecordTests
         Assert.Equal(0, await gw.OperatorCloseAllAsync(press));
         Assert.Equal(1, c.Closes);
         Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
-        Assert.Single(c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell));
+        Assert.Single(c.Inner.Broker.Orders, o => o.Side == OrderSide.Sell);
 
         // A NEW press is a new decision and is carried out — the owner looking at a position that is
         // still open must be able to press again and have it mean something.
