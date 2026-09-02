@@ -89,11 +89,16 @@ including quote freshness for an order without its own price — and only then d
 authorized as the AI's proposal, so the kill switch refuses an approval; the person re-enables and
 approves, two acts. A refusal leaves the record parked. A request older than the approval
 time-to-live (`GatewayOptions.ApprovalTtl`, 15 minutes by default) is refused with `APPROVAL_EXPIRED`
-and declined through the state machine: `AWAITING_APPROVAL → CANCELLED`, `last_error` saying so. Age
-is judged before the other gates, so a request that is both expired and refusable for some other
-reason is declined rather than left parked behind a refusal the person could lift and then walk
-straight back into. An agent replaying that request id gets the `CANCELLED` record back rather than
-`APPROVAL_REQUIRED`, and proposes again with a new id if it still wants the order.
+and declined through the state machine: `AWAITING_APPROVAL → CANCELLED`, `last_error` saying so. An
+age that cannot be trusted — a record timestamped in the future — expires on the same rule, and the
+limit is inclusive, so `ApprovalTtl = 0` expires everything. Age is judged before any of the gates
+above, so a request that is both expired and refusable for some other reason is declined rather than
+left parked behind a refusal the person could lift and then walk straight back into; a request that
+is not parked at all is still refused as `INVALID_REQUEST` first. **Nothing sweeps:** expiry is
+evaluated only when a person presses Approve, so a request can be past the limit and still listed as
+awaiting approval — which is why the Dashboard row states the approve-by time. An agent replaying
+that request id gets whatever the record now says, and proposes again with a new id if it comes back
+`CANCELLED` and it still wants the order.
 
 ## Health and errors
 

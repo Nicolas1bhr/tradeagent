@@ -52,7 +52,12 @@ public static class Errors
         [ErrorCode.STATE_DATABASE_CORRUPT]         = ("TradeAgent's records are damaged.", "Press Repair. Your broker account is not affected.", true),
         [ErrorCode.AI_TRADING_STOPPED]             = ("AI trading is stopped.", "Press Enable AI trading when you want it to resume.", false),
         [ErrorCode.LIVE_NOT_ACTIVATED]             = ("Real-money trading has not been switched on.", "Switch it on in Settings if that is what you want.", false),
-        [ErrorCode.MODE_FORBIDS_EXECUTION]         = ("The current mode does not allow the AI to trade.", "Change the mode if that is what you want.", false),
+        // True for every mode that reaches this code. It is raised when the mode forbids the AI to
+        // trade at all (observe-only) AND when a mode that does allow trading is not the mode this
+        // particular order was proposed under — approving a confirm-each-order proposal after
+        // switching to paper or to fully automatic. "The AI is not allowed to trade" would be false
+        // in those last two.
+        [ErrorCode.MODE_FORBIDS_EXECUTION]         = ("TradeAgent's current mode does not allow this order.", "Check the mode on the Dashboard. An order the AI has already proposed can only be approved in the confirm-each-order mode it was proposed in.", false),
         [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Paper mode refused to send an order to a real-money account.", "Select a simulation account, or switch mode deliberately.", false),
         [ErrorCode.APPROVAL_REQUIRED]              = ("The AI is asking permission to place an order.", "Approve or decline it in TradeAgent.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),

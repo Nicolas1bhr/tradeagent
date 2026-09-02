@@ -509,10 +509,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// approving is two deliberate acts. The emergency controls are outside this gate and stay there.
     ///
     /// A refusal leaves the record AWAITING_APPROVAL for a human to decline deliberately — with one
-    /// exception. A request older than ApprovalTtl is declined here, through the state machine,
-    /// because a request nobody can ever dispatch must not sit on the Dashboard looking alive; the
-    /// AI proposes again against the market as it is now. Age is judged before anything else so a
-    /// dead request cannot hide behind a refusal the user could lift and then walk straight back into.
+    /// exception. A request older than ApprovalTtl is declined here, through the state machine, so
+    /// that pressing Approve on a dead request ends it rather than half-reviving it; the AI proposes
+    /// again against the market as it is now. Age is judged before any of the gates below, so a dead
+    /// request cannot hide behind a refusal the user could lift and then walk straight back into.
+    ///
+    /// NOTHING SWEEPS. Expiry is evaluated here and only here, so an expired request keeps its
+    /// AWAITING_APPROVAL row on the Dashboard until someone presses Approve on it — which is exactly
+    /// why the row states the approve-by time rather than relying on the row disappearing. Expiring
+    /// them in the background would need the app's periodic loop (AppHost.BackgroundAsync) to call a
+    /// sweep, which is a change outside this unit's files.
     /// </summary>
     public async Task<ExecutionRequest> ApproveAsync(string requestId, CancellationToken ct = default)
     {
