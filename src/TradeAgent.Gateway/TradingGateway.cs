@@ -45,11 +45,13 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         _db = db;
         Connector = connector;
-        _requests = new ExecutionRequestStore(db);
+        // _opt first: the store takes this gateway's clock, so that a duration with one end written
+        // by the store and the other read here is measured on a single clock. See ExecutionRequestStore.
+        _opt = options ?? new GatewayOptions();
+        _requests = new ExecutionRequestStore(db, _opt.Clock);
         _log = new LogStore(db);
         _materials = new MaterialStore(db);
         _health = health ?? new HealthRegistry();
-        _opt = options ?? new GatewayOptions();
         Settings = LoadSettings();
 
         _health.Changed += OnHealthChanged;
@@ -831,16 +833,8 @@ public sealed class TradingGateway : IAsyncDisposable
                     continue;
                 }
 
-                // TWO CLOCKS MEET HERE, AND ONLY ONE OF THEM IS SUBSTITUTABLE. `Now` is
-                // GatewayOptions.Clock; `DispatchedAt` is written by ExecutionRequestStore.Transition
-                // from DateTimeOffset.UtcNow, which no option reaches. Under the default
-                // TimeProvider.System the two are the same clock and this reads exactly as it did
-                // before the seam existed. Under a substituted clock that has been moved forward,
-                // this age is inflated by however far it moved, so a test that both advances the
-                // clock and reconciles would see AbsenceGrace expire early. No test does both today
-                // (the clock is injected only by the approval time-to-live tests, which never
-                // reconcile). Giving the store the same clock is the real fix, and it is a change to
-                // Stores.cs, which this unit does not own.
+                // Both ends of this subtraction come from GatewayOptions.Clock: `DispatchedAt` is
+                // written by ExecutionRequestStore, which this gateway hands its own clock to.
                 var age = Now - (req.DispatchedAt ?? req.CreatedAt);
                 if (age >= _opt.AbsenceGrace)
                 {
