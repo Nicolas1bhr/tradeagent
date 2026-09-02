@@ -216,6 +216,10 @@ public class UpdateTests
         Assert.Null(service.Available);
         Assert.False(service.ShouldPrompt);
         Assert.Contains("could not check", service.Message);
+
+        // Failed because nobody answered, NOT because TradeAgent refused something it was shown.
+        // The Settings card words those two differently and this is the difference.
+        Assert.False(service.Refused);
     }
 
     [Fact]

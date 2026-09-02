@@ -502,6 +502,10 @@ sealed class SettingsPage
             UpdateStage.Idle => "not checked yet",
             UpdateStage.Checking => "asking GitHub…",
             UpdateStage.UpToDate => $"{updates.CurrentVersion} — you have the newest one",
+            // "Could not be checked" is true of a machine that is offline and false of a release
+            // TradeAgent looked at and refused. The reason for the second one is in _updateNote,
+            // directly below this row, so this only has to stop contradicting it.
+            UpdateStage.Failed when info is null && updates.Refused => "found, and not offered — see below",
             UpdateStage.Failed when info is null => "could not be checked",
             _ => info?.Version ?? "not checked yet"
         };

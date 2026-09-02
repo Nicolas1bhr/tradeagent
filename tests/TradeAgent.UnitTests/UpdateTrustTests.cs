@@ -168,6 +168,7 @@ public class UpdateTrustTests
 
         Assert.Null(service.Available);
         Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.True(service.Refused);   // not "we could not ask GitHub" — the Settings card says so
         Assert.Contains("look like the installer", service.Message);
 
         Assert.False(await service.InstallAsync());
