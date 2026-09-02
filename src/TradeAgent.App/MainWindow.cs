@@ -560,13 +560,20 @@ public sealed class MainWindow : Window
             return;
         }
 
-        // The one hard stop. Everything else the user is allowed to decide, as long as the button
-        // says what they are deciding.
+        // The hard stop itself is NOT here. It is in UpdateService.InstallAsync, because there are
+        // two Install buttons onto that one method and a check on either button is one the other
+        // walks around — and because this line only runs on the five-second tick, so a button armed
+        // while everything was clean stays pressable for up to five seconds after an order goes
+        // UNKNOWN. What is left here is the cosmetic and the sentence explaining it.
         var unconfirmed = status.UnreconciledRequests > 0;
         var size = string.IsNullOrEmpty(info.SizeLabel) ? "" : $" · {info.SizeLabel}";
 
-        _updateBannerText.Text = unconfirmed
-            ? $"TradeAgent {info.Version} is available. It can be installed once the unconfirmed order is settled."
+        // A refusal outranks the offer. Whatever UpdateService last said no to — an unconfirmed
+        // order, a release we cannot verify, a file that changed under us — is what the strip says,
+        // in its words rather than a paraphrase that could drift away from them.
+        _updateBannerText.Text =
+            updates.Stage == UpdateStage.Failed && !string.IsNullOrWhiteSpace(updates.Message) ? updates.Message
+            : unconfirmed ? $"TradeAgent {info.Version} is available. It can be installed once the unconfirmed order is settled."
             : $"TradeAgent {info.Version} is available{size}. You are running {updates.CurrentVersion}.";
 
         if (_updateInstall is null) return;

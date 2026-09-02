@@ -163,7 +163,8 @@ sealed class SettingsPage
                      "closes TradeAgent, replaces it, and opens the new version. Your records, your settings and " +
                      "your ATAS installation are untouched."),
             Ui.Micro($"Releases come from github.com/{_host.Updates.Repository}. The download is checked against " +
-                     "the checksum published beside it, which proves the file arrived intact — not who signed it.")));
+                     "the checksum published beside it, which proves the file arrived intact — not who signed it. " +
+                     "If that checksum is missing or does not match, TradeAgent refuses to install and says so here.")));
 
         // The right-hand column answers the question this page raises and nothing else answers:
         // what does pressing one of these actually do to my money and my open orders?
@@ -520,6 +521,12 @@ sealed class SettingsPage
         _checkNow.IsEnabled = !busy;
         _whatsNew.IsVisible = info is not null;
         _installUpdate.IsVisible = info is not null;
+
+        // Deliberately still only !busy, and deliberately NOT a copy of the banner's unconfirmed-order
+        // check. That check used to live on a button, which is how this page ended up being a second
+        // way around it; it is now inside UpdateService.InstallAsync, where both buttons meet. Leaving
+        // this one pressable means a press during an unconfirmed order produces the actual reason in
+        // _updateNote above rather than a dead control with nothing to read.
         _installUpdate.IsEnabled = !busy;
 
         if (info is not null)

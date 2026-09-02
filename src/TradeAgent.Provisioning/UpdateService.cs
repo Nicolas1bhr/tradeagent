@@ -98,11 +98,20 @@ public enum UpdateStage
 /// Where the update machinery gets its facts and what it does with them. Swapped wholesale in tests
 /// so the state machine can be exercised without a network, a download or a running installer.
 /// </summary>
+/// <param name="Hash">
+/// Reads a file that is already on disk and returns its SHA-256. Separate from <see cref="Download"/>
+/// because the file is hashed a second time immediately before it is started, and the two moments
+/// are the point: what the download verified and what Windows executes are only the same bytes if
+/// nobody wrote to <c>updates\&lt;version&gt;\</c> in between. Null means <see cref="Downloader.Sha256Async"/>,
+/// which is what production uses; a caller that supplies nothing therefore gets a real file read
+/// rather than a skipped check.
+/// </param>
 public sealed record UpdateSources(
     Func<CancellationToken, Task<string?>> LatestReleaseJson,
     Func<string, CancellationToken, Task<string?>> Text,
     Func<UpdateInfo, string?, IProgress<ProvisionProgress>?, CancellationToken, Task<string>> Download,
-    Action<string> Launch)
+    Action<string> Launch,
+    Func<string, CancellationToken, Task<string>>? Hash = null)
 {
     public static UpdateSources GitHub(string repository) => new(
         ct => Downloader.TryGetStringAsync($"https://api.github.com/repos/{repository}/releases/latest", ct),
@@ -111,9 +120,10 @@ public sealed record UpdateSources(
         {
             var dir = Path.Combine(Paths.Updates, info.Version);
             Prune(Paths.Updates, keep: dir);
-            return await Downloader.DownloadAsync(info.DownloadUrl, Path.Combine(dir, info.AssetName), progress, ct, sha);
+            return await Downloader.DownloadVerifiedAsync(info.DownloadUrl, Path.Combine(dir, info.AssetName), sha, progress, ct);
         },
-        Install);
+        Install,
+        Downloader.Sha256Async);
 
     /// <summary>
     /// Starts the installer and returns. TradeAgent closes immediately afterwards, and Inno Setup's
@@ -171,6 +181,14 @@ public sealed record UpdateSources(
 /// and enforced, which catches a truncated or corrupted download. It comes from the same release as
 /// the installer, so it proves the transfer, NOT the publisher — that is what code signing would be
 /// for, and this product does not have a certificate yet.
+///
+/// <b>And because that checksum is the whole chain, losing it is a refusal rather than a shortcut.</b>
+/// There is no signature underneath to fall back on, so every way the hash can go missing — a release
+/// that published no manifest, a manifest that cannot be fetched, a manifest that does not name our
+/// installer — ends in a sentence the owner can read and nothing being run. So does a release
+/// carrying two files that both look like the installer, and so does a file whose bytes changed
+/// between being checked and being started. The one thing this object will never do is start a 90 MB
+/// executable it cannot account for.
 /// </summary>
 public sealed class UpdateService
 {
@@ -188,6 +206,7 @@ public sealed class UpdateService
     readonly object _gate = new();
 
     bool _busy;
+    string? _lastRefusalLogged;
 
     public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null)
     {
@@ -222,6 +241,27 @@ public sealed class UpdateService
     /// <summary>True when there is something to offer and the user has not waved it away.</summary>
     public bool ShouldPrompt => Available is not null && !Dismissed;
 
+    /// <summary>
+    /// How many of the owner's orders have an outcome TradeAgent has not established — the gateway's
+    /// <c>NeedingReconciliation()</c> count, handed over as a number rather than as the gateway,
+    /// because this object has no business reading anything else about trading.
+    ///
+    /// Null is NOT zero. Null means nobody wired this up, and an updater that cannot see the order
+    /// book has no basis for deciding it is safe to replace the program holding it — so it refuses,
+    /// exactly as it does when the count is above zero or when asking throws. The alternative
+    /// (treat "not wired" as "all clear") is the same defect as putting the check in a view: a guard
+    /// that is absent on some route through the code is not a guard.
+    /// </summary>
+    public Func<int>? UnconfirmedWork { get; set; }
+
+    /// <summary>
+    /// Where an install or a refusal is written down for the owner to read afterwards, as
+    /// (text, level) — the shape of <c>LogStore.Activity</c>. Null in tests that do not care.
+    ///
+    /// A refusal nobody can find later is indistinguishable from a button that did nothing.
+    /// </summary>
+    public Action<string, string>? Activity { get; set; }
+
     public event Action? Changed;
 
     /// <summary>
@@ -252,11 +292,16 @@ public sealed class UpdateService
                 return;
             }
 
-            var found = ReleaseFeed.Parse(json, _current, _assetPattern);
+            var found = ReleaseFeed.Parse(json, _current, _assetPattern, out var problem);
             if (found is null)
             {
                 Available = null;
-                Set(UpdateStage.UpToDate, null);
+
+                // Two different nothings. "No release is newer than yours" is up-to-date; "there is
+                // a newer release and TradeAgent will not touch it" is a refusal, and rendering the
+                // second one as the first is how a wall in front of the owner becomes invisible.
+                if (problem is null) Set(UpdateStage.UpToDate, null);
+                else Refuse(problem);
                 return;
             }
 
@@ -277,10 +322,24 @@ public sealed class UpdateService
     }
 
     /// <summary>
-    /// Downloads the installer, checks it against the publisher's checksum, and starts it.
+    /// Downloads the installer, checks it against the publisher's checksum, checks it again the
+    /// instant before starting it, and starts it.
     ///
     /// Returns true when the installer is running, which is the caller's signal to close TradeAgent.
-    /// Returns false when nothing was started, and <see cref="Message"/> then says why.
+    /// Returns false when nothing was started, and <see cref="Message"/> then says why — in a
+    /// sentence written for the owner, not a code.
+    ///
+    /// <b>Every hard stop is here rather than in a view.</b> There are two Install buttons (the
+    /// banner and the Settings card) and both press this one method, so a check that lives on either
+    /// button is a check the other button walks around; a check on a button is also only as fresh as
+    /// the last five-second refresh that set <c>IsEnabled</c>. The buttons keep their cosmetics. The
+    /// decisions are these:
+    ///
+    /// <list type="number">
+    /// <item>Nothing is installed while an order's outcome is unknown — nor while we cannot tell.</item>
+    /// <item>Nothing is downloaded until a published hash for this exact file has been resolved.</item>
+    /// <item>Nothing is started until the bytes on disk are re-read and still match that hash.</item>
+    /// </list>
     /// </summary>
     public async Task<bool> InstallAsync(CancellationToken ct = default)
     {
@@ -301,28 +360,135 @@ public sealed class UpdateService
         }
         try
         {
+            // Before anything is fetched: is there an order whose outcome nobody knows? This is the
+            // one stop that is about the owner's money rather than about the file, and it is the
+            // cheapest to answer, so it is asked first. Inside the busy gate on purpose — a refusal
+            // that a concurrent background check could overwrite two seconds later is not visible.
+            if (OutstandingWork(out var outstanding)) return Refuse(outstanding);
+
             Set(UpdateStage.Downloading, $"Downloading TradeAgent {info.Version}…");
 
-            string? sha = null;
-            if (info.ChecksumUrl is not null)
-                sha = ChecksumManifest.Find(await _sources.Text(info.ChecksumUrl, ct), info.AssetName);
+            // The checksum is resolved BEFORE the download, not alongside it. A hash that cannot be
+            // resolved used to be passed to Downloader as null, where the verification step is
+            // simply skipped; there is no signature underneath to catch that, so this is the whole
+            // trust chain and it is not optional. Nothing here can hand Downloader a null.
+            var sha = await ResolveChecksumAsync(info, ct);
+            if (sha is null) return false;   // ResolveChecksumAsync has already said why
 
             var progress = new Progress<ProvisionProgress>(p => Set(UpdateStage.Downloading, p.Message));
             var installer = await _sources.Download(info, sha, progress, ct);
 
+            // And again, on the file that is about to be executed. The download verified bytes as
+            // they arrived; between then and now they have been renamed into updates\<version>\ and
+            // left on a disk any process running as this user can write to. A fast path that skips
+            // the download because the file is already there does not get to skip this.
+            var hash = _sources.Hash ?? Downloader.Sha256Async;
+            var actual = await hash(installer, ct);
+            if (!string.Equals(actual, sha, StringComparison.OrdinalIgnoreCase))
+                return Refuse(
+                    $"The downloaded TradeAgent {info.Version} changed after it was checked, so it was not started. " +
+                    "Nothing was installed and the version you are running is untouched.");
+
             Set(UpdateStage.Installing, $"Installing TradeAgent {info.Version}. TradeAgent will close and reopen itself.");
+            Activity?.Invoke($"You installed TradeAgent {info.Version}, replacing {CurrentVersion}", "info");
             _sources.Launch(installer);
             return true;
         }
         catch (Exception ex)
         {
-            Set(UpdateStage.Failed, ex is TradeAgentException t ? $"{t.Info.UserMessage} {t.Info.Repair}".Trim() : ex.Message);
+            var why = ex is TradeAgentException t ? $"{t.Info.UserMessage} {t.Info.Repair}".Trim() : ex.Message;
+            Set(UpdateStage.Failed, why);
+            Activity?.Invoke($"TradeAgent {info.Version} was not installed: {why}", "warn");
             return false;
         }
         finally
         {
             lock (_gate) _busy = false;
         }
+    }
+
+    /// <summary>
+    /// The hash this release published for this exact file, or null with <see cref="Message"/>
+    /// already set to the reason.
+    ///
+    /// Every null return here used to be a silent install of an unverified 90 MB executable: no
+    /// manifest in the release, a manifest that would not download, and a manifest whose lines do
+    /// not name our installer (a byte-order mark, a tab instead of the two spaces, an asset renamed
+    /// between packaging and publishing, a truncated hash, an empty body). A manifest that exists
+    /// and does not name our file is evidence of a mismatch, not of an old release.
+    /// </summary>
+    async Task<string?> ResolveChecksumAsync(UpdateInfo info, CancellationToken ct)
+    {
+        var cannot = $"TradeAgent {info.Version} cannot be verified";
+
+        if (info.ChecksumUrl is null)
+        {
+            Refuse($"{cannot}: it was published without the checksum file that proves the download is the one " +
+                   "we released. Nothing was installed.");
+            return null;
+        }
+
+        var manifest = await _sources.Text(info.ChecksumUrl, ct);
+        if (string.IsNullOrWhiteSpace(manifest))
+        {
+            Refuse($"{cannot}: the checksum file published with it could not be read. Nothing was installed — " +
+                   "check your internet connection and press Install update again.");
+            return null;
+        }
+
+        var sha = ChecksumManifest.Find(manifest, info.AssetName);
+        if (sha is null)
+        {
+            Refuse($"{cannot}: the checksum file published with it does not list {info.AssetName}. " +
+                   "Nothing was installed.");
+            return null;
+        }
+
+        return sha;
+    }
+
+    /// <summary>
+    /// True when there is trading work whose outcome TradeAgent cannot account for — including the
+    /// case where it cannot find out. <paramref name="reason"/> is then the sentence to show.
+    /// </summary>
+    bool OutstandingWork(out string reason)
+    {
+        const string cannotTell =
+            "TradeAgent cannot tell whether any of your orders are still unconfirmed, so it will not replace " +
+            "itself right now. Close and reopen TradeAgent, then try again.";
+
+        if (UnconfirmedWork is null) { reason = cannotTell; return true; }
+
+        int count;
+        try { count = UnconfirmedWork(); }
+        catch (Exception) { reason = cannotTell; return true; }
+
+        if (count <= 0) { reason = ""; return false; }
+
+        reason =
+            $"TradeAgent will not replace itself while {(count == 1 ? "an order's outcome is" : $"{count} orders' outcomes are")} " +
+            "still unconfirmed — that is the one moment an update could lose track of real money. Settle or reconcile " +
+            $"{(count == 1 ? "it" : "them")} on the Dashboard, then install.";
+        return true;
+    }
+
+    /// <summary>
+    /// Says no, in a sentence, on both surfaces and in the log. Always returns false.
+    ///
+    /// The same refusal twice in a row is written down once. The automatic check runs every six
+    /// hours whether anyone is looking or not, and a release that stays un-installable would
+    /// otherwise write the identical line into the activity log four times a day until it is fixed.
+    /// The first occurrence is always recorded; a different refusal always is too.
+    /// </summary>
+    bool Refuse(string reason)
+    {
+        Set(UpdateStage.Failed, reason);
+        if (_lastRefusalLogged != reason)
+        {
+            _lastRefusalLogged = reason;
+            Activity?.Invoke(reason, "warn");
+        }
+        return false;
     }
 
     /// <summary>"Later". The offer stays in Settings; only the banner goes away.</summary>
@@ -360,8 +526,23 @@ public static class ReleaseFeed
     /// The last one matters most. An update the user cannot install is not an update, and a banner
     /// offering one is a button that fails after the download.
     /// </summary>
-    public static UpdateInfo? Parse(string? json, UpdateVersion current, string assetPattern)
+    public static UpdateInfo? Parse(string? json, UpdateVersion current, string assetPattern) =>
+        Parse(json, current, assetPattern, out _);
+
+    /// <summary>
+    /// The same, and says which kind of nothing it is returning.
+    ///
+    /// <paramref name="problem"/> is null for every ordinary not-an-update: a draft, a pre-release, a
+    /// tag that is not a version, a release no newer than the running build, a malformed answer, a
+    /// release whose installer never uploaded. Those are all correctly reported to the owner as "you
+    /// have the newest one".
+    ///
+    /// It is a sentence when the release IS newer and we are refusing to touch it anyway, which the
+    /// owner has to be told — reporting a refusal as "up to date" is a wall they cannot see.
+    /// </summary>
+    public static UpdateInfo? Parse(string? json, UpdateVersion current, string assetPattern, out string? problem)
     {
+        problem = null;
         if (string.IsNullOrWhiteSpace(json)) return null;
 
         try
@@ -381,6 +562,7 @@ public static class ReleaseFeed
             var rx = new Regex(assetPattern, RegexOptions.IgnoreCase);
             string? name = null, url = null, checksums = null;
             long size = 0;
+            var matches = 0;
 
             foreach (var asset in assets.EnumerateArray())
             {
@@ -389,7 +571,10 @@ public static class ReleaseFeed
                 if (assetName is null || assetUrl is null) continue;
 
                 if (assetName.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase)) checksums = assetUrl;
-                if (name is not null || !rx.IsMatch(assetName)) continue;
+                if (!rx.IsMatch(assetName)) continue;
+
+                matches++;
+                if (name is not null) continue;
 
                 name = assetName;
                 url = assetUrl;
@@ -397,6 +582,20 @@ public static class ReleaseFeed
             }
 
             if (name is null || url is null) return null;
+
+            // Exactly one, or none. Two files that both look like the installer is a real release —
+            // an arm64 build published beside the x64 one would do it, and so would a leftover
+            // TradeAgent-Setup-x64.exe.bak under a looser TRADEAGENT_UPDATE_ASSET pattern. Which of
+            // them replaces the program holding the owner's open orders is not a question the order
+            // of a JSON array gets to answer, and there is no version of "pick one" that is a
+            // decision somebody made.
+            if (matches > 1)
+            {
+                problem =
+                    $"TradeAgent {version} cannot be installed: the release contains {matches} files that each look " +
+                    "like the installer, and TradeAgent will not guess which one to run. Nothing was downloaded.";
+                return null;
+            }
 
             var notes = Str(root, "body") ?? "";
             if (notes.Length > 4000) notes = notes[..4000];
@@ -426,12 +625,22 @@ public static class ReleaseFeed
 public static class ChecksumManifest
 {
     /// <summary>
-    /// The hash recorded for <paramref name="assetName"/>, or null when the manifest does not mention
-    /// it. Null means "download without a checksum", not "fail" — a release published before this
-    /// file existed is still installable, and a hash we cannot find is not a hash we can enforce.
+    /// The hash recorded for <paramref name="assetName"/>, or null when the manifest does not name
+    /// it.
     ///
-    /// Matching is on the file name alone. build.ps1 writes repository-relative paths
-    /// (<c>artifacts/TradeAgent-Setup-x64.exe</c>), which is not what the release asset is called.
+    /// <b>Null means the install is refused</b> — it used to mean "download without a checksum",
+    /// which made the product's only integrity check optional in five ordinary accidents (a
+    /// byte-order mark, a tab where the two spaces should be, an asset renamed between packaging
+    /// and publishing, a truncated hash, an empty file). The caller is
+    /// <see cref="UpdateService.InstallAsync"/> and it treats a manifest that exists and does not
+    /// name our installer as evidence of a mismatch, so this method stays deliberately strict:
+    /// widening it to accept manifests our own packaging never writes would be widening what we
+    /// will run.
+    ///
+    /// What it IS tolerant of is everything a correct manifest can legitimately look like: CRLF
+    /// endings, the <c>*name</c> binary marker sha256sum writes, junk lines around the real one,
+    /// a case-different file name, and build.ps1's repository-relative paths
+    /// (<c>artifacts/TradeAgent-Setup-x64.exe</c>), which are not what the release asset is called.
     /// </summary>
     public static string? Find(string? manifest, string assetName)
     {

@@ -128,6 +128,18 @@ public sealed class AppHost : IAsyncDisposable
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
 
+            // The updater's two hard dependencies, handed over as narrowly as they can be: a count
+            // and a log sink, not the gateway. UpdateService must be able to refuse to replace the
+            // program while an order's outcome is unknown, and it must be able to say why somewhere
+            // the owner can find it afterwards — but it has no business reading anything else about
+            // trading, and the AI has no business reaching either of these.
+            //
+            // Wired here rather than at construction because the gateway does not exist until now.
+            // Until it is wired UpdateService refuses to install at all: not knowing whether an
+            // order is outstanding is not the same as knowing there is none.
+            Updates.UnconfirmedWork = () => Gateway.Requests.NeedingReconciliation().Count;
+            Updates.Activity = (text, level) => Gateway.Log.Activity(text, level);
+
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();
             Health.Set(Components.Gateway, HealthState.READY);

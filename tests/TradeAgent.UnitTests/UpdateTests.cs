@@ -177,6 +177,10 @@ public class UpdateTests
         public string? ReleaseJson;
         public string? ChecksumText;
 
+        /// <summary>What the file handed back by the download hashes to when it is re-read
+        /// immediately before Launch. Same as the manifest's, unless a test says otherwise.</summary>
+        public string FileOnDisk = Hash;
+
         public UpdateSources Sources() => new(
             _ => Task.FromResult(ReleaseJson),
             (_, _) => Task.FromResult(ChecksumText),
@@ -188,11 +192,17 @@ public class UpdateTests
                         "the downloaded file did not match the publisher's checksum");
                 return Task.FromResult($"C:/updates/{info.AssetName}");
             },
-            path => Launched = path);
+            path => Launched = path,
+            (_, _) => Task.FromResult(FileOnDisk));
     }
 
+    /// <summary>
+    /// Wired the way <c>AppHost</c> wires it: with a way to ask whether any order's outcome is still
+    /// unknown, answering "none". An updater with no answer to that question refuses to install —
+    /// see <see cref="UpdateTrustTests"/> — so these tests, which are about everything else, say so.
+    /// </summary>
     static UpdateService Service(Recorder r, string current = "0.1.0") =>
-        new(current, "owner/repo", UpdateService.DefaultAssetPattern, r.Sources());
+        new(current, "owner/repo", UpdateService.DefaultAssetPattern, r.Sources()) { UnconfirmedWork = () => 0 };
 
     [Fact]
     public async Task An_offline_machine_reports_that_it_could_not_ask_and_offers_nothing()
@@ -292,17 +302,25 @@ public class UpdateTests
         Assert.Contains("could not be installed", service.Message);
     }
 
+    /// <summary>
+    /// This used to assert the opposite — that a release with no SHA256SUMS.txt installed anyway,
+    /// "without inventing" a hash. There is no signature behind the checksum to fall back on, so
+    /// that was the trust chain being optional rather than being lenient. See
+    /// <see cref="UpdateTrustTests"/> for the rest of the refusals.
+    /// </summary>
     [Fact]
-    public async Task A_release_without_a_checksum_file_still_installs_without_inventing_one()
+    public async Task A_release_without_a_checksum_file_is_refused_rather_than_installed_unverified()
     {
         var r = new Recorder { ReleaseJson = Release("v0.2.0", ["TradeAgent-Setup-x64.exe"]) };
         var service = Service(r);
 
         await service.CheckAsync();
-        Assert.True(await service.InstallAsync());
+        Assert.False(await service.InstallAsync());
 
         Assert.Null(r.ShaHandedToTheDownload);
-        Assert.Equal("C:/updates/TradeAgent-Setup-x64.exe", r.Launched);
+        Assert.Null(r.Launched);
+        Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.Contains("cannot be verified", service.Message);
     }
 
     [Fact]
