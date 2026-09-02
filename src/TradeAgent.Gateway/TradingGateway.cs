@@ -552,6 +552,18 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (proposer.IsOperator) proposer = new AgentContext("agent");
                 AuthorizeOrThrow(proposer);
 
+                // A RECORD NAMES A PLATFORM AND AN ACCOUNT, AND ONLY THE PAIR SAYS WHERE THE ORDER GOES.
+                //
+                // Switching platforms in Settings builds a new gateway over the SAME database
+                // (AppHost.SwitchConnectorAsync), so a parked request outlives the platform it was
+                // proposed for. An account id is unique only WITHIN a platform: the simulator's
+                // SIM-001 and a broker's SIM-001 are different money, and comparing ids alone would
+                // approve a simulator proposal onto the broker. Checked before the account, because
+                // asking the wrong platform to look up the account is a meaningless question.
+                if (Connector.Id != stored.ConnectorId)
+                    throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
+                        $"this order was proposed on the {stored.ConnectorId} platform, but {Connector.Id} is connected now");
+
                 // DispatchPlaceAsync sends to the account the RECORD names. If the owner changed
                 // accounts while this waited, that is no longer the chosen one.
                 var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");

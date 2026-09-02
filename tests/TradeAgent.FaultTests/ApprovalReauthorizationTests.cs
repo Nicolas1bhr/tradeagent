@@ -41,6 +41,31 @@ public class ApprovalReauthorizationTests
         Assert.Equal(ExecutionState.AWAITING_APPROVAL, gw.GetRequest(requestId)!.State);
     }
 
+    /// <summary>
+    /// What TestEnv.Ready does, but over a database and a connector the caller owns, and in
+    /// LIVE_CONFIRM with real money on. Needed to put TWO platforms over ONE store, which is the
+    /// shape AppHost.SwitchConnectorAsync leaves behind: a new gateway and connector, the same
+    /// database, and therefore the same parked requests.
+    /// </summary>
+    static async Task<TradingGateway> ReadyOver(Database db, ITradingConnector conn, string accountId,
+        GatewayOptions? options = null)
+    {
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), options);
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.LIVE_CONFIRM;
+            s.SelectedAccountId = accountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        gw.ActivateLive(true);
+        return gw;
+    }
+
     /// <summary>The three facts every refusal must leave behind, asserted together so none can be skipped.</summary>
     static void AssertRefusedAndStillParked(GatewayDeniedException denied, ErrorCode expected, TradingGateway gw,
         FakeConnector conn, string requestId)
@@ -189,6 +214,53 @@ public class ApprovalReauthorizationTests
 
         // The order parked for the chosen account is unaffected.
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("acct-same"), conn, "acct-same");
+    }
+
+    /// <summary>
+    /// AN ACCOUNT ID IS UNIQUE ONLY WITHIN A PLATFORM, SO THE PAIR IS WHAT IDENTIFIES THE MONEY.
+    ///
+    /// Switching platform in Settings disposes the gateway and builds a new one over the SAME
+    /// database (AppHost.SwitchConnectorAsync:162-197, which also clears the chosen account because
+    /// an id from one platform does not exist on the other). A request parked before the switch is
+    /// therefore still sitting in the store afterwards. If the new platform happens to expose an
+    /// account with the same id — "SIM-001" on a simulator and on a broker is not a contrived
+    /// coincidence, it is what default ids look like — then comparing account ids alone lets a
+    /// proposal made against a simulator dispatch to the real broker. The connector is compared too.
+    /// </summary>
+    [Fact]
+    public async Task An_order_parked_on_a_different_platform_is_refused_even_when_the_account_id_matches()
+    {
+        var db = TestEnv.NewDb();
+        using var dbh = db;
+
+        var innerA = new FakeConnector(new FakeBroker());
+        var innerB = new FakeConnector(new FakeBroker());
+        Assert.Equal(innerA.Broker.AccountId, innerB.Broker.AccountId);   // the same id on both platforms
+        var a = new ConnectorFacade(innerA, id: "platform-a");
+        var b = new ConnectorFacade(innerB, id: "platform-b");
+
+        // Parked on platform A, for account SIM-001 on platform A.
+        var gwA = await ReadyOver(db, a, innerA.Broker.AccountId);
+        await Park(gwA, "swap-1");
+        Assert.Equal("platform-a", gwA.GetRequest("swap-1")!.ConnectorId);
+
+        // The owner switches platform. Same database, same parked request, different wire.
+        var gwB = await ReadyOver(db, b, innerB.Broker.AccountId);
+        Assert.Equal(ExecutionState.AWAITING_APPROVAL, gwB.GetRequest("swap-1")!.State);
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gwB.ApproveAsync("swap-1"));
+        Assert.Equal(ErrorCode.ACCOUNT_NOT_FOUND, denied.Code);
+        Assert.Contains("platform-a", denied.Message);
+        Assert.Contains("platform-b", denied.Message);
+
+        // Nothing reached EITHER broker, and the request is still parked.
+        Assert.Empty(innerB.Broker.Orders);
+        Assert.Empty(innerA.Broker.Orders);
+        Assert.Equal(ExecutionState.AWAITING_APPROVAL, gwB.GetRequest("swap-1")!.State);
+
+        // Positive control: back on the platform it was proposed on, the same approval dispatches.
+        AssertDispatchedExactlyOnce(await gwA.ApproveAsync("swap-1"), innerA, "swap-1");
+        Assert.Empty(innerB.Broker.Orders);
     }
 
     [Fact]
@@ -467,7 +539,7 @@ public class ApprovalReauthorizationTests
         var db = TestEnv.NewDb();
         using var dbh = db;
         var inner = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking });
-        var conn = new CapabilityOverride(inner, inner.Capabilities with { SupportsModify = false });
+        var conn = new ConnectorFacade(inner, inner.Capabilities with { SupportsModify = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
         await conn.ConnectAsync();
@@ -485,12 +557,16 @@ public class ApprovalReauthorizationTests
         Assert.Null(gw.GetRequest("mod-1"));   // refused before a record was even written
     }
 
-    /// <summary>Forwards everything to the simulator except the capabilities it reports.</summary>
-    sealed class CapabilityOverride(FakeConnector inner, ConnectorCapabilities capabilities) : ITradingConnector
+    /// <summary>
+    /// Forwards everything to the simulator except the two facts the gateway makes decisions on that
+    /// FakeConnector hard-codes: the identity it reports and the capabilities it claims.
+    /// </summary>
+    sealed class ConnectorFacade(FakeConnector inner, ConnectorCapabilities? capabilities = null, string? id = null)
+        : ITradingConnector
     {
-        public string Id => inner.Id;
+        public string Id => id ?? inner.Id;
         public string DisplayName => inner.DisplayName;
-        public ConnectorCapabilities Capabilities => capabilities;
+        public ConnectorCapabilities Capabilities => capabilities ?? inner.Capabilities;
 
         public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
         public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
