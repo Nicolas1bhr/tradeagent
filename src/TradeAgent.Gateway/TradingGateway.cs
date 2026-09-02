@@ -525,18 +525,34 @@ public sealed class TradingGateway : IAsyncDisposable
             var intent = Json.Read<PlaceIntent>(stored.ParametersJson)!;
             var what = $"{intent.Side} {intent.Quantity} {intent.Symbol}";
 
+            // AGE IS BOUNDED AT BOTH ENDS, AND BOTH BOUNDS FAIL CLOSED.
+            //
+            // Below zero: a record timestamped in the future — the clock stepped backwards between
+            // parking and approving, or a database was restored — gives a negative age that no
+            // positive limit can ever exceed, so the request would stay approvable forever. Time
+            // that does not make sense is not a reason to trust a parked order, so it expires.
+            //
+            // At the limit: `>=`, not `>`. ApprovalTtl is documented as literal, with no "0 = off",
+            // and under `>` a frozen clock leaves the age exactly zero, which a zero limit would
+            // then let through — the opposite of what a zero limit means.
             var age = Now - stored.CreatedAt;
-            if (age > _opt.ApprovalTtl)
+            if (age < TimeSpan.Zero || age >= _opt.ApprovalTtl)
             {
                 var minutes = _opt.ApprovalTtl.TotalMinutes.ToString("0");
+                var untrustworthy = age < TimeSpan.Zero;
                 _requests.Transition(requestId, ExecutionState.AWAITING_APPROVAL, ExecutionState.CANCELLED,
-                    error: $"approval expired: waited {age.TotalMinutes:0} minutes, the limit is {minutes}");
-                _log.Activity($"{what} waited more than {minutes} minutes for your approval and was declined. Nothing was sent; the AI can propose it again.", "warn");
+                    error: untrustworthy
+                        ? $"approval expired: recorded {(-age).TotalMinutes:0} minutes in the future, so its age cannot be trusted"
+                        : $"approval expired: waited {age.TotalMinutes:0} minutes, the limit is {minutes}");
+                _log.Activity(untrustworthy
+                    ? $"{what} was declined because TradeAgent cannot tell how old it is. Nothing was sent; the AI can propose it again."
+                    : $"{what} waited more than {minutes} minutes for your approval and was declined. Nothing was sent; the AI can propose it again.", "warn");
                 _log.Engineering("Gateway", "approval_expired", "warn", requestId: requestId,
                     metadataJson: Json.Write(new { age_minutes = age.TotalMinutes, ttl_minutes = _opt.ApprovalTtl.TotalMinutes }));
                 StateChanged?.Invoke();
-                throw new GatewayDeniedException(ErrorCode.APPROVAL_EXPIRED,
-                    $"this order waited {age.TotalMinutes:0} minutes for approval and the limit is {minutes}; it has been declined, and the AI has to propose it again");
+                throw new GatewayDeniedException(ErrorCode.APPROVAL_EXPIRED, untrustworthy
+                    ? $"this order is recorded {(-age).TotalMinutes:0} minutes in the future, so its age cannot be trusted; it has been declined, and the AI has to propose it again"
+                    : $"this order waited {age.TotalMinutes:0} minutes for approval and the limit is {minutes}; it has been declined, and the AI has to propose it again");
             }
 
             try

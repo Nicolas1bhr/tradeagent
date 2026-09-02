@@ -476,6 +476,66 @@ public class ApprovalReauthorizationTests
         Assert.Empty(conn.Broker.Orders);
     }
 
+    /// <summary>
+    /// A record timestamped in the FUTURE has a negative age, and no positive limit can ever exceed
+    /// it, so under `age > ttl` such a request stayed approvable forever — the one state a
+    /// time-to-live exists to make impossible. A clock stepped backwards between parking and
+    /// approving is enough to produce it. Fail closed: an age that cannot be trusted is expired.
+    /// </summary>
+    [Fact]
+    public async Task A_request_timestamped_in_the_future_is_expired_rather_than_approvable_forever()
+    {
+        var clock = new TestClock();
+        var (gw, conn, db) = await Parked("future-control", options: new GatewayOptions { Clock = clock });
+        using var dbh = db;
+
+        new ExecutionRequestStore(db).TryCreate(new ExecutionRequest
+        {
+            RequestId = "future-1", AgentSessionId = "agent-1", ConnectorId = conn.Id,
+            AccountId = conn.Broker.AccountId, Instrument = "ES", Intent = RequestIntent.PLACE,
+            ParametersJson = Json.Write(TestEnv.Buy()),
+            ClientOrderId = TradingGateway.ClientOrderIdFor("future-1"),
+            CreatedAt = clock.GetUtcNow() + TimeSpan.FromHours(48),
+            State = ExecutionState.AWAITING_APPROVAL, Mode = TradingMode.LIVE_CONFIRM
+        });
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("future-1"));
+        Assert.Equal(ErrorCode.APPROVAL_EXPIRED, denied.Code);
+        Assert.Equal(0, conn.Broker.CountByClientOrderId(TradingGateway.ClientOrderIdFor("future-1")));
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("future-1")!.State);
+        Assert.Contains("expired", gw.GetRequest("future-1")!.LastError!);
+
+        // The person is told it could not be aged, not given a negative number of minutes.
+        var line = gw.Log.RecentActivity().Last();
+        Assert.DoesNotContain("-", line.Text);
+        Assert.Equal("warn", line.Level);
+
+        // A record with a sane timestamp on the same clock is untouched by this.
+        AssertDispatchedExactlyOnce(await gw.ApproveAsync("future-control"), conn, "future-control");
+    }
+
+    /// <summary>
+    /// ApprovalTtl is documented as literal, with no "0 = off". Under `age > ttl` a frozen clock
+    /// leaves the age exactly zero, and a zero limit let it through — a limit of nothing permitting
+    /// everything. `>=` is what makes the documented semantics true.
+    /// </summary>
+    [Fact]
+    public async Task A_zero_ttl_expires_every_approval_including_one_made_at_the_same_instant()
+    {
+        var clock = new TestClock();
+        var (gw, conn, db) = await Parked("ttl-zero",
+            options: new GatewayOptions { Clock = clock, ApprovalTtl = TimeSpan.Zero });
+        using var dbh = db;
+
+        // The clock has not moved since the request was parked: age is exactly zero.
+        Assert.Equal(clock.GetUtcNow(), gw.GetRequest("ttl-zero")!.CreatedAt);
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("ttl-zero"));
+        Assert.Equal(ErrorCode.APPROVAL_EXPIRED, denied.Code);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("ttl-zero")!.State);
+    }
+
     // ------------------------------------------------------------------ 2c. one clock
 
     /// <summary>
