@@ -909,7 +909,11 @@ public sealed class TradingGateway : IAsyncDisposable
         try { listed = (await Connector.GetOrdersAsync(accountId, false, null, ct)).Select(o => o.ConnectorOrderId).ToList(); }
         catch (Exception ex) { _log.Engineering("Gateway", "cancel_all_order_list_failed", "warn", ex: ex); }
 
-        var targets = listed is { Count: > 0 } ? listed.Select(id => (string?)id).ToList() : [null];
+        // The press itself gets a record (target null), and each order that could be named gets one
+        // of its own. The press-level record is what makes a RETRY recognisable as a retry even when
+        // the orders it cancelled have already left the book — without it, pressing again after a
+        // successful sweep would find an empty book, write nothing, and touch the wire a second time.
+        var targets = new string?[] { null }.Concat(listed?.Select(id => (string?)id) ?? []);
         var open = new List<(string RequestId, string? Target)>();
         foreach (var target in targets)
         {
@@ -918,7 +922,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 target is null ? RequestIntent.CANCEL_ALL : RequestIntent.CANCEL, "-",
                 Json.Write(new { order = target, press = nonce })));
             if (!created && _opt.IdempotencyEnabled) continue;      // the same press, pressed twice
-            _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+            // `created` is the guard on the write-ahead, not idempotency: with the harness seam off,
+            // a repeated press deliberately dispatches again over a record that has already settled,
+            // and moving it back to DISPATCHING is not a transition the table allows.
+            if (created) _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
             open.Add((rid, target));
         }
 
@@ -978,7 +985,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 _log.Engineering("Gateway", "operator_press_replayed", requestId: rid);
                 continue;
             }
-            var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+            // See OperatorCancelAllAsync: `created`, not idempotency, guards the write-ahead.
+            var current = created
+                ? _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING)
+                : stored;
 
             OrderInfo? order;
             try

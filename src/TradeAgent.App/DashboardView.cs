@@ -534,11 +534,16 @@ sealed class SafetyPage
             _stopButton,
             Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions."),
             Ui.Divider(),
+            // The nonce is minted INSIDE the handler, which Ui.Confirm runs once per confirmed
+            // press. That is what makes a retry of one press a replay — same press, same request
+            // ids, nothing sent twice — while a second, deliberate press is a new decision with new
+            // ids. Minting it outside would make every press the same press for the life of the
+            // window, and the second half of an emergency would silently do nothing.
             Ui.With(Ui.Confirm("Cancel all working orders", "Confirm: cancel all working orders",
-                    async () => await _host.Gateway.OperatorCancelAllAsync()),
+                    async () => await _host.Gateway.OperatorCancelAllAsync(TradingGateway.NewOperatorPressNonce())),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch),
             Ui.With(Ui.Confirm("Close all positions", "Confirm: close all positions with market orders",
-                    async () => await _host.Gateway.OperatorCloseAllAsync()),
+                    async () => await _host.Gateway.OperatorCloseAllAsync(TradingGateway.NewOperatorPressNonce())),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
         emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 

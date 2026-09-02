@@ -410,6 +410,34 @@ public class AgedDispatchTests
     }
 
     /// <summary>
+    /// The query underneath, both directions, with no gateway in the way: the same record is
+    /// unconfirmed work against one cutoff and not against another, and the flag-only overload —
+    /// which Doctor and the dev host still call — is unchanged by any of it.
+    /// </summary>
+    [Fact]
+    public void The_store_counts_a_dispatch_as_unreconciled_only_past_the_cutoff_it_is_given()
+    {
+        using var db = TestEnv.NewDb();
+        var store = new ExecutionRequestStore(db);
+        store.TryCreate(Recovery.Row("cutoff-1"));
+        store.Transition("cutoff-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+
+        Assert.Empty(store.NeedingReconciliation());                                        // the flag alone
+        Assert.Empty(store.NeedingReconciliation(DateTimeOffset.UtcNow - TimeSpan.FromHours(1)));
+        Assert.Single(store.NeedingReconciliation(DateTimeOffset.UtcNow));
+        Assert.Equal(ExecutionRequestStore.DefaultDispatchStrandedAfter, new GatewayOptions().DispatchStrandedAfter);
+
+        // A settled record is not dragged in by the cutoff, whatever its age.
+        store.Transition("cutoff-1", ExecutionState.DISPATCHING, ExecutionState.FILLED);
+        Assert.Empty(store.NeedingReconciliation(DateTimeOffset.UtcNow));
+
+        // ...and a flagged record is still counted with no cutoff at all.
+        store.MarkNeedsReconciliation("cutoff-1", "the stream settled it while a dispatch was in flight");
+        Assert.Single(store.NeedingReconciliation());
+        Assert.Single(store.NeedingReconciliation(DateTimeOffset.UtcNow));                  // once, not twice
+    }
+
+    /// <summary>
     /// The bound is a bound, not a synonym for DISPATCHING. An order hanging on a wire that has not
     /// yet blown its deadline is ordinary, and pausing on it would pause on every order placed.
     /// </summary>
@@ -762,11 +790,16 @@ public class OperatorEmergencyRecordTests
 
         Assert.Equal(2, ids.Count);
         var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
-        Assert.Equal(2, records.Count);
         Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
-        Assert.All(records, r => Assert.Equal(RequestIntent.CANCEL, r.Intent));
-        Assert.Contains(records, r => r.ParametersJson.Contains(a.ConnectorOrderId!));
-        Assert.Contains(records, r => r.ParametersJson.Contains(b.ConnectorOrderId!));
+        Assert.All(records, r => Assert.Equal("operator", r.AgentSessionId));
+
+        var perOrder = records.Where(r => r.Intent == RequestIntent.CANCEL).ToList();
+        Assert.Equal(2, perOrder.Count);
+        Assert.Contains(perOrder, r => r.ParametersJson.Contains(a.ConnectorOrderId!));
+        Assert.Contains(perOrder, r => r.ParametersJson.Contains(b.ConnectorOrderId!));
+
+        // ...and the press itself, which is what a retry recognises.
+        Assert.Single(records.Where(r => r.Intent == RequestIntent.CANCEL_ALL));
         Assert.Empty(gw.Requests.NeedingReconciliation());
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
@@ -781,10 +814,82 @@ public class OperatorEmergencyRecordTests
 
         await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
 
-        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-cancel-%'"));
-        Assert.Equal(ExecutionState.UNKNOWN, record.State);
-        Assert.True(record.NeedsReconciliation);
+        var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
+        Assert.Equal(2, records.Count);                        // the press, and the one order on the book
+        Assert.All(records, r => Assert.Equal(ExecutionState.UNKNOWN, r.State));
+        Assert.All(records, r => Assert.True(r.NeedsReconciliation));
         Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+    }
+
+    /// <summary>
+    /// The press, not the call, is the unit of intent. Pressing once and retrying that press must
+    /// not sell the position twice — which is what "close #1 failed, so I pressed again" did to a
+    /// 2-contract long: two market sells, a position reversed rather than flattened, and no record
+    /// that either was sent.
+    /// </summary>
+    [Fact]
+    public async Task A_retried_press_submits_nothing_and_a_new_press_is_a_new_request()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "rp-1", TestEnv.Buy(qty: 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;      // the close sits working, position still open
+        var press = TradingGateway.NewOperatorPressNonce();
+
+        Assert.Equal(1, await gw.OperatorCloseAllAsync(press));
+        Assert.Equal(1, c.Closes);
+
+        // The same press again — a retry, not a new decision.
+        Assert.Equal(0, await gw.OperatorCloseAllAsync(press));
+        Assert.Equal(1, c.Closes);
+        Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
+        Assert.Single(c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell));
+
+        // A NEW press is a new decision and is carried out — the owner looking at a position that is
+        // still open must be able to press again and have it mean something.
+        Assert.Equal(1, await gw.OperatorCloseAllAsync(TradingGateway.NewOperatorPressNonce()));
+        Assert.Equal(2, c.Closes);
+        Assert.Equal(2, gw.Requests.Query("request_id LIKE 'op-close-%'").Count);
+    }
+
+    /// <summary>
+    /// The positive control for the test above: with idempotency switched off the harness DOES see
+    /// the double close, so "one close" is evidence rather than an artefact of the fixture.
+    /// </summary>
+    [Fact]
+    public async Task Control_the_harness_can_detect_a_double_close_when_idempotency_is_off()
+    {
+        var (gw, c, db) = await Recovery.Ready(options: new GatewayOptions { IdempotencyEnabled = false });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "rp-off", TestEnv.Buy(qty: 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        var press = TradingGateway.NewOperatorPressNonce();
+
+        await gw.OperatorCloseAllAsync(press);
+        await gw.OperatorCloseAllAsync(press);
+
+        Assert.Equal(2, c.Closes);
+        Assert.Equal(4m, c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell).Sum(o => o.Quantity));
+    }
+
+    [Fact]
+    public async Task A_retried_cancel_all_press_submits_nothing()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "rc-1", TestEnv.Buy());
+        var press = TradingGateway.NewOperatorPressNonce();
+
+        Assert.Single(await gw.OperatorCancelAllAsync(press));
+        Assert.Equal(1, c.CancelAlls);
+
+        Assert.Empty(await gw.OperatorCancelAllAsync(press));
+        Assert.Equal(1, c.CancelAlls);                         // the wire was not touched again
+        Assert.Equal(2, gw.Requests.Query("request_id LIKE 'op-cancel-%'").Count);   // the press, and the order
+
+        // A new press still works — the book is empty now, so it sweeps and finds nothing to cancel.
+        Assert.Empty(await gw.OperatorCancelAllAsync(TradingGateway.NewOperatorPressNonce()));
+        Assert.Equal(2, c.CancelAlls);
     }
 
     /// <summary>
