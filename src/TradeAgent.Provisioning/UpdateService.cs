@@ -238,6 +238,16 @@ public sealed class UpdateService
     /// <summary>Set by "Later". Hides the banner for this run without pretending the update went away.</summary>
     public bool Dismissed { get; private set; }
 
+    /// <summary>
+    /// True when <see cref="Stage"/> is <see cref="UpdateStage.Failed"/> because TradeAgent said no,
+    /// rather than because something did not answer.
+    ///
+    /// The two look identical from outside and read completely differently to the owner: "we could
+    /// not ask GitHub" is weather, and "there is a newer version and this one will not be installed"
+    /// is a decision with a reason in <see cref="Message"/>.
+    /// </summary>
+    public bool Refused { get; private set; }
+
     /// <summary>True when there is something to offer and the user has not waved it away.</summary>
     public bool ShouldPrompt => Available is not null && !Dismissed;
 
@@ -483,6 +493,7 @@ public sealed class UpdateService
     bool Refuse(string reason)
     {
         Set(UpdateStage.Failed, reason);
+        Refused = true;
         if (_lastRefusalLogged != reason)
         {
             _lastRefusalLogged = reason;
@@ -503,6 +514,7 @@ public sealed class UpdateService
     {
         Stage = stage;
         Message = message;
+        Refused = false;
         Changed?.Invoke();
     }
 
