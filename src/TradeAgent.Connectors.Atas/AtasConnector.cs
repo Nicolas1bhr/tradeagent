@@ -31,6 +31,25 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     readonly CancellationTokenSource _cts = new();
     readonly SemaphoreSlim _sendGate = new(1, 1);
 
+    /// <summary>
+    /// How long ONE frame gets to reach the bridge before the connection is declared dead.
+    ///
+    /// The mirror of <see cref="AtasBridge.BridgeServer.WriteTimeout"/>, which bbcd36e added to the
+    /// bridge's end of this same pipe. This end was left without one, and the gap was worse here
+    /// than there: <see cref="Rpc"/> has an RPC timeout, but it starts AFTER the write returns, so
+    /// the deadline that is supposed to bound an order could not bound the part of it that hangs.
+    ///
+    /// And the write is taken under <c>_sendGate</c>, so one stuck frame does not stall one order —
+    /// it stalls every frame behind it, a cancel and a cancel-all included. Measured on macOS on
+    /// 2026-09-02 against a bridge that authenticated and then stopped reading: 1872 of 2000 calls
+    /// never finished at all, against a 1 s RPC timeout.
+    ///
+    /// Cancellation cannot recall a write the kernel has accepted, so the deadline ends the
+    /// connection by closing the handle; the accept loop then waits for the bridge to redial, which
+    /// is what it does after any disconnection.
+    /// </summary>
+    public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
     NamedPipeServerStream? _pipeStream;
     StreamWriter? _writer;
     Task? _accept;
@@ -445,11 +464,49 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         var w = _writer;
         if (w is null) return;
-        await _sendGate.WaitAsync(_cts.Token);
-        try { await w.WriteLineAsync(Json.Write(frame)); }
+        try { await WriteFrame(w, frame, _cts.Token); }
         catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
+    }
+
+    /// <summary>
+    /// Takes the send gate and writes one frame, with <see cref="WriteTimeout"/> on BOTH. False
+    /// means the deadline ended the connection rather than the frame landing.
+    ///
+    /// The gate needs its own deadline as much as the write does. Without one, the caller that is
+    /// stuck in the write holds the gate and every later caller queues behind it for as long as the
+    /// peer feels like — which is how one unread frame became an outage for the cancel that would
+    /// have ended it. The two deadlines are not redundant: with several callers the gate alone
+    /// frees everyone, but a SINGLE order larger than the socket buffer has nothing queued behind it
+    /// and only the deadline on the write itself can end that one.
+    ///
+    /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
+    /// later as an unobserved task exception.
+    /// </summary>
+    async Task<bool> WriteFrame(StreamWriter w, object frame, CancellationToken ct)
+    {
+        if (!await _sendGate.WaitAsync(WriteTimeout, ct)) { DropStalledPeer(); return false; }
+        try
+        {
+            var write = w.WriteLineAsync(Json.Write(frame));
+            try { await write.WaitAsync(WriteTimeout, ct); }
+            catch (TimeoutException) { Observe(write); DropStalledPeer(); return false; }
+            return true;
+        }
         finally { _sendGate.Release(); }
     }
+
+    /// <summary>
+    /// Ends a connection whose peer has stopped reading. Disposing the handle is what actually kills
+    /// the pending overlapped write; <see cref="Drop"/> alone only clears this side's state, and the
+    /// accept loop would still have been parked on a socket nobody was draining.
+    /// </summary>
+    void DropStalledPeer()
+    {
+        Drop($"the ATAS bridge stopped reading; no frame landed within {WriteTimeout.TotalSeconds:0}s");
+        try { _pipeStream?.Dispose(); } catch (Exception) { /* already gone */ }
+    }
+
+    static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
 
     void HandleEvent(BridgeFrame f)
     {
@@ -482,12 +539,22 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         var tcs = new TaskCompletionSource<BridgeFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
 
-        await _sendGate.WaitAsync(ct);
-        try { // One payload field ("data") in both directions; a request-only "args" field silently
+        try
+        {
+            // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
-            await _writer.WriteLineAsync(Json.Write(new { v = Versions.BridgeProtocolVersion, id, op, data = args })); }
+            if (!await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct))
+            {
+                _pending.TryRemove(id, out _);
+                // Indefinite, and it has to stay that way: a frame the kernel accepted but the
+                // bridge never read may or may not have reached ATAS. Safety rule 3 — only a
+                // definite refusal from the broker is allowed to read as definite.
+                throw new ConnectorTransportException(
+                    $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s");
+            }
+        }
+        catch (ConnectorTransportException) { throw; }
         catch (Exception ex) { _pending.TryRemove(id, out _); throw new ConnectorTransportException("could not reach the ATAS bridge", ex); }
-        finally { _sendGate.Release(); }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_timeout);
