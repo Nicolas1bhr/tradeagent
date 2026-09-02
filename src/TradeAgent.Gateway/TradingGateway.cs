@@ -1078,6 +1078,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public async Task<ReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
+        // Unreconciled(), not the flag: a record stranded in DISPATCHING is exactly what this method
+        // exists to settle, and waiting for a restart to notice was the gap.
+        //
+        // It can in principle hand the reconciler a record a dispatch is genuinely still holding —
+        // only if that dispatch has outlived DispatchStrandedAfter, i.e. three times the connector's
+        // own deadline. The result is a lost CAS, not a corrupted record: the dispatcher's Settle
+        // finds the row no longer in DISPATCHING, files `already_settled` and returns what is stored,
+        // and SettleUnknown falls back to flagging. Nothing is resubmitted on either path.
         var pending = Unreconciled();
         if (pending.Count == 0)
         {
