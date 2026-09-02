@@ -32,9 +32,22 @@ here as the price of the fail-closed reading, not as a defence.
 |---|---|---|
 | `ConnectorRejectedException` | The broker definitively refused | `REJECTED`, final, nothing to reconcile |
 | `ConnectorTransportException` | We do not know what happened | `UNKNOWN`, trading pauses, reconcile, **never resubmit** |
+| anything else | We do not know what happened | identical to the row above |
 
-Any other exception is treated as indefinite. Getting these backwards is the one mistake that can
+Any other exception is treated as indefinite — literally, on all three dispatch paths (place, cancel,
+modify): after the write-ahead, `ConnectorRejectedException` is the only exception that may settle a
+record without flagging it, and every other one settles `UNKNOWN`, pauses execution and writes an
+engineering row naming the exception type. Getting these backwards is the one mistake that can
 produce a live position nobody asked for.
+
+**What the connector answers is mapped, not guessed at.** The state on the returned `OrderInfo` is
+recorded as itself for `FILLED`, `PARTIALLY_FILLED`, `WORKING`, `ACKNOWLEDGED`, `REJECTED` and
+`CANCELLED`. Every other value — `UNKNOWN` first among them, and `CANCEL_PENDING`, which the state
+table will not let a dispatch claim — is recorded as `UNKNOWN` and reconciled. A modify is only
+recorded as applied when the returned order actually carries every value the modification asked for
+and is still in a state where a working modification means anything; otherwise it is `UNKNOWN` too.
+A connector that answers with a state outside this list is not wrong to do so, but it will pause
+trading, which is the safe direction.
 
 **The transport ledger — an obligation on every mutating call, and it is not a method on the
 interface.** `PlaceOrderAsync`, `ModifyOrderAsync`, `CancelOrderAsync`, `CancelAllOrdersAsync` and
@@ -282,6 +295,29 @@ Ownership: whoever holds a request writes its outcome. The dispatcher owns `CREA
 `AWAITING_APPROVAL` and `DISPATCHING`; the reconciler owns `RECONCILING`; the connector's event stream
 may only update requests neither of them currently holds. Both races this rule prevents were real
 bugs found during the build.
+
+**`DISPATCHING` means the wire may have been touched, and it expires.** The row is written before the
+connector is called, so a record still in `DISPATCHING` is one where nobody wrote down what the
+broker did. Two things follow, and both are the gateway's own behaviour rather than advice:
+
+- **At startup** — in the constructor, before any caller can read the store or place an order — every
+  `DISPATCHING` record becomes `UNKNOWN`, flagged for reconciliation, with execution capability
+  `PAUSED`. A record left mid-flight by a crash, a Windows restart or an update therefore pauses
+  trading on the next start instead of being silently trodden on by the next order.
+- **While running**, a record still `DISPATCHING` longer than `GatewayOptions.DispatchStrandedAfter`
+  (30 s: the connector's own 10 s RPC deadline plus slack) counts as unconfirmed work for the gate,
+  the status fields and the health row, without waiting for a restart to notice. Under that bound an
+  order in flight is ordinary and pauses nothing.
+
+Unconfirmed work is therefore "flagged, **or** dispatching for too long"; `trade status`'s
+`unreconciled_requests` counts both, and reconciling an aged record is what writes the flag onto it.
+
+**The operator's emergency controls write records too.** "Cancel all working orders" and "Close all
+positions" bypass authorization on purpose — they must work while trading is paused and while the
+kill switch is down — but each individual close and cancel now gets a write-ahead `execution_request`
+before the wire is touched, attributed to the operator, keyed by the press: a retry of the same press
+finds its records already there and sends nothing, a new press is a new decision. An ambiguous
+outcome leaves the record `UNKNOWN` and flagged, and the error still reaches the person who pressed.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
