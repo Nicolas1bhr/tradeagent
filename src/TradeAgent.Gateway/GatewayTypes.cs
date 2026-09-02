@@ -40,10 +40,55 @@ public sealed class GatewayOptions
     public TimeSpan HealthInterval { get; set; } = TimeSpan.FromSeconds(5);
 }
 
-public sealed record AgentContext(string SessionId)
+/// <summary>
+/// Who is asking, and whether they are the person at the keyboard.
+///
+/// <see cref="IsOperator"/> is the difference between an order that parks for approval and one that
+/// goes to the broker, and between the kill switch holding and the kill switch being ignored. It
+/// used to be <c>SessionId == "operator"</c> — a STRING COMPARISON on a value that arrives over the
+/// agent pipe: <see cref="GatewayPipeServer"/> built the context from <c>req.Session</c>, and `trade`
+/// copies <c>TRADEAGENT_SESSION</c> into that field verbatim. `TRADEAGENT_SESSION=operator trade buy`
+/// therefore placed a live order in LIVE_CONFIRM with nobody approving it, and traded through a
+/// pressed kill switch. Measured over the real pipe on 2026-09-02, before the fix: state FILLED,
+/// connector order FB-1, mode LIVE_CONFIRM.
+///
+/// So authority is no longer carried by the string. <see cref="Operator"/> is the only operator
+/// context that exists, made once by a constructor nothing else can reach; every public route in —
+/// the constructor, <see cref="ForAgent"/>, a <c>with</c> expression, JSON — yields
+/// <c>IsOperator == false</c> whatever the session is called. The reserved word is ALSO refused at
+/// the pipe, but that refusal is a tripwire, not the defence: this type is the defence.
+/// </summary>
+public sealed record AgentContext
 {
-    public static readonly AgentContext Operator = new("operator");
-    public bool IsOperator => SessionId == "operator";
+    /// <summary>The session name the operator's own context carries. Reserved on the wire.</summary>
+    public const string OperatorSessionId = "operator";
+
+    /// <summary>The one and only operator context. In-process callers pass this; nothing can forge it.</summary>
+    public static readonly AgentContext Operator = new(OperatorSessionId, isOperator: true);
+
+    /// <summary>An ordinary caller. Cannot be an operator, whatever the session is called.</summary>
+    public AgentContext(string sessionId) : this(sessionId, isOperator: false) { }
+
+    AgentContext(string sessionId, bool isOperator)
+    {
+        SessionId = sessionId;
+        IsOperator = isOperator;
+    }
+
+    public string SessionId { get; init; }
+
+    /// <summary>
+    /// Private init on purpose: <c>ctx with { IsOperator = true }</c> does not compile outside this
+    /// type, so the record's own copy semantics cannot be used to promote a context either.
+    /// </summary>
+    public bool IsOperator { get; private init; }
+
+    /// <summary>
+    /// The context for a caller on the other side of the fence, named by whatever session string it
+    /// sent. The only factory the pipe server uses, and it cannot return an operator.
+    /// </summary>
+    public static AgentContext ForAgent(string? sessionId) =>
+        new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!);
 }
 
 public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, decimal Quantity,

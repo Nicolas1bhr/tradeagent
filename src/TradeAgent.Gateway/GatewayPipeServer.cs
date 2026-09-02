@@ -140,7 +140,20 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
     async Task<IpcResponse> Handle(IpcRequest req, CancellationToken ct)
     {
-        var ctx = new AgentContext(string.IsNullOrWhiteSpace(req.Session) ? "agent" : req.Session!);
+        // The reserved session is refused rather than quietly downgraded. AgentContext.ForAgent
+        // cannot return an operator context whatever this string says, so nothing here is load
+        // bearing for safety — it is a tripwire. An agent asking for the operator's name is probing
+        // for an escalation, and a probe nobody can see afterwards is not evidence.
+        if (string.Equals(req.Session?.Trim(), AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
+        {
+            gateway.Log.Engineering("Ipc", "operator_session_refused", "warn",
+                session: req.Session, requestId: req.RequestId ?? req.Id,
+                metadataJson: Json.Write(new { op = req.Op }));
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
+        }
+
+        var ctx = AgentContext.ForAgent(req.Session);
         var rid = req.RequestId ?? req.Id;
         try
         {
