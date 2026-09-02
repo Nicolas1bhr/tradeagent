@@ -9,7 +9,7 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <AtasBridgeBuild Condition="'$(AtasBridgeBuild)'==''">false</AtasBridgeBuild>
   </PropertyGroup>
 </Project>
