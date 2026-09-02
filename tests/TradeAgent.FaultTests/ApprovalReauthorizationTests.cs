@@ -387,6 +387,54 @@ public class ApprovalReauthorizationTests
         AssertDispatchedExactlyOnce(await gw.ApproveAsync("qty-1"), conn, "qty-1");
     }
 
+    /// <summary>
+    /// The allowlist is the owner's list of what the AI may touch at all. Narrowing it is the most
+    /// direct way to say "not this instrument", and a parked order has to hear it: an approval that
+    /// ignored the list would trade the one instrument the owner had just forbidden.
+    /// </summary>
+    [Fact]
+    public async Task An_instrument_taken_off_the_allowlist_since_parking_refuses_the_approval()
+    {
+        var (gw, conn, db) = await Parked("allow-1");
+        using var dbh = db;
+        Assert.Empty(new RiskPolicy().InstrumentAllowlist);   // empty means "everything", the default
+
+        gw.Update(s => s.Risk.InstrumentAllowlist = ["NQ"]);   // ES is now off the list
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("allow-1"));
+        AssertRefusedAndStillParked(denied, ErrorCode.RISK_LIMIT_EXCEEDED, gw, conn, "allow-1");
+        Assert.Contains("allowed instrument list", denied.Message);
+
+        gw.Update(s => s.Risk.InstrumentAllowlist = ["ES", "NQ"]);
+        AssertDispatchedExactlyOnce(await gw.ApproveAsync("allow-1"), conn, "allow-1");
+    }
+
+    /// <summary>
+    /// The notional cap is the only limit denominated in money, and it is the one whose arithmetic
+    /// can silently under-count: ES is 50 units of face value per contract, so a cap compared
+    /// against price × quantity alone would pass an order worth fifty times the limit. The cap is
+    /// set between the two products, so only the multiplied value breaches it — on the approval
+    /// path, which had no notional test of any kind.
+    /// </summary>
+    [Fact]
+    public async Task The_notional_cap_on_an_approval_multiplies_by_contract_size()
+    {
+        var (gw, conn, db) = await Parked("notional-1");
+        using var dbh = db;
+        var contractSize = (await gw.InstrumentsAsync()).Single(i => i.Symbol == "ES").ContractSize!.Value;
+        Assert.NotEqual(1m, contractSize);
+        var price = FakeBroker.BasePrice("ES");
+
+        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() => gw.ApproveAsync("notional-1"));
+        AssertRefusedAndStillParked(denied, ErrorCode.RISK_LIMIT_EXCEEDED, gw, conn, "notional-1");
+        Assert.Contains("order value", denied.Message);
+
+        gw.Update(s => s.Risk.MaxNotionalPerOrder = price * contractSize + price);
+        AssertDispatchedExactlyOnce(await gw.ApproveAsync("notional-1"), conn, "notional-1");
+    }
+
     // ------------------------------------------------------------------ 2b. time-to-live
 
     /// <summary>A clock the test moves by hand. The gateway reads no other.</summary>
