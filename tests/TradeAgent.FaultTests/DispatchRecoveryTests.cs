@@ -1,0 +1,787 @@
+using System.Text.Json;
+using TradeAgent.ConnectorSdk;
+using TradeAgent.Connectors.Fake;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using Xunit;
+
+namespace TradeAgent.Tests.Fault;
+
+// =================================================================================================
+// U2c-1 — dispatch recovery.
+//
+// One defect class, four proven instances: "only an explicitly flagged UNKNOWN record blocks
+// execution, and the wire can be touched without leaving one." Everything here is about the window
+// between the write-ahead DISPATCHING row and the record of what the broker actually did.
+//
+//   A  a crash after the write-ahead strands DISPATCHING unflagged, and nothing sweeps it
+//   B  a connector answer the dispatcher does not list becomes ACKNOWLEDGED
+//   C  an exception outside the catch taxonomy strands DISPATCHING after the wire was touched
+//   D  the operator's emergency controls touch the wire with no record at all
+//
+// Every test asserts BOTH directions: the unsafe outcome is refused AND the ordinary path still
+// works. A gateway that paused on every in-flight order, or refused every close, would satisfy half
+// of this file and be useless.
+// =================================================================================================
+
+/// <summary>
+/// A connector that can answer with a state of the test's choosing, throw AFTER the broker has
+/// already acted, ignore a modification, and hang on the wire. The built-in FakeConnector can do
+/// none of these: its fault profile injects failures BEFORE or AT the broker, and its return states
+/// are whatever the book says. Post-acceptance behaviour is exactly what this unit is about, so the
+/// knobs live here rather than in tests/Shared — nothing outside this file needs them.
+/// </summary>
+sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
+{
+    public FakeConnector Inner => inner;
+    public Func<OrderInfo, OrderInfo>? RewritePlaced;
+    public Exception? ThrowAfterPlace;
+    public Exception? ThrowAfterCancel;
+    public Exception? ThrowAfterModify;
+    public Exception? ThrowAfterClose;
+    public Exception? ThrowAfterCancelAll;
+    public bool ModifyIgnoresTheRequest;
+    public TaskCompletionSource? HangPlace;
+    public int Closes;
+    public int CancelAlls;
+
+    public string Id => inner.Id;
+    public string DisplayName => inner.DisplayName;
+    public ConnectorCapabilities Capabilities => inner.Capabilities;
+
+    public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
+    public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
+    public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);
+    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => inner.GetAccountsAsync(ct);
+    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
+    public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
+    public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
+    public Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => inner.GetPositionsAsync(a, ct);
+    public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default) => inner.GetOrdersAsync(a, inc, since, ct);
+    public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) => inner.GetExecutionsAsync(a, since, ct);
+
+    public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
+    {
+        var o = await inner.PlaceOrderAsync(cmd, ct);            // the broker HAS it
+        if (HangPlace is { } hang) await hang.Task;              // ...and the answer never comes back
+        if (ThrowAfterPlace is { } ex) throw ex;                 // ...or this happens instead
+        return RewritePlaced?.Invoke(o) ?? o;
+    }
+
+    public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default)
+    {
+        var o = ModifyIgnoresTheRequest
+            ? (await inner.GetOrdersAsync(inner.Broker.AccountId, true, null, ct)).First(x => x.ConnectorOrderId == cmd.ConnectorOrderId)
+            : await inner.ModifyOrderAsync(cmd, ct);
+        if (ThrowAfterModify is { } ex) throw ex;
+        return o;
+    }
+
+    public async Task CancelOrderAsync(string id, CancellationToken ct = default)
+    {
+        await inner.CancelOrderAsync(id, ct);                    // the broker DID cancel
+        if (ThrowAfterCancel is { } ex) throw ex;
+    }
+
+    public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
+    {
+        CancelAlls++;
+        var ids = await inner.CancelAllOrdersAsync(a, ct);
+        if (ThrowAfterCancelAll is { } ex) throw ex;
+        return ids;
+    }
+
+    public async Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)
+    {
+        Closes++;
+        var o = await inner.ClosePositionAsync(a, s, coid, ct);  // the closing order IS submitted
+        if (ThrowAfterClose is { } ex) throw ex;
+        return o;
+    }
+
+    public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+    public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+    public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+    public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+    public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+    public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+    public ValueTask DisposeAsync() => inner.DisposeAsync();
+}
+
+static class Recovery
+{
+    /// <summary>A gateway over the scriptable connector, healthy and allowed to trade.</summary>
+    public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
+        FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
+        Database? db = null)
+    {
+        db ??= TestEnv.NewDb();
+        var c = new RecoveryConnector(new FakeConnector(new FakeBroker(), faults));
+        var gw = new TradingGateway(db, c, new HealthRegistry(), options);
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = c.Inner.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            settings?.Invoke(s);
+        });
+        await c.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        return (gw, c, db);
+    }
+
+    public static ExecutionRequest Row(string id, RequestIntent intent = RequestIntent.PLACE,
+        string instrument = "ES", string account = "SIM-001") => new()
+        {
+            RequestId = id, ConnectorId = "fake", AccountId = account, Instrument = instrument,
+            Intent = intent, ParametersJson = Json.Write(TestEnv.Buy()),
+            ClientOrderId = TradingGateway.ClientOrderIdFor(id),
+            CreatedAt = DateTimeOffset.UtcNow, State = ExecutionState.CREATED, Mode = TradingMode.PAPER
+        };
+
+    /// <summary>
+    /// Moves a row's dispatch timestamp into the past. `dispatched_at` is written by
+    /// ExecutionRequestStore.Transition from its own clock, which no test option reaches, so an
+    /// "old" dispatch is made by editing the row rather than by sleeping through the bound.
+    /// </summary>
+    public static void Backdate(Database db, string requestId, TimeSpan by) => db.Write(_ =>
+    {
+        using var c = db.Cmd("UPDATE execution_request SET dispatched_at=$t WHERE request_id=$r",
+            ("$t", (DateTimeOffset.UtcNow - by).UtcDateTime.ToString("O")), ("$r", requestId));
+        return c.ExecuteNonQuery();
+    });
+
+    public static List<(string Event, string Severity, string? Ex)> Engineering(Database db, string requestId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT event,severity,exception FROM engineering_log WHERE request_id=$r ORDER BY id", ("$r", requestId));
+        using var r = c.ExecuteReader();
+        var rows = new List<(string, string, string?)>();
+        while (r.Read()) rows.Add((r.GetString(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)));
+        return rows;
+    });
+
+    public static Exception Make(string kind) => kind switch
+    {
+        "InvalidOperation" => new InvalidOperationException("collection was modified"),
+        "Json" => new JsonException("unexpected token"),
+        "NullReference" => new NullReferenceException("object reference not set"),
+        "Timeout" => new TimeoutException("no answer from the platform"),
+        "OperationCanceled" => new OperationCanceledException("the RPC was abandoned"),
+        _ => new Exception("something no taxonomy names")
+    };
+}
+
+// =================================================================================================
+// A(i) — a DISPATCHING record found at startup is "the wire may have been touched"
+// =================================================================================================
+
+/// <summary>
+/// FINDING 5 / addendum C1. A crash between the write-ahead DISPATCHING row and Settle leaves the
+/// record unflagged; nothing sweeps it, `NeedingReconciliation()` reads the flag alone, and the next
+/// start places a second order on top of one that may be live at the broker.
+/// </summary>
+public class StartupSweepTests
+{
+    [Fact]
+    public async Task A_DISPATCHING_record_found_at_startup_is_swept_to_UNKNOWN_and_pauses_trading()
+    {
+        var file = Path.Combine(TestEnv.Home, $"sweep-{Guid.NewGuid():n}.db");
+        var broker = new FakeBroker();
+        var coid = TradingGateway.ClientOrderIdFor("mid-flight");
+
+        // Run 1: the write-ahead is durable, the broker accepts, and the process dies before Settle.
+        using (var db = new Database(file))
+        {
+            var store = new ExecutionRequestStore(db);
+            store.TryCreate(Recovery.Row("mid-flight", account: broker.AccountId));
+            store.Transition("mid-flight", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+            broker.Accept(new PlaceOrderCommand(coid, broker.AccountId, "ES", OrderSide.Buy,
+                OrderType.Market, 1m, null, null, TimeInForce.Day, null), FillBehaviour.FillImmediately);
+        }
+
+        // Run 2: same records, same broker, a gateway constructed over the store as it stands.
+        using (var db = new Database(file))
+        {
+            var conn = new FakeConnector(broker);
+            var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+            gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; });
+
+            // Swept at construction, before anything else can read the store or place an order.
+            var swept = gw.GetRequest("mid-flight")!;
+            Assert.Equal(ExecutionState.UNKNOWN, swept.State);
+            Assert.True(swept.NeedsReconciliation);
+            Assert.Single(gw.Requests.NeedingReconciliation());
+            Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+
+            await conn.ConnectAsync();
+            await gw.RefreshHealthAsync();
+
+            Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+            Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+            var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+                gw.PlaceAsync(new AgentContext("a"), "mid-flight-2", TestEnv.Buy()));
+            Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, denied.Code);
+            Assert.Single(broker.Orders);                       // no second order on top of the first
+
+            // ...and the other direction: the reconciler can finish what the sweep started, without
+            // resubmitting anything, and trading resumes.
+            var result = await gw.ReconcileAsync();
+            Assert.True(result.Clean, string.Join("; ", result.Details));
+            Assert.Equal(ExecutionState.FILLED, gw.GetRequest("mid-flight")!.State);
+            Assert.Single(broker.Orders);
+            Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        }
+    }
+
+    /// <summary>
+    /// The sweep is not "pause on anything you find". A record that never reached the wire, and a
+    /// record already settled, must survive a restart untouched — otherwise every restart pauses
+    /// trading and the pause stops meaning anything.
+    /// </summary>
+    [Fact]
+    public async Task The_sweep_touches_DISPATCHING_and_nothing_else()
+    {
+        var file = Path.Combine(TestEnv.Home, $"sweep-others-{Guid.NewGuid():n}.db");
+        using (var db = new Database(file))
+        {
+            var store = new ExecutionRequestStore(db);
+            store.TryCreate(Recovery.Row("kept-created"));
+            store.TryCreate(Recovery.Row("kept-parked"));
+            store.Transition("kept-parked", ExecutionState.CREATED, ExecutionState.AWAITING_APPROVAL);
+            store.TryCreate(Recovery.Row("kept-filled"));
+            store.Transition("kept-filled", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+            store.Transition("kept-filled", ExecutionState.DISPATCHING, ExecutionState.FILLED);
+        }
+
+        using (var db = new Database(file))
+        {
+            var (gw, _, _) = await Recovery.Ready(db: db);
+
+            Assert.Equal(ExecutionState.CREATED, gw.GetRequest("kept-created")!.State);
+            Assert.Equal(ExecutionState.AWAITING_APPROVAL, gw.GetRequest("kept-parked")!.State);
+            Assert.Equal(ExecutionState.FILLED, gw.GetRequest("kept-filled")!.State);
+            Assert.Empty(gw.Requests.NeedingReconciliation());
+
+            // A clean restart still trades. Half of this unit is proving the pause is not universal.
+            Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+            var placed = await gw.PlaceAsync(new AgentContext("a"), "after-clean-restart", TestEnv.Buy());
+            Assert.Equal(ExecutionState.FILLED, placed.State);
+
+            // The parked order is still a parked order: declinable, exactly as before the restart.
+            Assert.Equal(ExecutionState.CANCELLED, gw.Decline("kept-parked").State);
+        }
+    }
+
+    /// <summary>
+    /// The swept record has to be reachable by the one route the product gives a person: the
+    /// unconfirmed card on the Dashboard, which calls ForceResolve with FILLED or CANCELLED.
+    /// </summary>
+    [Fact]
+    public async Task A_swept_record_can_be_resolved_through_the_override_card()
+    {
+        var file = Path.Combine(TestEnv.Home, $"sweep-force-{Guid.NewGuid():n}.db");
+        using (var db = new Database(file))
+        {
+            var store = new ExecutionRequestStore(db);
+            store.TryCreate(Recovery.Row("card-1"));
+            store.Transition("card-1", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        }
+
+        using (var db = new Database(file))
+        {
+            var (gw, _, _) = await Recovery.Ready(db: db);
+            var card = Assert.Single(gw.Requests.NeedingReconciliation());
+            Assert.Equal("card-1", card.RequestId);
+            Assert.False(OrderStateMachine.IsTerminal(card.State));   // the card offers two answers
+
+            gw.ForceResolve("card-1", ExecutionState.FILLED, "checked in ATAS: 1 ES filled");
+
+            Assert.Equal(ExecutionState.FILLED, gw.GetRequest("card-1")!.State);
+            Assert.Empty(gw.Requests.NeedingReconciliation());
+            await gw.RefreshHealthAsync();
+            Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        }
+    }
+
+    /// <summary>
+    /// The honest expectation on the owner's machine: a CANCEL request stranded at DISPATCHING by an
+    /// older build now surfaces as needing reconciliation. That is the point — it gives a row nobody
+    /// could see an in-product route — and the absence path must still terminate it rather than
+    /// leaving it flagged forever.
+    /// </summary>
+    [Fact]
+    public async Task A_legacy_stranded_cancel_record_is_swept_and_the_absence_path_terminates_it()
+    {
+        var file = Path.Combine(TestEnv.Home, $"sweep-cancel-{Guid.NewGuid():n}.db");
+        using (var db = new Database(file))
+        {
+            var store = new ExecutionRequestStore(db);
+            store.TryCreate(Recovery.Row("legacy-cancel", RequestIntent.CANCEL, instrument: "-"));
+            store.Transition("legacy-cancel", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        }
+
+        using (var db = new Database(file))
+        {
+            var (gw, _, _) = await Recovery.Ready(db: db, options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+            Assert.Equal(ExecutionState.UNKNOWN, gw.GetRequest("legacy-cancel")!.State);
+            Assert.Single(gw.Requests.NeedingReconciliation());
+
+            var result = await gw.ReconcileAsync();
+
+            Assert.True(result.Clean, string.Join("; ", result.Details));
+            Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("legacy-cancel")!.State);
+            Assert.Empty(gw.Requests.NeedingReconciliation());
+            Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        }
+    }
+}
+
+// =================================================================================================
+// A(ii) — a DISPATCHING record older than the wire's own deadline is unreconciled work
+// =================================================================================================
+
+/// <summary>
+/// The half of FINDING 5 that does not need a restart. A strand only becomes visible at the next
+/// start; until then the record sits DISPATCHING, unflagged, and trading continues over it.
+/// </summary>
+public class AgedDispatchTests
+{
+    [Fact]
+    public async Task A_DISPATCHING_record_older_than_the_bound_pauses_trading_without_any_restart()
+    {
+        var (gw, _, db) = await Recovery.Ready();
+        using var dbh = db;
+        var store = gw.Requests;
+        store.TryCreate(Recovery.Row("stranded-live"));
+        store.Transition("stranded-live", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+
+        // Fresh: an order genuinely on the wire must NOT pause the gateway that is placing it.
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        Recovery.Backdate(db, "stranded-live", TimeSpan.FromMinutes(10));
+
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "after-strand", TestEnv.Buy()));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, denied.Code);
+
+        // The health row the Dashboard reads agrees with the gate.
+        await gw.RefreshHealthAsync();
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+
+        // And the reconciler picks it up: it is the thing that writes the flag, so a surface still
+        // reading needs_reconciliation=1 catches up within one background pass.
+        await gw.ReconcileAsync();
+        Assert.True(gw.GetRequest("stranded-live")!.NeedsReconciliation);
+    }
+
+    /// <summary>
+    /// The bound is a bound, not a synonym for DISPATCHING. An order hanging on a wire that has not
+    /// yet blown its deadline is ordinary, and pausing on it would pause on every order placed.
+    /// </summary>
+    [Fact]
+    public async Task An_order_still_inside_the_bound_does_not_pause_trading()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        var hang = new TaskCompletionSource();
+        c.HangPlace = hang;
+
+        var inFlight = Task.Run(() => gw.PlaceAsync(new AgentContext("a"), "hanging", TestEnv.Buy()));
+        try
+        {
+            while (gw.GetRequest("hanging")?.State != ExecutionState.DISPATCHING) await Task.Delay(5);
+
+            // The wire is open, the broker already has the order, and the record is DISPATCHING.
+            Assert.True(gw.TryAuthorizeExecution(AgentContext.Operator, out _));
+            Assert.Empty(gw.Requests.NeedingReconciliation());
+
+            // Now let it be old. Same record, same connector, opposite verdict.
+            Recovery.Backdate(db, "hanging", TimeSpan.FromMinutes(10));
+            Assert.False(gw.TryAuthorizeExecution(AgentContext.Operator, out _, out var code));
+            Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+        }
+        finally
+        {
+            c.HangPlace = null;
+            hang.SetResult();
+            await inFlight;
+        }
+    }
+}
+
+// =================================================================================================
+// B — what the connector answered is what gets recorded
+// =================================================================================================
+
+/// <summary>
+/// FINDING 9 / addendum C2. `_ => ACKNOWLEDGED` turns "we do not know" into "we do know, it is
+/// live", and a modify the platform ignored into a modify that was applied.
+/// </summary>
+public class ConnectorAnswerMappingTests
+{
+    /// <summary>
+    /// The mapping this unit promises, written out here rather than imported, so that changing the
+    /// production switch cannot silently change what the test expects.
+    /// </summary>
+    public static (ExecutionState Stored, bool Flagged) Expected(ExecutionState returned) => returned switch
+    {
+        ExecutionState.FILLED => (ExecutionState.FILLED, false),
+        ExecutionState.PARTIALLY_FILLED => (ExecutionState.PARTIALLY_FILLED, false),
+        ExecutionState.WORKING => (ExecutionState.WORKING, false),
+        ExecutionState.ACKNOWLEDGED => (ExecutionState.ACKNOWLEDGED, false),
+        ExecutionState.REJECTED => (ExecutionState.REJECTED, false),
+        ExecutionState.CANCELLED => (ExecutionState.CANCELLED, false),
+        // Everything else is an answer we cannot record as an outcome. CANCEL_PENDING is in this
+        // group and not in the one above because DISPATCHING -> CANCEL_PENDING is not a legal
+        // transition (FaultTests.The_table_lets_a_dispatching_cancel_reach_cancelled pins its
+        // absence), so the only honest destination for it is UNKNOWN.
+        _ => (ExecutionState.UNKNOWN, true)
+    };
+
+    [Theory]
+    [InlineData(ExecutionState.CREATED)]
+    [InlineData(ExecutionState.AWAITING_APPROVAL)]
+    [InlineData(ExecutionState.DISPATCHING)]
+    [InlineData(ExecutionState.ACKNOWLEDGED)]
+    [InlineData(ExecutionState.WORKING)]
+    [InlineData(ExecutionState.PARTIALLY_FILLED)]
+    [InlineData(ExecutionState.FILLED)]
+    [InlineData(ExecutionState.CANCEL_PENDING)]
+    [InlineData(ExecutionState.CANCELLED)]
+    [InlineData(ExecutionState.REJECTED)]
+    [InlineData(ExecutionState.UNKNOWN)]
+    [InlineData(ExecutionState.RECONCILING)]
+    public async Task Every_state_a_connector_can_answer_with_is_recorded_faithfully_or_as_unknown(ExecutionState returned)
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        c.RewritePlaced = o => o with { State = returned };
+
+        var r = await gw.PlaceAsync(new AgentContext("a"), $"answer-{returned}", TestEnv.Buy());
+        var (expected, flagged) = Expected(returned);
+
+        Assert.Equal(expected, r.State);
+        Assert.Equal(flagged, r.NeedsReconciliation);
+        Assert.Equal(!flagged, gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        if (flagged)
+            Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+    }
+
+    /// <summary>The theory above is only a total map while it names every value of the enum.</summary>
+    [Fact]
+    public void The_theory_covers_every_execution_state()
+    {
+        var covered = typeof(ConnectorAnswerMappingTests)
+            .GetMethod(nameof(Every_state_a_connector_can_answer_with_is_recorded_faithfully_or_as_unknown))!
+            .GetCustomAttributes(typeof(InlineDataAttribute), false)
+            .Cast<InlineDataAttribute>()
+            .Select(a => (ExecutionState)a.GetData(null!).First()[0]!)
+            .ToHashSet();
+
+        Assert.Equal(Enum.GetValues<ExecutionState>().ToHashSet(), covered);
+    }
+
+    [Fact]
+    public async Task A_modification_the_platform_did_not_apply_is_never_recorded_as_applied()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "mod-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        var before = c.Inner.Broker.Orders.Single();
+        c.ModifyIgnoresTheRequest = true;                      // the platform returns the order unchanged
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), "mod-ignored", placed.ConnectorOrderId!,
+            quantity: 7m, limitPrice: 4242m, stopPrice: null);
+
+        Assert.Equal(before.Quantity, c.Inner.Broker.Orders.Single().Quantity);   // nothing moved
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    [Fact]
+    public async Task A_modification_the_platform_did_apply_is_acknowledged_and_pauses_nothing()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "mod2-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), "mod2-apply", placed.ConnectorOrderId!,
+            quantity: 3m, limitPrice: 2m, stopPrice: null);
+
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, r.State);
+        Assert.False(r.NeedsReconciliation);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
+
+// =================================================================================================
+// C — every exception after the wire is touched is an indefinite outcome
+// =================================================================================================
+
+/// <summary>
+/// FINDING 10 / addendum C3. The catch taxonomy names three exception types on place and two on
+/// cancel/modify; anything else propagates past Settle and leaves the write-ahead row as the last
+/// word. docs/CONTRACTS.md already promised "any other exception is treated as indefinite".
+/// </summary>
+public class DispatchExceptionTaxonomyTests
+{
+    public static TheoryData<string> Indefinite =>
+        ["InvalidOperation", "Json", "NullReference", "Timeout", "OperationCanceled", "Plain"];
+
+    [Theory]
+    [MemberData(nameof(Indefinite))]
+    public async Task A_place_that_throws_after_the_wire_is_recorded_UNKNOWN_and_pauses(string kind)
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        c.ThrowAfterPlace = Recovery.Make(kind);
+
+        var r = await gw.PlaceAsync(new AgentContext("a"), $"place-{kind}", TestEnv.Buy());
+        c.ThrowAfterPlace = null;
+
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+
+        // No second order goes on top of the one nobody accounted for.
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), $"place-{kind}-next", TestEnv.Buy()));
+        Assert.Single(c.Inner.Broker.Orders);
+
+        // An engineer has to be able to tell WHICH defect did this.
+        var events = Recovery.Engineering(db, $"place-{kind}");
+        Assert.Contains(events, e => e.Event == "dispatch_unknown" && (e.Ex ?? "").Contains(Recovery.Make(kind).GetType().Name));
+    }
+
+    [Theory]
+    [MemberData(nameof(Indefinite))]
+    public async Task A_cancel_that_throws_after_the_wire_is_recorded_UNKNOWN_and_pauses(string kind)
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), $"cx-{kind}", TestEnv.Buy());
+        c.ThrowAfterCancel = Recovery.Make(kind);
+
+        var r = await gw.CancelAsync(new AgentContext("a"), $"cx-{kind}-cancel", placed.ConnectorOrderId!);
+
+        // The broker DID cancel. The ledger must not be silent about having asked.
+        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders.Single().State);
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    [Theory]
+    [MemberData(nameof(Indefinite))]
+    public async Task A_modify_that_throws_after_the_wire_is_recorded_UNKNOWN_and_pauses(string kind)
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), $"mx-{kind}", TestEnv.Buy());
+        c.ThrowAfterModify = Recovery.Make(kind);
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), $"mx-{kind}-mod", placed.ConnectorOrderId!, 3m, null, null);
+
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    /// <summary>
+    /// The other direction, and the one that must not be widened away: a definite broker refusal is
+    /// still final, still unflagged, and still leaves trading open.
+    /// </summary>
+    [Fact]
+    public async Task A_definite_refusal_still_settles_REJECTED_on_all_three_paths()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "rej-place", TestEnv.Buy());
+        c.ThrowAfterCancel = new ConnectorRejectedException("this order cannot be cancelled");
+        var cancelled = await gw.CancelAsync(new AgentContext("a"), "rej-cancel", placed.ConnectorOrderId!);
+        Assert.Equal(ExecutionState.REJECTED, cancelled.State);
+        Assert.False(cancelled.NeedsReconciliation);
+
+        c.ThrowAfterCancel = null;
+        c.ThrowAfterModify = new ConnectorRejectedException("that price is not valid");
+        var modified = await gw.ModifyAsync(new AgentContext("a"), "rej-mod", placed.ConnectorOrderId!, 2m, null, null);
+        Assert.Equal(ExecutionState.REJECTED, modified.State);
+        Assert.False(modified.NeedsReconciliation);
+
+        c.ThrowAfterModify = null;
+        c.Inner.Faults.RejectNext = 1;
+        var refused = await gw.PlaceAsync(new AgentContext("a"), "rej-buy", TestEnv.Buy());
+        Assert.Equal(ExecutionState.REJECTED, refused.State);
+        Assert.False(refused.NeedsReconciliation);
+
+        // Nothing above is unconfirmed work, so trading is still open.
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>The ordinary paths, unbroken: place, cancel, modify with a healthy connector.</summary>
+    [Fact]
+    public async Task The_ordinary_paths_still_work()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "ok-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        Assert.Equal(ExecutionState.WORKING, placed.State);
+
+        var modified = await gw.ModifyAsync(new AgentContext("a"), "ok-mod", placed.ConnectorOrderId!, 2m, null, null);
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, modified.State);
+
+        var cancelled = await gw.CancelAsync(new AgentContext("a"), "ok-cancel", placed.ConnectorOrderId!);
+        Assert.Equal(ExecutionState.CANCELLED, cancelled.State);
+        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders.Single().State);
+
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
+        var filled = await gw.PlaceAsync(new AgentContext("a"), "ok-market", TestEnv.Buy());
+        Assert.Equal(ExecutionState.FILLED, filled.State);
+    }
+}
+
+// =================================================================================================
+// D — the operator's emergency controls leave a record
+// =================================================================================================
+
+/// <summary>
+/// FINDING 11 / addendum C4. Close all positions is the button the owner reaches for in an
+/// emergency, and it writes nothing: a close that reaches the broker and then fails leaves no trace,
+/// pauses nothing, and the natural second press reverses the position instead of flattening it.
+/// </summary>
+public class OperatorEmergencyRecordTests
+{
+    [Fact]
+    public async Task A_close_that_landed_then_failed_leaves_a_flagged_record()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "pos-1", TestEnv.Buy(qty: 2m));
+        Assert.Single(c.Inner.Broker.Positions);
+
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;       // the close sits working, as a real one does
+        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+
+        // The operator must still be told it failed — the record is in addition to the error, not
+        // instead of it.
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCloseAllAsync());
+
+        var record = Assert.Single(gw.Requests.Query("intent='PLACE' AND request_id LIKE 'op-close-%'"));
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.Equal("ES", record.Instrument);
+        Assert.Equal("operator", record.AgentSessionId);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    [Fact]
+    public async Task Close_all_with_a_healthy_connector_closes_each_position_once_and_records_each()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "flat-es", TestEnv.Buy(qty: 2m));
+        await gw.PlaceAsync(AgentContext.Operator, "flat-nq", TestEnv.Buy("NQ", 1m));
+        Assert.Equal(2, c.Inner.Broker.Positions.Count);
+
+        var closed = await gw.OperatorCloseAllAsync();
+
+        Assert.Equal(2, closed);
+        Assert.Equal(2, c.Closes);
+        Assert.Empty(c.Inner.Broker.Positions);
+        var records = gw.Requests.Query("request_id LIKE 'op-close-%'");
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal(ExecutionState.FILLED, r.State));
+        Assert.All(records, r => Assert.False(r.NeedsReconciliation));
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    [Fact]
+    public async Task Cancel_all_records_every_order_it_cancels()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var a = await gw.PlaceAsync(AgentContext.Operator, "w-1", TestEnv.Buy());
+        var b = await gw.PlaceAsync(AgentContext.Operator, "w-2", TestEnv.Buy("NQ"));
+
+        var ids = await gw.OperatorCancelAllAsync();
+
+        Assert.Equal(2, ids.Count);
+        var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
+        Assert.All(records, r => Assert.Equal(RequestIntent.CANCEL, r.Intent));
+        Assert.Contains(records, r => r.ParametersJson.Contains(a.ConnectorOrderId!));
+        Assert.Contains(records, r => r.ParametersJson.Contains(b.ConnectorOrderId!));
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    [Fact]
+    public async Task A_cancel_all_that_failed_on_the_wire_leaves_its_orders_flagged()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "wf-1", TestEnv.Buy());
+        c.ThrowAfterCancelAll = new ConnectorTransportException("connection lost during cancel-all");
+
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+
+        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-cancel-%'"));
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+    }
+
+    /// <summary>
+    /// The escape hatch stays an escape hatch. The controls must work while trading is paused by the
+    /// very records they write, and while the kill switch is down — that is why they are outside
+    /// AUTHORIZATION, and a fix that quietly pulled them inside it would be the worse bug.
+    /// </summary>
+    [Fact]
+    public async Task The_emergency_controls_still_work_while_trading_is_paused()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "eh-1", TestEnv.Buy());
+        c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
+        await gw.PlaceAsync(AgentContext.Operator, "eh-2", TestEnv.Buy("NQ", 2m));
+
+        // Pause trading for real, the way a lost acknowledgement does.
+        gw.Requests.MarkNeedsReconciliation("eh-1", "unconfirmed");
+        gw.StopAiTrading("test");
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        var ids = await gw.OperatorCancelAllAsync();
+        var closed = await gw.OperatorCloseAllAsync();
+
+        Assert.NotEmpty(ids);
+        Assert.Equal(1, closed);
+        Assert.Empty(c.Inner.Broker.Positions);
+    }
+}
