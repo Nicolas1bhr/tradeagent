@@ -400,8 +400,15 @@ public sealed class UpdateService
                     "Nothing was installed and the version you are running is untouched.");
 
             Set(UpdateStage.Installing, $"Installing TradeAgent {info.Version}. TradeAgent will close and reopen itself.");
-            Activity?.Invoke($"You installed TradeAgent {info.Version}, replacing {CurrentVersion}", "info");
             _sources.Launch(installer);
+
+            // After Launch, not before: until Setup is actually running there is nothing to record,
+            // and "you installed it" beside the exception saying Windows would not start it is a log
+            // that argues with itself. The caller closes TradeAgent only once this returns true, so
+            // this write completes first.
+            Activity?.Invoke(
+                $"You installed TradeAgent {info.Version} over {CurrentVersion} — TradeAgent is closing so Setup can replace it",
+                "info");
             return true;
         }
         catch (Exception ex)
