@@ -119,3 +119,12 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   launched → `records/codex-U14-r5.txt`; the round-4 verifier resumed with `briefs/U14-r5-verify.md` (targets: the two
   classes as implemented, the survivors, the class fix both ways, F9 partial, the harness again). Heavy legs: U2a builder
   r5 + U14 verifier r5 = 2.
+- 23:20 **Codex delta re-review of U14 `6a40fa7`** (gpt-5.6-sol, ~30 min, `records/codex-U14-r5.txt`): 13 of 16 priors
+  FIXED; PARTIAL: 5/16 (the adapter's close-all refusal has no executable gate — needs the ATAS stub on the box) and 9
+  (v2 peer events gated, but mismatch returns true and a later hello clears it). New: **F17 HIGH** — an I/O-unreadable
+  committed file is treated as ABSENT and replaced (the I/O sibling of the parse-failure fixes); F18/F19 rotation hides
+  an unresolved safety event / diagnostic-only sidecar mislabelled historical; F20 events trusted before the hello;
+  F21 a stopped adapter reacquires the lease via its still-subscribed handler; F22 LOW. Round 6 bounce written
+  (`briefs/U14-r6-bounce.md`) with one rule per class: absent = FileNotFound only; degraded state survives rotation;
+  protocol compatibility is connection-level and a mismatch poisons the connection; StopBridge releases and unsubscribes;
+  the adapter gate gets written against the ATAS stub on the box. Waits for the round-5 verifier, then the same builder.

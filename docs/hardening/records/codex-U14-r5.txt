@@ -1,0 +1,67 @@
+PRIOR 1 — FIXED — the exclusive lease is retained in `_lease` until disposal or process death, so an idle live owner still excludes rivals at src/TradeAgent.AtasBridge/CoidWitness.cs:1507
+
+PRIOR 2 — FIXED — reader recovery now calls only the in-memory adoption path and never acquires the lease or changes disk at src/TradeAgent.AtasBridge/CoidWitness.cs:1145
+
+PRIOR 3 — FIXED — candidate recovery now requires exactly the committed identifier set, rejecting a full X/Y/Z replacement of A/B/C at src/TradeAgent.AtasBridge/CoidWitness.cs:1175
+
+PRIOR 4 — FIXED — `Parse` rejects null records/elements and invalid core fields before `Take`, while parsed-invalid committed bytes block writes at src/TradeAgent.AtasBridge/CoidWitness.cs:921
+
+PRIOR 5 — PARTIAL — the witness refusal now precedes `ITradingManager.ClosePosition`, but the exact unavailable-witness runtime assertion remains unverified at src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs:1775
+
+PRIOR 6 — FIXED — the test spends the quota on 40 non-safety warnings, proves only 32 survive, then proves the later safety event survives at tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:1664
+
+PRIOR 7 — FIXED — RESOLVED is now an unrationed safety transition and a fresh witness reads the gap as closed at src/TradeAgent.AtasBridge/CoidWitness.cs:1658
+
+PRIOR 8 — FIXED — a candidate may contain only committed identifiers and adoption can only merge an acknowledgement into an existing claim at src/TradeAgent.AtasBridge/CoidWitness.cs:1067
+
+PRIOR 9 — PARTIAL — incompatible-peer events are gated, but mismatch still returns true and the same session can send a compatible hello to clear the refusal at src/TradeAgent.Connectors.Atas/AtasConnector.cs:316
+
+PRIOR 10 — FIXED — support collection now includes both the current and rotated `*.errors.log*` files at src/TradeAgent.Diagnostics/Doctor.cs:291
+
+PRIOR 11 — FIXED — both transient exception classes now assert exactly five attempts and an upper elapsed-time bound at tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:690
+
+PRIOR 12 — FIXED — the standing is computed after witness classification and before `All`, while reader recovery is disk-pure at tools/probe/Program.cs:1067
+
+PRIOR 13 — FIXED — recovery now requires both parsed committed content and its exact fingerprint/generation lineage at src/TradeAgent.AtasBridge/CoidWitness.cs:1213
+
+PRIOR 14 — FIXED — `git diff --check e22eec6..HEAD` is clean and the formerly trailing-space assertion is clean at tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:794
+
+PRIOR 15 — FIXED — the injected opener exercises the unreadable-candidate branch on Windows, with the real Unix test retained beside it at tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:1937
+
+PRIOR 16 — PARTIAL — the adapter now has a reported successful ATAS-enabled Windows compile, but its unavailable-witness dispatch behavior still has no executable gate at docs/hardening/records/U14.md:685
+
+CLAIM MF4b — UNVERIFIED — validation closes the null-element route, but `Take` still allocates while copying and can throw after partial progress, so `_loaded` ordering is not literally unreachable at src/TradeAgent.AtasBridge/CoidWitness.cs:944
+
+CLAIM MV9 — CONFIRMED — in ordinary execution `EnsureRecovered` only adopts records, while `Trouble` reads no adoption-mutated field, so skipping it cannot change that property’s result at src/TradeAgent.AtasBridge/CoidWitness.cs:1145
+
+CLAIM F9 DISCONNECT — REFUTED — keeping the session has an observable effect: after a v2 hello returns true, a later v3 hello sets `_connected`, installs `_hello`, and clears `_incompatible` at src/TradeAgent.Connectors.Atas/AtasConnector.cs:356
+
+CLAIM F9 ADJACENT HELLO — PARTIAL — a genuinely unproved hello returns false and closes, but an authenticated peer can publish events before any compatible hello has been accepted at src/TradeAgent.Connectors.Atas/AtasConnector.cs:296
+
+RESIDUAL F8 — CONFIRMED — if `_replace` moves the temp and then throws, `Submitting` returns false although the destination contains the new claim: a claim with no order, not an order with no claim, at src/TradeAgent.AtasBridge/CoidWitness.cs:1471
+
+FINDING 17 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:892 — an unreadable committed file can be treated as absent and replaced, destroying history and potentially accepting the new claim
+
+Exact check: commit acknowledged A; inject an opener that denies the four load reads and four CAS reads but permits the post-replace read; submit B and assert rejection plus byte-for-byte preservation of A. Current code sets `_committedHash=null`, leaves `_committedUnreadable=false`, replaces A with B, and can return true.
+
+FINDING 18 — MED — src/TradeAgent.AtasBridge/CoidWitness.cs:1264 — rotation can hide an unresolved safety event when the first entry in the new log is diagnostic
+
+Exact check: create an oversized sidecar ending in `ERROR`, then trigger an aged-candidate quarantine through `Identified` without committing; after rotation, a fresh witness must retain non-null `Trouble`. Current classification searches only the diagnostic-only current log and ignores the unresolved event in `.1`.
+
+FINDING 19 — MED — src/TradeAgent.AtasBridge/CoidWitnessReport.cs:43 — a diagnostic-only sidecar is mislabeled historical and makes a zero falsely non-provisional
+
+Exact check: assert `Standing(sidecarExists:true, troubled:false, noted:true)` is `Noted` and its zero is provisional. Current code returns `Historical`, whose explanation falsely claims a clean commit resolved earlier failures.
+
+FINDING 20 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:296 — successful authentication alone permits trusted events before protocol compatibility is established
+
+Exact check: complete challenge/response, send a quote or order event before any hello, and assert no callback; current `_authenticated && _incompatible is null` gate invokes `HandleEvent`.
+
+FINDING 21 — MED — src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs:468 — a stopped adapter can reacquire and retain the released witness lease through its still-subscribed order handler
+
+Exact check: complete stop, keep the same trading manager bound, raise an order event with any non-empty comment, then start a second adapter and submit; the second must not be refused by the stopped adapter. Current callback reaches `Identified`, which leases before checking whether the record exists.
+
+FINDING 22 — LOW — src/TradeAgent.AtasBridge/CoidWitness.cs:1129 — a viable candidate that contributes no acknowledgement is reported as recovered and left for repeated processing
+
+Exact check: place an exact-lineage candidate that attempts to revise an already-recorded broker ID, invoke owner recovery through `Identified` on a missing ID, and assert it is quarantined or explicitly refused. Current code logs “recovered,” adopts nothing, and leaves the temp.
+
+SUMMARY — 2 HIGH / 6 MED / 1 LOW
