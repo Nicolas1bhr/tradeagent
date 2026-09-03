@@ -65,3 +65,10 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   `u2a-verify-r4` + `u2a-codex-r4` detached at `d25dbb4`; Codex `gpt-5.6-sol` launched on the codex worktree
   (→ `records/codex-U2a-r4.txt`); U2a verifier (Opus) dispatched with the updated `briefs/U2a-r4-verify.md` (target 6 =
   the rewritten fixture is a tooth). Heavy legs: U14 verifier + U2a verifier = 2.
+- 20:10 **Nicolas answered the six decisions** in one line: no broker, no account, no SSH to Mihael's machine — do all
+  that is possible with what we have; Binance could be connected for testing later (intended use is futures). Recorded
+  as resolutions in `HANDOFF-2026-09-03.md` §5. Consequences: the live trial stays out of scope; signing deferred with
+  the SmartScreen sentence (D7 by deferral); the test box is the target (D6 walk-through on it); monitoring = A on the
+  box (D5); the five keyboard minutes fold into the v0.1.2 box session; containment waits for the U12 revision.
+- 20:10 Tailscale up; box reachable (`win-state.sh`: uptime 1d 04h, console session active, ATAS running, TradeAgent
+  0.1.1 installed, home present, **UI agent NOT running** — restart with `tools/win-agent.sh start` at the box session).
