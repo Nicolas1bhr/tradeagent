@@ -515,6 +515,39 @@ public class BridgeRoundTripTests
         await Wait(async () => await Task.FromResult(Volatile.Read(ref seen) > before));
     }
 
+    /// <summary>
+    /// AND THE SAME GATE ON THE HEARTBEAT, WHICH IS THE ONE THAT ASSIGNS. A heartbeat carries a whole
+    /// <c>BridgeHello</c>, so a peer that has proved the secret and said NOTHING about its protocol
+    /// could set <c>SupportsClientOrderId</c>, <c>SupportsOrderHistory</c> and
+    /// <c>ReconciliationProvable</c> here without ever sending a hello at all — the same unlock as
+    /// the refused peer's heartbeat, reached from the other side. The connection-level refusal
+    /// cannot catch this one: nothing has been refused, because nothing has been claimed.
+    /// </summary>
+    [Fact]
+    public async Task An_authenticated_peer_sets_no_capabilities_by_heartbeat_before_any_hello()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe) { SendHello = false };
+        await bridge.ConnectAsync();
+        await Task.Delay(200);
+
+        await bridge.Heartbeat(Speaking(Versions.BridgeProtocolVersion));
+        await Task.Delay(300);
+
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+
+        // A gate, not a wall: the hello arrives and the next heartbeat is taken.
+        await bridge.SaySomethingElse(Speaking(Versions.BridgeProtocolVersion));
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
     /// <summary>One hello, saying whatever protocol the caller wants it to say.</summary>
     static BridgeHello Speaking(int protocol) => new()
     {
