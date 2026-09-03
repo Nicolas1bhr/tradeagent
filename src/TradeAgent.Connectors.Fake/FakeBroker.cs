@@ -152,6 +152,18 @@ public sealed class FaultProfile
     public int DropBeforeBrokerAccept { get; set; }
 
     public int RejectNext { get; set; }
+
+    /// <summary>
+    /// The broker refuses the next cancellation, definitively. One-shot, like the others.
+    ///
+    /// A live broker refuses a cancel for ordinary reasons — the order filled a moment ago, it is
+    /// already being cancelled, the venue will not accept one now — and without this the fake could
+    /// only ever succeed at cancelling. That made a sweep reporting ATTEMPTS indistinguishable from
+    /// one reporting SUCCESSES, so the mutant that swaps them survived every test. It is the
+    /// difference between "cancel-all cancelled 3" and "cancel-all tried 3", which on the command a
+    /// person reaches for when they want everything to stop is the whole of the meaning.
+    /// </summary>
+    public int RefuseCancel { get; set; }
     public FillBehaviour Fill { get; set; } = FillBehaviour.FillImmediately;
 
     /// <summary>Backdates quotes so staleness checks can be exercised.</summary>
