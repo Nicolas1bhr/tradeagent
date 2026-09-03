@@ -213,6 +213,80 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// THE LENGTH BOUND, AND IT IS ON THE THING THAT LEAVES THE PROCESS.
+    ///
+    /// Bounding the request id at 64 and not the id built from it was the gap: <c>TA-</c> is
+    /// prefixed on the way to the broker, so a 64-character request id left as a 67-character client
+    /// order id. The bound is now 61 so the client order id fits 64 — and the test asserts the
+    /// CLIENT ORDER ID length, not the request id's, because that is the string safety rule 1 is
+    /// about. A mutant that loosens the cap fails here.
+    ///
+    /// The 64 itself is a conservative guess. ATAS's real limit is NOT VERIFIED and cannot be from
+    /// this machine.
+    /// </summary>
+    [Fact]
+    public async Task The_longest_accepted_request_id_still_fits_the_client_order_id_budget()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var longest = new string('a', 61);
+        var accepted = await client.SendAsync(Buy(longest, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(accepted.Ok, $"a {longest.Length}-character id was refused: {Json.Write(accepted.Error)}");
+
+        // The string that actually reaches the broker is what the budget is about.
+        Assert.Equal(64, TradingGateway.ClientOrderIdFor(longest).Length);
+        Assert.Equal(TradingGateway.ClientOrderIdFor(longest), conn.Broker.Orders.Single().ClientOrderId);
+
+        var tooLong = await client.SendAsync(Buy(new string('a', 62), "NQ")).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(tooLong.Ok, "a 62-character id was accepted and would leave as a 65-character client order id");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), tooLong.Error!.Code);
+        Assert.Single(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// Two sweeps must not mint the same ids. The nonce is what stops a second cancel-all replaying
+    /// the first one's records instead of cancelling anything — the same class of fault as the
+    /// original collision, one layer in.
+    /// </summary>
+    [Fact]
+    public async Task Two_sweeps_mint_different_ids()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        async Task<List<string>> SweepOnce(string place, string sweep)
+        {
+            Assert.True((await client.SendAsync(Buy(place, "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+            var data = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = sweep })
+                .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+            Assert.Equal(1, data.GetProperty("attempted").GetInt32());
+            return data.GetProperty("requests").EnumerateArray()
+                .Select(r => r.GetProperty("request_id").GetString()!).ToList();
+        }
+
+        var first = await SweepOnce("nonce-a", "sweep-nonce-1");
+        var second = await SweepOnce("nonce-b", "sweep-nonce-2");
+
+        Assert.Single(first);
+        Assert.Single(second);
+        Assert.NotEqual(first[0], second[0]);
+
+        // And both really cancelled, rather than the second replaying the first's record.
+        Assert.Equal(2, (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED));
+    }
+
+    /// <summary>
     /// The count is of cancellations that LANDED. With nothing working, a sweep cancels nothing and
     /// must say so — and the other direction, a real working order, is cancelled and counted once.
     /// </summary>

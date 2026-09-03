@@ -363,8 +363,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
             if (!IsConservativeId(given))
                 return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-                    "a request id may use only letters, digits and '-', up to 64 characters — it is carried " +
-                    "onto the broker order as the client order id, and that has to be a shape the broker will give back");
+                    $"a request id may use only letters, digits and '-', up to {MaxRequestIdChars} characters — it is " +
+                    $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
+                    "and that has to be a shape the broker will give back");
         }
 
         var ctx = AgentContext.ForAgent(req.Session);
@@ -435,6 +436,27 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     const string MintedIdPrefix = "op-";
 
     /// <summary>
+    /// The most characters a CLIENT ORDER ID may run to in total.
+    ///
+    /// 64 is a conservative guess and it is labelled as one. **ATAS's real limit is NOT VERIFIED**
+    /// and cannot be from here — it is settleable only on the box, and it is on the open questions
+    /// list with the charset. What is certain is that some limit exists and that safety rule 1
+    /// needs this field to come back unchanged, so an unbounded id is a bet rather than a value.
+    /// </summary>
+    const int MaxClientOrderIdChars = 64;
+
+    /// <summary>
+    /// The most characters an incoming request id may run to, so the id built FROM it still fits.
+    ///
+    /// Derived, not typed: <c>TradingGateway.ClientOrderIdFor</c> prefixes <c>TA-</c>, so the budget
+    /// is <see cref="MaxClientOrderIdChars"/> minus that prefix — 61 today. Bounding the request id
+    /// and not the thing actually sent was the gap: a 64-character id was accepted and left the
+    /// process as a 67-character client order id. Reading the prefix off the real function means a
+    /// change there moves this instead of silently breaking it.
+    /// </summary>
+    static readonly int MaxRequestIdChars = MaxClientOrderIdChars - TradingGateway.ClientOrderIdFor("").Length;
+
+    /// <summary>
     /// The only characters allowed in a request id, minted or agent-chosen: <c>[A-Za-z0-9-]</c>.
     ///
     /// Deliberately narrower than anything a broker is likely to refuse, because this string leaves
@@ -442,7 +464,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// without changing what anything currently does.
     /// </summary>
     static bool IsConservativeId(string id) =>
-        id.Length is > 0 and <= 64 && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+        id.Length > 0 && id.Length <= MaxRequestIdChars && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
 
     /// <summary>
     /// Agent-initiated cancel-all still goes through per-order requests so each cancellation is a
