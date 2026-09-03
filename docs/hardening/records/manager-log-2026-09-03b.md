@@ -88,3 +88,15 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   F7 (RESOLVED rationed), V3 = Codex F2 (readers write) with the class fix "degraded = unresolved SAFETY lines"; V5 says
   the builder's cap-direction argument was backwards (safe direction, wrong record). Findings appended to
   `briefs/U14-r5-bounce.md`; the SAME builder resumed by message (§9.3). Heavy legs: U2a verifier + U14 builder r5 = 2.
+- 21:20 **Codex on U2a `d25dbb4` (gpt-5.6-sol, ~75 min): 5 HIGH / 6 MED / 3 LOW** (`records/codex-U2a-r4.txt`).
+  Triage: F1 (effective id `RequestId ?? Id` unvalidated) and F11 (prerequisite Orders RPCs before the emergency frame,
+  and the "agent leg" test bypasses the gateway) are U2a's own files → round 5. F2 is a CLASS defect: per-chunk progress
+  budgets made the 35 s drain bound fictional and disposal never re-awaits the cancelled handler → decision: a whole-frame
+  ceiling the drain derives from, and disposal re-awaits so UNKNOWN is recorded before the store closes. F5 (agent
+  close → `Place`, no fast path — the record's known gap, single close too) and F6/F8 (sweep replay re-sweeps the
+  current book; idempotency only for Place) live in `TradingGateway.cs`/the store, which U2c-1 round 4 is reworking →
+  moved into `briefs/U2c1-r4-build.md` as class C (C1 intent through `ITradingConnector`, C2 composite persisted before
+  effects, replay returns the stored outcome) and recorded as HIGH-open-with-owner at U2a's integration. F10 (reserved
+  session accepted on hello frames) is mandatory despite LOW. The box being up turns F12 ("NOT VERIFIED on Windows")
+  into an on-box test run in round 5. Bounce: `briefs/U2a-r5-bounce.md`; the SAME builder is resumed when the U2a
+  verifier vacates its slot.

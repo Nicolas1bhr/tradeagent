@@ -69,6 +69,23 @@ inconclusive and keeps trading paused.* Implement each as a red-first test that 
 - Delete the code the simplification retires (the reconstruct-at-restart path, the same-nonce retry, the sweep call);
   a simplification that leaves the old path reachable is not one.
 
+## Round 4, class C — inherited from U2a's Codex review (HIGH, owner moved here because the files are yours)
+
+- **C1 (U2a Codex F5 + F11 class): intent must survive the layer that transforms operations.** Agent `close` and every
+  `close-all` leg call `PlaceAsync`, so the connector sees `Place` and the risk-reducing fast path (2 s emergency gate,
+  U2a round 4) never applies. Carry the risk-reducing intent through `ITradingConnector` for close legs (a `Close`
+  intent, not an offsetting `Place`), so the connector classifies it correctly; single `close` included. Acceptance:
+  `trade close ES` through the real `GatewayPipeServer` against a bridge that answers the position lookup then stalls
+  → completes near `EmergencyGateWait` with the emergency wording. U2a's builder fixes the prerequisite-read half in the
+  pipe server and connector; you own the gateway half.
+- **C2 (U2a Codex F6 + F8): replaying a sweep must not repeat effects.** A replayed `cancel-all`/`close-all` with the same
+  outer request id currently mints a fresh nonce and re-sweeps the CURRENT book (cancels orders created after the
+  original; liquidates newly opened positions). The class-B press records are the mechanism: the composite (outer request
+  id → captured child plan → per-child results) is persisted BEFORE effects, for the agent's sweep as for the operator's
+  press; a replay of a known outer id returns the stored outcome and sends nothing. Acceptance: sweep order A as
+  `sweep-1`, lose the reply, create order B, repeat `sweep-1` → B stays working and the original result is returned.
+  Idempotency by request id applies to every mutating op, not only `Place`.
+
 ## Proof obligations
 
 - Every item above: RED quoted before the fix, GREEN after, and a mutant that reverts the guard watched to bite (commit

@@ -1,0 +1,81 @@
+FINDING 1 — HIGH — src/TradeAgent.Gateway/GatewayPipeServer.cs:357 — The effective broker request id bypasses every new validation rule
+
+Only `req.RequestId` is checked, but line 372 uses `req.RequestId ?? req.Id`. An authenticated client can omit `request_id`, place with `id:"has#hash"` or an overlong/reserved `op-…` value, and send `TA-has#hash` to the broker. Existing tests always populate `RequestId`. Check: add a `SweepRequestIdTests` case with `RequestId=null`, malicious `Id`, and assert `INVALID_REQUEST` plus zero broker orders; it currently fails.
+
+FINDING 2 — HIGH — src/TradeAgent.Connectors.Atas/AtasConnector.cs:139 — The claimed 30-second worst-case path is not a bound, so the 35-second drain can abandon settlement
+
+`WorstCaseOrderPath` counts one 10-second write, but `WriteFrame` applies that timeout separately to every 8 KiB chunk. A legal near-1 MiB order can therefore make progress for roughly 128 × 10 seconds. `GatewayPipeServer.DisposeAsync` stops waiting after 35 seconds, cancels the handler, and never re-awaits it before the gateway/database are disposed. The committed drain test uses a six-second fake delay; it does not exercise the record’s claimed 28-second order or slow-progress connector writing.
+
+Check: at shipped defaults, use an authenticated peer accepting one 8 KiB chunk every nine seconds, start a 64+ KiB order, dispose after `DISPATCHING`, and assert disposal does not return with the request unsettled or log `handlers_did_not_finish`. Structurally, the class is non-composable deadline accounting: either provide a real whole-operation bound, or track the pre-dispatch/in-broker phases and re-await cancellation long enough to durably settle `UNKNOWN`.
+
+FINDING 3 — MED — src/TradeAgent.TradeCli/Program.cs:59 — CLI transmission state is asserted before the request write has completed
+
+`sent=true` is set before `PipeClient.SendAsync` starts writing. The boolean therefore cannot distinguish a completed frame from a zero/partial write, although that distinction drives `reply_lost`. Check: authenticate a server, close it immediately before the order write, and assert the CLI reports either a proven “nothing sent” state or an explicit “possibly sent” state based on a transport result—not an eagerly assigned boolean.
+
+FINDING 4 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:605 — Chunk completion is mistaken for byte progress, so a healthy slow reader is dropped as stalled
+
+`_lastWriteProgressAt` advances only after an entire 8 KiB `WriteAsync` completes. A peer accepting 1 KiB every 400 ms is continuously progressing and would finish a chunk within the normal 10-second deadline, but no chunk completes during the two-second emergency wait; the emergency consequently drops it as `PeerStalled`. The busy fixture accepts a full 8 KiB every 200 ms and cannot expose this boundary.
+
+Check: repeat the busy test with sub-chunk reads that complete each 8 KiB write in two-to-ten seconds; assert `Busy`, connection retained, and bytes increasing. This shares the deadline-accounting class with finding 2: progress needs an active-write byte/progress signal, not only completed local chunks.
+
+FINDING 5 — HIGH — src/TradeAgent.Gateway/TradingGateway.cs:709 — Agent close operations are transformed into Place and never receive the emergency path
+
+Both single `close` and every `close-all` leg call `PlaceAsync`, so `AtasConnector` sees `BridgeOps.Place`, not `BridgeOps.Close`. They therefore wait the ordinary ten-second gate deadline despite being explicitly accepted as risk-reducing intents. The record discloses close-all, but the same defect affects single close.
+
+Check: perform `trade close ES` through `GatewayPipeServer` against an authenticated bridge that answers the position lookup and then stalls; assert completion near `EmergencyGateWait` with emergency wording. It currently takes the ordinary path. The structural class, shared with finding 11, is intent classification below the layer that transforms operations; carry risk-reducing intent/deadline through the gateway and connector interface.
+
+FINDING 6 — HIGH — src/TradeAgent.Gateway/GatewayPipeServer.cs:478 — Replaying cancel-all or close-all repeats effects against new account state
+
+The outer `rid` parameter is unused. Every invocation mints a fresh random nonce, and no durable composite record is keyed by the caller’s request id. After a lost reply, replaying the same cancel-all can cancel orders created after the original sweep; replaying close-all can liquidate newly opened positions.
+
+Check: sweep order A with request id `sweep-1`, lose its reply, create order B, then repeat `sweep-1`; B must remain working and the original result must return. Current code cancels B. The shared replay class across findings 3, 6, 7, and 8 is that transmission/effect identity is ad hoc rather than first-class. Persist the outer mutation and its child plan/results before effects, and combine it with an explicit transport result such as `NothingWritten` / `PossiblyWritten` / `ReplyReceived`.
+
+FINDING 7 — MED — src/TradeAgent.TradeCli/PipeClient.cs:38 — Common lost-reply failures bypass CliReplayContract entirely
+
+Write/read `IOException`, `ObjectDisposedException`, and `JsonException` from a partial response are not converted to `TradeAgentException`, while `Program.cs` catches only `TradeAgentException`. The CLI can therefore terminate without its structured replay JSON or recovery guidance. The binary test closes only after reading a complete order and returns clean EOF, exercising the one wrapped path.
+
+Check: have the test server write half a JSON reply and close, and separately close during a large request write; both runs must exit 1 with the same request id and replay classification rather than an unhandled exception.
+
+FINDING 8 — MED — src/TradeAgent.Gateway/TradingGateway.cs:635 — The blanket replay contract is implemented only for Place
+
+`CancelAsync` and `ModifyAsync` authorize and resolve the target before consulting the idempotency store. A kill switch, paused health, or missing historical target can therefore prevent retrieval of an already-recorded result. `CloseAsync` re-authorizes and rereads positions before `PlaceAsync` checks the store; after a successful flatten, replay commonly returns `null` rather than the original `FILLED` request.
+
+Check: complete cancel/modify/close calls, alter authorization or flatten state, repeat the same request ids, and assert byte-equivalent stored outcomes with no connector calls. Move durable replay lookup ahead of authorization, target resolution, and position reads for every mutating operation.
+
+FINDING 9 — MED — src/TradeAgent.Gateway/GatewayPipeServer.cs:512 — Sweep uniqueness is limited to 32 bits and eventually collides with durable history
+
+Only eight GUID hex characters are retained. At roughly 77,000 lifetime sweeps, birthday-collision probability reaches about 50%. Reusing a nonce for the same intent/index makes `TryCreate` replay an old child request; a new cancel-all can then count the old `CANCELLED` record while leaving the current order working. The two-random-sweeps test cannot exercise collision handling deterministically.
+
+Check: inject a nonce seam returning the same value for two sweeps over different working orders and assert the second order is actually cancelled. A full 32-hex GUID still fits the 61-character budget.
+
+FINDING 10 — LOW — src/TradeAgent.Gateway/GatewayPipeServer.cs:209 — The reserved operator session is accepted on hello frames
+
+The reserved-session check exists only in `Handle`; the hello branch accepts a valid-token frame carrying `" operator "` and returns success. This does not escalate authority, because no `AgentContext` is created, but it fails the literal tripwire contract that client use of the reserved string is refused with `INVALID_REQUEST`.
+
+Check: send an authenticated hello with each reserved spelling and assert `INVALID_REQUEST` plus `operator_session_refused`.
+
+FINDING 11 — HIGH — src/TradeAgent.Gateway/GatewayPipeServer.cs:480 — Real gateway cancellation paths perform ordinary RPCs before reaching the emergency operation
+
+Agent cancel-all first calls `OrdersAsync`, an ordinary ten-second bridge RPC. Each resulting `CancelAsync` then calls `ResolveConnectorOrderId`, normally issuing another ordinary Orders RPC before the emergency Cancel frame. Single cancel by broker id has the same prerequisite; close and operator close-all likewise read positions normally first. The test labelled as an agent “leg” calls `AtasConnector.CancelOrderAsync` directly and bypasses all of this.
+
+Check: invoke cancel-all through the real gateway while a stalled write holds the connector gate and assert it returns around two seconds. It currently waits on the ordinary Orders path first. Fix the class shared with finding 5 by propagating one end-to-end risk-reducing deadline through prerequisite reads and the final mutation.
+
+FINDING 12 — MED — docs/hardening/records/U2a.md:63 — Core pipe behavior is still UNVERIFIED on the only production platform
+
+TradeAgent is a Windows desktop app, but the record says every U2a backpressure run used Unix-socket semantics and did not verify Windows named-pipe buffering, handle disposal of an accepted overlapped write, or the no-buffer stall mutant. The production claims “only the stalled peer is dropped” and “shutdown releases the write” therefore remain unconfirmed.
+
+Check: run `GatewayPipeBackpressureTests` and `ConnectorSendDeadlineTests` on Windows at shipped defaults, including the documented zero-buffer/handle-dispose mutant.
+
+FINDING 13 — LOW — tests/TradeAgent.IntegrationTests/CliReplayContractTests.cs:97 — The “before sending” binary test does not observe ordering
+
+The test waits for process exit and only checks that stderr eventually contains the id. Moving the announcement into the connection-failure catch—after the attempted send—would still pass.
+
+Check: run the CLI against a server that withholds accepting/reading the order, observe stderr concurrently, and require `request-id:` before allowing the request write.
+
+FINDING 14 — LOW — docs/hardening/records/U2a.md:65 — The proposed ATAS check cannot verify the claimed 64-character budget
+
+A generated close-all child id is about 22 characters, approximately 25 after `TA-`. One close-all can test the `op-…` character shape, but cannot establish that ATAS accepts and round-trips a 64-character client order id, contrary to the record’s statement that it settles both questions.
+
+Check: perform two box tests—one real close-all for the minted shape, and a separate sim placement with a 61-character request id producing an exactly 64-character `TA-…` value, verified from ATAS history after restart.
+
+SUMMARY — 5 HIGH / 6 MED / 3 LOW
