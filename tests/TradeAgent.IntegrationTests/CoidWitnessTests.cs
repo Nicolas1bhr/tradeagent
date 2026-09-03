@@ -125,6 +125,14 @@ public class CoidWitnessTests : IDisposable
         File.SetLastWriteTimeUtc(path, at ?? File.GetLastWriteTimeUtc(File_).AddMinutes(5));
     }
 
+    /// <summary>A temp at a name of the caller's choosing, for the cases that need two of them.</summary>
+    void WriteTempAt(string path, long generation, string? predecessor, string records)
+    {
+        var pred = predecessor is null ? "null" : $"\"{predecessor}\"";
+        File.WriteAllText(path,
+            $$"""{"version":1,"generation":{{generation}},"predecessor":{{pred}},"records":[{{records}}]}""");
+    }
+
     CoidWitness Session() => new(File_);
 
     /// <summary>A session whose rename behaves the way <paramref name="replace"/> says it does.</summary>
@@ -2548,6 +2556,88 @@ public class CoidWitnessTests : IDisposable
         next.Identified("TA-AFTER", "BRK-AFTER");
         next.Dispose();
         Assert.NotNull(Session().PriorSession("TA-AFTER"));
+    }
+
+    // -------------------------------------------------- what a person is told (tools/probe)
+
+    /// <summary>
+    /// THE WORDING AN OPERATOR READS, UNDER TEST — which nothing in this repository could do before.
+    ///
+    /// The probe's witness block sits behind a live bridge-pipe connection, so it never executes on a
+    /// machine that is not running ATAS; no test project references <c>tools/probe</c>; and the
+    /// round-4 verify leg's mutant, which made every sidecar read as UNRESOLVED, left all 81 tests
+    /// green. The decision is three booleans and no IO, so it is a pure function now and this is it
+    /// under test, in both directions and in all four states.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false, false, WitnessStanding.Clean)]
+    [InlineData(false, false, true, WitnessStanding.Noted)]
+    [InlineData(true, false, true, WitnessStanding.Historical)]
+    [InlineData(true, true, true, WitnessStanding.Unresolved)]
+    public void The_probe_reads_the_witness_standing_off_the_witness(
+        bool sidecarExists, bool troubled, bool noted, WitnessStanding expected)
+    {
+        Assert.Equal(expected, CoidWitnessReport.Standing(sidecarExists, troubled, noted));
+    }
+
+    /// <summary>
+    /// A ZERO IS PROVISIONAL WHENEVER SOMETHING WAS REFUSED ON THE WAY TO COUNTING IT. "No records"
+    /// and "this product never submitted that identifier" are the same sentence to a reader and are
+    /// only the same FACT when nothing was declined — which is exactly what a refused import looks
+    /// like, and exactly the reading that must never be produced by accident.
+    /// </summary>
+    [Theory]
+    [InlineData(WitnessStanding.Clean, false)]
+    [InlineData(WitnessStanding.Historical, false)]
+    [InlineData(WitnessStanding.Noted, true)]
+    [InlineData(WitnessStanding.Unresolved, true)]
+    public void A_zero_is_provisional_when_something_was_refused(WitnessStanding s, bool provisional)
+    {
+        Assert.Equal(provisional, CoidWitnessReport.ZeroIsProvisional(s));
+    }
+
+    /// <summary>
+    /// AND THE THREE WORDINGS SAY DIFFERENT THINGS. A report that shouts the same sentence at a
+    /// closed gap and an open one is a report nobody reads the day it is right — which is the defect
+    /// commit a8b3fb0 fixed and which nothing then pinned.
+    /// </summary>
+    [Fact]
+    public void The_three_witness_headlines_are_distinguishable()
+    {
+        var log = "/x/coid-witness.errors.log";
+        Assert.Contains("UNRESOLVED", CoidWitnessReport.Headline(WitnessStanding.Unresolved, log));
+        Assert.Contains("historical", CoidWitnessReport.Headline(WitnessStanding.Historical, log));
+        Assert.DoesNotContain("UNRESOLVED", CoidWitnessReport.Headline(WitnessStanding.Historical, log));
+        Assert.DoesNotContain("UNRESOLVED", CoidWitnessReport.Headline(WitnessStanding.Noted, log));
+        Assert.Contains("refused", CoidWitnessReport.Headline(WitnessStanding.Noted, log));
+        Assert.Equal("none recorded", CoidWitnessReport.Headline(WitnessStanding.Clean, log));
+
+        Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Unresolved));
+        Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Historical));
+        Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Noted));
+        Assert.Empty(CoidWitnessReport.Explanation(WitnessStanding.Clean));
+    }
+
+    /// <summary>
+    /// AND THE INPUTS THE PROBE FEEDS IT ARE THE ONES A REAL WITNESS PRODUCES, over the exact
+    /// directory Codex's check names: nothing committed and one anchorless temp. The zero has to come
+    /// out provisional, and the reader has to have changed nothing to say so.
+    /// </summary>
+    [Fact]
+    public void An_anchorless_temp_makes_the_probes_zero_provisional_without_touching_anything()
+    {
+        WriteTempAt(File_ + ".tmp-foreign", generation: 12, predecessor: "some-other-witness-file",
+                    records: RecordJson("TA-IMPORTED", "a-dead-session"));
+        var before = Directory.GetFiles(_dir).Select(Path.GetFileName).OrderBy(n => n).ToArray();
+
+        var witness = Session();
+        var sidecarExists = witness.ErrorLogPath is not null && File.Exists(witness.ErrorLogPath);
+        var standing = CoidWitnessReport.Standing(sidecarExists, witness.Trouble is not null, witness.Noted);
+
+        Assert.Empty(witness.All());
+        Assert.Equal(WitnessStanding.Noted, standing);
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(standing));
+        Assert.Equal(before, Directory.GetFiles(_dir).Select(Path.GetFileName).OrderBy(n => n).ToArray());
     }
 
     // ------------------------------------------------------------------ the surface token

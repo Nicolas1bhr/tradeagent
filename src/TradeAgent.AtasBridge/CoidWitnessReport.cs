@@ -1,0 +1,89 @@
+namespace TradeAgent.AtasBridge;
+
+/// <summary>Where a witness's sidecar stands, as one value. See <see cref="CoidWitnessReport"/>.</summary>
+public enum WitnessStanding
+{
+    /// <summary>Nothing has been written down and nothing was refused.</summary>
+    Clean,
+
+    /// <summary>Something was refused or noted, and no durability gap is open.</summary>
+    Noted,
+
+    /// <summary>A gap happened and a later clean commit closed it. History, not a live problem.</summary>
+    Historical,
+
+    /// <summary>A durability gap is open. Every verdict below it is provisional.</summary>
+    Unresolved
+}
+
+/// <summary>
+/// WHAT A PERSON IS TOLD ABOUT THE WITNESS, AS A PURE FUNCTION — and the reason it is not written
+/// inline in <c>tools/probe</c>, which is where it used to live.
+///
+/// That block sits behind a live bridge-pipe connection, so it cannot execute anywhere but a machine
+/// running ATAS: measured off Windows it never printed at all, no test project references the probe,
+/// and a mutant that made every sidecar read as UNRESOLVED left the whole suite green. The wording an
+/// operator actually reads was the least-verified thing in the unit.
+///
+/// The decision is three inputs and no IO, so it belongs here — in an assembly that is compiled and
+/// tested on every machine — and the probe becomes the thing it should be: a caller that renders what
+/// this returns.
+/// </summary>
+public static class CoidWitnessReport
+{
+    /// <summary>
+    /// The standing, from what the witness reports rather than from the sidecar existing.
+    ///
+    /// <paramref name="troubled"/> is <see cref="CoidWitness.Trouble"/> being non-null — an
+    /// UNRESOLVED safety gap, and the only state that makes the readings below it provisional on
+    /// account of a durability problem. <paramref name="noted"/> is <see cref="CoidWitness.Noted"/>:
+    /// something was refused or recorded, which need not be a gap at all — a foreign leftover moved
+    /// aside is the ordinary case — but which does mean a zero is not a confident zero.
+    /// </summary>
+    public static WitnessStanding Standing(bool sidecarExists, bool troubled, bool noted) =>
+        troubled ? WitnessStanding.Unresolved
+        : sidecarExists ? WitnessStanding.Historical
+        : noted ? WitnessStanding.Noted
+        : WitnessStanding.Clean;
+
+    /// <summary>The one line beside "WITNESS FAILURES".</summary>
+    public static string Headline(WitnessStanding standing, string sidecarPath) => standing switch
+    {
+        WitnessStanding.Unresolved => $"{sidecarPath} — UNRESOLVED. THIS FILE SHOULD NOT EXIST.",
+        WitnessStanding.Historical => $"{sidecarPath} — historical.",
+        WitnessStanding.Noted => "none recorded — but a candidate beside the witness was refused.",
+        _ => "none recorded"
+    };
+
+    /// <summary>What the line above means, in the words the operator gets.</summary>
+    public static string[] Explanation(WitnessStanding standing) => standing switch
+    {
+        WitnessStanding.Unresolved =>
+        [
+            "Each line is a rewrite of the witness that did not reach the disk. Treat every",
+            "verdict below as provisional until this is understood."
+        ],
+        WitnessStanding.Historical =>
+        [
+            "The last entry says the witness committed cleanly after those failures, so the",
+            "gap is closed and nothing below is provisional on account of this file. It is",
+            "kept as history; delete it once it has been read."
+        ],
+        WitnessStanding.Noted =>
+        [
+            "A file beside the witness was not a rewrite of it and was not adopted. Nothing",
+            "was lost by that, but it means a count of zero below is not the same as 'nothing",
+            "was ever recorded here'."
+        ],
+        _ => []
+    };
+
+    /// <summary>
+    /// WHETHER A ZERO BELOW IS PROVISIONAL, which is the whole reason the standing is computed
+    /// before the records are counted. "No records" and "this product never submitted that
+    /// identifier" are the same sentence to a reader, and they are only the same fact when nothing
+    /// was refused on the way to counting them.
+    /// </summary>
+    public static bool ZeroIsProvisional(WitnessStanding standing) =>
+        standing is WitnessStanding.Unresolved or WitnessStanding.Noted;
+}

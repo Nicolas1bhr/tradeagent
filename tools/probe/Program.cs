@@ -1053,38 +1053,22 @@ static class AtasProbe
         // identifier can be missing from the file because no run ever submitted it, or because the
         // run that did could not get it committed. Those are different findings and only this file
         // tells them apart.
+        // RESOLVED IS NOT THE SAME AS FAILING, and shouting at both is how a report stops being read.
+        // The witness itself decides — Trouble is null once a clean commit has closed the gap — so
+        // this asks rather than inferring from the file merely existing.
+        //
+        // THE DECISION AND THE WORDING LIVE IN CoidWitnessReport, not here, because this whole block
+        // sits behind a live bridge-pipe connection: it cannot execute on a machine that is not
+        // running ATAS, no test project references this program, and a mutant that made every sidecar
+        // read as UNRESOLVED left the entire suite green. What an operator actually reads was the
+        // least-verified thing in the unit. This is now a renderer.
         var sidecar = witness.ErrorLogPath;
-        if (sidecar is not null && File.Exists(sidecar))
-        {
-            // RESOLVED IS NOT THE SAME AS FAILING, and shouting at both is how a report stops being
-            // read. The witness itself decides — Trouble is null once a clean commit has closed the
-            // gap and the file's last line says so — so this asks rather than inferring from the
-            // file merely existing. A historical record of a gap that ended is worth printing and
-            // is not a reason to distrust anything below it.
-            var notes = ReadTail(sidecar, 10);
-            var unresolved = witness.Trouble is not null;
+        var sidecarExists = sidecar is not null && File.Exists(sidecar);
+        var standing = CoidWitnessReport.Standing(sidecarExists, witness.Trouble is not null, witness.Noted);
 
-            Line("WITNESS FAILURES", unresolved
-                ? $"{sidecar} — UNRESOLVED. THIS FILE SHOULD NOT EXIST."
-                : $"{sidecar} — historical.");
-            foreach (var note in notes) Cont(note);
-
-            if (unresolved)
-            {
-                Cont("Each line is a rewrite of the witness that did not reach the disk. Treat every");
-                Cont("verdict below as provisional until this is understood.");
-            }
-            else
-            {
-                Cont("The last entry says the witness committed cleanly after those failures, so the");
-                Cont("gap is closed and nothing below is provisional on account of this file. It is");
-                Cont("kept as history; delete it once it has been read.");
-            }
-        }
-        else
-        {
-            Line("WITNESS FAILURES", "none recorded");
-        }
+        Line("WITNESS FAILURES", CoidWitnessReport.Headline(standing, sidecar ?? "<none>"));
+        if (sidecarExists) foreach (var note in ReadTail(sidecar!, 10)) Cont(note);
+        foreach (var line in CoidWitnessReport.Explanation(standing)) Cont(line);
 
         var records = witness.All();
         Line("RECORDS ON FILE", records.Count.ToString());
@@ -1107,6 +1091,19 @@ static class AtasProbe
 
         if (records.Count == 0)
         {
+            // ASKED BEFORE THE ZERO IS INTERPRETED, and this is the second half of that rule. "No
+            // records" and "this product never submitted that identifier" are the same sentence to a
+            // reader, and they are only the same FACT when nothing was refused on the way to
+            // counting them.
+            if (CoidWitnessReport.ZeroIsProvisional(standing))
+            {
+                Line("VERDICT", "NOT ANSWERED — NO RECORDS, AND SOMETHING WAS REFUSED.");
+                Cont("The count below is zero and the line above says a candidate beside the witness");
+                Cont("was declined, or a rewrite did not land. Read the zero as provisional: it is not");
+                Cont("evidence that nothing was ever submitted on this machine.");
+                return new RestartCheckOutcome(0, "provisional-zero");
+            }
+
             Line("VERDICT", "NOT ANSWERED — NO EXPERIMENT HAS BEEN SET UP.");
             Cont("No run of this product has recorded submitting a client order id on this");
             Cont("machine, so there is nothing to look for. This is not a reading about");
