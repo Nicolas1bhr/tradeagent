@@ -54,6 +54,34 @@ public sealed class GatewayOptions
 }
 
 /// <summary>
+/// ONE PRESS OF AN EMERGENCY CONTROL, AND WHETHER IT EVER FINISHED.
+///
+/// The gateway makes a retry of the same press free: the request ids are derived from the press, so
+/// the second call finds its records already written and sends nothing. That guarantee is only worth
+/// anything if the screen actually presses the SAME press again — and the first version of this
+/// minted a fresh nonce inside the click handler, which meant the natural "it failed, press it
+/// again" was a brand-new press and a second set of closes. For a 2-contract long that is not a
+/// flatten, it is a reversal.
+///
+/// So the press is held until something says it finished cleanly. While it is outstanding, pressing
+/// the button repeats it; the screen tells the person that the last one is unconfirmed and needs
+/// resolving, rather than quietly sending more orders.
+/// </summary>
+public sealed class OperatorPress
+{
+    string? _outstanding;
+
+    /// <summary>True while the last press has not been shown to have finished.</summary>
+    public bool Outstanding => _outstanding is not null;
+
+    /// <summary>The nonce to use now: the same one again while the last press is outstanding.</summary>
+    public string Begin() => _outstanding ??= TradingGateway.NewOperatorPressNonce();
+
+    /// <summary>Retires the press only if the gateway has nothing unconfirmed left from it.</summary>
+    public void Finish(bool clean) { if (clean) _outstanding = null; }
+}
+
+/// <summary>
 /// Who is asking, and whether they are the person at the keyboard.
 ///
 /// <see cref="IsOperator"/> is the difference between an order that parks for approval and one that
