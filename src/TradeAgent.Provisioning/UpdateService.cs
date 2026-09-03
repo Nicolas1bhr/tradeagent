@@ -211,6 +211,7 @@ public sealed class UpdateService
     readonly object _gate = new();
 
     bool _busy;
+    bool _launched;
     string? _lastRefusalLogged;
 
     public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null)
@@ -361,6 +362,16 @@ public sealed class UpdateService
         var info = Available;
         if (info is null) return false;
 
+        // Setup is already running from an earlier press. Two installers of the same product racing
+        // to replace the same files is worse than either of them, and the second one is never what
+        // the owner meant by pressing again.
+        if (_launched)
+        {
+            Message = $"TradeAgent {info.Version} is already installing. TradeAgent is about to close and reopen itself.";
+            Changed?.Invoke();
+            return false;
+        }
+
         lock (_gate)
         {
             if (_busy)
@@ -414,13 +425,28 @@ public sealed class UpdateService
             Set(UpdateStage.Installing, $"Installing TradeAgent {info.Version}. TradeAgent will close and reopen itself.");
             _sources.Launch(installer);
 
+            // PAST THIS LINE THE OUTCOME IS "LAUNCHED", AND NOTHING BELOW CAN UNDO IT.
+            //
+            // Setup is running. It is going to replace the files this process is executing from,
+            // whatever happens next in here. So the latch goes up first — a second press must not be
+            // able to start a second installer over the first — and only then do we try to write it
+            // down. A logging failure that returned false would report a success as a failure, keep
+            // the caller from shutting down cleanly for Setup, and re-arm the button: three
+            // consequences, none of which is worth a log line.
+            _launched = true;
+
             // After Launch, not before: until Setup is actually running there is nothing to record,
             // and "you installed it" beside the exception saying Windows would not start it is a log
             // that argues with itself. The caller closes TradeAgent only once this returns true, so
             // this write completes first.
-            Activity?.Invoke(
-                $"You installed TradeAgent {info.Version} over {CurrentVersion} — TradeAgent is closing so Setup can replace it",
-                "info");
+            try
+            {
+                Activity?.Invoke(
+                    $"You installed TradeAgent {info.Version} over {CurrentVersion} — TradeAgent is closing so Setup can replace it",
+                    "info");
+            }
+            catch (Exception) { /* the installer is already running; there is nothing to fail back to */ }
+
             return true;
         }
         catch (Exception ex)
