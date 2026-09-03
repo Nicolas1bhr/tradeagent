@@ -560,13 +560,15 @@ public sealed class MainWindow : Window
 
         // Downloading shows even after Later was pressed: the user asked for this from Settings and
         // has to be able to see it happening from wherever they are.
-        _updateBanner.IsVisible = (info is not null && (working || !updates.Dismissed)) || refused;
+        _updateBanner.IsVisible = (info is not null || refused) && (working || !updates.Dismissed);
         if (!_updateBanner.IsVisible) return;
 
-        // With nothing on offer there is nothing to read, install or postpone — only the reason.
+        // With nothing left on offer there is nothing to read and nothing to install — only the
+        // reason. Later stays, because a strip the owner cannot put away is one they learn to look
+        // past, and Dismissed still hides this one exactly as it hides an offer.
         var actionable = info is not null && !working;
         if (_updateNotes is not null) _updateNotes.IsVisible = actionable;
-        if (_updateLater is not null) _updateLater.IsVisible = actionable;
+        if (_updateLater is not null) _updateLater.IsVisible = !working;
         if (_updateInstall is not null) _updateInstall.IsVisible = actionable;
 
         if (working)

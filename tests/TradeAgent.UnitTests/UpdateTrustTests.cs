@@ -1072,6 +1072,21 @@ public class UpdateTrustTests
         Assert.Contains("Gateway.InstallInProgress = () => Updates.InstallInProgress", text);
     }
 
+    /// <summary>
+    /// The same kind of gate, for the same reason, on the two banner rules that a failed re-check
+    /// used to walk through: the strip renders a REFUSAL rather than any Failed message, and it
+    /// expires the one refusal that stops being true. Both live in a file this suite cannot run.
+    /// </summary>
+    [Fact]
+    public void The_banner_still_distinguishes_a_refusal_from_a_failed_re_check()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "MainWindow.cs"));
+
+        Assert.Contains("updates.ExpireStaleRefusal();", text);
+        Assert.Contains("var refused = updates.Refused", text);
+        Assert.DoesNotContain("updates.Stage == UpdateStage.Failed && !string.IsNullOrWhiteSpace(updates.Message)", text);
+    }
+
     static string RepositoryRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
