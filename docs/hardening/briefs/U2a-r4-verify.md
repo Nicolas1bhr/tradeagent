@@ -15,10 +15,13 @@ to "fails" when uncertain. The previous verifier for this unit is gone (process 
 ## Where you work
 
 - Worktree: `/Users/nicolasbeeckman/Projects/ai-trading-software-for-mihael-worktrees/u2a-verify-r4`, detached at
-  **`e91293e`** = `u2a-pipe-hardening` (21 commits) rebased onto `main` `9fd5eb7` (which carries U2b, approval
-  re-authorization, in `GatewayTypes.cs`/`TradingGateway.cs`). The rebase was textually clean and the full suite was run
-  on it by the manager (figure in `records/manager-log-2026-09-03b.md`). First command: `git checkout -b u2a-verify-r4-probes`
-  so your probe commits stay reachable. Work ONLY there.
+  **`d25dbb4`** = `u2a-pipe-hardening` (21 commits) rebased onto `main` `9fd5eb7` (which carries U2b, approval
+  re-authorization, in `GatewayTypes.cs`/`TradingGateway.cs`) + round 4b (3 commits, test-only). The rebase was
+  textually clean; the rebased tip had ONE red test, `An_emergency_behind_a_busy_but_healthy_bridge_says_busy_and_does_not_drop_it`,
+  red at the pre-rebase tip too — the fixture assumed 400 × 512 KiB RPCs would still be draining after 2 s, and on this
+  Mac they drained in ≈1 s. Round 4b rewrote the fixture (`BridgePeer.ReadingSlowly`, ≤ 8 KiB per 200 ms) and the test
+  now asserts its own premise before the verdict; full suite at `d25dbb4`: **391 green**. Details in `records/U2a.md`
+  "Round 4b". First command: `git checkout -b u2a-verify-r4-probes` so your probe commits stay reachable. Work ONLY there.
 - Toolchain: `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`. No `timeout` binary; tool calls cap at
   10 min; run the full suite at most twice, output to a file, read the tail. Targeted `dotnet test --filter` otherwise.
 - The Windows box is OFFLINE. Named-pipe buffer semantics, the handle-dispose kill and the no-buffer stall (mutant B4)
@@ -41,6 +44,12 @@ to "fails" when uncertain. The previous verifier for this unit is gone (process 
    in-process still work.
 5. **Suite stability at shipped defaults**: the full suite once under load (run the saturation probe concurrently) —
    report the wall time and any flake by name.
+6. **The round-4b test rewrite is a tooth, not a tautology.** The builder reports three mutants (busy path always
+   drops → RED on "busy"; busy path returns `Sent` → RED at 12 s; the old 400-RPC fixture under the new assertions →
+   RED "measured nothing about gate expiry"). Reproduce them. Then ask what the builder could not: is there a machine
+   speed or scheduler state in which `ReadingSlowly` lets the emergency through before the gate wait, so the test
+   passes without entering the expiry branch? Also confirm the product's busy-vs-stalled branch is the one the test
+   reaches (attach a probe or log line in your worktree; do not trust the name of the assertion).
 
 ## Method (non-negotiable)
 

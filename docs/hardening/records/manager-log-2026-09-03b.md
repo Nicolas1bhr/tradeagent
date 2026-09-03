@@ -54,3 +54,14 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
 - 18:27 Pinned `u14-verify-r4` and `u14-codex-r4` (detached, `e22eec6`); Codex `gpt-5.6-sol` launched detached on the
   codex worktree, output → `records/codex-U14-r4.txt`; U14 verifier (Opus) dispatched with `briefs/U14-r4-verify.md`.
   Heavy legs: U2a r4b builder + U14 verifier = 2.
+- 19:55 **U2a round-4b builder reported** (Opus, 234K tokens, 26 min): the red test was U2a's OWN (red at `5c716aa`
+  too) — the fixture assumed 400 × 512 KiB RPCs would still be draining at 2 s; this Mac drained them in ≈1 s and the
+  cancel-all took a free gate at 0.71 s. Fix in the TEST only (`ConnectorSendDeadlineTests.cs`, 143+/35−): a
+  `BridgePeer.ReadingSlowly` peer (≤ 8 KiB per 200 ms — a wall-clock bound, 12.95 s for the 512 KiB order) and the test
+  asserts its own premise before the verdict. Three mutants bite, incl. the OLD fixture under the new assertions ("it was
+  never queued behind anything"). Tip **`d25dbb4`**, full suite **391 green** (75/108/208). Lesson for the record: the
+  round-4 "360 green" claim never covered this test as written — a claim without the run is not a claim.
+- 19:58 `u2a-pipe-hardening` moved `5c716aa` → **`d25dbb4`** (24 commits ahead of main; old tip pinned in `u2a-orig`).
+  `u2a-verify-r4` + `u2a-codex-r4` detached at `d25dbb4`; Codex `gpt-5.6-sol` launched on the codex worktree
+  (→ `records/codex-U2a-r4.txt`); U2a verifier (Opus) dispatched with the updated `briefs/U2a-r4-verify.md` (target 6 =
+  the rewritten fixture is a tooth). Heavy legs: U14 verifier + U2a verifier = 2.
