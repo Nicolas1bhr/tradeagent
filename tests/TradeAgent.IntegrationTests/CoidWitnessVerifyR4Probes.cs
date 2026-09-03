@@ -166,4 +166,57 @@ public class CoidWitnessVerifyR4Probes : IDisposable
         Assert.True(clean, $"leftovers={leftovers} — a cleanly committed witness still reports a gap:\n  "
                            + string.Join("\n  ", report));
     }
+
+    string CommittedText() => File.ReadAllText(File_);
+    long CommittedGeneration() =>
+        System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("generation").GetInt64();
+    static string Fp(string text)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes(text)) { hash ^= b; hash *= 1099511628211UL; }
+        return hash.ToString("x16");
+    }
+    void WriteTemp(long generation, string? predecessor, string records)
+    {
+        var path = File_ + ".tmp";
+        var pred = predecessor is null ? "null" : $"\"{predecessor}\"";
+        File.WriteAllText(path, $$"""{"version":1,"generation":{{generation}},"predecessor":{{pred}},"records":[{{records}}]}""");
+        File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(File_).AddMinutes(5));
+    }
+
+    /// <summary>
+    /// WHICH CROSS-CAP DIRECTION THE NEW ADOPTION RULE ACTUALLY REFUSES.
+    ///
+    /// `DropsACommittedRecord` reads THIS instance's `_cap` to decide whether a missing leading run
+    /// is explained by Trim — but the candidate was written by a different instance, whose cap this
+    /// build cannot see. Every cap-using test in the suite sets writer and reader to the SAME cap,
+    /// so the cross-cap case is unpinned. This measures it in both directions: a legitimate at-cap
+    /// rewrite, read by a build whose cap is larger, and by one whose cap is smaller.
+    /// </summary>
+    [Theory]
+    [InlineData(3, 5)]   // writer's cap SMALLER than the reader's — a cap RAISE on upgrade
+    [InlineData(5, 3)]   // writer's cap LARGER than the reader's — a cap LOWER on upgrade
+    public void An_at_cap_rewrite_is_adopted_whatever_cap_the_reading_build_has(int writerCap, int readerCap)
+    {
+        var writer = new CoidWitness(File_, null, writerCap);
+        for (var n = 1; n <= writerCap; n++)
+        {
+            writer.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
+            writer.Identified($"TA-{n}", $"BRK-{n}");
+        }
+        Assert.Equal(writerCap, CommittedIds().Length);
+
+        // The next claim arrived, the writer's Trim dropped TA-1 off the front, the rename never
+        // landed. A perfectly legitimate uncommitted rewrite, at the WRITER's cap.
+        var kept = Enumerable.Range(2, writerCap - 1).Select(n => RecordJson($"TA-{n}", "a-dead-session"));
+        var fresh = RecordJson($"TA-{writerCap + 1}", "a-dead-session");
+        WriteTemp(CommittedGeneration() + 1, Fp(CommittedText()), string.Join(",", kept.Append(fresh)));
+
+        var reader = new CoidWitness(File_, null, readerCap);
+        var adopted = reader.All().Select(r => r.ClientOrderId).ToArray();
+
+        Assert.True(adopted.Contains($"TA-{writerCap + 1}"),
+            $"writerCap={writerCap} readerCap={readerCap}: the legitimate at-cap rewrite was NOT adopted; "
+            + $"reader sees [{string.Join(", ", adopted)}]");
+    }
 }
