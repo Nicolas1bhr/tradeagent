@@ -1363,10 +1363,14 @@ public class CoidWitnessTests : IDisposable
         var seed = Session();
         Submit(seed, "TA-SEED");
 
-        // Both load the same committed state, then commit in turn.
+        // BOTH LOAD BEFORE EITHER WRITES, which is the whole of the scenario: B's idea of what is
+        // committed is already stale by the time it saves. Loading is what All() forces —
+        // PriorSessionIds(0) returns early without touching the file, and using it here quietly
+        // made this test pass with no compare-and-swap at all.
         var a = Session();
         var b = Session();
-        Assert.Empty(a.PriorSessionIds(0));   // force both to load before either writes
+        Assert.Single(a.All());
+        Assert.Single(b.All());
 
         Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
         Assert.True(b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
