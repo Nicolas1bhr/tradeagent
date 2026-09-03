@@ -1753,6 +1753,33 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         }
         if (position is null) return null;
 
+        // THE WRITE-AHEAD RECORD FOR A CLOSE GOES IN BEFORE ATAS IS ASKED — the same rule as Place,
+        // for the same reason, on the path that moves the most money.
+        //
+        // This is the operator's close-all. It ends in ITradingManager.ClosePosition, which creates
+        // an order; the identifier is written onto that order AFTERWARDS, by hand, because ATAS
+        // decides the side and the order does not exist until it has. That ordering meant a witness
+        // that could not write could not stop this order the way it stops every other one: Place
+        // asks and refuses, and this asked nothing at all. An order that moves a real position was
+        // therefore the one order in the product with no durable record that it was submitted.
+        //
+        // Placed HERE, after the position is found and before anything is asked of ATAS: with no
+        // position there is nothing to submit and nothing to record, and below this line the close
+        // is on its way and a refusal would be a lie.
+        //
+        // THE SIDE IS NOT INFERRED, here or anywhere on this path — the sign convention on
+        // Position.Volume is not proven by the dump and a wrong guess would double a position rather
+        // than flatten it. The record says what is true of the SUBMISSION: a close of this size on
+        // this instrument, with ATAS choosing the direction.
+        var recorded = false;
+        Guard(() => recorded = _witness.Submitting(clientOrderId, accountId, symbol, "Close",
+                                                   Math.Abs(position.Volume), null));
+        if (!recorded)
+            throw new AtasRejectedException(
+                $"the write-ahead record for {clientOrderId} could not be written to " +
+                $"{_witness.Path ?? "<no witness file>"}; nothing was submitted. " +
+                (_witness.LastWriteFailure ?? ""));
+
         // Reference identity, not OrderKey. An order ATAS has not identified yet has no key to be
         // diffed by — they all used to collapse onto one string — and "is this the same object I
         // already saw" is exactly the question a before/after diff is asking. LiveOrders yields each
