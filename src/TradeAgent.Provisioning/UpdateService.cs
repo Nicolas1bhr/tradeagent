@@ -212,7 +212,7 @@ public sealed class UpdateService
 
     bool _busy;
     bool _launched;
-    string? _lastRefusalLogged;
+    string? _lastRefusalReason;
 
     public UpdateService(string currentVersion, string? repository = null, string? assetPattern = null, UpdateSources? sources = null)
     {
@@ -325,6 +325,12 @@ public sealed class UpdateService
     /// </summary>
     public async Task CheckAsync(CancellationToken ct = default)
     {
+        // Setup is running and this process is closing. A background check that answered now would
+        // repaint the strip as an ordinary offer over the top of "TradeAgent will close and reopen
+        // itself", which is an invitation to press something during the seconds when pressing
+        // anything is worst.
+        if (_launched) return;
+
         lock (_gate)
         {
             if (_busy) return;
@@ -380,7 +386,15 @@ public sealed class UpdateService
     /// Downloads the installer, checks it against the publisher's checksum, checks it again the
     /// instant before starting it, and starts it.
     ///
-    /// Returns true when the installer is running, which is the caller's signal to close TradeAgent.
+    /// <b>A true return means this process is going to exit.</b> Setup is running and is about to
+    /// overwrite the files this program is executing from, so the only correct thing a caller can do
+    /// with true is shut down — `MainWindow.InstallUpdateAsync` calls `desktop.Shutdown()`, which
+    /// disposes the gateway, the pipe server and the database first. A caller that treats true as
+    /// "carried on normally" leaves a running trading application being replaced underneath itself.
+    /// Everything after `Launch` inside this method is written to that rule: the latch stays up, the
+    /// activity write cannot fail the result, a second press cannot start a second installer, and
+    /// background checks stop.
+    ///
     /// Returns false when nothing was started, and <see cref="Message"/> then says why — in a
     /// sentence written for the owner, not a code.
     ///
@@ -613,11 +627,14 @@ public sealed class UpdateService
         RefusedPendingWork = pendingWork;
         Changed?.Invoke();
 
-        if (!repeatable || _lastRefusalLogged != reason)
-        {
-            _lastRefusalLogged = reason;
-            Activity?.Invoke(reason, "warn");
-        }
+        // A DIFFERENT refusal is new information, and "Later" was said about something else. Without
+        // this, one press of Later hid every future refusal for the rest of the session — including
+        // the first sight of a release we will not install.
+        var changedReason = _lastRefusalReason != reason;
+        if (changedReason) Dismissed = false;
+
+        if (!repeatable || changedReason) Activity?.Invoke(reason, "warn");
+        _lastRefusalReason = reason;
         return false;
     }
 
@@ -642,7 +659,7 @@ public sealed class UpdateService
         if (!Refused || !RefusedPendingWork) return;
         if (OutstandingWork(out _)) return;              // still true, leave it alone
 
-        _lastRefusalLogged = null;
+        _lastRefusalReason = null;
         Set(Available is null ? UpdateStage.UpToDate : UpdateStage.Available, null);
     }
 
@@ -790,7 +807,23 @@ public static class ReleaseFeed
         foreach (var c in name)
         {
             if (c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|') return false;
-            if (char.IsControl(c)) return false;
+
+            // char.IsControl was not enough. U+202E RIGHT-TO-LEFT OVERRIDE reverses how the rest of
+            // the name is DRAWN, so "TradeAgent-Setup-\u202Eexe.tab.exe" reads as an ordinary
+            // installer on screen while being something else; U+200B and U+00AD are invisible
+            // entirely, and two names that look identical to the owner are two different files. None
+            // of them is a control character. The category is the check, not the codepoint.
+            switch (char.GetUnicodeCategory(c))
+            {
+                case System.Globalization.UnicodeCategory.Control:
+                case System.Globalization.UnicodeCategory.Format:
+                case System.Globalization.UnicodeCategory.Surrogate:
+                case System.Globalization.UnicodeCategory.PrivateUse:
+                case System.Globalization.UnicodeCategory.OtherNotAssigned:
+                case System.Globalization.UnicodeCategory.LineSeparator:
+                case System.Globalization.UnicodeCategory.ParagraphSeparator:
+                    return false;
+            }
         }
         return true;
     }
