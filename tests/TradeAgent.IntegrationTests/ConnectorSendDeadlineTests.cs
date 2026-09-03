@@ -290,26 +290,25 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
-    /// AT THE SHIPPED DEFAULT, NOT A TEST VALUE. Slow on purpose — about ten seconds — because the
-    /// point is the number the product actually waits, not a scaled-down proxy for it.
+    /// AN EMERGENCY DOES NOT WAIT TEN SECONDS. At shipped defaults, nothing shortened.
     ///
-    /// An emergency cancel-all queued behind one stalled write is the worst case the operator cares
-    /// about. MEASURED HERE AT 9.76s with nothing shortened. Round 1 quoted suite durations taken at
-    /// a 1s test deadline, which understated this by an order of magnitude; the corrected figure is
-    /// in the build record.
+    /// Measured before this change: a cancel-all queued behind one stalled write took 9.76 s, and for
+    /// all of it the owner had a screen that said nothing while trying to stop. Emergency operations
+    /// now get two seconds for the send gate and then take the connection down, so the answer — even
+    /// though it is a bad answer — arrives while a person is still looking at it.
     /// </summary>
     [Fact]
-    public async Task An_emergency_cancel_all_behind_a_stalled_write_ends_at_the_shipped_default()
+    public async Task An_emergency_cancel_all_behind_a_stalled_write_fails_fast_and_says_why()
     {
         var pipe = NewPipe();
-        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped WriteTimeout: untouched
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all deadlines shipped
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyGateWait);
         await connector.ConnectAsync();
 
         await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // One order too big for the socket buffer parks the writer; the cancel-all queues behind it.
-        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-shipped-1", "ATAS-STALLED", "ES",
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-emerg-1", "ATAS-STALLED", "ES",
             OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
         Observe([stuck]);
         await Task.Delay(250);
@@ -319,10 +318,46 @@ public class ConnectorSendDeadlineTests
         timer.Stop();
 
         Assert.True(ex is ConnectorTransportException, $"an emergency cancel surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(25),
-            $"the cancel-all took {timer.Elapsed.TotalSeconds:0.00}s at the shipped 10s deadline");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"the emergency cancel-all took {timer.Elapsed.TotalSeconds:0.00}s — it is still queueing behind the stalled write");
+
+        // A sentence the owner can act on, not a stack trace.
+        Assert.Contains("not responding", ex.Message);
+        Assert.Contains("NOT confirmed", ex.Message);
+        Assert.Contains("ATAS", ex.Message);
+
+        // And the stalled connection really is gone, which is what frees the gate and starts the retry.
+        await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
+    }
+
+    /// <summary>
+    /// The other half of the decision: ORDINARY traffic keeps the full deadline. A quote arriving
+    /// late costs nothing, and a caller that is merely queued has no business tearing down a
+    /// connection. Shipped values, so this one really does take about ten seconds.
+    /// </summary>
+    [Fact]
+    public async Task An_ordinary_op_behind_a_stalled_write_still_gets_the_full_deadline()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+        await connector.ConnectAsync();
+
+        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-1", "ATAS-STALLED", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
+        Observe([stuck]);
+        await Task.Delay(250);
+
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.GetAccountsAsync());
+        timer.Stop();
+
+        Assert.True(ex is ConnectorTransportException);
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
-            $"the cancel-all returned in {timer.Elapsed.TotalSeconds:0.00}s, which is not the shipped-default path this test claims to measure");
+            $"an ordinary read gave up after {timer.Elapsed.TotalSeconds:0.00}s — it took the emergency path it is not entitled to");
+        Assert.DoesNotContain("NOT confirmed", ex.Message);
     }
 
     // ---------------------------------------------------------------- helpers

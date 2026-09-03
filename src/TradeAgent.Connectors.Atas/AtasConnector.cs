@@ -50,6 +50,39 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// How long an EMERGENCY frame waits behind this process's own send queue before it stops
+    /// waiting and takes the connection down with it.
+    ///
+    /// A JUDGMENT, not a measurement, and the number is two seconds. Measured beforehand: at the
+    /// shipped deadline an emergency cancel-all queued behind one stalled write took 9.76 s to come
+    /// back, and for ten seconds the owner saw a screen that had not changed and had no idea whether
+    /// anything had been cancelled. Ten seconds is a long time to be told nothing while trying to
+    /// stop.
+    ///
+    /// So an emergency gets two seconds, and then the truth: the connection is dropped, the call
+    /// fails as INDEFINITE, and the reason says the bridge is not responding and the cancel is not
+    /// confirmed. That is worse information than a confirmed cancellation and far better than
+    /// silence, because it is the sentence that sends a person to their platform to look.
+    ///
+    /// Dropping is not collateral damage, it is the point: the stalled writer holding the gate is
+    /// what made the emergency wait, and closing the handle frees it and starts the reconnect.
+    ///
+    /// Ordinary agent traffic keeps the full <see cref="WriteTimeout"/>. A quote that arrives late
+    /// costs nothing, and an ordinary caller has no reason to tear down a connection that is merely
+    /// busy.
+    /// </summary>
+    public TimeSpan EmergencyGateWait { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The operations a person reaches for when they want something to STOP.
+    ///
+    /// Close is here as well as CancelAll because close-all is built out of per-position closes:
+    /// the gateway loops them, so a close that queues for ten seconds is a close-all that queues for
+    /// ten seconds per position.
+    /// </summary>
+    static bool IsEmergency(string op) => op is BridgeOps.CancelAll or BridgeOps.Close;
+
     NamedPipeServerStream? _pipeStream;
     StreamWriter? _writer;
     Task? _accept;
@@ -475,7 +508,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         var w = _writer;
         if (w is null) return;
-        try { _ = await WriteFrame(w, frame, _cts.Token); }
+        try { _ = await WriteFrame(w, frame, _cts.Token, WriteTimeout, emergency: false); }
         catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
     }
 
@@ -520,9 +553,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
-    async Task<SendOutcome> WriteFrame(StreamWriter w, object frame, CancellationToken ct)
+    async Task<SendOutcome> WriteFrame(StreamWriter w, object frame, CancellationToken ct,
+        TimeSpan gateWait, bool emergency)
     {
-        if (!await _sendGate.WaitAsync(WriteTimeout, ct)) return SendOutcome.Busy;
+        if (!await _sendGate.WaitAsync(gateWait, ct))
+        {
+            // An emergency does not queue politely. Whatever is holding the gate has had its two
+            // seconds; the connection goes, which frees the gate and starts the reconnect.
+            if (emergency) DropStalledPeer();
+            return emergency ? SendOutcome.PeerStalled : SendOutcome.Busy;
+        }
         try
         {
             var write = w.WriteLineAsync(Json.Write(frame));
@@ -595,18 +635,28 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
-            var outcome = await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct);
+            var emergency = IsEmergency(op);
+            var outcome = await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
+                emergency ? EmergencyGateWait : WriteTimeout, emergency);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
-                // Both are indefinite, and they have to stay that way: a frame that was queued or
-                // half-written may or may not have reached ATAS. Safety rule 3 — only a definite
-                // refusal from the broker is allowed to read as definite. They are DIFFERENT
-                // sentences, though, because they call for different things from the operator: one
-                // says the platform stopped listening, the other says this process is saturated.
-                throw new ConnectorTransportException(outcome is SendOutcome.PeerStalled
-                    ? $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s"
-                    : $"'{op}' waited {WriteTimeout.TotalSeconds:0}s to be sent and was not; the bridge connection is still up");
+                // All of these are indefinite, and they have to stay that way: a frame that was
+                // queued or half-written may or may not have reached ATAS. Safety rule 3 — only a
+                // definite refusal from the broker is allowed to read as definite. They are
+                // different SENTENCES, because they ask different things of whoever reads them.
+                throw new ConnectorTransportException(outcome switch
+                {
+                    // Written for the owner, not for a log: this one reaches the screen during the
+                    // seconds when someone is trying to stop and needs to know where they stand.
+                    SendOutcome.PeerStalled when emergency =>
+                        $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
+                        "dropped and will be retried — check your positions and orders in ATAS.",
+                    SendOutcome.PeerStalled =>
+                        $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s",
+                    _ =>
+                        $"'{op}' waited {WriteTimeout.TotalSeconds:0}s to be sent and was not; the bridge connection is still up"
+                });
             }
         }
         catch (ConnectorTransportException) { throw; }
