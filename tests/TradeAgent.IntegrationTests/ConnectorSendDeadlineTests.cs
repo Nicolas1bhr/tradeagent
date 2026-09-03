@@ -626,32 +626,58 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
-    /// A BRIDGE THAT IS ALIVE BUT NOT ANSWERING THIS ONE OPERATION IS NOT A DEAD BRIDGE.
+    /// A BRIDGE THAT IS ANSWERING IS NOT A DEAD BRIDGE, EVEN WHEN THIS ONE OPERATION IS LATE.
     ///
-    /// The round-4 busy/stalled distinction, applied AFTER the wire as well as before it. This peer
-    /// reads everything we send and heartbeats throughout; it simply never answers the cancel-all.
-    /// The caller still fails at the deadline and still reports UNKNOWN — its frame went out and
-    /// was not acknowledged, which is the most indefinite state there is — but the connection is
-    /// left up, because dropping something that is plainly running costs a reconnect and buys
-    /// nothing.
+    /// The keep half of the round-4 busy/stalled distinction, applied after the wire — and rewritten
+    /// in round 6 around the signal that actually carries it. It used to use a peer that read
+    /// everything and heartbeated but answered nothing, which passed for the wrong reason: the rule
+    /// then kept ANY peer that had sent a frame, heartbeats included, and that is verifier finding
+    /// F-B — a wedged ATAS beats while its read loop is frozen, so the verdict was a coin flip on
+    /// heartbeat phase.
     ///
-    /// The keep-signal is ANY frame, not a heartbeat specifically: the bridge heartbeats every 5 s,
-    /// so a healthy connection is routinely silent for longer than an emergency waits, and a rule
-    /// that needed a heartbeat inside the window would drop healthy bridges.
+    /// So the fixture now demonstrates the thing the verdict is about. This peer reads every frame
+    /// and answers all of them EXCEPT the cancel-all, and the test keeps ordinary traffic flowing
+    /// across the window so answers really are arriving while the emergency waits. The caller still
+    /// fails and still reports UNKNOWN — its frame went out and was not acknowledged — but the
+    /// connection stays up, because a bridge that is returning answers is one the advised retry can
+    /// actually run on.
     /// </summary>
     [Fact]
-    public async Task An_emergency_a_live_bridge_does_not_answer_is_unknown_but_not_a_drop()
+    public async Task An_emergency_a_busy_bridge_has_not_answered_yet_is_unknown_but_not_a_drop()
     {
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
         await connector.ConnectAsync();
 
-        await using var peer = await BridgePeer.ReadingAndHeartbeating(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, BridgeOps.CancelAll);
         await Wait(async () => await connector.IsConnectedAsync());
 
+        // Ordinary traffic that IS answered, for as long as the emergency waits. Without it the peer
+        // is merely capable of answering; with it, it demonstrably is.
+        using var chatter = new CancellationTokenSource();
+        var answered = 0;
+        var talking = Task.Run(async () =>
+        {
+            while (!chatter.IsCancellationRequested)
+            {
+                try { await connector.GetAccountsAsync(chatter.Token); Interlocked.Increment(ref answered); }
+                catch (Exception) { /* the emergency's own failure must not end the chatter */ }
+                try { await Task.Delay(150, chatter.Token); } catch (Exception) { return; }
+            }
+        });
+
+        await Wait(() => Task.FromResult(Volatile.Read(ref answered) > 0));
+        var answeredBefore = Volatile.Read(ref answered);
+
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-BEATING"));
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-ANSWERING"));
         timer.Stop();
+        await chatter.CancelAsync();
+        try { await talking; } catch (Exception) { /* torn down with the test */ }
+
+        // The premise: answers really were coming back while the emergency was outstanding.
+        Assert.True(Volatile.Read(ref answered) > answeredBefore,
+            "no request was answered while the emergency waited, so this is the wedged case and not the busy one");
 
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
@@ -660,114 +686,53 @@ public class ConnectorSendDeadlineTests
         Assert.Contains("NOT confirmed", ex.Message);
         Assert.DoesNotContain("not responding", ex.Message);
         Assert.True(await connector.IsConnectedAsync(),
-            "a bridge that was reading everything and heartbeating throughout was dropped");
+            "a bridge that was answering requests throughout was dropped");
     }
 
     /// <summary>
-    /// THE AGENT'S CANCEL-ALL, THROUGH THE REAL GATEWAY, WHICH IS WHERE THE TIME WAS ACTUALLY GOING.
+    /// A BRIDGE THAT TALKS BUT DOES NOT LISTEN IS NOT ALIVE IN THE DIRECTION THAT MATTERS.
     ///
-    /// Codex F11 on d25dbb4. The test that claimed to measure "the agent's sweep leg" called
-    /// <c>AtasConnector.CancelOrderAsync</c> directly and skipped everything the gateway does first:
-    /// a real cancel-all reads the working orders (an ordinary <c>orders</c> RPC), and each leg then
-    /// resolves its target by reading orders again, before the two-second emergency frame it was
-    /// hurrying to send ever gets a turn. At shipped deadlines the prerequisite read alone served
-    /// the full ten seconds — so the measured 2002 ms was real and was measuring the wrong thing.
+    /// Verifier finding F-B on 0909ada. The reply-timeout rule kept the connection whenever ANY frame
+    /// had arrived during the window, and a heartbeat is a frame. But
+    /// <c>BridgeServer.StartHeartbeat</c> runs on its own <c>Task.Run</c>, independent of the frame
+    /// read loop — so a freeze inside ATAS that wedges the loop leaves the heartbeat running, and the
+    /// emergency was told the bridge was merely BUSY and left the dead connection up. Measured by the
+    /// verifier at the shipped 5 s interval: KEPT in 6 of 12 runs, the verdict decided by heartbeat
+    /// phase. A coin flip on whether stop works.
     ///
-    /// This one goes over the IPC pipe, through <see cref="GatewayPipeServer"/> and
-    /// <see cref="TradingGateway"/>, onto a real <see cref="AtasConnector"/> whose bridge has
-    /// stopped reading, with one 128 KiB write already holding the connector's send gate — so the
-    /// prerequisite read has to queue for that gate exactly as the cancel frame would.
+    /// Twelve phases across that interval, and the answer has to be the same for all of them. The
+    /// peer accepts NOTHING — asserted, not assumed — so whatever it is doing with its other thread,
+    /// the frame this emergency is waiting on was never read.
     /// </summary>
-    [Fact]
-    public async Task An_agent_cancel_all_through_the_real_gateway_fails_fast_on_a_stalled_bridge()
-    {
-        var bridgePipe = NewPipe();
-        await using var connector = new AtasConnector(bridgePipe, TimeSpan.FromSeconds(10), Cred());   // shipped
-        await connector.ConnectAsync();
-        await using var peer = await BridgePeer.Stalled(bridgePipe, Cred().Secret);
-        await Wait(async () => await connector.IsConnectedAsync());
-
-        using var db = TestEnv.NewDb();
-        var gw = new TradingGateway(db, connector, new HealthRegistry());
-        gw.Update(s =>
-        {
-            s.Mode = TradingMode.PAPER;
-            s.SelectedAccountId = "ATAS-STALLED";   // so the ONE prerequisite read is the orders list
-        });
-
-        var ipcPipe = NewPipe();
-        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), ipcPipe);
-        server.Start();
-        await using var client = new PipeClient();
-        await client.ConnectAsync(10_000, ipcPipe);
-
-        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-f11-hold", "ATAS-STALLED", "ES",
-            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
-        Observe([stuck]);
-        await Task.Delay(250);
-
-        var timer = Stopwatch.StartNew();
-        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f11-sweep" })
-            .WaitAsync(TimeSpan.FromSeconds(40));
-        timer.Stop();
-
-        Assert.False(reply.Ok, "the sweep reported success against a bridge that has read nothing");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"cancel-all through the real gateway took {timer.Elapsed.TotalSeconds:0.00}s — the prerequisite orders read is still on the ordinary deadline");
-
-        // And it is the emergency's own sentence that comes back, not a generic transport failure:
-        // the read inherited the operation's urgency, so it also inherited its words.
-        Assert.Contains("NOT confirmed", reply.Error!.Message);
-    }
-
-    /// <summary>
-    /// A PROGRESS BUDGET IS NOT A BOUND, AND SOMETHING HAS TO BE.
-    ///
-    /// Codex F2, the structural half. <see cref="AtasConnector.WriteTimeout"/> is spent per chunk and
-    /// RESET by every chunk the peer accepts — which is exactly what makes it a stalled-peer detector
-    /// and exactly what stops it bounding anything. A legal order near the 1 MiB frame cap is a
-    /// thousand chunks, so a peer that accepts one just inside the budget each time keeps the write
-    /// alive for a thousand times the budget. <c>WorstCaseOrderPath</c> counted ONE WriteTimeout for
-    /// the whole write, <c>GatewayPipeServer.HandlerDrainTimeout</c> was derived from that claim, and
-    /// so the drain could expire on an order that was still legitimately in progress and abandon it
-    /// DISPATCHING — the state cc7006e and 02aad9a exist to prevent.
-    ///
-    /// The fixture is built so that ONLY the whole-frame ceiling can end this write: the peer accepts
-    /// a chunk every 200 ms against a 2 s per-chunk budget, so the progress budget is never close to
-    /// expiring, and at that rate the 512 KiB frame needs about a hundred seconds. It must end at the
-    /// ceiling instead, and say which bound it was.
-    /// </summary>
-    [Fact]
-    public async Task A_write_that_keeps_making_progress_is_still_bounded_in_total()
+    [Theory]
+    [InlineData(0)] [InlineData(400)] [InlineData(800)] [InlineData(1200)]
+    [InlineData(1600)] [InlineData(2000)] [InlineData(2400)] [InlineData(2800)]
+    [InlineData(3200)] [InlineData(3600)] [InlineData(4000)] [InlineData(4400)]
+    public async Task A_bridge_that_only_heartbeats_is_dropped_whatever_the_heartbeat_phase(int phaseMs)
     {
         var pipe = NewPipe();
-        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(1), Cred())
-        {
-            WriteTimeout = TimeSpan.FromSeconds(2),    // per chunk, and never reached here
-            FrameTimeout = TimeSpan.FromSeconds(3)     // the total, and the only thing that can end it
-        };
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all deadlines shipped
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyDeadline);
         await connector.ConnectAsync();
-        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret, 1024, TimeSpan.FromMilliseconds(200));
+
+        await using var peer = await BridgePeer.HeartbeatingButNotReading(
+            pipe, Cred().Secret, TimeSpan.FromMilliseconds(phaseMs));
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // ~5 KiB/s against 512 KiB: a hundred seconds of steady, unbroken progress.
+        // Nothing parked: the gate is free, the small frame lands in the socket buffer, and what is
+        // on trial is the REPLY timeout rather than the queue.
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(
-            new PlaceOrderCommand("TA-ceiling-1", "ATAS-READING", "ES", OrderSide.Buy, OrderType.Market,
-                1m, null, null, TimeInForce.Day, new string('c', 512 * 1024))));
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-WEDGED"));
         timer.Stop();
 
-        Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10),
-            $"the write ran for {timer.Elapsed.TotalSeconds:0.00}s — the per-chunk budget was reset forever and nothing bounded the total");
-        Assert.True(timer.Elapsed >= TimeSpan.FromSeconds(3) - TimeSpan.FromMilliseconds(200),
-            $"the write ended after {timer.Elapsed.TotalSeconds:0.00}s, before the ceiling — some other bound fired and this measures nothing");
+        // The fixture's own premise: it read nothing at all, so any liveness it appears to have is
+        // coming from the thread a freeze does not stop.
+        Assert.Equal(0, peer.BytesRead);
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
 
-        // The right accusation: it was being read the whole time, it was simply never going to finish.
-        Assert.Contains("still being sent", ex.Message);
-        Assert.DoesNotContain("did not read", ex.Message);
-
-        // Half a frame is in a writer every caller shares, so the connection cannot be reused.
+        Assert.Contains("not responding", ex.Message);
+        Assert.DoesNotContain("busy", ex.Message);
         await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
     }
 
@@ -903,18 +868,92 @@ public class ConnectorSendDeadlineTests
         public static async Task<BridgePeer> ReadingAndHeartbeating(string pipe, string secret)
         {
             var peer = await ConnectAndSayHello(pipe, secret, "ATAS-BEATING", TimeSpan.Zero, PaceBytes);
-            _ = Task.Run(peer.Heartbeats);
+            _ = Task.Run(() => peer.Heartbeats(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250)));
             return peer;
         }
 
-        async Task Heartbeats()
+        /// <summary>
+        /// A WEDGED BRIDGE: it heartbeats at the shipped interval and never reads a byte.
+        ///
+        /// This is not a contrived shape. <c>BridgeServer.StartHeartbeat</c> runs on its own
+        /// <c>Task.Run</c>, independent of the frame read loop, so a freeze inside ATAS that wedges
+        /// the loop leaves the heartbeat running — the connection looks alive and consumes nothing.
+        /// <paramref name="phase"/> is how long it waits before the first one, which is what decides
+        /// whether a heartbeat lands inside an emergency's two-second window.
+        /// </summary>
+        public static async Task<BridgePeer> HeartbeatingButNotReading(string pipe, string secret, TimeSpan phase)
         {
+            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-WEDGED", null, PaceBytes);
+            _ = Task.Run(() => peer.Heartbeats(phase, ShippedHeartbeatInterval));
+            return peer;
+        }
+
+        /// <summary><c>BridgeServer.HeartbeatInterval</c>, read from that file, not guessed.</summary>
+        public static readonly TimeSpan ShippedHeartbeatInterval = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// A BRIDGE THAT IS PLAINLY SERVING, with one operation outstanding: it reads every frame and
+        /// answers all of them except <paramref name="mute"/>.
+        ///
+        /// This is the shape the "busy" verdict exists for — the read loop is running, answers are
+        /// coming back, and one request is simply late. It is what separates that from a wedged
+        /// bridge, which produces heartbeats and no answers at all.
+        /// </summary>
+        public static async Task<BridgePeer> AnsweringAllBut(string pipe, string secret, string mute)
+        {
+            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-ANSWERING", null, PaceBytes);
+            _ = Task.Run(() => peer.AnswerEverythingBut(mute));
+            return peer;
+        }
+
+        async Task AnswerEverythingBut(string mute)
+        {
+            var buf = new byte[8192];
+            var pending = new MemoryStream();
             try
             {
                 while (!_stop.IsCancellationRequested)
                 {
-                    await Task.Delay(250, _stop.Token);
+                    var n = await _p.ReadAsync(buf, _stop.Token);
+                    if (n == 0) return;
+                    Interlocked.Add(ref _read, n);
+                    pending.Write(buf, 0, n);
+
+                    // Line framing, because a read boundary is not a frame boundary.
+                    var all = pending.ToArray();
+                    var from = 0;
+                    for (var i = 0; i < all.Length; i++)
+                    {
+                        if (all[i] != (byte)'\n') continue;
+                        var line = Encoding.UTF8.GetString(all, from, i - from);
+                        from = i + 1;
+                        BridgeFrame? f;
+                        try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { continue; }
+                        if (f?.Id is null || f.Op == mute) continue;
+                        await WriteAsync(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data = Array.Empty<object>() });
+                    }
+                    pending = new MemoryStream();
+                    pending.Write(all, from, all.Length - from);
+                }
+            }
+            catch (Exception) { /* the test ending is how this always ends */ }
+        }
+
+        long _beats;
+
+        /// <summary>Heartbeats this peer has put on the wire since the handshake.</summary>
+        public long HeartbeatsSent => Interlocked.Read(ref _beats);
+
+        async Task Heartbeats(TimeSpan phase, TimeSpan interval)
+        {
+            try
+            {
+                await Task.Delay(phase, _stop.Token);
+                while (!_stop.IsCancellationRequested)
+                {
                     await WriteAsync(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat });
+                    Interlocked.Increment(ref _beats);
+                    await Task.Delay(interval, _stop.Token);
                 }
             }
             catch (Exception) { /* the test ending is how this always ends */ }
