@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- WINDOWS-ONLY, AND DELIBERATELY OUTSIDE TradeAgent.sln.
+       AtasStrategyAdapter is <Compile Remove>d unless AtasBridgeBuild=true, so no test in the
+       cross-platform suite can reach its branches. This is the executable gate for the ones that
+       move money, and it only exists where the real ATAS assemblies do:
+
+         tools/win-push.sh
+         tools/win-run.sh 'cd C:\ta\repo\tools\atas-gate && dotnet run -c Release -p:AtasBridgeBuild=true'
+
+       AtasBridgeBuild has to be passed on the command line, not set here: a property in this file
+       does not reach the referenced project, so the adapter would be compiled OUT of the very
+       assembly this gate exists to exercise and the failure reads as a missing type.
+
+       It exits non-zero on failure, so it is a gate and not a demonstration. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>atas-gate</AssemblyName>
+    <RootNamespace>TradeAgent.AtasGate</RootNamespace>
+    <AtasBridgeBuild>true</AtasBridgeBuild>
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
+  </ItemGroup>
+  <PropertyGroup>
+    <AtasInstallDir Condition="'$(AtasInstallDir)'==''">C:\Program Files (x86)\ATAS Platform</AtasInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ATAS.Indicators"><HintPath>$(AtasInstallDir)\ATAS.Indicators.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ATAS.Strategies"><HintPath>$(AtasInstallDir)\ATAS.Strategies.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ATAS.DataFeedsCore"><HintPath>$(AtasInstallDir)\ATAS.DataFeedsCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Utils.Common"><HintPath>$(AtasInstallDir)\Utils.Common.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

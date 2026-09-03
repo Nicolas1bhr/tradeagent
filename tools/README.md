@@ -64,6 +64,29 @@ tools/win-ps.sh  < script.ps1       # runs PowerShell without four layers of quo
 tools/win-shot.sh /tmp/win.png      # console desktop only — see win-state.sh above
 ```
 
+### atas-gate/ — the money-path branches, executed
+
+`AtasStrategyAdapter.cs` is `<Compile Remove>`d unless `AtasBridgeBuild=true`, so nothing in the
+cross-platform suite can reach the branches that refuse an order. Two review rounds recorded the
+operator close-all refusal as inspected-but-unverified for exactly that reason. This runs it, against
+the real ATAS assemblies, with stubs for the two interfaces the adapter binds:
+
+```bash
+tools/win-push.sh
+tools/win-run.sh 'cd C:\ta\repo\tools\atas-gate && dotnet run -c Release -p:AtasBridgeBuild=true -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"'
+```
+
+It exits non-zero on failure, so it is a gate rather than a demonstration, and it asserts both
+directions: with the witness unavailable `ITradingManager.ClosePosition` is never called and the
+refusal is the definite "nothing was submitted"; with it writable the close IS put to ATAS.
+
+Two things it is worth knowing before editing it. `AtasBridgeBuild=true` must be passed on the command
+line — a property in the gate's own csproj does not reach the referenced project, and the adapter is
+then compiled OUT of the assembly the gate exists to exercise, which reads as a missing type. And the
+ATAS assemblies are referenced `Private=false` (copying them beside a strategy is what breaks its
+loading), so a console running outside ATAS resolves them from the install directory itself — hence
+the `AssemblyResolve` handler, installed before any ATAS type is touched.
+
 **Use `win-ps.sh` for anything longer than one word.** `win-run.sh 'powershell -Command "..."'` has
 to survive zsh, then ssh's re-parse, then cmd.exe, then PowerShell — four layers with four different
 escape rules. Anything containing a quote, a `$` or a backslash arrives mangled, and the symptom is
