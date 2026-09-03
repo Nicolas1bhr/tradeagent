@@ -129,6 +129,18 @@ public sealed class CoidWitness
     readonly int _cap;
     readonly string? _path;
 
+    /// <summary>
+    /// THE ONE STEP THAT FAILS ON WINDOWS AND CANNOT BE MADE TO FAIL ANYWHERE ELSE.
+    ///
+    /// <c>MoveFileEx(MOVEFILE_REPLACE_EXISTING)</c> refuses with a sharing violation when the
+    /// destination is open without <c>FileShare.Delete</c> — a scanner, the indexer, another
+    /// process's reader. On macOS and Linux <c>rename(2)</c> does not consult open handles at all,
+    /// so the failure this class has to survive is not reproducible on the machine it is written on.
+    /// It is therefore a seam: production passes nothing and gets <see cref="DefaultReplace"/>, and
+    /// a test passes a delegate that throws the way Windows would.
+    /// </summary>
+    readonly Action<string, string> _replace;
+
     bool _loaded;
     bool _readFailed;
     bool _writeFailed;
@@ -166,13 +178,27 @@ public sealed class CoidWitness
     /// The testable shape. <paramref name="sessionId"/> is null in every production use — a caller
     /// choosing the session id is exactly what property 2 above rules out — and tests pass null too:
     /// two instances over one path get two different sessions for free, which is the whole scenario.
+    ///
+    /// <paramref name="replace"/> is null in every production use as well. It exists because the
+    /// failure this class must survive — a rename refused because the destination is open — happens
+    /// on Windows and cannot be provoked on the machine the code is written on. See
+    /// <see cref="_replace"/>.
     /// </summary>
-    public CoidWitness(string? path, string? sessionId = null, int cap = DefaultCap)
+    public CoidWitness(string? path, string? sessionId = null, int cap = DefaultCap,
+                       Action<string, string>? replace = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
+        _replace = replace ?? DefaultReplace;
     }
+
+    /// <summary>
+    /// The real thing: one operation, so a reader sees the old file or the new one and no third
+    /// thing. See <see cref="Save"/> for why never a delete followed by a move.
+    /// </summary>
+    static void DefaultReplace(string tmp, string destination) =>
+        File.Move(tmp, destination, overwrite: true);
 
     /// <summary>
     /// Resolving the default path touches <see cref="Paths"/>, which creates directories. Guarded
@@ -486,7 +512,7 @@ public sealed class CoidWitness
 
         for (var attempt = 0; ; attempt++)
         {
-            try { File.Move(tmp, _path, overwrite: true); return; }
+            try { _replace(tmp, _path); return; }
             catch (IOException) when (attempt < 3) { Thread.Sleep(20); }
         }
     }
