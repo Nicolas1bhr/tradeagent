@@ -43,6 +43,10 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public Exception? ThrowAfterClose;
     public Exception? ThrowAfterCancelAll;
     public bool ModifyIgnoresTheRequest;
+    public bool CancelDoesNotReachTheBook;
+    public bool CancelAllDoesNotReachTheBook;
+    /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
+    public Func<OrderInfo, OrderInfo>? RewriteBook;
     public TaskCompletionSource? HangPlace;
     public int Closes;
     public int CancelAlls;
@@ -59,7 +63,11 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
     public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
     public Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => inner.GetPositionsAsync(a, ct);
-    public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default) => inner.GetOrdersAsync(a, inc, since, ct);
+    public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default)
+    {
+        var orders = await inner.GetOrdersAsync(a, inc, since, ct);
+        return RewriteBook is null ? orders : orders.Select(RewriteBook).ToList();
+    }
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) => inner.GetExecutionsAsync(a, since, ct);
 
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
@@ -81,14 +89,14 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
 
     public async Task CancelOrderAsync(string id, CancellationToken ct = default)
     {
-        await inner.CancelOrderAsync(id, ct);                    // the broker DID cancel
+        if (!CancelDoesNotReachTheBook) await inner.CancelOrderAsync(id, ct);   // the broker DID cancel
         if (ThrowAfterCancel is { } ex) throw ex;
     }
 
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
     {
         CancelAlls++;
-        var ids = await inner.CancelAllOrdersAsync(a, ct);
+        var ids = CancelAllDoesNotReachTheBook ? [] : await inner.CancelAllOrdersAsync(a, ct);
         if (ThrowAfterCancelAll is { } ex) throw ex;
         return ids;
     }
@@ -952,5 +960,191 @@ public class OperatorEmergencyRecordTests
         Assert.NotEmpty(ids);
         Assert.Equal(1, closed);
         Assert.Empty(c.Inner.Broker.Positions);
+    }
+}
+
+// =================================================================================================
+// ROUND 2 · item 1 — a cancel or a modify is reconciled against the ORDER IT NAMED
+// =================================================================================================
+
+/// <summary>
+/// The reconciler matched every request against a `TA-{requestId}` client id at the broker. A PLACE
+/// really does carry that id onto the order; a CANCEL, a MODIFY and a cancel-all never transmit it —
+/// they send the target's broker id, or nothing but the account. So the lookup always missed, and on
+/// a connector that can prove its own history the absence rule then read "no order exists" and wrote
+/// CANCELLED: the ledger recording a cancellation as done, and trading resuming, while the order it
+/// was supposed to cancel is still working at the broker.
+/// </summary>
+public class TargetedReconciliationTests
+{
+    static GatewayOptions NoGrace => new() { AbsenceGrace = TimeSpan.Zero };
+
+    [Fact]
+    public async Task A_cancel_whose_target_is_still_working_is_never_reconciled_as_cancelled()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "t-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        // The cancel never takes effect at the platform, and the answer is lost on the way home.
+        c.CancelDoesNotReachTheBook = true;
+        c.ThrowAfterCancel = new ConnectorTransportException("wire down after the cancel was sent");
+        var cancel = await gw.CancelAsync(new AgentContext("a"), "t-cancel", placed.ConnectorOrderId!);
+        Assert.Equal(ExecutionState.UNKNOWN, cancel.State);
+        c.ThrowAfterCancel = null;
+        c.CancelDoesNotReachTheBook = false;
+
+        var result = await gw.ReconcileAsync();
+
+        // The target is the evidence, and it says the cancel did not land.
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
+        var record = gw.GetRequest("t-cancel")!;
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.Equal(ExecutionState.REJECTED, record.State);
+        Assert.False(record.NeedsReconciliation);
+        Assert.Contains("still working", record.LastError);
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+
+        // Nothing is unconfirmed any more — the answer was definite — so the agent may trade, and it
+        // may try the cancellation again under a new request id.
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        var retry = await gw.CancelAsync(new AgentContext("a"), "t-cancel-2", placed.ConnectorOrderId!);
+        Assert.Equal(ExecutionState.CANCELLED, retry.State);
+        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders.Single().State);
+    }
+
+    [Fact]
+    public async Task A_cancel_whose_target_is_gone_reconciles_as_cancelled()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "g-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        // This one DOES take effect; only the acknowledgement is lost.
+        c.ThrowAfterCancel = new ConnectorTransportException("wire down after the cancel was sent");
+        await gw.CancelAsync(new AgentContext("a"), "g-cancel", placed.ConnectorOrderId!);
+        c.ThrowAfterCancel = null;
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("g-cancel")!.State);
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    [Fact]
+    public async Task A_cancel_whose_target_filled_instead_is_recorded_as_a_cancel_that_failed()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "f-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        c.CancelDoesNotReachTheBook = true;
+        c.ThrowAfterCancel = new ConnectorTransportException("wire down");
+        await gw.CancelAsync(new AgentContext("a"), "f-cancel", placed.ConnectorOrderId!);
+        c.ThrowAfterCancel = null;
+        c.CancelDoesNotReachTheBook = false;
+        c.Inner.Broker.FillWorking(placed.ConnectorOrderId!);   // it filled instead of cancelling
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        var record = gw.GetRequest("f-cancel")!;
+        Assert.Equal(ExecutionState.REJECTED, record.State);    // the cancel failed; the order is gone
+        Assert.Contains("FILLED", record.LastError);
+    }
+
+    [Fact]
+    public async Task A_modify_the_platform_never_applied_is_never_reconciled_as_cancelled()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "m-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        c.ModifyIgnoresTheRequest = true;
+        c.ThrowAfterModify = new ConnectorTransportException("wire down after the change was sent");
+        var mod = await gw.ModifyAsync(new AgentContext("a"), "m-mod", placed.ConnectorOrderId!, 5m, null, null);
+        Assert.Equal(ExecutionState.UNKNOWN, mod.State);
+        c.ThrowAfterModify = null;
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.Equal(1m, c.Inner.Broker.Orders.Single().Quantity);       // the platform never changed it
+        var record = gw.GetRequest("m-mod")!;
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.Equal(ExecutionState.REJECTED, record.State);
+        Assert.False(record.NeedsReconciliation);
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+    }
+
+    [Fact]
+    public async Task A_modify_the_platform_did_apply_reconciles_as_acknowledged()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "ma-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        // The change lands at the platform and the acknowledgement is lost on the way back.
+        c.ThrowAfterModify = new ConnectorTransportException("wire down");
+        await gw.ModifyAsync(new AgentContext("a"), "ma-mod", placed.ConnectorOrderId!, 4m, null, null);
+        c.ThrowAfterModify = null;
+        c.RewriteBook = o => o.ConnectorOrderId == placed.ConnectorOrderId ? o with { Quantity = 4m } : o;
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, gw.GetRequest("ma-mod")!.State);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    [Fact]
+    public async Task A_cancel_all_press_is_reconciled_by_what_is_left_on_the_book()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "ca-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
+        c.CancelAllDoesNotReachTheBook = true;
+
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;
+        c.CancelAllDoesNotReachTheBook = false;
+
+        var result = await gw.ReconcileAsync();
+
+        // An order is still working, so the sweep demonstrably did not happen.
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
+        Assert.Equal(ExecutionState.REJECTED, umbrella.State);
+        Assert.Contains("still working", umbrella.LastError);
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+    }
+
+    [Fact]
+    public async Task A_cancel_all_press_that_emptied_the_book_reconciles_as_cancelled()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "cb-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
+
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.All(gw.Requests.Query("request_id LIKE 'op-cancel-%'"),
+            r => Assert.Equal(ExecutionState.CANCELLED, r.State));
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
