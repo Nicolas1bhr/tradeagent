@@ -743,6 +743,73 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
         Assert.Contains("io:degraded", reader.Token());
     }
+    /// <summary>
+    /// THE SAME DEFECT ONE STEP ALONG, AND A COUNT CANNOT SEE IT. A candidate that holds the SAME
+    /// NUMBER of records as the committed file, but not the same ones: it dropped a committed claim
+    /// and added one of its own. Every count check in the world reads that as "no records were
+    /// lost" — three against three — and adopting it drops the claim, because the adopted set is
+    /// what the next save commits.
+    ///
+    /// The property that matters is MEMBERSHIP: every identifier that was committed is still there.
+    /// The one exception is the prefix <c>Trim</c> takes at the cap, and this file is nowhere near
+    /// its cap, so nothing can account for TA-1 going missing.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_swapped_a_committed_claim_for_another_is_ignored()
+    {
+        var first = Session();
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            Submit(first, $"TA-{n}");
+            first.Identified($"TA-{n}", $"BRK-{n}");
+        }
+
+        // Three records against three, perfect lineage — and TA-1 is not in it.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: string.Join(",", RecordJson("TA-2", "a-dead-session"),
+                                            RecordJson("TA-3", "a-dead-session"),
+                                            RecordJson("TA-SWAPPED", "a-dead-session")));
+
+        var reader = Session();
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
+        Assert.NotNull(reader.PriorSession("TA-1"));
+        Assert.Null(reader.PriorSession("TA-SWAPPED"));
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("TA-1 is committed and not in it",
+                        File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION OF THE SAME RULE, AND IT IS WHY THE RULE IS NOT SIMPLY "KEEP EVERY
+    /// COMMITTED IDENTIFIER". At the cap the legitimate next rewrite MUST lose a record: a claim
+    /// arrives, <see cref="CoidWitness"/> trims the oldest off the front to make room, and the
+    /// result is missing a committed identifier through no fault of its own. Refusing that would
+    /// refuse every recovery on a full witness — which is every long-lived one.
+    ///
+    /// So a missing leading run is allowed exactly when the candidate is full. This test is the
+    /// half that a rule tightened without care would break silently.
+    /// </summary>
+    [Fact]
+    public void A_rewrite_that_trimmed_the_oldest_at_the_cap_is_still_adopted()
+    {
+        var writer = new CoidWitness(File_, null, cap: 3);
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            writer.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
+            writer.Identified($"TA-{n}", $"BRK-{n}");
+        }
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], CommittedIds());
+
+        // TA-4 arrived and Trim dropped TA-1 from the front. The rename never landed.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: string.Join(",", RecordJson("TA-2", "a-dead-session"),
+                                            RecordJson("TA-3", "a-dead-session"),
+                                            RecordJson("TA-4", "a-dead-session")));
+
+        var reader = new CoidWitness(File_, null, cap: 3);
+        Assert.Equal(["TA-2", "TA-3", "TA-4"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Equal("BRK-TA-4", reader.PriorSession("TA-4")!.BrokerOrderId);
+    }
 
     /// <summary>
     /// Every viable candidate descends from the same commit and so carries the same generation —
