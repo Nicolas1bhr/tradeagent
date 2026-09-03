@@ -1107,16 +1107,19 @@ public sealed class CoidWitness : IDisposable
     /// not land, "the first write failed and an order went out anyway" cannot happen. A first
     /// rewrite that never landed protects nothing, so nothing is lost by declining to trust it.
     ///
-    /// The middle case is the awkward one: the committed file EXISTS but does not parse. Its
-    /// generation is then unknowable, so the fingerprint is the whole of the test — which is sound,
-    /// because the fingerprint is over the exact bytes and is strictly the stronger of the two
-    /// checks. The generation comparison adds confirmation, never permission.
+    /// AND THE ANCHOR HAS TO PARSE. The awkward middle case is a committed file that EXISTS but is
+    /// not an envelope. Its generation is then unknowable, and this used to fall back to the
+    /// fingerprint by itself, on the argument that the fingerprint is over exact bytes and is the
+    /// stronger of the two checks. It is — over bytes that mean something. Corrupt bytes are not a
+    /// history this file has, they are a file that has to be replaced, and a temp claiming descent
+    /// from them was adopted whatever generation it named: its acknowledged identifiers reached
+    /// <see cref="PriorSession"/> while the witness was reporting, at the same moment, that it could
+    /// not be read. Both halves of the lineage or no adoption.
     /// </summary>
     static bool DescendsFrom(Envelope temp, string? committedText, Envelope? committed)
     {
-        if (committedText is null) return false;
+        if (committedText is null || committed is null) return false;
         if (!string.Equals(temp.Predecessor, Fingerprint(committedText), StringComparison.Ordinal)) return false;
-        if (committed is null) return true;
         return temp.Generation == committed.Generation + 1;
     }
 
