@@ -822,6 +822,45 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// INVALID BYTES ARE NOT A VALIDATED ANCHOR, AND FINGERPRINT ALONE IS NOT LINEAGE.
+    ///
+    /// When the committed file existed but did not parse, its generation was unknowable, so the
+    /// lineage test fell back to the fingerprint by itself and any temp claiming ANY generation was
+    /// adopted. The argument for that was that the fingerprint is over exact bytes and is the
+    /// stronger of the two checks. It is — over bytes that mean something. Corrupt bytes are not a
+    /// history this file has; they are a file that has to be replaced, and adopting a rewrite that
+    /// claims descent from them walks its acknowledged identifiers into <c>PriorSession</c> while
+    /// the witness is simultaneously reporting that it cannot be read.
+    ///
+    /// So an anchor has to PARSE. Both halves of the lineage or no adoption.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_committed_file_is_not_an_anchor()
+    {
+        File.WriteAllText(File_, "this is not a witness envelope at all");
+        var corrupt = File.ReadAllText(File_);
+
+        WriteTemp(generation: 999, predecessor: Fingerprint(corrupt),
+                  records: RecordJson("TA-GHOST", "a-dead-session"));
+
+        var reader = Session();
+        Assert.Null(reader.PriorSession("TA-GHOST"));
+        Assert.Empty(reader.PriorSessionIds(16));
+        Assert.True(reader.Unreadable);
+        Assert.Contains("records:err", reader.Token());
+
+        // And it is the missing anchor rather than the arithmetic: the generation a first rewrite
+        // would carry is refused just the same.
+        foreach (var f in Temps()) File.Delete(f);
+        WriteTemp(generation: 1, predecessor: Fingerprint(corrupt),
+                  records: RecordJson("TA-GHOST-2", "a-dead-session"));
+
+        var again = Session();
+        Assert.Null(again.PriorSession("TA-GHOST-2"));
+        Assert.Empty(again.PriorSessionIds(16));
+    }
+
+    /// <summary>
     /// LINEAGE AUTHENTICATES THE PARENT, NOT THE CONTENT. A rewrite can descend perfectly well from
     /// the committed file and still hold fewer records than it — and adopting one displaces
     /// committed claims, because the adopted set is what the next save commits. At the cap that
@@ -922,7 +961,8 @@ public class CoidWitnessTests : IDisposable
         var reader = new CoidWitness(File_, null, cap: 3);
         Assert.Null(reader.PriorSession("TA-X"));
         Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Empty(reader.PriorSessionIds(16).Where(id => id.StartsWith("TA-X") || id.StartsWith("TA-Y")));
+        Assert.DoesNotContain(reader.PriorSessionIds(16),
+                              id => id.StartsWith("TA-X", StringComparison.Ordinal));
     }
 
     /// <summary>
