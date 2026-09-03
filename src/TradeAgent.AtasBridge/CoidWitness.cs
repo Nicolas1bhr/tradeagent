@@ -874,8 +874,11 @@ public sealed class CoidWitness : IDisposable
     static Envelope? Parse(string json)
     {
         Envelope? envelope;
+        // ANY exception, not just JsonException. Deserialize also throws NotSupportedException for
+        // shapes the converter cannot handle, and one escaping here reaches EnsureLoaded, whose
+        // caller swallows it — leaving an instance that believes it loaded a file it never read.
         try { envelope = JsonSerializer.Deserialize<Envelope>(json, Opts); }
-        catch (JsonException) { return null; }
+        catch (Exception) { return null; }
         if (envelope is null || envelope.Version < 1 || envelope.Generation < 0) return null;
 
         var records = envelope.Records;
