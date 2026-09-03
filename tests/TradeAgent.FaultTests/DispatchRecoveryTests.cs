@@ -1376,3 +1376,93 @@ public class CloseAllOutcomeTests
         Assert.Contains("You closed all positions (2)", Recovery.Activity(db));
     }
 }
+
+// =================================================================================================
+// ROUND 2 · item 3 — the screen presses the same press again, not a new one
+// =================================================================================================
+
+/// <summary>
+/// The gateway makes a retried press free, and the Dashboard threw that away by minting a fresh
+/// nonce inside the click handler: the natural "it failed, press it again" was a NEW press, a second
+/// set of closes, and a 2-contract long sold twice. These exercise `OperatorPress` — the object the
+/// two emergency handlers actually hold — against the real gateway.
+/// </summary>
+public class OperatorPressPolicyTests
+{
+    [Fact]
+    public async Task A_press_that_could_not_be_confirmed_is_repeated_rather_than_reissued()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "press-1", TestEnv.Buy(qty: 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+
+        var button = new OperatorPress();          // what SafetyPage holds for "Close all positions"
+
+        var first = button.Begin();
+        await gw.OperatorCloseAllAsync(first);
+        button.Finish(!gw.HasUnconfirmedWork());
+
+        Assert.True(button.Outstanding);           // ambiguous, so the press is not over
+        Assert.Equal(1, c.Closes);
+
+        // The position is still open, so the person presses again. The wire must not be touched.
+        c.ThrowAfterClose = null;
+        var second = button.Begin();
+        await gw.OperatorCloseAllAsync(second);
+        button.Finish(!gw.HasUnconfirmedWork());
+
+        Assert.Equal(first, second);
+        Assert.Equal(1, c.Closes);
+        Assert.Single(c.Inner.Broker.Orders, o => o.Side == OrderSide.Sell);
+        Assert.Equal(2m, c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell).Sum(o => o.Quantity));
+        Assert.True(button.Outstanding);
+
+        // THE OTHER DIRECTION. Once the person resolves the unconfirmed record, the control is armed
+        // again and the next press really does send a close.
+        var stranded = Assert.Single(gw.Requests.NeedingReconciliation());
+        gw.ForceResolve(stranded.RequestId, ExecutionState.CANCELLED, "checked in ATAS: nothing was sent");
+        button.Finish(!gw.HasUnconfirmedWork());
+        Assert.False(button.Outstanding);
+
+        var third = button.Begin();
+        Assert.NotEqual(first, third);
+        await gw.OperatorCloseAllAsync(third);
+        Assert.Equal(2, c.Closes);
+    }
+
+    [Fact]
+    public async Task A_press_that_finished_cleanly_does_not_hold_the_control()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "clean-1", TestEnv.Buy(qty: 2m));
+        var button = new OperatorPress();
+
+        var first = button.Begin();
+        Assert.Equal(1, await gw.OperatorCloseAllAsync(first));
+        button.Finish(!gw.HasUnconfirmedWork());
+
+        Assert.False(button.Outstanding);
+        Assert.NotEqual(first, button.Begin());    // the next press is a new decision
+    }
+
+    [Fact]
+    public async Task The_cancel_all_control_holds_its_press_the_same_way()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "cpress-1", TestEnv.Buy());
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
+
+        var button = new OperatorPress();
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync(button.Begin()));
+        button.Finish(!gw.HasUnconfirmedWork());
+        Assert.True(button.Outstanding);
+
+        c.ThrowAfterCancelAll = null;
+        Assert.Empty(await gw.OperatorCancelAllAsync(button.Begin()));
+        Assert.Equal(1, c.CancelAlls);             // the same press: the sweep was not repeated
+    }
+}
