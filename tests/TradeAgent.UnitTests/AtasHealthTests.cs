@@ -133,11 +133,39 @@ public class AtasHealthTests
         Assert.Contains("coid-witness.json", detail);
     }
 
-    /// <summary>An older bridge does not report the field at all, and must not read as a failing one.</summary>
+    /// <summary>
+    /// A BRIDGE THAT DOES NOT REPORT THE FIELD IS NOT A HEALTHY BRIDGE ANY MORE — it is an older
+    /// build, and it must be refused rather than read as one with nothing to say.
+    ///
+    /// The silence is not the problem; what the silence hides is. A version-2 bridge writes the
+    /// witness, ignores whether the rewrite reached the disk, and sends the order anyway. Reading
+    /// its null as "no trouble" is precisely the wrong inference: it cannot report trouble it does
+    /// not look for. The protocol number is what separates those two, and it is bumped, so such a
+    /// bridge never becomes <c>AtasConnector.Bridge</c> at all — it arrives as a refusal string,
+    /// which this row already renders FAILED ahead of anything derived from the connection.
+    /// </summary>
     [Fact]
-    public void A_bridge_that_does_not_report_a_witness_failure_is_still_ready()
+    public void A_bridge_speaking_the_previous_protocol_is_refused_rather_than_believed()
     {
-        var hello = new BridgeHello { BridgeVersion = "0.9.1", BridgeProtocolVersion = 2, WitnessFailure = null };
+        Assert.False(Versions.BridgeCompatible(2));
+        Assert.True(Versions.BridgeCompatible(Versions.BridgeProtocolVersion));
+
+        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — reinstall the add-on";
+        var (state, detail) = AtasHealth.BridgeRow(true, Machine(), HealthState.READY, null, refusal);
+        Assert.Equal(HealthState.FAILED, state);
+        Assert.Equal(refusal, detail);
+    }
+
+    /// <summary>A current bridge with nothing to report is still READY.</summary>
+    [Fact]
+    public void A_current_bridge_with_no_witness_trouble_is_ready()
+    {
+        var hello = new BridgeHello
+        {
+            BridgeVersion = "0.9.1",
+            BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+            WitnessFailure = null
+        };
         Assert.Equal(HealthState.READY, AtasHealth.BridgeRow(true, Machine(), HealthState.READY, hello, null).State);
     }
 
