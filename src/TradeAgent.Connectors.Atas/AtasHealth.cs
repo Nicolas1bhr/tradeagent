@@ -56,9 +56,21 @@ public static class AtasHealth
         if (!string.IsNullOrWhiteSpace(refusal)) return (HealthState.FAILED, refusal);
 
         if (connection == HealthState.READY)
+        {
+            // CONNECTED IS NOT THE SAME AS ABLE TO TRADE. The bridge refuses any order whose client
+            // order id it could not write to the witness file, because rule 1 rests on that record —
+            // and a permanent local failure at that path refuses every order forever. A READY row
+            // over a bridge in that state is the row lying to the one person who could fix it, so
+            // this is the row that says so. It is DEGRADED rather than FAILED: the pipe is up and
+            // everything that does not place an order still works.
+            if (!string.IsNullOrWhiteSpace(hello?.WitnessFailure))
+                return (HealthState.DEGRADED,
+                        "connected, but orders are being refused: " + IncompatibleBridge.Clean(hello.WitnessFailure, 200));
+
             return (HealthState.READY, hello is null
                 ? "connected"
                 : $"connected · bridge {hello.BridgeVersion}, protocol {hello.BridgeProtocolVersion}");
+        }
 
         if (connection == HealthState.DEGRADED)
             return (HealthState.DEGRADED, "connected, but ATAS has stopped answering");

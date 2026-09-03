@@ -109,6 +109,23 @@ public sealed class BridgeHello
     /// </summary>
     [JsonPropertyName("trading_surface")] public string? TradingSurface { get; set; }
 
+    /// <summary>
+    /// THE WRITE-AHEAD RECORD COULD NOT BE WRITTEN, in one line naming the file. Null — not empty —
+    /// when the bridge has no such trouble or does not report the field at all, so an older bridge
+    /// reads as "nothing to say" rather than as a failure.
+    ///
+    /// It exists because the refusal it describes is otherwise silent. <c>Place</c> now declines an
+    /// order whose client order id could not be recorded, which is right — rule 1 rests on that
+    /// record — but a permanent local failure at the witness path refuses EVERY order forever, and
+    /// without a route to the screen the owner sees orders failing and no reason anywhere. This is
+    /// that route: it lands in the ATAS bridge health row, which is where somebody is already
+    /// looking when trading stops.
+    ///
+    /// DIAGNOSTIC ONLY. No capability derives from it, and it is free text from the bridge, so it is
+    /// cleaned before it reaches a label.
+    /// </summary>
+    [JsonPropertyName("witness_failure")] public string? WitnessFailure { get; set; }
+
     [JsonPropertyName("supports_modify")] public bool SupportsModify { get; set; }
     [JsonPropertyName("supports_close_position")] public bool SupportsClosePosition { get; set; }
 }
@@ -131,11 +148,17 @@ public sealed class BridgeHello
 public sealed record IncompatibleBridge(int ReportedProtocolVersion, int ExpectedProtocolVersion,
                                         string BridgeVersion, string AtasVersion)
 {
-    /// <summary>Untrusted text on its way to a label: one line, printable, and short.</summary>
-    public static string Clean(string? raw)
+    /// <summary>
+    /// Untrusted text on its way to a label: one line, printable, and short.
+    ///
+    /// <paramref name="max"/> defaults to the version-string length this was written for. A caller
+    /// that needs a sentence — the witness-failure row has to name a file path — asks for more,
+    /// which changes how much is kept and nothing about what is stripped.
+    /// </summary>
+    public static string Clean(string? raw, int max = 40)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "unknown";
-        var kept = new string(raw.Where(c => !char.IsControl(c)).Take(40).ToArray()).Trim();
+        var kept = new string(raw.Where(c => !char.IsControl(c)).Take(max).ToArray()).Trim();
         return kept.Length == 0 ? "unknown" : kept;
     }
 
