@@ -157,6 +157,13 @@ public sealed class StubBridge : IAsyncDisposable
         throw new InvalidOperationException("the pipe owner closed the connection without authenticating");
     }
 
+    /// <summary>
+    /// Raises a bridge event the way the real bridge does. Nothing else in the suite sent one, which
+    /// is how an authenticated peer speaking a refused protocol kept its event channel.
+    /// </summary>
+    public Task RaiseEvent(string name, object payload) =>
+        Send(new { v = Versions.BridgeProtocolVersion, @event = name, data = payload });
+
     Task Send(object o) => _w!.WriteLineAsync(Json.Write(o));
 
     async Task Loop(CancellationToken ct)
