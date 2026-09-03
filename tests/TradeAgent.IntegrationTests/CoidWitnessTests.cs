@@ -1030,8 +1030,15 @@ public class CoidWitnessTests : IDisposable
     /// Absent is exactly <see cref="FileNotFoundException"/> on the committed path. Every other way
     /// of not getting the bytes is unreadable, and unreadable refuses every write.
     /// </summary>
-    [Fact]
-    public void A_committed_file_that_cannot_be_read_is_not_treated_as_absent()
+    /// <param name="from">the first open of the committed path to deny (0 = the load's).</param>
+    /// <param name="to">one past the last. The load takes 1 open when it succeeds and 4 when every
+    /// attempt is refused, so (0,4) denies the load, (1,5) denies the compare-and-swap after a
+    /// successful load, and (0,8) denies both — Codex's own shape.</param>
+    [Theory]
+    [InlineData(0, 4, "the load's four reads")]
+    [InlineData(1, 5, "the compare-and-swap's four reads")]
+    [InlineData(0, 8, "both, with the post-replace read permitted")]
+    public void A_committed_file_that_cannot_be_read_is_not_treated_as_absent(int from, int to, string which)
     {
         var a = Session();
         Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
@@ -1039,27 +1046,29 @@ public class CoidWitnessTests : IDisposable
         a.Dispose();
         var original = File.ReadAllText(File_);
 
-        // The load's four reads and the compare-and-swap's four are denied; the post-replace
-        // read-back is permitted — which is exactly what makes a denied read look like an empty
-        // directory instead of a locked file.
-        var denied = 0;
+        var opens = 0;
         var w = new CoidWitness(File_, null, CoidWitness.DefaultCap, null,
             open: p =>
             {
-                if (string.Equals(p, File_, StringComparison.Ordinal) && denied < 8)
+                if (string.Equals(p, File_, StringComparison.Ordinal))
                 {
-                    denied++;
-                    throw new IOException("The process cannot access the file because it is being used by another process.");
+                    var n = opens++;
+                    if (n >= from && n < to)
+                        throw new IOException("The process cannot access the file because it is being used by another process.");
                 }
                 return new FileStream(p, FileMode.Open, FileAccess.Read,
                                       FileShare.ReadWrite | FileShare.Delete);
             });
 
-        Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null), which);
         Assert.Equal(original, File.ReadAllText(File_));
-        Assert.True(w.Unreadable);
-        Assert.NotNull(w.Trouble);
+
+        // AND THE DIAGNOSIS IS THE REPAIR. "Could not be read" sends a person to a lock or a damaged
+        // file; "changed underneath this writer" sends them hunting a second bridge that is not
+        // there. Each guard produces the first only if it is the one that fired, which is what makes
+        // them separately load-bearing rather than redundant.
         Assert.Contains("could not be read", w.Trouble);
+        Assert.DoesNotContain("changed underneath", w.Trouble);
     }
 
     /// <summary>
