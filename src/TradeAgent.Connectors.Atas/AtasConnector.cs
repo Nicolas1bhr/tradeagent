@@ -41,6 +41,30 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     BridgeCredential? _credential;
     volatile bool _authenticated;
+
+    /// <summary>
+    /// THIS CONNECTION HAS BEEN REFUSED, AND THE DECISION IS THE CONNECTION'S RATHER THAN THE
+    /// FRAME'S.
+    ///
+    /// Guarding one frame type at a time is how this kept reopening. The hello refusal was added,
+    /// then events were let through, so events were gated; then a HEARTBEAT — which carries a whole
+    /// <c>BridgeHello</c> — set the capabilities instead, one op to the left; and a second hello on
+    /// the same connection cleared the refusal outright. Each fix was correct about its instance and
+    /// left the class alone: <b>a peer this connector has refused is still allowed to speak.</b>
+    ///
+    /// So it is decided ONCE, at the top of <see cref="Dispatch"/>, for every frame there is and
+    /// every frame anyone adds later. Nothing clears it but a new connection — <see cref="Drop"/>
+    /// resets it — because the fault is the peer's identity, not the frame that revealed it.
+    /// </summary>
+    volatile bool _refused;
+
+    /// <summary>
+    /// A COMPATIBLE HELLO HAS BEEN ACCEPTED ON THIS CONNECTION — which is a different fact from
+    /// "this peer proved itself". Authentication says the thing on the pipe holds the secret; it
+    /// says nothing about what it speaks, and before a hello arrives nothing has been established at
+    /// all. Events and heartbeat refreshes both reach outside this class, so both wait for this.
+    /// </summary>
+    volatile bool _compatible;
     DateTimeOffset _peerArrived = DateTimeOffset.MaxValue;
     UnauthenticatedBridge? _unauthenticated;
     string? _peerImage;
@@ -246,6 +270,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // The silent-peer reading is the one that does leave with the peer: it is derived from
         // _peerArrived, reset below, so a pipe with nobody on it stops claiming anybody is there.
         _authenticated = false;
+        // Both are facts about THIS connection and end with it, exactly as _incompatible does: a
+        // fresh peer on a fresh connection is heard out from the beginning, and a repaired bridge
+        // that reconnects is accepted on its first hello.
+        _refused = false;
+        _compatible = false;
         _peerArrived = DateTimeOffset.MaxValue;
         _peerImage = null;
         _writer = null;
@@ -258,6 +287,18 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <summary>Handles one frame. False means this peer gets no further hearing.</summary>
     async Task<bool> Dispatch(string line)
     {
+        // ONE DECISION FOR THE WHOLE CONNECTION, ABOVE EVERY FRAME TYPE. See _refused: guarding one
+        // op at a time is how this reopened three times — the hello was refused, then events got
+        // through, then a heartbeat carrying a hello, then a second hello. A peer whose protocol
+        // this build cannot speak now gets no further hearing of ANY kind, including from a frame
+        // type nobody has written yet.
+        //
+        // DISCARDED, NOT DISCONNECTED. Returning false breaks the read loop, which runs Drop, which
+        // clears _incompatible — so the version number and the repair vanish from the row a moment
+        // after being written. The frame is dropped instead: the peer may talk all it likes and
+        // nothing it says is read, which is the whole of what "refused" has to mean here.
+        if (_refused) return true;
+
         BridgeFrame? f;
         try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { return true; }
         if (f is null) return true;
@@ -293,7 +334,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // protocol this build does not speak is refused as a connection, both directions.
         if (f.Event is not null)
         {
-            if (_authenticated && _incompatible is null) HandleEvent(f);
+            // AUTHENTICATION IS NOT COMPATIBILITY. Proving the secret says what the peer HAS; it says
+            // nothing about what it speaks, and before a hello arrives nothing has been established.
+            if (_authenticated && _compatible) HandleEvent(f);
             return true;
         }
 
@@ -312,7 +355,26 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                     hello.BridgeProtocolVersion, Versions.BridgeProtocolVersion,
                     IncompatibleBridge.Clean(hello.BridgeVersion), IncompatibleBridge.Clean(hello.AtasVersion));
                 _connected = false;
+                _hello = null;
+                _compatible = false;
+
+                // AND THE CONNECTION IS REFUSED, NOT THE FRAME. What used to happen was that this
+                // returned true and nothing else changed, so every later frame was still READ: a
+                // heartbeat carrying a whole hello set the capabilities back, and a second hello
+                // cleared the refusal outright. _refused ends that above, for every frame type at
+                // once and for any frame type added later.
+                _refused = true;
                 ConnectionChanged?.Invoke(HealthState.FAILED);
+
+                // THE PEER IS KEPT ON THE PIPE ANYWAY, AND THAT IS DELIBERATE. Returning false here
+                // breaks the read loop, which runs Drop, which clears _incompatible — by design,
+                // because "wrong version" is a fact about the peer and leaves with it
+                // (When_an_incompatible_bridge_disconnects_the_status_row_is_told pins that). So a
+                // refusal that also disconnects erases the version number microseconds after
+                // writing it and leaves the dashboard reading FAILED with nothing on it, while the
+                // bridge redials every two seconds — the exact failure the unproved-hello comment
+                // below was written about. Keeping the peer costs nothing now that it is refused
+                // whole: it is heard by nobody, and the row names the version and the repair.
                 return true;
             }
 
@@ -355,6 +417,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
             _hello = hello;
             _incompatible = null;
+            _compatible = true;
             _connected = true;
             _lastHeartbeat = DateTimeOffset.UtcNow;
             ConnectionChanged?.Invoke(HealthState.READY);
@@ -368,7 +431,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // and the branch below assigns it to _hello. So an unproved peer that simply never sends
             // a hello could set SupportsClientOrderId and SupportsOrderHistory here instead, and
             // ReconciliationProvable with them: the same unlock, one frame to the left.
-            if (!_authenticated) return true;
+            // Same gate as the event branch, and for the same reason: this branch assigns to _hello,
+            // so a peer that has not had a compatible hello accepted on this connection cannot reach
+            // it. _refused is already handled above, for every frame at once.
+            if (!_authenticated || !_compatible) return true;
 
             _lastHeartbeat = DateTimeOffset.UtcNow;
 

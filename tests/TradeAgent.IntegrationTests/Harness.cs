@@ -87,6 +87,13 @@ public sealed class StubBridge : IAsyncDisposable
     public List<OrderInfo> Book { get; } = [];
     public bool AnswerRpcs { get; set; } = true;
 
+    /// <summary>
+    /// Whether the handshake hello is sent at all. False lets a test put a frame on the wire from a
+    /// peer that has AUTHENTICATED and said nothing about its protocol — which is the state the
+    /// event gate has to refuse.
+    /// </summary>
+    public bool SendHello { get; set; } = true;
+
     public StubBridge(string pipe, BridgeHello? hello = null, BridgeCredential? credential = null)
     {
         _pipe = pipe;
@@ -113,7 +120,7 @@ public sealed class StubBridge : IAsyncDisposable
         _r = new StreamReader(_client, new UTF8Encoding(false), false, 8192, leaveOpen: true);
 
         await Authenticate(ct);
-        await Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = _hello });
+        if (SendHello) await Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = _hello });
         _loop = Task.Run(() => Loop(_cts.Token));
     }
 
@@ -163,6 +170,17 @@ public sealed class StubBridge : IAsyncDisposable
     /// </summary>
     public Task RaiseEvent(string name, object payload) =>
         Send(new { v = Versions.BridgeProtocolVersion, @event = name, data = payload });
+
+    /// <summary>A hello of the caller's choosing, at any time — including after one was refused.</summary>
+    public Task SaySomethingElse(BridgeHello hello) =>
+        Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = hello });
+
+    /// <summary>
+    /// A heartbeat carrying a whole hello, which is how a capability proved after the handshake
+    /// reaches the connector — and the frame a refused peer used to re-enter through.
+    /// </summary>
+    public Task Heartbeat(BridgeHello hello) =>
+        Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat, data = hello });
 
     Task Send(object o) => _w!.WriteLineAsync(Json.Write(o));
 
