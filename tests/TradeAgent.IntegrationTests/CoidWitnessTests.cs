@@ -68,6 +68,22 @@ public class CoidWitnessTests : IDisposable
     /// </summary>
     static void Age(string path) => File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-5));
 
+    /// <summary>The sidecar beside the witness, and its non-blank lines.</summary>
+    string Sidecar => Path.Combine(_dir, CoidWitness.ErrorLogName);
+    string[] SidecarLines() => File.Exists(Sidecar)
+        ? File.ReadAllLines(Sidecar).Where(l => l.Trim().Length > 0).ToArray() : [];
+
+    /// <summary>
+    /// A stale foreign temp: a perfectly good envelope that descends from nothing on this machine.
+    /// One quarantine WARNING each, which is what spends the non-safety quota.
+    /// </summary>
+    void WriteForeignLeftover(int n)
+    {
+        var p = File_ + $".tmp-dead-{n:D3}";
+        File.WriteAllText(p, $$"""{"version":1,"generation":99,"predecessor":"deadbeefdeadbeef","records":[{{RecordJson($"TA-X{n}", "dead")}}]}""");
+        Age(p);
+    }
+
     /// <summary>
     /// The identifiers in the COMMITTED file, read straight out of it. Deliberately not through
     /// <see cref="CoidWitness"/>: a durability assertion that goes through the reader can be
@@ -768,8 +784,12 @@ public class CoidWitnessTests : IDisposable
         // from this file means "this product never submitted that identifier" — the one answer that
         // must never be produced by accident — and something WAS refused, so a reader is told.
         // Unreadable stays false: the zero is a fact about the disk, not a failure to read it.
+        //
+        // The flag is `io:noted` and not `io:degraded`: a refused import is a diagnostic, not a
+        // durability gap, and only a gap may reach Trouble and drop SupportsClientOrderId.
         Assert.Contains("records:0", w.Token());
-        Assert.Contains("io:degraded", w.Token());
+        Assert.Contains("io:noted", w.Token());
+        Assert.Null(w.Trouble);
         Assert.False(w.Unreadable);
 
         // And the shape that round 2 still accepted: generation 1, descended from nothing. It is
@@ -783,7 +803,8 @@ public class CoidWitnessTests : IDisposable
         Assert.Empty(again.All());
         Assert.Empty(again.PriorSessionIds(16));
         Assert.Contains("records:0", again.Token());
-        Assert.Contains("io:degraded", again.Token());
+        Assert.Contains("io:noted", again.Token());
+        Assert.Null(again.Trouble);
         Assert.False(again.Unreadable);
         Assert.Contains("nothing anchors it",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
@@ -811,7 +832,8 @@ public class CoidWitnessTests : IDisposable
 
         var reader = Session();
         Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("io:noted", reader.Token());   // written down, but not a durability gap
+        Assert.Null(reader.Trouble);
     }
     /// <summary>
     /// THE SAME DEFECT ONE STEP ALONG, AND A COUNT CANNOT SEE IT. A candidate that holds the SAME
@@ -844,7 +866,8 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
         Assert.NotNull(reader.PriorSession("TA-1"));
         Assert.Null(reader.PriorSession("TA-SWAPPED"));
-        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("io:noted", reader.Token());   // written down, but not a durability gap
+        Assert.Null(reader.Trouble);
         Assert.Contains("TA-1 is committed and not in it",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
@@ -901,7 +924,8 @@ public class CoidWitnessTests : IDisposable
 
         var reader = Session();
         Assert.Equal(["TA-COMMITTED"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("io:noted", reader.Token());   // written down, but not a durability gap
+        Assert.Null(reader.Trouble);
         Assert.Contains("rival uncommitted rewrites",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
@@ -1374,7 +1398,12 @@ public class CoidWitnessTests : IDisposable
         Assert.True(File.Exists(log));
         Assert.Contains("RESOLVED", File.ReadAllLines(log)[^1]);
 
-        Assert.Contains("io:ok", Session().Token());
+        // NOT DEGRADED any more — which is the property. The sidecar still has history in it, so
+        // the token says `io:noted` rather than `io:ok`: the file is worth looking at, and no gap
+        // is open.
+        Assert.DoesNotContain("io:degraded", Session().Token());
+        Assert.Contains("io:noted", Session().Token());
+        Assert.Null(Session().Trouble);
     }
 
     /// <summary>
@@ -1565,6 +1594,73 @@ public class CoidWitnessTests : IDisposable
     {
         Assert.Equal(Path.Combine(_dir, CoidWitness.ErrorLogName), Session().ErrorLogPath);
         Assert.Null(new CoidWitness(path: null).ErrorLogPath);
+    }
+
+    /// <summary>
+    /// THE LINE THAT ENDS A DEGRADATION IS NOT A DIAGNOSTIC, AND THE QUOTA MUST NOT RATION IT.
+    ///
+    /// `RESOLVED` was written as a warning, so a session that had already spent its 32 non-safety
+    /// lines on quarantine notes could not write it. `_degraded` was cleared in memory while the
+    /// file's last word was still an open gap, so the NEXT process reported DEGRADED over a witness
+    /// that had committed cleanly — and `Describe()` computes `SupportsClientOrderId` from exactly
+    /// that. Permanent once the 64 `.rejected-n` slots are gone, because then the surplus is
+    /// re-rejected and the quota re-spent every session.
+    ///
+    /// The marker is a state transition, at most once per session and already guarded against
+    /// duplication by the re-read in `Settled`, so it cannot flood.
+    /// </summary>
+    [Fact]
+    public void A_clean_commit_says_the_gap_is_closed_even_after_the_warning_quota_is_spent()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+
+        // A REAL durability gap from an earlier run — a safety event, not a warning.
+        var failed = Session(NeverLands);
+        Assert.False(failed.Submitting("TA-GAP", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains(SidecarLines(), l => l.Contains("did not land"));
+
+        // 40 stale foreign temps: one quarantine warning each, well past the 32-line quota.
+        for (var i = 0; i < 40; i++) WriteForeignLeftover(i);
+
+        var next = Session();
+        Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+
+        // The warnings ARE still rationed — that half of the rule is the design.
+        Assert.Equal(32, SidecarLines().Count(l => l.Contains("ignored ")));
+
+        // And the witness says the gap is closed, so the next start does not report one.
+        Assert.Contains("RESOLVED", SidecarLines()[^1]);
+        Assert.Null(Session().Trouble);
+    }
+
+    /// <summary>
+    /// A QUARANTINE WARNING IS NOT A DURABILITY GAP, AND CONFLATING THEM IS WHAT MADE THE ROW CRY
+    /// WOLF. `Note()` set the degraded state for every line it wrote, so a foreign leftover moved
+    /// aside — a tidy-up — was indistinguishable downstream from a claim that never reached the
+    /// disk. `Trouble` non-null is what puts DEGRADED on the ATAS bridge row and drops
+    /// `SupportsClientOrderId` to false, so a machine with an old temp beside the witness reported
+    /// that orders were being refused while every order went through.
+    ///
+    /// The zero is still FLAGGED — `io:noted` says the sidecar has something in it — but only an
+    /// unresolved SAFETY line reaches `Trouble`.
+    /// </summary>
+    [Fact]
+    public void A_quarantined_leftover_is_noted_without_claiming_a_durability_gap()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        WriteForeignLeftover(1);
+
+        var next = Session();
+        Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains(SidecarLines(), l => l.Contains("ignored "));
+
+        // Written down, visible in the token — and NOT a reason to tell the operator that orders
+        // are being refused.
+        Assert.Contains("io:noted", next.Token());
+        Assert.Null(next.Trouble);
+        Assert.Null(Session().Trouble);
     }
 
     // -------------------------------------------------------------- two writers, one file

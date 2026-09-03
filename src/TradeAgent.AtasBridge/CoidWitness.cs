@@ -185,6 +185,25 @@ public sealed class CoidWitness
     /// <summary>What a resolved sidecar's last line says. See <see cref="_degraded"/>.</summary>
     const string ResolvedMarker = "RESOLVED coid-witness committed cleanly after the failures above.";
 
+    /// <summary>
+    /// WHAT MAKES A SIDECAR LINE A SAFETY EVENT ON DISK, and why the state has to be read off this
+    /// rather than off the file merely existing.
+    ///
+    /// Two very different things are written here: a DURABILITY GAP — a claim or an acknowledgement
+    /// that did not reach the disk — and a DIAGNOSTIC — a foreign leftover moved aside, two rivals
+    /// declined, a rewrite recovered. The first means an order may have gone out with no record
+    /// behind it. The second means the file was tidied. They were indistinguishable downstream,
+    /// because every line set the degraded state, and the degraded state is what puts DEGRADED on
+    /// the ATAS bridge row and drops <c>SupportsClientOrderId</c> to false. A machine with one old
+    /// temp beside the witness therefore reported that orders were being refused while every order
+    /// went through — the row crying wolf, which is the thing that makes it unreadable the day it is
+    /// right.
+    ///
+    /// Safety lines already carried this prefix and diagnostics already lacked it, so the format
+    /// does not change; what changes is that the distinction is now load-bearing and named.
+    /// </summary>
+    const string SafetyPrefix = "ERROR ";
+
     const int MaxLoggedFailures = 32;
     const int MaxNoteChars = 400;
     const long MaxErrorLogBytes = 64 * 1024;
@@ -234,6 +253,16 @@ public sealed class CoidWitness
     /// business stat-ing a file five times a minute forever.
     /// </summary>
     bool _degraded;
+
+    /// <summary>
+    /// THERE IS SOMETHING IN THE SIDECAR, whether or not it is a durability gap. Reported through
+    /// <see cref="Token"/> as <c>io:noted</c> and nowhere else — it is deliberately NOT a
+    /// <see cref="Trouble"/> input, because a quarantined leftover is not a reason to tell an
+    /// operator that orders are being refused. What it is for is the reading a zero needs: a reader
+    /// that sees <c>records:0</c> beside <c>io:noted</c> knows something was refused, and does not
+    /// take the zero for "this product never submitted that identifier".
+    /// </summary>
+    bool _noted;
 
     /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
@@ -713,7 +742,12 @@ public sealed class CoidWitness
                 // otherwise invisible: the next run starts with a clean LastWriteFailure and a
                 // witness that looks perfect. The field name and the shape of the token are
                 // unchanged, so a probe splitting on spaces reads it exactly as before.
-                var io = _writeFailed ? "failed" : _degraded ? "degraded" : "ok";
+                // FOUR STATES. "failed" is this session unable to write. "degraded" is an
+                // UNRESOLVED SAFETY line — a claim or an acknowledgement that did not reach the
+                // disk, most usefully one from a session that has already ended. "noted" is a
+                // sidecar with diagnostics in it and no open gap, which is what makes a zero here a
+                // flagged zero rather than a confident one. Only "degraded" reaches Trouble.
+                var io = _writeFailed ? "failed" : _degraded ? "degraded" : _noted ? "noted" : "ok";
                 return $"session:{session},records:{_records.Count},prior:{prior},io:{io}";
             }
         }
@@ -739,11 +773,17 @@ public sealed class CoidWitness
         _loaded = true;
         if (_path is null) return;
 
-        // UNRESOLVED, not merely present. Asked before anything below can write one.
+        // UNRESOLVED SAFETY, not merely present, and not merely non-RESOLVED. Asked before anything
+        // below can write a line of its own. A sidecar full of quarantine warnings is NOTED; only an
+        // unresolved safety line is a durability gap.
         try
         {
             if (ErrorLogPath is { } log && File.Exists(log))
-                _degraded = !string.Equals(LastSidecarLine(), ResolvedMarker, StringComparison.Ordinal);
+            {
+                _noted = LastSidecarLine() is not null;
+                _degraded = LastDecidingLine() is { } last
+                            && !string.Equals(last, ResolvedMarker, StringComparison.Ordinal);
+            }
         }
         catch (Exception) { }
 
@@ -1059,15 +1099,33 @@ public sealed class CoidWitness
     /// but the grace costs one comparison and covers a writer that is not this build.
     /// </summary>
     /// <summary>The sidecar's last non-blank line with its timestamp stripped, or null.</summary>
-    string? LastSidecarLine()
+    string? LastSidecarLine() => LastLineWhere(_ => true);
+
+    /// <summary>
+    /// THE LAST LINE THAT DECIDES THE STATE: a safety event or the marker that closes one. Warnings
+    /// are skipped, because they say nothing about whether a durability gap is open — that is the
+    /// whole of the class fix (see <see cref="SafetyPrefix"/>). Null when the sidecar holds nothing
+    /// but diagnostics, which is the ordinary case on a machine that has merely tidied a leftover.
+    /// </summary>
+    string? LastDecidingLine() =>
+        LastLineWhere(l => l.StartsWith(SafetyPrefix, StringComparison.Ordinal)
+                           || string.Equals(l, ResolvedMarker, StringComparison.Ordinal));
+
+    /// <summary>The last sidecar line matching <paramref name="want"/>, timestamp stripped.</summary>
+    string? LastLineWhere(Func<string, bool> want)
     {
         try
         {
             if (ErrorLogPath is not { } log || !File.Exists(log)) return null;
-            var last = Array.FindLast(File.ReadAllLines(log), l => !string.IsNullOrWhiteSpace(l));
-            if (last is null) return null;
-            var space = last.IndexOf(' ');
-            return space < 0 ? last : last[(space + 1)..];
+            var lines = File.ReadAllLines(log);
+            for (var i = lines.Length - 1; i >= 0; i--)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i])) continue;
+                var space = lines[i].IndexOf(' ');
+                var text = space < 0 ? lines[i] : lines[i][(space + 1)..];
+                if (want(text)) return text;
+            }
+            return null;
         }
         catch (Exception) { return null; }
     }
@@ -1397,8 +1455,16 @@ public sealed class CoidWitness
             // and the file has been open to anything since. Appending a second RESOLVED under a
             // first says a gap was closed twice; worse, appending one at all when the tail already
             // says RESOLVED means this instance is reporting on a gap that was not its own.
-            if (!string.Equals(LastSidecarLine(), ResolvedMarker, StringComparison.Ordinal))
-                AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: false);
+            //
+            // AND IT IS WRITTEN AS A SAFETY EVENT, because it is the line that ENDS one. Written as
+            // a warning it was rationed by the same 32-line quota as the quarantine notes, so a
+            // session that had tidied 32 leftovers could not say the gap was closed: the flag was
+            // cleared in memory while the file's last word was still an open gap, and the next
+            // process read DEGRADED over a witness that had just committed cleanly. It is a state
+            // transition, at most once per session, guarded against duplication by the re-read
+            // above — it cannot flood the file the quota exists to bound.
+            if (!string.Equals(LastDecidingLine(), ResolvedMarker, StringComparison.Ordinal))
+                AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: true);
         }
     }
 
@@ -1458,7 +1524,11 @@ public sealed class CoidWitness
     /// </summary>
     void Note(string line, bool safety = false)
     {
-        _degraded = true;
+        _noted = true;
+        // ONLY A SAFETY EVENT OPENS A DURABILITY GAP. This used to set _degraded for every line, so
+        // a quarantined leftover and a lost claim were the same state downstream — see
+        // <see cref="SafetyPrefix"/> for what that cost.
+        if (safety) _degraded = true;
         AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}", safety);
     }
 
