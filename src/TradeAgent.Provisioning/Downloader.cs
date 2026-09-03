@@ -50,7 +50,8 @@ public static class Downloader
         string destFile,
         IProgress<ProvisionProgress>? progress = null,
         CancellationToken ct = default,
-        string? sha256 = null)
+        string? sha256 = null,
+        ErrorCode integrityCode = ErrorCode.AI_INSTALL_FAILED)
     {
         var dir = Path.GetDirectoryName(destFile);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -107,7 +108,7 @@ public static class Downloader
             if (!string.Equals(actual, sha256.Trim(), StringComparison.OrdinalIgnoreCase))
             {
                 File.Delete(part);
-                throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
+                throw new TradeAgentException(integrityCode,
                     $"the downloaded {name} did not match the publisher's checksum, so it was thrown away");
             }
         }
@@ -129,7 +130,9 @@ public static class Downloader
     /// entire trust chain — there is no signature underneath it.
     ///
     /// So the update path uses this instead. It cannot be handed a null by accident: a caller that
-    /// loses its hash gets a refusal here even if every check upstream of it is one day removed.
+    /// loses its hash gets a refusal here even if every check upstream of it is one day removed, and
+    /// a real mismatch is reported as <see cref="ErrorCode.UPDATE_INTEGRITY_FAILED"/> rather than as
+    /// AI_INSTALL_FAILED, which names a different program.
     /// </summary>
     public static Task<string> DownloadVerifiedAsync(
         string url,
@@ -142,7 +145,7 @@ public static class Downloader
             throw new TradeAgentException(ErrorCode.UPDATE_FAILED,
                 $"{Path.GetFileName(destFile)} was not downloaded because there is no published checksum to check it against");
 
-        return DownloadAsync(url, destFile, progress, ct, sha256);
+        return DownloadAsync(url, destFile, progress, ct, sha256, ErrorCode.UPDATE_INTEGRITY_FAILED);
     }
 
     /// <summary>

@@ -629,6 +629,116 @@ public class UpdateTrustTests
         Assert.Null(problem);
     }
 
+    // ---- 6. a checksum failure names the update, not the AI assistant ----------------------------
+
+    [Fact]
+    public void The_update_integrity_failure_has_its_own_code_and_all_four_catalogue_fields()
+    {
+        // Errors.Get falls back to UNKNOWN_ERROR for a code with no entry, so asking Get alone
+        // cannot tell a real entry from a missing one. This asks the catalogue itself.
+        Assert.Contains(ErrorCode.UPDATE_INTEGRITY_FAILED, Errors.All);
+
+        var info = Errors.Get(ErrorCode.UPDATE_INTEGRITY_FAILED);
+        Assert.Equal(ErrorCode.UPDATE_INTEGRITY_FAILED, info.Code);
+        Assert.False(string.IsNullOrWhiteSpace(info.Technical));
+        Assert.Contains("TradeAgent", info.UserMessage);
+        Assert.Contains("not installed", info.UserMessage);
+        Assert.Contains("untouched", info.Repair);
+        Assert.False(info.AutoRepairable);   // a bad release is not something we repair by retrying
+
+        // The words that made this its own code: the old one named the wrong program.
+        Assert.DoesNotContain("AI assistant", info.UserMessage);
+    }
+
+    [Fact]
+    public async Task A_real_checksum_mismatch_is_reported_as_an_update_failure_and_written_down()
+    {
+        var lines = new List<string>();
+        var f = Wellformed();
+        var sources = f.Sources() with
+        {
+            Download = (_, _, _, _) => throw new TradeAgentException(
+                ErrorCode.UPDATE_INTEGRITY_FAILED,
+                "the downloaded TradeAgent-Setup-x64.exe did not match the publisher's checksum, so it was thrown away")
+        };
+        var service = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources)
+        {
+            UnconfirmedWork = () => 0,
+            Activity = (text, level) => lines.Add($"{level}: {text}")
+        };
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+
+        Assert.Equal(0, f.Launches);
+        Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.Contains("did not match the checksum", service.Message);
+        Assert.Contains("untouched", service.Message);
+        Assert.DoesNotContain("AI assistant", service.Message);
+
+        var line = Assert.Single(lines);
+        Assert.Contains("0.2.0", line);        // names the update
+        Assert.Contains("not installed", line);
+    }
+
+    /// <summary>The path the real Downloader takes: a mismatch there carries the update's own code.</summary>
+    [Fact]
+    public async Task The_verified_download_reports_a_mismatch_with_the_update_code()
+    {
+        var dir = TempDir();
+        try
+        {
+            var ex = await Assert.ThrowsAsync<TradeAgentException>(() =>
+                Downloader.DownloadVerifiedAsync("https://example.invalid/x.exe", Path.Combine(dir, "x.exe"), null));
+
+            // The no-hash guard keeps UPDATE_FAILED; the byte-mismatch guard inside DownloadAsync is
+            // the one that now carries UPDATE_INTEGRITY_FAILED (its network half is not reachable
+            // from a unit test, so this pins the code plumbed into it rather than a live mismatch).
+            Assert.Equal(ErrorCode.UPDATE_FAILED, ex.Info.Code);
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // ---- 7. once Setup is running, that is the outcome -------------------------------------------
+
+    /// <summary>
+    /// Launch succeeded, so the installer is running and is going to replace the files this process
+    /// is executing from. A logging failure after that must not report the success as a failure —
+    /// which would also stop the caller shutting down cleanly for Setup, and re-arm a button that
+    /// would start a SECOND installer over the first.
+    /// </summary>
+    [Fact]
+    public async Task A_logging_failure_after_Launch_does_not_turn_a_started_install_into_a_failure()
+    {
+        var calls = 0;
+        var f = Wellformed();
+        var service = Service(f);
+        service.Activity = (_, _) => { calls++; throw new InvalidOperationException("database is locked"); };
+        await service.CheckAsync();
+
+        Assert.True(await service.InstallAsync());     // still true: Setup IS running
+
+        Assert.Equal(1, calls);                        // it did try to write
+        Assert.Equal(1, f.Launches);
+        Assert.Equal(UpdateStage.Installing, service.Stage);
+    }
+
+    [Fact]
+    public async Task A_second_press_after_Setup_has_started_does_not_start_a_second_installer()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        await service.CheckAsync();
+
+        Assert.True(await service.InstallAsync());
+        Assert.False(await service.InstallAsync());
+        Assert.False(await service.InstallAsync());
+
+        Assert.Equal(1, f.Launches);
+        Assert.Contains("already installing", service.Message);
+        Assert.Equal(UpdateStage.Installing, service.Stage);   // not flipped to Failed
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()

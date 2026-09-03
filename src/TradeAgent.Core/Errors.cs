@@ -16,7 +16,7 @@ public enum ErrorCode
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, TRADING_PAUSED_UNRECONCILED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
-    UPDATE_FAILED
+    UPDATE_FAILED, UPDATE_INTEGRITY_FAILED
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
@@ -68,6 +68,12 @@ public static class Errors
         [ErrorCode.GATEWAY_ALREADY_RUNNING]        = ("TradeAgent is already running.", "Use the window that is already open.", false),
         [ErrorCode.ILLEGAL_STATE_TRANSITION]       = ("An internal safety check blocked an inconsistent update.", "Nothing was sent to the broker. Create a support package.", false),
         [ErrorCode.UPDATE_FAILED]                  = ("The new version of TradeAgent could not be installed.", "Check your internet connection and press Install update again. The version you have is untouched.", true),
+        // Distinct from UPDATE_FAILED on purpose. "Could not be installed" is a download that did
+        // not arrive; this is a download that arrived and was not what the publisher said it would
+        // be, which is the one failure in this product that is never the owner's internet. It used
+        // to be reported as AI_INSTALL_FAILED — "The AI assistant could not be installed" — which
+        // names the wrong program entirely.
+        [ErrorCode.UPDATE_INTEGRITY_FAILED]        = ("The new version of TradeAgent did not match the checksum published with it, so it was not installed.", "Nothing was installed and the version you are running is untouched. Press Install update again; if it keeps happening the published release is at fault, not your computer.", false),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)
