@@ -154,7 +154,13 @@ public sealed class CoidWitness
     /// whole budget costs 205 ms (U14 round-2 verifier) and 229 ms (builder, same day, same machine)
     /// of wall clock — the 200 ms of sleeps plus scheduling — and the worst path a single pipe call
     /// can take, every save in one operation running its full budget, was measured by the verifier
-    /// at 8.42 s against the 10 s RPC deadline the gateway allows. So this
+    /// at 8.42 s against the 10 s RPC deadline the gateway allows.
+    ///
+    /// RE-MEASURED AFTER THE COMPARE-AND-SWAP AND THE LOCK FILE WENT IN, because both sit on this
+    /// path and a budget that fits is not a budget that stays fitting: 218 ms for one fully-refused
+    /// rewrite and 216 ms each over ten back to back (builder, macOS). Neither addition is
+    /// measurable in the uncontended case, which is the design — a compare-and-swap miss costs one
+    /// read and short-circuits before the retry budget, and an uncontended lock file is one open. So this
     /// budget fits, with about 1.5 s of margin, and it is the largest one that does: doubling the
     /// attempts would put a wholly contended order past the deadline, where the gateway stops
     /// waiting and records the order UNKNOWN — turning a disk problem into a reconciliation.
@@ -1106,6 +1112,7 @@ public sealed class CoidWitness
     /// </summary>
     bool Attempt(string claim)
     {
+        if (_path is not { } destination) return false;
         var tmp = _tempPrefix + (++_tempSeq);
 
         // THE LINEAGE GOES IN THE FILE, not in the timestamps. It names the generation after the
@@ -1140,7 +1147,7 @@ public sealed class CoidWitness
         {
             try
             {
-                _replace(tmp, _path);
+                _replace(tmp, destination);
                 return Committed(text, claim);
             }
             catch (Exception e) when (Transient(e) && attempt < ReplaceAttempts)
