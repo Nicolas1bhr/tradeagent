@@ -266,6 +266,47 @@ public class GatewayPipeBackpressureTests
         Assert.Single(conn.Broker.Orders);
     }
 
+    /// <summary>
+    /// A SLOW READER IS NOT A STOPPED READER, and the deadline has to be able to tell them apart.
+    ///
+    /// Found by review of a0aa1a7: the deadline bounded the whole write, which makes it a throughput
+    /// floor of (reply size / timeout) rather than a stalled-peer detector. A peer reading steadily
+    /// at 79 KiB/s was dropped at 10.1 s on a ~1 MiB reply and recorded as having stopped reading —
+    /// a healthy agent on a busy machine, disconnected mid-order and then libelled in the log.
+    ///
+    /// The reader here is paced well under the OLD floor (~960 KiB/s at this 1 s deadline) and well
+    /// over the new one (~8 KiB/s). The two assertions together are what cannot both hold under a
+    /// total-duration bound: the whole reply arrived, AND it took several times the deadline to do it.
+    /// </summary>
+    [Fact]
+    public async Task A_slow_but_continuous_reader_is_not_mistaken_for_a_stalled_one()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { WriteTimeout = TimeSpan.FromSeconds(1) };
+        server.Start();
+
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await agent.WriteAsync(new IpcRequest { Op = Ops.MaterialList, Session = "agent-slow" });
+
+        // ~16 KiB every 60 ms is about 260 KiB/s: a quarter of the old floor, thirty times the new.
+        var timer = Stopwatch.StartNew();
+        var line = await agent.ReadLineSlowlyAsync(16 * 1024, TimeSpan.FromMilliseconds(60), TimeSpan.FromSeconds(60));
+        timer.Stop();
+
+        Assert.InRange(Encoding.UTF8.GetByteCount(line), FloorOfTheReply, (1 << 20) - 1);
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(2),
+            $"the reply arrived in {timer.Elapsed.TotalSeconds:0.0}s, which is too fast to prove anything about a 1s deadline");
+        Assert.True(await WaitForDrop(db, TimeSpan.Zero) is null,
+            "a peer that read every byte was recorded as having stopped reading");
+
+        // Still a working connection afterwards, not merely an un-dropped one.
+        await agent.WriteAsync(new IpcRequest { Op = Ops.Status });
+        Assert.True(Json.Read<IpcResponse>(await agent.ReadLineAsync(TimeSpan.FromSeconds(5)))!.Ok);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     static async Task<(string Op, string? Session, string Metadata)?> WaitForDrop(Database db, TimeSpan bound)
@@ -323,6 +364,27 @@ public class GatewayPipeBackpressureTests
             var one = new byte[1];
             var n = await _p.ReadAsync(one).AsTask().WaitAsync(bound);
             Assert.Equal(1, n);
+        }
+
+        /// <summary>
+        /// One whole frame, read at a deliberate pace: <paramref name="perChunk"/> bytes, then a
+        /// pause. Slow, continuous, and never stopped — the shape the deadline used to misread.
+        /// </summary>
+        public async Task<string> ReadLineSlowlyAsync(int perChunk, TimeSpan pause, TimeSpan bound)
+        {
+            var buf = new byte[perChunk];
+            var ms = new MemoryStream();
+            var deadline = DateTime.UtcNow + bound;
+            while (DateTime.UtcNow < deadline)
+            {
+                var n = await _p.ReadAsync(buf).AsTask().WaitAsync(bound);
+                if (n == 0) throw new IOException("the server closed the connection before the line ended");
+                var nl = Array.IndexOf(buf, (byte)'\n', 0, n);
+                if (nl >= 0) { ms.Write(buf, 0, nl); return Encoding.UTF8.GetString(ms.ToArray()); }
+                ms.Write(buf, 0, n);
+                await Task.Delay(pause);
+            }
+            throw new TimeoutException($"the reply did not finish within {bound.TotalSeconds:0}s");
         }
 
         /// <summary>One whole frame. Nothing arrives on this pipe unasked, so reading past the newline cannot happen.</summary>
