@@ -66,6 +66,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     readonly string _pipe = pipeName ?? Paths.PipeName;
+
+    /// <summary>
+    /// TWO TOKENS, AND THE SPLIT IS LOAD BEARING.
+    ///
+    /// <c>_accept</c> stops new connections being taken. <c>_cts</c> is what the HANDLERS hold, and
+    /// it is cancelled only after they have been given their chance to finish.
+    ///
+    /// One token for both is what was here, and it made draining handlers impossible in principle:
+    /// the handler's token reaches <c>TradingGateway.PlaceAsync</c> and, through it, the connector's
+    /// own wait on the broker. Cancelling it first ABORTS AN ORDER THAT MAY ALREADY BE AT THE
+    /// BROKER — the exact way an order ends up recorded DISPATCHING for ever, which is the fault
+    /// this drain exists to prevent. Measured: with one token the in-flight place unwound in 15 ms
+    /// and disposal "succeeded" without waiting for anything.
+    /// </summary>
+    readonly CancellationTokenSource _accept = new();
     readonly CancellationTokenSource _cts = new();
 
     /// <summary>
@@ -75,12 +90,32 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     readonly System.Collections.Concurrent.ConcurrentDictionary<NamedPipeServerStream, byte> _live = new();
 
+    /// <summary>
+    /// Every handler task currently running. Registering the PIPES was not enough: closing a pipe
+    /// ends the handler's I/O, but a handler parked INSIDE the gateway — in the middle of a place,
+    /// waiting on the broker — is not doing I/O at all, and disposal walked straight past it. It
+    /// then outlived the server, the gateway AND the database, so the settle that would have moved
+    /// its order out of DISPATCHING ran against a closed connection, or never ran. An order that
+    /// reached the broker was left DISPATCHING for ever.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> _handlers = new();
+
+    /// <summary>
+    /// How long <see cref="DisposeAsync"/> waits for in-flight handlers once their pipes are shut.
+    ///
+    /// ARITHMETIC, not measured. It has to be longer than a normal settle — a place that reached the
+    /// broker and is being written back — and shorter than a person's patience with an app that will
+    /// not close. Anything still running when it expires is LOGGED rather than waited on, because a
+    /// handler that will not finish must not be able to hold the app open.
+    /// </summary>
+    static readonly TimeSpan HandlerDrainTimeout = TimeSpan.FromSeconds(5);
+
     Task? _loop;
     volatile bool _disposed;
 
     public string PipeName => _pipe;
 
-    public void Start() => _loop ??= Task.Run(() => AcceptLoop(_cts.Token));
+    public void Start() => _loop ??= Task.Run(() => AcceptLoop(_accept.Token));
 
     async Task AcceptLoop(CancellationToken ct)
     {
@@ -94,7 +129,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 var s = server;
                 server = null; // ownership moves to the handler
                 _live[s] = 0;
-                _ = Task.Run(() => Serve(s, ct), ct);
+                // The HANDLER token, not the accept token: a connection already taken is served to
+                // the end even though the door has closed.
+                var handler = Task.Run(() => Serve(s, _cts.Token), _cts.Token);
+                _handlers[handler] = 0;
+                _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
             }
             catch (OperationCanceledException) { server?.Dispose(); return; }
             catch (Exception ex)
@@ -488,19 +527,50 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         if (_disposed) return;      // idempotent: disposing twice is not an error, it is a no-op
         _disposed = true;
-        await _cts.CancelAsync();
 
+        // 1. Stop taking new connections. Handlers already running are untouched by this.
+        await _accept.CancelAsync();
+        if (_loop is not null)
+        {
+            try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception) { /* cancelled, faulted, or would not let go: either way we are done */ }
+        }
+
+        // 2. Close the connections. This is what frees a handler parked in a write to a peer that
+        //    stopped reading — cancellation cannot, because the write is already with the kernel.
+        //    A handler that is inside the gateway rather than inside a write is not disturbed by it.
         foreach (var connection in _live.Keys)
         {
             try { connection.Dispose(); } catch (Exception) { /* already gone */ }
             _live.TryRemove(connection, out _);
         }
 
-        if (_loop is not null)
+        // 3. THEN wait for the handlers, with their token still uncancelled. This is the step that
+        //    lets a place already at the broker finish and settle. AppHost disposes server (:274),
+        //    then gateway (:275), then the database (:276), so a settle that completes here
+        //    completes while both are still open. Bounded, because a handler that will not finish
+        //    must not be able to hold the app open.
+        var handlers = _handlers.Keys.ToArray();
+        if (handlers.Length > 0)
         {
-            try { await _loop.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (Exception) { /* cancelled, faulted, or would not let go: either way we are done */ }
+            try { await Task.WhenAll(handlers).WaitAsync(HandlerDrainTimeout); }
+            catch (Exception) { /* faulted or over the bound; the count below is what matters */ }
+
+            var unfinished = handlers.Count(h => !h.IsCompleted);
+            if (unfinished > 0)
+                gateway.Log.Engineering("Ipc", "handlers_did_not_finish", "error",
+                    metadataJson: Json.Write(new
+                    {
+                        unfinished,
+                        of = handlers.Length,
+                        drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds
+                    }));
         }
+
+        // 4. Only now is it safe to cancel the handlers' token: anything still holding it has had
+        //    its chance and is over the bound, and there is nothing left to settle in good order.
+        await _cts.CancelAsync();
         _cts.Dispose();
+        _accept.Dispose();
     }
 }
