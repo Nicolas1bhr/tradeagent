@@ -2641,6 +2641,59 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A SAFETY EVENT IS NEVER DROPPED — INCLUDING WHEN SEVERAL WRITERS PRODUCE ONE AT ONCE.
+    ///
+    /// The quota path honours that contract and the concurrency path did not. The writers producing
+    /// these lines are precisely the ones the lease REFUSED, so they are unserialised by
+    /// construction — there is no lock between them, which is the whole point of them being refused
+    /// — and every failure on this path is swallowed on purpose, so a line that lost the race was
+    /// discarded in silence.
+    ///
+    /// 160 DISTINCT claims through four writers over one witness, and every one of them has to be on
+    /// disk. Distinct, because the round-4 verify leg's own runs lost duplicates and could not tell a
+    /// dropped line from a repeated one.
+    /// </summary>
+    [Fact]
+    public void No_safety_event_is_lost_when_several_writers_produce_one_at_once()
+    {
+        const int writers = 4, each = 40;
+
+        // Every one of these fails its rewrite, so every Submitting writes exactly one safety line —
+        // whichever of them holds the lease and whichever are refused by it.
+        var all = Enumerable.Range(0, writers).Select(_ => Session(NeverLands)).ToArray();
+        try
+        {
+            Parallel.For(0, writers, w =>
+            {
+                for (var i = 0; i < each; i++)
+                    all[w].Submitting($"TA-{w}-{i:D3}", "SIM", "ES", "Buy", 1m, null);
+            });
+        }
+        finally { foreach (var w in all) w.Dispose(); }
+
+        // The whole sidecar set: the owner's file, its rotated generation, and each refused writer's
+        // own — which is the glob the probe and the support package already collect.
+        var lines = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+            .SelectMany(File.ReadAllLines)
+            .Where(l => l.Trim().Length > 0)
+            .ToArray();
+
+        var missing = new List<string>();
+        for (var w = 0; w < writers; w++)
+            for (var i = 0; i < each; i++)
+            {
+                var claim = $"TA-{w}-{i:D3}";
+                if (!lines.Any(l => l.Contains(claim, StringComparison.Ordinal))) missing.Add(claim);
+            }
+
+        Assert.True(missing.Count == 0,
+            $"{missing.Count} of {writers * each} safety events were dropped: " +
+            string.Join(", ", missing.Take(12)) +
+            $" [lines={lines.Length} rotated={File.Exists(Sidecar + ".1")} " +
+            $"bytes={(File.Exists(Sidecar) ? new FileInfo(Sidecar).Length : 0)}]");
+    }
+
+    /// <summary>
     /// A WITNESS THAT HAS NOTHING TO RECORD DOES NOT BECOME THE OWNER BY BEING ASKED.
     ///
     /// <c>Identified</c> took the lease and then looked for the record. The order-event fan calls it
