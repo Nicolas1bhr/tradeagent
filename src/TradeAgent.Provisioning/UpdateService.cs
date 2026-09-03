@@ -349,7 +349,7 @@ public sealed class UpdateService
                 // a newer release and TradeAgent will not touch it" is a refusal, and rendering the
                 // second one as the first is how a wall in front of the owner becomes invisible.
                 if (problem is null) Set(UpdateStage.UpToDate, null);
-                else Refuse(problem);
+                else Refuse(problem, repeatable: true);
                 return;
             }
 
@@ -559,7 +559,10 @@ public sealed class UpdateService
         try { count = UnconfirmedWork(); }
         catch (Exception) { reason = cannotTell; return true; }
 
-        if (count <= 0) { reason = ""; return false; }
+        // A negative count is not zero. Nothing should produce one, which is exactly why it must not
+        // be read as "all clear" — it means the thing being counted is not what we think it is.
+        if (count < 0) { reason = cannotTell; return true; }
+        if (count == 0) { reason = ""; return false; }
 
         reason =
             $"TradeAgent will not replace itself while {(count == 1 ? "an order's outcome is" : $"{count} orders' outcomes are")} " +
@@ -576,7 +579,13 @@ public sealed class UpdateService
     /// otherwise write the identical line into the activity log four times a day until it is fixed.
     /// The first occurrence is always recorded; a different refusal always is too.
     /// </summary>
-    bool Refuse(string reason, bool pendingWork = false)
+    /// <param name="repeatable">
+    /// True only for the automatic six-hourly check, whose refusal is the same sentence every time
+    /// until the release changes and would otherwise write the identical line four times a day. A
+    /// PRESS is never deduplicated: two presses are two decisions by the owner, and a log that
+    /// silently collapses them cannot answer "did I press it again?".
+    /// </param>
+    bool Refuse(string reason, bool pendingWork = false, bool repeatable = false)
     {
         // The flags are set BEFORE Changed fires. Set() raises it, and a handler that read Refused
         // during that call would have seen the refusal as an ordinary failure — the one distinction
@@ -587,7 +596,7 @@ public sealed class UpdateService
         RefusedPendingWork = pendingWork;
         Changed?.Invoke();
 
-        if (_lastRefusalLogged != reason)
+        if (!repeatable || _lastRefusalLogged != reason)
         {
             _lastRefusalLogged = reason;
             Activity?.Invoke(reason, "warn");
@@ -706,6 +715,18 @@ public static class ReleaseFeed
 
             if (name is null || url is null) return null;
 
+            // The name comes off a web page and becomes a path: Path.Combine(updates\<version>\, name).
+            // Nothing downstream is obliged to notice that "TradeAgent-Setup/../../../Startup/x.exe"
+            // matches the installer pattern — .* matches a slash — so it is refused here, where the
+            // release is turned into an offer, rather than relied upon to trip over the basename
+            // compare in ChecksumManifest.Find by accident.
+            if (!IsPlainFileName(name))
+            {
+                problem = $"TradeAgent {version} cannot be installed: the release names its installer in a way " +
+                          "TradeAgent will not treat as a file name. Nothing was downloaded.";
+                return null;
+            }
+
             // Exactly one, or none. Two files that both look like the installer is a real release —
             // an arm64 build published beside the x64 one would do it, and so would a leftover
             // TradeAgent-Setup-x64.exe.bak under a looser TRADEAGENT_UPDATE_ASSET pattern. Which of
@@ -735,6 +756,26 @@ public static class ReleaseFeed
             // A malformed answer is the same as no answer. It is never an update.
             return null;
         }
+    }
+
+    /// <summary>
+    /// A bare file name and nothing else: no directory separator, no drive, no <c>..</c>, no control
+    /// characters, and short enough to be a real name. Spelled out rather than delegated to
+    /// <c>Path.GetInvalidFileNameChars</c>, which answers differently on macOS and Windows — the
+    /// machine that decides must not be the machine the check happens to run on.
+    /// </summary>
+    static bool IsPlainFileName(string name)
+    {
+        if (name.Length is 0 or > 200) return false;
+        if (name.Contains("..")) return false;
+        if (name is "." or "..") return false;
+
+        foreach (var c in name)
+        {
+            if (c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|') return false;
+            if (char.IsControl(c)) return false;
+        }
+        return true;
     }
 
     static string? Str(JsonElement e, string name) =>

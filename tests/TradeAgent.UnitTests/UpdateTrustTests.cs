@@ -956,6 +956,130 @@ public class UpdateTrustTests
         Assert.False(service.Refused);
     }
 
+    // ---- 9. the low batch -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_negative_count_of_outstanding_work_is_unknown_rather_than_none()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        service.UnconfirmedWork = () => -1;
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+        Assert.False(f.DownloadStarted);
+        Assert.Contains("cannot tell", service.Message);
+    }
+
+    /// <summary>
+    /// Two presses are two decisions by the owner. A log that collapses them cannot answer "did I
+    /// press it again?", which is the question the log exists for. Only the automatic six-hourly
+    /// check is deduplicated, because it asks the same question unprompted until the release changes.
+    /// </summary>
+    [Fact]
+    public async Task Every_press_is_logged_even_when_the_refusal_is_the_same_one()
+    {
+        var lines = new List<string>();
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = Service(f);
+        service.Activity = (text, _) => lines.Add(text);
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+        Assert.False(await service.InstallAsync());
+        Assert.False(await service.InstallAsync());
+
+        Assert.Equal(3, lines.Count);
+    }
+
+    [Fact]
+    public async Task The_automatic_check_does_not_write_the_same_refusal_every_six_hours()
+    {
+        var lines = new List<string>();
+        var f = new Fake { ReleaseJson = Release("TradeAgent-Setup-arm64.exe", Asset, "SHA256SUMS.txt") };
+        var service = Service(f);
+        service.Activity = (text, _) => lines.Add(text);
+
+        await service.CheckAsync();
+        await service.CheckAsync();
+        await service.CheckAsync();
+
+        var line = Assert.Single(lines);
+        Assert.Contains("look like the installer", line);
+    }
+
+    /// <summary>
+    /// The asset name comes off a web page and becomes Path.Combine(updates\&lt;version&gt;\, name).
+    /// The installer pattern's ".*" matches a separator, so the name has to be refused explicitly
+    /// rather than left to trip over the basename compare in Find by accident.
+    /// </summary>
+    [Theory]
+    [InlineData("TradeAgent-Setup/../../../Startup/TradeAgent-Setup-x64.exe")]
+    [InlineData("TradeAgent-Setup\\..\\..\\TradeAgent-Setup-x64.exe")]
+    [InlineData("TradeAgent-Setup-x64.exe/../evil.exe")]
+    public void An_installer_named_like_a_path_is_never_offered(string assetName)
+    {
+        UpdateVersion.TryParse("0.1.0", out var current);
+        var json = $$"""
+            {"tag_name":"v0.2.0","draft":false,"prerelease":false,"body":"","html_url":"h",
+             "assets":[{"name":"{{assetName.Replace("\\", "\\\\")}}","browser_download_url":"u","size":9},
+                       {"name":"SHA256SUMS.txt","browser_download_url":"s","size":1}]}
+            """;
+
+        Assert.Null(ReleaseFeed.Parse(json, current, @"TradeAgent-Setup.*\.exe", out var problem));
+        Assert.Contains("will not treat as a file name", problem);
+    }
+
+    [Fact]
+    public void An_ordinary_installer_name_is_still_a_plain_file_name()
+    {
+        UpdateVersion.TryParse("0.1.0", out var current);
+        Assert.NotNull(ReleaseFeed.Parse(Release(Asset, "SHA256SUMS.txt"), current, UpdateService.DefaultAssetPattern));
+    }
+
+    /// <summary>
+    /// The real GitHub sources, not a fake: the download the updater actually performs refuses a null
+    /// hash before it touches the network. Reverting UpdateSources.GitHub to the tolerant
+    /// Downloader.DownloadAsync survived the whole suite before this existed.
+    /// </summary>
+    [Fact]
+    public async Task The_real_update_download_refuses_a_missing_hash_before_any_network_call()
+    {
+        var sources = UpdateSources.GitHub("owner/repo");
+        var info = new UpdateInfo("0.2.0", "v0.2.0", Asset, "https://example.invalid/x", 9, "h", "");
+
+        var ex = await Assert.ThrowsAsync<TradeAgentException>(() => sources.Download(info, null, null, default));
+        Assert.Equal(ErrorCode.UPDATE_FAILED, ex.Info.Code);
+    }
+
+    /// <summary>
+    /// A source-text gate, and it says so. TradeAgent.App is not built by this test suite, so the
+    /// three lines in AppHost that hand UpdateService its dependencies cannot be exercised here — a
+    /// verifier deleted them and the whole suite stayed green. Without the first two the updater
+    /// refuses every install (fail-closed, but bricked); without the third the gateway would keep
+    /// dispatching orders while Setup replaces the program. This asserts they are still written.
+    /// </summary>
+    [Fact]
+    public void The_composition_root_still_hands_the_updater_its_dependencies()
+    {
+        var appHost = Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "AppHost.cs");
+        Assert.True(File.Exists(appHost), appHost);
+
+        var text = File.ReadAllText(appHost);
+        Assert.Contains("Updates.UnconfirmedWork =", text);
+        Assert.Contains("NeedingReconciliation().Count", text);
+        Assert.Contains("Updates.Activity =", text);
+        Assert.Contains("Gateway.InstallInProgress = () => Updates.InstallInProgress", text);
+    }
+
+    static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()
