@@ -39,12 +39,26 @@ public static class CoidWitnessReport
     /// account of a durability problem. <paramref name="noted"/> is <see cref="CoidWitness.Noted"/>:
     /// something was refused or recorded, which need not be a gap at all — a foreign leftover moved
     /// aside is the ordinary case — but which does mean a zero is not a confident zero.
+    ///
+    /// <paramref name="gapClosed"/> is <see cref="CoidWitness.GapClosed"/>, and it used to be "does
+    /// the sidecar exist". That is not the same question. A file holding nothing but quarantine
+    /// notes exists and has never had a gap to close, so it was labelled HISTORICAL — whose
+    /// explanation tells the reader that a clean commit resolved earlier failures, which never
+    /// happened — and that label made a zero below it non-provisional. "Historical" means a RESOLVED
+    /// marker stands after the last safety line, never "no safety lines in this file".
     /// </summary>
-    public static WitnessStanding Standing(bool sidecarExists, bool troubled, bool noted) =>
+    public static WitnessStanding Standing(bool gapClosed, bool troubled, bool noted) =>
         troubled ? WitnessStanding.Unresolved
-        : sidecarExists ? WitnessStanding.Historical
+        : gapClosed ? WitnessStanding.Historical
         : noted ? WitnessStanding.Noted
         : WitnessStanding.Clean;
+
+    /// <summary>
+    /// The same decision off a live witness, so the probe and its tests cannot drift on what they
+    /// feed it — which is the mistake that produced the finding above.
+    /// </summary>
+    public static WitnessStanding Standing(CoidWitness witness) =>
+        Standing(witness.GapClosed, witness.Trouble is not null, witness.Noted);
 
     /// <summary>The one line beside "WITNESS FAILURES".</summary>
     public static string Headline(WitnessStanding standing, string sidecarPath) => standing switch

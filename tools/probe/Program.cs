@@ -1063,11 +1063,10 @@ static class AtasProbe
         // read as UNRESOLVED left the entire suite green. What an operator actually reads was the
         // least-verified thing in the unit. This is now a renderer.
         var sidecar = witness.ErrorLogPath;
-        var sidecarExists = sidecar is not null && File.Exists(sidecar);
-        var standing = CoidWitnessReport.Standing(sidecarExists, witness.Trouble is not null, witness.Noted);
+        var standing = CoidWitnessReport.Standing(witness);
 
         Line("WITNESS FAILURES", CoidWitnessReport.Headline(standing, sidecar ?? "<none>"));
-        if (sidecarExists) foreach (var note in ReadTail(sidecar!, 10)) Cont(note);
+        if (sidecar is not null && File.Exists(sidecar)) foreach (var note in ReadTail(sidecar, 10)) Cont(note);
         foreach (var line in CoidWitnessReport.Explanation(standing)) Cont(line);
 
         var records = witness.All();
