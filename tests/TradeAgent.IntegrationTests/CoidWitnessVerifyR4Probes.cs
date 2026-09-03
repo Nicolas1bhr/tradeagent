@@ -61,4 +61,109 @@ public class CoidWitnessVerifyR4Probes : IDisposable
         if (aSaidDurable == true)
             Assert.Contains("TA-A", CommittedIds());
     }
+
+    string Sidecar => Path.Combine(_dir, CoidWitness.ErrorLogName);
+    string[] SidecarLines() => File.Exists(Sidecar)
+        ? File.ReadAllLines(Sidecar).Where(l => l.Trim().Length > 0).ToArray() : [];
+    static string RecordJson(string id, string session) =>
+        $$"""{"client_order_id":"{{id}}","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-{{id}}","identified_at":"2026-01-01T00:00:01+00:00"}""";
+    static void Age(string path) => File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-5));
+
+    /// <summary>
+    /// THE QUOTA CAN RATION THE **RESOLVED MARKER**, AND THE MARKER IS WHAT ENDS A DEGRADATION.
+    ///
+    /// Item 3's rule is "safety events never rationed; warnings and markers are". The RESOLVED
+    /// marker is written with `safety: false` (CoidWitness.cs:1398), so a session that has already
+    /// spent its 32 non-safety lines on quarantine warnings cannot write it. `_degraded` is then
+    /// cleared IN MEMORY while the file's last line still reads as an unresolved gap, so the next
+    /// process to load reports DEGRADED over a witness that committed cleanly — the permanent
+    /// degradation loop commit 5e5b011 was written to end, re-entered through the quota.
+    /// </summary>
+    [Fact]
+    public void A_clean_commit_marks_the_sidecar_resolved_even_after_the_quota_is_spent()
+    {
+        var owner = new CoidWitness(File_);
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+
+        // 40 stale foreign temps: one quarantine WARNING each, past the 32-line quota.
+        for (var i = 0; i < 40; i++)
+        {
+            var p = File_ + $".tmp-dead-{i:D2}";
+            File.WriteAllText(p, $$"""{"version":1,"generation":99,"predecessor":"deadbeefdeadbeef","records":[{{RecordJson($"TA-X{i}", "dead")}}]}""");
+            Age(p);
+        }
+
+        var next = new CoidWitness(File_);
+        Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+
+        // The warnings ARE rationed — that half is the design.
+        var lines = SidecarLines();
+        Assert.Equal(32, lines.Count(l => l.Contains("ignored ")));
+
+        // THE INVARIANT: a witness that has committed cleanly says so on its last line, so the next
+        // process does not report DEGRADED over a gap that is closed.
+        Assert.Contains("RESOLVED", lines[^1]);
+        Assert.Null(new CoidWitness(File_).Trouble);
+    }
+
+    /// <summary>
+    /// A SAFETY EVENT SURVIVES ROTATION. Item 3 keeps failures unrationed and bounds the file by
+    /// rotating one generation back. Drives the sidecar past MaxErrorLogBytes with real refused
+    /// rewrites and asserts the LAST failure is still on disk after the roll.
+    /// </summary>
+    [Fact]
+    public void A_safety_event_is_still_written_after_the_sidecar_has_rotated()
+    {
+        var w = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+                                (_, _) => throw new IOException("the process cannot access the file"));
+        for (var i = 0; i < 400; i++)
+            Assert.False(w.Submitting($"TA-FAIL-{i:D4}", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar never rotated — raise the iteration count");
+        Assert.True(new FileInfo(Sidecar + ".1").Length > 0);
+
+        // Unrationed: the last claim's failure is on disk, far past the 32-line quota.
+        Assert.Contains(SidecarLines(), l => l.Contains("TA-FAIL-0399"));
+        Assert.True(SidecarLines().Count(l => l.Contains("did not land")) > 32);
+    }
+
+    /// <summary>
+    /// HOW LONG THE RATIONED MARKER LASTS, as an invariant rather than a measurement: a witness that
+    /// has just committed cleanly must not make the NEXT process report a durability gap, because
+    /// `Trouble` non-null is what drops `SupportsClientOrderId` to false in Describe().
+    ///
+    /// 40 leftovers: the 64 `.rejected-n` quarantine slots suffice, so the mess clears and only the
+    /// first session is wrong. 100 leftovers: the slots run out, the surplus is re-rejected every
+    /// session, the quota is spent every session, and the marker is never written again — the
+    /// permanent degradation loop 5e5b011 closed, re-entered through the quota.
+    /// </summary>
+    [Theory]
+    [InlineData(40)]
+    [InlineData(100)]
+    public void A_witness_that_commits_cleanly_does_not_make_the_next_start_report_a_gap(int leftovers)
+    {
+        var owner = new CoidWitness(File_);
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        for (var i = 0; i < leftovers; i++)
+        {
+            var p = File_ + $".tmp-dead-{i:D3}";
+            File.WriteAllText(p, $$"""{"version":1,"generation":99,"predecessor":"deadbeefdeadbeef","records":[{{RecordJson($"TA-X{i}", "dead")}}]}""");
+            Age(p);
+        }
+
+        var report = new List<string>();
+        var clean = true;
+        for (var session = 1; session <= 4; session++)
+        {
+            var w = new CoidWitness(File_);
+            var wrote = w.Submitting($"TA-S{session}", "SIM", "ES", "Buy", 1m, null);
+            var after = new CoidWitness(File_);          // a fresh process, i.e. the next bridge start
+            report.Add($"session {session}: committed={wrote} nextStartTrouble={(after.Trouble is null ? "none" : "DEGRADED")} token={after.Token()}");
+            Assert.True(wrote, "the claim did not commit; this probe is about a HEALTHY witness");
+            clean &= after.Trouble is null;
+            foreach (var f in Directory.GetFiles(_dir, "*.tmp-dead-*")) Age(f);
+        }
+        Assert.True(clean, $"leftovers={leftovers} — a cleanly committed witness still reports a gap:\n  "
+                           + string.Join("\n  ", report));
+    }
 }
