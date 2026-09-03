@@ -204,4 +204,34 @@ public class VerifyR4TimingProbes(ITestOutputHelper o)
 
         public async ValueTask DisposeAsync() => await _p.DisposeAsync();
     }
+
+    /// <summary>
+    /// PROBE 8. THE COMMONEST REAL SHAPE: ATAS is frozen and NOTHING else is in flight, so the send
+    /// gate is FREE when the owner presses the button. EmergencyGateWait bounds only the GATE wait;
+    /// the emergency then becomes the writer and its own write is bounded by WriteTimeout (10 s),
+    /// after which the RPC reply timeout (10 s) applies. Probe PASSES if an emergency on an idle
+    /// stalled bridge takes materially longer than the 2 s the decision promises.
+    /// </summary>
+    [Fact]
+    public async Task PROBE8_emergency_on_an_idle_stalled_bridge()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+        await using var peer = await StalledPeer.Connect(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // NOTHING is holding the gate. The bridge has simply stopped reading.
+        var timer = Stopwatch.StartNew();
+        Exception? ex = null;
+        try { await connector.CancelAllOrdersAsync("ATAS-STALLED"); } catch (Exception e) { ex = e; }
+        timer.Stop();
+        var ms = (int)timer.Elapsed.TotalMilliseconds;
+        o.WriteLine($"idle-stalled emergency elapsed = {ms} ms");
+        o.WriteLine($"exception = {ex?.GetType().Name}: {ex?.Message}");
+        o.WriteLine($"connected after = {await connector.IsConnectedAsync()}");
+        o.WriteLine($"owner-readable sentence present: NOT confirmed={ex?.Message.Contains("NOT confirmed")}");
+
+        Assert.True(ms > 4000, $"the emergency came back in {ms} ms — the 2 s promise holds even with a free gate");
+    }
 }
