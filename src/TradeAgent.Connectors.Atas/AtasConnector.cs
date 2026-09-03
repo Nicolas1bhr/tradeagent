@@ -464,33 +464,74 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         var w = _writer;
         if (w is null) return;
-        try { await WriteFrame(w, frame, _cts.Token); }
+        try { _ = await WriteFrame(w, frame, _cts.Token); }
         catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
     }
 
     /// <summary>
-    /// Takes the send gate and writes one frame, with <see cref="WriteTimeout"/> on BOTH. False
-    /// means the deadline ended the connection rather than the frame landing.
+    /// What happened to one frame. Three outcomes, because two of them were being confused.
+    /// </summary>
+    enum SendOutcome
+    {
+        /// <summary>The frame reached the peer.</summary>
+        Sent,
+
+        /// <summary>
+        /// The PEER did not read it in time. Its connection is dropped: this is a fact about the
+        /// bridge, not about this caller.
+        /// </summary>
+        PeerStalled,
+
+        /// <summary>
+        /// WE were still queued behind our own traffic when the bound expired. A fact about this
+        /// process under load and nothing at all about the peer, so only this caller fails and the
+        /// connection is left alone.
+        /// </summary>
+        Busy
+    }
+
+    /// <summary>
+    /// Takes the send gate, then writes one frame under <see cref="WriteTimeout"/>.
     ///
-    /// The gate needs its own deadline as much as the write does. Without one, the caller that is
-    /// stuck in the write holds the gate and every later caller queues behind it for as long as the
-    /// peer feels like — which is how one unread frame became an outage for the cancel that would
-    /// have ended it. The two deadlines are not redundant: with several callers the gate alone
-    /// frees everyone, but a SINGLE order larger than the socket buffer has nothing queued behind it
-    /// and only the deadline on the write itself can end that one.
+    /// THE DEADLINE STARTS AFTER THE GATE, and that is a correction. It used to start before, which
+    /// made it measure this process's own send queue as well as the peer's reading: enough
+    /// concurrent RPCs and a perfectly healthy bridge was declared stalled and disconnected, because
+    /// OUR backlog ran out ITS clock. The gate wait is still bounded — a caller must not queue for
+    /// ever — but expiring there returns <see cref="SendOutcome.Busy"/> and touches nothing else.
+    ///
+    /// CANCELLATION WITH A WRITE IN FLIGHT IS A DROP, not a return. The write is on a StreamWriter
+    /// shared by every caller, and a cancelled wait does not cancel the write — so releasing the
+    /// gate would hand the next caller a writer with a half-written frame still going into it. That
+    /// left the connector wedged with Connected still true and no reconnect, every later frame
+    /// failing for ever. The write state is unknown, so the connection ends the same way a timeout
+    /// ends it.
     ///
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
-    async Task<bool> WriteFrame(StreamWriter w, object frame, CancellationToken ct)
+    async Task<SendOutcome> WriteFrame(StreamWriter w, object frame, CancellationToken ct)
     {
-        if (!await _sendGate.WaitAsync(WriteTimeout, ct)) { DropStalledPeer(); return false; }
+        if (!await _sendGate.WaitAsync(WriteTimeout, ct)) return SendOutcome.Busy;
         try
         {
             var write = w.WriteLineAsync(Json.Write(frame));
-            try { await write.WaitAsync(WriteTimeout, ct); }
-            catch (TimeoutException) { Observe(write); DropStalledPeer(); return false; }
-            return true;
+            try
+            {
+                await write.WaitAsync(WriteTimeout, ct);
+                return SendOutcome.Sent;
+            }
+            catch (TimeoutException)
+            {
+                Observe(write);
+                DropStalledPeer();
+                return SendOutcome.PeerStalled;
+            }
+            catch (OperationCanceledException)
+            {
+                Observe(write);
+                DropStalledPeer();
+                throw;
+            }
         }
         finally { _sendGate.Release(); }
     }
@@ -543,14 +584,18 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
-            if (!await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct))
+            var outcome = await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct);
+            if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
-                // Indefinite, and it has to stay that way: a frame the kernel accepted but the
-                // bridge never read may or may not have reached ATAS. Safety rule 3 — only a
-                // definite refusal from the broker is allowed to read as definite.
-                throw new ConnectorTransportException(
-                    $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s");
+                // Both are indefinite, and they have to stay that way: a frame that was queued or
+                // half-written may or may not have reached ATAS. Safety rule 3 — only a definite
+                // refusal from the broker is allowed to read as definite. They are DIFFERENT
+                // sentences, though, because they call for different things from the operator: one
+                // says the platform stopped listening, the other says this process is saturated.
+                throw new ConnectorTransportException(outcome is SendOutcome.PeerStalled
+                    ? $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s"
+                    : $"'{op}' waited {WriteTimeout.TotalSeconds:0}s to be sent and was not; the bridge connection is still up");
             }
         }
         catch (ConnectorTransportException) { throw; }
