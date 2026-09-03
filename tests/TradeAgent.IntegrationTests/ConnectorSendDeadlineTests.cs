@@ -303,6 +303,8 @@ public class ConnectorSendDeadlineTests
     public void The_deadlines_these_tests_reason_about_are_the_ones_the_product_ships()
     {
         Assert.Equal(TimeSpan.FromSeconds(10), new AtasConnector(NewPipe()).WriteTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), new AtasConnector(NewPipe()).FrameTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(2), new AtasConnector(NewPipe()).EmergencyDeadline);
         Assert.Equal(TimeSpan.FromSeconds(10), new BridgeServer(new LoopbackAtasAdapter(), NewPipe()).WriteTimeout);
 
         using var db = TestEnv.NewDb();
@@ -716,6 +718,57 @@ public class ConnectorSendDeadlineTests
         // And it is the emergency's own sentence that comes back, not a generic transport failure:
         // the read inherited the operation's urgency, so it also inherited its words.
         Assert.Contains("NOT confirmed", reply.Error!.Message);
+    }
+
+    /// <summary>
+    /// A PROGRESS BUDGET IS NOT A BOUND, AND SOMETHING HAS TO BE.
+    ///
+    /// Codex F2, the structural half. <see cref="AtasConnector.WriteTimeout"/> is spent per chunk and
+    /// RESET by every chunk the peer accepts — which is exactly what makes it a stalled-peer detector
+    /// and exactly what stops it bounding anything. A legal order near the 1 MiB frame cap is a
+    /// thousand chunks, so a peer that accepts one just inside the budget each time keeps the write
+    /// alive for a thousand times the budget. <c>WorstCaseOrderPath</c> counted ONE WriteTimeout for
+    /// the whole write, <c>GatewayPipeServer.HandlerDrainTimeout</c> was derived from that claim, and
+    /// so the drain could expire on an order that was still legitimately in progress and abandon it
+    /// DISPATCHING — the state cc7006e and 02aad9a exist to prevent.
+    ///
+    /// The fixture is built so that ONLY the whole-frame ceiling can end this write: the peer accepts
+    /// a chunk every 200 ms against a 2 s per-chunk budget, so the progress budget is never close to
+    /// expiring, and at that rate the 512 KiB frame needs about a hundred seconds. It must end at the
+    /// ceiling instead, and say which bound it was.
+    /// </summary>
+    [Fact]
+    public async Task A_write_that_keeps_making_progress_is_still_bounded_in_total()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(1), Cred())
+        {
+            WriteTimeout = TimeSpan.FromSeconds(2),    // per chunk, and never reached here
+            FrameTimeout = TimeSpan.FromSeconds(3)     // the total, and the only thing that can end it
+        };
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret, 1024, TimeSpan.FromMilliseconds(200));
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // ~5 KiB/s against 512 KiB: a hundred seconds of steady, unbroken progress.
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(
+            new PlaceOrderCommand("TA-ceiling-1", "ATAS-READING", "ES", OrderSide.Buy, OrderType.Market,
+                1m, null, null, TimeInForce.Day, new string('c', 512 * 1024))));
+        timer.Stop();
+
+        Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(10),
+            $"the write ran for {timer.Elapsed.TotalSeconds:0.00}s — the per-chunk budget was reset forever and nothing bounded the total");
+        Assert.True(timer.Elapsed >= TimeSpan.FromSeconds(3) - TimeSpan.FromMilliseconds(200),
+            $"the write ended after {timer.Elapsed.TotalSeconds:0.00}s, before the ceiling — some other bound fired and this measures nothing");
+
+        // The right accusation: it was being read the whole time, it was simply never going to finish.
+        Assert.Contains("still being sent", ex.Message);
+        Assert.DoesNotContain("did not read", ex.Message);
+
+        // Half a frame is in a writer every caller shares, so the connection cannot be reused.
+        await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
     }
 
     /// <summary>

@@ -45,6 +45,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     async Task Wire(CancellationToken ct)
     {
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
+        if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected) throw new ConnectorTransportException("simulator is disconnected");
     }
 
@@ -93,6 +94,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
+        if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected) throw new ConnectorTransportException("simulator is disconnected");
 
         // Transport dies before the broker sees it: nothing landed, but we cannot know that here.

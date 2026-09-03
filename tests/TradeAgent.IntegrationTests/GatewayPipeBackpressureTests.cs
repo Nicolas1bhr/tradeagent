@@ -408,7 +408,7 @@ public class GatewayPipeBackpressureTests
 
         // 10 + 10 + 10 at the shipped values. If a connector deadline grows, this fails here rather
         // than by abandoning an order at shutdown six months later.
-        Assert.Equal(TimeSpan.FromSeconds(30), connector.WorstCaseOrderPath);
+        Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
         Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
             $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
             $"worst-case order path {connector.WorstCaseOrderPath.TotalSeconds:0}s — a shutdown mid-order abandons it");
@@ -426,7 +426,7 @@ public class GatewayPipeBackpressureTests
         using var _1 = db;
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);   // HandlerDrainTimeout: untouched
-        Assert.Equal(TimeSpan.FromSeconds(35), server.HandlerDrainTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(55), server.HandlerDrainTimeout);
         server.Start();
 
         const string rid = "cli-slowsettle-1";
@@ -464,9 +464,71 @@ public class GatewayPipeBackpressureTests
     }
 
     /// <summary>
+    /// A HANDLER THAT IS CANCELLED STILL HAS SOMETHING TO WRITE DOWN, AND DISPOSAL HAS TO WAIT FOR IT.
+    ///
+    /// Codex F2, the second half. Disposal drained the handlers, then cancelled their token, then
+    /// returned. A handler over the bound is cancelled and unwinds THROUGH the catch-all that records
+    /// an after-the-wire failure as UNKNOWN — and disposal walked away at exactly that moment, so
+    /// AppHost closed the gateway and then the database under a request that was mid-write-back. An
+    /// order that may have reached the broker and left no record is the state this whole drain
+    /// exists to prevent, produced at the last step by cancelling and not waiting.
+    ///
+    /// The broker here is slow but WELL BEHAVED — it honours the token — so the handler can finish
+    /// the moment it is cancelled, if anybody waits. Nobody did.
+    /// </summary>
+    [Fact]
+    public async Task Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            HandlerDrainTimeout = TimeSpan.FromMilliseconds(300)   // far shorter than the order path
+        };
+        server.Start();
+
+        const string rid = "cli-settle-on-cancel-1";
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+        conn.Faults.LatencyMs = 5000;                              // cancellable: it unwinds when asked
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-settle-on-cancel",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(30));
+
+        await server.DisposeAsync();
+
+        // The request is not left mid-flight. Whatever it settled on, it settled on something and
+        // wrote it down BEFORE the store could close under it.
+        var record = gw.GetRequest(rid);
+        Assert.NotNull(record);
+        Assert.NotEqual(ExecutionState.DISPATCHING, record!.State);
+
+        // And it is not reported as abandoned, because it was not: it finished, during the wait
+        // that was added for it.
+        Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
+    }
+
+    /// <summary>
     /// A handler that really will not finish is abandoned rather than waited on — and that has to be
     /// an ERROR in the record, not a note. It is the only trace that an order may have been left
     /// unsettled, so it must reach whatever an operator actually reads.
+    ///
+    /// THE FAULT IS UNCANCELLABLE LATENCY, and it has to be. A merely slow broker unwinds the moment
+    /// disposal cancels the token, and since disposal now RE-AWAITS that unwind so the handler can
+    /// record what it knows (Codex F2), such a handler always finishes and this line correctly does
+    /// not appear. The only thing that still produces an abandoned handler is a call that does not
+    /// honour the token — a blocking vendor SDK call on a thread nothing can interrupt — which is
+    /// exactly the shape this error exists to report.
     /// </summary>
     [Fact]
     public async Task A_handler_that_outlasts_the_drain_is_recorded_as_an_error()
@@ -475,12 +537,16 @@ public class GatewayPipeBackpressureTests
         using var _1 = db;
         var pipe = NewPipe();
         // Deliberately far shorter than the order path, which is the situation the log line exists for.
-        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { HandlerDrainTimeout = TimeSpan.FromMilliseconds(300) };
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            HandlerDrainTimeout = TimeSpan.FromMilliseconds(300),
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
+        };
         server.Start();
 
         await using var agent = await RawAgent.ConnectAndHello(pipe);
         await WarmUp(agent);
-        conn.Faults.LatencyMs = 5000;
+        conn.Faults.UncancellableLatencyMs = 5000;
         await agent.WriteAsync(new IpcRequest
         {
             Op = Ops.Buy,
