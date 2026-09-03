@@ -520,7 +520,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         var working = await gateway.OrdersAsync(false, ct);
         var results = new List<ExecutionRequest>();
-        var nonce = SweepNonce();
+        var nonce = FreshSweepNonce("cancelall");
         var i = 0;
         foreach (var o in working)
             results.Add(await gateway.CancelAsync(ctx, DerivedId(nonce, "cancelall", i++), o.ConnectorOrderId, ct));
@@ -549,8 +549,56 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     static string DerivedId(string nonce, string intent, int index) =>
         $"{MintedIdPrefix}{nonce}-{intent}-{index}";
 
-    /// <summary>A fresh nonce for one sweep. Hex, so it cannot leave the conservative charset.</summary>
-    static string SweepNonce() => Guid.NewGuid().ToString("n")[..8];
+    /// <summary>
+    /// A candidate nonce for one sweep. Hex, so it cannot leave the conservative charset.
+    ///
+    /// A WHOLE GUID, not the first eight characters of one. Eight hex is 32 bits, and the thing it
+    /// has to stay clear of is not another live sweep — it is this installation's own DURABLE
+    /// history, which only grows. At roughly 77,000 lifetime sweeps the birthday probability of
+    /// landing on a nonce already in that history reaches about half (Codex F9), and a repeat is not
+    /// a near miss: leg <c>op-{nonce}-cancelall-0</c> becomes an id the store already holds, so the
+    /// leg REPLAYS an old record and the sweep counts a stale CANCELLED for an order still WORKING.
+    ///
+    /// 32 hex characters cost nothing here: <c>op-</c> + 32 + <c>-cancelall-</c> + index is 48, well
+    /// inside the 61 the client-order-id budget allows, and a test asserts that rather than this
+    /// comment claiming it.
+    /// </summary>
+    static string NewSweepNonce() => Guid.NewGuid().ToString("n");
+
+    /// <summary>TEST SEAM: where a sweep's nonce comes from. The real one in production.</summary>
+    public Func<string> SweepNonceSource { get; init; } = NewSweepNonce;
+
+    /// <summary>How many nonces a sweep will try before it refuses to guess again.</summary>
+    const int MaxNonceAttempts = 8;
+
+    /// <summary>
+    /// A nonce that is not already in the durable history it could collide WITH.
+    ///
+    /// Widening the nonce makes a collision vanishingly unlikely; this makes it HARMLESS, which is a
+    /// different property and the one worth having on the money path. Asking costs one indexed read
+    /// per sweep, and it is the only way the guarantee is testable at all — a probability is not
+    /// something a test can observe, and 2^128 is not something it can wait for.
+    ///
+    /// Index 0 is enough to decide it: a sweep that minted anything minted leg 0, and a sweep that
+    /// minted nothing left no record for this one to replay.
+    /// </summary>
+    string FreshSweepNonce(string intent)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var nonce = SweepNonceSource();
+            if (gateway.Requests.Get(DerivedId(nonce, intent, 0)) is null) return nonce;
+
+            // One in 2^128 that nobody can ever confirm happened is worse than one that is logged.
+            gateway.Log.Engineering("Ipc", "sweep_nonce_collision", "warn",
+                metadataJson: Json.Write(new { intent, attempt }));
+
+            if (attempt >= MaxNonceAttempts)
+                throw new GatewayDeniedException(ErrorCode.UNKNOWN_ERROR,
+                    $"could not mint a sweep id for '{intent}' that is not already in this " +
+                    "installation's history; nothing was cancelled or closed");
+        }
+    }
 
     /// <summary>Same two corrections as <see cref="CancelAll"/>: uncollidable ids, and a count of what landed.</summary>
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
@@ -558,7 +606,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var positions = await gateway.PositionsAsync(ct);
         var results = new List<ExecutionRequest>();
         var nothingToDo = new List<string>();
-        var nonce = SweepNonce();
+        var nonce = FreshSweepNonce("closeall");
         var i = 0;
         foreach (var p in positions.Where(p => p.Quantity != 0))
         {

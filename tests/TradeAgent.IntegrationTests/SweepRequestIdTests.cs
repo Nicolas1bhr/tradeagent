@@ -2,6 +2,7 @@ using System.Text.Json;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
 using TradeAgent.TradeCli;
@@ -167,6 +168,98 @@ public class SweepRequestIdTests
         Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
         Assert.Empty(conn.Broker.Orders);
     }
+
+    // ---------------------------------------------------------- the sweep nonce (F9)
+
+    /// <summary>
+    /// A NONCE THAT REPEATS MUST NOT MAKE A SWEEP REPLAY AN OLDER ONE.
+    ///
+    /// Codex F9 on d25dbb4: the nonce was eight hex characters — 32 bits — so at roughly 77,000
+    /// lifetime sweeps the birthday probability of colliding with this installation's own durable
+    /// history reaches about half. A repeat makes leg <c>op-{nonce}-cancelall-0</c> an id the store
+    /// already holds, so the leg REPLAYS that record: the sweep counts an old CANCELLED while the
+    /// order it was actually pointed at is left WORKING. That is the bdf9a24 fault — a claim that is
+    /// not true about the book in front of it — reached by a third route.
+    ///
+    /// The nonce is now a whole GUID, and this test does not depend on that: the seam forces the
+    /// collision so the RECOVERY is what is measured. It repeats the value for the first two mints
+    /// and then yields real ones, which is the shape a genuine collision has — a constant source
+    /// could not recover by construction and would be testing the refusal instead.
+    /// </summary>
+    [Fact]
+    public async Task A_repeated_sweep_nonce_is_detected_and_the_second_sweep_still_cancels()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+
+        var mints = 0;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SweepNonceSource = () => ++mints <= 2 ? "collide" : Guid.NewGuid().ToString("n")
+        };
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("nonce-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var first = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-n1" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+        Assert.Equal(1, first.GetProperty("cancelled").GetInt32());
+
+        // A NEW order, and a second sweep whose first nonce attempt is the one already in history.
+        Assert.True((await client.SendAsync(Buy("nonce-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Single(await gw.OrdersAsync(false));
+
+        var second = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-n2" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+
+        // The claim AND the book. A replayed leg reports the old record's CANCELLED and leaves the
+        // order it was aimed at working, so both halves have to be read.
+        Assert.Equal(1, second.GetProperty("attempted").GetInt32());
+        Assert.Equal(1, second.GetProperty("cancelled").GetInt32());
+        Assert.Empty(await gw.OrdersAsync(false));
+        Assert.Equal(2, (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED));
+        Assert.Equal(2, conn.Broker.Orders.Count(o => o.State == ExecutionState.CANCELLED));
+
+        // And the collision is VISIBLE. A one-in-2^128 event that happens silently is one nobody
+        // can ever confirm happened.
+        Assert.True(HasEvent(db, "sweep_nonce_collision"),
+            "the nonce collided and was recovered from, but nothing was recorded");
+    }
+
+    /// <summary>The minted id has to satisfy the same bound the gateway enforces on an agent's.</summary>
+    [Fact]
+    public async Task A_minted_sweep_id_still_fits_the_client_order_id_budget()
+    {
+        var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("budget-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-budget" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+
+        var minted = sweep.GetProperty("requests").EnumerateArray()
+            .Select(r => r.GetProperty("request_id").GetString()!).Single();
+
+        // Widening the nonce moved this number; nothing was checking it, and a minted id is not
+        // subject to the pipe's own guard because it never crosses the pipe.
+        var coid = TradingGateway.ClientOrderIdFor(minted);
+        Assert.True(coid.Length <= 64,
+            $"minted id '{minted}' becomes a {coid.Length}-character client order id, over the 64 the budget allows");
+        Assert.Matches("^[A-Za-z0-9-]+$", coid);
+    }
+
+    static bool HasEvent(Database db, string ev) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM engineering_log WHERE event=$e", ("$e", ev));
+        return Convert.ToInt32(c.ExecuteScalar()) > 0;
+    });
 
     // ---------------------------------------------------------- the EFFECTIVE id (F1 / V1)
 
