@@ -331,12 +331,54 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// THE SAME ACT GETS THE SAME URGENCY WHOEVER ASKED. One stalled bridge, both callers at once.
+    ///
+    /// The first version of the fast path keyed on the operator's own button, so the agent's
+    /// cancel-all — which the gateway sweeps into per-order <c>Cancel</c> legs — fell through to the
+    /// full deadline. Measured: 9707 ms per agent leg against 2006 ms for the button, and the legs
+    /// run in sequence, so an agent cancelling N orders through a stalled bridge waited ~10N seconds
+    /// to be told nothing. Both are cancellations. Both reduce risk. Both are urgent.
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_leg_and_the_operator_button_both_fail_fast_on_one_stalled_bridge()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped deadlines
+        await connector.ConnectAsync();
+
+        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-intent-1", "ATAS-STALLED", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
+        Observe([stuck]);
+        await Task.Delay(250);
+
+        // The agent's sweep leg (BridgeOps.Cancel) and the operator's button (BridgeOps.CancelAll),
+        // against the same stalled writer, at the same moment.
+        var timer = Stopwatch.StartNew();
+        var leg = connector.CancelOrderAsync("FB-1");
+        var button = connector.CancelAllOrdersAsync("ATAS-STALLED");
+        var both = await Task.WhenAll(
+            Assert.ThrowsAnyAsync<Exception>(() => leg),
+            Assert.ThrowsAnyAsync<Exception>(() => button));
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"a cancel took {timer.Elapsed.TotalSeconds:0.00}s behind a stalled write — one of these is still on the full deadline");
+        Assert.All(both, ex => Assert.True(ex is ConnectorTransportException,
+            $"a cancellation of unknown outcome surfaced as {ex.GetType().Name}"));
+    }
+
+    /// <summary>
     /// The other half of the decision: ORDINARY traffic keeps the full deadline. A quote arriving
     /// late costs nothing, and a caller that is merely queued has no business tearing down a
     /// connection. Shipped values, so this one really does take about ten seconds.
     /// </summary>
-    [Fact]
-    public async Task An_ordinary_op_behind_a_stalled_write_still_gets_the_full_deadline()
+    [Theory]
+    [InlineData("read")]     // a quote arriving late costs nothing
+    [InlineData("place")]    // and an order that OPENS risk has no claim on an emergency path at all
+    public async Task An_ordinary_op_behind_a_stalled_write_still_gets_the_full_deadline(string kind)
     {
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
@@ -351,12 +393,15 @@ public class ConnectorSendDeadlineTests
         await Task.Delay(250);
 
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.GetAccountsAsync());
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => kind == "read"
+            ? connector.GetAccountsAsync()
+            : connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-2", "ATAS-STALLED", "ES",
+                OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
         timer.Stop();
 
         Assert.True(ex is ConnectorTransportException);
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
-            $"an ordinary read gave up after {timer.Elapsed.TotalSeconds:0.00}s — it took the emergency path it is not entitled to");
+            $"an ordinary '{kind}' gave up after {timer.Elapsed.TotalSeconds:0.00}s — it took the emergency path it is not entitled to");
         Assert.DoesNotContain("NOT confirmed", ex.Message);
     }
 
