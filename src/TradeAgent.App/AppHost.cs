@@ -128,22 +128,12 @@ public sealed class AppHost : IAsyncDisposable
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
 
-            // The updater's two hard dependencies, handed over as narrowly as they can be: a count
-            // and a log sink, not the gateway. UpdateService must be able to refuse to replace the
-            // program while an order's outcome is unknown, and it must be able to say why somewhere
-            // the owner can find it afterwards — but it has no business reading anything else about
-            // trading, and the AI has no business reaching either of these.
-            //
-            // Wired here rather than at construction because the gateway does not exist until now.
-            // Until it is wired UpdateService refuses to install at all: not knowing whether an
-            // order is outstanding is not the same as knowing there is none.
-            Updates.UnconfirmedWork = () => Gateway.Requests.NeedingReconciliation().Count;
-            Updates.Activity = (text, level) => Gateway.Log.Activity(text, level);
-
-            // And the other direction, closing the same window from the other side: while an install
-            // is going the gateway refuses to dispatch anything new, because the process that would
-            // have to reconcile the answer is the one being replaced.
-            Gateway.InstallInProgress = () => Updates.InstallInProgress;
+            // Both halves of the updater/gateway contract, in one call that a test can run: the
+            // updater refuses to replace the program while an order is unconfirmed, and the gateway
+            // refuses to dispatch while the program is being replaced. It is a seam rather than
+            // three assignments here because this project is not built by the test suite, and a
+            // guard that can only be checked by grepping for it is a guard nobody is checking.
+            UpdateGatewayCoupling.Attach(Gateway, Updates);
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();
