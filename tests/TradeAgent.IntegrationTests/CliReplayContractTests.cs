@@ -197,6 +197,52 @@ public class CliReplayContractTests
         Assert.Equal(transport == "PossiblyWritten", json.GetProperty("reply_lost").GetBoolean());
     }
 
+    /// <summary>
+    /// THE ID IS ANNOUNCED BEFORE THE FRAME GOES OUT, AND THIS TEST WATCHES IT HAPPEN.
+    ///
+    /// Codex F13: the previous version waited for the process to exit and then checked that stderr
+    /// contained the id, which moving the announcement into the connection-failure catch — AFTER the
+    /// attempted send — would also have satisfied. Here the service completes the handshake and then
+    /// never answers, so the CLI is still blocked when the assertion is made: an announcement made
+    /// on any failure path could not have been printed yet, because there has been no failure.
+    /// </summary>
+    [Fact]
+    public async Task The_real_cli_announces_the_id_while_the_call_is_still_in_flight()
+    {
+        var token = IpcToken.Ensure();
+        var handshaken = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = new CancellationTokenSource();
+        var serving = HandshakeThenSilence(Paths.PipeName, handshaken, stop.Token);
+
+        var (exe, prefix) = TradeBinary();
+        var psi = new ProcessStartInfo { FileName = exe, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (var a in prefix) psi.ArgumentList.Add(a);
+        foreach (var a in new[] { "buy", "ES", "1" }) psi.ArgumentList.Add(a);
+
+        using var p = Process.Start(psi)!;
+        try
+        {
+            // Wait until the service has answered the handshake and gone quiet. From here the CLI is
+            // inside the call: its order is written or being written, and no reply will ever come.
+            await handshaken.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+            var line = await p.StandardError.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.NotNull(line);
+            Assert.StartsWith("request-id: cli-", line);
+
+            // The ordering claim: the id is on stderr while the call is STILL OUTSTANDING. An
+            // announcement moved into any failure path could not have run — nothing has failed yet,
+            // and nothing will, because this service simply never answers.
+            Assert.False(p.HasExited, "the CLI had already finished, so this proves nothing about ordering");
+        }
+        finally
+        {
+            try { p.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+            await stop.CancelAsync();
+            try { await serving; } catch (Exception) { /* the service is torn down with the client */ }
+        }
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>Answers the handshake, takes one order frame, then closes without replying.</summary>
@@ -269,6 +315,35 @@ public class CliReplayContractTests
         })));
         server.Dispose();
     });
+
+    /// <summary>
+    /// Answers the handshake, signals that it has, and then says nothing at all — holding the
+    /// connection open so the client stays inside its call until the test tears it down.
+    /// </summary>
+    static async Task HandshakeThenSilence(string pipe, TaskCompletionSource handshaken, CancellationToken stop) => await Task.Run(async () =>
+    {
+        using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        await server.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(30), stop);
+        var r = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var w = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        // The client may be killed by the test before it says hello; that is an ending, not a fault.
+        if (await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)) is not { } helloLine) return;
+        var hello = Json.Read<IpcRequest>(helloLine)!;
+        await w.WriteLineAsync(Json.Write(IpcResponse.Success(hello.Id, new
+        {
+            protocol_version = Versions.ProtocolVersion,
+            app_version = Versions.App,
+            compatible = true
+        })));
+
+        handshaken.TrySetResult();
+
+        // Held open, unread and unanswered, until the test tears the client down.
+        try { await Task.Delay(TimeSpan.FromSeconds(30), stop); } catch (Exception) { /* expected */ }
+        server.Dispose();
+    }, stop);
 
     static async Task<(int Exit, string Stdout, string Stderr)> RunTrade(params string[] args)
     {
