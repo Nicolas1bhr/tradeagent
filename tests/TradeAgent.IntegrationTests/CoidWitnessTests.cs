@@ -1,4 +1,6 @@
 using TradeAgent.AtasBridge;
+using TradeAgent.Core;
+using TradeAgent.Diagnostics;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -761,6 +763,58 @@ public class CoidWitnessTests : IDisposable
         Assert.False(new CoidWitness(path: null).Unreadable);
     }
 
+    /// <summary>
+    /// A DURABILITY GAP THAT ENDED WHEN THE PROCESS DID IS THE ONE NOBODY WOULD SEE. The next run
+    /// starts with a clean <c>LastWriteFailure</c> and a witness that looks perfect, so the only
+    /// thing left saying a claim once failed to reach the disk is the sidecar — and it said it to
+    /// nobody. The surface token now carries it, in the field that already exists and without adding
+    /// one, so a probe splitting the report on spaces reads it exactly as before.
+    /// </summary>
+    [Fact]
+    public void A_sidecar_left_by_an_earlier_run_makes_the_token_say_so()
+    {
+        var earlier = Session(NeverLands);
+        Submit(earlier, "TA-GAP");
+        Assert.Contains("io:failed", earlier.Token());
+        Assert.True(File.Exists(Path.Combine(_dir, CoidWitness.ErrorLogName)));
+
+        // The restart. This session writes perfectly well; the gap is still a fact about the file.
+        var next = Session();
+        Assert.Contains("io:degraded", next.Token());
+        Assert.DoesNotContain(' ', next.Token());
+
+        // Cleared by deleting it, which takes effect at the next start.
+        File.Delete(Path.Combine(_dir, CoidWitness.ErrorLogName));
+        Assert.Contains("io:ok", Session().Token());
+    }
+
+    /// <summary>
+    /// A line-oriented file gets one line. Most of what lands in it is an OS exception message and a
+    /// path, and neither is under this product's control — a newline in the middle turns one event
+    /// into two half-events and lets whatever follows pose as a fresh, timestamp-free record.
+    /// </summary>
+    [Fact]
+    public void A_failure_message_cannot_forge_extra_lines_in_the_sidecar()
+    {
+        var w = Session((tmp, destination) =>
+            throw new IOException("refused\n2026-01-01T00:00:00.0000000+00:00 ERROR everything is fine\r\u0007"));
+        Submit(w, "TA-INJECT");
+
+        var text = File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName));
+        Assert.Single(text.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.DoesNotContain("everything is fine\r", text);
+        Assert.DoesNotContain('\u0007', text);
+        Assert.Contains("TA-INJECT", text);
+    }
+
+    /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
+    [Fact]
+    public void The_sidecar_sits_beside_the_witness_file()
+    {
+        Assert.Equal(Path.Combine(_dir, CoidWitness.ErrorLogName), Session().ErrorLogPath);
+        Assert.Null(new CoidWitness(path: null).ErrorLogPath);
+    }
+
     // -------------------------------------------------------------- two writers, one file
 
     /// <summary>
@@ -1026,6 +1080,30 @@ public class CoidWitnessTests : IDisposable
     {
         Assert.Equal("proven-crosssession", ClientOrderIdProofs.Token(ClientOrderIdProof.CrossSession, 1, 1));
         Assert.Equal("proven-crosssession", ClientOrderIdProofs.Token(ClientOrderIdProof.CrossSession, 0, 0));
+    }
+
+    /// <summary>
+    /// AND THE SUPPORT PACKAGE CAN SEE IT. The collector walked <c>Paths.Logs</c> only, and the
+    /// bridge cannot write there — it runs inside ATAS and may not take a dependency on anything
+    /// that would not be deployed with it, so it writes a plain file beside the witness. A
+    /// durability gap in the write-ahead record is precisely what a support package is for, and it
+    /// was the one thing the package could not carry.
+    /// </summary>
+    [Fact]
+    public void The_support_package_carries_the_witness_failure_log()
+    {
+        var sidecar = Path.Combine(Paths.BridgeDir, CoidWitness.ErrorLogName);
+        File.WriteAllText(sidecar, "2026-09-03T00:00:00.0000000+00:00 ERROR coid-witness rewrite did not land.");
+        try
+        {
+            var zip = Doctor.CreateSupportPackage(TestEnv.NewDb(),
+                Path.Combine(_dir, "support.zip"));
+
+            using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
+            var entry = archive.Entries.SingleOrDefault(e => e.FullName.Contains(CoidWitness.ErrorLogName));
+            Assert.NotNull(entry);
+        }
+        finally { try { File.Delete(sidecar); } catch (IOException) { } }
     }
 
     /// <summary>
