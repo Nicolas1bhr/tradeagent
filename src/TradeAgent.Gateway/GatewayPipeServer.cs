@@ -333,6 +333,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
         }
 
+        // The other half of what makes a derived id uncollidable: an agent cannot type one.
+        if (req.RequestId?.Contains(DerivedIdSeparator) == true)
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"'{DerivedIdSeparator}' is reserved in a request id — it is how cancel-all and close-all " +
+                "name the per-order requests they derive from yours, and an id containing it could collide with one");
+
         var ctx = AgentContext.ForAgent(req.Session);
         var rid = req.RequestId ?? req.Id;
         try
@@ -390,27 +396,78 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
+    /// The separator in a derived request id, and the one character an agent may not put in its own.
+    ///
+    /// Derived ids used to be <c>{rid}-{i}</c>, which any agent can also type. An agent that placed
+    /// an order as <c>X-0</c> and later swept with <c>--request-id X</c> handed the FIRST cancel the
+    /// id <c>X-0</c> — already in the idempotency store as a PLACE — so the sweep replayed that
+    /// record instead of cancelling, and still counted it. Reserving a character the pipe refuses on
+    /// the way in makes the collision impossible by construction rather than unlikely.
+    /// </summary>
+    const char DerivedIdSeparator = '#';
+
+    /// <summary>
     /// Agent-initiated cancel-all still goes through per-order requests so each cancellation is a
     /// durable, reconcilable record rather than one opaque sweep.
+    ///
+    /// THE COUNT IS OF CANCELLATIONS THAT LANDED, not of attempts made. It was
+    /// <c>cancelled = results.Count</c>, which reported every order it had tried — so a sweep that
+    /// left an order WORKING, or came back UNKNOWN, still said <c>cancelled=1</c>. On the one command
+    /// a person reaches for when they want everything to stop, that is the worst possible lie.
     /// </summary>
     async Task<object> CancelAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var working = await gateway.OrdersAsync(false, ct);
-        var results = new List<object>();
+        var results = new List<ExecutionRequest>();
         var i = 0;
         foreach (var o in working)
-            results.Add(await gateway.CancelAsync(ctx, $"{rid}-{i++}", o.ConnectorOrderId, ct));
-        return new { cancelled = results.Count, requests = results };
+            results.Add(await gateway.CancelAsync(ctx, DerivedId(rid, "cancel-all", i++), o.ConnectorOrderId, ct));
+
+        var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
+        return new
+        {
+            cancelled = landed,
+            attempted = results.Count,
+            // Named rather than inferred: anything not cancelled is still out there, and the agent
+            // has to be able to see which without diffing two lists.
+            not_cancelled = results.Where(r => r.State is not ExecutionState.CANCELLED)
+                .Select(r => new { request_id = r.RequestId, order = r.ConnectorOrderId, state = r.State.ToString() }),
+            requests = results
+        };
     }
 
+    /// <summary>
+    /// A per-item id derived from the sweep's own id, in a shape an agent cannot produce because
+    /// <see cref="DerivedIdSeparator"/> is refused on the way in.
+    /// </summary>
+    static string DerivedId(string rid, string intent, int index) =>
+        $"{rid}{DerivedIdSeparator}{intent}{DerivedIdSeparator}{index}";
+
+    /// <summary>Same two corrections as <see cref="CancelAll"/>: uncollidable ids, and a count of what landed.</summary>
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var positions = await gateway.PositionsAsync(ct);
-        var results = new List<object?>();
+        var results = new List<ExecutionRequest>();
+        var nothingToDo = new List<string>();
         var i = 0;
         foreach (var p in positions.Where(p => p.Quantity != 0))
-            results.Add(await gateway.CloseAsync(ctx, $"{rid}-{i++}", p.Symbol, ct));
-        return new { closed = results.Count, requests = results };
+        {
+            // Null means the gateway found nothing to close for that symbol. Not a failure, and
+            // not a closure either — counting it as one is exactly the overstatement being removed.
+            var r = await gateway.CloseAsync(ctx, DerivedId(rid, "close-all", i++), p.Symbol, ct);
+            if (r is null) nothingToDo.Add(p.Symbol); else results.Add(r);
+        }
+
+        var landed = results.Count(r => r.State is ExecutionState.FILLED);
+        return new
+        {
+            closed = landed,
+            attempted = results.Count + nothingToDo.Count,
+            nothing_to_close = nothingToDo,
+            not_closed = results.Where(r => r.State is not ExecutionState.FILLED)
+                .Select(r => new { request_id = r.RequestId, instrument = r.Instrument, state = r.State.ToString() }),
+            requests = results
+        };
     }
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
