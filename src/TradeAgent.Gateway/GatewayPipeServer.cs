@@ -350,26 +350,39 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
         }
 
+        // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
+        // that is USED, not on the field that may be absent.
+        //
+        // `request_id` is optional on the wire and `id` is not, so the id that actually reaches the
+        // broker and keys the idempotency store is this fallback. Validating only `req.RequestId`
+        // left every rule below bypassable by omitting one field, and both halves were measured on
+        // d25dbb4 before this changed: a 200-character frame id containing '#', '/' and a space was
+        // accepted and left this process as the 203-character ClientOrderId `TA-x#y/z w_qqq…`; and
+        // `op-deadbeef-cancelall-0` in the frame id reached the broker AND became a live
+        // idempotency key — the bdf9a24 collision (a sweep leg replaying an agent's PLACE record
+        // and counting it as cancelled) restored one field over.
+        var rid = req.RequestId ?? req.Id;
+
         // Two checks, and they are not the same check. The PREFIX keeps an agent's id from
         // colliding with one this gateway mints for a sweep leg. The CHARSET keeps whatever the
         // agent chose from reaching the broker as ClientOrderId ("TA-" + this) in a shape safety
         // rule 1 needs to round-trip and no one here can promise ATAS will accept.
-        if (req.RequestId is { } given)
-        {
-            if (given.StartsWith(MintedIdPrefix, StringComparison.OrdinalIgnoreCase))
-                return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-                    $"a request id may not start with '{MintedIdPrefix}' — that prefix is how cancel-all and " +
-                    "close-all name the per-order requests they mint, and an id using it could collide with one");
+        //
+        // Applied to every op rather than only the mutating ones. `rid` is consumed only by the
+        // mutating branches today, but the cost of guarding a read is one comparison and the cost
+        // of scoping it is that the next op to start using `rid` inherits the hole silently.
+        if (rid.StartsWith(MintedIdPrefix, StringComparison.OrdinalIgnoreCase))
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"a request id may not start with '{MintedIdPrefix}' — that prefix is how cancel-all and " +
+                "close-all name the per-order requests they mint, and an id using it could collide with one");
 
-            if (!IsConservativeId(given))
-                return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-                    $"a request id may use only letters, digits and '-', up to {MaxRequestIdChars} characters — it is " +
-                    $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
-                    "and that has to be a shape the broker will give back");
-        }
+        if (!IsConservativeId(rid))
+            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                $"a request id may use only letters, digits and '-', up to {MaxRequestIdChars} characters — it is " +
+                $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
+                "and that has to be a shape the broker will give back");
 
         var ctx = AgentContext.ForAgent(req.Session);
-        var rid = req.RequestId ?? req.Id;
         try
         {
             object? data = req.Op switch
