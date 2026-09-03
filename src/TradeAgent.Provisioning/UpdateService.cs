@@ -254,6 +254,23 @@ public sealed class UpdateService
     /// </summary>
     public bool Refused { get; private set; }
 
+    /// <summary>
+    /// True when the standing refusal is the unconfirmed-order one.
+    ///
+    /// It is the only refusal that stops being true on its own — the order settles and nothing about
+    /// the update has changed. Every other one (a release we cannot verify, two files that both look
+    /// like the installer, bytes that changed under us) stays true until a different release is
+    /// published, so nothing expires it and nothing should.
+    /// </summary>
+    public bool RefusedPendingWork { get; private set; }
+
+    /// <summary>
+    /// True when the release on offer published a checksum file, so it is capable of being verified
+    /// at all. False is not a refusal by itself — the refusal is in <see cref="InstallAsync"/> — it
+    /// is what lets both surfaces say so BEFORE the owner presses, instead of after.
+    /// </summary>
+    public bool CanBeVerified => Available?.ChecksumUrl is not null;
+
     /// <summary>True when there is something to offer and the user has not waved it away.</summary>
     public bool ShouldPrompt => Available is not null && !Dismissed;
 
@@ -408,7 +425,7 @@ public sealed class UpdateService
             // one stop that is about the owner's money rather than about the file, and it is the
             // cheapest to answer, so it is asked first. Inside the busy gate on purpose — a refusal
             // that a concurrent background check could overwrite two seconds later is not visible.
-            if (OutstandingWork(out var outstanding)) return Refuse(outstanding);
+            if (OutstandingWork(out var outstanding)) return Refuse(outstanding, pendingWork: true);
 
             Set(UpdateStage.Downloading, $"Downloading TradeAgent {info.Version}…");
 
@@ -438,7 +455,7 @@ public sealed class UpdateService
             // can have gone UNKNOWN since, and the sample taken minutes ago would launch anyway.
             // ADDED, not moved: the early ask is what keeps a refusal from costing the owner the
             // download, and this one is what makes the answer true at the moment it is acted on.
-            if (OutstandingWork(out var late)) return Refuse(late);
+            if (OutstandingWork(out var late)) return Refuse(late, pendingWork: true);
 
             Set(UpdateStage.Installing, $"Installing TradeAgent {info.Version}. TradeAgent will close and reopen itself.");
             _sources.Launch(installer);
@@ -559,10 +576,17 @@ public sealed class UpdateService
     /// otherwise write the identical line into the activity log four times a day until it is fixed.
     /// The first occurrence is always recorded; a different refusal always is too.
     /// </summary>
-    bool Refuse(string reason)
+    bool Refuse(string reason, bool pendingWork = false)
     {
-        Set(UpdateStage.Failed, reason);
+        // The flags are set BEFORE Changed fires. Set() raises it, and a handler that read Refused
+        // during that call would have seen the refusal as an ordinary failure — the one distinction
+        // the Settings card and the banner exist to draw.
+        Stage = UpdateStage.Failed;
+        Message = reason;
         Refused = true;
+        RefusedPendingWork = pendingWork;
+        Changed?.Invoke();
+
         if (_lastRefusalLogged != reason)
         {
             _lastRefusalLogged = reason;
@@ -579,11 +603,29 @@ public sealed class UpdateService
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Drops a standing refusal that has stopped being true.
+    ///
+    /// Called on the refresh tick. Only the unconfirmed-order refusal can go stale, and it goes
+    /// stale the moment the order settles — leaving "TradeAgent will not replace itself…" on screen
+    /// beside a button that has just been re-enabled is the banner arguing with its own button, and
+    /// with nothing to expire it that lasted until the next check, up to six hours later.
+    /// </summary>
+    public void ExpireStaleRefusal()
+    {
+        if (!Refused || !RefusedPendingWork) return;
+        if (OutstandingWork(out _)) return;              // still true, leave it alone
+
+        _lastRefusalLogged = null;
+        Set(Available is null ? UpdateStage.UpToDate : UpdateStage.Available, null);
+    }
+
     void Set(UpdateStage stage, string? message)
     {
         Stage = stage;
         Message = message;
         Refused = false;
+        RefusedPendingWork = false;
         Changed?.Invoke();
     }
 
