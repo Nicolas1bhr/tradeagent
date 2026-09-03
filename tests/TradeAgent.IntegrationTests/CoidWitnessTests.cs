@@ -81,6 +81,20 @@ public class CoidWitnessTests : IDisposable
     long CommittedGeneration() =>
         System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("generation").GetInt64();
 
+    /// <summary>
+    /// The broker order id the COMMITTED file carries for an identifier, or null when it carries
+    /// none. Read out of the file rather than through <see cref="CoidWitness"/> for the same reason
+    /// <see cref="CommittedIds"/> is: an assertion that goes through the reader can be satisfied by
+    /// an uncommitted temp the reader recovered. The property is absent, not null, when there is no
+    /// id — the writer omits nulls.
+    /// </summary>
+    string? CommittedBrokerId(string id) =>
+        System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("records")
+            .EnumerateArray()
+            .Where(r => r.GetProperty("client_order_id").GetString() == id)
+            .Select(r => r.TryGetProperty("broker_order_id", out var b) ? b.GetString() : null)
+            .FirstOrDefault();
+
     /// <summary>One acknowledged record, in the shape the file stores.</summary>
     static string RecordJson(string id, string session) =>
         $$"""{"client_order_id":"{{id}}","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-{{id}}","identified_at":"2026-01-01T00:00:01+00:00"}""";
@@ -502,6 +516,51 @@ public class CoidWitnessTests : IDisposable
         var next = Session();
         Assert.Null(next.PriorSession("TA-REFUSED"));
         Assert.Empty(next.PriorSessionIds(16));
+    }
+
+    /// <summary>
+    /// THE ASYMMETRY, PINNED FROM BOTH SIDES, BECAUSE IT LOOKS LIKE AN INCONSISTENCY AND IS NOT.
+    ///
+    /// A refused <c>Submitting</c> is rolled back: <c>Place</c> will not send the order, so the claim
+    /// describes nothing, and leaving it in memory lets an unrelated order in ATAS's book complete it
+    /// with a real broker id — manufactured prior-session evidence for an order this product never
+    /// submitted.
+    ///
+    /// A refused <c>Identified</c> is NOT rolled back, and the difference is the direction of the
+    /// facts. The order is LIVE at the broker and the id is REAL. Rolling it back would throw away
+    /// the half this product did not write, for an order it did send — so the next save could commit
+    /// the record without an id it already knew, and the restart experiment would read that order as
+    /// unacknowledged for ever.
+    ///
+    /// The test that already covers the acknowledgement path reads it back through a RESTART, which
+    /// the stranded temp satisfies whether or not memory kept the id. This one asks the running
+    /// session, which is the only place the asymmetry is visible.
+    /// </summary>
+    [Fact]
+    public void A_refused_acknowledgement_is_kept_where_a_refused_claim_is_taken_back()
+    {
+        var refused = false;
+        var w = Session(LandsUntil(() => refused));
+
+        // The claim lands, so Place sends the order and ATAS assigns it an id.
+        Assert.True(w.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+
+        // THE ACKNOWLEDGEMENT HALF. The rewrite that records the broker id is refused for good.
+        refused = true;
+        w.Identified("TA-LIVE", "BRK-LIVE");
+        Assert.Equal("BRK-LIVE", w.All().Single(r => r.ClientOrderId == "TA-LIVE").BrokerOrderId);
+        Assert.Null(CommittedBrokerId("TA-LIVE"));
+
+        // THE CLAIM HALF, in the same session, against the same refusal.
+        Assert.False(w.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
+        Assert.DoesNotContain(w.All(), r => r.ClientOrderId == "TA-REFUSED");
+
+        // And the next commit carries exactly that asymmetry onto the disk: the acknowledgement
+        // survived the refusal, the abandoned claim did not.
+        refused = false;
+        Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(["TA-LIVE", "TA-NEXT"], CommittedIds());
+        Assert.Equal("BRK-LIVE", CommittedBrokerId("TA-LIVE"));
     }
 
     /// <summary>
