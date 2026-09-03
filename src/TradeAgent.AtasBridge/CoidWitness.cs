@@ -156,6 +156,7 @@ public sealed class CoidWitness
     const int ReplaceBackoffMs = 20;
 
     const int MaxLoggedFailures = 32;
+    const int MaxNoteChars = 400;
     const long MaxErrorLogBytes = 64 * 1024;
 
     static readonly JsonSerializerOptions Opts = new()
@@ -192,6 +193,17 @@ public sealed class CoidWitness
     bool _loaded;
     bool _readFailed;
     bool _candidateUnreadable;
+
+    /// <summary>
+    /// THERE IS SOMETHING IN THE SIDECAR — from a previous run of this product or from this one.
+    /// Reported through <see cref="Token"/> as <c>io:degraded</c>, because a durability gap that
+    /// ended when the process did is exactly the gap nobody would otherwise ever see: the next
+    /// session starts with a clean <see cref="LastWriteFailure"/> and a witness that looks perfect.
+    /// Cleared by deleting the file, which takes effect at the next start — checked once at load
+    /// rather than on every heartbeat, because <see cref="Token"/> runs on the heartbeat and has no
+    /// business stat-ing a file five times a minute forever.
+    /// </summary>
+    bool _degraded;
 
     /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
@@ -261,6 +273,25 @@ public sealed class CoidWitness
     /// look like a working witness that quietly forgets everything at shutdown.
     /// </summary>
     public string? Path => _path;
+
+    /// <summary>
+    /// Where a rewrite that never landed is written down, or null when this witness has no home.
+    /// Printed by <c>tools/probe</c> and collected into the support package, because a file nobody
+    /// is told about is not a report.
+    /// </summary>
+    public string? ErrorLogPath
+    {
+        get
+        {
+            if (_path is null) return null;
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(_path);
+                return string.IsNullOrEmpty(dir) ? null : System.IO.Path.Combine(dir, ErrorLogName);
+            }
+            catch (Exception) { return null; }
+        }
+    }
 
     /// <summary>
     /// The live bridge's witness: a fresh session id, and the file under
@@ -545,8 +576,14 @@ public sealed class CoidWitness
                 foreach (var r in _records)
                     if (!string.Equals(r.SessionId, SessionId, StringComparison.Ordinal)
                         && !string.IsNullOrEmpty(r.BrokerOrderId)) prior++;
-                return $"session:{session},records:{_records.Count},prior:{prior}," +
-                       $"io:{(_writeFailed ? "failed" : "ok")}";
+                // THREE STATES, NOT TWO, and the middle one is the whole point of it. "failed"
+                // is this session unable to write. "degraded" is a durability gap recorded in the
+                // sidecar — most usefully one from a session that has already ended, which is
+                // otherwise invisible: the next run starts with a clean LastWriteFailure and a
+                // witness that looks perfect. The field name and the shape of the token are
+                // unchanged, so a probe splitting on spaces reads it exactly as before.
+                var io = _writeFailed ? "failed" : _degraded ? "degraded" : "ok";
+                return $"session:{session},records:{_records.Count},prior:{prior},io:{io}";
             }
         }
         catch (Exception) { return $"session:{session},records:err,prior:err,io:failed"; }
@@ -570,6 +607,9 @@ public sealed class CoidWitness
         if (_loaded) return;
         _loaded = true;
         if (_path is null) return;
+
+        // Asked before anything below can write one.
+        try { _degraded = ErrorLogPath is { } log && File.Exists(log); } catch (Exception) { }
 
         var committedText = ReadTolerantly(_path, out var unreadable);
         var committed = committedText is null ? null : Parse(committedText);
@@ -959,8 +999,29 @@ public sealed class CoidWitness
         Note(line);
     }
 
-    /// <summary>One line into the sidecar. Caller holds <see cref="_gate"/>.</summary>
-    void Note(string line) => AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {line}");
+    /// <summary>
+    /// One line into the sidecar, and it is ONE line however hard the input tries. Caller holds
+    /// <see cref="_gate"/>.
+    /// </summary>
+    void Note(string line)
+    {
+        _degraded = true;
+        AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}");
+    }
+
+    /// <summary>
+    /// A LINE-ORIENTED FILE GETS ONE LINE. Most of what lands here is an exception message and a
+    /// path, and neither is under this product's control: an OS error string can carry a newline, a
+    /// filename can carry anything the filesystem allows. A newline in the middle turns one event
+    /// into two half-events and lets whatever follows it pose as a fresh, timestamp-free record —
+    /// so control characters become spaces and the whole thing is clipped.
+    /// </summary>
+    static string OneLine(string raw)
+    {
+        var kept = new char[Math.Min(raw.Length, MaxNoteChars)];
+        for (var i = 0; i < kept.Length; i++) kept[i] = char.IsControl(raw[i]) ? ' ' : raw[i];
+        return new string(kept) + (raw.Length > MaxNoteChars ? "…" : "");
+    }
 
     /// <summary>
     /// Appends one line to <see cref="ErrorLogName"/> beside the witness. Bounded at

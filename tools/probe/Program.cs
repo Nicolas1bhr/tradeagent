@@ -1048,6 +1048,25 @@ static class AtasProbe
         Cont("one the bridge uses, everything below reads as 'nothing was recorded'.");
         Line("FILE EXISTS", witness.Path is not null && File.Exists(witness.Path) ? "YES" : "NO");
 
+        // THE SIDECAR, PRINTED BEFORE ANY VERDICT. It holds the rewrites that never landed, and a
+        // durability gap in the write-ahead record changes how everything below should be read: an
+        // identifier can be missing from the file because no run ever submitted it, or because the
+        // run that did could not get it committed. Those are different findings and only this file
+        // tells them apart.
+        var sidecar = witness.ErrorLogPath;
+        if (sidecar is not null && File.Exists(sidecar))
+        {
+            var notes = ReadTail(sidecar, 10);
+            Line("WITNESS FAILURES", $"{sidecar} — THIS FILE SHOULD NOT EXIST.");
+            foreach (var note in notes) Cont(note);
+            Cont("Each line is a rewrite of the witness that did not reach the disk. Treat every");
+            Cont("verdict below as provisional until this is understood.");
+        }
+        else
+        {
+            Line("WITNESS FAILURES", "none recorded");
+        }
+
         var records = witness.All();
         Line("RECORDS ON FILE", records.Count.ToString());
 
@@ -2610,6 +2629,19 @@ static class AtasProbe
             if (part.Length > key.Length + 1 && part[key.Length] == '=' && part.AsSpan(0, key.Length).SequenceEqual(key))
                 return part[(key.Length + 1)..];
         return null;
+    }
+
+    /// <summary>The last few lines of a file, clipped, for printing. Never throws.</summary>
+    static string[] ReadTail(string path, int lines)
+    {
+        try
+        {
+            var all = File.ReadAllLines(path);
+            return all.Skip(Math.Max(0, all.Length - lines))
+                      .Select(l => l.Length > 200 ? l[..200] + "…" : l)
+                      .ToArray();
+        }
+        catch (Exception e) { return [$"(could not be read: {e.GetType().Name})"]; }
     }
 
     static string? Token(string? surface, string key)

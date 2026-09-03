@@ -276,6 +276,19 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
                 File.Copy(f, Path.Combine(staging, name), true);
             }
 
+            // THE BRIDGE'S OWN FAILURE LOG, which lives beside the witness record rather than in
+            // Paths.Logs: the bridge runs inside ATAS and may not take a dependency on anything that
+            // would not be deployed with it, so it writes a plain file next to the file it is about.
+            // A durability gap in the write-ahead record is exactly the thing a support package is
+            // for, and it was the one thing this collector could not see.
+            try
+            {
+                foreach (var f in Directory.GetFiles(Paths.BridgeDir, "*.errors.log"))
+                    File.Copy(f, Path.Combine(staging, "bridge-" + Path.GetFileName(f)), true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+
             if (File.Exists(target)) File.Delete(target);
             ZipFile.CreateFromDirectory(staging, target);
             return target;
