@@ -2672,6 +2672,45 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A CANDIDATE THAT GAVE NOTHING IS SPENT, AND SAYING IT WAS "RECOVERED" IS BOTH WRONG AND
+    /// PERMANENT.
+    ///
+    /// A temp can be a legal transition — exactly the committed identifiers — and still contribute
+    /// nothing: it restates a broker id already on file, or belongs to another session, or carries no
+    /// acknowledgement at all. Adoption correctly takes nothing from it. But it was then reported as
+    /// "recovered an uncommitted rewrite" and left where it was, because only a candidate that gave
+    /// something is deleted after the commit that carries it. So every later session found it again,
+    /// declared it recovered again, and wrote another line about it — the permanent-noise loop commit
+    /// 5e5b011 closed, re-entered through the one candidate that is neither adopted nor rejected.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_recovers_nothing_is_moved_aside_rather_than_re_examined_for_ever()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        owner.Identified("TA-LIVE", "BRK-REAL");
+        var session = owner.SessionId;
+        var committed = CommittedText();
+        owner.Dispose();
+
+        // A legal transition whose only difference is a broker id the file already has.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(committed),
+                  records: $$"""{"client_order_id":"TA-LIVE","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-FORGED","identified_at":"2026-01-01T00:00:01+00:00"}""");
+        Age(Temps().Single());
+
+        var next = Session();
+        Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        next.Dispose();
+
+        // Nothing was taken from it, and it is out of the candidate glob so no later session has to
+        // look at it again.
+        Assert.Equal("BRK-REAL", Session().PriorSession("TA-LIVE")!.BrokerOrderId);
+        Assert.Empty(Temps());
+        Assert.Single(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
+        Assert.DoesNotContain(SidecarLines(), l => l.Contains("recovered an uncommitted rewrite"));
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
