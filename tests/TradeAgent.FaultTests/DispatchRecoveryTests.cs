@@ -82,8 +82,13 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default)
     {
         if (HideOrdersEntirely) return [];
-        var orders = await inner.GetOrdersAsync(a, inc, since, ct);
-        return RewriteBook is null ? orders : orders.Select(RewriteBook).ToList();
+        // The `since` window is applied AFTER RewriteBook, because a platform filters on the order's
+        // own timestamp — which is exactly the thing a test needs to move to prove that a caller's
+        // window can hide a resting order. Filtering first (the inner fake's own behaviour) made a
+        // window mutant survive: the rewrite never reached the filter.
+        var orders = await inner.GetOrdersAsync(a, inc, null, ct);
+        if (RewriteBook is not null) orders = orders.Select(RewriteBook).ToList();
+        return since is null ? orders : orders.Where(o => o.At >= since).ToList();
     }
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) => inner.GetExecutionsAsync(a, since, ct);
 
