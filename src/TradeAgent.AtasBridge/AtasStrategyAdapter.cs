@@ -212,6 +212,22 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     readonly CoidWitness _witness = new();
 
     /// <summary>
+    /// THIS STRATEGY HAS BEEN TAKEN DOWN, AND ITS HANDLERS ARE STILL SUBSCRIBED.
+    ///
+    /// `StopBridge` releases the witness lease, but the order-event fan is a lambda closed over the
+    /// trading manager and is never unsubscribed — a fresh lambda cannot be removed with `-=`, which
+    /// is why every handler in this class compares against the live surface instead. The fan calls
+    /// `CoidWitness.Identified` for every order in ATAS's book carrying a comment, so a stopped
+    /// strategy could take the lease back on the next order event and hold it for the life of the
+    /// ATAS process, refusing every order the live bridge then tried to record.
+    ///
+    /// The witness side of that is closed too — `Identified` no longer leases before it knows it has
+    /// something to write — but a stopped strategy should not be reaching for the file at all, and
+    /// this says so at the one place that decides whether this instance is still anybody's bridge.
+    /// </summary>
+    volatile bool _stopped;
+
+    /// <summary>
     /// How many prior-session identifiers <see cref="Describe"/> re-checks per call.
     ///
     /// <see cref="OnOrderPayload"/> is a PUSH and nothing guarantees ATAS raises an order event for
@@ -392,6 +408,25 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// </summary>
     protected override void OnStopping() => Guard(StopBridge);
 
+    /// <summary>
+    /// THE SECOND TERMINAL PATH, BECAUSE ONE CALLBACK IS NOT A GUARANTEE.
+    ///
+    /// The witness lease is held for the life of its owner and released by <see cref="StopBridge"/>,
+    /// which until now was reached only from <see cref="OnStopping"/>. If ATAS tears a strategy down
+    /// some other way — a chart closed, a workspace switched, the strategy removed rather than
+    /// stopped — the lease is held for the life of the ATAS PROCESS and every later order is refused
+    /// "another writer owns this witness" until ATAS itself restarts. Fail-closed, and a mis-click
+    /// that costs a restart.
+    ///
+    /// `ChartStrategy` is `IDisposable` (dump line 269) and this hook is the disposal one; both call
+    /// the same idempotent teardown, so whichever ATAS actually fires, the lease is let go.
+    ///
+    /// WHICH ONE IT FIRES IS NOT VERIFIED. That needs a running ATAS with a strategy on a chart, and
+    /// this build is not deployed — the box still runs the protocol-2 DLL. Until the v0.1.2 redeploy
+    /// this is two hooks and a compiler, not a measurement.
+    /// </summary>
+    protected override void OnDispose() => Guard(StopBridge);
+
     void SyncBridgeToState()
     {
         if (State == ATAS.Strategies.StrategyStates.Started) StartBridge();
@@ -401,6 +436,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     void StartBridge()
     {
         TryBind();
+        _stopped = false;
         BridgeServer bridge;
         lock (_gate)
         {
@@ -447,6 +483,10 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// </summary>
     void StopBridge()
     {
+        // FIRST, so that anything still holding a reference to this instance stops acting through it
+        // before the teardown below has finished — the fan runs on ATAS's thread and does not wait.
+        _stopped = true;
+
         BridgeServer? bridge;
         lock (_gate) { bridge = _bridge; _bridge = null; }
 
@@ -1993,8 +2033,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // comment — restored from a workspace, or placed by hand with the same text — is a
                 // no-op here, which is exactly the guard that stops such an order writing its own
                 // id into the record and then matching itself on the next read-back.
-                _witness.Identified(o.Comment, o.Id);
-                ProveClientOrderId(o.Comment);
+                // A STOPPED STRATEGY RECORDS NOTHING. See _stopped: this fan is still subscribed
+                // after the teardown, and every call here reaches for the witness.
+                if (!_stopped)
+                {
+                    _witness.Identified(o.Comment, o.Id);
+                    ProveClientOrderId(o.Comment);
+                }
             }
             OrderChanged?.Invoke(ToOrder(o, null));
         }

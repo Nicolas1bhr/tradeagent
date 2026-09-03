@@ -629,12 +629,14 @@ public sealed class CoidWitness : IDisposable
         {
             lock (_gate)
             {
-                if (!Lease()) { NotOurs(NotOursDetail(clientOrderId)); return; }
-
+                // LOOK BEFORE LEASING. The order-event fan calls this for EVERY order in ATAS's book
+                // carrying a comment, so leasing first meant a witness belonging to a strategy that
+                // had already been stopped reacquired the file on the next event about somebody
+                // else's identifier — and held it for the life of the ATAS process, refusing every
+                // order the live bridge then tried to record. Reading the record needs no lease, and
+                // if there is nothing of ours under that identifier there is nothing to write.
                 EnsureLoaded();
-                if (_committedUnreadable) { NotOurs(UnreadableDetail()); return; }
                 AdoptInMemory();
-                ReportAndQuarantine();
                 var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
                 if (i < 0) return;
 
@@ -643,6 +645,11 @@ public sealed class CoidWitness : IDisposable
                 // ordinary case every time a prior session's order shows up in the book.
                 if (!string.Equals(record.SessionId, SessionId, StringComparison.Ordinal)) return;
                 if (!string.IsNullOrEmpty(record.BrokerOrderId)) return;
+
+                // Now there IS something to write, so now the lease matters.
+                if (!Lease()) { NotOurs(NotOursDetail(clientOrderId)); return; }
+                if (_committedUnreadable) { NotOurs(UnreadableDetail()); return; }
+                ReportAndQuarantine();
 
                 // NO ROLLBACK HERE, AND THE ASYMMETRY WITH Submitting IS THE POINT. A failed
                 // Submitting means the order will not be sent, so its claim describes nothing and
