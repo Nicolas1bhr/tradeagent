@@ -388,6 +388,11 @@ public sealed class CoidWitness
             lock (_gate)
             {
                 EnsureLoaded();
+
+                // EVERYTHING BEFORE THE ATTEMPT, KEPT, so a refusal can be undone exactly. See the
+                // rollback below for why a refused claim may not be left lying in memory.
+                var before = _records.ToArray();
+
                 _records.RemoveAll(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
                 _records.Add(new CoidWitnessRecord
                 {
@@ -401,7 +406,23 @@ public sealed class CoidWitness
                     Price = price
                 });
                 Trim();
-                return Save(clientOrderId);
+                if (Save(clientOrderId)) return true;
+
+                // THE REFUSED CLAIM IS TAKEN BACK OUT, and this is a rule-1 correction rather than
+                // tidiness. Returning false means <c>Place</c> refuses the order, so no order
+                // carrying this identifier is ever sent. But the record would stay in memory, and
+                // the order-event fan calls Identified for EVERY order it sees carrying a comment —
+                // so an unrelated order in ATAS's book bearing this identifier would complete the
+                // abandoned claim with its own broker id, and that record is then full
+                // prior-session evidence: a write-ahead claim, acknowledged, for an order this
+                // product never submitted. Exactly the manufactured proof the whole file exists to
+                // make impossible.
+                //
+                // The snapshot is restored rather than the new record removed, because Trim may
+                // have dropped others to make room for it.
+                _records.Clear();
+                _records.AddRange(before);
+                return false;
             }
         }
         catch (Exception) { MarkWriteFailed(); return false; }
@@ -439,6 +460,11 @@ public sealed class CoidWitness
                 if (!string.Equals(record.SessionId, SessionId, StringComparison.Ordinal)) return;
                 if (!string.IsNullOrEmpty(record.BrokerOrderId)) return;
 
+                // NO ROLLBACK HERE, AND THE ASYMMETRY WITH Submitting IS THE POINT. A failed
+                // Submitting means the order will not be sent, so its claim describes nothing and
+                // must not survive. A failed Identified is the opposite: the order IS live and the
+                // broker id IS real, so the half we did not write has to be kept in memory for the
+                // next save to carry, and left in the temp for a later session to recover.
                 _records[i] = record with { BrokerOrderId = brokerOrderId, IdentifiedAt = DateTimeOffset.UtcNow };
                 Save(clientOrderId);
             }
