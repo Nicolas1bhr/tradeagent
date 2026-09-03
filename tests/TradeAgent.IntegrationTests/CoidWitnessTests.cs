@@ -1068,6 +1068,30 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("TA-BOUND", File.ReadAllText(log));
     }
 
+    /// <summary>
+    /// A ROW THAT CRIES WOLF IS A ROW NOBODY READS THE DAY IT IS RIGHT. The failure was permanent
+    /// for the life of the process, so a contended replace that succeeded on the very next order
+    /// left the ATAS bridge health row saying "orders are being refused" while every order was going
+    /// through. A failure superseded by a commit carrying the same records no longer describes
+    /// anything.
+    /// </summary>
+    [Fact]
+    public void A_write_failure_that_resolves_stops_being_reported()
+    {
+        var refused = true;
+        var w = Session(LandsUntil(() => refused));
+
+        Assert.False(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+        Assert.NotNull(w.LastWriteFailure);
+        Assert.Contains("io:failed", w.Token());
+
+        refused = false;
+        Assert.True(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Null(w.LastWriteFailure);
+        Assert.DoesNotContain("io:failed", w.Token());
+    }
+
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
     [Fact]
     public void The_sidecar_sits_beside_the_witness_file()

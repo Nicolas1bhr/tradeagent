@@ -1145,7 +1145,7 @@ public sealed class CoidWitness
         {
             _generation++;
             _committedHash = ours;
-            SweepStranded();
+            Settled();
             return true;
         }
 
@@ -1166,9 +1166,9 @@ public sealed class CoidWitness
 
         if (landed)
         {
-            SweepStranded();
             Note($"WARN coid-witness rewrite was overtaken by another writer, which carried this " +
                  $"claim forward. file={_path} claim={claim}");
+            Settled();
             return true;
         }
 
@@ -1177,6 +1177,28 @@ public sealed class CoidWitness
                            $"claim is not in what got committed. file={_path} claim={claim}";
         Note(LastWriteFailure);
         return false;
+    }
+
+    /// <summary>
+    /// A CLEAN COMMIT, AND WHAT IT PUTS RIGHT.
+    ///
+    /// <see cref="LastWriteFailure"/> and <see cref="_writeFailed"/> used to be permanent for the
+    /// life of the process. That is wrong once anything reads them: a contended replace that
+    /// succeeded on the next order left the ATAS bridge health row saying "orders are being refused"
+    /// while every order was going through, and a row that cries wolf is a row nobody reads the day
+    /// it is right. A failure that has been superseded by a commit carrying the same records is a
+    /// failure that no longer describes anything.
+    ///
+    /// What does NOT clear here is the sidecar: the history stays on disk. Whether it still counts
+    /// as a live problem is <see cref="_degraded"/>'s question, resolved separately.
+    ///
+    /// Caller holds <see cref="_gate"/>.
+    /// </summary>
+    void Settled()
+    {
+        _writeFailed = false;
+        LastWriteFailure = null;
+        SweepStranded();
     }
 
     /// <summary>
