@@ -1098,11 +1098,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// agent's own close goes through, which recorded UNKNOWN and paused while this button recorded
     /// nothing at all.
     /// </summary>
+    /// <returns>How many of the positions it tried to close are confirmed flat afterwards.</returns>
     public async Task<int> OperatorCloseAllAsync(string? pressNonce = null, CancellationToken ct = default)
     {
         var nonce = pressNonce ?? NewOperatorPressNonce();
         var accountId = await RequireAccountId(ct);
         var positions = await Connector.GetPositionsAsync(accountId, ct);
+        var attempted = new List<string>();
         var n = 0;
 
         foreach (var p in positions.Where(p => p.Quantity != 0))
@@ -1117,6 +1119,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 _log.Engineering("Gateway", "operator_press_replayed", requestId: rid);
                 continue;
             }
+            attempted.Add(p.Symbol);
             // See OperatorCancelAllAsync: `created`, not idempotency, guards the write-ahead.
             var current = created
                 ? _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING)
@@ -1158,9 +1161,37 @@ public sealed class TradingGateway : IAsyncDisposable
                 Settle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
         }
 
-        _log.Activity($"You closed all positions ({n})", "warn");
+        // WHAT WAS SENT IS NOT WHAT WAS DONE. `n` counts closes the platform accepted; a market close
+        // is not instantaneous, and one that is merely working has flattened nothing. So the account
+        // is read back, and the sentence the owner sees says what is actually left — "You closed all
+        // positions" was printed over two closes still resting on the book.
+        IReadOnlyList<PositionInfo> after;
+        try
+        {
+            after = await Connector.GetPositionsAsync(accountId, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.Activity($"You asked to close {attempted.Count} position(s). {n} close order(s) were accepted, " +
+                          "but TradeAgent could not read the account back to confirm what is left.", "warn");
+            _log.Engineering("Gateway", "close_all_unverified", "warn", ex: ex);
+            StateChanged?.Invoke();
+            return 0;
+        }
+
+        var open = after.Where(p => p.Quantity != 0 && attempted.Contains(p.Symbol)).ToList();
+        var flat = attempted.Count - open.Count;
+
+        _log.Activity(
+            attempted.Count == 0 ? "You closed all positions (0)"
+            : open.Count == 0 ? $"You closed all positions ({flat})"
+            : $"You asked to close {attempted.Count} position(s); {flat} confirmed flat. Still open: " +
+              string.Join(", ", open.Select(p => $"{p.Symbol} {p.Quantity}")) +
+              ". A close order can rest on the book before it fills.",
+            "warn");
+
         StateChanged?.Invoke();
-        return n;
+        return flat;
     }
 
     /// <summary>The write-ahead row for one thing one press does. Always attributed to the operator.</summary>

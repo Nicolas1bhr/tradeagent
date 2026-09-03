@@ -185,6 +185,16 @@ static class Recovery
         return rows;
     });
 
+    /// <summary>The plain-language history the person reads on the Dashboard.</summary>
+    public static List<string> Activity(Database db) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT text FROM activity ORDER BY id");
+        using var r = c.ExecuteReader();
+        var rows = new List<string>();
+        while (r.Read()) rows.Add(r.GetString(0));
+        return rows;
+    });
+
     public static Exception Make(string kind) => kind switch
     {
         "InvalidOperation" => new InvalidOperationException("collection was modified"),
@@ -893,7 +903,9 @@ public class OperatorEmergencyRecordTests
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;      // the close sits working, position still open
         var press = TradingGateway.NewOperatorPressNonce();
 
-        Assert.Equal(1, await gw.OperatorCloseAllAsync(press));
+        // Zero "flat", because the close rests on the book — see CloseAllOutcomeTests. What matters
+        // here is how many closes were SENT.
+        Assert.Equal(0, await gw.OperatorCloseAllAsync(press));
         Assert.Equal(1, c.Closes);
 
         // The same press again — a retry, not a new decision.
@@ -904,7 +916,7 @@ public class OperatorEmergencyRecordTests
 
         // A NEW press is a new decision and is carried out — the owner looking at a position that is
         // still open must be able to press again and have it mean something.
-        Assert.Equal(1, await gw.OperatorCloseAllAsync(TradingGateway.NewOperatorPressNonce()));
+        Assert.Equal(0, await gw.OperatorCloseAllAsync(TradingGateway.NewOperatorPressNonce()));
         Assert.Equal(2, c.Closes);
         Assert.Equal(2, gw.Requests.Query("request_id LIKE 'op-close-%'").Count);
     }
@@ -1318,5 +1330,49 @@ public class CloseAllOutcomeTests
         // The half that failed still pauses trading and still has a route out.
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
         Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    [Fact]
+    public async Task A_close_that_is_only_submitted_is_not_counted_as_a_closed_position()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "sub-es", TestEnv.Buy("ES", 2m));
+        await gw.PlaceAsync(AgentContext.Operator, "sub-nq", TestEnv.Buy("NQ", 1m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;   // the closes rest on the book, as market closes do
+
+        var closed = await gw.OperatorCloseAllAsync();
+
+        Assert.Equal(2, c.Closes);                          // both were submitted
+        Assert.Equal(0, closed);                            // and neither position is flat
+        Assert.Equal(2, c.Inner.Broker.Positions.Count);
+
+        // A close that is merely working is not ambiguous — it is simply not done yet, so it neither
+        // pauses trading nor claims to have flattened anything.
+        var records = gw.Requests.Query("request_id LIKE 'op-close-%'");
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal(ExecutionState.WORKING, r.State));
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        var said = Recovery.Activity(db).Last(t => t.StartsWith("You "));
+        Assert.DoesNotContain("You closed all positions", said);
+        Assert.Contains("Still open", said);
+        Assert.Contains("ES", said);
+        Assert.Contains("NQ", said);
+    }
+
+    [Fact]
+    public async Task Close_all_says_it_closed_everything_only_when_the_account_is_flat()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "flat-a", TestEnv.Buy("ES", 2m));
+        await gw.PlaceAsync(AgentContext.Operator, "flat-b", TestEnv.Buy("NQ", 1m));
+
+        var closed = await gw.OperatorCloseAllAsync();
+
+        Assert.Equal(2, closed);
+        Assert.Empty(c.Inner.Broker.Positions);
+        Assert.Contains("You closed all positions (2)", Recovery.Activity(db));
     }
 }
