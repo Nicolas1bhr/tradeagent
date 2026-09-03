@@ -291,6 +291,9 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     bool _noted;
 
+    /// <summary>The last deciding line is the RESOLVED marker. See <see cref="GapClosed"/>.</summary>
+    bool _gapClosed;
+
     /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
     /// file carries, and the fingerprint of its exact bytes (null when nothing is committed). Every
@@ -762,6 +765,22 @@ public sealed class CoidWitness : IDisposable
     /// product never submitted that identifier". A reader that declined a candidate sets this
     /// without writing anything, which is what lets <c>tools/probe</c> mark its own zero provisional.
     /// </summary>
+    /// <summary>
+    /// A DURABILITY GAP HAPPENED AND A CLEAN COMMIT CLOSED IT — the last line that decides anything
+    /// is the RESOLVED marker. Distinct from "the sidecar exists", which is what the probe used to
+    /// ask: a file holding nothing but quarantine notes has never had a gap to close, and calling
+    /// that "historical" tells a reader that earlier failures were resolved when there were none.
+    /// </summary>
+    public bool GapClosed
+    {
+        get
+        {
+            if (_path is null) return false;
+            try { lock (_gate) { EnsureLoaded(); return _gapClosed; } }
+            catch (Exception) { return false; }
+        }
+    }
+
     public bool Noted
     {
         get
@@ -846,11 +865,13 @@ public sealed class CoidWitness : IDisposable
         // unresolved safety line is a durability gap.
         try
         {
-            if (ErrorLogPath is { } log && File.Exists(log))
+            if (SidecarGenerations().Any(File.Exists))
             {
                 _noted = LastSidecarLine() is not null;
-                _degraded = LastDecidingLine() is { } last
-                            && !string.Equals(last, ResolvedMarker, StringComparison.Ordinal);
+                var deciding = LastDecidingLine();
+                _degraded = deciding is not null
+                            && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
+                _gapClosed = string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
             }
         }
         catch (Exception) { }
@@ -1267,6 +1288,28 @@ public sealed class CoidWitness : IDisposable
     string? LastSidecarLine() => LastLineWhere(_ => true);
 
     /// <summary>
+    /// THE SIDECAR IS A SET, NOT A FILE, and the state has to be read off the set.
+    ///
+    /// <see cref="AppendToErrorLog"/> bounds the file by rotating it one generation back and writing
+    /// into a fresh one. Reading only the current log was right as long as whoever tipped the file
+    /// over also put a deciding line in the new one — which a WRITING session does, RESOLVED if its
+    /// commit landed and a fresh failure if it did not. But the line that tips it over can be a
+    /// quarantine WARNING from a session that commits nothing (`Identified` for an identifier the
+    /// file does not carry does exactly that), and then the new log holds one diagnostic, every
+    /// safety event is in <c>.1</c>, and the next process reads a witness with an open durability
+    /// gap as perfectly healthy.
+    ///
+    /// Newest first: the current log, then the rotated one. The LAST deciding line wins wherever it
+    /// is, so a gap closed before the rotation stays closed and one left open stays open.
+    /// </summary>
+    IEnumerable<string> SidecarGenerations()
+    {
+        if (ErrorLogPath is not { } log) yield break;
+        yield return log;
+        yield return log + ".1";
+    }
+
+    /// <summary>
     /// THE LAST LINE THAT DECIDES THE STATE: a safety event or the marker that closes one. Warnings
     /// are skipped, because they say nothing about whether a durability gap is open — that is the
     /// whole of the class fix (see <see cref="SafetyPrefix"/>). Null when the sidecar holds nothing
@@ -1279,20 +1322,23 @@ public sealed class CoidWitness : IDisposable
     /// <summary>The last sidecar line matching <paramref name="want"/>, timestamp stripped.</summary>
     string? LastLineWhere(Func<string, bool> want)
     {
-        try
+        foreach (var log in SidecarGenerations())
         {
-            if (ErrorLogPath is not { } log || !File.Exists(log)) return null;
-            var lines = File.ReadAllLines(log);
-            for (var i = lines.Length - 1; i >= 0; i--)
+            try
             {
-                if (string.IsNullOrWhiteSpace(lines[i])) continue;
-                var space = lines[i].IndexOf(' ');
-                var text = space < 0 ? lines[i] : lines[i][(space + 1)..];
-                if (want(text)) return text;
+                if (!File.Exists(log)) continue;
+                var lines = File.ReadAllLines(log);
+                for (var i = lines.Length - 1; i >= 0; i--)
+                {
+                    if (string.IsNullOrWhiteSpace(lines[i])) continue;
+                    var space = lines[i].IndexOf(' ');
+                    var text = space < 0 ? lines[i] : lines[i][(space + 1)..];
+                    if (want(text)) return text;
+                }
             }
-            return null;
+            catch (Exception) { /* the next generation may still answer */ }
         }
-        catch (Exception) { return null; }
+        return null;
     }
 
     /// <summary>Renames a rejected candidate out of the <c>.tmp*</c> glob. Null when it was left.</summary>
@@ -1675,6 +1721,7 @@ public sealed class CoidWitness : IDisposable
             // above — it cannot flood the file the quota exists to bound.
             if (!string.Equals(LastDecidingLine(), ResolvedMarker, StringComparison.Ordinal))
                 AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: true);
+            _gapClosed = true;
         }
     }
 
@@ -1738,7 +1785,7 @@ public sealed class CoidWitness : IDisposable
         // ONLY A SAFETY EVENT OPENS A DURABILITY GAP. This used to set _degraded for every line, so
         // a quarantined leftover and a lost claim were the same state downstream — see
         // <see cref="SafetyPrefix"/> for what that cost.
-        if (safety) _degraded = true;
+        if (safety) { _degraded = true; _gapClosed = false; }
         AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}", safety);
     }
 

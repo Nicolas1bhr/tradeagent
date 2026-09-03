@@ -2640,6 +2640,79 @@ public class CoidWitnessTests : IDisposable
         Assert.NotNull(Session().PriorSession("TA-AFTER"));
     }
 
+    /// <summary>
+    /// AN OPEN GAP SURVIVES THE SIDECAR ROTATING, and the case that breaks it is the one where the
+    /// rotating session writes a DIAGNOSTIC.
+    ///
+    /// The state is decided from the last line that decides anything — a safety event or the marker
+    /// that closes one — read out of the CURRENT log. `AppendToErrorLog` rotates that log to `.1`
+    /// past its size bound and writes the new line into a fresh one. When the session that tips it
+    /// over is a writing session, it puts a deciding line in the new file either way (RESOLVED if its
+    /// commit landed, a fresh ERROR if it did not), so nothing is lost. When the line that tips it
+    /// over is a QUARANTINE WARNING and the session commits nothing — which is exactly what
+    /// `Identified` for an identifier that is not on file does — the new log holds one diagnostic and
+    /// no deciding line, every safety event is in `.1`, and the next process reads a witness with an
+    /// open durability gap as healthy.
+    /// </summary>
+    [Fact]
+    public void An_unresolved_gap_is_not_lost_when_the_sidecar_rotates()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // An oversized sidecar whose last deciding line is a real durability gap.
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        File.AppendAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={File_} claim=TA-GAP"
+            + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);
+
+        // A leftover to move aside, and a session that writes that one diagnostic and commits
+        // nothing: Identified for an identifier the file does not carry.
+        WriteForeignLeftover(1);
+        var w = Session();
+        w.Identified("TA-NOT-ON-FILE", "BRK-X");
+        w.Dispose();
+
+        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar did not rotate — raise the padding");
+        Assert.Contains(File.ReadAllLines(Sidecar), l => l.Contains("ignored "));
+        Assert.DoesNotContain(File.ReadAllLines(Sidecar), l => l.Contains("ERROR "));
+
+        // The gap is still open and the next start has to say so.
+        Assert.NotNull(Session().Trouble);
+        Assert.Contains("io:degraded", Session().Token());
+    }
+
+    /// <summary>
+    /// AND THE OTHER DIRECTION: a gap that a clean commit closed BEFORE the rotation stays closed
+    /// afterwards. A rule that just looked further back would resurrect every failure a machine has
+    /// ever had; what is carried forward is the LAST deciding line, whichever file it is in.
+    /// </summary>
+    [Fact]
+    public void A_gap_closed_before_the_rotation_stays_closed_after_it()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        File.AppendAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={File_} claim=TA-GAP"
+            + Environment.NewLine);
+        File.AppendAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} RESOLVED coid-witness committed cleanly after the failures above."
+            + Environment.NewLine);
+
+        WriteForeignLeftover(1);
+        var w = Session();
+        w.Identified("TA-NOT-ON-FILE", "BRK-X");
+        w.Dispose();
+
+        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar did not rotate — raise the padding");
+        Assert.Null(Session().Trouble);
+    }
+
     // -------------------------------------------------- what a person is told (tools/probe)
 
     /// <summary>
@@ -2655,11 +2728,43 @@ public class CoidWitnessTests : IDisposable
     [InlineData(false, false, false, WitnessStanding.Clean)]
     [InlineData(false, false, true, WitnessStanding.Noted)]
     [InlineData(true, false, true, WitnessStanding.Historical)]
-    [InlineData(true, true, true, WitnessStanding.Unresolved)]
+    [InlineData(false, true, true, WitnessStanding.Unresolved)]
+    // THE ROW THAT WAS WRONG: a sidecar holding only diagnostics. It exists, so it was called
+    // "historical" — whose explanation tells the reader a clean commit resolved earlier failures,
+    // which never happened — and that made a zero below it non-provisional. Nothing was resolved
+    // because nothing was ever a gap; something WAS refused, so the zero is provisional.
+    [InlineData(false, false, true, WitnessStanding.Noted)]
     public void The_probe_reads_the_witness_standing_off_the_witness(
-        bool sidecarExists, bool troubled, bool noted, WitnessStanding expected)
+        bool gapClosed, bool troubled, bool noted, WitnessStanding expected)
     {
-        Assert.Equal(expected, CoidWitnessReport.Standing(sidecarExists, troubled, noted));
+        Assert.Equal(expected, CoidWitnessReport.Standing(gapClosed, troubled, noted));
+    }
+
+    /// <summary>
+    /// AND THE INPUT COMES OFF A REAL WITNESS. `Standing` is only as honest as what it is handed, and
+    /// what it used to be handed was "does the file exist" — true of a sidecar that has never held a
+    /// safety line in its life.
+    /// </summary>
+    [Fact]
+    public void A_diagnostic_only_sidecar_is_noted_and_not_historical()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        WriteForeignLeftover(1);
+        owner.Dispose();
+
+        var next = Session();
+        Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains(SidecarLines(), l => l.Contains("ignored "));
+        next.Dispose();
+
+        var reader = Session();
+        Assert.True(File.Exists(Sidecar));
+        Assert.False(reader.GapClosed);
+        Assert.True(reader.Noted);
+        Assert.Equal(WitnessStanding.Noted,
+                     CoidWitnessReport.Standing(reader.GapClosed, reader.Trouble is not null, reader.Noted));
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(WitnessStanding.Noted));
     }
 
     /// <summary>
