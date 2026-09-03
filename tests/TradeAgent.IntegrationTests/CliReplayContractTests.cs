@@ -91,6 +91,72 @@ public class CliReplayContractTests
         Assert.Contains("--request-id cli-abc", lost.GetProperty("recovery").GetString());
     }
 
+    /// <summary>
+    /// THE ONE TRANSPORT TRANSITION THAT WOULD PLACE A SECOND REAL ORDER, AND IT HAD NO TEST.
+    ///
+    /// Verifier finding F-C. Mutant W3 turns the read-failure path from <c>PossiblyWritten</c> into
+    /// <c>NothingWritten</c> and all 238 integration tests stayed green — its two siblings, the
+    /// clean-EOF path and the truncated-reply path, both had biting tests, so this was a hole rather
+    /// than a pattern. The consequence is exact and it is the worst one this unit has:
+    /// <c>RecoveryLine</c> returns null, <c>reply_lost</c> is false, and the agent is never told to
+    /// re-run with the SAME id — so a frame that provably left this process becomes a fresh proposal
+    /// with a new id, which is a second real order. That is 7c93181's original defect, reachable by
+    /// a one-word edit nothing caught.
+    ///
+    /// The read has to FAIL rather than end, which is what makes this path distinct from its two
+    /// siblings: a clean close gives end-of-stream and a truncated object gives a parse failure.
+    /// Cancelling the caller's token while the reply is outstanding is the reachable form of it — a
+    /// timeout or a Ctrl-C on a call whose order is already at the service — and it is deterministic,
+    /// which an abortive socket close on a local pipe is not.
+    /// </summary>
+    [Fact]
+    public async Task A_reply_whose_read_fails_leaves_the_order_possibly_written()
+    {
+        var pipe = "ta-w3-" + Guid.NewGuid().ToString("n")[..12];
+        IpcToken.Ensure();
+        using var stop = new CancellationTokenSource();
+        var serving = TakeTheOrderAndSayNothing(pipe, stop.Token);
+
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        using var caller = new CancellationTokenSource();
+        var call = client.TrySendAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            RequestId = "cli-w3-1",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        }, caller.Token);
+
+        // The frame is out and the service is holding it; we are inside the read.
+        await Task.Delay(400);
+        await caller.CancelAsync();
+        var result = await call.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The frame left this process, so nothing below may call it unsent.
+        Assert.Equal(TransportOutcome.PossiblyWritten, result.Outcome);
+        Assert.Null(result.Reply);
+
+        // And the whole consequence chain, because the outcome only matters through what it makes
+        // the CLI say: an id to re-run with, and reply_lost telling the agent this is a retry.
+        var recovery = CliReplayContract.RecoveryLine(result.Outcome, "cli-w3-1");
+        Assert.NotNull(recovery);
+        Assert.Contains("--request-id cli-w3-1", recovery);
+
+        var json = JsonDocument.Parse(Json.Write(CliReplayContract.UnansweredJson(
+            "cli-w3-1", result.Outcome, IpcError.From(result.Failure!.Info)))).RootElement;
+        Assert.True(json.GetProperty("reply_lost").GetBoolean(),
+            "a frame that reached the service was reported as never sent, so the agent would propose again with a NEW id");
+        Assert.Equal("PossiblyWritten", json.GetProperty("transport").GetString());
+
+        await stop.CancelAsync();
+        try { await serving; } catch (Exception) { /* torn down with the test */ }
+    }
+
     // ------------------------------------------------------------ the real binary
 
     /// <summary>
@@ -341,6 +407,29 @@ public class CliReplayContractTests
         handshaken.TrySetResult();
 
         // Held open, unread and unanswered, until the test tears the client down.
+        try { await Task.Delay(TimeSpan.FromSeconds(30), stop); } catch (Exception) { /* expected */ }
+        server.Dispose();
+    }, stop);
+
+    /// <summary>Answers the handshake, takes the order, and then simply holds it — no reply, no close.</summary>
+    static async Task TakeTheOrderAndSayNothing(string pipe, CancellationToken stop) => await Task.Run(async () =>
+    {
+        using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        await server.WaitForConnectionAsync(stop).WaitAsync(TimeSpan.FromSeconds(30), stop);
+        var r = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var w = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        if (await r.ReadLineAsync(stop) is not { } helloLine) return;
+        var hello = Json.Read<IpcRequest>(helloLine)!;
+        await w.WriteLineAsync(Json.Write(IpcResponse.Success(hello.Id, new
+        {
+            protocol_version = Versions.ProtocolVersion,
+            app_version = Versions.App,
+            compatible = true
+        })));
+
+        await r.ReadLineAsync(stop);          // the order, taken and held
         try { await Task.Delay(TimeSpan.FromSeconds(30), stop); } catch (Exception) { /* expected */ }
         server.Dispose();
     }, stop);
