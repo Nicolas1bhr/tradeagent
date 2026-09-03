@@ -484,6 +484,75 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A PEER MOVING SLOWER THAN ONE WRITE CHUNK PER EMERGENCY WINDOW IS STILL MOVING.
+    ///
+    /// Codex F4 on d25dbb4, and it is the same class as the defect round 4 fixed: progress was
+    /// recorded only when a whole 8 KiB `WriteAsync` completed, so the signal's RESOLUTION was the
+    /// chunk size. A peer accepting 1 KiB every 400 ms is reading continuously and would finish an
+    /// 8 KiB chunk inside the ordinary 10 s write budget — but it completes NO chunk inside the 2 s
+    /// an emergency waits, so the emergency read "no chunk finished" as "the bridge has stopped"
+    /// and dropped a healthy connection. The busy fixture could not see this: it accepts a whole
+    /// 8 KiB every 200 ms, which is comfortably one chunk per window.
+    ///
+    /// MEASURED, because Codex's own numbers land on the safe side here and the finding is real one
+    /// step further down. A drain sweep against the 8 KiB chunk, 2026-09-03, macOS Unix socket:
+    ///
+    ///   2.50 KiB/s (1 KiB/400 ms) → 5120 B accepted in the window → busy, kept
+    ///   1.25 KiB/s (1 KiB/800 ms) → 2048 B accepted in the window → NOT RESPONDING, DROPPED
+    ///   0.63 KiB/s (1 KiB/1600 ms) → 1024 B accepted in the window → NOT RESPONDING, DROPPED
+    ///
+    /// A peer that took two kilobytes off us while we watched, and was still reading when we hung
+    /// up on it, told the owner it had stopped responding.
+    ///
+    /// The arithmetic, stated rather than left implicit: the chunk size IS the resolution, so a peer
+    /// slower than one chunk per <see cref="AtasConnector.EmergencyDeadline"/> is misread. At 8 KiB
+    /// that boundary is 4 KiB/s; at 1 KiB it is 512 B/s. It cannot be removed, only moved — a peer
+    /// slow enough is indistinguishable from a dead one inside two seconds, and round 4 took that
+    /// trade deliberately. What is not acceptable is a boundary an ordinary slow reader sits on the
+    /// wrong side of.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_reading_below_one_chunk_per_window_is_busy_and_not_dropped()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+
+        // 1 KiB every 800 ms: 1.25 KiB/s, measured above as the first rate on the WRONG side of the
+        // 8 KiB boundary — ~2 KiB accepted while the emergency waits, and no chunk completed.
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret, 1024, TimeSpan.FromMilliseconds(800));
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-subchunk-1", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+        Observe([stuck]);
+        await Wait(() => Task.FromResult(peer.BytesRead >= 4 * 1024));
+        var acceptedBefore = peer.BytesRead;
+
+        var timer = Stopwatch.StartNew();
+        Exception? ex = null;
+        try { await connector.CancelAllOrdersAsync("ATAS-READING"); }
+        catch (Exception e) { ex = e; }
+        timer.Stop();
+        var acceptedDuring = peer.BytesRead - acceptedBefore;
+
+        // The premise: it really was accepting bytes throughout, and really did make the emergency
+        // wait out its deadline.
+        Assert.True(timer.Elapsed >= connector.EmergencyDeadline - TimeSpan.FromMilliseconds(100),
+            $"the emergency came back in {timer.Elapsed.TotalSeconds:0.00}s — it was not queued behind anything");
+        Assert.True(acceptedDuring > 0,
+            "the peer accepted nothing while the emergency waited, so this is the stalled case and measures nothing");
+        Assert.True(acceptedDuring < 8 * 1024,
+            $"the peer accepted {acceptedDuring} bytes — a whole chunk or more, so the sub-chunk boundary was never walked");
+
+        Assert.NotNull(ex);
+        Assert.Contains("busy", ex.Message);
+        Assert.DoesNotContain("not responding", ex.Message);
+        Assert.True(await connector.IsConnectedAsync(),
+            "a bridge accepting bytes throughout was dropped because no whole chunk finished in the window");
+    }
+
+    /// <summary>
     /// AN EMERGENCY IS TWO SECONDS OF WAITING, NOT TWO SECONDS OF QUEUEING.
     ///
     /// Verifier V2 on d25dbb4, and it is the shape f518251 was written for in its most likely real

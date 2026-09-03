@@ -675,14 +675,29 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     }
 
     /// <summary>
-    /// How much of a frame one write deadline covers, mirroring <c>GatewayPipeServer</c>.
+    /// How much of a frame one write deadline covers, and — the part that was costing more — HOW
+    /// FINELY PROGRESS CAN BE SEEN.
     ///
     /// ARITHMETIC. Chunking is what makes <see cref="WriteTimeout"/> a stalled-peer detector rather
     /// than a throughput floor of (frame size / timeout), and it is also what makes progress
     /// OBSERVABLE — a single WriteLineAsync gives back one task that either finishes or does not,
     /// and an emergency caller cannot ask it whether the bridge is alive.
+    ///
+    /// But a chunk only reports progress when the WHOLE of it has been accepted, so the chunk size
+    /// is the RESOLUTION of that signal, and anything moving slower than one chunk per
+    /// <see cref="EmergencyDeadline"/> reads as not moving at all. Measured at 8 KiB on 2026-09-03
+    /// (Codex F4): a peer accepting 1 KiB every 800 ms — 2 KiB taken off us inside the window, still
+    /// reading when we hung up — was dropped and told the owner it had stopped responding. At
+    /// 2.5 KiB/s it was correctly called busy; the boundary sat between them, at chunk ÷ deadline =
+    /// 4 KiB/s.
+    ///
+    /// 1 KiB puts that boundary at 512 B/s. The boundary cannot be removed, only moved: a peer slow
+    /// enough IS indistinguishable from a dead one inside two seconds, and round 4 took that trade
+    /// knowingly. What it must not sit on is the speed of an ordinary struggling reader. The cost is
+    /// eight times as many writes for a large frame — 1024 of them for a 1 MiB order, on a local
+    /// pipe — against telling somebody their bridge is dead when it is not.
     /// </summary>
-    const int WriteChunkBytes = 8192;
+    const int WriteChunkBytes = 1024;
 
     /// <summary>
     /// Ends a connection whose peer has stopped reading. Disposing the handle is what actually kills
