@@ -822,6 +822,90 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A TEMP IS NEVER ADOPTED AS A NEW CLAIM, AND THE REASON IS A CONTRACT THIS BUILD ALREADY KEEPS.
+    ///
+    /// Since round 2 <c>Place</c> refuses the order when <c>Submitting</c> returns false. So a temp
+    /// holding a claim that was never committed is, by that contract, a submission THAT DID NOT
+    /// HAPPEN — no order carrying that identifier was ever handed to ATAS. Recovering it writes a
+    /// write-ahead record for an order this product never submitted, and the record is then
+    /// indistinguishable from a real one: complete it with any acknowledgement and it is
+    /// prior-session evidence. At the cap it is worse still, because the phantom evicts a genuine
+    /// committed claim to make room for itself.
+    ///
+    /// Recovery cannot tell a failed SUBMISSION temp from a failed ACKNOWLEDGEMENT temp by looking
+    /// at it — both are "the rewrite that did not land". So the rule is stated instead of inferred:
+    /// a temp may only add acknowledgement information to a claim ALREADY in the committed file. It
+    /// may never introduce an identifier.
+    /// </summary>
+    [Fact]
+    public void A_temp_is_never_adopted_as_a_new_claim()
+    {
+        var a = Session();
+        Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+        a.Dispose();
+
+        // B's rewrite never lands, so Place refused that order and nothing was sent. The temp stays.
+        var b = Session(NeverLands);
+        Assert.False(b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.Single(Temps());
+        b.Dispose();
+
+        // The restart, and then an order that DID go out.
+        var c = Session();
+        Assert.True(c.Submitting("TA-C", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Equal(["TA-A", "TA-C"], CommittedIds());
+        Assert.Null(c.PriorSession("TA-B"));
+        c.Dispose();
+        Assert.DoesNotContain("TA-B", Session().PriorSessionIds(16));
+    }
+
+    /// <summary>
+    /// AND THE DIRECTION THAT MUST STILL WORK, because it is what the recovery exists for: the order
+    /// IS live, ATAS assigned it an id, and the rewrite recording that id is the one that failed.
+    /// The claim is already committed, so the temp adds only the half this product did not write.
+    /// </summary>
+    [Fact]
+    public void A_temp_may_still_add_an_acknowledgement_to_a_committed_claim()
+    {
+        var refused = false;
+        var w = Session(LandsUntil(() => refused));
+        Assert.True(w.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        refused = true;
+        w.Identified("TA-LIVE", "BRK-LIVE");
+        Assert.Single(Temps());
+        w.Dispose();
+
+        var next = Session();
+        Assert.Equal("BRK-LIVE", next.PriorSession("TA-LIVE")!.BrokerOrderId);
+        Assert.Equal(["TA-LIVE"], next.All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// A FORGED ACKNOWLEDGEMENT IS STILL REFUSED. <c>Identified</c> will not write a broker id into a
+    /// record belonging to another session — that refusal is what stops an order found in ATAS's book
+    /// writing its own id into a prior record and then matching itself. Recovery must not become the
+    /// way around it, so a temp may only complete a claim whose session it shares.
+    /// </summary>
+    [Fact]
+    public void A_temp_cannot_acknowledge_a_claim_that_belongs_to_another_session()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        var committed = CommittedText();
+        owner.Dispose();
+
+        // Someone drops a rewrite beside the witness that completes the claim under a session that
+        // never wrote it.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(committed),
+                  records: RecordJson("TA-LIVE", "a-session-that-never-wrote-this"));
+
+        var reader = Session();
+        Assert.Null(reader.PriorSession("TA-LIVE"));
+        Assert.Null(reader.All().Single().BrokerOrderId);
+    }
+
+    /// <summary>
     /// AN ENVELOPE THAT DESERIALISES IS NOT AN ENVELOPE THAT MEANS ANYTHING.
     ///
     /// `Parse` asked only whether the JSON deserialised. `records:[null, A]` does — and then
@@ -1050,69 +1134,20 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// WHICH CROSS-CAP DIRECTION THE TRANSITION RULE REFUSES, MEASURED IN BOTH — because the round-4
-    /// record argued the direction BACKWARDS and no test pinned either.
+    /// THE AT-CAP REWRITE IS REFUSED TOO, AND ROUND 5 CHANGED THIS ON PURPOSE.
     ///
-    /// The rule reads THIS instance's cap to decide whether a missing oldest record is explained by a
-    /// trim; the candidate was written by an instance whose cap this build cannot see. So the temp
-    /// that is refused comes from a SMALLER-capped writer — the affected upgrade is a cap RAISE, not
-    /// a lower, and the round-4 record said the opposite.
+    /// This test used to assert the opposite: at the cap a legitimate rewrite MUST drop the oldest
+    /// record to make room, so a candidate missing a leading identifier was adopted rather than
+    /// refused. That case only ever arises from a <c>Submitting</c> rewrite — the trim happens when a
+    /// NEW claim arrives — and a temp is never adopted as a new claim, so there is nothing left to
+    /// adopt: the order it describes was refused by <c>Place</c> and never sent.
     ///
-    /// The refusal is the safe direction and its cost is stated rather than hidden: the committed
-    /// file is kept whole, and the one un-recovered acknowledgement means `PriorSession` answers null
-    /// for that identifier — a proof refused, never a proof invented.
-    /// </summary>
-    [Theory]
-    [InlineData(5, 3, true)]    // writer's cap LARGER than the reader's — a cap LOWER on upgrade
-    [InlineData(3, 5, false)]   // writer's cap SMALLER than the reader's — a cap RAISE on upgrade
-    public void An_at_cap_rewrite_from_a_differently_capped_build(int writerCap, int readerCap, bool adopted)
-    {
-        var writer = new CoidWitness(File_, null, writerCap);
-        for (var n = 1; n <= writerCap; n++)
-        {
-            writer.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
-            writer.Identified($"TA-{n}", $"BRK-{n}");
-        }
-        Assert.Equal(writerCap, CommittedIds().Length);
-        var committedBefore = CommittedIds();
-
-        // The next claim arrived, the writer's Trim dropped TA-1 off the front, the rename never
-        // landed. A perfectly legitimate uncommitted rewrite, at the WRITER's cap.
-        var kept = Enumerable.Range(2, writerCap - 1).Select(n => RecordJson($"TA-{n}", "a-dead-session"));
-        var fresh = RecordJson($"TA-{writerCap + 1}", "a-dead-session");
-        WriteTemp(CommittedGeneration() + 1, Fingerprint(CommittedText()),
-                  string.Join(",", kept.Append(fresh)));
-
-        var reader = new CoidWitness(File_, null, readerCap);
-        var seen = reader.All().Select(r => r.ClientOrderId).ToArray();
-
-        if (adopted)
-        {
-            Assert.Contains($"TA-{writerCap + 1}", seen);
-        }
-        else
-        {
-            // Refused — and nothing is lost by refusing: the committed file is kept whole and the
-            // un-recovered acknowledgement is a proof declined, not a claim dropped.
-            Assert.DoesNotContain($"TA-{writerCap + 1}", seen);
-            Assert.Equal(committedBefore, seen);
-            Assert.Equal(committedBefore, CommittedIds());
-            Assert.Null(reader.PriorSession($"TA-{writerCap + 1}"));
-        }
-    }
-
-    /// <summary>
-    /// THE OTHER DIRECTION OF THE SAME RULE, AND IT IS WHY THE RULE IS NOT SIMPLY "KEEP EVERY
-    /// COMMITTED IDENTIFIER". At the cap the legitimate next rewrite MUST lose a record: a claim
-    /// arrives, <see cref="CoidWitness"/> trims the oldest off the front to make room, and the
-    /// result is missing a committed identifier through no fault of its own. Refusing that would
-    /// refuse every recovery on a full witness — which is every long-lived one.
-    ///
-    /// So a missing leading run is allowed exactly when the candidate is full. This test is the
-    /// half that a rule tightened without care would break silently.
+    /// What the refusal costs is nothing, and that is the point: the committed file is kept whole,
+    /// the phantom does not evict the oldest genuine claim to make room for itself, and no identifier
+    /// this product never submitted reaches the cross-session reading.
     /// </summary>
     [Fact]
-    public void A_rewrite_that_trimmed_the_oldest_at_the_cap_is_still_adopted()
+    public void An_at_cap_rewrite_carrying_a_new_claim_is_refused_and_costs_nothing()
     {
         var writer = new CoidWitness(File_, null, cap: 3);
         foreach (var n in new[] { 1, 2, 3 })
@@ -1121,16 +1156,54 @@ public class CoidWitnessTests : IDisposable
             writer.Identified($"TA-{n}", $"BRK-{n}");
         }
         Assert.Equal(["TA-1", "TA-2", "TA-3"], CommittedIds());
+        writer.Dispose();
 
-        // TA-4 arrived and Trim dropped TA-1 from the front. The rename never landed.
+        // TA-4 arrived, Trim dropped TA-1 off the front, the rename never landed — so Place refused
+        // the TA-4 order and nothing carrying it was sent.
         WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
                   records: string.Join(",", RecordJson("TA-2", "a-dead-session"),
                                             RecordJson("TA-3", "a-dead-session"),
                                             RecordJson("TA-4", "a-dead-session")));
 
         var reader = new CoidWitness(File_, null, cap: 3);
-        Assert.Equal(["TA-2", "TA-3", "TA-4"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Equal("BRK-TA-4", reader.PriorSession("TA-4")!.BrokerOrderId);
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Null(reader.PriorSession("TA-4"));
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], CommittedIds());
+    }
+
+    /// <summary>
+    /// AND THE CROSS-CAP QUESTION IS GONE WITH IT, which is a better answer than the one round 4
+    /// recorded and the round-5 review asked to have pinned.
+    ///
+    /// The old rule read THIS instance's cap to decide whether a missing oldest record was explained
+    /// by a trim, while the candidate came from an instance whose cap it could not see — so the same
+    /// temp was adopted or refused depending on which build read it, and the round-4 record named the
+    /// affected direction backwards. A rewrite that trims is now refused by everybody, so the rule no
+    /// longer reads the cap at all and both cross-cap directions behave identically.
+    /// </summary>
+    [Theory]
+    [InlineData(5, 3)]
+    [InlineData(3, 5)]
+    public void An_at_cap_rewrite_is_refused_whatever_cap_the_reading_build_has(int writerCap, int readerCap)
+    {
+        var writer = new CoidWitness(File_, null, writerCap);
+        for (var n = 1; n <= writerCap; n++)
+        {
+            writer.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
+            writer.Identified($"TA-{n}", $"BRK-{n}");
+        }
+        var committedBefore = CommittedIds();
+        writer.Dispose();
+
+        var kept = Enumerable.Range(2, writerCap - 1).Select(n => RecordJson($"TA-{n}", "a-dead-session"));
+        var fresh = RecordJson($"TA-{writerCap + 1}", "a-dead-session");
+        WriteTemp(CommittedGeneration() + 1, Fingerprint(CommittedText()),
+                  string.Join(",", kept.Append(fresh)));
+
+        var reader = new CoidWitness(File_, null, readerCap);
+        Assert.Equal(committedBefore, reader.All().Select(r => r.ClientOrderId));
+        Assert.Null(reader.PriorSession($"TA-{writerCap + 1}"));
+        Assert.Equal(committedBefore, CommittedIds());
     }
 
     /// <summary>
@@ -1145,15 +1218,19 @@ public class CoidWitnessTests : IDisposable
         var first = Session();
         Submit(first, "TA-COMMITTED");
 
+        // Two rewrites that are each a legal transition — the committed claim, acknowledged — and
+        // that disagree about the broker id. Nothing in the files says which one ATAS assigned.
         var generation = CommittedGeneration() + 1;
         var predecessor = Fingerprint(CommittedText());
-        foreach (var (suffix, id) in new[] { ("-a-1", "TA-RIVAL-A"), ("-b-1", "TA-RIVAL-B") })
+        var session = first.SessionId;
+        foreach (var (suffix, brk) in new[] { ("-a-1", "BRK-A"), ("-b-1", "BRK-B") })
             File.WriteAllText(File_ + ".tmp" + suffix,
-                $$"""{"version":1,"generation":{{generation}},"predecessor":"{{predecessor}}","records":[{{RecordJson("TA-COMMITTED", "s")}},{{RecordJson(id, "s")}}]}""");
+                $$"""{"version":1,"generation":{{generation}},"predecessor":"{{predecessor}}","records":[{"client_order_id":"TA-COMMITTED","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"{{brk}}","identified_at":"2026-01-01T00:00:01+00:00"}]}""");
 
         var reader = Session();
         Assert.Equal(["TA-COMMITTED"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Contains("io:noted", reader.Token());   // flagged, but not a durability gap
+        Assert.Null(reader.All().Single().BrokerOrderId);   // neither broker id was believed
+        Assert.Contains("io:noted", reader.Token());        // flagged, but not a durability gap
         Assert.Null(reader.Trouble);
 
         // THE REASON IS WRITTEN DOWN BY THE OWNER. A reader flags its own answer and writes nothing
@@ -1215,17 +1292,16 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_failed_rewrite_is_adopted_when_the_clock_went_backwards()
     {
-        var first = Session();
-        Submit(first, "TA-COMMITTED");
-
-        // The run that owned the witness has ended — which is what a restart IS.
-        first.Dispose();
-        var stranded = Session(NeverLands);
-        Submit(stranded, "TA-STRANDED");
+        var refused = false;
+        var stranded = Session(LandsUntil(() => refused));
+        Assert.True(stranded.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        refused = true;
+        stranded.Identified("TA-LIVE", "BRK-LIVE");
         File.SetLastWriteTimeUtc(Temps().Single(), File.GetLastWriteTimeUtc(File_).AddHours(-1));
+        stranded.Dispose();
 
         var reader = Session();
-        Assert.Equal(["TA-COMMITTED", "TA-STRANDED"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Equal("BRK-LIVE", reader.PriorSession("TA-LIVE")!.BrokerOrderId);
     }
 
     /// <summary>
@@ -2287,10 +2363,17 @@ public class CoidWitnessTests : IDisposable
         for (var i = 0; i < 5; i++) Submit(w, $"TA-{i}");
 
         Assert.Single(Temps());
-        // Each refusal is rolled back before the next attempt, so the surviving rewrite holds the
-        // committed state plus the one claim that was in flight when the writer stopped — not five
-        // abandoned claims for five orders that were never sent.
-        Assert.Equal(["TA-SEED", "TA-4"], Session().All().Select(r => r.ClientOrderId));
+
+        // ROUND 5 REWROTE THIS ASSERTION, and it is the one Codex named. It used to read
+        // `["TA-SEED", "TA-4"]` — the surviving temp's abandoned claim reappearing after a restart.
+        // TA-4's Submitting returned false, so Place refused that order and nothing carrying it was
+        // ever sent; a later session that adopted it would be writing a write-ahead record for an
+        // order this product never submitted. One temp still survives, and none of the five refused
+        // claims comes back from it.
+        w.Dispose();
+        var next = Session();
+        Assert.Equal(["TA-SEED"], next.All().Select(r => r.ClientOrderId));
+        for (var i = 0; i < 5; i++) Assert.Null(next.PriorSession($"TA-{i}"));
     }
 
     /// <summary>
