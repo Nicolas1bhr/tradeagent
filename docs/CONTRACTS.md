@@ -93,7 +93,11 @@ Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap.
 Compiled into both halves so the shapes cannot drift. TradeAgent hosts; the bridge dials in, sends
 `hello` with its capabilities, then heartbeats. One payload field, `data`, in both directions. A
 `bridge_protocol_version` mismatch is refused outright rather than half-trusted. `rejected: true` on a
-failure frame is what marks a refusal definite.
+failure frame is what marks a refusal definite. **The version is 3** (`Versions.BridgeProtocolVersion`):
+U14 raised it from 2 because the write-ahead promise changed — a version-2 bridge places the order
+whether or not the `coid-witness.json` rewrite reached the disk, and omits `witness_failure` from its
+hello, so its silence cannot be read as "no trouble"; the mismatch routes it to `IncompatibleBridge`,
+which names the version and the repair.
 
 ## Bridge deadlines, and what a slow bridge is told
 
