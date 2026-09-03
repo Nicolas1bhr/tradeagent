@@ -51,13 +51,18 @@ Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap.
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
   hash matches nothing in the ledger is refused rather than stored.
 - Every mutating op takes `request_id`. Reusing one returns the original outcome and dispatches nothing.
-- **`request_id` is restricted** (release-note fact, narrowed 2026-09-03): letters, digits and `-`
-  only, 1-61 characters, and it may not begin with `op-`. It is carried onto the broker order as the
-  client order id `TA-{request_id}`, which must therefore fit 64 characters; safety rule 1 needs that
-  field to round-trip, so the shape is kept to what a broker is least likely to refuse. `op-` is
-  reserved for the ids the gateway mints itself for `cancel-all` and `close-all` legs
-  (`op-{nonce}-{intent}-{n}`), so an agent's id can never collide with one. A `request_id` outside
-  this is refused with `INVALID_REQUEST` rather than truncated.
+  **If it is omitted, the frame's own `id` is used in its place** — so the restriction below is
+  enforced on whichever of the two is in effect, not on the optional field. (Until 2026-09-03 it was
+  enforced on `request_id` alone, and omitting that field put an unrestricted wire string on a broker
+  order: measured at 203 characters, with `#`, `/` and a space in it.)
+- **The effective request id is restricted** (release-note fact, narrowed 2026-09-03): letters,
+  digits and `-` only, 1-61 characters, and it may not begin with `op-`. It is carried onto the
+  broker order as the client order id `TA-{request_id}`, which must therefore fit 64 characters;
+  safety rule 1 needs that field to round-trip, so the shape is kept to what a broker is least
+  likely to refuse. `op-` is reserved for the ids the gateway mints itself for `cancel-all` and
+  `close-all` legs (`op-{nonce}-{intent}-{n}`), so an agent's id can never collide with one — a
+  guarantee that holds only because the frame `id` is checked too. An effective id outside this is
+  refused with `INVALID_REQUEST` rather than truncated.
   **The 64-character ceiling is a conservative guess: ATAS's real client-order-id limit is NOT
   VERIFIED and can only be settled on the Windows box.**
 - `trade` prints `request-id: <id>` on stderr *before* sending, and includes `request_id` in `--json`.

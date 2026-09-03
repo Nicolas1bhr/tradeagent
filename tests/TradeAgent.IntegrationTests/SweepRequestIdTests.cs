@@ -168,6 +168,97 @@ public class SweepRequestIdTests
         Assert.Empty(conn.Broker.Orders);
     }
 
+    // ---------------------------------------------------------- the EFFECTIVE id (F1 / V1)
+
+    /// <summary>A mutating frame that carries its id in the FRAME field and omits request_id.</summary>
+    static IpcRequest BuyWithFrameId(string frameId, string symbol) => new()
+    {
+        Op = Ops.Buy,
+        Id = frameId,
+        RequestId = null,           // the whole exploit: the guarded field is simply not sent
+        Args = new()
+        {
+            ["symbol"] = JsonSerializer.SerializeToElement(symbol),
+            ["quantity"] = JsonSerializer.SerializeToElement("1"),
+            ["limit"] = JsonSerializer.SerializeToElement("1")
+        }
+    };
+
+    /// <summary>
+    /// THE GUARD HAS TO BE ON THE VALUE THAT IS USED, NOT THE FIELD THAT MAY BE ABSENT.
+    ///
+    /// `GatewayPipeServer` validated `req.RequestId` and then computed `req.RequestId ?? req.Id`,
+    /// so an agent that simply omitted `request_id` put an arbitrary wire string on the broker
+    /// order. Measured by the round-4 verifier before this fix: a 200-character frame id containing
+    /// '#', '/' and a space left this process as the 203-character ClientOrderId
+    /// `TA-x#y/z w_qqq…`. Safety rule 1 requires that field to round-trip, and it is the one field
+    /// the rule says must not be guessed at — the entire reason ea1f47d and 5c716aa exist.
+    ///
+    /// Same shapes as the request_id theory above, one field over, plus the length bound.
+    /// </summary>
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("has#hash")]
+    [InlineData("has/slash")]
+    [InlineData("has_underscore")]
+    [InlineData("émoji")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]   // 62 — one over
+    public async Task A_frame_id_outside_the_conservative_charset_is_refused_when_request_id_is_omitted(string id)
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var reply = await client.SendAsync(BuyWithFrameId(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok,
+            $"frame id '{id}' was accepted with no request_id, and it reaches the broker as TA-{id}");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The second instance of the same class: the reserved minted PREFIX, bypassed the same way.
+    ///
+    /// `GatewayPipeServer` claims a minted sweep id is uncollidable BY CONSTRUCTION because the
+    /// agent cannot type the shape. It could — in the frame id. Measured before this fix:
+    /// `op-deadbeef-cancelall-0` reached the broker as `TA-op-deadbeef-cancelall-0` AND became a
+    /// live idempotency key, which is the bdf9a24 fault (a sweep leg replaying an agent's PLACE
+    /// record and counting it as cancelled) restored by a different route.
+    ///
+    /// Both halves are asserted: refused on the way in, and not present in the store afterwards.
+    /// </summary>
+    [Theory]
+    [InlineData("op-deadbeef-cancelall-0")]
+    [InlineData("op-anything")]
+    [InlineData("OP-UPPERCASE")]
+    public async Task A_frame_id_using_the_reserved_minted_prefix_is_refused_when_request_id_is_omitted(string id)
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var reply = await client.SendAsync(BuyWithFrameId(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok, $"frame id '{id}' was accepted and can collide with a minted sweep id");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+
+        // And it did not become an idempotency key: a sweep minting this exact id must still do
+        // real work rather than replay a planted PLACE record.
+        var replay = await client.SendAsync(BuyWithFrameId(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(replay.Ok);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
     /// <summary>
     /// A SWEEP THAT COULD NOT CANCEL EVERYTHING MUST NOT SAY IT DID.
     ///
