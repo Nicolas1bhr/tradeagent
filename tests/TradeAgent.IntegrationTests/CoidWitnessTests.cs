@@ -2806,14 +2806,14 @@ public class CoidWitnessTests : IDisposable
     /// </summary>
     [Theory]
     [InlineData(false, false, false, WitnessStanding.Clean)]
+    // THE ROW THAT WAS WRONG, and it is the second one. A sidecar holding only diagnostics has no
+    // gap that was closed, so `gapClosed` is false and the standing is Noted. The first argument
+    // used to be "does the sidecar exist", which is true of that same file — so it was called
+    // "historical", whose explanation tells the reader a clean commit resolved earlier failures that
+    // never happened, and that label made a zero below it non-provisional.
     [InlineData(false, false, true, WitnessStanding.Noted)]
     [InlineData(true, false, true, WitnessStanding.Historical)]
     [InlineData(false, true, true, WitnessStanding.Unresolved)]
-    // THE ROW THAT WAS WRONG: a sidecar holding only diagnostics. It exists, so it was called
-    // "historical" — whose explanation tells the reader a clean commit resolved earlier failures,
-    // which never happened — and that made a zero below it non-provisional. Nothing was resolved
-    // because nothing was ever a gap; something WAS refused, so the zero is provisional.
-    [InlineData(false, false, true, WitnessStanding.Noted)]
     public void The_probe_reads_the_witness_standing_off_the_witness(
         bool gapClosed, bool troubled, bool noted, WitnessStanding expected)
     {
