@@ -98,6 +98,13 @@ public sealed record CoidWitnessRecord
 /// placement — rule 3 broken by bookkeeping. A witness that cannot write is a witness that cannot
 /// prove anything later, which is the direction to fail in; a witness that throws is an order whose
 /// outcome is unknown.
+///
+/// SWALLOWED IS NOT THE SAME AS LOST, and the difference is the point of <see cref="Save"/>.
+/// <see cref="Submitting"/> RETURNS whether the claim reached the disk, so the caller can refuse to
+/// place an order whose identifier could not be recorded; a rewrite that will not land keeps its
+/// state in memory, leaves the newer content in the temp for <see cref="UncommittedRewrite"/> to
+/// find after a restart, and writes an engineering event to <see cref="ErrorLogName"/>. What must
+/// never happen is the write disappearing with nobody able to tell.
 /// </summary>
 public sealed class CoidWitness
 {
@@ -109,6 +116,47 @@ public sealed class CoidWitness
 
     /// <summary>The file's own name, so a person looking for it can find it.</summary>
     public const string FileName = "coid-witness.json";
+
+    /// <summary>
+    /// WHERE A REWRITE THAT NEVER LANDED IS WRITTEN DOWN, and why it is a plain file beside the
+    /// witness rather than a log call.
+    ///
+    /// This assembly has no logger and may not acquire one. It is deployed into ATAS's Strategies
+    /// folder by filename prefix (trap 34), so a package reference or the gateway's SQLite store
+    /// would silently not be copied and the bridge would fail to load with no message anywhere; and
+    /// nothing in this project writes a log today. A failed rewrite therefore says so here, next to
+    /// the file it is about, where <c>tools/probe</c> and a person both already look.
+    ///
+    /// Bounded twice: <see cref="MaxLoggedFailures"/> lines per session, and restarted past
+    /// <see cref="MaxErrorLogBytes"/>. Every part of it is best-effort inside its own catch — a
+    /// witness that cannot write must never become a witness that throws.
+    /// </summary>
+    public const string ErrorLogName = "coid-witness.errors.log";
+
+    /// <summary>
+    /// HOW HARD THE WHOLE-FILE REPLACE IS TRIED, AND THESE NUMBERS ARE A JUDGMENT.
+    ///
+    /// Five attempts with a backoff of 20, 40, 60, 80 ms — 200 ms of patience. On Windows the
+    /// replace is refused while the destination is open without <c>FileShare.Delete</c>: a scanner,
+    /// the indexer, another process's reader, or another process replacing the same file. All of
+    /// those are sub-100 ms in the ordinary case. The constraint pulling the other way is that
+    /// <see cref="Submitting"/> runs on the pipe thread inside <c>Place</c>, BEFORE the order is
+    /// handed to ATAS, so every millisecond spent here is slippage on a live order. 200 ms is long
+    /// enough to ride out a scanner and short enough that a genuinely locked file refuses the order
+    /// promptly rather than hanging it.
+    ///
+    /// NOT MEASURED. The one data point is a GitHub CI failure on `test (windows-latest)` which says
+    /// only that the previous budget — three retries, 60 ms — was not enough at least once. There is
+    /// no distribution behind these numbers and there will not be one until a Windows run produces
+    /// it.
+    /// </summary>
+    const int ReplaceAttempts = 5;
+
+    /// <summary>Multiplied by the attempt number, so the waits lengthen: 20, 40, 60, 80 ms.</summary>
+    const int ReplaceBackoffMs = 20;
+
+    const int MaxLoggedFailures = 32;
+    const long MaxErrorLogBytes = 64 * 1024;
 
     static readonly JsonSerializerOptions Opts = new()
     {
@@ -144,6 +192,16 @@ public sealed class CoidWitness
     bool _loaded;
     bool _readFailed;
     bool _writeFailed;
+    int _loggedFailures;
+
+    /// <summary>
+    /// The last rewrite that did not reach the disk, in one line naming the destination, the temp
+    /// that holds the newer state, the newest claim at risk and the exception. Null until one
+    /// happens, and it stays set afterwards — a session that ever failed to make a claim durable has
+    /// had a gap, and clearing this on the next success would hide it. Read by tests and available
+    /// to the probe; the same line is appended to <see cref="ErrorLogName"/>.
+    /// </summary>
+    public string? LastWriteFailure { get; private set; }
 
     /// <summary>
     /// THE SESSION IDENTITY, AND WHY IT IS A GUID RATHER THAN SOMETHING MEANINGFUL.
@@ -227,11 +285,26 @@ public sealed class CoidWitness
     /// would make <see cref="PriorSession"/> ambiguous, and the accurate reading of a resubmission
     /// is that THIS session is submitting it now: any earlier record's broker id belongs to a
     /// different order that happened to share the identifier.
+    ///
+    /// IT RETURNS WHETHER THE CLAIM IS ON DISK, AND THE CALLER IS MEANT TO ACT ON IT. True means the
+    /// record reached <see cref="Path"/>. False means it did not, for one of three reasons: no
+    /// identifier was supplied, this witness has nowhere to live (<see cref="Path"/> is null), or
+    /// the rewrite did not land inside <see cref="ReplaceAttempts"/> attempts. An order whose
+    /// identifier could not be recorded must not be sent — the whole point of a write-ahead record
+    /// is that it exists BEFORE the order does, and a claim that only ever lived in this process's
+    /// memory is not one. The caller is <c>AtasStrategyAdapter.Place</c>, which runs this before
+    /// handing the order to ATAS and can therefore still refuse it.
+    ///
+    /// IT RETURNS RATHER THAN THROWS, and that is not squeamishness. An exception out of here lands
+    /// inside <c>Place</c> after <c>_submitted</c> has been written and before ATAS has been asked,
+    /// where the gateway reads it as an AMBIGUOUS placement and starts reconciling an order that was
+    /// never submitted — rule 3 broken by bookkeeping. A caller that wants to refuse can raise its
+    /// own definite rejection, which is honest because nothing has been handed to ATAS yet.
     /// </summary>
-    public void Submitting(string clientOrderId, string? accountId, string? symbol, string? side,
+    public bool Submitting(string clientOrderId, string? accountId, string? symbol, string? side,
                            decimal quantity, decimal? price)
     {
-        if (string.IsNullOrEmpty(clientOrderId) || _path is null) return;
+        if (string.IsNullOrEmpty(clientOrderId) || _path is null) return false;
         try
         {
             lock (_gate)
@@ -250,10 +323,10 @@ public sealed class CoidWitness
                     Price = price
                 });
                 Trim();
-                Save();
+                return Save();
             }
         }
-        catch (Exception) { MarkWriteFailed(); }
+        catch (Exception) { MarkWriteFailed(); return false; }
     }
 
     /// <summary>
@@ -442,32 +515,99 @@ public sealed class CoidWitness
         _loaded = true;
         if (_path is null) return;
 
+        // THE REWRITE THAT NEVER LANDED, READ FIRST. Without this the claim in an uncommitted temp
+        // is invisible to every reader forever, which is the whole of the failure this file was
+        // rewritten to close: on a contended Windows machine a replace is refused, the newer state
+        // stays in the temp, the process ends, and the durable answer to "did this product submit
+        // this identifier" becomes NO for an identifier that was handed to ATAS microseconds later.
+        // See UncommittedRewrite for the rule and for why an OLDER temp is ignored.
+        if (Adopt(UncommittedRewrite(_path))) return;
+
         var json = ReadTolerantly(_path, out var failed);
         _readFailed = failed;
         if (json is null) return;
+        if (Adopt(json)) return;
 
+        // A truncated or hand-edited file is not a crash and is not evidence either. Treat it as
+        // unreadable — the token says so — and let this session write a clean one. The records lost
+        // were claims about orders from runs that have already ended.
+        _readFailed = true;
+    }
+
+    /// <summary>
+    /// Parses one envelope into <see cref="_records"/>. False — with the list left empty — when the
+    /// text is not an envelope at all, which is how a truncated temp is refused in favour of the
+    /// committed file. Caller holds <see cref="_gate"/>.
+    /// </summary>
+    bool Adopt(string? json)
+    {
+        if (json is null) return false;
         try
         {
-            var envelope = JsonSerializer.Deserialize<Envelope>(json, Opts);
-            if (envelope?.Records is { } list)
+            if (JsonSerializer.Deserialize<Envelope>(json, Opts)?.Records is { } list)
+            {
                 foreach (var r in list)
                     if (!string.IsNullOrEmpty(r.ClientOrderId)) _records.Add(r);
+                return true;
+            }
         }
-        catch (JsonException)
-        {
-            // A truncated or hand-edited file is not a crash and is not evidence either. Treat it
-            // as unreadable — the token says so — and let this session write a clean one. The
-            // records lost were claims about orders from runs that have already ended.
-            _readFailed = true;
-            _records.Clear();
-        }
+        catch (JsonException) { }
+        _records.Clear();
+        return false;
     }
+
+    /// <summary>
+    /// THE CONTENT OF A REWRITE WHOSE RENAME NEVER LANDED, or null when there is no such thing.
+    ///
+    /// THE RULE, STATED SO IT CAN BE ARGUED WITH. The temp is used instead of the committed file
+    /// when all three hold: it exists and can be read; **it parses** (checked by the caller); and
+    /// either the committed file does not exist, or the temp's last-write time is **strictly newer**
+    /// than the committed file's.
+    ///
+    ///   * IT PARSES, because <see cref="Save"/> writes the temp with <c>File.WriteAllText</c>,
+    ///     which is not atomic — a crash in the middle of one leaves a truncated file. This envelope
+    ///     ends <c>]}</c>, so a truncation that still parses is not reachable in practice, and a
+    ///     temp that does not parse is ignored in favour of the committed file rather than treated
+    ///     as corruption.
+    ///
+    ///   * STRICTLY NEWER, because a successful save CONSUMES its own temp: the replace moves it
+    ///     onto the real name. A temp that outlives a save can therefore only be the product of a
+    ///     rewrite whose rename failed — and it is then, by construction, the more complete record,
+    ///     since it was serialised from the same in-memory list plus the claim that failed to land.
+    ///     A tie goes to the committed file: that one was agreed, and equal timestamps are not
+    ///     evidence that the temp is ahead.
+    ///
+    ///   * AND THE COST OF THAT LAST CHOICE, STATED. On a filesystem with coarse timestamps — FAT32
+    ///     is 2 seconds — a tie is reachable and the recovery would not happen. The real path is
+    ///     %LOCALAPPDATA% on NTFS (100 ns) and the dev and CI paths are APFS and ext4. NOT VERIFIED
+    ///     on FAT, and not worth a sequence number on the record to close.
+    ///
+    /// READ-ONLY. It does not try to commit what it adopts. A reader here may be <c>tools/probe</c>
+    /// or <see cref="PriorSession"/> on ATAS's event thread, neither of which may start writing
+    /// files, and committing from a read path would race the writer that owns the temp. Convergence
+    /// happens instead on this session's next <see cref="Save"/>, which serialises the adopted
+    /// records back out and renames over the top.
+    /// </summary>
+    static string? UncommittedRewrite(string path)
+    {
+        try
+        {
+            var tmp = TempPathFor(path);
+            if (!File.Exists(tmp)) return null;
+            if (File.Exists(path) && File.GetLastWriteTimeUtc(tmp) <= File.GetLastWriteTimeUtc(path)) return null;
+            return ReadTolerantly(tmp, out _);
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>The rewrite in progress, and the rewrite that never landed. One name, two meanings.</summary>
+    static string TempPathFor(string path) => path + ".tmp";
 
     /// <summary>
     /// A read that survives the file being REPLACED under it.
     ///
-    /// <see cref="Save"/> replaces the whole file with <c>File.Move(..., overwrite: true)</c>, and
-    /// a second bridge instance — or a probe — can be doing that at the moment this opens it. The
+    /// <see cref="Save"/> replaces the whole file with <see cref="DefaultReplace"/>, and a second
+    /// bridge instance — or a probe — can be doing that at the moment this opens it. The
     /// share flags admit a concurrent writer and a concurrent delete, and the retry covers the
     /// instant during a replace when the name resolves to neither the old file nor the new one. A
     /// missing file is NOT that case and returns immediately: it means nothing has ever been
@@ -501,20 +641,99 @@ public sealed class CoidWitness
     /// replacing the real one in a single operation means a reader sees the old file or the new
     /// one, and no third thing.
     ///
-    /// Caller holds <see cref="_gate"/>. Failure is swallowed by the public methods above: an
-    /// unwritable witness proves nothing later, which is the direction to fail in.
+    /// AND WHEN THE REPLACE IS REFUSED ANYWAY. It is retried — see <see cref="ReplaceAttempts"/> for
+    /// the numbers and for the fact that they are a judgment — and if it still will not land, the
+    /// write is NOT quietly dropped. Three things happen instead, and each of them closes a
+    /// different half of the hole:
+    ///
+    ///   1. THE IN-MEMORY STATE IS KEPT. The claim stays in <see cref="_records"/>, so the next
+    ///      successful save carries it and the durable file catches up on its own.
+    ///   2. THE TEMP IS LEFT WHERE IT IS, holding the newer state, and
+    ///      <see cref="UncommittedRewrite"/> makes a later session read it. That is what stops a
+    ///      failure at the END of a session from losing the claim outright, which is the case the
+    ///      first point cannot help with — there is no next save.
+    ///   3. IT IS WRITTEN DOWN. <see cref="LastWriteFailure"/> and the sidecar
+    ///      <see cref="ErrorLogName"/>, naming the file, the temp and the newest claim at risk.
+    ///
+    /// RETURNS whether the records reached <see cref="_path"/>. <see cref="Submitting"/> hands that
+    /// answer to its caller, which can still refuse to place the order.
+    ///
+    /// Caller holds <see cref="_gate"/>.
     /// </summary>
-    void Save()
+    bool Save()
     {
-        if (_path is null) return;
-        var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(new Envelope { Records = _records }, Opts));
+        if (_path is null) return false;
+        var tmp = TempPathFor(_path);
 
-        for (var attempt = 0; ; attempt++)
+        // Not retried: a temp that cannot be written at all is a directory problem, not contention,
+        // and the retry budget belongs to the replace. It is reported on the same path as a refused
+        // replace, because a claim that never reached even the temp is just as lost.
+        try { File.WriteAllText(tmp, JsonSerializer.Serialize(new Envelope { Records = _records }, Opts)); }
+        catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
+
+        for (var attempt = 1; ; attempt++)
         {
-            try { _replace(tmp, _path); return; }
-            catch (IOException) when (attempt < 3) { Thread.Sleep(20); }
+            try { _replace(tmp, _path); return true; }
+            catch (Exception e) when (Transient(e) && attempt < ReplaceAttempts)
+            {
+                Thread.Sleep(ReplaceBackoffMs * attempt);
+            }
+            catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
         }
+    }
+
+    /// <summary>
+    /// The two ways Windows refuses to replace an open file, and both of them pass.
+    ///
+    /// A sharing violation — the destination is open without <c>FileShare.Delete</c>, which is a
+    /// scanner, the indexer or another reader — arrives as <see cref="IOException"/>. A handle the
+    /// process may not displace, or a read-only attribute set by a backup tool, arrives as
+    /// <see cref="UnauthorizedAccessException"/> instead, and that one used not to be retried at
+    /// all: the first refusal ended the write. Both are transient and both are retried.
+    /// </summary>
+    static bool Transient(Exception e) => e is IOException or UnauthorizedAccessException;
+
+    /// <summary>
+    /// The engineering event. Caller holds <see cref="_gate"/>.
+    ///
+    /// <see cref="_writeFailed"/> is set and never cleared: a session that once failed to make a
+    /// claim durable has had a gap, and reporting <c>io:ok</c> again after the next success would
+    /// hide it.
+    /// </summary>
+    void ReportWriteFailure(Exception e, string tmp)
+    {
+        _writeFailed = true;
+        var newest = _records.Count > 0 ? _records[^1].ClientOrderId : "<none>";
+        var line = $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={_path} " +
+                   $"temp_holding_newer_state={tmp} newest_claim={newest} records_in_memory={_records.Count} " +
+                   $"{e.GetType().Name}: {e.Message}";
+        LastWriteFailure = line;
+        AppendToErrorLog(line);
+    }
+
+    /// <summary>
+    /// Appends one line to <see cref="ErrorLogName"/> beside the witness. Bounded at
+    /// <see cref="MaxLoggedFailures"/> lines per session so a permanently unwritable destination
+    /// cannot turn every order into a log line, and the file is restarted past
+    /// <see cref="MaxErrorLogBytes"/> so it cannot grow without limit across sessions.
+    ///
+    /// Every failure here is discarded. The operation that just failed was a rename onto a file
+    /// something else has open, which says nothing about whether an append to a different name
+    /// works — but if it does not, the answer is silence, not an exception out of <c>Place</c>.
+    /// </summary>
+    void AppendToErrorLog(string line)
+    {
+        if (_loggedFailures >= MaxLoggedFailures) return;
+        _loggedFailures++;
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(_path);
+            if (string.IsNullOrEmpty(dir)) return;
+            var log = System.IO.Path.Combine(dir, ErrorLogName);
+            if (File.Exists(log) && new FileInfo(log).Length > MaxErrorLogBytes) File.Delete(log);
+            File.AppendAllText(log, line + Environment.NewLine);
+        }
+        catch (Exception) { /* a witness that cannot write must not become one that throws */ }
     }
 
     /// <summary>
