@@ -727,6 +727,23 @@ public sealed class CoidWitness : IDisposable
         }
     }
 
+    /// <summary>
+    /// SOMETHING WAS REFUSED OR WRITTEN DOWN, whether or not a durability gap is open. Distinct from
+    /// <see cref="Trouble"/> on purpose: a quarantined leftover is not a reason to tell an operator
+    /// that orders are being refused, but it IS a reason not to read a zero from this file as "this
+    /// product never submitted that identifier". A reader that declined a candidate sets this
+    /// without writing anything, which is what lets <c>tools/probe</c> mark its own zero provisional.
+    /// </summary>
+    public bool Noted
+    {
+        get
+        {
+            if (_path is null) return false;
+            try { lock (_gate) { EnsureLoaded(); return _noted; } }
+            catch (Exception) { return false; }
+        }
+    }
+
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
