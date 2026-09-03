@@ -917,8 +917,10 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // "IT RETURNED AN ORDER" IS NOT AN ANSWER. This settled ACKNOWLEDGED unconditionally without
         // looking at what came back, so a platform that quietly ignored the request left the ledger
-        // saying a stop had been moved when it had not.
-        if (!ModificationApplied(command, o))
+        // saying a stop had been moved when it had not. At dispatch time both "no" and "cannot tell"
+        // are unconfirmed; the reconciler is where they part company.
+        await EnsureInstrumentsAsync(ct);
+        if (CheckModification(command, o) != ModifyVerdict.Applied)
             return RecordIndefinite(current.RequestId,
                 $"the platform returned the order as {o.State} qty={o.Quantity} limit={o.LimitPrice?.ToString() ?? "none"} " +
                 $"stop={o.StopPrice?.ToString() ?? "none"}, which does not show the change that was asked for",
@@ -929,6 +931,16 @@ public sealed class TradingGateway : IAsyncDisposable
         return Settle(current.RequestId, ExecutionState.ACKNOWLEDGED, connectorOrderId: o.ConnectorOrderId);
     }
 
+    enum ModifyVerdict
+    {
+        /// <summary>The order carries what was asked for.</summary>
+        Applied,
+        /// <summary>It demonstrably does not: a value that did not move, or an order that is done.</summary>
+        NotApplied,
+        /// <summary>A price differs and nothing here can say whether that is the platform's own grid.</summary>
+        Unknowable
+    }
+
     /// <summary>
     /// Did the platform actually do what the modification asked?
     ///
@@ -937,15 +949,43 @@ public sealed class TradingGateway : IAsyncDisposable
     /// working modification means anything. A terminal order (it filled, or was cancelled, while the
     /// change was in flight) is not evidence that the change applied; it is evidence that we do not
     /// know at what price the fill happened, which is precisely an UNKNOWN.
+    ///
+    /// PRICES ARE COMPARED ON THE INSTRUMENT'S OWN GRID. Platforms round a request to the tick, so
+    /// asking 4242.13 of an instrument that trades in quarters comes back as 4242.25 — applied, and
+    /// the first version of this called it unconfirmed and paused trading over it. The comparison is
+    /// against the request rounded to the NEAREST tick, and nothing wider: a tolerance band of one
+    /// tick would swallow the case this method exists for, where the platform ignored a small change
+    /// and handed back the old price. If the tick size is not known, a differing price is not
+    /// evidence either way and says so, rather than being called a definite failure.
     /// </summary>
-    static bool ModificationApplied(ModifyOrderCommand cmd, OrderInfo o)
+    ModifyVerdict CheckModification(ModifyOrderCommand cmd, OrderInfo o)
     {
         if (o.State is not (ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING or ExecutionState.PARTIALLY_FILLED))
-            return false;
-        if (cmd.Quantity is { } q && o.Quantity != q) return false;
-        if (cmd.LimitPrice is { } limit && o.LimitPrice != limit) return false;
-        if (cmd.StopPrice is { } stop && o.StopPrice != stop) return false;
-        return true;
+            return ModifyVerdict.NotApplied;
+        if (cmd.Quantity is { } q && o.Quantity != q) return ModifyVerdict.NotApplied;
+
+        var tick = _instrumentCache.FirstOrDefault(i => i.Symbol == o.Symbol)?.TickSize ?? 0m;
+        var limit = PriceVerdict(o.LimitPrice, cmd.LimitPrice, tick);
+        if (limit != ModifyVerdict.Applied) return limit;
+        return PriceVerdict(o.StopPrice, cmd.StopPrice, tick);
+    }
+
+    static ModifyVerdict PriceVerdict(decimal? shown, decimal? asked, decimal tick)
+    {
+        if (asked is not { } want) return ModifyVerdict.Applied;      // nothing was asked of this field
+        if (shown is not { } have) return ModifyVerdict.NotApplied;   // asked for a price, got none
+        if (have == want) return ModifyVerdict.Applied;
+        if (tick <= 0m) return ModifyVerdict.Unknowable;
+        return have == Math.Round(want / tick, MidpointRounding.AwayFromZero) * tick
+            ? ModifyVerdict.Applied : ModifyVerdict.NotApplied;
+    }
+
+    /// <summary>Tick sizes come from the instrument list, so it has to be there before judging one.</summary>
+    async Task EnsureInstrumentsAsync(CancellationToken ct)
+    {
+        if (_instrumentCache.Count > 0) return;
+        try { await InstrumentsAsync(ct); }
+        catch (Exception) { /* judged without a grid; PriceVerdict says Unknowable rather than guessing */ }
     }
 
     public async Task<ExecutionRequest?> CloseAsync(AgentContext ctx, string requestId, string symbol, CancellationToken ct = default)
@@ -1441,11 +1481,15 @@ public sealed class TradingGateway : IAsyncDisposable
             return (false, $"order {target} is not on the account, so the change cannot be confirmed");
 
         var asked = new ModifyOrderCommand(target, stored.Quantity, stored.LimitPrice, stored.StopPrice);
-        if (ModificationApplied(asked, match))
+        await EnsureInstrumentsAsync(ct);
+        var verdict = CheckModification(asked, match);
+        if (verdict == ModifyVerdict.Applied)
         {
             Resolve(ExecutionState.ACKNOWLEDGED, $"order {target} carries the change");
             return (true, $"order {target} carries the change");
         }
+        if (verdict == ModifyVerdict.Unknowable)
+            return (false, $"order {target} shows a different price and its tick size is unknown; a person has to look");
         if (OrderStateMachine.IsTerminal(match.State))
             return (false, $"order {target} is {match.State} and does not carry the change; a person has to look");
 
