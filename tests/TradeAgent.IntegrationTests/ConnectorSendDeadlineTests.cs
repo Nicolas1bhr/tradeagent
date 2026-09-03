@@ -90,6 +90,16 @@ public class ConnectorSendDeadlineTests
                 $"a frame that may or may not have reached ATAS surfaced as {ex?.GetType().Name}, " +
                 "which the gateway would read as definite");
         });
+
+        // AND THE SENTENCE THE ORDINARY PeerStalled BRANCH PRODUCES, which nothing read until now.
+        // The caller holding the gate when the write deadline fires is the one that gets it, so it
+        // is deterministic rather than incidental. Round 4's verifier swapped the two ordinary
+        // sentences (mutant M14) — telling a merely busy bridge it had stopped reading and a dead
+        // one that the connection was still up — and the whole suite stayed green. That is the same
+        // class 9e50559 fixed on the emergency path: a healthy peer libelled as dead, one branch
+        // over, with nobody reading the words.
+        var messages = calls.Where(c => c.IsFaulted).Select(c => c.Exception!.InnerException!.Message).ToList();
+        Assert.Contains(messages, m => m.Contains("did not read") && m.Contains("accounts"));
     }
 
     /// <summary>
@@ -264,6 +274,15 @@ public class ConnectorSendDeadlineTests
         // The contention has to be REAL for the rest of this to mean anything: if nothing ever hit
         // the bound, the connection surviving proves only that nothing happened.
         Assert.Contains(calls, c => c.IsFaulted);
+
+        // AND THE SENTENCE THE ORDINARY Busy BRANCH PRODUCES. Instrumentation in the round-4 verify
+        // counted this branch entered 1015 times in one run of this class with no test reading what
+        // it says, which is how mutant M14 (the two ordinary sentences swapped) survived the whole
+        // suite. The words matter for the same reason they matter on the emergency path: one of
+        // them sends a person to look at a dead bridge and the other tells them to wait.
+        var busy = calls.Where(c => c.IsFaulted).Select(c => c.Exception!.InnerException!.Message).ToList();
+        Assert.Contains(busy, m => m.Contains("to be sent and was not") && m.Contains("still up"));
+        Assert.DoesNotContain(busy, m => m.Contains("did not read"));
 
         Assert.True(await connector.IsConnectedAsync(),
             "a bridge that was reading everything was disconnected because THIS process queued its own frames");
@@ -468,6 +487,14 @@ public class ConnectorSendDeadlineTests
     /// The other half of the decision: ORDINARY traffic keeps the full deadline. A quote arriving
     /// late costs nothing, and a caller that is merely queued has no business tearing down a
     /// connection. Shipped values, so this one really does take about ten seconds.
+    ///
+    /// THE HOLDER READS, and that is a correction rather than a detail. With a stalled holder this
+    /// test never reached a gate-expiry branch at all: the holder's own write deadline fired at 10 s
+    /// and dropped the connection, which FREED the ordinary caller, so what it measured was the
+    /// holder's drop and what it read was the generic "could not reach the ATAS bridge" wrapper —
+    /// not the classification under test (round-4 verify, F3, instrumented). A holder that keeps
+    /// reading outlives the ordinary caller's own 10 s gate wait, so the caller expires on ITS OWN
+    /// bound and the sentence asserted below is the one its own branch produced.
     /// </summary>
     [Theory]
     [InlineData("read")]     // a quote arriving late costs nothing
@@ -478,18 +505,18 @@ public class ConnectorSendDeadlineTests
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
         await connector.ConnectAsync();
 
-        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
-        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-1", "ATAS-STALLED", "ES",
-            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-1", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
         Observe([stuck]);
-        await Task.Delay(250);
+        await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
 
         var timer = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => kind == "read"
             ? connector.GetAccountsAsync()
-            : connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-2", "ATAS-STALLED", "ES",
+            : connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-2", "ATAS-READING", "ES",
                 OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
         timer.Stop();
 
@@ -497,6 +524,14 @@ public class ConnectorSendDeadlineTests
         Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
             $"an ordinary '{kind}' gave up after {timer.Elapsed.TotalSeconds:0.00}s — it took the emergency path it is not entitled to");
         Assert.DoesNotContain("NOT confirmed", ex.Message);
+
+        // The branch it actually reached, in its own words: queued behind our own traffic, so the
+        // connection is untouched. Asserting the sentence is what makes the swap mutant fail here
+        // rather than only in the load test.
+        Assert.Contains("to be sent and was not", ex.Message);
+        Assert.Contains("still up", ex.Message);
+        Assert.True(await connector.IsConnectedAsync(),
+            "an ordinary caller expiring on the send gate took the connection down with it");
     }
 
     // ---------------------------------------------------------------- helpers
