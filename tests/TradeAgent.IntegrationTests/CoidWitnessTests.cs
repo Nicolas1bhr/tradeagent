@@ -61,6 +61,16 @@ public class CoidWitnessTests : IDisposable
 
     string CommittedText() => File.ReadAllText(File_);
 
+    /// <summary>
+    /// The identifiers in the COMMITTED file, read straight out of it. Deliberately not through
+    /// <see cref="CoidWitness"/>: a durability assertion that goes through the reader can be
+    /// satisfied by an uncommitted temp the reader recovered, which is the opposite of what
+    /// "durable" means.
+    /// </summary>
+    string[] CommittedIds() =>
+        System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("records")
+            .EnumerateArray().Select(r => r.GetProperty("client_order_id").GetString()!).ToArray();
+
     long CommittedGeneration() =>
         System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("generation").GetInt64();
 
@@ -384,10 +394,14 @@ public class CoidWitnessTests : IDisposable
         // DURABILITY, asserted before the tidiness below it, because this is the property the file
         // exists for and the other one is housekeeping. 301 = the seed plus 300 churn claims, all
         // inside DefaultCap, so nothing was trimmed and nothing may be missing.
-        var reader = Session();
-        Assert.Equal(301, reader.All().Count);
-        Assert.Equal("TA-CHURN-299", reader.All()[^1].ClientOrderId);
-        Assert.NotNull(reader.All().SingleOrDefault(r => r.ClientOrderId == "TA-SEED"));
+        //
+        // READ OUT OF THE COMMITTED FILE, NOT THROUGH A SESSION. A session recovers an uncommitted
+        // temp — that is the whole of this unit — so asking one whether the claims are there can be
+        // answered by a rewrite that never landed. That is precisely the state this assertion is
+        // supposed to detect, and it would pass anyway.
+        Assert.Equal(301, CommittedIds().Length);
+        Assert.Equal("TA-CHURN-299", CommittedIds()[^1]);
+        Assert.Contains("TA-SEED", CommittedIds());
 
         // A leftover temp no longer means a lost record — the assertions above just proved none was
         // lost, and a reader prefers a newer temp. It means a rename was still refused after the
@@ -484,7 +498,17 @@ public class CoidWitnessTests : IDisposable
     public void A_rename_refused_four_times_running_still_lands()
     {
         var w = Session(RefusedTimes(4, SharingViolation));
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
         Submit(w, "TA-CONTENDED");
+        clock.Stop();
+
+        // THE WAITS ARE REAL AND THEY LENGTHEN: 20 + 40 + 60 + 80 ms between the five attempts. A
+        // retry loop with the sleeps taken out passes every other assertion here — it lands on the
+        // fifth attempt just the same — while doing on a live Windows machine exactly what the
+        // budget exists to prevent: five refusals inside a microsecond, then giving up.
+        Assert.True(clock.ElapsedMilliseconds >= 150,
+            $"the whole retry ran in {clock.ElapsedMilliseconds} ms — the backoff is not being taken");
 
         Assert.Empty(Temps());
         Assert.Single(Session().All());
@@ -593,6 +617,27 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(reader.PriorSession("TA-1"));
         Assert.DoesNotContain("TA-1", reader.PriorSessionIds(16));
         Assert.Equal(["TA-7", "TA-6", "TA-5", "TA-4"], reader.PriorSessionIds(16));
+    }
+
+    /// <summary>
+    /// The fingerprint proves the temp was derived from these exact committed bytes; the generation
+    /// proves it is the rewrite that came immediately after them. A candidate with the right
+    /// predecessor and the wrong place in the sequence is not this file's next state, however much
+    /// of its content it shares.
+    /// </summary>
+    [Fact]
+    public void A_temp_whose_generation_is_not_the_next_one_is_ignored()
+    {
+        var first = Session();
+        Submit(first, "TA-REAL");
+        first.Identified("TA-REAL", "BRK-REAL");
+
+        WriteTemp(generation: CommittedGeneration() + 7, predecessor: Fingerprint(CommittedText()),
+                  records: RecordJson("TA-GHOST", "some-dead-session"));
+
+        var reader = Session();
+        Assert.Null(reader.PriorSession("TA-GHOST"));
+        Assert.Equal(["TA-REAL"], reader.All().Select(r => r.ClientOrderId));
     }
 
     /// <summary>
@@ -805,6 +850,80 @@ public class CoidWitnessTests : IDisposable
         Assert.DoesNotContain("everything is fine\r", text);
         Assert.DoesNotContain('\u0007', text);
         Assert.Contains("TA-INJECT", text);
+    }
+
+    /// <summary>
+    /// The claim at risk is the one being written, not the newest record on the list. For
+    /// <c>Submitting</c> those are the same; for <c>Identified</c> they are not — it updates a
+    /// record wherever it sits — so reading the last entry named an unrelated identifier and sent
+    /// whoever was holding the sidecar looking for the wrong order.
+    /// </summary>
+    [Fact]
+    public void The_sidecar_names_the_claim_that_was_at_risk_not_the_newest_one()
+    {
+        var landing = true;
+        var w = Session((tmp, destination) =>
+        {
+            if (!landing) throw new FileNotFoundException("gone", tmp);
+            File.Move(tmp, destination, overwrite: true);
+        });
+
+        Submit(w, "TA-FIRST");
+        Submit(w, "TA-SECOND");
+        landing = false;
+        w.Identified("TA-FIRST", "BRK-FIRST");
+
+        Assert.Contains("claim=TA-FIRST", w.LastWriteFailure);
+        Assert.DoesNotContain("claim=TA-SECOND", w.LastWriteFailure);
+    }
+
+    /// <summary>
+    /// When the temp is what failed to be written, it does not hold anything — saying it holds the
+    /// newer state sends whoever reads the sidecar to a file that is absent or half-written, looking
+    /// for a claim that is not in it.
+    /// </summary>
+    [Fact]
+    public void A_temp_that_could_not_be_written_is_not_reported_as_holding_the_claim()
+    {
+        var blocker = Path.Combine(_dir, "not-a-directory");
+        File.WriteAllText(blocker, "a file, so nothing can be written underneath it");
+        var w = new CoidWitness(Path.Combine(blocker, "coid-witness.json"));
+
+        Submit(w, "TA-NO-TEMP");
+
+        Assert.Contains("temp_not_written=", w.LastWriteFailure);
+        Assert.DoesNotContain("temp_holding_newer_state=", w.LastWriteFailure);
+    }
+
+    /// <summary>
+    /// A permanently unwritable destination turns every order into a log line. The per-session line
+    /// cap is what stops the report about a disk problem from becoming one.
+    /// </summary>
+    [Fact]
+    public void The_sidecar_stops_after_a_bounded_number_of_failures_in_one_session()
+    {
+        var w = Session((tmp, destination) => throw new FileNotFoundException("gone", tmp));
+        for (var i = 0; i < 40; i++) Submit(w, $"TA-{i}");
+
+        Assert.Equal(32, File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length);
+    }
+
+    /// <summary>
+    /// And across sessions the cap resets, so the bound that matters there is the file's size. It is
+    /// restarted rather than trimmed: the newest failures are the ones worth keeping, and rewriting
+    /// a log to drop its head is more file IO than a failing disk deserves.
+    /// </summary>
+    [Fact]
+    public void An_oversized_sidecar_is_restarted_rather_than_grown_forever()
+    {
+        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
+        File.WriteAllText(log, new string('x', 70 * 1024));
+
+        var w = Session((tmp, destination) => throw new FileNotFoundException("gone", tmp));
+        Submit(w, "TA-BOUND");
+
+        Assert.True(new FileInfo(log).Length < 4096, $"the sidecar is {new FileInfo(log).Length} bytes");
+        Assert.Contains("TA-BOUND", File.ReadAllText(log));
     }
 
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
