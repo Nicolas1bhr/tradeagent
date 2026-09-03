@@ -190,6 +190,82 @@ public class GatewayPipeBackpressureTests
         Assert.True(Json.Read<IpcResponse>(await agent.ReadLineAsync(TimeSpan.FromSeconds(5)))!.Ok);
     }
 
+    /// <summary>
+    /// THE REPLY IS LOST AFTER THE ORDER IS ALREADY AT THE BROKER, and the request id has to survive
+    /// that or the agent's only recovery is a second real order.
+    ///
+    /// Found by review of a0aa1a7: the drop was recorded with request_id NULL, so nothing on either
+    /// side of the pipe still knew which order the lost reply belonged to. The CLI mints the id, the
+    /// order fills, the reply cannot be delivered — and with the id gone the agent's next move is a
+    /// fresh id, which is a second position it only asked for once.
+    ///
+    /// The order carries a large comment so its own reply cannot fit the socket buffer: the reply
+    /// echoes the intent back as parameters_json, so this is a dispatched order whose reply is
+    /// genuinely undeliverable, not a stall arranged around one.
+    /// </summary>
+    [Fact]
+    public async Task A_dispatched_order_whose_reply_is_lost_keeps_its_request_id_and_replays()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { WriteTimeout = TimeSpan.FromSeconds(1) };
+        server.Start();
+
+        const string rid = "cli-lostreply-1";
+        var order = new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-lost",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                // Arithmetic, not measured: 64 KiB is four times the ~16 KiB the macOS kernel holds
+                // for a reader that never comes, so the reply echoing it cannot land in the buffer.
+                ["comment"] = JsonSerializer.SerializeToElement(new string('c', 64 * 1024))
+            }
+        };
+
+        await using (var stalled = await RawAgent.ConnectAndHello(pipe))
+        {
+            await stalled.WriteAsync(order);
+            await stalled.ReadOneByteAsync(TimeSpan.FromSeconds(5));   // the reply has begun; then nothing
+            var dropped = await WaitForDrop(db, TimeSpan.FromSeconds(6));
+            Assert.True(dropped is not null, "the stalled peer was never dropped, so nothing was recorded about it");
+            Assert.Equal(Ops.Buy, dropped.Value.Op);
+            Assert.Contains(rid, dropped.Value.Metadata);
+        }
+
+        // The order really did reach the broker. This is the whole hazard: the trade happened and
+        // the only acknowledgement of it was thrown away.
+        Assert.Single(conn.Broker.Orders);
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest(rid)!.State);
+
+        // And the recovery the CLI now tells the agent to perform actually works: same id, new
+        // connection, the stored outcome comes back and NO second order is placed.
+        await using var replay = new PipeClient();
+        await replay.ConnectAsync(10_000, pipe).WaitAsync(TimeSpan.FromSeconds(5));
+        var reply = await replay.SendAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-lost",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var replayed = (JsonElement)reply.Data!;
+        Assert.Equal(rid, replayed.GetProperty("request_id").GetString());
+        Assert.Equal("FILLED", replayed.GetProperty("state").GetString());
+        Assert.Single(conn.Broker.Orders);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     static async Task<(string Op, string? Session, string Metadata)?> WaitForDrop(Database db, TimeSpan bound)

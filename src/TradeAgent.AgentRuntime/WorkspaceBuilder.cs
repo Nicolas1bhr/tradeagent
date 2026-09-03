@@ -93,6 +93,12 @@ public static class WorkspaceBuilder
     it returns the original outcome and will never place a second order. Use a *new* id only when you
     genuinely want another order.
 
+    **If an order command dies without printing a reply, the order may still have been placed.** The
+    id is printed on stderr as `request-id: <id>` *before* the order is sent, and it is in the
+    `--json` object as `request_id`, precisely so you still have it when the reply is what went
+    missing. Re-run with the SAME `--request-id`, or read `trade orders` first. **Never retry a lost
+    reply with a new id** — that is not a retry, it is a second order.
+
     **If a command fails, do not retry it blindly.** Read the error. `ORDER_STATE_UNKNOWN` means
     TradeAgent cannot yet confirm what happened — it does **not** mean the order failed. Trading is
     paused while it checks with the broker. Wait, then run `trade status --json` again. Re-sending in

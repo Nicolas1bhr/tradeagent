@@ -126,12 +126,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 try { req = Json.Read<IpcRequest>(line); }
                 catch (Exception)
                 {
-                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null)) return;
+                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null, null)) return;
                     continue;
                 }
                 if (req is null)
                 {
-                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame"), "", null)) return;
+                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame"), "", null, null)) return;
                     continue;
                 }
 
@@ -140,7 +140,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     if (!Security.IpcToken.Matches(req.Token, token))
                     {
                         gateway.Log.Engineering("Ipc", "auth_rejected", "warn");
-                        await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session);
+                        await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session, req.RequestId);
                         return; // one chance per connection
                     }
                     authenticated = true;
@@ -149,17 +149,17 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                         protocol_version = Versions.ProtocolVersion,
                         app_version = Versions.App,
                         compatible = req.V == Versions.ProtocolVersion
-                    }), req.Op, req.Session)) return;
+                    }), req.Op, req.Session, req.RequestId)) return;
                     continue;
                 }
 
                 if (!authenticated)
                 {
-                    await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session);
+                    await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session, req.RequestId);
                     return;
                 }
 
-                if (!await Send(pipe, writer, await Handle(req, ct), req.Op, req.Session)) return;
+                if (!await Send(pipe, writer, await Handle(req, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -204,7 +204,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
-    async Task<bool> Send(NamedPipeServerStream pipe, StreamWriter w, IpcResponse r, string op, string? session)
+    async Task<bool> Send(NamedPipeServerStream pipe, StreamWriter w, IpcResponse r,
+        string op, string? session, string? requestId)
     {
         var write = w.WriteLineAsync(Json.Write(r));
         try
@@ -215,8 +216,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         catch (TimeoutException)
         {
             Observe(write);
+            // THE REQUEST ID IS THE POINT OF THIS RECORD, not decoration on it. The reply that was
+            // dropped may be the only acknowledgement of an order that already reached the broker,
+            // and this log line is then the sole surviving link between that order and the id the
+            // agent must reuse to reconcile it. It used to be written with request_id NULL.
             gateway.Log.Engineering("Ipc", "peer_stopped_reading", "warn", session: session,
-                metadataJson: Json.Write(new { op, write_timeout_ms = (int)WriteTimeout.TotalMilliseconds }));
+                requestId: requestId,
+                metadataJson: Json.Write(new
+                {
+                    op,
+                    request_id = requestId,
+                    write_timeout_ms = (int)WriteTimeout.TotalMilliseconds
+                }));
             try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
             return false;
         }

@@ -34,6 +34,23 @@ if (op is null)
     return 2;
 }
 
+// MINTED AND ANNOUNCED BEFORE THE FRAME GOES OUT, not after a reply comes back.
+//
+// The id is the only thing that makes a retry safe, and the reply is exactly what goes missing when
+// it is needed most: a dropped connection, a killed CLI, a gateway that stopped reading. Printing it
+// after the reply meant that in the one case where the agent must reuse the id, it never learned it
+// — so its only recovery was a fresh id, which is a SECOND REAL ORDER.
+//
+// On stderr on purpose: stdout carries the --json object an agent parses, and this must not be able
+// to corrupt it. It is also in that object, so an agent reading only stdout still has it.
+var requestId = flags.GetValueOrDefault("request-id")
+    ?? (Ops.IsMutating(op) ? $"cli-{Guid.NewGuid():n}" : null);
+if (requestId is not null) Console.Error.WriteLine($"request-id: {requestId}");
+
+// Whether the frame was handed to the pipe at all. False means nothing was sent and there is
+// nothing to reconcile; true means the outcome is UNKNOWN, which is a different sentence.
+var sent = false;
+
 await using var client = new PipeClient();
 try
 {
@@ -42,15 +59,16 @@ try
     {
         Op = op,
         Session = Environment.GetEnvironmentVariable("TRADEAGENT_SESSION") ?? "agent",
-        RequestId = flags.GetValueOrDefault("request-id") ?? (Ops.IsMutating(op) ? $"cli-{Guid.NewGuid():n}" : null),
+        RequestId = requestId,
         Args = args2.ToDictionary(k => k.Key, v => JsonSerializer.SerializeToElement(v.Value))
     };
 
+    sent = true;
     var reply = await client.SendAsync(request);
 
     if (wantJson)
     {
-        Console.WriteLine(Json.Write(new { ok = reply.Ok, data = reply.Data, error = reply.Error }, true));
+        Console.WriteLine(Json.Write(new { ok = reply.Ok, request_id = requestId, data = reply.Data, error = reply.Error }, true));
         return reply.Ok ? 0 : 1;
     }
 
@@ -69,13 +87,31 @@ try
 }
 catch (TradeAgentException ex)
 {
+    // A TRANSPORT FAILURE AFTER THE FRAME WENT OUT IS NOT A FAILED ORDER.
+    //
+    // The order may already have reached the broker — the reply is what was lost, not necessarily
+    // the trade. So this says the one thing that keeps the agent from placing a second one: the id
+    // it already used, and that `trade orders` can be read before deciding anything.
+    var replyLost = sent && requestId is not null;
+    var recovery = replyLost
+        ? $"reply lost — re-run with --request-id {requestId} or check `trade orders` first"
+        : null;
+
     if (wantJson)
     {
-        Console.WriteLine(Json.Write(new { ok = false, error = IpcError.From(ex.Info) }, true));
+        Console.WriteLine(Json.Write(new
+        {
+            ok = false,
+            request_id = requestId,
+            reply_lost = replyLost,
+            recovery,
+            error = IpcError.From(ex.Info)
+        }, true));
         return 1;
     }
     Console.Error.WriteLine($"{ex.Code}: {ex.Info.UserMessage}");
     Console.Error.WriteLine($"  what to do: {ex.Info.Repair}");
+    if (recovery is not null) Console.Error.WriteLine($"  {recovery}");
     return 1;
 }
 
@@ -214,7 +250,11 @@ static void Usage()
 
     Add --json to any command for machine-readable output. That is the canonical interface.
 
-    Retries: every order command carries a request id. Reusing the SAME --request-id is always safe —
-    it returns the original outcome and never places a second order. Use a NEW id for a new order.
+    Retries: every order command carries a request id, printed on stderr BEFORE the order is sent
+    and included in --json output. Reusing the SAME --request-id is always safe — it returns the
+    original outcome and never places a second order. Use a NEW id for a new order.
+
+    If a command dies without a reply, the order may still have reached the broker. Re-run it with
+    the SAME --request-id, or read `trade orders` first. Never retry with a new id.
     """);
 }
