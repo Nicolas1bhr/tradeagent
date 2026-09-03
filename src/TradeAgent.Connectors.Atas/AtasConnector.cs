@@ -64,6 +64,17 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     UnauthenticatedBridge? _unauthenticated;
     string? _peerImage;
 
+    /// <summary>
+    /// The longest one order can take before this connector gives up on it, at the current values.
+    ///
+    /// Three bounded waits in series inside <see cref="Rpc"/>: the send gate, the write, then the
+    /// reply. Published because <c>GatewayPipeServer.HandlerDrainTimeout</c> has to outlast it — a
+    /// shutdown drain shorter than this abandons an order that is still legitimately in progress —
+    /// and a number in one file derived by hand from constants in another is a claim with an expiry
+    /// date. A test asserts the drain still covers this.
+    /// </summary>
+    public TimeSpan WorstCaseOrderPath => WriteTimeout + WriteTimeout + _timeout;
+
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;

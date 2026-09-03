@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.Connectors.Atas;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -392,7 +393,136 @@ public class GatewayPipeBackpressureTests
         Assert.Equal(Ops.MaterialList, dropped.Value.Op);
     }
 
+    /// <summary>
+    /// The drain has to outlast the path it is draining, and this is what keeps the two numbers
+    /// honest when someone changes one of them. A hand-derived constant in one file computed from
+    /// constants in another is a claim with an expiry date.
+    /// </summary>
+    [Fact]
+    public void The_shutdown_drain_outlasts_the_connectors_worst_case_order()
+    {
+        var connector = new AtasConnector("ta-drain-arith");
+        using var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, new FakeConnector(new FakeBroker()), new HealthRegistry());
+        var server = new GatewayPipeServer(gw, "tok", "ta-drain-arith-2");
+
+        // 10 + 10 + 10 at the shipped values. If a connector deadline grows, this fails here rather
+        // than by abandoning an order at shutdown six months later.
+        Assert.Equal(TimeSpan.FromSeconds(30), connector.WorstCaseOrderPath);
+        Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
+            $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
+            $"worst-case order path {connector.WorstCaseOrderPath.TotalSeconds:0}s — a shutdown mid-order abandons it");
+    }
+
+    /// <summary>
+    /// AT THE SHIPPED DRAIN BOUND. The broker takes eight seconds, which is longer than the five the
+    /// bound used to be and well inside the thirty-five it now is. Under the old bound this exact
+    /// shape produced <c>DisposeAsync returned after 5.01s … unfinished:1 … state=DISPATCHING</c>.
+    /// </summary>
+    [Fact]
+    public async Task An_order_slower_than_the_old_drain_bound_still_settles_before_shutdown_returns()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);   // HandlerDrainTimeout: untouched
+        Assert.Equal(TimeSpan.FromSeconds(35), server.HandlerDrainTimeout);
+        server.Start();
+
+        const string rid = "cli-slowsettle-1";
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+
+        // Warm the gateway's instrument and account lookups first, then slow the broker down. The
+        // fault applies to EVERY connector call, so arming it up front would put the latency in the
+        // pre-flight checks instead of where this test needs it: inside the dispatch.
+        await WarmUp(agent);
+        conn.Faults.LatencyMs = 6000;
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-slowsettle",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(30));
+
+        var timer = Stopwatch.StartNew();
+        await server.DisposeAsync();
+        timer.Stop();
+
+        // Past the five seconds the bound used to be: under that bound this exact shape produced
+        // "DisposeAsync returned after 5.01s … unfinished:1 … state=DISPATCHING".
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
+            $"DisposeAsync returned in {timer.Elapsed.TotalSeconds:0.00}s — it gave up on an order that was still in progress");
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest(rid)!.State);
+        Assert.Single(conn.Broker.Orders);
+        Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
+    }
+
+    /// <summary>
+    /// A handler that really will not finish is abandoned rather than waited on — and that has to be
+    /// an ERROR in the record, not a note. It is the only trace that an order may have been left
+    /// unsettled, so it must reach whatever an operator actually reads.
+    /// </summary>
+    [Fact]
+    public async Task A_handler_that_outlasts_the_drain_is_recorded_as_an_error()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        // Deliberately far shorter than the order path, which is the situation the log line exists for.
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { HandlerDrainTimeout = TimeSpan.FromMilliseconds(300) };
+        server.Start();
+
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+        conn.Faults.LatencyMs = 5000;
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-stuck",
+            RequestId = "cli-stuck-1",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest("cli-stuck-1") is not null, TimeSpan.FromSeconds(30));
+
+        await server.DisposeAsync();
+
+        var severity = ReadEngineering(db, "handlers_did_not_finish");
+        Assert.NotNull(severity);
+        Assert.Equal("error", severity);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// Makes the gateway's pre-flight lookups cheap, so a broker latency armed afterwards lands on
+    /// the dispatch rather than on the instrument and account calls in front of it.
+    /// </summary>
+    static async Task WarmUp(RawAgent agent)
+    {
+        foreach (var op in new[] { Ops.Instruments, Ops.Account, Ops.Positions })
+        {
+            await agent.WriteAsync(new IpcRequest { Op = op });
+            await agent.ReadLineAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    /// <summary>The severity of the first engineering row for an event, or null if there is none.</summary>
+    static string? ReadEngineering(Database db, string @event) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT severity FROM engineering_log WHERE component='Ipc' AND event=$e ORDER BY id LIMIT 1", ("$e", @event));
+        using var r = c.ExecuteReader();
+        return r.Read() ? r.GetString(0) : null;
+    });
 
     static async Task WaitFor(Func<bool> condition, TimeSpan bound)
     {

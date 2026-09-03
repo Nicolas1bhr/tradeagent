@@ -103,12 +103,29 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>
     /// How long <see cref="DisposeAsync"/> waits for in-flight handlers once their pipes are shut.
     ///
-    /// ARITHMETIC, not measured. It has to be longer than a normal settle — a place that reached the
-    /// broker and is being written back — and shorter than a person's patience with an app that will
-    /// not close. Anything still running when it expires is LOGGED rather than waited on, because a
-    /// handler that will not finish must not be able to hold the app open.
+    /// ARITHMETIC, not measured, and DERIVED FROM THE CONNECTOR'S WORST CASE rather than picked.
+    /// Five seconds was picked, and it was shorter than the path it had to outlast, so a shutdown
+    /// during an order still abandoned it: measured at the shipped values,
+    /// <c>DisposeAsync returned after 5.01s … unfinished:1 … state=DISPATCHING</c>.
+    ///
+    /// The worst case for ONE order through <c>AtasConnector.Rpc</c>, at shipped values:
+    ///
+    ///     send gate wait      up to WriteTimeout      10 s
+    ///   + the write itself    up to WriteTimeout      10 s
+    ///   + waiting for ATAS    up to rpcTimeout        10 s
+    ///   = 30 s, + 5 s for the settle and its write-back
+    ///   = 35 s
+    ///
+    /// <c>AtasConnector.WorstCaseOrderPath</c> computes those first three from the live values and a
+    /// test asserts this default still covers it, so changing a connector deadline breaks a test
+    /// rather than silently reintroducing the abandoned order.
+    ///
+    /// THE TRADE IS DELIBERATE: the app may take up to 35 s to close, but ONLY while an order is
+    /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
+    /// before this wait. Waiting is the right side of that trade, because the alternative is an
+    /// order that reached the broker and is recorded DISPATCHING for ever.
     /// </summary>
-    static readonly TimeSpan HandlerDrainTimeout = TimeSpan.FromSeconds(5);
+    public TimeSpan HandlerDrainTimeout { get; init; } = TimeSpan.FromSeconds(35);
 
     Task? _loop;
     volatile bool _disposed;
