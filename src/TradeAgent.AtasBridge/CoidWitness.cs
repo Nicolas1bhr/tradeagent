@@ -259,6 +259,9 @@ public sealed class CoidWitness
     /// job. Leaving them lying around is how a trimmed identifier comes back to life.
     /// </summary>
     readonly List<string> _stranded = new();
+
+    /// <summary>The candidate this instance adopted at load, or null. Deleted once it is committed.</summary>
+    string? _adopted;
     bool _writeFailed;
     int _loggedFailures;
 
@@ -747,6 +750,8 @@ public sealed class CoidWitness
     /// </summary>
     bool AdoptUncommittedRewrite(string? committedText, Envelope? committed)
     {
+        var viable = new List<(string Path, Envelope Envelope)>();
+
         foreach (var candidate in Candidates())
         {
             var text = ReadTolerantly(candidate, out var unreadable);
@@ -776,10 +781,45 @@ public sealed class CoidWitness
                 continue;
             }
 
-            Take(envelope);
-            return true;
+            // LINEAGE AUTHENTICATES THE PARENT, NOT THE CONTENT, and that gap is real. A rewrite
+            // that descends perfectly well from the committed file can still hold FEWER records
+            // than it — and adopting one displaces committed claims, up to and including
+            // resurrecting an identifier the cap had trimmed, since the adopted set becomes what
+            // the next save commits. No legitimate rewrite shrinks: Submitting replaces a record
+            // under the same identifier and Trim only ever brings the count back down to the cap,
+            // never below the committed count.
+            if (committed is not null && envelope.Records.Count < committed.Records.Count)
+            {
+                RejectCandidate(candidate,
+                    $"it holds fewer records than the committed file ({envelope.Records.Count} < " +
+                    $"{committed.Records.Count}), so adopting it would drop committed claims");
+                continue;
+            }
+
+            viable.Add((candidate, envelope));
         }
-        return false;
+
+        if (viable.Count == 0) return false;
+
+        // TWO RIVALS MEAN NEITHER IS TRUSTED. Every viable candidate descends from the same commit
+        // and therefore carries the same generation, so nothing in the file distinguishes them —
+        // the previous rule let mtime pick, silently, between two rewrites that may hold different
+        // claims. One writer cannot produce this (it keeps at most one uncommitted rewrite), so it
+        // means two writers or a copied file, and guessing is how a claim gets dropped without
+        // anybody being told. Decline both, keep the committed file, and say so.
+        if (viable.Count > 1)
+        {
+            Note($"WARN coid-witness found {viable.Count} rival uncommitted rewrites of generation " +
+                 $"{viable[0].Envelope.Generation} and adopted none of them: " +
+                 string.Join(", ", viable.Select(v => v.Path)));
+            return false;
+        }
+
+        Take(viable[0].Envelope);
+        _adopted = viable[0].Path;
+        Note($"coid-witness recovered an uncommitted rewrite (generation {viable[0].Envelope.Generation}, " +
+             $"{viable[0].Envelope.Records.Count} records) from {viable[0].Path}");
+        return true;
     }
 
     /// <summary>
