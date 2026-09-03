@@ -542,21 +542,42 @@ public sealed class MainWindow : Window
     void RefreshUpdateBanner(GatewayStatus status)
     {
         var updates = _host.Updates;
+
+        // A refusal the owner has since acted on must not outlive the acting. This drops the
+        // unconfirmed-order one the moment the order settles; every other refusal stays, because
+        // nothing about them has changed.
+        updates.ExpireStaleRefusal();
+
         var info = updates.Available;
         var working = updates.Stage is UpdateStage.Downloading or UpdateStage.Installing;
 
+        // A REFUSAL, not any failure. "TradeAgent could not check for a newer version" is weather:
+        // it must never cover a valid offer that is already on screen, which is what happens when a
+        // six-hourly re-check fails behind the owner's back. A refusal is a decision with a reason,
+        // and it is shown even when there is nothing left to offer — an ambiguous release nulls
+        // Available, and silence about it is exactly the wall this unit exists to remove.
+        var refused = updates.Refused && !string.IsNullOrWhiteSpace(updates.Message);
+
         // Downloading shows even after Later was pressed: the user asked for this from Settings and
         // has to be able to see it happening from wherever they are.
-        _updateBanner.IsVisible = info is not null && (working || !updates.Dismissed);
-        if (info is null || !_updateBanner.IsVisible) return;
+        _updateBanner.IsVisible = (info is not null && (working || !updates.Dismissed)) || refused;
+        if (!_updateBanner.IsVisible) return;
 
-        if (_updateNotes is not null) _updateNotes.IsVisible = !working;
-        if (_updateLater is not null) _updateLater.IsVisible = !working;
-        if (_updateInstall is not null) _updateInstall.IsVisible = !working;
+        // With nothing on offer there is nothing to read, install or postpone — only the reason.
+        var actionable = info is not null && !working;
+        if (_updateNotes is not null) _updateNotes.IsVisible = actionable;
+        if (_updateLater is not null) _updateLater.IsVisible = actionable;
+        if (_updateInstall is not null) _updateInstall.IsVisible = actionable;
 
         if (working)
         {
-            _updateBannerText.Text = updates.Message ?? $"Installing TradeAgent {info.Version}…";
+            _updateBannerText.Text = updates.Message ?? $"Installing TradeAgent {info?.Version}…";
+            return;
+        }
+
+        if (info is null)
+        {
+            _updateBannerText.Text = updates.Message ?? "";
             return;
         }
 
@@ -568,16 +589,20 @@ public sealed class MainWindow : Window
         var unconfirmed = status.UnreconciledRequests > 0;
         var size = string.IsNullOrEmpty(info.SizeLabel) ? "" : $" · {info.SizeLabel}";
 
-        // A refusal outranks the offer. Whatever UpdateService last said no to — an unconfirmed
-        // order, a release we cannot verify, a file that changed under us — is what the strip says,
-        // in its words rather than a paraphrase that could drift away from them.
         _updateBannerText.Text =
-            updates.Stage == UpdateStage.Failed && !string.IsNullOrWhiteSpace(updates.Message) ? updates.Message
-            : unconfirmed ? $"TradeAgent {info.Version} is available. It can be installed once the unconfirmed order is settled."
+            refused ? updates.Message
+            : !updates.CanBeVerified
+                ? $"TradeAgent {info.Version} was published without the checksum file that proves what it is, so it cannot be installed."
+            : unconfirmed
+                ? $"TradeAgent {info.Version} is available. It can be installed once the unconfirmed order is settled."
             : $"TradeAgent {info.Version} is available{size}. You are running {updates.CurrentVersion}.";
 
         if (_updateInstall is null) return;
-        _updateInstall.IsEnabled = !unconfirmed;
+
+        // Cosmetics only, both of them. The refusals they mirror are in InstallAsync and are the
+        // things that actually stop an install; these keep the button from inviting a press that is
+        // already known to end in a refusal.
+        _updateInstall.IsEnabled = !unconfirmed && updates.CanBeVerified;
 
         // The armed label carries whatever the second press is actually going to interrupt. It is
         // never the bare word "Confirm", and it is never quieter than the truth.

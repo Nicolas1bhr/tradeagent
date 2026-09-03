@@ -517,21 +517,34 @@ sealed class SettingsPage
         var checkedAt = updates.LastCheckedUtc is { } t
             ? $"Last checked {t.ToLocalTime():d MMMM, HH:mm}."
             : "Not checked yet.";
+
+        // Said BEFORE the press, not after it. A release with no checksum file beside it is one this
+        // product will refuse to install; the refusal is in UpdateService and stays there, but the
+        // owner should not have to press a button twice to be told something we already know.
         var message = updates.Message;
+        if (string.IsNullOrWhiteSpace(message) && info is not null && !updates.CanBeVerified)
+            message = $"TradeAgent {info.Version} was published without the checksum file that proves what it is. " +
+                      "It cannot be installed.";
         _updateNote.Text = string.IsNullOrWhiteSpace(message) ? checkedAt : $"{message} {checkedAt}";
-        _updateNote.Foreground = updates.Stage == UpdateStage.Failed ? Theme.Caution : Theme.TextMuted;
+        _updateNote.Foreground =
+            updates.Stage == UpdateStage.Failed || (info is not null && !updates.CanBeVerified)
+                ? Theme.Caution
+                : Theme.TextMuted;
 
         var busy = updates.Stage is UpdateStage.Checking or UpdateStage.Downloading or UpdateStage.Installing;
         _checkNow.IsEnabled = !busy;
         _whatsNew.IsVisible = info is not null;
         _installUpdate.IsVisible = info is not null;
 
-        // Deliberately still only !busy, and deliberately NOT a copy of the banner's unconfirmed-order
-        // check. That check used to live on a button, which is how this page ended up being a second
-        // way around it; it is now inside UpdateService.InstallAsync, where both buttons meet. Leaving
-        // this one pressable means a press during an unconfirmed order produces the actual reason in
-        // _updateNote above rather than a dead control with nothing to read.
-        _installUpdate.IsEnabled = !busy;
+        // Deliberately NOT a copy of the banner's unconfirmed-order check. That check used to live on
+        // a button, which is how this page ended up being a second way around it; it is now inside
+        // UpdateService.InstallAsync, where both buttons meet. Leaving this pressable during an
+        // unconfirmed order means the press produces the actual reason in _updateNote above rather
+        // than a dead control with nothing to read.
+        //
+        // A release that published no checksum file is different: there is no press that can ever
+        // succeed, and the note beside the button already says why.
+        _installUpdate.IsEnabled = !busy && updates.CanBeVerified;
 
         if (info is not null)
             Ui.Relabel(_installUpdate, "Install update", $"Confirm: close TradeAgent and install {info.Version}");

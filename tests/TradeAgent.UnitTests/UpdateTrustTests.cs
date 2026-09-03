@@ -847,6 +847,115 @@ public class UpdateTrustTests
         Assert.Equal(UpdateStage.Failed, refused.Stage);
     }
 
+    // ---- 3. a refusal that expires, and a failed re-check that hides nothing ----------------------
+
+    /// <summary>
+    /// The unconfirmed-order refusal stops being true when the order settles. Nothing used to expire
+    /// it, so it sat on the strip beside a button the five-second tick had already re-enabled, until
+    /// the next automatic check up to six hours later.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_about_an_unconfirmed_order_expires_when_the_order_settles()
+    {
+        var outstanding = 1;
+        var f = Wellformed();
+        var service = Service(f);
+        service.UnconfirmedWork = () => outstanding;
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+        Assert.True(service.Refused);
+        Assert.True(service.RefusedPendingWork);
+
+        // Still true: nothing expires.
+        service.ExpireStaleRefusal();
+        Assert.True(service.Refused);
+
+        outstanding = 0;
+        service.ExpireStaleRefusal();
+
+        Assert.False(service.Refused);
+        Assert.Null(service.Message);
+        Assert.Equal(UpdateStage.Available, service.Stage);   // back to the offer it was
+        Assert.NotNull(service.Available);
+    }
+
+    /// <summary>
+    /// Every other refusal is about the release, not about the owner's order book, and stays until a
+    /// different release is published. Expiring those would hide the reason and re-arm the button.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_about_the_release_itself_does_not_expire()
+    {
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = await Offering(f);
+
+        Assert.False(await service.InstallAsync());
+        Assert.True(service.Refused);
+        Assert.False(service.RefusedPendingWork);
+
+        service.ExpireStaleRefusal();
+
+        Assert.True(service.Refused);
+        Assert.Contains("cannot be verified", service.Message);
+    }
+
+    /// <summary>
+    /// A six-hourly re-check that fails is weather. It must not turn a standing offer into a
+    /// refusal, because the banner shows a refusal over the offer — which is how "could not check"
+    /// came to hide a perfectly valid update.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_re_check_is_not_a_refusal_and_leaves_the_offer_readable()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        await service.CheckAsync();
+
+        Assert.Equal(UpdateStage.Available, service.Stage);
+        var offered = service.Available;
+
+        f.ReleaseJson = null;                       // the machine goes offline
+        await service.CheckAsync();
+
+        Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.False(service.Refused);              // the banner renders the offer, not this
+        Assert.Contains("could not check", service.Message);
+        Assert.Same(offered, service.Available);    // and the offer itself survives
+    }
+
+    // ---- 8. a release that cannot be verified says so before the press ---------------------------
+
+    [Fact]
+    public async Task A_release_with_no_checksum_file_says_so_before_the_owner_presses_anything()
+    {
+        var f = new Fake { ReleaseJson = Release(Asset) };
+        var service = await Offering(f);
+
+        // Still offered, so What's new and the version still render — only the press is refused.
+        Assert.NotNull(service.Available);
+        Assert.False(service.CanBeVerified);
+        Assert.Equal(UpdateStage.Available, service.Stage);
+
+        var withManifest = await Offering(new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt") });
+        Assert.True(withManifest.CanBeVerified);
+
+        // And the hard stop is still the thing that actually stops it.
+        Assert.False(await service.InstallAsync());
+        Assert.False(f.DownloadStarted);
+        Assert.Contains("cannot be verified", service.Message);
+    }
+
+    [Fact]
+    public void Nothing_on_offer_can_be_verified_and_that_is_not_a_refusal()
+    {
+        var service = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern,
+            new Fake().Sources());
+
+        Assert.False(service.CanBeVerified);   // no Available at all
+        Assert.False(service.Refused);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()
