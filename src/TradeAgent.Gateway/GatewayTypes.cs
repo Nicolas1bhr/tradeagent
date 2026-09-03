@@ -52,13 +52,18 @@ public sealed class GatewayOptions
 /// pressed kill switch. Measured over the real pipe on 2026-09-02, before the fix: state FILLED,
 /// connector order FB-1, mode LIVE_CONFIRM.
 ///
-/// So authority is no longer carried by the string. <see cref="Operator"/> is the only operator
-/// context that exists, made once by a constructor nothing else can reach; every public route in —
-/// the constructor, <see cref="ForAgent"/>, a <c>with</c> expression, JSON — yields
-/// <c>IsOperator == false</c> whatever the session is called. The reserved word is ALSO refused at
-/// the pipe, but that refusal is a tripwire, not the defence: this type is the defence.
+/// A CLASS, NOT A RECORD, AND THAT IS THE FIX FOR THE SECOND HOLE. As a record it kept its own copy
+/// constructor, so <c>AgentContext.Operator with { SessionId = "x" }</c> produced a NEW operator
+/// context with someone else's name on it — while the comment here claimed no public route could.
+/// A class has no <c>with</c>, so the claim and the code now agree. Equality is not implemented
+/// because nothing compares these for authority and an accidental value-equality check on a
+/// security type is a trap, not a convenience.
+///
+/// <see cref="Operator"/> is the only operator context that exists, made once by a constructor
+/// nothing else can reach. The reserved word is ALSO refused at the pipe, but that refusal is a
+/// tripwire, not the defence: this type is the defence.
 /// </summary>
-public sealed record AgentContext
+public sealed class AgentContext
 {
     /// <summary>The session name the operator's own context carries. Reserved on the wire.</summary>
     public const string OperatorSessionId = "operator";
@@ -75,13 +80,8 @@ public sealed record AgentContext
         IsOperator = isOperator;
     }
 
-    public string SessionId { get; init; }
-
-    /// <summary>
-    /// Private init on purpose: <c>ctx with { IsOperator = true }</c> does not compile outside this
-    /// type, so the record's own copy semantics cannot be used to promote a context either.
-    /// </summary>
-    public bool IsOperator { get; private init; }
+    public string SessionId { get; }
+    public bool IsOperator { get; }
 
     /// <summary>
     /// The context for a caller on the other side of the fence, named by whatever session string it
@@ -89,6 +89,8 @@ public sealed record AgentContext
     /// </summary>
     public static AgentContext ForAgent(string? sessionId) =>
         new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!);
+
+    public override string ToString() => IsOperator ? "operator (in-process)" : SessionId;
 }
 
 public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, decimal Quantity,
