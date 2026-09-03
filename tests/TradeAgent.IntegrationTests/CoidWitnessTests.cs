@@ -2713,6 +2713,62 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(Session().Trouble);
     }
 
+    /// <summary>
+    /// A SAFETY EVENT IS NEVER DROPPED — INCLUDING WHEN SEVERAL WRITERS PRODUCE ONE AT ONCE.
+    ///
+    /// The quota path honours that contract and the concurrency path did not. The append ends in a
+    /// single-writer open (`FileShare.Read` denies a second writer), and every failure here is
+    /// swallowed on purpose — a witness that cannot write must not become one that throws — so a
+    /// line that lost the race was discarded silently. The writers that produce these lines are
+    /// precisely the ones the lease REFUSED, so they are unserialised by construction: there is no
+    /// lock between them, which is the whole point of them being refused.
+    ///
+    /// Measured by the round-5 verify leg at 4, 2, 2 and 6 lines lost out of 160 across four runs of
+    /// three real processes. This drives 160 DISTINCT claims through four writers over one file and
+    /// asserts every one of them is on disk — distinct, because the verifier's own runs lost
+    /// duplicates and could not tell a dropped line from a repeated one.
+    /// </summary>
+    [Fact]
+    public void No_safety_event_is_lost_when_several_writers_produce_one_at_once()
+    {
+        const int writers = 4, each = 40;
+
+        // Every one of these fails its rewrite, so every Submitting writes exactly one safety line —
+        // whichever of them holds the lease and whichever are refused by it.
+        var all = Enumerable.Range(0, writers).Select(_ => Session(NeverLands)).ToArray();
+        try
+        {
+            Parallel.For(0, writers, w =>
+            {
+                for (var i = 0; i < each; i++)
+                    all[w].Submitting($"TA-{w}-{i:D3}", "SIM", "ES", "Buy", 1m, null);
+            });
+        }
+        finally { foreach (var w in all) w.Dispose(); }
+
+        // Across the whole sidecar set, because a rotation mid-run is not a loss.
+        // The whole sidecar set: the owner's file, its rotated generation, and each refused
+        // writer's own — which is the glob the probe and the support package already collect.
+        var lines = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+            .SelectMany(File.ReadAllLines)
+            .Where(l => l.Trim().Length > 0)
+            .ToArray();
+
+        var missing = new List<string>();
+        for (var w = 0; w < writers; w++)
+            for (var i = 0; i < each; i++)
+            {
+                var claim = $"TA-{w}-{i:D3}";
+                if (!lines.Any(l => l.Contains(claim, StringComparison.Ordinal))) missing.Add(claim);
+            }
+
+        Assert.True(missing.Count == 0,
+            $"{missing.Count} of {writers * each} safety events were dropped: " +
+            string.Join(", ", missing.Take(12)) +
+            $" [lines={lines.Length} rotated={File.Exists(Sidecar + ".1")} " +
+            $"bytes={(File.Exists(Sidecar) ? new FileInfo(Sidecar).Length : 0)}]");
+    }
+
     // -------------------------------------------------- what a person is told (tools/probe)
 
     /// <summary>
@@ -2946,6 +3002,12 @@ public class CoidWitnessTests : IDisposable
         // file. The older generation holds the FIRST of them, which is where a fault starts.
         var rolled = sidecar + ".1";
         File.WriteAllText(rolled, "2026-09-02T00:00:00.0000000+00:00 ERROR the first one, which is the one that explains it.");
+
+        // AND A REFUSED WRITER'S OWN FILE. Since round 6 an instance the lease turned away writes
+        // beside the canonical sidecar rather than into it — one writer per file, so nothing races —
+        // and its account of what it could not record is exactly what a support package is for.
+        var perWriter = sidecar + "-9999-deadbeef";
+        File.WriteAllText(perWriter, "2026-09-03T00:00:00.0000000+00:00 ERROR claim=TA-REFUSED another writer owns this witness");
         try
         {
             var zip = Doctor.CreateSupportPackage(TestEnv.NewDb(),
@@ -2954,11 +3016,13 @@ public class CoidWitnessTests : IDisposable
             using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
             Assert.Contains(archive.Entries, e => e.FullName.EndsWith(CoidWitness.ErrorLogName, StringComparison.Ordinal));
             Assert.Contains(archive.Entries, e => e.FullName.EndsWith(CoidWitness.ErrorLogName + ".1", StringComparison.Ordinal));
+            Assert.Contains(archive.Entries, e => e.FullName.EndsWith("-9999-deadbeef", StringComparison.Ordinal));
         }
         finally
         {
             try { File.Delete(sidecar); } catch (IOException) { }
             try { File.Delete(rolled); } catch (IOException) { }
+            try { File.Delete(perWriter); } catch (IOException) { }
         }
     }
 
