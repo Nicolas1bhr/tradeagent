@@ -34,18 +34,11 @@ if (op is null)
     return 2;
 }
 
-// MINTED AND ANNOUNCED BEFORE THE FRAME GOES OUT, not after a reply comes back.
-//
-// The id is the only thing that makes a retry safe, and the reply is exactly what goes missing when
-// it is needed most: a dropped connection, a killed CLI, a gateway that stopped reading. Printing it
-// after the reply meant that in the one case where the agent must reuse the id, it never learned it
-// — so its only recovery was a fresh id, which is a SECOND REAL ORDER.
-//
-// On stderr on purpose: stdout carries the --json object an agent parses, and this must not be able
-// to corrupt it. It is also in that object, so an agent reading only stdout still has it.
-var requestId = flags.GetValueOrDefault("request-id")
-    ?? (Ops.IsMutating(op) ? $"cli-{Guid.NewGuid():n}" : null);
-if (requestId is not null) Console.Error.WriteLine($"request-id: {requestId}");
+// The replay contract lives in CliReplayContract so it can be tested; see that file for why.
+// Minted and announced BEFORE the frame goes out, because the case that needs the id is the case
+// where no reply arrives.
+var requestId = CliReplayContract.MintRequestId(op, flags.GetValueOrDefault("request-id"));
+CliReplayContract.AnnounceRequestId(Console.Error, requestId);
 
 // Whether the frame was handed to the pipe at all. False means nothing was sent and there is
 // nothing to reconcile; true means the outcome is UNKNOWN, which is a different sentence.
@@ -68,7 +61,7 @@ try
 
     if (wantJson)
     {
-        Console.WriteLine(Json.Write(new { ok = reply.Ok, request_id = requestId, data = reply.Data, error = reply.Error }, true));
+        Console.WriteLine(Json.Write(CliReplayContract.AnsweredJson(requestId, reply), true));
         return reply.Ok ? 0 : 1;
     }
 
@@ -87,26 +80,12 @@ try
 }
 catch (TradeAgentException ex)
 {
-    // A TRANSPORT FAILURE AFTER THE FRAME WENT OUT IS NOT A FAILED ORDER.
-    //
-    // The order may already have reached the broker — the reply is what was lost, not necessarily
-    // the trade. So this says the one thing that keeps the agent from placing a second one: the id
-    // it already used, and that `trade orders` can be read before deciding anything.
-    var replyLost = sent && requestId is not null;
-    var recovery = replyLost
-        ? $"reply lost — re-run with --request-id {requestId} or check `trade orders` first"
-        : null;
+    // A transport failure after the frame went out is not a failed order; see CliReplayContract.
+    var recovery = CliReplayContract.RecoveryLine(sent, requestId);
 
     if (wantJson)
     {
-        Console.WriteLine(Json.Write(new
-        {
-            ok = false,
-            request_id = requestId,
-            reply_lost = replyLost,
-            recovery,
-            error = IpcError.From(ex.Info)
-        }, true));
+        Console.WriteLine(Json.Write(CliReplayContract.UnansweredJson(requestId, sent, IpcError.From(ex.Info)), true));
         return 1;
     }
     Console.Error.WriteLine($"{ex.Code}: {ex.Info.UserMessage}");
