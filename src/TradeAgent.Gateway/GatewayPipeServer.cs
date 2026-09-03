@@ -350,11 +350,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
         }
 
-        // The other half of what makes a derived id uncollidable: an agent cannot type one.
-        if (req.RequestId?.Contains(DerivedIdSeparator) == true)
-            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-                $"'{DerivedIdSeparator}' is reserved in a request id — it is how cancel-all and close-all " +
-                "name the per-order requests they derive from yours, and an id containing it could collide with one");
+        // Two checks, and they are not the same check. The PREFIX keeps an agent's id from
+        // colliding with one this gateway mints for a sweep leg. The CHARSET keeps whatever the
+        // agent chose from reaching the broker as ClientOrderId ("TA-" + this) in a shape safety
+        // rule 1 needs to round-trip and no one here can promise ATAS will accept.
+        if (req.RequestId is { } given)
+        {
+            if (given.StartsWith(MintedIdPrefix, StringComparison.OrdinalIgnoreCase))
+                return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                    $"a request id may not start with '{MintedIdPrefix}' — that prefix is how cancel-all and " +
+                    "close-all name the per-order requests they mint, and an id using it could collide with one");
+
+            if (!IsConservativeId(given))
+                return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+                    "a request id may use only letters, digits and '-', up to 64 characters — it is carried " +
+                    "onto the broker order as the client order id, and that has to be a shape the broker will give back");
+        }
 
         var ctx = AgentContext.ForAgent(req.Session);
         var rid = req.RequestId ?? req.Id;
@@ -413,15 +424,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
-    /// The separator in a derived request id, and the one character an agent may not put in its own.
+    /// The prefix on every request id the GATEWAY mints, and the one prefix an agent may not use.
     ///
-    /// Derived ids used to be <c>{rid}-{i}</c>, which any agent can also type. An agent that placed
-    /// an order as <c>X-0</c> and later swept with <c>--request-id X</c> handed the FIRST cancel the
-    /// id <c>X-0</c> — already in the idempotency store as a PLACE — so the sweep replayed that
-    /// record instead of cancelling, and still counted it. Reserving a character the pipe refuses on
-    /// the way in makes the collision impossible by construction rather than unlikely.
+    /// It replaces a reserved separator (<c>#</c>), which solved collisions and created a worse
+    /// problem: the id is carried into <c>ClientOrderId</c> as <c>TA-{id}</c> and SENT TO THE BROKER,
+    /// and safety rule 1 requires that field to round-trip. Whether ATAS accepts <c>#</c> in a client
+    /// order id is not knowable from here — it is settleable only on the box — so minting one was a
+    /// bet on the one field the rule says must not be guessed at.
     /// </summary>
-    const char DerivedIdSeparator = '#';
+    const string MintedIdPrefix = "op-";
+
+    /// <summary>
+    /// The only characters allowed in a request id, minted or agent-chosen: <c>[A-Za-z0-9-]</c>.
+    ///
+    /// Deliberately narrower than anything a broker is likely to refuse, because this string leaves
+    /// the process. Every id in the suite already conformed, so this narrows what is ACCEPTED
+    /// without changing what anything currently does.
+    /// </summary>
+    static bool IsConservativeId(string id) =>
+        id.Length is > 0 and <= 64 && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
 
     /// <summary>
     /// Agent-initiated cancel-all still goes through per-order requests so each cancellation is a
@@ -436,9 +457,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         var working = await gateway.OrdersAsync(false, ct);
         var results = new List<ExecutionRequest>();
+        var nonce = SweepNonce();
         var i = 0;
         foreach (var o in working)
-            results.Add(await gateway.CancelAsync(ctx, DerivedId(rid, "cancel-all", i++), o.ConnectorOrderId, ct));
+            results.Add(await gateway.CancelAsync(ctx, DerivedId(nonce, "cancelall", i++), o.ConnectorOrderId, ct));
 
         var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
         return new
@@ -454,11 +476,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
-    /// A per-item id derived from the sweep's own id, in a shape an agent cannot produce because
-    /// <see cref="DerivedIdSeparator"/> is refused on the way in.
+    /// A per-item id for one leg of a sweep: <c>op-{nonce}-{intent}-{index}</c>.
+    ///
+    /// It does NOT embed the agent's own id any more. That is what keeps it inside
+    /// <see cref="IsConservativeId"/> whatever the agent called its sweep, and the nonce plus the
+    /// reserved prefix are what keep it from colliding with anything the agent can choose. The legs
+    /// are returned in the reply, so the agent can still tie them back to its own request.
     /// </summary>
-    static string DerivedId(string rid, string intent, int index) =>
-        $"{rid}{DerivedIdSeparator}{intent}{DerivedIdSeparator}{index}";
+    static string DerivedId(string nonce, string intent, int index) =>
+        $"{MintedIdPrefix}{nonce}-{intent}-{index}";
+
+    /// <summary>A fresh nonce for one sweep. Hex, so it cannot leave the conservative charset.</summary>
+    static string SweepNonce() => Guid.NewGuid().ToString("n")[..8];
 
     /// <summary>Same two corrections as <see cref="CancelAll"/>: uncollidable ids, and a count of what landed.</summary>
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
@@ -466,12 +495,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var positions = await gateway.PositionsAsync(ct);
         var results = new List<ExecutionRequest>();
         var nothingToDo = new List<string>();
+        var nonce = SweepNonce();
         var i = 0;
         foreach (var p in positions.Where(p => p.Quantity != 0))
         {
             // Null means the gateway found nothing to close for that symbol. Not a failure, and
             // not a closure either — counting it as one is exactly the overstatement being removed.
-            var r = await gateway.CloseAsync(ctx, DerivedId(rid, "close-all", i++), p.Symbol, ct);
+            var r = await gateway.CloseAsync(ctx, DerivedId(nonce, "closeall", i++), p.Symbol, ct);
             if (r is null) nothingToDo.Add(p.Symbol); else results.Add(r);
         }
 

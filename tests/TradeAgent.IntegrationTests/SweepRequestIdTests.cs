@@ -78,11 +78,55 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
-    /// The reserved separator is refused on the way in, which is what makes a derived id
-    /// uncollidable by construction rather than by hoping the agent picks different words.
+    /// EVERY ID THE GATEWAY MINTS LEAVES THIS PROCESS ON A BROKER ORDER, so its charset is a safety
+    /// property and not a style question.
+    ///
+    /// The id is carried onto the order as <c>TA-{id}</c>, and safety rule 1 requires that field to
+    /// round-trip. The previous scheme minted <c>TA-…#close-all#0</c> — and whether ATAS accepts
+    /// <c>#</c> in a client order id is not knowable from here, only on the box. This asserts every
+    /// minted id is <c>[A-Za-z0-9-]</c>, from a sweep whose own id is at the edge of what is allowed.
     /// </summary>
     [Fact]
-    public async Task A_request_id_containing_the_reserved_separator_is_refused()
+    public async Task Every_id_the_gateway_mints_is_in_the_conservative_charset()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("mint-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await client.SendAsync(Buy("mint-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-mint" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+        Assert.Equal(2, sweep.GetProperty("attempted").GetInt32());
+
+        var minted = sweep.GetProperty("requests").EnumerateArray()
+            .Select(r => r.GetProperty("request_id").GetString()!).ToList();
+        Assert.Equal(2, minted.Count);
+
+        foreach (var id in minted)
+        {
+            Assert.Matches("^[A-Za-z0-9-]+$", id);
+            Assert.StartsWith("op-", id);
+            // And what actually reaches the broker, which is the string the rule is about.
+            Assert.Matches("^[A-Za-z0-9-]+$", TradingGateway.ClientOrderIdFor(id));
+        }
+        Assert.Equal(minted.Count, minted.Distinct().Count());
+    }
+
+    /// <summary>
+    /// The reserved PREFIX is refused on the way in. That is what makes a minted id uncollidable by
+    /// construction rather than by hoping the agent picks different words.
+    /// </summary>
+    [Theory]
+    [InlineData("op-deadbeef-cancelall-0")]
+    [InlineData("op-anything")]
+    [InlineData("OP-UPPERCASE")]
+    public async Task A_request_id_using_the_reserved_minted_prefix_is_refused(string id)
     {
         var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var _1 = db;
@@ -92,10 +136,36 @@ public class SweepRequestIdTests
         await using var client = new PipeClient();
         await client.ConnectAsync(10_000, pipe);
 
-        var reply = await client.SendAsync(Buy("mine#cancel-all#0", "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+        var reply = await client.SendAsync(Buy(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
 
-        Assert.False(reply.Ok, "an id in the shape the sweep derives was accepted");
+        Assert.False(reply.Ok, $"'{id}' was accepted, and it can collide with a minted sweep id");
         Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+    }
+
+    /// <summary>
+    /// An id that would not survive the trip to the broker is refused before an order carries it.
+    /// </summary>
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("has#hash")]
+    [InlineData("has/slash")]
+    [InlineData("has_underscore")]
+    [InlineData("émoji")]
+    public async Task A_request_id_outside_the_conservative_charset_is_refused(string id)
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var reply = await client.SendAsync(Buy(id, "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok, $"'{id}' was accepted and would have reached the broker as TA-{id}");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
     }
 
     /// <summary>
