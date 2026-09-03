@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
@@ -307,7 +308,74 @@ public class GatewayPipeBackpressureTests
         Assert.True(Json.Read<IpcResponse>(await agent.ReadLineAsync(TimeSpan.FromSeconds(5)))!.Ok);
     }
 
+    /// <summary>
+    /// SHUTDOWN WAITS FOR A HANDLER THAT IS INSIDE THE GATEWAY, not merely for one blocked on I/O.
+    ///
+    /// Found by review of a0aa1a7. Registering the PIPES fixed the abandoned-connection half and
+    /// missed this one: a handler parked in the middle of a place — through to the broker, waiting
+    /// on it — is doing no I/O at all, so closing its pipe does not reach it and disposal walked
+    /// past. It then outlived the server, the gateway AND the database, so the settle that moves the
+    /// order out of DISPATCHING ran against a closed connection or never ran, and an order that had
+    /// really reached the broker was left DISPATCHING for ever.
+    ///
+    /// `AppHost.DisposeAsync` runs server (`:274`) then gateway (`:275`) then database (`:276`), so a
+    /// handler drained inside the server's disposal finishes while both are still open. That order is
+    /// what makes waiting here worth anything.
+    /// </summary>
+    [Fact]
+    public async Task Shutdown_waits_for_a_handler_that_is_inside_the_gateway_placing_an_order()
+    {
+        // The broker takes its time, so the handler is provably still inside PlaceAsync when the
+        // server is disposed — not merely racing it.
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { LatencyMs = 1500 });
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        const string rid = "cli-inflight-1";
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-inflight",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+
+        // Wait until the order is genuinely in flight, then pull the server out from under it.
+        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(5));
+        var timer = Stopwatch.StartNew();
+        await server.DisposeAsync();
+        timer.Stop();
+
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
+            $"DisposeAsync returned in {timer.Elapsed.TotalMilliseconds:0}ms — it did not wait for the handler placing an order");
+
+        // Read the state with NO polling: if disposal waited, the settle is already durable.
+        var state = gw.GetRequest(rid)!.State;
+        Assert.True(state is not ExecutionState.DISPATCHING,
+            $"an order that reached the broker was left {state} when the server shut down");
+        Assert.Equal(ExecutionState.FILLED, state);
+        Assert.Single(conn.Broker.Orders);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    static async Task WaitFor(Func<bool> condition, TimeSpan bound)
+    {
+        var deadline = DateTime.UtcNow + bound;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return;
+            await Task.Delay(20);
+        }
+        throw new TimeoutException("condition was not met in time");
+    }
 
     static async Task<(string Op, string? Session, string Metadata)?> WaitForDrop(Database db, TimeSpan bound)
     {
