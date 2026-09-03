@@ -364,6 +364,34 @@ public class GatewayPipeBackpressureTests
         Assert.Single(conn.Broker.Orders);
     }
 
+    /// <summary>
+    /// The agent pipe's own deadline, AT THE SHIPPED DEFAULT. Ten seconds of real waiting, because a
+    /// drop proven at a 1 s test value proves the mechanism and not the product.
+    /// </summary>
+    [Fact]
+    public async Task A_stalled_peer_is_dropped_at_the_shipped_default_deadline()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        PlantBigNotes(gw);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);   // WriteTimeout: untouched
+        Assert.Equal(TimeSpan.FromSeconds(10), server.WriteTimeout);
+        server.Start();
+
+        await using var stalled = await RawAgent.ConnectAndHello(pipe);
+        var timer = Stopwatch.StartNew();
+        await stalled.WriteAsync(new IpcRequest { Op = Ops.MaterialList, Session = "agent-shipped" });
+        await stalled.ReadOneByteAsync(TimeSpan.FromSeconds(5));
+
+        var dropped = await WaitForDrop(db, TimeSpan.FromSeconds(20));
+        timer.Stop();
+
+        Assert.True(dropped is not null, $"no drop within 20s at the shipped 10s deadline (elapsed {timer.Elapsed.TotalSeconds:0.0}s)");
+        Assert.InRange(timer.Elapsed, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(20));
+        Assert.Equal(Ops.MaterialList, dropped.Value.Op);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     static async Task WaitFor(Func<bool> condition, TimeSpan bound)
