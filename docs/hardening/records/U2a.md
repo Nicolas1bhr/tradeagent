@@ -272,3 +272,192 @@ twelve, including the two ten-second shipped-default tests, ran green in the sam
   `tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs`. **No product code changed in round 4b.**
 - The rebase itself is therefore still unverified as a whole by this round: it is proven not to have caused THIS
   failure, and the full suite is green at `d25dbb4`, but that is the extent of the claim.
+
+## Round 5 (build record, 2026-09-03)
+
+Bounce on `d25dbb4` from Codex round 4 (5H/6M/3L, `records/codex-U2a-r4.txt`) and the Opus verifier
+(FAIL 2H/1M/1L, `records/U2a-verify-r4.md`). Same worktree `u2a-rebase-probe`, same builder (§9.3).
+F5, F6 and the gateway half of F8 were split to U2c-1 round 4 by the manager and are NOT touched here;
+`TradingGateway.cs`, `Stores.cs` and `GatewayTypes.cs` are not opened.
+
+**Windows box reachable this round** (`tools/win-state.sh` → tailscale up, `DESKTOP-K8VRIT9`,
+session Active/console, desktop live, ATAS installed+running, `C:\ta\repo` present; exit 3 = no UI
+agent, console work only — which is all a test run needs). On-box results at the end of this section.
+
+| finding | real / refuted | RED | GREEN | mutant | commit |
+|---|---|---|---|---|---|
+| **F1 / V1** (H) effective id `RequestId ?? Id` unguarded | **real** | 9 failed (6 charset+length, 3 reserved prefix), each with the order on the broker | 23/23 `SweepRequestIdTests` | guard the optional field again → **RED 9** | `b9d2f5a` |
+| **F10** (L, mandatory) reserved session accepted on hello | **real** | 8 failed — all 8 spellings answered `ok=true` on the first frame | 22/22 `OperatorContextTests` | hello skips the tripwire again → **RED 8** | `d88ebd0` |
+| **F9** (M) 32-bit sweep nonce collides with durable history | **real** | forced collision left order `FB-2` WORKING while the sweep reported it cancelled | 25/25 `SweepRequestIdTests` | drop the collision check → **RED 1**; narrow the nonce to 8 hex → **SURVIVED** (see note) | `1af35c0` |
+| **V3** (M) ordinary `SendOutcome` sentences unread; M14 survived | **real** | M14 (sentences swapped) survived the suite in round 4 | 13/13 class | M14 re-run → **RED 1** (`Local_queueing_under_load…`, `Assert.Contains() Failure: Filter not matched`) | `ba66916` |
+| **V2** (H, new) emergency bounded only at the gate | **real** | idle stalled bridge, free gate: 10005 ms, "ATAS did not answer", connection UP | 17/17 class | reply wait → ordinary timeout **RED 2**; never drop **RED 1**; always drop **RED 1** | `040add3` |
+| **F4** (M) chunk completion mistaken for byte progress | **real, measured** | 1 KiB/800 ms: peer accepted 2048 B during the window and was DROPPED as "not responding" | 17/17 class | chunk back to 8192 → **RED 1** | `60ac33e` |
+| **F11** (H) prerequisite reads served the ordinary deadline | **real** | cancel-all through the REAL gateway on a stalled bridge: **9.77 s** | 18/18 class, ≈2 s | scope never opened → **RED 1** (9.77 s); `place` inside an open scope still takes 10 s | `8f983ac` |
+| **F2** (H) non-composable deadline accounting | **real** | (i) write ran **102.84 s** on a steadily-progressing peer; (ii) `handlers_did_not_finish` at **error** for a handler that would have settled | 32/32 both classes | no ceiling → **RED 1** (102.84 s); no re-await → **RED 1** | `5eb6f44` |
+| **F3 / F7 / F8-CLI** (M) transport result is ad hoc | **real** | `trade buy` against a service that vanished after the handshake exited **134 (SIGABRT)**, unhandled, with the recovery JSON already printed | 9/9 `CliReplayContractTests` | drop the truncated-reply catch → **RED 1**; claim `NothingWritten` for every failure → **RED 2** | `788832a` |
+| **F13** (L) the "id before sending" test did not observe ordering | **real** | announcement moved to the failure path → **RED 1** | 9/9 | same mutant is the proof | `0909ada` |
+| **V4** (L) `MaxRequestIdChars` literal mutant survives | **noted, no action** | — | — | the verifier's own finding: equivalent today (M13 and M12+M13 both RED), and the brief asks for none | — |
+
+**F7's test found a second crash while it was being written**, and it is the same defect one line
+later: `Program.cs` holds the client in an `await using`, so disposal runs AFTER the catch has chosen
+an exit code and printed the JSON — and flushing a `StreamWriter` into a pipe whose far end has gone
+throws `IOException` from outside every handler. Measured: exit **134**. `PipeClient.DisposeAsync` now
+swallows transport failures. Recorded because it was not in either review's list.
+
+**§9.9 for F2 — can a gate catch "a derived bound whose inputs changed" generically?** Partly, and the
+useful half is cheap. What CANNOT be caught generically is the actual defect here: `WorstCaseOrderPath`
+was arithmetic over the wrong TERM — it counted a per-chunk progress budget as if it bounded a whole
+write — and no script can know that `WriteTimeout` is reset by every chunk while `FrameTimeout` is not.
+That is a reading of the code, and it took a second model to do it. What CAN be caught, and now is: the
+composition itself. `HandlerDrainTimeout > connector.WorstCaseOrderPath` is asserted from the LIVE
+values rather than from the numbers in the comment, so changing any input moves the assertion instead
+of silently invalidating a document — and the round-4 verifier's M13 (`TA-` → `TA-v2-`) already proved
+that shape bites. The generalisable rule, and it is the same one as round 4b's: **a number that a
+comment derives must be re-derived by an assertion from the same inputs, in the same expression the
+comment describes.** Every constant this unit reasons about now has one (`WriteTimeout`, `FrameTimeout`,
+`EmergencyDeadline`, `HandlerDrainTimeout`, `MaxRequestIdChars`).
+
+**F9 note (honest, in the shape of the verifier's own M12 entry).** Widening the nonce and adding the
+collision check are not independent: once a sweep asks the store whether the id it is about to mint is
+already in history, ANY nonce width is correct, so narrowing it back to 8 hex survives the suite. The
+width is now defence-in-depth and the check is the property under test. Recorded because a surviving
+mutant is a fact, not because it is a defect.
+
+**F4 was measured before it was believed.** Codex's stated numbers (1 KiB every 400 ms) land on the
+SAFE side on macOS, so a drain sweep against the 8 KiB chunk found where the boundary actually sits:
+
+| peer drain | bytes accepted during the 2 s window | verdict at chunk = 8 KiB |
+|---|---|---|
+| 2.50 KiB/s (1 KiB / 400 ms) | 5120 | busy, connection kept |
+| **1.25 KiB/s (1 KiB / 800 ms)** | **2048** | **"not responding", DROPPED** |
+| 0.63 KiB/s (1 KiB / 1600 ms) | 1024 | "not responding", DROPPED |
+
+A peer that took two kilobytes off us while we watched, and was still reading when we hung up on it,
+was told it had stopped responding — 9e50559's defect one layer down, in the resolution of the signal
+that commit added. The chunk is now 1 KiB, which moves the boundary from 4 KiB/s to 512 B/s. It cannot
+be removed, only moved, and that is stated in the source rather than left implicit.
+
+**V2's liveness rule, and the two things it is deliberately NOT keyed on.** Not on the write's own
+progress: the kernel accepting bytes means the socket buffer had room, not that anything read them —
+an 8 KiB buffer swallows a whole emergency frame while the far end is a corpse. Not on heartbeats
+specifically: `BridgeServer.HeartbeatInterval` is **5 s** (read from source), so a healthy connection
+is routinely silent for longer than an emergency waits and a heartbeat-in-the-window rule would drop
+healthy bridges. It is keyed on ANY frame arriving during the caller's window. The trade, stated: a
+bridge that is alive but wedged on this one operation is dropped and redialled, which costs a
+reconnect — and a reconnect is the remedy for a wedged connection and the only thing that makes the
+retry the failure advises worth making.
+
+**`EmergencyGateWait` is renamed `EmergencyDeadline`**, because it is no longer a gate wait. Callers
+in the suite and the round-4 text in this record above refer to the old name; the number (2 s) and the
+decision behind it are unchanged.
+
+### Commits (branch `u2a-rebase-probe`, on top of `d25dbb4`) — tip **`0909ada`**
+
+| sha | finding | what |
+|---|---|---|
+| `b9d2f5a` | F1 / V1 | Guard the request id that is used, not the field that may be absent |
+| `d88ebd0` | F10 | Refuse the reserved operator session on the hello frame as well |
+| `1af35c0` | F9 | Make a repeated sweep nonce harmless instead of merely unlikely |
+| `ba66916` | V3 | Read the ordinary transport sentences, and reach the branch that writes them |
+| `040add3` | V2 | Bound an emergency end to end, and let the peer decide the connection's fate |
+| `60ac33e` | F4 | Make the progress signal finer than the peer we are willing to call dead |
+| `8f983ac` | F11 | Carry the emergency deadline through the reads an emergency has to do first |
+| `5eb6f44` | F2 | Give one frame a ceiling, and wait for a cancelled handler to write down what it knows |
+| `788832a` | F3/F7/F8-CLI | Make the CLI's transport state something the transport reports, not a flag set in advance |
+| `0909ada` | F13 | Watch the request id reach stderr while the call is still outstanding |
+
+No `Co-Authored-By` trailers (`git log d25dbb4..HEAD --format=%B | grep -ci co-authored` → `0`).
+**No forbidden file opened:** `git diff --name-only d25dbb4..HEAD | grep -E 'TradingGateway.cs|Stores.cs|GatewayTypes.cs'`
+→ no matches. `u2a-pipe-hardening` untouched; nothing pushed to a remote, merged or rebased.
+
+Every mutant was applied to a `cp` copy's original, `touch`ed, run, then restored from the `cp` copy
+and `touch`ed again — never `git checkout --`. `git status --short` empty after each.
+
+### Gates — Mac (tip `0909ada`)
+
+```
+dotnet build TradeAgent.sln
+Build succeeded.  0 Warning(s)  0 Error(s)
+
+dotnet test TradeAgent.sln      (exit 0)
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 677 ms  - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed: 238, Skipped: 0, Total: 238, Duration: 2 m 42 s - TradeAgent.IntegrationTests.dll
+```
+**421 green, 0 red** (391 at `d25dbb4`; this round adds 30 tests).
+
+### Gates — the Windows box (F12, and it closes the oldest NOT-VERIFIED line in this record)
+
+`tools/win-push.sh` (740K, 446 files) then `tools/win-run.sh`, against `DESKTOP-K8VRIT9`, ATAS
+installed and running, console session live. The installed app, ATAS and the real home were not
+touched: the suite redirects `TRADEAGENT_HOME` to a scratch directory and every pipe name in these
+tests is a fresh GUID, so nothing bound the installation's own pipe.
+
+```
+dotnet build TradeAgent.sln
+Build succeeded.  0 Warning(s)  0 Error(s)   (13.63 s)
+
+--filter FullyQualifiedName~ConnectorSendDeadlineTests
+Passed!  - Failed: 0, Passed: 20, Skipped: 0, Total: 20, Duration: 58 s
+
+--filter FullyQualifiedName~GatewayPipeBackpressureTests
+Passed!  - Failed: 0, Passed: 12, Skipped: 0, Total: 12, Duration: 1 m 23 s
+
+--filter CliReplayContractTests | OperatorContextTests | SweepRequestIdTests
+Passed!  - Failed: 0, Passed: 56, Skipped: 0, Total: 56, Duration: 7 s
+
+dotnet test TradeAgent.sln --no-build      (exit 0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 4 s     - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 238, Skipped: 0, Total: 238, Duration: 2 m 44 s - TradeAgent.IntegrationTests.dll
+```
+**421 green on Windows, 0 red — the same 421 as macOS, and the same durations.**
+
+**What that does and does not settle.** It settles the class of claim every earlier round had to leave
+open: the pipe and connector behaviour runs on real Windows named-pipe semantics at shipped defaults,
+including the backpressure drops, the shutdown drain, the emergency classification and the round-4b
+paced-peer fixture — whose premise depends on the socket buffer being far smaller than a 512 KiB
+frame, and which the verifier flagged as possibly failing on a Windows pipe with a large buffer. It
+did not: the premise assertions passed, so the buffer is not large enough to swallow the frame. The
+drop paths passing is also the first evidence that disposing the handle really does kill an accepted
+overlapped write on Windows, since the tests that assert the drop depend on it.
+
+**It does NOT settle:** ATAS's real client-order-id limit or whether ATAS accepts the `op-…` shape —
+both need the app and a live order, and stay with the v0.1.2 step as the brief directs (Codex F14 is
+right that one `close-all` cannot settle the 64-character question; the two checks it names are the
+plan). I also did NOT run the Windows-only no-buffer mutant (B4) to prove the backpressure tests would
+fail without the 8 KiB buffer — the tests pass with it, which is weaker than a mutation proof.
+
+### What I did NOT do, round 5
+
+- **F5, F6 and the gateway half of F8 are untouched**, per the manager's split. `TradingGateway.cs`,
+  `Stores.cs` and `GatewayTypes.cs` were never opened — verified by `git diff --name-only`. They stay
+  HIGH-open-with-owner at U2c-1 round 4. Two consequences are load-bearing for reading this record:
+  an agent `close`/`close-all` still arrives at the connector as `BridgeOps.Place` and still does NOT
+  get the emergency deadline for the frame itself (only its prerequisite reads now do, which is my
+  half of F11); and a replayed sweep still re-sweeps the current book (F6).
+- **The F9 forced-collision consequence is bounded, not eliminated.** A sweep now re-mints rather than
+  replaying, so a collision is harmless. What a colliding leg id would have done — replayed an old
+  record and counted a stale CANCELLED — is F6's class and is fixed there, not here.
+- **Red-first was inverted on V2, F11 and F2.** Their tests were written against the fix and the RED
+  was then measured by reverting the product change (V2: reply wait back to the ordinary timeout;
+  F11: scope never opened, 9.77 s; F2: no ceiling, 102.84 s; no re-await, error logged). That is a
+  mutation proof, not a red-first one, and it is weaker in exactly one way: it cannot show the test
+  would have been written differently had the defect been in front of me. F1, F10, F9, F4 and the CLI
+  findings were genuinely red first.
+- **`EmergencyDeadline`'s liveness rule has a stated cost I did not measure in the field:** a bridge
+  that is alive but wedged on one operation is dropped and redialled. I measured that a heartbeating
+  peer is kept and a silent one is dropped; I did not measure how often a real ATAS bridge goes
+  silent for two seconds while healthy — the 5 s heartbeat interval is read from source, not observed
+  on the box.
+- **`FrameTimeout` = 30 s and the drain 55 s are judgments, not measurements**, in the same sense the
+  2 s emergency was: the arithmetic is derived and asserted, the choice of 30 is mine. The
+  product-visible consequence is that a shutdown with an order genuinely in flight may now take up to
+  55 s rather than 35. That is a number the manager may want to rule on.
+- I did not run the App or the UI, `tools/probe`, `tools/mac-run.sh`, or any ATAS interaction.
+- I did not run the round-4 verifier's probe branch (`u2a-verify-r4-probes`) or lift its files; I read
+  its record and reproduced the findings with my own fixtures. Its `VerifyR4Probes` /
+  `VerifyR4TimingProbes` remain in the verify worktree only.
+- I did not re-run the full suite a second time on Mac after the last commit's mutants; the 421-green
+  run above is at the tip with a clean tree, and each mutant was restored and re-verified by its
+  class before moving on.

@@ -128,3 +128,14 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   (`briefs/U14-r6-bounce.md`) with one rule per class: absent = FileNotFound only; degraded state survives rotation;
   protocol compatibility is connection-level and a mismatch poisons the connection; StopBridge releases and unsubscribes;
   the adapter gate gets written against the ATAS stub on the box. Waits for the round-5 verifier, then the same builder.
+- 23:45 **U2a builder round 5 reported** (Opus, 506K tokens cumulative, 71 min): tip **`0909ada`** (10 commits, one per
+  finding), suite 391 → **421 green** (75/108/238) on the Mac and IDENTICAL on the Windows box (the named-pipe classes
+  measured on Windows for the first time — F12 closed). Every finding real with a mutant; F4 measured (a peer that
+  accepted 2048 B at 1 KiB/800 ms was dropped); red-first INVERTED on V2/F11/F2 (disclosed). **Rulings:** `FrameTimeout`
+  30 s whole-frame ceiling ACCEPTED (worst-case shutdown with an order in flight 35 → 55 s; abandoning an unsettled
+  request is the worse failure); rename `EmergencyGateWait` → `EmergencyDeadline` ACCEPTED (2 s unchanged, now bounds
+  gate + write + reply). `u2a-pipe-hardening` moved `d25dbb4` → `0909ada` (34 ahead of main).
+- 23:50 Round-5 verification: `u2a-verify-r5` + `u2a-codex-r5` at `0909ada`; Codex delta review launched
+  (`records/codex-U2a-r5.txt`, priors 5/6/8-gateway marked DEFERRED-BY-DECISION); the round-4 verifier resumed with
+  `briefs/U2a-r5-verify.md` (own red-first probe against `d25dbb4` for one inverted item). Heavy legs: U14 verifier r5 +
+  U2a verifier r5 = 2; U14 builder r6 queued behind the U14 verifier.
