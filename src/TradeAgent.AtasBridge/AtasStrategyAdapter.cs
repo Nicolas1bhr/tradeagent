@@ -567,7 +567,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // witness path — a directory where the temp belongs, a permission — now refuses EVERY
             // order, forever, and without this the owner sees orders failing with nothing on any
             // screen saying why. This rides the hello into the ATAS bridge health row.
-            WitnessFailure = _witness.LastWriteFailure,
+            WitnessFailure = _witness.Trouble,
             // Portfolio.IsRealAccount is the only simulation signal in the dump. When there is no
             // portfolio yet we report NOT simulated, because guessing "simulated" on an unknown
             // account is the guess that costs money.
@@ -579,7 +579,14 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // match is our own object being read back to us, so it proves only that Order.Id was
             // assigned. ProvesRoundTrip is the whole of the decision and it lives in
             // ClientOrderIdProofs, which every machine can test.
-            SupportsClientOrderId = proof.ProvesRoundTrip(),
+            // AND FALSE WHILE THE WITNESS CANNOT VOUCH FOR ITS OWN HISTORY. The reading above is
+            // about what ATAS did; this is about whether the record that makes it answerable after a
+            // restart is intact. An unresolved durability gap means some claim this product made is
+            // not on disk, so "rule 1 is proven" is a statement this run cannot support — and the
+            // gate it feeds decides whether the product may trade unattended. Reporting the
+            // capability false is the direction to fail in; the per-order refusal in Place is the
+            // precise test and it is unaffected, so LIVE_CONFIRM dispatch still works.
+            SupportsClientOrderId = proof.ProvesRoundTrip() && _witness.Trouble is null,
             // Why it is false, when it is. Diagnostic only — see BridgeHello.ClientOrderIdAttempts.
             ClientOrderIdAttempts = attempts,
             ClientOrderIdChecks = checks,

@@ -1195,6 +1195,48 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("io:ok", Session().Token());
     }
 
+    /// <summary>
+    /// THE STATE THAT WAS INVISIBLE TO THE APP. A failure in an earlier session leaves nothing in
+    /// memory — the process that saw it is gone — so the hello carried null, and the ATAS bridge row
+    /// said READY over a witness with an unresolved durability gap. All three states have to reach
+    /// the wire, including the witness that has nowhere to live at all, which would otherwise refuse
+    /// every order in silence.
+    /// </summary>
+    [Fact]
+    public void The_hello_carries_a_gap_left_by_an_earlier_run()
+    {
+        Assert.Null(Session().Trouble);
+
+        var earlier = Session(NeverLands);
+        Submit(earlier, "TA-GAP");
+        Assert.Contains("did not land", earlier.Trouble);
+
+        // The restart: nothing in memory, and the gap is still real.
+        foreach (var f in Temps()) Age(f);
+        var next = Session();
+        Assert.NotNull(next.Trouble);
+        Assert.Contains(CoidWitness.ErrorLogName, next.Trouble);
+
+        // A witness with nowhere to live says so rather than refusing every order in silence.
+        Assert.Contains("nowhere to live", new CoidWitness(path: null).Trouble);
+    }
+
+    /// <summary>And it goes quiet again once a clean commit has resolved the gap.</summary>
+    [Fact]
+    public void The_hello_stops_carrying_a_gap_that_was_resolved()
+    {
+        var refused = true;
+        var w = Session(LandsUntil(() => refused));
+        Assert.False(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+        Assert.NotNull(w.Trouble);
+
+        refused = false;
+        Assert.True(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Null(w.Trouble);
+        Assert.Null(Session().Trouble);
+    }
+
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
     [Fact]
     public void The_sidecar_sits_beside_the_witness_file()

@@ -603,6 +603,45 @@ public sealed class CoidWitness
         }
     }
 
+    /// <summary>
+    /// THE WITNESS'S TROUBLE IN ONE LINE, or null when there is none — the value that rides the
+    /// hello into the ATAS bridge health row.
+    ///
+    /// Three states, and the middle one is the one that was invisible. A failure in THIS session is
+    /// <see cref="LastWriteFailure"/>. A failure in an EARLIER one leaves nothing in memory at all:
+    /// the process that saw it is gone, this one starts with a clean slate and a witness that looks
+    /// perfect, and the only thing that still knows is the sidecar. Reporting only the first meant
+    /// the app said READY over a witness with an unresolved durability gap. And a witness with
+    /// nowhere to live at all reports so here rather than silently refusing every order, which is
+    /// what it would otherwise do.
+    ///
+    /// It is a REPORT, not a gate on ordering: <c>Place</c> refuses per order on the write actually
+    /// failing, which is the precise test. This is what makes the reason visible and what downgrades
+    /// the capability — a run that cannot vouch for its own history cannot claim rule 1 is proven.
+    /// </summary>
+    public string? Trouble
+    {
+        get
+        {
+            if (_path is null)
+                return "the write-ahead record has nowhere to live on this machine, so no client " +
+                       "order id can be recorded and no order can be placed";
+            try
+            {
+                lock (_gate)
+                {
+                    EnsureLoaded();
+                    if (LastWriteFailure is { } now) return now;
+                    return _degraded
+                        ? $"an earlier run could not write the write-ahead record; the account of it " +
+                          $"is in {ErrorLogPath}"
+                        : null;
+                }
+            }
+            catch (Exception) { return null; }
+        }
+    }
+
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
