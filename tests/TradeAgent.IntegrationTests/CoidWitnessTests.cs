@@ -727,6 +727,84 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("TA-UNWRITABLE", File.ReadAllText(log));
     }
 
+    // -------------------------------------------------------------- two writers, one file
+
+    /// <summary>
+    /// Trap 35 says a second bridge can be running, and with one shared temp name the two interleave
+    /// inside a rewrite: B's write lands between A's write and A's rename, so A renames B's content
+    /// onto the file. Distinct names per writer are what stop that, and this is the cheapest
+    /// statement of it — two writers, two temps.
+    /// </summary>
+    [Fact]
+    public void Two_writers_do_not_share_a_temp_name()
+    {
+        var a = Session(NeverLands);
+        var b = Session(NeverLands);
+        Submit(a, "TA-A");
+        Submit(b, "TA-B");
+
+        Assert.Equal(2, Temps().Length);
+        Assert.Equal(2, Temps().Select(Path.GetFileName).Distinct().Count());
+    }
+
+    /// <summary>
+    /// AND THE PROMISE IS CHECKED, NOT ASSUMED. The rename returning success says this process
+    /// replaced the file; it does not say the file still holds this process's content a moment
+    /// later. <c>Submitting</c> tells <c>Place</c> that THIS claim is durable, and <c>Place</c>
+    /// refuses the order on false — so a claim another writer overwrote must report false, or the
+    /// order goes out with no write-ahead record anywhere.
+    /// </summary>
+    [Fact]
+    public void Submitting_is_false_when_another_writer_overwrote_the_rewrite()
+    {
+        var other = Session();
+        Submit(other, "TA-OTHER");
+
+        // The second bridge commits on top, in the instant between our rename and our read-back.
+        var w = Session((tmp, destination) =>
+        {
+            File.Move(tmp, destination, overwrite: true);
+            Submit(other, "TA-OTHER-2");
+        });
+
+        Assert.False(w.Submitting("TA-MINE", "SIM", "ES", "Buy", 1m, null));
+        Assert.DoesNotContain("TA-MINE", File.ReadAllText(File_));
+    }
+
+    /// <summary>
+    /// A temp that is GONE is not contention, and waiting 200 ms in 20 ms steps for a file that is
+    /// never coming back is 200 ms of an order's life spent on a certainty. Both of the exceptions
+    /// that say so derive from <see cref="IOException"/>, so they have to be excluded by name.
+    /// </summary>
+    [Fact]
+    public void A_vanished_temp_is_not_waited_for()
+    {
+        var w = Session((tmp, destination) => throw new FileNotFoundException("it is gone", tmp));
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(w.Submitting("TA-GONE", "SIM", "ES", "Buy", 1m, null));
+        clock.Stop();
+
+        Assert.True(clock.ElapsedMilliseconds < 100,
+            $"burned {clock.ElapsedMilliseconds} ms of the retry budget on a file that is not coming back");
+    }
+
+    /// <summary>
+    /// One writer keeps at most one uncommitted rewrite. The new one is on disk before the old one
+    /// is removed, so the claim is never unheld — and two temps of the same lineage from one writer
+    /// would be genuinely ambiguous to the recovery scan, since they are written milliseconds apart
+    /// and mtime cannot order them.
+    /// </summary>
+    [Fact]
+    public void A_writer_leaves_at_most_one_uncommitted_rewrite()
+    {
+        var w = Session(NeverLands);
+        for (var i = 0; i < 5; i++) Submit(w, $"TA-{i}");
+
+        Assert.Single(Temps());
+        Assert.Equal(["TA-0", "TA-1", "TA-2", "TA-3", "TA-4"], Session().All().Select(r => r.ClientOrderId));
+    }
+
     /// <summary>
     /// Two threads, which is what actually happens: <c>Submitting</c> is called from <c>Place</c> on
     /// the bridge's pipe thread and <c>Identified</c> from the order-event fan on ATAS's.

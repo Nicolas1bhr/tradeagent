@@ -200,6 +200,32 @@ public sealed class CoidWitness
     /// </summary>
     long _generation;
     string? _committedHash;
+
+    /// <summary>
+    /// A TEMP NAME NO OTHER WRITER USES, and why one shared name was a defect rather than a detail.
+    ///
+    /// Trap 35: a second bridge can be running. With one <c>coid-witness.json.tmp</c> for everybody,
+    /// two writers interleave inside a rewrite — B's <c>WriteAllText</c> lands between A's write and
+    /// A's rename, so A renames B's content onto the file and reports its own claim durable when
+    /// what got committed was somebody else's; and a temp consumed by the other writer's rename
+    /// makes this one's replace fail with FileNotFound and burn the entire retry budget waiting for
+    /// a file that is never coming back.
+    ///
+    /// The prefix carries the process id AND the session, because two witnesses over one path inside
+    /// one process is the ordinary case in tests and a real one whenever two strategies are started.
+    /// The sequence makes each rewrite of this instance distinct, so a rewrite that failed is still
+    /// on disk under its own name when the next one is written.
+    /// </summary>
+    readonly string _tempPrefix = "";
+    int _tempSeq;
+
+    /// <summary>
+    /// Temps this instance wrote that never got committed. Deleted after the next successful commit:
+    /// that commit carries the same records plus whatever came after, so nothing is thrown away —
+    /// and anything it does NOT carry was removed by <see cref="Trim"/>, which is the cap doing its
+    /// job. Leaving them lying around is how a trimmed identifier comes back to life.
+    /// </summary>
+    readonly List<string> _stranded = new();
     bool _writeFailed;
     int _loggedFailures;
 
@@ -258,6 +284,8 @@ public sealed class CoidWitness
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
         _replace = replace ?? DefaultReplace;
+        if (_path is not null)
+            _tempPrefix = $"{_path}.tmp-{Environment.ProcessId}-{(SessionId.Length >= 8 ? SessionId[..8] : SessionId)}-";
     }
 
     /// <summary>
@@ -673,9 +701,6 @@ public sealed class CoidWitness
     void RejectCandidate(string candidate, string why) =>
         Note($"ignored {candidate}: {why}");
 
-    /// <summary>The rewrite in progress, and the rewrite that never landed. One name, two meanings.</summary>
-    static string TempPathFor(string path) => path + ".tmp";
-
     /// <summary>
     /// A NON-CRYPTOGRAPHIC FINGERPRINT, AND THAT IS THE RIGHT CHOICE HERE — FNV-1a, 64 bit, over the
     /// UTF-8 bytes.
@@ -763,7 +788,7 @@ public sealed class CoidWitness
     bool Save()
     {
         if (_path is null) return false;
-        var tmp = TempPathFor(_path);
+        var tmp = _tempPrefix + (++_tempSeq);
 
         // THE LINEAGE GOES IN THE FILE, not in the timestamps. It names the generation after the
         // committed one and the fingerprint of the committed content it was derived from, which is
@@ -782,21 +807,89 @@ public sealed class CoidWitness
         try { File.WriteAllText(tmp, text); }
         catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
 
+        // THE NEW REWRITE SUPERSEDES THIS INSTANCE'S EARLIER FAILED ONE, and the ordering here is
+        // the whole of the safety: the new temp is already on disk before the old one is removed, so
+        // there is never an instant with no temp holding the claim. Two temps of the same lineage
+        // from one writer would also be genuinely ambiguous to the recovery scan — they are written
+        // milliseconds apart and mtime cannot order them — and letting them pile up is how a
+        // trimmed identifier finds its way back onto disk.
+        SweepStranded();
+
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 _replace(tmp, _path);
-                _generation = envelope.Generation;
-                _committedHash = Fingerprint(text);
-                return true;
+                return Committed(text);
             }
             catch (Exception e) when (Transient(e) && attempt < ReplaceAttempts)
             {
                 Thread.Sleep(ReplaceBackoffMs * attempt);
             }
-            catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
+            catch (Exception e) { _stranded.Add(tmp); ReportWriteFailure(e, tmp); return false; }
         }
+    }
+
+    /// <summary>
+    /// AFTER THE RENAME LANDED: IS WHAT IS ON DISK OURS? The rename returning success says this
+    /// process replaced the file; it does NOT say the file still holds this process's content a
+    /// moment later, and with a second bridge running it may not. <see cref="Submitting"/> promises
+    /// its caller that THIS claim is durable, so the promise is checked rather than assumed.
+    ///
+    /// Three outcomes, and the middle one is the point:
+    ///
+    ///   * OURS. The lineage moves forward, this instance's stranded temps are swept, true.
+    ///   * SOMEBODY ELSE'S. Our claim is not on disk. The lineage is re-synced to what actually IS
+    ///     committed so the next rewrite descends from THAT rather than from a file nobody has, the
+    ///     overwrite is reported, and false goes back to the caller — which for <c>Place</c> means
+    ///     refusing the order, which is right: the write-ahead record is not there.
+    ///   * UNREADABLE. Not evidence of an overwriter. The rename is the durability event and it
+    ///     succeeded, so this reports true and records that the confirmation could not be taken.
+    ///     Refusing an order because a re-read hiccuped would be inventing a failure.
+    ///
+    /// Caller holds <see cref="_gate"/>.
+    /// </summary>
+    bool Committed(string text)
+    {
+        var ours = Fingerprint(text);
+        var actual = _path is null ? null : ReadTolerantly(_path, out _);
+
+        if (actual is null)
+        {
+            _generation++;
+            _committedHash = ours;
+            SweepStranded();
+            Note($"WARN coid-witness rewrite landed but could not be read back to confirm. file={_path}");
+            return true;
+        }
+
+        if (string.Equals(Fingerprint(actual), ours, StringComparison.Ordinal))
+        {
+            _generation++;
+            _committedHash = ours;
+            SweepStranded();
+            return true;
+        }
+
+        _committedHash = Fingerprint(actual);
+        _generation = Parse(actual)?.Generation ?? 0;
+        _writeFailed = true;
+        var newest = _records.Count > 0 ? _records[^1].ClientOrderId : "<none>";
+        LastWriteFailure = $"ERROR coid-witness rewrite was overwritten by another writer before it " +
+                           $"could be confirmed. file={_path} newest_claim={newest}";
+        Note(LastWriteFailure);
+        return false;
+    }
+
+    /// <summary>
+    /// Deletes this instance's uncommitted leftovers. Called after the superseding rewrite is
+    /// already on disk, never before. See <see cref="_stranded"/>.
+    /// </summary>
+    void SweepStranded()
+    {
+        foreach (var path in _stranded)
+            try { File.Delete(path); } catch (Exception) { }
+        _stranded.Clear();
     }
 
     /// <summary>
@@ -807,8 +900,14 @@ public sealed class CoidWitness
     /// process may not displace, or a read-only attribute set by a backup tool, arrives as
     /// <see cref="UnauthorizedAccessException"/> instead, and that one used not to be retried at
     /// all: the first refusal ended the write. Both are transient and both are retried.
+    ///
+    /// A VANISHED TEMP IS NOT CONTENTION, and both of its exceptions derive from
+    /// <see cref="IOException"/>, so they are excluded by name. Waiting 200 ms in 20 ms steps for a
+    /// file that has been deleted is 200 ms of an order's life spent on a certainty.
     /// </summary>
-    static bool Transient(Exception e) => e is IOException or UnauthorizedAccessException;
+    static bool Transient(Exception e) =>
+        e is IOException or UnauthorizedAccessException
+        && e is not FileNotFoundException and not DirectoryNotFoundException;
 
     /// <summary>
     /// The engineering event. Caller holds <see cref="_gate"/>.
