@@ -1166,6 +1166,21 @@ public sealed class TradingGateway : IAsyncDisposable
             try
             {
                 var since = req.CreatedAt - TimeSpan.FromMinutes(5);
+
+                // A REQUEST THAT NEVER SENT ITS OWN CLIENT ORDER ID CANNOT BE FOUND BY IT. Only a
+                // PLACE carries `TA-{requestId}` onto an order at the broker; a CANCEL and a MODIFY
+                // transmit the TARGET's broker id, and a cancel-all transmits nothing but the
+                // account. Matching those on ClientOrderId therefore always missed, and the absence
+                // rule below then read "no order exists" and wrote CANCELLED — a cancellation
+                // recorded as done, and trading resumed, over an order still working at the broker.
+                if (req.Intent is RequestIntent.CANCEL or RequestIntent.MODIFY or RequestIntent.CANCEL_ALL)
+                {
+                    var (settled, note) = await ReconcileByTargetAsync(req, since, ct);
+                    if (settled) resolved++; else inconclusive++;
+                    details.Add($"{req.RequestId}: {note}");
+                    continue;
+                }
+
                 var orders = await Connector.GetOrdersAsync(req.AccountId, true, since, ct);
                 var match = orders.FirstOrDefault(o => o.ClientOrderId == req.ClientOrderId);
 
@@ -1234,6 +1249,94 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         StateChanged?.Invoke();
         return new ReconcileResult(resolved, inconclusive, details);
+    }
+
+    // What a CANCEL / MODIFY / CANCEL_ALL record stored about the order it was aimed at. Read back
+    // rather than re-derived: the target is the only evidence these requests leave behind.
+    sealed record TargetRef(string? Order, decimal? Quantity, decimal? LimitPrice, decimal? StopPrice);
+
+    /// <summary>
+    /// Reconciles a request whose outcome lives in ANOTHER order's state.
+    ///
+    /// The question is never "does an order with our id exist" — it is "did the thing we asked for
+    /// happen to the order we named". So the target is looked up by ITS broker id and read:
+    ///   - a cancel whose target is cancelled, or gone from a history the platform can prove, landed;
+    ///   - a cancel whose target is still working, or filled, or refused, did NOT land — the request
+    ///     is REJECTED and the caller may ask again under a new id. It is never CANCELLED, which
+    ///     would assert that an order still live at the broker had been withdrawn;
+    ///   - a cancel whose target is CANCEL_PENDING is genuinely undecided and stays unconfirmed;
+    ///   - a modify is applied only if the target carries the values that were asked for;
+    ///   - a cancel-all is judged by what is left on the account's book.
+    /// </summary>
+    async Task<(bool Settled, string Note)> ReconcileByTargetAsync(ExecutionRequest req, DateTimeOffset since, CancellationToken ct)
+    {
+        var stored = Json.Read<TargetRef>(req.ParametersJson);
+        var orders = await Connector.GetOrdersAsync(req.AccountId, true, since, ct);
+
+        ExecutionRequest Resolve(ExecutionState to, string why)
+        {
+            var r = _requests.Transition(req.RequestId, ExecutionState.RECONCILING, to,
+                needsReconciliation: false, markReconciled: true, error: why);
+            _log.Engineering("Reconciler", "target_reconciled", requestId: req.RequestId,
+                metadataJson: Json.Write(new { intent = req.Intent.ToString(), state = to.ToString(), why }));
+            return r;
+        }
+
+        // A cancel-all named no single order, so the whole book is the evidence.
+        if (req.Intent == RequestIntent.CANCEL_ALL || stored?.Order is null)
+        {
+            var live = orders.Where(o => !OrderStateMachine.IsTerminal(o.State)).ToList();
+            if (live.Count > 0)
+            {
+                Resolve(ExecutionState.REJECTED,
+                    $"{live.Count} order(s) are still working, so the cancel-all did not take effect");
+                return (true, $"{live.Count} order(s) still working; the cancel-all did not take effect");
+            }
+            Resolve(ExecutionState.CANCELLED, "no working orders are left on the account");
+            return (true, "no working orders are left on the account");
+        }
+
+        var target = stored.Order;
+        var match = orders.FirstOrDefault(o => o.ConnectorOrderId == target);
+
+        if (req.Intent == RequestIntent.CANCEL)
+        {
+            if (match is null)
+            {
+                // Absent from a history this backend can prove: there is nothing working to withdraw.
+                Resolve(ExecutionState.CANCELLED, $"the platform does not list order {target} at all");
+                return (true, $"order {target} is not on the account; nothing is working");
+            }
+            if (match.State == ExecutionState.CANCELLED)
+            {
+                Resolve(ExecutionState.CANCELLED, $"the platform has order {target} cancelled");
+                return (true, $"the platform has order {target} cancelled");
+            }
+            if (match.State == ExecutionState.CANCEL_PENDING)
+                return (false, $"the platform is still cancelling order {target}");
+
+            Resolve(ExecutionState.REJECTED,
+                OrderStateMachine.IsTerminal(match.State)
+                    ? $"order {target} is {match.State}; the cancellation did not take effect"
+                    : $"order {target} is still working; the cancellation did not take effect");
+            return (true, $"order {target} is {match.State}; the cancellation did not take effect");
+        }
+
+        // MODIFY.
+        if (match is null)
+            return (false, $"order {target} is not on the account, so the change cannot be confirmed");
+
+        var asked = new ModifyOrderCommand(target, stored.Quantity, stored.LimitPrice, stored.StopPrice);
+        if (ModificationApplied(asked, match))
+        {
+            Resolve(ExecutionState.ACKNOWLEDGED, $"order {target} carries the change");
+            return (true, $"order {target} carries the change");
+        }
+        if (OrderStateMachine.IsTerminal(match.State))
+            return (false, $"order {target} is {match.State} and does not carry the change; a person has to look");
+
+        Resolve(ExecutionState.REJECTED, $"order {target} is still working and does not carry the change");
+        return (true, $"order {target} does not carry the change; it did not take effect");
     }
 
     /// <summary>
