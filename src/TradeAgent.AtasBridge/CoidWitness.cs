@@ -921,13 +921,13 @@ public sealed class CoidWitness : IDisposable
             // that descends perfectly well from the committed file can still be missing records it
             // had — and adopting one drops committed claims, up to and including resurrecting an
             // identifier the cap had trimmed, since the adopted set becomes what the next save
-            // commits. See DropsACommittedRecord for what "no legitimate rewrite loses a record"
+            // commits. See IllegalTransition for what one rewrite of this file can legally do
             // means once Trim is in the picture.
-            if (committed is not null && DropsACommittedRecord(envelope, committed) is { } loss)
+            if (committed is not null && IllegalTransition(envelope, committed) is { } illegal)
             {
                 _rejected.Add((candidate,
-                    $"it does not carry the committed records forward ({loss}), so adopting it " +
-                    $"would drop claims"));
+                    $"it is not one rewrite of the committed file ({illegal}), so adopting it " +
+                    $"would drop or invent claims"));
                 continue;
             }
 
@@ -1019,51 +1019,74 @@ public sealed class CoidWitness : IDisposable
     }
 
     /// <summary>
-    /// WHICH COMMITTED CLAIM A CANDIDATE WOULD DROP, or null when it drops none — and the whole
-    /// point of it is that this is MEMBERSHIP, never a count.
+    /// WHETHER A CANDIDATE IS A LEGAL TRANSITION FROM THE COMMITTED STATE — or the reason it is not.
+    /// Null means it is one rewrite of this file and may be adopted.
     ///
-    /// A count catches a rewrite that lost records outright and is blind to the one that SWAPPED
-    /// them: a candidate holding three records where the committed file holds three, but a
-    /// DIFFERENT three, reads as "nothing was lost" — three against three — and adopting it drops a
-    /// committed claim, because the adopted set is what the next save commits. Every identifier that
-    /// was committed has to still be there.
+    /// THE CORRECTION THIS IS. The previous rule asked whether the candidate kept the committed
+    /// MEMBERS, with a leading run excused because <see cref="Trim"/> takes one at the cap. Asked
+    /// that way it validates a SHAPE, and the shape has a hole at the end: when NONE of the committed
+    /// identifiers is present the search for the first surviving one walks off the end of the list
+    /// and there is nothing left to check. Committed A/B/C at cap 3 against a perfectly lined-up
+    /// X/Y/Z was therefore adopted — and X/Y/Z are acknowledged records, so they walk into
+    /// <see cref="PriorSessionIds"/>, the cross-session reading and <c>SupportsClientOrderId</c> as
+    /// proof for orders this product never submitted.
     ///
-    /// EXCEPT THE ONES TRIM TOOK, which is the whole subtlety and the reason this is not simply a
-    /// subset test. At the cap the legitimate next rewrite MUST lose a record: a claim arrives,
-    /// <see cref="Trim"/> drops the oldest off the FRONT to make room, and the result is missing a
-    /// committed identifier through no fault of its own. Demanding every committed id would refuse
-    /// every recovery on a full witness, which is every long-lived one.
+    /// THE RULE IS THE TRANSITION, and it comes from what one rewrite can actually do. A rewrite is
+    /// <see cref="Submitting"/> — remove any record under this identifier, append one, then
+    /// <see cref="Trim"/> — or <see cref="Identified"/>, which replaces a record in place. So from
+    /// committed C the only legal C' is:
     ///
-    /// So a missing LEADING RUN is allowed — and allowed only when the candidate is FULL. That
-    /// second half is what a prefix rule on its own leaves open: <see cref="Trim"/> removes nothing
-    /// below <see cref="_cap"/>, so a candidate holding three records under a cap of five cannot
-    /// have trimmed anything, and a leading identifier missing from it went missing some other way.
-    /// Anything missing after the first committed id that IS present is unexplainable in either
-    /// case: Trim removes a prefix and never a hole.
+    ///   1. NO DUPLICATES. Two records under one identifier make <see cref="PriorSession"/> answer
+    ///      whichever it meets first, which is a property of the file's byte order rather than of
+    ///      this machine's history. Nothing this build writes can contain one.
+    ///   2. IT NEVER SHRINKS. |C'| ≥ |C|: a rewrite adds a claim and then trims to the cap, so it
+    ///      cannot end up holding fewer records than the file it came from.
+    ///   3. IT ADDS AT MOST ONE. |C'| ≤ |C| + 1. More than that is not a rewrite, it is somebody's
+    ///      history.
+    ///   4. IT DROPS AT MOST THE ONE OLDEST, AND ONLY AT THE CAP. Every committed identifier is in
+    ///      C' except possibly the FIRST, and that one only when C' is full — because below the cap
+    ///      <see cref="Trim"/> removes nothing, so a missing record has no rewrite that explains it.
+    ///
+    /// WHOSE CAP, AND WHICH UPGRADE THAT COSTS. Rule 4 reads THIS instance's <see cref="_cap"/>,
+    /// while the candidate was written by an instance whose cap this build cannot see. They differ
+    /// only across builds, and the direction is worth naming because the round-4 record named it
+    /// backwards: it is a temp from a SMALLER-capped writer that is refused, so the affected upgrade
+    /// is a cap RAISE. The cost is one un-recovered acknowledgement on the first start of the new
+    /// build — <see cref="PriorSession"/> answers null for that identifier, which refuses a proof
+    /// rather than inventing one, and the committed file is kept whole.
     ///
     /// It names the identifier rather than returning a bool because that name is what goes in the
-    /// sidecar. "3 records against 3" is exactly the sentence that made this defect invisible.
+    /// sidecar. "3 records against 3" is the sentence that made the first version of this invisible.
     /// </summary>
-    string? DropsACommittedRecord(Envelope candidate, Envelope committed)
+    string? IllegalTransition(Envelope candidate, Envelope committed)
     {
-        // THE EXISTING RULE, KEPT: a candidate may never shrink the record set. A legitimate rewrite
-        // adds a claim and then trims to the cap, so it never ends up holding fewer records than the
-        // committed file does — whatever the identifiers in it are.
+        var ids = new HashSet<string>(candidate.Records.Select(r => r.ClientOrderId), StringComparer.Ordinal);
+        if (ids.Count != candidate.Records.Count)
+            return "it carries the same identifier twice, which no rewrite this build writes can do";
+
         if (candidate.Records.Count < committed.Records.Count)
             return $"it holds {candidate.Records.Count} records against the committed file's " +
                    $"{committed.Records.Count}";
 
-        var ids = new HashSet<string>(candidate.Records.Select(r => r.ClientOrderId), StringComparer.Ordinal);
+        if (candidate.Records.Count > committed.Records.Count + 1)
+            return $"it holds {candidate.Records.Count} records against the committed file's " +
+                   $"{committed.Records.Count}, and one rewrite adds one claim";
 
-        // The leading run the candidate does not have. Trim is the only thing that produces one.
-        var i = 0;
-        while (i < committed.Records.Count && !ids.Contains(committed.Records[i].ClientOrderId)) i++;
-        if (i > 0 && candidate.Records.Count < _cap)
+        // The one record a trim at the cap may have taken, and no more.
+        var dropped = 0;
+        while (dropped < committed.Records.Count && !ids.Contains(committed.Records[dropped].ClientOrderId))
+            dropped++;
+
+        if (dropped > 1)
+            return $"{dropped} committed records are missing from it and one rewrite drops at most " +
+                   $"the oldest, so it is not a rewrite of this file";
+
+        if (dropped == 1 && candidate.Records.Count < _cap)
             return $"{committed.Records[0].ClientOrderId} is committed and not in it, and it holds " +
                    $"{candidate.Records.Count} records against a cap of {_cap}, so no trim accounts " +
                    $"for the loss";
 
-        for (; i < committed.Records.Count; i++)
+        for (var i = dropped; i < committed.Records.Count; i++)
             if (!ids.Contains(committed.Records[i].ClientOrderId))
                 return $"{committed.Records[i].ClientOrderId} is committed and not in it";
 
