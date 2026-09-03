@@ -1149,11 +1149,31 @@ public sealed class TradingGateway : IAsyncDisposable
             throw;   // the person pressed this button and has to be told it failed
         }
 
+        // EACH RECORD IS SETTLED FROM THE PLATFORM'S ANSWER ABOUT ITS OWN ORDER. The sweep returning
+        // without an exception says the call was made; it does not say what happened to any
+        // particular order, and a record settled CANCELLED on that basis is a claim nobody made.
+        var missed = 0;
         foreach (var (rid, target) in open)
         {
-            if (target is null || cancelled.Contains(target)) Settle(rid, ExecutionState.CANCELLED);
-            else RecordIndefinite(rid, $"the platform did not list {target} among the orders it cancelled",
+            if (target is null) continue;                       // the press-level record, settled below
+            if (cancelled.Contains(target))
+            {
+                Settle(rid, ExecutionState.CANCELLED, error: "the platform listed this order among the ones it cancelled");
+                continue;
+            }
+            missed++;
+            RecordIndefinite(rid, $"the platform did not list {target} among the orders it cancelled",
                 $"Order {target} was not among the ones the platform reported cancelling.");
+        }
+
+        if (open.FirstOrDefault(o => o.Target is null).RequestId is { } pressRecord)
+        {
+            if (missed == 0)
+                Settle(pressRecord, ExecutionState.CANCELLED,
+                    error: $"the platform reported cancelling {cancelled.Count} order(s)");
+            else
+                RecordIndefinite(pressRecord, $"{missed} captured order(s) were not in the platform's answer",
+                    $"The platform did not account for {missed} of the orders this press asked to cancel.");
         }
 
         _log.Activity($"You cancelled all working orders ({cancelled.Count})", "warn");

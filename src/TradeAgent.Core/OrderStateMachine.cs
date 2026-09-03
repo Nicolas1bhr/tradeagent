@@ -29,9 +29,13 @@ public static class OrderStateMachine
         //       platform answered CANCELLED to a place — the ordinary answer for an unfilled
         //       immediate-or-cancel order. It used to be recorded as ACKNOWLEDGED, i.e. an order the
         //       broker had killed carried as open forever.
-        //     - TradingGateway.OperatorCancelAllAsync, reached only after CancelAllOrdersAsync
-        //       returned and listed that order (or, for the record standing for the press itself,
-        //       after the sweep returned at all). An order the platform did NOT list goes to UNKNOWN.
+        //     - TradingGateway.OperatorCancelAllAsync, reached only for an order the platform's own
+        //       answer LISTED as cancelled (and, for the record standing for the press itself, only
+        //       when every captured order was in that answer). An order the platform did not account
+        //       for goes to UNKNOWN, not to CANCELLED.
+        //     - TradingGateway.OperatorCloseAllAsync, which maps the close order's returned state
+        //       through the same MapDispatchOutcome table as a place: CANCELLED there is the
+        //       platform saying the closing order itself was killed.
         // Why widening a deliberately intent-agnostic table is acceptable: any OTHER caller that takes
         //   this edge wrongly is not silent — TradingGateway.Settle now files `illegal_settle` at error
         //   severity the first time a table refusal happens. The table stays a small pure function
