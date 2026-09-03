@@ -219,12 +219,52 @@ public class OperatorContextTests
             Assert.False(AgentContext.ForAgent(s).IsOperator, $"ForAgent(\"{s}\") claimed operator authority");
         }
 
-        // A copy of an ordinary context cannot become one either.
-        Assert.False((new AgentContext("agent") with { SessionId = Reserved }).IsOperator);
+        // And there is no copy route at all any more: AgentContext is a sealed class, so the
+        // record `with` that used to carry IsOperator=true off Operator does not exist to be used.
+        Assert.False(typeof(AgentContext).GetMethods().Any(m => m.Name == "<Clone>$"),
+            "AgentContext still has a record clone method, so `with` can still copy operator authority");
 
         // And the one that is meant to be, still is.
         Assert.True(AgentContext.Operator.IsOperator);
         Assert.Equal(Reserved, AgentContext.Operator.SessionId);
+    }
+
+    /// <summary>
+    /// EVERY SPELLING OF THE RESERVED WORD, OVER THE REAL PIPE.
+    ///
+    /// The type refuses operator authority whatever the string is, so none of these can escalate.
+    /// The tripwire is what is on trial here: it exists so a probe is VISIBLE, and a tripwire that
+    /// only catches the exact lowercase spelling catches only an agent that was not trying. Without
+    /// the variants, `OrdinalIgnoreCase` could be narrowed to `Ordinal` and the `Trim()` deleted with
+    /// nothing failing.
+    ///
+    /// Asserted on the refusal AND on the log, because a probe that is silently downgraded rather
+    /// than refused leaves the operator with no way to know it happened.
+    /// </summary>
+    [Theory]
+    [InlineData("Operator")]
+    [InlineData("OPERATOR")]
+    [InlineData("oPeRaToR")]
+    [InlineData(" operator")]
+    [InlineData("operator ")]
+    [InlineData("\toperator")]
+    [InlineData("  OPERATOR  ")]
+    public async Task Every_spelling_of_the_reserved_session_is_refused_and_recorded(string spelling)
+    {
+        var (gw, conn, db, server, client) = await LiveConfirm();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var reply = await client.SendAsync(Buy(spelling)).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok, $"session='{spelling}' was accepted: {Json.Write(reply.Data)}");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+
+        var (found, op) = ReadRefusal(db);
+        Assert.True(found, $"session='{spelling}' was refused but nothing was recorded, so the probe is invisible");
+        Assert.Equal(Ops.Buy, op);
     }
 
     // ---------------------------------------------------------------- helpers
