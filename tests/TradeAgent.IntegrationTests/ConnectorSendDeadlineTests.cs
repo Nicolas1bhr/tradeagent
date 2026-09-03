@@ -5,6 +5,8 @@ using TradeAgent.AtasBridge;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -266,6 +268,61 @@ public class ConnectorSendDeadlineTests
         Assert.True(await connector.IsConnectedAsync(),
             "a bridge that was reading everything was disconnected because THIS process queued its own frames");
         Assert.NotNull(await connector.GetQuoteAsync("ES").WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    /// <summary>
+    /// THE DEADLINES THESE TESTS REASON ABOUT ARE THE ONES THE PRODUCT SHIPS.
+    ///
+    /// Every other test in this unit sets a short deadline so it can run in seconds. That is fine
+    /// only while the shipped default is what the reasoning assumes — and nothing was checking. This
+    /// pins the three of them by name, so changing a default breaks a test instead of silently
+    /// invalidating every duration quoted in the build record.
+    /// </summary>
+    [Fact]
+    public void The_deadlines_these_tests_reason_about_are_the_ones_the_product_ships()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(10), new AtasConnector(NewPipe()).WriteTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(10), new BridgeServer(new LoopbackAtasAdapter(), NewPipe()).WriteTimeout);
+
+        using var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, new Connectors.Fake.FakeConnector(new Connectors.Fake.FakeBroker()), new HealthRegistry());
+        Assert.Equal(TimeSpan.FromSeconds(10), new GatewayPipeServer(gw, "tok", NewPipe()).WriteTimeout);
+    }
+
+    /// <summary>
+    /// AT THE SHIPPED DEFAULT, NOT A TEST VALUE. Slow on purpose — about ten seconds — because the
+    /// point is the number the product actually waits, not a scaled-down proxy for it.
+    ///
+    /// An emergency cancel-all queued behind one stalled write is the worst case the operator cares
+    /// about. MEASURED HERE AT 9.76s with nothing shortened. Round 1 quoted suite durations taken at
+    /// a 1s test deadline, which understated this by an order of magnitude; the corrected figure is
+    /// in the build record.
+    /// </summary>
+    [Fact]
+    public async Task An_emergency_cancel_all_behind_a_stalled_write_ends_at_the_shipped_default()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped WriteTimeout: untouched
+        await connector.ConnectAsync();
+
+        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // One order too big for the socket buffer parks the writer; the cancel-all queues behind it.
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-shipped-1", "ATAS-STALLED", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
+        Observe([stuck]);
+        await Task.Delay(250);
+
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-STALLED"));
+        timer.Stop();
+
+        Assert.True(ex is ConnectorTransportException, $"an emergency cancel surfaced as {ex.GetType().Name}");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(25),
+            $"the cancel-all took {timer.Elapsed.TotalSeconds:0.00}s at the shipped 10s deadline");
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
+            $"the cancel-all returned in {timer.Elapsed.TotalSeconds:0.00}s, which is not the shipped-default path this test claims to measure");
     }
 
     // ---------------------------------------------------------------- helpers
