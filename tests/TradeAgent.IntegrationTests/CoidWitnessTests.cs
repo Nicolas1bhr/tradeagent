@@ -2762,8 +2762,9 @@ public class CoidWitnessTests : IDisposable
         Assert.True(File.Exists(Sidecar));
         Assert.False(reader.GapClosed);
         Assert.True(reader.Noted);
-        Assert.Equal(WitnessStanding.Noted,
-                     CoidWitnessReport.Standing(reader.GapClosed, reader.Trouble is not null, reader.Noted));
+        // Through the overload the probe itself calls, so the test and the probe cannot drift on
+        // what they feed it — which is the mistake that produced this finding.
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
         Assert.True(CoidWitnessReport.ZeroIsProvisional(WitnessStanding.Noted));
     }
 
