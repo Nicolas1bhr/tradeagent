@@ -1047,27 +1047,78 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// AND THE PROMISE IS CHECKED, NOT ASSUMED. The rename returning success says this process
-    /// replaced the file; it does not say the file still holds this process's content a moment
-    /// later. <c>Submitting</c> tells <c>Place</c> that THIS claim is durable, and <c>Place</c>
-    /// refuses the order on false — so a claim another writer overwrote must report false, or the
-    /// order goes out with no write-ahead record anywhere.
+    /// TWO WRITERS LOADED AT THE SAME GENERATION, AND NEITHER CLAIM IS LOST. Before the
+    /// compare-and-swap, B — loaded when the file was at generation N — would replace A's freshly
+    /// committed N+1 with its own N+1, deleting A's claim silently and AFTER A's read-back had
+    /// already told A the claim was durable. B now notices the file is not what its lineage says,
+    /// rebases onto A's commit, and carries both.
     /// </summary>
     [Fact]
-    public void Submitting_is_false_when_another_writer_overwrote_the_rewrite()
+    public void Two_writers_at_the_same_generation_both_keep_their_claims()
     {
-        var other = Session();
-        Submit(other, "TA-OTHER");
+        var seed = Session();
+        Submit(seed, "TA-SEED");
 
-        // The second bridge commits on top, in the instant between our rename and our read-back.
+        // Both load the same committed state, then commit in turn.
+        var a = Session();
+        var b = Session();
+        Assert.Empty(a.PriorSessionIds(0));   // force both to load before either writes
+
+        Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+        Assert.True(b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Contains("TA-A", CommittedIds());
+        Assert.Contains("TA-B", CommittedIds());
+        Assert.Contains("TA-SEED", CommittedIds());
+    }
+
+    /// <summary>
+    /// AND THE PROMISE IS STILL CHECKED. What matters is not whose bytes won but whether THIS claim
+    /// is in what got committed. A writer that rebased carries it forward, and refusing an order
+    /// whose record is demonstrably on disk would be inventing a failure — but a clobber that drops
+    /// it must report false, because <c>Place</c> has to refuse that order.
+    /// </summary>
+    [Fact]
+    public void Submitting_is_false_when_the_claim_is_not_in_what_got_committed()
+    {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
+        // Something that is not a CoidWitness writes over the file the instant after our rename.
+        var foreign = "{\"version\":1,\"generation\":99,\"predecessor\":null,\"records\":[" +
+                      RecordJson("TA-FOREIGN", "somebody-else") + "]}";
         var w = Session((tmp, destination) =>
         {
             File.Move(tmp, destination, overwrite: true);
-            Submit(other, "TA-OTHER-2");
+            File.WriteAllText(destination, foreign);
         });
 
         Assert.False(w.Submitting("TA-MINE", "SIM", "ES", "Buy", 1m, null));
         Assert.DoesNotContain("TA-MINE", File.ReadAllText(File_));
+        Assert.Contains("io:failed", w.Token());
+    }
+
+    /// <summary>
+    /// THE RENAME IS NOT THE EVIDENCE. Round 2 returned true when the destination could not be read
+    /// back, on the argument that the rename is the durability event. Rule 1 is a question about
+    /// evidence: a record this process cannot read back is one it does not know is there, and the
+    /// honest answer is no — so the order is refused rather than sent on an assumption.
+    /// </summary>
+    [Fact]
+    public void A_rewrite_that_cannot_be_read_back_is_not_reported_as_durable()
+    {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
+        var w = Session((tmp, destination) =>
+        {
+            File.Move(tmp, destination, overwrite: true);
+            File.Delete(destination);
+        });
+
+        Assert.False(w.Submitting("TA-VANISHED", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("could not be read back", w.LastWriteFailure);
+        Assert.Contains("io:failed", w.Token());
     }
 
     /// <summary>
