@@ -9,6 +9,11 @@ Semantic trading operations, no platform detail. Reads, mutations, and an event 
 
 Two things carry the safety of the whole system:
 
+`OrderInfo.Quantity` is deliberately **not** specified as the order's total or its remaining size:
+connectors differ, and nothing in TradeAgent depends on the distinction. What depends on it — deciding
+whether a modification was applied — treats a quantity that does not match the request as *unknown*
+rather than as a refusal, so the ambiguity cannot become a false outcome.
+
 **`ConnectorCapabilities`** — what a backend can actually promise. `ReconciliationProvable` is
 `SupportsClientOrderId && SupportsOrderHistory`. The gateway reads it to decide how much autonomy is
 safe, and refuses `LIVE_AUTONOMOUS` when it is false. A connector must report this truthfully;
@@ -321,24 +326,45 @@ BEFORE the write is attempted; a failure to persist is reported to the caller as
 does not lift the pause. A reconcile pass that finds nothing pending while that pause is held reports
 itself unfinished instead of clearing it.
 
-**A cancel or a modify is reconciled against the order it named**, not against a client order id it
-never transmitted. A cancel whose target is cancelled — or gone from a history the platform can prove
-— is `CANCELLED`; one whose target is still working, filled or refused is `REJECTED`, meaning "the
-cancellation did not take effect", and the agent may ask again under a new request id. A modify is
-`ACKNOWLEDGED` only if the target carries the values asked for, compared on the instrument's own tick
-grid; if it does not, and the order is still live, the request is `REJECTED`. Anything genuinely
-undecided (a cancel still pending at the platform, a target that has finished, a price on an unknown
-grid) stays unconfirmed and keeps trading paused.
+**A request leaves the unconfirmed set only on positive, definite, stable evidence about its own
+target. Anything else is inconclusive and keeps trading paused.** Every branch of reconciliation is
+derived from that one rule:
+
+- **A cancel or a modify is reconciled against the order it named**, not against a client order id it
+  never transmitted, and the target is looked up by id against the whole book — never a time window,
+  because an order that has rested longer than the window is not absent, it is old.
+- **Absence is evidence only after the grace window** (`GatewayOptions.AbsenceGrace`), measured from
+  the operation's own dispatch, on a connector that can prove its own history. Then a cancel whose
+  target does not exist is `CANCELLED`.
+- **A target that is `UNKNOWN`, `DISPATCHING`, `RECONCILING` or `CANCEL_PENDING` decides nothing.**
+- **"The cancel did not take effect" needs a terminal target, or one that has held still** — the same
+  state, quantity, fills and prices — across a whole grace window. One sighting of a working order is
+  not proof: the platform's acknowledgement can arrive after TradeAgent's own RPC gave up. Only then
+  is the request `REJECTED`, and the agent may ask again under a new request id.
+- **A modify is `ACKNOWLEDGED` only if the target carries what was asked for**, and is never recorded
+  as a definite failure without a definite refusal. Prices are judged on the instrument's tick grid:
+  an on-grid price within one tick of the request is the request, whichever way the platform rounded.
+  `OrderInfo.Quantity` is **not** defined by this contract as total or remaining, so a quantity that
+  does not match is inconclusive rather than a refusal.
+- **A cancel-all is judged on the orders its press captured**, never on whatever is live now; an
+  order that arrived after the press belongs to no press.
 
 **The operator's emergency controls write records too.** "Cancel all working orders" and "Close all
 positions" bypass authorization on purpose — they must work while trading is paused and while the
 kill switch is down — but each individual close and cancel now gets a write-ahead `execution_request`
-before the wire is touched, attributed to the operator, keyed by the press: a retry of the same press
-finds its records already there and sends nothing, a new press is a new decision. The screen holds
-one press per control and repeats it while its outcome is unconfirmed, rather than issuing a new one,
-so "it failed, press it again" cannot close a position twice. Close-all continues through every
-position after one of them fails, counts a position closed only when the account reads back flat, and
-says what is still open instead of claiming it closed everything.
+before the wire is touched, attributed to the operator, keyed by the press. **A press captures its
+target set the first time it is pressed** — the order ids a cancel-all saw, the symbol and size of
+each position a close-all saw — and every retry acts only on that set, so an order or a position that
+arrived afterwards is never swept up by it. A retry finds its records already written and sends
+nothing; a press that sent nothing says so rather than reporting that it closed everything. **A press
+is complete only when its OWN records are settled and the position it targeted is flat** — never
+because unrelated work elsewhere happens to be confirmed — and the screen adopts an unresolved press
+from the store when it starts, so a restart cannot mint a fresh press over an unconfirmed close.
+Close-all continues through every position after one of them fails, and counts a position closed only
+when the account reads back flat.
+
+Each order a cancel-all touched is settled from the platform's answer **about that order**: the sweep
+returning without an exception says the call was made, not what became of any particular order.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
