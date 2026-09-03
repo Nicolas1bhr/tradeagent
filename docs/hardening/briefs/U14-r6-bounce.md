@@ -41,6 +41,32 @@ record, <date>)` to `records/U14.md` in the main worktree AS YOU GO with the fin
 `dotnet build TradeAgent.sln` + FULL suite once at the end on the Mac, and the on-box run for the adapter gate. Report:
 tip sha, the table, suite counts (Mac + box), "What I did NOT do".
 
-## Verifier round-5 findings (appended by the manager when leg [2] reports)
+## Verifier round-5 findings (leg [2], Opus, on `6a40fa7`) — VERDICT: FAIL — 1H/2M/2L · record `records/U14-verify-r5.md`
 
-_pending_
+- **R1 (HIGH) = the heartbeat branch of the F20 / PRIOR 9 class.** A peer whose hello was refused as protocol 2 sets
+  `_hello` — and with it `ReconciliationProvable=True` — through ONE heartbeat claiming protocol 3 (`AtasConnector.cs:371`);
+  that removes the `AUTONOMY_REQUIRES_PROVABLE_STATE` refusal (`TradingGateway.cs:213`) and the "needs a human to look"
+  escalation (`:818`) while the row still says "reinstall the add-on". Round 5 guarded the event branch and left the
+  heartbeat branch; the connector's own comment names the route. **Rule (one decision, one place):** refusal is decided
+  ONCE at the top of `Dispatch` for the whole connection — a refused peer's events, heartbeats and later hellos are all
+  dropped; `_hello`/`ReconciliationProvable` can be set only by a compatible hello on an unrefused connection. Tests: v2
+  hello then a v3-claiming heartbeat → still refused, `ReconciliationProvable=false`, autonomy still refused, row
+  unchanged; fresh v3 connection → accepted. (You may read `TradingGateway.cs` to write the assertion; do not edit it.)
+- **R2 (MED) = F21's premise.** The lease is released only via `StopBridge` ← `OnStopping` (`AtasStrategyAdapter.cs:212/393/468`),
+  a path no test runs; if ATAS does not fire it, every later order is refused until ATAS restarts. Rule: release on EVERY
+  terminal path — `OnStopping`, `Dispose()`, and whatever ATAS calls when a strategy is removed from a chart — and never
+  rely on one callback. Which callback ATAS actually fires is NOT verifiable without disturbing the running bridge on the
+  box; leave that line under NOT verified for the v0.1.2 bridge redeploy, and say so.
+- **R3 (MED).** Safety events are DROPPED under concurrent sidecar appends (4/2/2/6 lost of 160 over four runs) — the
+  writers are the ones the lease refused, so they are unserialised by construction. Rule: a refused writer never writes the
+  owner's sidecar; it writes its own per-writer file (same directory, same glob, collected by the probe and the support
+  package), or appends with a guaranteed-atomic single write — choose, and prove it with a 160-event concurrent test
+  that loses none.
+- **R4 (LOW).** Unlinking the lock file yields two live owners on macOS (Windows immunity not verified); measured to cost no
+  claim (CAS + read-back refuse). Document in the record; no code unless a one-line guard exists.
+- **R5 (LOW).** Record wording: the CAS also fires after a legitimate ownership handover, not only for a foreign build.
+
+Closed by the verifier (do not carry forward): the "unproved hello" peer (dropped outright, raises nothing); MF4b
+(unreachable, three ways); MV9 (no observable effect). Held: lease both directions on real processes (A alive → B
+refused; A SIGKILLed → C acquires); 3 × 240 claims → 80 durable / 0 lost / 0 phantom / 156 lock refusals / 0 CAS; F8
+field-precise; F4/F13 anchors; 417 twice.
