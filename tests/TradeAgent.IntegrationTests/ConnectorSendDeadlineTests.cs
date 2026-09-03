@@ -1036,7 +1036,7 @@ public class ConnectorSendDeadlineTests
         public static async Task<BridgePeer> ReadingAndHeartbeating(string pipe, string secret)
         {
             var peer = await ConnectAndSayHello(pipe, secret, "ATAS-BEATING", TimeSpan.Zero, PaceBytes);
-            _ = Task.Run(() => peer.Heartbeats(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250)));
+            peer.Track(Task.Run(() => peer.Heartbeats(TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250))));
             return peer;
         }
 
@@ -1052,7 +1052,7 @@ public class ConnectorSendDeadlineTests
         public static async Task<BridgePeer> HeartbeatingButNotReading(string pipe, string secret, TimeSpan phase)
         {
             var peer = await ConnectAndSayHello(pipe, secret, "ATAS-WEDGED", null, PaceBytes);
-            _ = Task.Run(() => peer.Heartbeats(phase, ShippedHeartbeatInterval));
+            peer.Track(Task.Run(() => peer.Heartbeats(phase, ShippedHeartbeatInterval)));
             return peer;
         }
 
@@ -1070,7 +1070,7 @@ public class ConnectorSendDeadlineTests
         public static async Task<BridgePeer> AnsweringAllBut(string pipe, string secret, string mute)
         {
             var peer = await ConnectAndSayHello(pipe, secret, "ATAS-ANSWERING", null, PaceBytes);
-            _ = Task.Run(() => peer.AnswerEverythingBut(mute));
+            peer.Track(Task.Run(() => peer.AnswerEverythingBut(mute)));
             return peer;
         }
 
@@ -1179,7 +1179,7 @@ public class ConnectorSendDeadlineTests
 
             // Started only AFTER the handshake, so BytesRead counts nothing but the traffic a test
             // put on the wire itself.
-            if (pace is { } p) _ = Task.Run(() => peer.Pump(p, bytes));
+            if (pace is { } p) peer.Track(Task.Run(() => peer.Pump(p, bytes)));
             return peer;
         }
 
@@ -1219,9 +1219,30 @@ public class ConnectorSendDeadlineTests
             }
         }
 
+        readonly List<Task> _background = [];
+        void Track(Task t) { lock (_background) _background.Add(t); }
+
+        /// <summary>
+        /// STOP WRITING BEFORE THE PIPE GOES AWAY, and wait for it to have stopped.
+        ///
+        /// Cancelling and disposing in the same breath leaves a background writer mid-<c>WriteAsync</c>
+        /// on a handle that is being closed underneath it. On macOS that surfaces as a caught
+        /// exception and nothing more; on Windows a named pipe is a real kernel object with an
+        /// overlapped write in flight, and this fixture reproduced it: with the twelve heartbeat
+        /// phases running alongside two other test hosts, `dotnet test TradeAgent.sln` aborted with
+        /// "Test host process crashed" — twice, at 234 and 209 tests — and was green with the same
+        /// twelve excluded. So the tasks are held, cancelled, and AWAITED first.
+        /// </summary>
         public async ValueTask DisposeAsync()
         {
             await _stop.CancelAsync();
+            Task[] running;
+            lock (_background) running = [.. _background];
+            if (running.Length > 0)
+            {
+                try { await Task.WhenAll(running).WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* cancelled or faulted: either way it is no longer writing */ }
+            }
             await _p.DisposeAsync();
         }
     }
