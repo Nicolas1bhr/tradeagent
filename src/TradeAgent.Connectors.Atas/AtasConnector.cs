@@ -118,6 +118,22 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     static bool IsRiskReducing(string op) =>
         op is BridgeOps.Cancel or BridgeOps.CancelAll or BridgeOps.Close;
 
+    /// <summary>
+    /// Ops that can INCREASE exposure, and which therefore never inherit an emergency deadline from
+    /// an ambient <see cref="RiskReducingScope"/> however they got here.
+    ///
+    /// The scope exists so the READS a risk-reducing operation has to do first — the orders list a
+    /// sweep needs, the resolution of a client id, the position behind a close — stop being served
+    /// the ordinary ten seconds while an emergency waits on them (Codex F11). It must not become a
+    /// side door onto the fast path for the one thing round 4 deliberately kept off it. The gateway
+    /// implements close as a PLACE of an offsetting order, so without this line an agent close-all
+    /// would acquire the emergency deadline for its orders by the back door — a change that belongs
+    /// to whoever carries intent through ITradingConnector (F5), decided there and not by accident
+    /// here.
+    /// </summary>
+    static bool OpensExposure(string op) =>
+        op is BridgeOps.Place or BridgeOps.Modify or BridgeOps.PlaceViaAsyncOverload;
+
     NamedPipeServerStream? _pipeStream;
     Stream? _out;
 
@@ -769,7 +785,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // follows — the gate, the write and the reply — has to fit inside one bound, because the
         // person waiting is not waiting for a phase.
         var startedAt = Environment.TickCount64;
-        var emergency = IsRiskReducing(op) || RiskReducingScope.IsActive;
+        var emergency = IsRiskReducing(op) || (RiskReducingScope.IsActive && !OpensExposure(op));
 
         try
         {

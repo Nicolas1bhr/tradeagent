@@ -7,6 +7,8 @@ using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
+using TradeAgent.TradeCli;
 using Xunit;
 
 namespace TradeAgent.Tests.Integration;
@@ -660,6 +662,63 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// THE AGENT'S CANCEL-ALL, THROUGH THE REAL GATEWAY, WHICH IS WHERE THE TIME WAS ACTUALLY GOING.
+    ///
+    /// Codex F11 on d25dbb4. The test that claimed to measure "the agent's sweep leg" called
+    /// <c>AtasConnector.CancelOrderAsync</c> directly and skipped everything the gateway does first:
+    /// a real cancel-all reads the working orders (an ordinary <c>orders</c> RPC), and each leg then
+    /// resolves its target by reading orders again, before the two-second emergency frame it was
+    /// hurrying to send ever gets a turn. At shipped deadlines the prerequisite read alone served
+    /// the full ten seconds — so the measured 2002 ms was real and was measuring the wrong thing.
+    ///
+    /// This one goes over the IPC pipe, through <see cref="GatewayPipeServer"/> and
+    /// <see cref="TradingGateway"/>, onto a real <see cref="AtasConnector"/> whose bridge has
+    /// stopped reading, with one 128 KiB write already holding the connector's send gate — so the
+    /// prerequisite read has to queue for that gate exactly as the cancel frame would.
+    /// </summary>
+    [Fact]
+    public async Task An_agent_cancel_all_through_the_real_gateway_fails_fast_on_a_stalled_bridge()
+    {
+        var bridgePipe = NewPipe();
+        await using var connector = new AtasConnector(bridgePipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.Stalled(bridgePipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        using var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, connector, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = "ATAS-STALLED";   // so the ONE prerequisite read is the orders list
+        });
+
+        var ipcPipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), ipcPipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, ipcPipe);
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-f11-hold", "ATAS-STALLED", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 128 * 1024)));
+        Observe([stuck]);
+        await Task.Delay(250);
+
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f11-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(40));
+        timer.Stop();
+
+        Assert.False(reply.Ok, "the sweep reported success against a bridge that has read nothing");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"cancel-all through the real gateway took {timer.Elapsed.TotalSeconds:0.00}s — the prerequisite orders read is still on the ordinary deadline");
+
+        // And it is the emergency's own sentence that comes back, not a generic transport failure:
+        // the read inherited the operation's urgency, so it also inherited its words.
+        Assert.Contains("NOT confirmed", reply.Error!.Message);
+    }
+
+    /// <summary>
     /// The other half of the decision: ORDINARY traffic keeps the full deadline. A quote arriving
     /// late costs nothing, and a caller that is merely queued has no business tearing down a
     /// connection. Shipped values, so this one really does take about ten seconds.
@@ -673,8 +732,9 @@ public class ConnectorSendDeadlineTests
     /// bound and the sentence asserted below is the one its own branch produced.
     /// </summary>
     [Theory]
-    [InlineData("read")]     // a quote arriving late costs nothing
-    [InlineData("place")]    // and an order that OPENS risk has no claim on an emergency path at all
+    [InlineData("read")]           // a quote arriving late costs nothing
+    [InlineData("place")]          // and an order that OPENS risk has no claim on an emergency path at all
+    [InlineData("place-in-scope")] // not even nested inside a risk-reducing operation (see below)
     public async Task An_ordinary_op_behind_a_stalled_write_still_gets_the_full_deadline(string kind)
     {
         var pipe = NewPipe();
@@ -688,6 +748,14 @@ public class ConnectorSendDeadlineTests
             OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
         Observe([stuck]);
         await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
+
+        // "place-in-scope" is the guard on the ambient deadline added for F11. That scope exists so
+        // the READS a cancel-all or a close must do first stop being served the ordinary ten
+        // seconds — and the gateway implements close as a PLACE of an offsetting order, so without
+        // an explicit exclusion at the connector an agent close-all would acquire the emergency
+        // deadline for its orders through the back door. Carrying intent that far is F5's decision
+        // and another unit's file; it must not happen here by accident.
+        using var scope = kind == "place-in-scope" ? RiskReducingScope.Begin() : null;
 
         var timer = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => kind == "read"

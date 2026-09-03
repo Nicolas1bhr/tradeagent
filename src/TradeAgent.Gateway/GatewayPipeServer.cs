@@ -411,6 +411,23 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 "and that has to be a shape the broker will give back");
 
         var ctx = AgentContext.ForAgent(req.Session);
+
+        // EVERY READ THIS OPERATION HAS TO DO FIRST IS PART OF THE EMERGENCY, NOT A PRELUDE TO IT.
+        //
+        // The connector classifies urgency by the bridge op it is about to send, which is right for
+        // the final frame and blind to everything that has to happen before it. A cancel-all reads
+        // the working orders; cancelling by client id resolves the target by reading orders; a close
+        // reads the position. Those are ordinary `orders` and `positions` RPCs, so at shipped
+        // deadlines an emergency spent TEN SECONDS on a prerequisite read before the two-second
+        // frame it was hurrying to send ever got a turn — and the test that claimed to measure the
+        // agent's leg called the connector directly and skipped all of it (Codex F11).
+        //
+        // The intent is known here and needed several layers down, through interfaces this unit does
+        // not own, so it travels on the execution context instead of through a signature. It only
+        // ever WIDENS urgency, and Place/Modify are excluded at the far end, so the worst a stray
+        // scope can do is make a read give up in two seconds and report UNKNOWN.
+        using var riskReducing = IsRiskReducing(req.Op) ? RiskReducingScope.Begin() : null;
+
         try
         {
             object? data = req.Op switch
@@ -537,6 +554,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             requests = results
         };
     }
+
+    /// <summary>
+    /// Which IPC operations can only ever REDUCE exposure, and so carry the emergency deadline down
+    /// through everything they have to read first. `buy`, `sell` and `modify` are absent on purpose.
+    /// </summary>
+    static bool IsRiskReducing(string op) =>
+        op is Core.Ops.Cancel or Core.Ops.CancelAll or Core.Ops.Close or Core.Ops.CloseAll;
 
     /// <summary>
     /// A per-item id for one leg of a sweep: <c>op-{nonce}-{intent}-{index}</c>.
