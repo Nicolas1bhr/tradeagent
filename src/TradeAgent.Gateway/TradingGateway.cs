@@ -59,6 +59,22 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>
     DateTimeOffset Now => _opt.Clock.GetUtcNow();
 
+    /// <summary>
+    /// THE PAUSE THAT DOES NOT DEPEND ON THE DATABASE. Every durable record of an unconfirmed
+    /// outcome is a write, and a write can fail — a locked database, a full disk, a read-only file.
+    /// When it does, the wire has still been touched, so the refusal has to exist somewhere the
+    /// failure cannot reach. This is that somewhere: set in memory BEFORE the write is attempted,
+    /// read by the authorization gate, and lifted only when something has actually settled the work
+    /// (a reconcile pass that finished clean, or a person confirming the record).
+    /// </summary>
+    volatile string? _unconfirmed;
+
+    void LatchUnconfirmed(string reason)
+    {
+        _unconfirmed = reason;
+        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, reason);
+    }
+
     public TradingGateway(Database db, ITradingConnector connector, HealthRegistry? health = null,
         GatewayOptions? options = null)
     {
@@ -104,6 +120,10 @@ public sealed class TradingGateway : IAsyncDisposable
         var stranded = _requests.Dispatching();
         if (stranded.Count == 0) return;
 
+        // In memory before the first write, for the same reason RecordIndefinite does it: the pause
+        // must not depend on the store being writable at the moment we discover the problem.
+        LatchUnconfirmed($"{stranded.Count} request(s) were still being sent when TradeAgent last stopped");
+
         foreach (var req in stranded)
         {
             try
@@ -132,7 +152,17 @@ public sealed class TradingGateway : IAsyncDisposable
     // while still subscribed to a shared HealthRegistry keeps writing into the log after it stops
     // being the authority — two owners of one fact, which is the defect class this design exists to
     // avoid.
-    void OnHealthChanged(ComponentHealth h) { _log.Health(h); StateChanged?.Invoke(); }
+    // The write is guarded because SETTING health must never fail its caller. `health_event` is a
+    // historical row; the state the screen and the gates read lives in the registry, in memory. This
+    // handler is on the path of every _health.Set, including the one that pauses execution when an
+    // outcome could not be written down — and a store that refused THAT write will refuse this one,
+    // which is how a locked database once turned "pause trading" into an exception instead.
+    void OnHealthChanged(ComponentHealth h)
+    {
+        try { _log.Health(h); }
+        catch (Exception) { /* the in-memory registry already carries it; the row is a nicety */ }
+        StateChanged?.Invoke();
+    }
     // The detail is what makes a red row repairable: a version-mismatched ATAS bridge is refused
     // for good reasons and otherwise looks identical to no bridge at all.
     void OnConnectionChanged(HealthState s) =>
@@ -247,6 +277,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public List<ExecutionRequest> Unreconciled() => _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
 
+    /// <summary>
+    /// Is there anything this gateway will not trade over — including an outcome it could not write
+    /// down. The screen and the background loop ask this rather than counting rows, so neither can
+    /// disagree with the gate.
+    /// </summary>
+    public bool HasUnconfirmedWork() => _unconfirmed is not null || Unreconciled().Count > 0;
+
     async Task<string> RequireAccountId(CancellationToken ct)
     {
         if (Settings.SelectedAccountId is { } id) return id;
@@ -341,6 +378,14 @@ public sealed class TradingGateway : IAsyncDisposable
         if (unreconciled.Count > 0)
         {
             (reason, code) = ($"{unreconciled.Count} earlier request(s) are unconfirmed", ErrorCode.TRADING_PAUSED_UNRECONCILED);
+            return false;
+        }
+        // The in-memory latch is checked AFTER the store, so that when both agree the message is the
+        // one that can count. It is checked at all because the store may not have been writable when
+        // the outcome had to be recorded.
+        if (_unconfirmed is { } latched)
+        {
+            (reason, code) = (latched, ErrorCode.TRADING_PAUSED_UNRECONCILED);
             return false;
         }
 
@@ -549,13 +594,52 @@ public sealed class TradingGateway : IAsyncDisposable
     ExecutionRequest RecordIndefinite(string requestId, string technical, string sentence,
         Exception? ex = null, string? connectorOrderId = null)
     {
-        var final = SettleUnknown(requestId, technical, connectorOrderId);
-        _log.Activity($"{sentence} AI trading is paused until it is confirmed.", "warn");
-        _log.Engineering("Gateway", "dispatch_unknown", "warn", requestId: requestId, ex: ex,
-            metadataJson: Json.Write(new { reason = technical, exception = ex?.GetType().FullName }));
-        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "an order is unconfirmed");
+        // PAUSE FIRST, WRITE SECOND. Everything below this line is a database write, and the reason
+        // this method exists at all is that something went wrong at the worst moment — which is
+        // exactly when the disk is full, the file is locked by another connection, or the store is
+        // read-only. Persisting first meant a throw skipped the health row, the logs and the pause,
+        // leaving a touched wire, an unflagged DISPATCHING row and an open gate.
+        LatchUnconfirmed("an order outcome is unconfirmed");
         StateChanged?.Invoke();
-        return final;
+
+        try
+        {
+            var final = SettleUnknown(requestId, technical, connectorOrderId);
+            _log.Activity($"{sentence} AI trading is paused until it is confirmed.", "warn");
+            _log.Engineering("Gateway", "dispatch_unknown", "warn", requestId: requestId, ex: ex,
+                metadataJson: Json.Write(new { reason = technical, exception = ex?.GetType().FullName }));
+            StateChanged?.Invoke();
+            return final;
+        }
+        catch (Exception persist)
+        {
+            // The record could not be made. The pause above stands, and the caller is told rather
+            // than handed a record that does not exist. The log attempt runs off this thread because
+            // the store that just refused a write will refuse this one too, for as long as its own
+            // timeout — and an order path must not wait out a second one to file a log line.
+            _ = Task.Run(async () =>
+            {
+                // A handful of attempts while whatever held the store lets go. Not a queue and not a
+                // guarantee — the in-memory pause is the guarantee; this is so an engineer can find
+                // out afterwards WHY trading paused with nothing in the ledger to point at.
+                for (var attempt = 0; attempt < 6; attempt++)
+                {
+                    // Wait before the FIRST attempt too: the store refused a write a moment ago, and
+                    // retrying into the same locked file only burns another timeout.
+                    await Task.Delay(250);
+                    try
+                    {
+                        _log.Engineering("Gateway", "record_indefinite_failed", "error", requestId: requestId,
+                            ex: persist, metadataJson: Json.Write(new { reason = technical, original = ex?.GetType().FullName }));
+                        return;
+                    }
+                    catch (Exception) { /* try again below */ }
+                }
+            });
+
+            throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                $"the outcome of {requestId} could not be written down ({persist.Message}); trading is paused");
+        }
     }
 
     /// <summary>
@@ -1122,6 +1206,19 @@ public sealed class TradingGateway : IAsyncDisposable
         // finds the row no longer in DISPATCHING, files `already_settled` and returns what is stored,
         // and SettleUnknown falls back to flagging. Nothing is resubmitted on either path.
         var pending = Unreconciled();
+        if (pending.Count == 0 && _unconfirmed is { } latched)
+        {
+            // The store says there is nothing to confirm and this gateway knows better: an outcome
+            // it could not write down. Clearing the pause here would launder that failure into
+            // "all clear", so the pass reports itself unfinished instead. It resolves on its own
+            // once the aged-dispatch bound exposes the write-ahead row this outcome belongs to.
+            _log.Engineering("Reconciler", "unconfirmed_without_a_record", "error",
+                metadataJson: Json.Write(new { reason = latched }));
+            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, latched);
+            StateChanged?.Invoke();
+            return new ReconcileResult(0, 1, [$"{latched}, and no record of it could be written; trading stays paused"]);
+        }
+
         if (pending.Count == 0)
         {
             // NOTHING PENDING IS AN OUTCOME, NOT A REASON TO SKIP THE ROW. The all-resolved path
@@ -1130,6 +1227,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // ReconcileAsync watched execution stay PAUSED on a book with nothing left to confirm.
             // In the app the background health tick hid this; anything driving the gateway directly
             // saw it. Same two lines the sibling path uses, so the two cannot drift apart again.
+            _unconfirmed = null;
             _health.Set(Components.ExecutionCapability, HealthState.READY);
             StateChanged?.Invoke();
             return new ReconcileResult(0, 0, []);
@@ -1240,6 +1338,9 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (inconclusive == 0)
         {
+            // Everything this pass found has a definite outcome now, so the in-memory pause has
+            // nothing left to stand for.
+            _unconfirmed = null;
             _log.Activity("Orders reconciled");
             _health.Set(Components.ExecutionCapability, HealthState.READY);
         }
@@ -1393,6 +1494,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // transition and rewriting a terminal state would only destroy the timestamp on it;
             // what is actually stale is the flag. This is the common ending for the race above.
             var confirmed = _requests.ClearReconciliation(requestId);
+            _unconfirmed = null;   // a person has answered the question the latch was holding open
             _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
             _log.Engineering("Gateway", "force_resolve_confirmed", "warn", requestId: requestId,
                 metadataJson: Json.Write(new { state = finalState.ToString(), note }));
@@ -1416,6 +1518,7 @@ public sealed class TradingGateway : IAsyncDisposable
             _requests.Transition(requestId, from, ExecutionState.RECONCILING);
         var result = _requests.Transition(requestId, _requests.Get(requestId)!.State, finalState,
             needsReconciliation: false, markReconciled: true, error: $"resolved by user: {note}");
+        _unconfirmed = null;   // as above: the override answers it
         _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
 
         // Every other mutator on this class announces itself and this one did not, so the screen that
@@ -1469,10 +1572,11 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             var unreconciled = Unreconciled().Count;
+            var latched = _unconfirmed;
             _health.Set(Components.ExecutionCapability,
-                unreconciled > 0 ? HealthState.PAUSED
+                unreconciled > 0 || latched is not null ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
-                unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : "");
+                unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
         }
         catch (Exception ex)
         {
