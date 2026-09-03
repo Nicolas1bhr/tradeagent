@@ -428,17 +428,27 @@ public class ConnectorSendDeadlineTests
         var acceptedBefore = peer.BytesRead;
 
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-READING"));
+        Exception? ex = null;
+        try { await connector.CancelAllOrdersAsync("ATAS-READING"); }
+        catch (Exception e) { ex = e; }
         timer.Stop();
+        var acceptedDuring = peer.BytesRead - acceptedBefore;
 
-        // THE FIXTURE'S OWN PREMISE, ASSERTED BEFORE THE VERDICT IS READ. Without these two, a
-        // fixture that failed to contend the gate reports a product defect instead of reporting
-        // itself — which is exactly what the 400-RPC version did.
-        Assert.False(stuck.IsCompleted,
-            "the write holding the send gate finished while the emergency waited — the emergency was never queued behind anything, so this measured nothing");
-        Assert.True(peer.BytesRead > acceptedBefore,
-            $"the peer accepted no bytes between {acceptedBefore} and the emergency returning — that is the STALLED case, not the busy one this test is about");
+        // THE FIXTURE'S OWN PREMISE, ASSERTED FIRST AND SEPARATELY FROM THE VERDICT.
+        //
+        // Both of these are conditions this test CREATES, and neither is a claim about the product.
+        // Without them a fixture that failed to contend the gate reports a product defect instead of
+        // reporting itself, which is exactly what the 400-RPC version did: it came back in 0.71 s
+        // off a free gate and said "no exception was thrown". Deliberately NOT asserted on the
+        // in-flight write's own state — a drop on the wrong branch ends that write too, so it would
+        // diagnose a real product defect as a broken fixture.
+        Assert.True(timer.Elapsed >= connector.EmergencyGateWait - TimeSpan.FromMilliseconds(100),
+            $"the emergency came back in {timer.Elapsed.TotalSeconds:0.00}s, short of the {connector.EmergencyGateWait.TotalSeconds:0}s gate wait — " +
+            "it was never queued behind anything, so this run measured nothing about gate EXPIRY");
+        Assert.True(acceptedDuring > 0,
+            "the peer accepted no bytes while the emergency waited — that is the STALLED case, not the busy one this test is about");
 
+        Assert.NotNull(ex);
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
             $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
