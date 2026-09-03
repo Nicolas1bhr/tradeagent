@@ -643,6 +643,19 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// <see cref="RecordIndefinite"/> for a caller that must not stop. It can throw when the store
+    /// refuses the write — and inside a loop over positions, that would abandon the positions after
+    /// it. The in-memory pause is already latched before the throw, so continuing costs nothing that
+    /// matters and finishing the emergency is worth more than the exception.
+    /// </summary>
+    void SafelyRecordIndefinite(string requestId, string technical, string sentence,
+        Exception? ex = null, string? connectorOrderId = null)
+    {
+        try { RecordIndefinite(requestId, technical, sentence, ex, connectorOrderId); }
+        catch (Exception) { /* latched in memory; the background retry carries the reason */ }
+    }
+
+    /// <summary>
     /// WHAT THE PLATFORM ANSWERED, TRANSLATED INTO WHAT WE MAY RECORD. Total over
     /// <see cref="ExecutionState"/> on purpose: the catch-all this replaces mapped every state it did
     /// not list onto ACKNOWLEDGED, which turned UNKNOWN — whose entire meaning is "we do not know" —
@@ -1116,9 +1129,13 @@ public sealed class TradingGateway : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                RecordIndefinite(rid, ex.Message,
+                // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
+                // press that hit trouble on the first symbol left every other position open and
+                // unrecorded — an emergency control that stops half way through the emergency. The
+                // failure is recorded, execution is paused by it, and the loop goes on to the rest.
+                SafelyRecordIndefinite(rid, ex.Message,
                     $"TradeAgent could not confirm whether the close of {p.Symbol} reached the platform.", ex);
-                throw;   // as above: the person pressed this and has to be told
+                continue;
             }
             n++;
 
@@ -1127,14 +1144,14 @@ public sealed class TradingGateway : IAsyncDisposable
                 // No order came back. The one implementation that returns null means "there was no
                 // position to close", but a connector that submitted the close and could not read it
                 // back looks identical from here, and the SDK does not say which. Unknown it is.
-                RecordIndefinite(rid, "the platform returned no order for the close",
+                SafelyRecordIndefinite(rid, "the platform returned no order for the close",
                     $"TradeAgent could not confirm whether {p.Symbol} was closed.");
                 continue;
             }
 
             var (to, indefinite) = MapDispatchOutcome(order.State);
             if (indefinite)
-                RecordIndefinite(rid, $"the platform answered {order.State} for the close",
+                SafelyRecordIndefinite(rid, $"the platform answered {order.State} for the close",
                     $"The platform answered {order.State} when closing {p.Symbol}, which is not something TradeAgent can record as done.",
                     connectorOrderId: order.ConnectorOrderId);
             else

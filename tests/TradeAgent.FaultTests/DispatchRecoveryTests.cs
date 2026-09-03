@@ -41,6 +41,10 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public Exception? ThrowAfterCancel;
     public Exception? ThrowAfterModify;
     public Exception? ThrowAfterClose;
+    /// <summary>When set, ThrowAfterClose fires only for this symbol.</summary>
+    public string? ThrowAfterCloseSymbol;
+    /// <summary>Makes the order positions are visited in deterministic (ES before NQ).</summary>
+    public bool SortPositionsBySymbol;
     public Exception? ThrowAfterCancelAll;
     public bool ModifyIgnoresTheRequest;
     public bool CancelDoesNotReachTheBook;
@@ -64,7 +68,11 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
     public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
-    public Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => inner.GetPositionsAsync(a, ct);
+    public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
+    {
+        var p = await inner.GetPositionsAsync(a, ct);
+        return SortPositionsBySymbol ? p.OrderBy(x => x.Symbol, StringComparer.Ordinal).ToList() : p;
+    }
     public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default)
     {
         var orders = await inner.GetOrdersAsync(a, inc, since, ct);
@@ -108,7 +116,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     {
         Closes++;
         var o = await inner.ClosePositionAsync(a, s, coid, ct);  // the closing order IS submitted
-        if (ThrowAfterClose is { } ex) throw ex;
+        if (ThrowAfterClose is { } ex && (ThrowAfterCloseSymbol is null || ThrowAfterCloseSymbol == s)) throw ex;
         return o;
     }
 
@@ -789,9 +797,12 @@ public class OperatorEmergencyRecordTests
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;       // the close sits working, as a real one does
         c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
 
-        // The operator must still be told it failed — the record is in addition to the error, not
-        // instead of it.
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCloseAllAsync());
+        // ROUND 2 (item 4): the loop records the failure and carries on rather than throwing, because
+        // throwing abandoned every position after this one. What the person is told does not depend
+        // on an exception: execution is paused, the record is on the unconfirmed card, and the
+        // Dashboard's own press check (item 3) reports it after the press returns.
+        await gw.OperatorCloseAllAsync();
+        Assert.True(gw.HasUnconfirmedWork());
 
         var record = Assert.Single(gw.Requests.Query("intent='PLACE' AND request_id LIKE 'op-close-%'"));
         Assert.Equal(ExecutionState.UNKNOWN, record.State);
@@ -1267,5 +1278,45 @@ public class UnconfirmedLatchTests
 
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
         Assert.Equal(HealthState.READY, gw.Health.Get(Components.ExecutionCapability).State);
+    }
+}
+
+// =================================================================================================
+// ROUND 2 · items 4 and 5 — close all positions, honestly
+// =================================================================================================
+
+/// <summary>
+/// Two defects in the same loop. It threw on the first position that failed, so the second position
+/// got neither a close nor a record — an emergency control that stops half way through an emergency.
+/// And it counted a position as closed the moment a close order came back at all, then said "You
+/// closed all positions (2)" while both closes were sitting unfilled on the book.
+/// </summary>
+public class CloseAllOutcomeTests
+{
+    [Fact]
+    public async Task Close_all_keeps_going_after_one_position_fails()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "cp-es", TestEnv.Buy("ES", 2m));
+        await gw.PlaceAsync(AgentContext.Operator, "cp-nq", TestEnv.Buy("NQ", 1m));
+        c.SortPositionsBySymbol = true;                 // ES is visited first
+        c.ThrowAfterCloseSymbol = "ES";
+        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+
+        await gw.OperatorCloseAllAsync();
+
+        Assert.Equal(2, c.Closes);                      // the second position was still attempted
+        var es = Assert.Single(gw.Requests.Query("instrument='ES' AND request_id LIKE 'op-close-%'"));
+        var nq = Assert.Single(gw.Requests.Query("instrument='NQ' AND request_id LIKE 'op-close-%'"));
+        Assert.Equal(ExecutionState.UNKNOWN, es.State);
+        Assert.True(es.NeedsReconciliation);
+        Assert.Equal(ExecutionState.FILLED, nq.State);
+        Assert.False(nq.NeedsReconciliation);
+        Assert.DoesNotContain(c.Inner.Broker.Positions, p => p.Symbol == "NQ");
+
+        // The half that failed still pauses trading and still has a route out.
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
     }
 }
