@@ -487,6 +487,84 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// The proof path, through a file that was never committed. Both saves are refused — the
+    /// write-ahead claim and the broker id that completes it — so the acknowledged record exists
+    /// only in the temp when the process ends. A recovered record has to be evidence exactly as a
+    /// committed one is, or the recovery is bookkeeping rather than a fix.
+    /// </summary>
+    [Fact]
+    public void A_record_recovered_from_an_uncommitted_rewrite_is_evidence_like_any_other()
+    {
+        var w = Session(NeverLands);
+        Submit(w, "TA-STRANDED");
+        w.Identified("TA-STRANDED", "BRK-STRANDED");
+
+        Assert.False(File.Exists(File_), "neither rewrite landed");
+
+        var next = Session();
+        var record = next.PriorSession("TA-STRANDED");
+
+        Assert.NotNull(record);
+        Assert.Equal("BRK-STRANDED", record.BrokerOrderId);
+        Assert.NotEqual(next.SessionId, record.SessionId);
+        Assert.Equal(["TA-STRANDED"], next.PriorSessionIds(16));
+    }
+
+    /// <summary>
+    /// The write-ahead record is what makes rule 1 answerable, so <c>Place</c> has to be able to
+    /// find out whether the claim it just made is on disk — it runs BEFORE the order is handed to
+    /// ATAS and can still refuse. This is the true direction.
+    /// </summary>
+    [Fact]
+    public void Submitting_says_when_the_write_ahead_reached_the_disk()
+    {
+        var w = Session();
+        Assert.True(w.Submitting("TA-OK", "SIM", "ES", "Buy", 1m, null));
+        Assert.True(w.Submitting("TA-OK-2", "SIM", "ES", "Buy", 1m, null));
+    }
+
+    /// <summary>
+    /// And the false direction, in all three of its forms. An order whose identifier could not be
+    /// recorded must not be sent: the whole value of a write-ahead record is that it exists before
+    /// the order does, and a claim that only ever lived in this process's memory is not one.
+    /// </summary>
+    [Fact]
+    public void Submitting_says_when_the_write_ahead_did_not_reach_the_disk()
+    {
+        // The rewrite will not land. The claim is kept and it is recoverable, but it is not durable.
+        Assert.False(Session(NeverLands).Submitting("TA-NOT-DURABLE", "SIM", "ES", "Buy", 1m, null));
+
+        // No identifier to record.
+        Assert.False(Session().Submitting("", "SIM", "ES", "Buy", 1m, null));
+
+        // Nowhere at all to record one.
+        Assert.False(new CoidWitness(path: null).Submitting("TA-INERT", "SIM", "ES", "Buy", 1m, null));
+    }
+
+    /// <summary>
+    /// NOT SILENTLY. A rewrite that never lands is written down beside the witness, naming the file,
+    /// the temp that holds the newer state and the claim at risk — because this assembly has no
+    /// logger and may not acquire one (trap 34), and a durability gap nobody can see is the same as
+    /// no gap until the day it matters.
+    /// </summary>
+    [Fact]
+    public void A_rewrite_that_never_lands_is_written_down_where_it_can_be_found()
+    {
+        var w = Session(NeverLands);
+        Submit(w, "TA-UNWRITABLE");
+
+        Assert.NotNull(w.LastWriteFailure);
+        Assert.Contains("TA-UNWRITABLE", w.LastWriteFailure);
+        Assert.Contains(File_, w.LastWriteFailure);
+        Assert.Contains(Temp_, w.LastWriteFailure);
+        Assert.Contains("io:failed", w.Token());
+
+        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
+        Assert.True(File.Exists(log), "the failure belongs on disk beside the witness");
+        Assert.Contains("TA-UNWRITABLE", File.ReadAllText(log));
+    }
+
+    /// <summary>
     /// Two threads, which is what actually happens: <c>Submitting</c> is called from <c>Place</c> on
     /// the bridge's pipe thread and <c>Identified</c> from the order-event fan on ATAS's.
     /// </summary>
