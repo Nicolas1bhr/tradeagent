@@ -113,6 +113,13 @@ public class CoidWitnessTests : IDisposable
     static IOException SharingViolation() =>
         new("The process cannot access the file because it is being used by another process.");
 
+    /// <summary>A rename that fails at once — no retry budget, so a test can run many of them.</summary>
+    static Action<string, string> VanishesUnless(Func<bool> lands) => (tmp, destination) =>
+    {
+        if (!lands()) throw new FileNotFoundException("it is gone", tmp);
+        File.Move(tmp, destination, overwrite: true);
+    };
+
     /// <summary>A rename that is refused for good: the destination is never released.</summary>
     static void NeverLands(string tmp, string destination) => throw SharingViolation();
 
@@ -1068,16 +1075,49 @@ public class CoidWitnessTests : IDisposable
     /// a log to drop its head is more file IO than a failing disk deserves.
     /// </summary>
     [Fact]
-    public void An_oversized_sidecar_is_restarted_rather_than_grown_forever()
+    public void An_oversized_sidecar_is_rotated_rather_than_thrown_away()
     {
         var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
         File.WriteAllText(log, new string('x', 70 * 1024));
 
-        var w = Session((tmp, destination) => throw new FileNotFoundException("gone", tmp));
+        var w = Session(VanishesUnless(() => false));
         Submit(w, "TA-BOUND");
 
         Assert.True(new FileInfo(log).Length < 4096, $"the sidecar is {new FileInfo(log).Length} bytes");
         Assert.Contains("TA-BOUND", File.ReadAllText(log));
+
+        // ROTATED, NOT DELETED. Deleting was fine while the quota capped what could be lost; with
+        // failures unrationed the file being thrown away is the one holding them.
+        Assert.True(File.Exists(log + ".1"), "the previous window of history is kept");
+    }
+
+    /// <summary>
+    /// THE QUOTA USED TO SILENCE THE THING THE FILE EXISTS FOR. Thirty-two lines into a session it
+    /// stopped writing — and the next event might be an acknowledgement that never reached the disk
+    /// for an order that is live at the broker, which this file is the only cross-process record of.
+    /// Warnings and markers are rationed; failures are not, and a failure after a RESOLVED marker
+    /// reopens the gap for the next session to see.
+    /// </summary>
+    [Fact]
+    public void A_safety_event_after_the_quota_and_after_a_resolved_marker_is_still_recorded()
+    {
+        var lands = false;
+        var w = Session(VanishesUnless(() => lands));
+        for (var i = 0; i < 31; i++)
+            Assert.False(w.Submitting($"TA-{i}", "SIM", "ES", "Buy", 1m, null));
+
+        lands = true;
+        Assert.True(w.Submitting("TA-OK", "SIM", "ES", "Buy", 1m, null));
+
+        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
+        Assert.Contains("RESOLVED", File.ReadAllLines(log)[^1]);
+        Assert.Null(Session().Trouble);
+
+        lands = false;
+        Assert.False(w.Submitting("TA-AFTER-QUOTA", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Contains("TA-AFTER-QUOTA", File.ReadAllText(log));
+        Assert.NotNull(Session().Trouble);
     }
 
     /// <summary>
