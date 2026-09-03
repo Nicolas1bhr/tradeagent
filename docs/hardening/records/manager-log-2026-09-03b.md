@@ -139,3 +139,10 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   (`records/codex-U2a-r5.txt`, priors 5/6/8-gateway marked DEFERRED-BY-DECISION); the round-4 verifier resumed with
   `briefs/U2a-r5-verify.md` (own red-first probe against `d25dbb4` for one inverted item). Heavy legs: U14 verifier r5 +
   U2a verifier r5 = 2; U14 builder r6 queued behind the U14 verifier.
+- 23:55 **Codex usage limit hit** mid-way through the U2a round-5 delta review (99K tokens in, no output file; the CLI
+  printed "You've hit your usage limit … try again at Sep 4th, 2026 2:34 AM"). The U14 round-5 delta had completed
+  before the limit. Decision: **no same-model substitute** for the U2a delta (the U2a verifier already IS an independent
+  Opus leg on the same diff; a second Opus read adds no cross-model property) — the U2a integration WAITS for the Codex
+  reset; a wake-up is armed for 02:36 and the delta re-review is re-launched then (same prompt file
+  `briefs/U2a-r5-codex-prompt.txt`). Skip-or-wait logged per §4.5: WAIT. The U14 round-6 delta review will also need
+  Codex after the reset.
