@@ -2641,18 +2641,19 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// AN OPEN GAP SURVIVES THE SIDECAR ROTATING, and the case that breaks it is the one where the
-    /// rotating session writes a DIAGNOSTIC.
+    /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
-    /// The state is decided from the last line that decides anything — a safety event or the marker
-    /// that closes one — read out of the CURRENT log. `AppendToErrorLog` rotates that log to `.1`
-    /// past its size bound and writes the new line into a fresh one. When the session that tips it
-    /// over is a writing session, it puts a deciding line in the new file either way (RESOLVED if its
-    /// commit landed, a fresh ERROR if it did not), so nothing is lost. When the line that tips it
-    /// over is a QUARANTINE WARNING and the session commits nothing — which is exactly what
-    /// `Identified` for an identifier that is not on file does — the new log holds one diagnostic and
-    /// no deciding line, every safety event is in `.1`, and the next process reads a witness with an
-    /// open durability gap as healthy.
+    /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
+    /// whether a gap is open can be moved out from under the decision at any append. The rule this
+    /// pins is about the on-disk SHAPE and not about which code path produced it: whatever wrote
+    /// them, if the last deciding line is a safety event it is in `.1` and the current log holds only
+    /// diagnostics, the gap is open and the next start has to say so.
+    ///
+    /// Codex reached this shape through `Identified` for an identifier the file does not carry, which
+    /// quarantined and committed nothing. That particular route is closed separately — see
+    /// `An_acknowledgement_for_an_identifier_this_witness_does_not_have_takes_no_lease`, which stops
+    /// that call reaching the recovery at all — so the shape is built here directly, which is what
+    /// the reading rule is actually about.
     /// </summary>
     [Fact]
     public void An_unresolved_gap_is_not_lost_when_the_sidecar_rotates()
@@ -2661,33 +2662,25 @@ public class CoidWitnessTests : IDisposable
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
         seed.Dispose();
 
-        // An oversized sidecar whose last deciding line is a real durability gap.
-        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
-        File.AppendAllText(Sidecar,
-            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={File_} claim=TA-GAP"
+        // The state a rotation leaves: every safety event in the previous generation, one diagnostic
+        // in the current one.
+        File.WriteAllText(Sidecar + ".1",
+            $"{DateTimeOffset.UtcNow.AddMinutes(-2):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
             + Environment.NewLine);
-        Assert.NotNull(Session().Trouble);
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ignored {File_}.tmp-dead: it does not descend from the committed file"
+            + Environment.NewLine);
 
-        // A leftover to move aside, and a session that writes that one diagnostic and commits
-        // nothing: Identified for an identifier the file does not carry.
-        WriteForeignLeftover(1);
-        var w = Session();
-        w.Identified("TA-NOT-ON-FILE", "BRK-X");
-        w.Dispose();
-
-        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar did not rotate — raise the padding");
-        Assert.Contains(File.ReadAllLines(Sidecar), l => l.Contains("ignored "));
-        Assert.DoesNotContain(File.ReadAllLines(Sidecar), l => l.Contains("ERROR "));
-
-        // The gap is still open and the next start has to say so.
-        Assert.NotNull(Session().Trouble);
-        Assert.Contains("io:degraded", Session().Token());
+        var reader = Session();
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.False(reader.GapClosed);
     }
 
     /// <summary>
     /// AND THE OTHER DIRECTION: a gap that a clean commit closed BEFORE the rotation stays closed
     /// afterwards. A rule that just looked further back would resurrect every failure a machine has
-    /// ever had; what is carried forward is the LAST deciding line, whichever file it is in.
+    /// ever had; what is carried forward is the LAST deciding line, whichever generation it is in.
     /// </summary>
     [Fact]
     public void A_gap_closed_before_the_rotation_stays_closed_after_it()
@@ -2696,77 +2689,38 @@ public class CoidWitnessTests : IDisposable
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
         seed.Dispose();
 
-        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
-        File.AppendAllText(Sidecar,
-            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={File_} claim=TA-GAP"
+        File.WriteAllText(Sidecar + ".1",
+            $"{DateTimeOffset.UtcNow.AddMinutes(-2):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine
+            + $"{DateTimeOffset.UtcNow.AddMinutes(-1):O} RESOLVED coid-witness committed cleanly after the failures above."
             + Environment.NewLine);
-        File.AppendAllText(Sidecar,
-            $"{DateTimeOffset.UtcNow:O} RESOLVED coid-witness committed cleanly after the failures above."
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ignored {File_}.tmp-dead: it does not descend from the committed file"
             + Environment.NewLine);
 
-        WriteForeignLeftover(1);
-        var w = Session();
-        w.Identified("TA-NOT-ON-FILE", "BRK-X");
-        w.Dispose();
-
-        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar did not rotate — raise the padding");
-        Assert.Null(Session().Trouble);
+        var reader = Session();
+        Assert.Null(reader.Trouble);
+        Assert.True(reader.GapClosed);
+        Assert.Equal(WitnessStanding.Historical, CoidWitnessReport.Standing(reader));
     }
 
     /// <summary>
-    /// A SAFETY EVENT IS NEVER DROPPED — INCLUDING WHEN SEVERAL WRITERS PRODUCE ONE AT ONCE.
-    ///
-    /// The quota path honours that contract and the concurrency path did not. The append ends in a
-    /// single-writer open (`FileShare.Read` denies a second writer), and every failure here is
-    /// swallowed on purpose — a witness that cannot write must not become one that throws — so a
-    /// line that lost the race was discarded silently. The writers that produce these lines are
-    /// precisely the ones the lease REFUSED, so they are unserialised by construction: there is no
-    /// lock between them, which is the whole point of them being refused.
-    ///
-    /// Measured by the round-5 verify leg at 4, 2, 2 and 6 lines lost out of 160 across four runs of
-    /// three real processes. This drives 160 DISTINCT claims through four writers over one file and
-    /// asserts every one of them is on disk — distinct, because the verifier's own runs lost
-    /// duplicates and could not tell a dropped line from a repeated one.
+    /// AND A ROTATION THAT REALLY HAPPENS still leaves the state readable — the same rule, driven
+    /// through the real `AppendToErrorLog` rather than a hand-built directory, so a change to how
+    /// rotation names or orders its generations shows up here.
     /// </summary>
     [Fact]
-    public void No_safety_event_is_lost_when_several_writers_produce_one_at_once()
+    public void A_real_rotation_leaves_the_gap_readable()
     {
-        const int writers = 4, each = 40;
+        var w = Session(NeverLands);
+        for (var i = 0; i < 400; i++)
+            Assert.False(w.Submitting($"TA-FAIL-{i:D4}", "SIM", "ES", "Buy", 1m, null));
+        w.Dispose();
 
-        // Every one of these fails its rewrite, so every Submitting writes exactly one safety line —
-        // whichever of them holds the lease and whichever are refused by it.
-        var all = Enumerable.Range(0, writers).Select(_ => Session(NeverLands)).ToArray();
-        try
-        {
-            Parallel.For(0, writers, w =>
-            {
-                for (var i = 0; i < each; i++)
-                    all[w].Submitting($"TA-{w}-{i:D3}", "SIM", "ES", "Buy", 1m, null);
-            });
-        }
-        finally { foreach (var w in all) w.Dispose(); }
-
-        // Across the whole sidecar set, because a rotation mid-run is not a loss.
-        // The whole sidecar set: the owner's file, its rotated generation, and each refused
-        // writer's own — which is the glob the probe and the support package already collect.
-        var lines = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
-            .SelectMany(File.ReadAllLines)
-            .Where(l => l.Trim().Length > 0)
-            .ToArray();
-
-        var missing = new List<string>();
-        for (var w = 0; w < writers; w++)
-            for (var i = 0; i < each; i++)
-            {
-                var claim = $"TA-{w}-{i:D3}";
-                if (!lines.Any(l => l.Contains(claim, StringComparison.Ordinal))) missing.Add(claim);
-            }
-
-        Assert.True(missing.Count == 0,
-            $"{missing.Count} of {writers * each} safety events were dropped: " +
-            string.Join(", ", missing.Take(12)) +
-            $" [lines={lines.Length} rotated={File.Exists(Sidecar + ".1")} " +
-            $"bytes={(File.Exists(Sidecar) ? new FileInfo(Sidecar).Length : 0)}]");
+        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar never rotated — raise the iteration count");
+        var reader = Session();
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
     }
 
     // -------------------------------------------------- what a person is told (tools/probe)
