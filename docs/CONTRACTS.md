@@ -82,23 +82,41 @@ bugs found during the build.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
-`APPROVAL_REQUIRED`. When a person approves it, the gateway runs every gate again at that moment — the
-mode must still be `LIVE_CONFIRM`, then kill switch, live activation, the chosen account (and that it
-is the account the order was parked for), unreconciled work, the health chain, and every risk limit
-including quote freshness for an order without its own price — and only then dispatches. The order is
-authorized as the AI's proposal, so the kill switch refuses an approval; the person re-enables and
-approves, two acts. A refusal leaves the record parked. A request older than the approval
-time-to-live (`GatewayOptions.ApprovalTtl`, 15 minutes by default) is refused with `APPROVAL_EXPIRED`
-and declined through the state machine: `AWAITING_APPROVAL → CANCELLED`, `last_error` saying so. An
-age that cannot be trusted — a record timestamped in the future — expires on the same rule, and the
-limit is inclusive, so `ApprovalTtl = 0` expires everything. Age is judged before any of the gates
-above, so a request that is both expired and refusable for some other reason is declined rather than
-left parked behind a refusal the person could lift and then walk straight back into; a request that
-is not parked at all is still refused as `INVALID_REQUEST` first. **Nothing sweeps:** expiry is
-evaluated only when a person presses Approve, so a request can be past the limit and still listed as
-awaiting approval — which is why the Dashboard row states the approve-by time. An agent replaying
-that request id gets whatever the record now says, and proposes again with a new id if it comes back
-`CANCELLED` and it still wants the order.
+`APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the decision again from the
+start, in this order:
+
+1. the request must exist and still be `AWAITING_APPROVAL` — else `INVALID_REQUEST`;
+2. its age must be inside the approval time-to-live — else `APPROVAL_EXPIRED`, below;
+3. the mode must still be `LIVE_CONFIRM`, the mode it was proposed under — else
+   `MODE_FORBIDS_EXECUTION`. `PAPER` and `LIVE_AUTONOMOUS` do allow the AI to trade; they are simply
+   not the mode this order was parked under, and neither auto-dispatches it;
+4. the authorization chain — kill switch, live activation, autonomy-needs-provable-state, an account
+   chosen, no unreconciled work, a trustable health chain — run with **the AI's session, never the
+   operator's**. The person is pressing the button but the ORDER is the AI's proposal, which is what
+   makes the kill switch refuse an approval with `AI_TRADING_STOPPED`: re-enable, then approve, two
+   deliberate acts;
+5. the platform must still be the connector the record was parked on — else `ACCOUNT_NOT_FOUND`. An
+   account id is unique only *within* a platform, and switching platforms builds a new gateway over
+   the same database, so a parked request outlives the platform it was proposed for; comparing
+   account ids alone would send a simulator proposal to a real broker exposing the same id;
+6. the chosen account must be the one the record names — else `ACCOUNT_NOT_FOUND`, since the dispatch
+   goes to the account on the record;
+7. every risk limit: allowlist, quantity, paper-vs-real, rate limit, open positions, quote freshness
+   for an order without its own price, and order value multiplied by contract size.
+
+Only then does it dispatch. A refusal at any step leaves the record `AWAITING_APPROVAL` for a person
+to decline deliberately — except step 2. A request as old as or older than the approval time-to-live
+(`GatewayOptions.ApprovalTtl`, 15 minutes by default) is refused with `APPROVAL_EXPIRED` and declined
+through the state machine: `AWAITING_APPROVAL → CANCELLED`, `last_error` saying so. The bound is
+inclusive, so `ApprovalTtl = 0` expires everything; and an age that cannot be trusted — a record
+timestamped in the future, after a clock step or a restore — expires on the same rule rather than
+staying approvable forever. Age is judged before every gate that follows it, so a request that is
+both expired and refusable for some other reason is declined rather than left parked behind a refusal
+the person could lift and then walk straight back into. **Nothing sweeps:** expiry is evaluated only
+when a person presses Approve, so a request can be past the limit and still listed as awaiting
+approval — which is why the Dashboard row states the time it stops being approvable. An agent
+replaying that request id gets whatever the record now says, and proposes again with a new id if it
+comes back `CANCELLED` and it still wants the order.
 
 ## Health and errors
 

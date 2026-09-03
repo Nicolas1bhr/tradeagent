@@ -208,8 +208,11 @@ sealed class DashboardPage
                     Text = TryDescribe(w), FontFamily = Theme.Mono, FontSize = Theme.Base,
                     FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap
                 },
-                Ui.Micro($"asked at {w.CreatedAt.ToLocalTime():HH:mm} — approve by "
-                         + $"{(w.CreatedAt + _host.Gateway.ApprovalTtl).ToLocalTime():HH:mm}, after that it is declined"),
+                // The limit is inclusive and nothing sweeps: at the deadline the order is already too
+                // old to approve, and pressing Approve from then on declines it rather than sending it.
+                // "approve by HH:mm, after that it is declined" got both halves slightly wrong.
+                Ui.Micro($"asked at {w.CreatedAt.ToLocalTime():HH:mm} — approve before "
+                         + $"{(w.CreatedAt + _host.Gateway.ApprovalTtl).ToLocalTime():HH:mm}; from then, approving declines it instead"),
                 Ui.With(Ui.Row(Theme.S2,
                         Ui.Confirm("Approve", "Confirm: place this order",
                             () => ApproveAsync(id)),
