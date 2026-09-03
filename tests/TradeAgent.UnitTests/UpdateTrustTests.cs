@@ -1350,6 +1350,112 @@ public class UpdateTrustTests
         Assert.Contains("Downloader.TryGetSmallTextAsync(url, ChecksumManifest.MaxCharacters, ChecksumManifest.FetchTimeout, ct)", text);
     }
 
+    // ---- 3. the low batch ------------------------------------------------------------------------
+
+    /// <summary>
+    /// char.IsControl was not enough. U+202E reverses how the rest of the name is drawn, so an
+    /// installer can read as an ordinary .exe on screen and be something else; U+200B and U+00AD are
+    /// invisible, so two names identical to the owner are two different files. None is a control
+    /// character, and all three were offered.
+    /// </summary>
+    [Theory]
+    [InlineData("\u202E", "right-to-left override")]
+    [InlineData("\u200B", "zero width space")]
+    [InlineData("\u00AD", "soft hyphen")]
+    [InlineData("\u2028", "line separator")]
+    [InlineData("\uFEFF", "zero width no-break space")]
+    public void An_installer_name_carrying_an_invisible_character_is_never_offered(string sneaky, string what)
+    {
+        _ = what;
+        UpdateVersion.TryParse("0.1.0", out var current);
+        var json = $$"""
+            {"tag_name":"v0.2.0","draft":false,"prerelease":false,"body":"","html_url":"h",
+             "assets":[{"name":"TradeAgent-Setup-{{sneaky}}x64.exe","browser_download_url":"u","size":9},
+                       {"name":"SHA256SUMS.txt","browser_download_url":"s","size":1}]}
+            """;
+
+        Assert.Null(ReleaseFeed.Parse(json, current, UpdateService.DefaultAssetPattern, out var problem));
+        Assert.Contains("will not treat as a file name", problem);
+    }
+
+    [Fact]
+    public void A_plain_ascii_installer_name_is_still_offered()
+    {
+        UpdateVersion.TryParse("0.1.0", out var current);
+        var found = ReleaseFeed.Parse(Release(Asset, "SHA256SUMS.txt"), current, UpdateService.DefaultAssetPattern,
+            out var problem);
+
+        Assert.NotNull(found);
+        Assert.Null(problem);
+        Assert.Equal(Asset, found.AssetName);
+    }
+
+    /// <summary>
+    /// Behavioural, not a reading of the source: the LAST thing Changed fires with must already be
+    /// the refusal. A handler that ran before the flags were set would see an ordinary failure —
+    /// which is the one distinction the banner and the Settings card are built on.
+    /// </summary>
+    [Fact]
+    public async Task A_handler_woken_by_a_refusal_already_sees_the_refusal()
+    {
+        var seen = new List<(bool Refused, UpdateStage Stage, string? Message)>();
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = Service(f);
+        await service.CheckAsync();
+        service.Changed += () => seen.Add((service.Refused, service.Stage, service.Message));
+
+        Assert.False(await service.InstallAsync());
+
+        var last = seen[^1];
+        Assert.True(last.Refused);
+        Assert.Equal(UpdateStage.Failed, last.Stage);
+        Assert.Contains("cannot be verified", last.Message);
+    }
+
+    /// <summary>
+    /// "Later" was said about one thing. It used to silence every refusal afterwards for the rest of
+    /// the session, including the first sight of a release TradeAgent will not install.
+    /// </summary>
+    [Fact]
+    public async Task Later_does_not_hide_a_different_refusal_later_in_the_session()
+    {
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = Service(f);
+        await service.CheckAsync();
+
+        service.Dismiss();
+        Assert.True(service.Dismissed);
+
+        Assert.False(await service.InstallAsync());          // a refusal it has not seen before
+        Assert.False(service.Dismissed);                     // so the strip comes back with the reason
+
+        service.Dismiss();
+        Assert.False(await service.InstallAsync());          // the SAME refusal again
+        Assert.True(service.Dismissed);                      // stays put: nothing new was said
+    }
+
+    /// <summary>
+    /// Setup is running and this process is closing. A background check answering now would repaint
+    /// the strip as an ordinary offer over "TradeAgent will close and reopen itself".
+    /// </summary>
+    [Fact]
+    public async Task No_check_runs_once_Setup_has_been_started()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        await service.CheckAsync();
+        Assert.True(await service.InstallAsync());
+        Assert.Equal(UpdateStage.Installing, service.Stage);
+
+        f.ReleaseJson = Release("TradeAgent-Setup-arm64.exe", Asset, "SHA256SUMS.txt");   // would refuse
+        await service.CheckAsync();
+        await service.CheckAsync();
+
+        Assert.Equal(UpdateStage.Installing, service.Stage);
+        Assert.Contains("will close and reopen", service.Message);
+        Assert.Equal(1, f.Launches);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()
