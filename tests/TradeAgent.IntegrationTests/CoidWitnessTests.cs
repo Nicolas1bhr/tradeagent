@@ -431,17 +431,20 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_claim_whose_rename_never_landed_is_still_readable_after_a_restart()
     {
+        // A committed file first, so the rewrite that fails has something to descend FROM. Round 3
+        // removed the anchorless branch: a temp with no committed witness beside it is not evidence
+        // of anything this machine did, and since Place now refuses any order whose write-ahead
+        // record did not land, there is no order out there for it to have been protecting.
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
         var w = Session(NeverLands);
         Submit(w, "TA-LOST");
-
-        // Every attempt refused, so nothing was ever committed under the real name.
-        Assert.False(File.Exists(File_));
         Assert.NotEmpty(Temps());
 
         // The restart: the process that wrote it is gone, and a new session reads what it left.
         var next = Session();
-        Assert.Single(next.All());
-        Assert.Equal("TA-LOST", next.All()[0].ClientOrderId);
+        Assert.Equal(["TA-SEED", "TA-LOST"], next.All().Select(r => r.ClientOrderId));
     }
 
     /// <summary>
@@ -647,14 +650,19 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(w.PriorSession("TA-IMPORTED"));
         Assert.Empty(w.PriorSessionIds(16));
 
-        // And descended from nothing, but not the first rewrite either.
-        File.Delete(Temps().Single());
-        WriteTemp(generation: 5, predecessor: null,
+        // And the shape that round 2 still accepted: generation 1, descended from nothing. It is
+        // not a lineage test — every first rewrite of every witness on earth looks exactly like
+        // this — and it is refused too.
+        foreach (var f in Temps()) File.Delete(f);
+        WriteTemp(generation: 1, predecessor: null,
                   records: RecordJson("TA-ALSO-IMPORTED", "a-dead-session"), at: DateTime.UtcNow);
 
         var again = Session();
         Assert.Empty(again.All());
         Assert.Empty(again.PriorSessionIds(16));
+        Assert.Contains("io:degraded", again.Token());
+        Assert.Contains("TA-ALSO-IMPORTED".Length > 0 ? "nothing anchors it" : "", 
+                        File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
 
     /// <summary>
@@ -747,11 +755,12 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_record_recovered_from_an_uncommitted_rewrite_is_evidence_like_any_other()
     {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
         var w = Session(NeverLands);
         Submit(w, "TA-STRANDED");
         w.Identified("TA-STRANDED", "BRK-STRANDED");
-
-        Assert.False(File.Exists(File_), "neither rewrite landed");
 
         var next = Session();
         var record = next.PriorSession("TA-STRANDED");
@@ -866,8 +875,12 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("io:degraded", next.Token());
         Assert.DoesNotContain(' ', next.Token());
 
-        // Cleared by deleting it, which takes effect at the next start.
+        // Cleared by deleting it, which takes effect at the next start. The stranded temp goes too:
+        // with no committed file to anchor it, every session rejects it afresh and writes that
+        // rejection to the sidecar, which is the self-sustaining degradation the quarantine in the
+        // next commit exists to stop.
         File.Delete(Path.Combine(_dir, CoidWitness.ErrorLogName));
+        foreach (var f in Temps()) File.Delete(f);
         Assert.Contains("io:ok", Session().Token());
     }
 
@@ -1043,11 +1056,15 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_writer_leaves_at_most_one_uncommitted_rewrite()
     {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
         var w = Session(NeverLands);
         for (var i = 0; i < 5; i++) Submit(w, $"TA-{i}");
 
         Assert.Single(Temps());
-        Assert.Equal(["TA-0", "TA-1", "TA-2", "TA-3", "TA-4"], Session().All().Select(r => r.ClientOrderId));
+        Assert.Equal(["TA-SEED", "TA-0", "TA-1", "TA-2", "TA-3", "TA-4"],
+                     Session().All().Select(r => r.ClientOrderId));
     }
 
     /// <summary>
