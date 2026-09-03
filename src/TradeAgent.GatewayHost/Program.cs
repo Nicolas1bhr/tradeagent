@@ -125,7 +125,7 @@ static async Task Background(TradingGateway gateway, CancellationToken ct)
         try
         {
             await gateway.RefreshHealthAsync(ct);
-            if (gateway.Requests.NeedingReconciliation().Count > 0)
+            if (gateway.HasUnconfirmedWork())   // the gate's own question, not the raw flag
             {
                 var r = await gateway.ReconcileAsync(ct);
                 backoff = r.Clean ? TimeSpan.FromSeconds(2) : TimeSpan.FromSeconds(Math.Min(60, backoff.TotalSeconds * 2));

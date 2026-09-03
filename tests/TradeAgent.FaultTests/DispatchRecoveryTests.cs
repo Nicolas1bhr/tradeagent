@@ -1556,3 +1556,75 @@ public class TickNormalizedModifyTests
         Assert.True(record.NeedsReconciliation);
     }
 }
+
+// =================================================================================================
+// ROUND 2 · item 7 — every reader asks the same question the gate asks
+// =================================================================================================
+
+/// <summary>
+/// The doctor, the dev host and the Dashboard card each counted `needs_reconciliation=1`. That is a
+/// different question from the one the gate asks, so a stranded dispatch produced a machine that
+/// refused to trade while the self-check said "nothing outstanding" and the card that is supposed to
+/// list the blocking records was empty.
+/// </summary>
+public class OneQuestionForUnconfirmedWorkTests
+{
+    [Fact]
+    public async Task The_doctor_reports_an_aged_dispatch_the_gate_is_refusing_over()
+    {
+        var (gw, _, db) = await Recovery.Ready();
+        using var dbh = db;
+        gw.Requests.TryCreate(Recovery.Row("doc-aged"));
+        gw.Requests.Transition("doc-aged", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        Recovery.Backdate(db, "doc-aged", TimeSpan.FromMinutes(10));
+
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+        Assert.Empty(gw.Requests.NeedingReconciliation());     // the raw flag still says nothing
+
+        var report = await new Doctor(gw).RunAsync();
+
+        var check = Assert.Single(report.Checks, c => c.Name == "Order confirmation");
+        Assert.Equal(HealthState.DEGRADED, check.State);
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, check.Code);
+        Assert.Contains("1 order(s) not yet confirmed", check.Detail);
+    }
+
+    [Fact]
+    public async Task The_card_lists_the_records_the_gate_is_refusing_over()
+    {
+        var (gw, _, db) = await Recovery.Ready();
+        using var dbh = db;
+        gw.Requests.TryCreate(Recovery.Row("card-aged"));
+        gw.Requests.Transition("card-aged", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        Recovery.Backdate(db, "card-aged", TimeSpan.FromMinutes(10));
+
+        // Exactly what DashboardView hands to RefreshUnconfirmed.
+        var rows = gw.Unreconciled();
+
+        Assert.Single(rows);
+        Assert.Equal("card-aged", rows[0].RequestId);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        // ...and the card's route out still reaches it.
+        gw.ForceResolve("card-aged", ExecutionState.CANCELLED, "checked in ATAS: no such order");
+        Assert.Empty(gw.Unreconciled());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    [Fact]
+    public async Task A_clean_machine_still_reports_clean()
+    {
+        var (gw, _, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(new AgentContext("a"), "clean-doc", TestEnv.Buy());
+
+        var report = await new Doctor(gw).RunAsync();
+
+        var check = Assert.Single(report.Checks, c => c.Name == "Order confirmation");
+        Assert.Equal(HealthState.READY, check.State);
+        Assert.Equal("nothing outstanding", check.Detail);
+        Assert.Empty(gw.Unreconciled());
+        Assert.False(gw.HasUnconfirmedWork());
+    }
+}
