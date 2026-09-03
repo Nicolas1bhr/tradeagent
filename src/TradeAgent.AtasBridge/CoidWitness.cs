@@ -239,6 +239,23 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     readonly Action<string, string> _replace;
 
+    /// <summary>
+    /// THE OTHER STEP THAT FAILS ON WINDOWS AND CANNOT BE MADE TO FAIL ANYWHERE ELSE — opening a file
+    /// that exists and refusing to hand it over.
+    ///
+    /// On Unix a test can chmod a candidate to 000 and get exactly that. On Windows there is no
+    /// portable way to do it from inside a test: it takes an ACL or a second process holding the file
+    /// without <c>FileShare.Read</c>. So the branch that matters most — a candidate that is THERE and
+    /// unreadable, which must count as a failed read or a witness with nothing committed beside it
+    /// reports a confident zero — was asserted on macOS and Linux and skipped on the one platform
+    /// this product runs on.
+    ///
+    /// Same remedy as <see cref="_replace"/>: production passes nothing and opens the file the usual
+    /// way; a test passes an opener that refuses. The Unix chmod test is KEPT beside the seam test,
+    /// so a seam that stopped resembling the real refusal would show up.
+    /// </summary>
+    readonly Func<string, Stream> _open;
+
     bool _loaded;
     bool _readFailed;
 
@@ -407,12 +424,13 @@ public sealed class CoidWitness : IDisposable
     /// <see cref="_replace"/>.
     /// </summary>
     public CoidWitness(string? path, string? sessionId = null, int cap = DefaultCap,
-                       Action<string, string>? replace = null)
+                       Action<string, string>? replace = null, Func<string, Stream>? open = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
         _replace = replace ?? DefaultReplace;
+        _open = open ?? DefaultOpen;
         if (_path is not null)
             _tempPrefix = $"{_path}.tmp-{Environment.ProcessId}-{(SessionId.Length >= 8 ? SessionId[..8] : SessionId)}-";
     }
@@ -423,6 +441,13 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     static void DefaultReplace(string tmp, string destination) =>
         File.Move(tmp, destination, overwrite: true);
+
+    /// <summary>
+    /// The real open, with the share flags a file that is being REPLACED under the reader needs: a
+    /// concurrent writer and a concurrent delete are both admitted. See <see cref="ReadTolerantly"/>.
+    /// </summary>
+    static Stream DefaultOpen(string path) =>
+        new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     /// <summary>
     /// Resolving the default path touches <see cref="Paths"/>, which creates directories. Guarded
@@ -1321,14 +1346,13 @@ public sealed class CoidWitness : IDisposable
     /// missing file is NOT that case and returns immediately: it means nothing has ever been
     /// written, which is a clean answer rather than a failed read.
     /// </summary>
-    static string? ReadTolerantly(string path, out bool failed)
+    string? ReadTolerantly(string path, out bool failed)
     {
         for (var attempt = 0; ; attempt++)
         {
             try
             {
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete);
+                using var stream = _open(path);
                 using var reader = new StreamReader(stream);
                 failed = false;
                 return reader.ReadToEnd();
