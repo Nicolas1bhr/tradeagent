@@ -109,3 +109,13 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   Findings appended to `briefs/U2a-r5-bounce.md`; the SAME builder resumed. Heavy legs: U14 builder r5 + U2a builder
   r5 = 2. Both Codex worktrees (`u14-codex-r4`, `u2a-codex-r4`) and the verify worktrees stay until integration (the
   probe branches hold reusable tests).
+- 22:40 **U14 builder round 5 reported** (Opus, 491K tokens cumulative, 62 min): tip **`6a40fa7`** (14 commits), suite
+  387 → **417 green** (75/111/231) on the Mac AND on the Windows box (first on-box run for this unit); the four adapter
+  hunks compiled on the box against real ATAS (5 warnings, 0 errors); every finding real, each with a RED and a biting
+  mutant; two survivors declared unreachable/no-effect (MF4b, MV9); F9's disconnect half refuted with a code reason and
+  an adjacent "unproved hello" peer flagged; the F8 residual named. V5 subsumed (F8 removed the `_cap` dependency).
+- 22:45 Round-5 verification: `u14-verify-r5` + `u14-codex-r5` pinned at `6a40fa7`; Codex DELTA re-review (fallback form
+  §4.2: fresh read-only audit naming the 16 prior findings, `PRIOR n — FIXED|NOT FIXED|PARTIAL` + new findings only)
+  launched → `records/codex-U14-r5.txt`; the round-4 verifier resumed with `briefs/U14-r5-verify.md` (targets: the two
+  classes as implemented, the survivors, the class fix both ways, F9 partial, the harness again). Heavy legs: U2a builder
+  r5 + U14 verifier r5 = 2.
