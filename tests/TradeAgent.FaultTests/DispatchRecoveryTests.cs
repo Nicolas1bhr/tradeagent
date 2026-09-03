@@ -51,6 +51,8 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public decimal? ModifyRoundsPricesTo;
     public bool CancelDoesNotReachTheBook;
     public bool CancelAllDoesNotReachTheBook;
+    /// <summary>The platform lists no orders at all — the target is genuinely absent.</summary>
+    public bool HideOrdersEntirely;
     /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
     public Func<OrderInfo, OrderInfo>? RewriteBook;
     /// <summary>Runs after the broker accepted and before this connector answers.</summary>
@@ -77,6 +79,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     }
     public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default)
     {
+        if (HideOrdersEntirely) return [];
         var orders = await inner.GetOrdersAsync(a, inc, since, ct);
         return RewriteBook is null ? orders : orders.Select(RewriteBook).ToList();
     }
@@ -1111,9 +1114,11 @@ public class TargetedReconciliationTests
         Assert.Equal(1m, c.Inner.Broker.Orders.Single().Quantity);       // the platform never changed it
         var record = gw.GetRequest("m-mod")!;
         Assert.NotEqual(ExecutionState.CANCELLED, record.State);
-        Assert.Equal(ExecutionState.REJECTED, record.State);
-        Assert.False(record.NeedsReconciliation);
-        Assert.True(result.Clean, string.Join("; ", result.Details));
+        // ROUND 3 (R4): a modification that cannot be confirmed is never a DEFINITE failure either.
+        // Only a broker refusal settles REJECTED; this stays unconfirmed for a person.
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.False(result.Clean);
     }
 
     [Fact]
@@ -1616,21 +1621,28 @@ public class TickNormalizedModifyTests
     }
 
     /// <summary>
-    /// The direction that must NOT be lost to the tolerance: a platform that ignored the request
-    /// returns the OLD price, and that is still an unconfirmed modification even when the change
-    /// asked for was small.
+    /// A price that did not move is unconfirmed — with one stated exception. ROUND 3 accepts any
+    /// on-grid price within ONE TICK of the request as applied, whichever way the platform rounded,
+    /// so a request smaller than the grid can express (4000.13 against a 0.25 grid, order at 4000)
+    /// now reads as applied. That is the cost of not pausing on every rounded price, and it is
+    /// bounded by one tick: this test pins the boundary on both sides.
     /// </summary>
     [Fact]
-    public async Task A_price_that_did_not_move_is_still_unconfirmed_even_within_a_tick()
+    public async Task A_price_that_did_not_move_by_more_than_a_tick_is_still_unconfirmed()
     {
         var (gw, c, db, placed) = await Working();
         using var dbh = db;
         c.ModifyIgnoresTheRequest = true;                     // returns the order at 4000, unchanged
 
-        var r = await gw.ModifyAsync(new AgentContext("a"), "tick-ignored", placed.ConnectorOrderId!, null, 4000.13m, null);
+        // Inside one tick of the untouched price: indistinguishable from a rounding, so it is taken
+        // as applied. Stated, not hidden.
+        var inside = await gw.ModifyAsync(new AgentContext("a"), "tick-inside", placed.ConnectorOrderId!, null, 4000.13m, null);
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, inside.State);
 
-        Assert.Equal(ExecutionState.UNKNOWN, r.State);
-        Assert.True(r.NeedsReconciliation);
+        // Further than one tick and unmoved: no rounding explains that, so it is unconfirmed.
+        var outside = await gw.ModifyAsync(new AgentContext("a"), "tick-outside", placed.ConnectorOrderId!, null, 4242m, null);
+        Assert.Equal(ExecutionState.UNKNOWN, outside.State);
+        Assert.True(outside.NeedsReconciliation);
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
         Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
     }
@@ -1733,5 +1745,194 @@ public class OneQuestionForUnconfirmedWorkTests
         Assert.Equal("nothing outstanding", check.Detail);
         Assert.Empty(gw.Unreconciled());
         Assert.False(gw.HasUnconfirmedWork());
+    }
+}
+
+// =================================================================================================
+// ROUND 3 · R1 + R4 — a request leaves the unconfirmed set only on positive, definite, STABLE
+// evidence about its own target
+// =================================================================================================
+
+/// <summary>A clock a test can move, so a grace window can be crossed without sleeping through it.</summary>
+sealed class MovableClock(DateTimeOffset start) : TimeProvider
+{
+    DateTimeOffset _now = start;
+    public override DateTimeOffset GetUtcNow() => _now;
+    public void Advance(TimeSpan by) => _now = _now.Add(by);
+}
+
+public class ConservativeTargetEvidenceTests
+{
+    static (MovableClock Clock, GatewayOptions Options) Clocked()
+    {
+        var clock = new MovableClock(DateTimeOffset.UtcNow);
+        return (clock, new GatewayOptions { Clock = clock });   // DEFAULT AbsenceGrace, deliberately
+    }
+
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, ExecutionRequest Placed, MovableClock Clock)> Resting()
+    {
+        var (clock, options) = Clocked();
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "r3-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        return (gw, c, db, placed, clock);
+    }
+
+    /// <summary>Loses the answer to a cancel that never reached the book.</summary>
+    static async Task<ExecutionRequest> LoseACancel(TradingGateway gw, RecoveryConnector c, string id, string target)
+    {
+        c.CancelDoesNotReachTheBook = true;
+        c.ThrowAfterCancel = new ConnectorTransportException("wire down after the cancel was sent");
+        var r = await gw.CancelAsync(new AgentContext("a"), id, target);
+        c.ThrowAfterCancel = null;
+        c.CancelDoesNotReachTheBook = false;
+        return r;
+    }
+
+    // R1a — the lookup window must not decide the answer
+    [Fact]
+    public async Task A_target_older_than_any_window_is_still_found_rather_than_called_absent()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, "r3-window", placed.ConnectorOrderId!);
+
+        // The order has rested for an hour. A window measured from the CANCEL's own creation time
+        // does not contain it, and "not in the window" used to become "no such order, so the cancel
+        // landed" — over an order that is still working.
+        c.RewriteBook = o => o with { At = clock.GetUtcNow() - TimeSpan.FromHours(1) };
+        clock.Advance(TimeSpan.FromMinutes(30));
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
+        Assert.NotEqual(ExecutionState.CANCELLED, gw.GetRequest("r3-window")!.State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    // R1b — absence is only evidence after the grace, measured from dispatch
+    [Fact]
+    public async Task An_absent_target_is_not_evidence_until_the_grace_has_passed()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, "r3-grace", placed.ConnectorOrderId!);
+        c.RewriteBook = _ => throw new InvalidOperationException("unused");
+        c.RewriteBook = null;
+        c.HideOrdersEntirely = true;                       // the platform lists nothing at all
+
+        var early = await gw.ReconcileAsync();
+        Assert.False(early.Clean);
+        Assert.NotEqual(ExecutionState.CANCELLED, gw.GetRequest("r3-grace")!.State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        clock.Advance(TimeSpan.FromSeconds(30));           // past the default 15s grace
+        var late = await gw.ReconcileAsync();
+
+        Assert.True(late.Clean, string.Join("; ", late.Details));
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("r3-grace")!.State);
+    }
+
+    // R1c — a target in a non-definite state decides nothing
+    [Theory]
+    [InlineData(ExecutionState.UNKNOWN)]
+    [InlineData(ExecutionState.DISPATCHING)]
+    [InlineData(ExecutionState.RECONCILING)]
+    [InlineData(ExecutionState.CANCEL_PENDING)]
+    public async Task A_target_in_a_non_definite_state_leaves_the_cancel_unconfirmed(ExecutionState state)
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, $"r3-nd-{state}", placed.ConnectorOrderId!);
+        c.RewriteBook = o => o with { State = state };
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest($"r3-nd-{state}")!;
+        Assert.False(result.Clean);
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    // R1d — "still working" is only proof of failure once it has held still
+    [Fact]
+    public async Task A_working_target_must_hold_still_before_the_cancel_is_called_failed()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, "r3-settle", placed.ConnectorOrderId!);
+
+        // First sighting: the acknowledgement may still be in flight at the platform.
+        var first = await gw.ReconcileAsync();
+        Assert.False(first.Clean);
+        Assert.Equal(ExecutionState.RECONCILING, gw.GetRequest("r3-settle")!.State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        // It moved: the clock is reset, and it is still not evidence.
+        c.RewriteBook = o => o with { FilledQuantity = 0.5m, State = ExecutionState.PARTIALLY_FILLED };
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.False((await gw.ReconcileAsync()).Clean);
+        Assert.NotEqual(ExecutionState.REJECTED, gw.GetRequest("r3-settle")!.State);
+
+        // Unchanged across the whole window: now it is.
+        clock.Advance(TimeSpan.FromSeconds(30));
+        var settled = await gw.ReconcileAsync();
+
+        Assert.True(settled.Clean, string.Join("; ", settled.Details));
+        Assert.Equal(ExecutionState.REJECTED, gw.GetRequest("r3-settle")!.State);
+        Assert.Contains("did not take effect", gw.GetRequest("r3-settle")!.LastError);
+    }
+
+    // R1e — a cancel-all is judged on the orders the press captured
+    [Fact]
+    public async Task An_order_that_arrived_after_the_press_does_not_decide_the_cancel_all()
+    {
+        var (clock, options) = Clocked();
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "r3-ca-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;
+
+        // The sweep DID land — the captured order is cancelled — and a NEW order appears afterwards,
+        // placed by hand in the platform, which is the only way one can arrive while trading is
+        // paused by this very press.
+        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
+            OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null), FillBehaviour.LeaveWorking);
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.Equal(ExecutionState.CANCELLED, umbrella.State);        // judged on what it captured
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single(o => o.Symbol == "NQ").State);
+    }
+
+    // R4 — a modify never becomes a definite failure without a definite refusal
+    [Fact]
+    public async Task A_modification_that_cannot_be_confirmed_is_never_recorded_as_a_definite_failure()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        c.ModifyIgnoresTheRequest = true;
+        c.ThrowAfterModify = new ConnectorTransportException("wire down after the change was sent");
+        await gw.ModifyAsync(new AgentContext("a"), "r3-mod", placed.ConnectorOrderId!, null, 4242m, null);
+        c.ThrowAfterModify = null;
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest("r3-mod")!;
+        Assert.False(result.Clean);
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.True(record.NeedsReconciliation);
     }
 }

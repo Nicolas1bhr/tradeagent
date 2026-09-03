@@ -985,9 +985,11 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         /// <summary>The order carries what was asked for.</summary>
         Applied,
-        /// <summary>It demonstrably does not: a value that did not move, or an order that is done.</summary>
-        NotApplied,
-        /// <summary>A price differs and nothing here can say whether that is the platform's own grid.</summary>
+        /// <summary>
+        /// It does not — and nothing here can tell "the platform refused" from "the platform
+        /// answered in units or on a grid we cannot read". There is deliberately no third value:
+        /// only a ConnectorRejectedException is a definite refusal, and that never reaches here.
+        /// </summary>
         Unknowable
     }
 
@@ -1011,23 +1013,36 @@ public sealed class TradingGateway : IAsyncDisposable
     ModifyVerdict CheckModification(ModifyOrderCommand cmd, OrderInfo o)
     {
         if (o.State is not (ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING or ExecutionState.PARTIALLY_FILLED))
-            return ModifyVerdict.NotApplied;
-        if (cmd.Quantity is { } q && o.Quantity != q) return ModifyVerdict.NotApplied;
+            return ModifyVerdict.Unknowable;
+
+        // QUANTITY IS NOT A DECIDABLE FIELD. docs/CONTRACTS.md does not say whether OrderInfo.Quantity
+        // is the order's total or what is left of it, and connectors differ, so a number that does
+        // not match the request is as likely to be a different convention as a refused change.
+        if (cmd.Quantity is { } q && o.Quantity != q) return ModifyVerdict.Unknowable;
 
         var tick = _instrumentCache.FirstOrDefault(i => i.Symbol == o.Symbol)?.TickSize ?? 0m;
-        var limit = PriceVerdict(o.LimitPrice, cmd.LimitPrice, tick);
-        if (limit != ModifyVerdict.Applied) return limit;
-        return PriceVerdict(o.StopPrice, cmd.StopPrice, tick);
+        return PriceCarries(o.LimitPrice, cmd.LimitPrice, tick) && PriceCarries(o.StopPrice, cmd.StopPrice, tick)
+            ? ModifyVerdict.Applied : ModifyVerdict.Unknowable;
     }
 
-    static ModifyVerdict PriceVerdict(decimal? shown, decimal? asked, decimal tick)
+    /// <summary>
+    /// Does the price that came back carry the price that was asked for? Platforms put a request on
+    /// the instrument's own grid, and in either direction — so a price ON the grid and within one
+    /// tick of the request is the request, as applied. Anything further, anything off the grid, and
+    /// anything at all when the grid is unknown, is not evidence either way.
+    ///
+    /// THE COST OF THIS, STATED: asking for a change smaller than one tick and being ignored reads
+    /// as applied, because the returned old price is itself within a tick. A change the grid cannot
+    /// express is not a change; the alternative — pausing trading on every rounded price — was the
+    /// defect this replaces.
+    /// </summary>
+    static bool PriceCarries(decimal? shown, decimal? asked, decimal tick)
     {
-        if (asked is not { } want) return ModifyVerdict.Applied;      // nothing was asked of this field
-        if (shown is not { } have) return ModifyVerdict.NotApplied;   // asked for a price, got none
-        if (have == want) return ModifyVerdict.Applied;
-        if (tick <= 0m) return ModifyVerdict.Unknowable;
-        return have == Math.Round(want / tick, MidpointRounding.AwayFromZero) * tick
-            ? ModifyVerdict.Applied : ModifyVerdict.NotApplied;
+        if (asked is not { } want) return true;        // nothing was asked of this field
+        if (shown is not { } have) return false;       // asked for a price, got none
+        if (have == want) return true;
+        if (tick <= 0m) return false;                  // no grid to judge against
+        return Math.Abs(have - want) <= tick && decimal.Remainder(have, tick) == 0m;
     }
 
     /// <summary>Tick sizes come from the instrument list, so it has to be there before judging one.</summary>
@@ -1375,7 +1390,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 // recorded as done, and trading resumed, over an order still working at the broker.
                 if (req.Intent is RequestIntent.CANCEL or RequestIntent.MODIFY or RequestIntent.CANCEL_ALL)
                 {
-                    var (settled, note) = await ReconcileByTargetAsync(req, since, ct);
+                    var (settled, note) = await ReconcileByTargetAsync(req, ct);
                     if (settled) resolved++; else inconclusive++;
                     details.Add($"{req.RequestId}: {note}");
                     continue;
@@ -1473,42 +1488,114 @@ public sealed class TradingGateway : IAsyncDisposable
     ///   - a modify is applied only if the target carries the values that were asked for;
     ///   - a cancel-all is judged by what is left on the account's book.
     /// </summary>
-    async Task<(bool Settled, string Note)> ReconcileByTargetAsync(ExecutionRequest req, DateTimeOffset since, CancellationToken ct)
+    /// <summary>
+    /// What the target looked like the last time this request was judged, and since when. A cancel
+    /// that "did not land" is only proved by a target that stayed put: an acknowledgement can arrive
+    /// at the platform after our own RPC gave up, so ONE sighting of a working order proves nothing.
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Signature, DateTimeOffset Since)> _settleWatch = new();
+
+    static string SignatureOf(OrderInfo o) =>
+        $"{o.State}|{o.Quantity}|{o.FilledQuantity}|{o.LimitPrice}|{o.StopPrice}";
+
+    /// <summary>True once the target has shown the SAME face for a whole grace window.</summary>
+    bool HeldStill(string requestId, string signature)
+    {
+        var now = Now;
+        var entry = _settleWatch.AddOrUpdate(requestId, _ => (signature, now),
+            (_, prev) => prev.Signature == signature ? prev : (signature, now));
+        return entry.Signature == signature && now - entry.Since >= _opt.AbsenceGrace;
+    }
+
+    /// <summary>A state the platform is asserting, as opposed to one that says it does not know.</summary>
+    static bool IsDefinite(ExecutionState s) =>
+        s is not (ExecutionState.UNKNOWN or ExecutionState.DISPATCHING or ExecutionState.RECONCILING
+                  or ExecutionState.CANCEL_PENDING);
+
+    /// <summary>
+    /// Reconciles a request whose outcome lives in ANOTHER order's state.
+    ///
+    /// THE RULE, and every branch below is derived from it: a request leaves the unconfirmed set only
+    /// on positive, definite, stable evidence about ITS OWN target. Anything else is inconclusive and
+    /// keeps trading paused. Concretely —
+    ///   - the target is looked up by id against the WHOLE book, never a window: a window measured
+    ///     from the cancel's own creation time does not contain an order that has rested longer than
+    ///     it, and "not in the window" became "no such order, so the cancel landed";
+    ///   - absence only counts after AbsenceGrace has passed since this operation was dispatched,
+    ///     exactly as it does for a place;
+    ///   - a target that is UNKNOWN, DISPATCHING, RECONCILING or CANCEL_PENDING decides nothing;
+    ///   - "the cancel did not land" needs a target that is terminal, or one that has held still
+    ///     across a whole grace window — one sighting of a working order is not proof, because the
+    ///     platform's acknowledgement can arrive after our RPC gave up;
+    ///   - a modify is confirmed only by the target carrying what was asked for; it is never recorded
+    ///     as a definite failure without a definite refusal;
+    ///   - a cancel-all is judged on the orders the press captured, not on whatever is live now.
+    /// </summary>
+    async Task<(bool Settled, string Note)> ReconcileByTargetAsync(ExecutionRequest req, CancellationToken ct)
     {
         var stored = Json.Read<TargetRef>(req.ParametersJson);
-        var orders = await Connector.GetOrdersAsync(req.AccountId, true, since, ct);
+        var orders = await Connector.GetOrdersAsync(req.AccountId, true, null, ct);
+        var grace = _opt.AbsenceGrace;
+        var age = Now - (req.DispatchedAt ?? req.CreatedAt);
 
         ExecutionRequest Resolve(ExecutionState to, string why)
         {
             var r = _requests.Transition(req.RequestId, ExecutionState.RECONCILING, to,
                 needsReconciliation: false, markReconciled: true, error: why);
+            ClearLatch(req.RequestId);
+            _settleWatch.TryRemove(req.RequestId, out _);
             _log.Engineering("Reconciler", "target_reconciled", requestId: req.RequestId,
                 metadataJson: Json.Write(new { intent = req.Intent.ToString(), state = to.ToString(), why }));
             return r;
         }
 
-        // A cancel-all named no single order, so the whole book is the evidence.
+        // ---- a cancel-all is judged on the set the press captured
         if (req.Intent == RequestIntent.CANCEL_ALL || stored?.Order is null)
         {
-            var live = orders.Where(o => !OrderStateMachine.IsTerminal(o.State)).ToList();
-            if (live.Count > 0)
+            // The per-order records this press wrote ARE the captured set; an order that arrived
+            // afterwards belongs to nobody's press and must not decide this one.
+            var captured = _requests.Query("request_id LIKE $p", ("$p", $"{req.RequestId}-%"))
+                .Select(r => Json.Read<TargetRef>(r.ParametersJson)?.Order)
+                .Where(id => id is not null)
+                .ToHashSet();
+
+            var live = orders
+                .Where(o => !OrderStateMachine.IsTerminal(o.State) && IsDefinite(o.State))
+                .Where(o => captured.Count == 0 || captured.Contains(o.ConnectorOrderId))
+                .ToList();
+
+            if (live.Count == 0)
             {
-                Resolve(ExecutionState.REJECTED,
-                    $"{live.Count} order(s) are still working, so the cancel-all did not take effect");
-                return (true, $"{live.Count} order(s) still working; the cancel-all did not take effect");
+                if (captured.Count == 0 && age < grace)
+                    return (false, $"the account still has to settle inside the {grace.TotalSeconds:0}s grace window");
+                Resolve(ExecutionState.CANCELLED,
+                    captured.Count == 0 ? "no working orders are left on the account"
+                                        : "none of the orders this press captured is working any more");
+                return (true, "the orders this press captured are no longer working");
             }
-            Resolve(ExecutionState.CANCELLED, "no working orders are left on the account");
-            return (true, "no working orders are left on the account");
+
+            if (captured.Count == 0)
+                return (false, $"{live.Count} order(s) are working and none can be attributed to this press");
+
+            var fingerprint = string.Join(";", live.OrderBy(o => o.ConnectorOrderId).Select(SignatureOf));
+            if (!HeldStill(req.RequestId, fingerprint))
+                return (false, $"{live.Count} of the captured order(s) are still working; waiting to see them hold still");
+
+            Resolve(ExecutionState.REJECTED,
+                $"{live.Count} captured order(s) are still working, so the cancel-all did not take effect");
+            return (true, $"{live.Count} captured order(s) still working; the cancel-all did not take effect");
         }
 
         var target = stored.Order;
         var match = orders.FirstOrDefault(o => o.ConnectorOrderId == target);
 
+        // ---- a cancel
         if (req.Intent == RequestIntent.CANCEL)
         {
             if (match is null)
             {
-                // Absent from a history this backend can prove: there is nothing working to withdraw.
+                if (age < grace)
+                    return (false, $"order {target} is not listed yet, still inside the {grace.TotalSeconds:0}s grace window");
                 Resolve(ExecutionState.CANCELLED, $"the platform does not list order {target} at all");
                 return (true, $"order {target} is not on the account; nothing is working");
             }
@@ -1517,35 +1604,37 @@ public sealed class TradingGateway : IAsyncDisposable
                 Resolve(ExecutionState.CANCELLED, $"the platform has order {target} cancelled");
                 return (true, $"the platform has order {target} cancelled");
             }
-            if (match.State == ExecutionState.CANCEL_PENDING)
-                return (false, $"the platform is still cancelling order {target}");
+            if (!IsDefinite(match.State))
+                return (false, $"the platform reports order {target} as {match.State}, which settles nothing");
 
-            Resolve(ExecutionState.REJECTED,
-                OrderStateMachine.IsTerminal(match.State)
-                    ? $"order {target} is {match.State}; the cancellation did not take effect"
-                    : $"order {target} is still working; the cancellation did not take effect");
-            return (true, $"order {target} is {match.State}; the cancellation did not take effect");
+            if (OrderStateMachine.IsTerminal(match.State))
+            {
+                Resolve(ExecutionState.REJECTED, $"order {target} is {match.State}; the cancellation did not take effect");
+                return (true, $"order {target} is {match.State}; the cancellation did not take effect");
+            }
+
+            if (!HeldStill(req.RequestId, SignatureOf(match)))
+                return (false, $"order {target} is still working; waiting to see it hold still before calling the cancellation failed");
+
+            Resolve(ExecutionState.REJECTED, $"order {target} is still working; the cancellation did not take effect");
+            return (true, $"order {target} is still working; the cancellation did not take effect");
         }
 
-        // MODIFY.
+        // ---- a modify
         if (match is null)
             return (false, $"order {target} is not on the account, so the change cannot be confirmed");
 
-        var asked = new ModifyOrderCommand(target, stored.Quantity, stored.LimitPrice, stored.StopPrice);
         await EnsureInstrumentsAsync(ct);
-        var verdict = CheckModification(asked, match);
-        if (verdict == ModifyVerdict.Applied)
+        var asked = new ModifyOrderCommand(target, stored.Quantity, stored.LimitPrice, stored.StopPrice);
+        if (CheckModification(asked, match) == ModifyVerdict.Applied)
         {
             Resolve(ExecutionState.ACKNOWLEDGED, $"order {target} carries the change");
             return (true, $"order {target} carries the change");
         }
-        if (verdict == ModifyVerdict.Unknowable)
-            return (false, $"order {target} shows a different price and its tick size is unknown; a person has to look");
-        if (OrderStateMachine.IsTerminal(match.State))
-            return (false, $"order {target} is {match.State} and does not carry the change; a person has to look");
 
-        Resolve(ExecutionState.REJECTED, $"order {target} is still working and does not carry the change");
-        return (true, $"order {target} does not carry the change; it did not take effect");
+        // NEVER a definite failure without a definite refusal. A platform that rounds, or reports a
+        // quantity we cannot read as total-or-remaining, is not the platform saying no.
+        return (false, $"order {target} is {match.State} and does not show the change; a person has to look");
     }
 
     /// <summary>
