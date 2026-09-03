@@ -1,5 +1,6 @@
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Gateway;
 using TradeAgent.Provisioning;
 using Xunit;
 
@@ -737,6 +738,113 @@ public class UpdateTrustTests
         Assert.Equal(1, f.Launches);
         Assert.Contains("already installing", service.Message);
         Assert.Equal(UpdateStage.Installing, service.Stage);   // not flipped to Failed
+    }
+
+    // ---- 2. the other side of the window: no new dispatches while an install is going -------------
+
+    /// <summary>
+    /// The pre-install check refuses to replace the program while an order is unconfirmed. This is
+    /// the same window from the other end: an order placed AFTER that check and before Setup starts
+    /// would be dispatched by a process that is about to be overwritten, and the answer would arrive
+    /// after the thing that was going to reconcile it had gone.
+    /// </summary>
+    [Fact]
+    public async Task The_gateway_refuses_to_dispatch_while_an_install_is_going()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+
+        var installing = false;
+        gw.InstallInProgress = () => installing;
+
+        // Control first: the harness can dispatch at all, or the refusal below proves nothing.
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+
+        installing = true;
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out var reason, out var code));
+        Assert.Equal(ErrorCode.UPDATE_INSTALL_IN_PROGRESS, code);
+        Assert.Contains("installing a new version", reason);
+
+        // And it is a real refusal on the order path, not only on the query.
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), Guid.NewGuid().ToString("n"), TestEnv.Buy()));
+
+        // Cleared when the install is refused or finishes: trading comes back on its own.
+        installing = false;
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+        await gw.PlaceAsync(new AgentContext("a"), Guid.NewGuid().ToString("n"), TestEnv.Buy());
+    }
+
+    /// <summary>
+    /// The owner pressing Approve by hand is exactly the case being closed, so the latch does not
+    /// exempt the operator the way the AI kill switch does.
+    /// </summary>
+    [Fact]
+    public async Task The_install_latch_does_not_exempt_the_operator()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+        gw.InstallInProgress = () => true;
+
+        Assert.False(gw.TryAuthorizeExecution(AgentContext.Operator, out _, out var code));
+        Assert.Equal(ErrorCode.UPDATE_INSTALL_IN_PROGRESS, code);
+    }
+
+    /// <summary>A hook that throws is read as "installing": the direction that cannot dispatch.</summary>
+    [Fact]
+    public async Task A_latch_that_cannot_be_read_refuses_rather_than_dispatches()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+        gw.InstallInProgress = () => throw new InvalidOperationException("database is locked");
+
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.UPDATE_INSTALL_IN_PROGRESS, code);
+    }
+
+    /// <summary>
+    /// The updater's half of the same latch: it is up for the whole of an install and comes back
+    /// down when the install is refused — a refusal must not leave trading switched off.
+    /// </summary>
+    [Fact]
+    public async Task The_updater_raises_the_latch_for_the_install_and_lowers_it_on_a_refusal()
+    {
+        var f = Wellformed();
+        var seen = new List<bool>();
+        var service = Service(f);
+        var sources = f.Sources() with
+        {
+            Download = (_, sha, _, _) =>
+            {
+                f.DownloadStarted = true;
+                f.ShaHandedToTheDownload = sha;
+                return Task.FromResult(f.InstallerPath);
+            }
+        };
+
+        var latched = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources)
+        {
+            UnconfirmedWork = () => 0
+        };
+        latched.Changed += () => seen.Add(latched.InstallInProgress);
+        await latched.CheckAsync();
+
+        Assert.False(latched.InstallInProgress);
+        Assert.True(await latched.InstallAsync());
+        Assert.Contains(true, seen);                  // it was up while the install ran
+        Assert.True(latched.InstallInProgress);       // and stays up: Setup is running, we are closing
+
+        // A refused install leaves it down, so a release we will not install does not stop trading.
+        var refused = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern,
+            new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" }.Sources())
+        {
+            UnconfirmedWork = () => 0
+        };
+        await refused.CheckAsync();
+
+        Assert.False(await refused.InstallAsync());
+        Assert.False(refused.InstallInProgress);
+        Assert.Equal(UpdateStage.Failed, refused.Stage);
     }
 
     // ---- helpers ---------------------------------------------------------------------------------

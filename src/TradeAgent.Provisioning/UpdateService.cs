@@ -278,6 +278,21 @@ public sealed class UpdateService
     /// </summary>
     public Action<string, string>? Activity { get; set; }
 
+    /// <summary>
+    /// True from the moment an install is confirmed until it is refused, fails, or Setup is running.
+    ///
+    /// The gateway reads this and refuses to dispatch new orders while it is set — the other half of
+    /// the unconfirmed-order rule. `InstallAsync` refuses to replace the program while an order is
+    /// outstanding; this refuses to start an order while the program is being replaced. Without both
+    /// the window is only narrowed, not closed: an order placed after the check and before Launch
+    /// would be dispatched by a process that is about to be overwritten.
+    ///
+    /// It stays set after a successful Launch. That is deliberately wider than "until Launch
+    /// returns": Setup is running, this process is closing, and there is no version of the next few
+    /// seconds in which starting an order is a good idea.
+    /// </summary>
+    public bool InstallInProgress { get; private set; }
+
     public event Action? Changed;
 
     /// <summary>
@@ -383,7 +398,10 @@ public sealed class UpdateService
                 return false;
             }
             _busy = true;
+            InstallInProgress = true;
         }
+        Changed?.Invoke();
+
         try
         {
             // Before anything is fetched: is there an order whose outcome nobody knows? This is the
@@ -458,7 +476,13 @@ public sealed class UpdateService
         }
         finally
         {
-            lock (_gate) _busy = false;
+            lock (_gate)
+            {
+                _busy = false;
+                // Down again unless Setup is actually running, in which case it stays up until this
+                // process ends — which is imminent and is the point.
+                InstallInProgress = _launched;
+            }
         }
     }
 
