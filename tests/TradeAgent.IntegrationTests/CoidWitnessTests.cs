@@ -403,6 +403,8 @@ public class CoidWitnessTests : IDisposable
         Submit(first, "TA-DUP");
         first.Identified("TA-DUP", "BRK-OLD");
 
+        // The run that owned the witness has ended — which is what a restart IS.
+        first.Dispose();
         var second = Session();
         Submit(second, "TA-DUP");
 
@@ -707,6 +709,8 @@ public class CoidWitnessTests : IDisposable
         WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
                   records: "");
 
+        // The run that owned the witness has ended — which is what a restart IS.
+        first.Dispose();
         var reader = Session();
         Assert.Equal("BRK-REAL", reader.PriorSession("TA-REAL")!.BrokerOrderId);
 
@@ -806,6 +810,13 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("io:noted", again.Token());
         Assert.Null(again.Trouble);
         Assert.False(again.Unreadable);
+
+        // THE REASON IS WRITTEN DOWN BY THE OWNER. A reader flags its own answer and writes nothing
+        // (see A_reader_changes_nothing_on_disk_even_when_no_owner_holds_the_witness), so the
+        // sidecar line appears when a party entitled to write one next runs.
+        again.Dispose();
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-OURS", "SIM", "ES", "Buy", 1m, null));
         Assert.Contains("nothing anchors it",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
@@ -866,8 +877,15 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
         Assert.NotNull(reader.PriorSession("TA-1"));
         Assert.Null(reader.PriorSession("TA-SWAPPED"));
-        Assert.Contains("io:noted", reader.Token());   // written down, but not a durability gap
+        Assert.Contains("io:noted", reader.Token());   // flagged, but not a durability gap
         Assert.Null(reader.Trouble);
+
+        // THE REASON IS WRITTEN DOWN BY THE OWNER. A reader flags its own answer and writes nothing
+        // (see A_reader_changes_nothing_on_disk_even_when_no_owner_holds_the_witness), so the
+        // sidecar line appears when a party entitled to write one next runs.
+        first.Dispose();
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
         Assert.Contains("TA-1 is committed and not in it",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
@@ -924,8 +942,15 @@ public class CoidWitnessTests : IDisposable
 
         var reader = Session();
         Assert.Equal(["TA-COMMITTED"], reader.All().Select(r => r.ClientOrderId));
-        Assert.Contains("io:noted", reader.Token());   // written down, but not a durability gap
+        Assert.Contains("io:noted", reader.Token());   // flagged, but not a durability gap
         Assert.Null(reader.Trouble);
+
+        // THE REASON IS WRITTEN DOWN BY THE OWNER. A reader flags its own answer and writes nothing
+        // (see A_reader_changes_nothing_on_disk_even_when_no_owner_holds_the_witness), so the
+        // sidecar line appears when a party entitled to write one next runs.
+        first.Dispose();
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
         Assert.Contains("rival uncommitted rewrites",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
@@ -982,6 +1007,8 @@ public class CoidWitnessTests : IDisposable
         var first = Session();
         Submit(first, "TA-COMMITTED");
 
+        // The run that owned the witness has ended — which is what a restart IS.
+        first.Dispose();
         var stranded = Session(NeverLands);
         Submit(stranded, "TA-STRANDED");
         File.SetLastWriteTimeUtc(Temps().Single(), File.GetLastWriteTimeUtc(File_).AddHours(-1));
@@ -1001,6 +1028,8 @@ public class CoidWitnessTests : IDisposable
         Submit(first, "TA-ONE");
         first.Identified("TA-ONE", "BRK-ONE");
 
+        // The run that owned the witness has ended — which is what a restart IS.
+        first.Dispose();
         var refused = false;
         var stranded = Session(LandsUntil(() => refused));
         Assert.True(stranded.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
@@ -1136,16 +1165,22 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("io:failed", earlier.Token());
         Assert.True(File.Exists(Path.Combine(_dir, CoidWitness.ErrorLogName)));
 
-        // The restart. This session writes perfectly well; the gap is still a fact about the file.
+        // The restart. A READER sees the gap the earlier run left, and changes nothing.
         foreach (var f in Temps()) Age(f);
         var next = Session();
         Assert.Contains("io:degraded", next.Token());
         Assert.DoesNotContain(' ', next.Token());
+        Assert.Single(Temps());
 
-        // Cleared by deleting it, which takes effect at the next start. The stranded temp does NOT
-        // have to be cleaned up by hand any more: the session above quarantined it out of the
-        // candidate glob, which is what stops one crash degrading the witness for ever.
+        // Moving the leftover out of the candidate glob is a WRITE, so it belongs to the next OWNER
+        // rather than to whoever happens to look — that is what stops one crash degrading the
+        // witness for ever, and it is now done by the party entitled to do it.
+        earlier.Dispose();
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LATER", "SIM", "ES", "Buy", 1m, null));
         Assert.Empty(Temps());
+
+        // Cleared by deleting the sidecar, which takes effect at the next start.
         File.Delete(Path.Combine(_dir, CoidWitness.ErrorLogName));
         Assert.Contains("io:ok", Session().Token());
     }
@@ -1321,15 +1356,20 @@ public class CoidWitnessTests : IDisposable
         WriteTemp(generation: 99, predecessor: "some-other-witness", records: RecordJson("TA-GHOST", "s"));
         Age(Temps().Single());
 
-        var reader = Session();
-        Assert.Equal(["TA-REAL"], reader.All().Select(r => r.ClientOrderId));
+        // Moving it aside is a write, so it is the next OWNER that does it — a reader only reads.
+        first.Dispose();
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LATER", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(["TA-REAL", "TA-LATER"], owner.All().Select(r => r.ClientOrderId));
         Assert.Empty(Temps());
         Assert.Single(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
 
         var linesAfterFirstLook = File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length;
 
         // Every later session finds nothing to complain about.
-        Assert.Equal(["TA-REAL"], Session().All().Select(r => r.ClientOrderId));
+        owner.Dispose();
+        var later = Session();
+        Assert.True(later.Submitting("TA-LATEST", "SIM", "ES", "Buy", 1m, null));
         Assert.Equal(linesAfterFirstLook,
                      File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length);
     }
@@ -1369,6 +1409,8 @@ public class CoidWitnessTests : IDisposable
         Assert.Single(Temps());
 
         // A new session recovers it, then writes something of its own.
+        // The run that owned the witness has ended — which is what a restart IS.
+        w.Dispose();
         var next = Session();
         Assert.Equal("BRK-ONE", next.PriorSession("TA-ONE")!.BrokerOrderId);
         Assert.True(next.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
@@ -1498,6 +1540,8 @@ public class CoidWitnessTests : IDisposable
         var seed = Session();
         Submit(seed, "TA-SEED");
 
+        // The run that owned the witness has ended — which is what a restart IS.
+        seed.Dispose();
         var w = Session(NeverLands);
         Submit(w, "TA-ONE");
         Assert.Single(Temps());
@@ -1552,9 +1596,9 @@ public class CoidWitnessTests : IDisposable
         WriteTemp(generation: 99, predecessor: "some-other-witness", records: RecordJson("TA-GHOST", "s"));
         Age(Temps().Single());
 
-        using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
-                                        FileAccess.ReadWrite, FileShare.None);
-
+        // The owner is alive and holds its lease — no hand-held file handle needed any more, which
+        // is the round-5 change: ownership is a lifetime, so "somebody else owns it" is the
+        // ordinary state of the world for every reader.
         var reader = Session();
         Assert.Equal(["TA-SEED"], reader.All().Select(r => r.ClientOrderId));
         Assert.Null(reader.PriorSession("TA-GHOST"));
@@ -1614,6 +1658,7 @@ public class CoidWitnessTests : IDisposable
     {
         var seed = Session();
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
 
         // A REAL durability gap from an earlier run — a safety event, not a warning.
         var failed = Session(NeverLands);
@@ -1623,6 +1668,7 @@ public class CoidWitnessTests : IDisposable
         // 40 stale foreign temps: one quarantine warning each, well past the 32-line quota.
         for (var i = 0; i < 40; i++) WriteForeignLeftover(i);
 
+        failed.Dispose();
         var next = Session();
         Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
 
@@ -1631,6 +1677,7 @@ public class CoidWitnessTests : IDisposable
 
         // And the witness says the gap is closed, so the next start does not report one.
         Assert.Contains("RESOLVED", SidecarLines()[^1]);
+        next.Dispose();
         Assert.Null(Session().Trouble);
     }
 
@@ -1651,6 +1698,7 @@ public class CoidWitnessTests : IDisposable
         var owner = Session();
         Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
         WriteForeignLeftover(1);
+        owner.Dispose();
 
         var next = Session();
         Assert.True(next.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
@@ -1660,6 +1708,7 @@ public class CoidWitnessTests : IDisposable
         // are being refused.
         Assert.Contains("io:noted", next.Token());
         Assert.Null(next.Trouble);
+        next.Dispose();
         Assert.Null(Session().Trouble);
     }
 
@@ -1675,12 +1724,140 @@ public class CoidWitnessTests : IDisposable
     public void Two_writers_do_not_share_a_temp_name()
     {
         var a = Session(NeverLands);
-        var b = Session(NeverLands);
         Submit(a, "TA-A");
+
+        // A second LIVE writer never reaches the temp stage at all now — it is refused before it
+        // writes anything (see A_second_live_writer_is_refused_even_when_it_never_overlaps_a_call).
+        // The per-writer name still matters across RUNS: the first run's stranded temp must not be
+        // the name the next run writes, or the next run's replace consumes it.
+        var blocked = Session(NeverLands);
+        Assert.False(blocked.Submitting("TA-BLOCKED", "SIM", "ES", "Buy", 1m, null));
+        Assert.Single(Temps());
+
+        a.Dispose();
+        var b = Session(NeverLands);
         Submit(b, "TA-B");
 
         Assert.Equal(2, Temps().Length);
         Assert.Equal(2, Temps().Select(Path.GetFileName).Distinct().Count());
+    }
+
+    /// <summary>
+    /// ONE OWNER PER WITNESS IS A LIFETIME LEASE, NOT A PER-CALL LOCK — and the difference is a
+    /// second live bridge writing the file.
+    ///
+    /// The lock used to be taken and released inside each call, so two live instances that simply
+    /// did not overlap took turns successfully: A writes, releases; B writes, releases. Every test
+    /// that claimed to prove "one owner" simulated the rival by holding the lock FROM THE TEST, so
+    /// none of them exercised the sequence that actually happens — two bridges on one machine, each
+    /// perfectly polite, alternating. The owner now holds an exclusive handle from its first write
+    /// until it is disposed, so the second instance is refused on every call rather than only when
+    /// it collides with one.
+    ///
+    /// The OS releases the handle when the process dies, so a crashed bridge strands nothing.
+    /// </summary>
+    [Fact]
+    public void A_second_live_writer_is_refused_even_when_it_never_overlaps_a_call()
+    {
+        var a = Session();
+        Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+
+        // A is alive and idle. Nothing external holds the lock; B is simply not the owner.
+        var b = Session();
+        Assert.False(b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("another writer owns this witness", b.Trouble);
+        Assert.Equal(["TA-A"], CommittedIds());
+
+        // BOTH DIRECTIONS. A lease that could never be handed on would be a witness one crash could
+        // wedge for ever. When the owner lets go — Dispose here, process death in the field, and the
+        // OS does that one whether the process asked or not — the next writer takes it.
+        a.Dispose();
+        var c = Session();
+        Assert.True(c.Submitting("TA-C", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(["TA-A", "TA-C"], CommittedIds());
+        Assert.Null(c.Trouble);
+    }
+
+    /// <summary>
+    /// WHAT THE LEASE IS ACTUALLY FOR, DRIVEN THROUGH THE ONE INTERLEAVING THAT SHOWS IT. Lifted
+    /// from the round-4 adversarial-verify leg, whose mutant MV2 — `FileShare.None` →
+    /// `FileShare.ReadWrite`, i.e. the lock stops excluding anybody — left all 80 tests green.
+    ///
+    /// Writer B is between its compare-and-swap and its rename when writer A runs an entire
+    /// `Submitting`. Without exclusion A is told its write-ahead record is DURABLE — so `Place`
+    /// sends that order — and B's rename then commits a file that does not contain A's claim. An
+    /// order on the wire with no record behind it is the one outcome rule 1 exists to prevent.
+    /// </summary>
+    [Fact]
+    public void The_lease_is_what_stops_a_claim_reported_durable_from_being_dropped()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        CoidWitness? a = null;
+        bool? aSaidDurable = null;
+
+        // B's rename is the hook: A's whole claim runs inside B's replace, after B's CAS passed.
+        var b = Session((tmp, dest) =>
+        {
+            if (a is not null && aSaidDurable is null)
+                aSaidDurable = a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null);
+            File.Move(tmp, dest, overwrite: true);
+        });
+        a = Session();
+
+        // Both load the same committed content before either writes.
+        _ = b.All();
+        _ = a.All();
+
+        b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null);
+
+        // THE INVARIANT: a claim Submitting called durable is on the committed file.
+        Assert.NotNull(aSaidDurable);
+        if (aSaidDurable == true) Assert.Contains("TA-A", CommittedIds());
+    }
+
+    /// <summary>
+    /// A READER CHANGES NOTHING ON DISK — INCLUDING WHEN NOBODY OWNS THE WITNESS.
+    ///
+    /// Item 4 asserted only that a reader does not write while somebody ELSE holds the lock. The
+    /// read paths took the lock opportunistically and treated getting it as being the owner, so a
+    /// reader over an unowned witness quarantined temps, created the lock file and wrote the
+    /// sidecar. `tools/probe` is the diagnostic an operator runs when the bridge is NOT running,
+    /// which is exactly when it became the owner — and the line it left ("could not write the
+    /// write-ahead record") misdescribes a tidy-up as a durability gap.
+    ///
+    /// Reading is now read-only in the literal sense: the whole directory is byte-identical after.
+    /// </summary>
+    [Fact]
+    public void A_reader_changes_nothing_on_disk_even_when_no_owner_holds_the_witness()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        owner.Identified("TA-SEED", "BRK-SEED");
+        owner.Dispose();                       // nobody owns the witness now — the probe's own case
+        WriteForeignLeftover(1);
+
+        var before = Directory.GetFiles(_dir).Select(Path.GetFileName).OrderBy(n => n).ToArray();
+
+        // Everything a reader does, in one instance, with no writer running and no lock held.
+        var reader = Session();
+        Assert.Equal(["TA-SEED"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Equal("BRK-SEED", reader.PriorSession("TA-SEED")!.BrokerOrderId);
+        _ = reader.PriorSessionIds(16);
+        _ = reader.Token();
+        _ = reader.Trouble;
+        _ = reader.Unreadable;
+
+        // Byte-for-byte the same directory: nothing quarantined, nothing renamed, nothing appended.
+        Assert.Equal(before, Directory.GetFiles(_dir).Select(Path.GetFileName).OrderBy(n => n).ToArray());
+        Assert.False(File.Exists(Sidecar), "a reader wrote the sidecar");
+        Assert.Empty(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
+
+        // And it still answered about the leftover: the zero-is-flagged rule needs the reader to
+        // KNOW it refused something, which it can do without writing it down.
+        Assert.Contains("io:noted", reader.Token());
     }
 
     /// <summary>
@@ -1701,8 +1878,10 @@ public class CoidWitnessTests : IDisposable
     {
         var owner = Session();
         Submit(owner, "TA-SEED");
+        owner.Dispose();
 
-        // Somebody else holds the witness for the duration — a second bridge, in one line.
+        // Something that is not a CoidWitness holds the witness for the duration — a backup tool, a
+        // scanner, an operator's shell. The rival-bridge case is the lease, one test up.
         using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
                                         FileAccess.ReadWrite, FileShare.None);
 
@@ -1734,9 +1913,12 @@ public class CoidWitnessTests : IDisposable
         var w = Session();
         Assert.True(w.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
 
-        // Somebody else owns the witness from here on — a second bridge, in one line.
-        using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
-                                        FileAccess.ReadWrite, FileShare.None);
+        // THE SHAPE THIS ACTUALLY HAS. This bridge is taken down, a second one starts and takes the
+        // witness — and this one's order-event fan is still running against ATAS. No hand-held file
+        // handle: the rival is a real witness holding a real lease.
+        w.Dispose();
+        var other = Session();
+        Assert.True(other.Submitting("TA-OTHER", "SIM", "ES", "Buy", 1m, null));
 
         // THE CLAIM PATH. Refused, and Place gets the sentence it needs to say why.
         Assert.False(w.Submitting("TA-BLOCKED", "SIM", "ES", "Buy", 1m, null));
@@ -1750,7 +1932,7 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(CommittedBrokerId("TA-LIVE"));
 
         // Nothing lost, nothing phantom: the file is exactly as its owner left it.
-        Assert.Equal(["TA-LIVE"], CommittedIds());
+        Assert.Equal(["TA-LIVE", "TA-OTHER"], CommittedIds());
     }
 
     /// <summary>
@@ -1844,6 +2026,8 @@ public class CoidWitnessTests : IDisposable
     {
         var seed = Session();
         Submit(seed, "TA-SEED");
+        // The run that owned the witness has ended — which is what a restart IS.
+        seed.Dispose();
 
         var w = Session((tmp, destination) =>
         {
@@ -1885,6 +2069,8 @@ public class CoidWitnessTests : IDisposable
     {
         var seed = Session();
         Submit(seed, "TA-SEED");
+        // The run that owned the witness has ended — which is what a restart IS.
+        seed.Dispose();
 
         var w = Session(NeverLands);
         for (var i = 0; i < 5; i++) Submit(w, $"TA-{i}");
