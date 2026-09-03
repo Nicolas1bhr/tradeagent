@@ -153,24 +153,24 @@ public class UnprovedPeerVerifyR5Probes
         await using var client = new System.IO.Pipes.NamedPipeClientStream(
             ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
         await client.ConnectAsync(10_000);
-        await using var w = new StreamWriter(client, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+        // NOT `await using`: the connector drops an unproved peer, and disposing a StreamWriter over
+        // a dead pipe throws from the flush in teardown — the test's own plumbing, not the subject.
+        var w = new StreamWriter(client, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
 
-        await w.WriteLineAsync(Json.Write(new BridgeFrame
-        {
-            Op = BridgeOps.Hello,
-            Data = System.Text.Json.JsonSerializer.SerializeToElement(new BridgeHello
-            {
-                BridgeProtocolVersion = Versions.BridgeProtocolVersion,
-                BridgeVersion = "9.9.9", AtasVersion = "6.1.2.3",
-                SupportsClientOrderId = true, SupportsOrderHistory = true
-            }, Json.Options)
-        }));
-
-        // The events go out immediately behind the hello, in the same write burst, so they are on
-        // the wire before this end can act on the refusal. Writing may itself fail once the peer is
-        // dropped — that outcome is the answer too, so it is caught rather than asserted away.
+        // Hello and events in ONE burst, so the events are on the wire before this end can act on
+        // the refusal. Any write may fail once the peer is dropped — that outcome is a refusal too.
         try
         {
+            await w.WriteLineAsync(Json.Write(new BridgeFrame
+            {
+                Op = BridgeOps.Hello,
+                Data = System.Text.Json.JsonSerializer.SerializeToElement(new BridgeHello
+                {
+                    BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+                    BridgeVersion = "9.9.9", AtasVersion = "6.1.2.3",
+                    SupportsClientOrderId = true, SupportsOrderHistory = true
+                }, Json.Options)
+            }));
             await w.WriteLineAsync(Json.Write(new { v = Versions.BridgeProtocolVersion, @event = BridgeEvents.Quote, data = new { symbol = "ES", bid = 1.0, ask = 2.0 } }));
             await w.WriteLineAsync(Json.Write(new { v = Versions.BridgeProtocolVersion, @event = BridgeEvents.Order, data = new { id = "X", status = "Filled" } }));
         }
