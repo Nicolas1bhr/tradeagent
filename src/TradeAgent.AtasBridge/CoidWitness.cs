@@ -260,9 +260,12 @@ public sealed class CoidWitness : IDisposable
     bool _readFailed;
 
     /// <summary>
-    /// SOMETHING IS AT <see cref="Path"/> AND IT IS NOT AN ENVELOPE. Refuses every write while it
-    /// stands — see <see cref="EnsureLoaded"/> — and reports through <see cref="Trouble"/>, which
-    /// puts the reason on the ATAS bridge row and drops <c>SupportsClientOrderId</c>.
+    /// THIS BUILD DOES NOT HAVE THE COMMITTED CONTENT, and it is not because the file is absent.
+    /// Two ways in and they are one predicate on purpose (<see cref="EnsureLoaded"/>): the read was
+    /// REFUSED, or the bytes arrived and are not an envelope. Absent — <see cref="FileNotFoundException"/>
+    /// on this path — is neither, and is the only outcome that lets a write proceed against nothing.
+    /// Refuses every write while it stands and reports through <see cref="Trouble"/>, which puts the
+    /// reason on the ATAS bridge row and drops <c>SupportsClientOrderId</c>.
     /// </summary>
     bool _committedUnreadable;
     bool _candidateUnreadable;
@@ -852,6 +855,14 @@ public sealed class CoidWitness : IDisposable
         }
         catch (Exception) { }
 
+        // ONE PREDICATE FOR "THIS BUILD DOES NOT HAVE THE COMMITTED CONTENT", and it covers both
+        // ways of not having it. ABSENT is exactly FileNotFound on this path — the file has never
+        // been written — and that is the only outcome that lets a write proceed against nothing.
+        // Every other outcome is UNREADABLE: the read was refused (a scanner, an ACL, a disk error)
+        // or the bytes came back and are not an envelope. Those were two predicates and the I/O one
+        // was missing, so a denied read looked like an empty directory: lineage reset to generation
+        // 0 with no predecessor, the compare-and-swap compared null against null and passed, and the
+        // rewrite replaced a file of acknowledged claims with the new claim alone.
         var committedText = ReadTolerantly(_path, out var unreadable);
         var committed = committedText is null ? null : Parse(committedText);
         if (committedText is not null && committed is null) unreadable = true;
@@ -889,7 +900,7 @@ public sealed class CoidWitness : IDisposable
         // over it destroys whatever it holds, and this run cannot say what that was — so every write
         // is refused while it stands and Trouble says why. It is a state and not a latch: repair or
         // remove the file and the next start works.
-        _committedUnreadable = committedText is not null && committed is null;
+        _committedUnreadable = unreadable;
 
         if (committed is not null) Take(committed);
 
@@ -1402,7 +1413,13 @@ public sealed class CoidWitness : IDisposable
         // not this build: an older bridge, a hand edit, a restored backup. There is no safe merge
         // with a party whose semantics are unknown, and this product does not support two writers
         // (trap 35: a second bridge is a misconfiguration). Refuse, and let Place refuse the order.
-        var current = ReadTolerantly(_path, out _);
+        // AND THE COMPARE-AND-SWAP READ HAS THE SAME RULE. It used to discard the failure flag, so
+        // a refused read here produced null, null matched a null _committedHash, and the swap went
+        // ahead against a file this instance had never managed to see. A read that failed says
+        // nothing about what is on disk, and "nothing" is not a lineage.
+        var current = ReadTolerantly(_path, out var unreadable);
+        if (unreadable) { NotOurs(UnreadableDetail()); return false; }
+
         var currentHash = current is null ? null : Fingerprint(current);
         if (!string.Equals(currentHash, _committedHash, StringComparison.Ordinal))
         {
@@ -1417,7 +1434,8 @@ public sealed class CoidWitness : IDisposable
     /// <summary>The one sentence for "there is something at the path and it is not an envelope".</summary>
     string UnreadableDetail() =>
         $"the write-ahead record at {_path} could not be read, so this run cannot say what it has " +
-        $"submitted and must not write over it; repair or remove the file";
+        $"submitted and must not write over it; if the file is locked wait, if it is damaged repair " +
+        $"or remove it";
 
     /// <summary>The one refusal shape for "this witness is not ours to write". Caller holds the gate.</summary>
     void NotOurs(string detail)
