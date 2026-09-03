@@ -67,9 +67,17 @@ public sealed class GatewayOptions
 /// the button repeats it; the screen tells the person that the last one is unconfirmed and needs
 /// resolving, rather than quietly sending more orders.
 /// </summary>
+public sealed record PressOutcome(string Nonce, int Records, int Unfinished, bool Complete, string Summary);
+
 public sealed class OperatorPress
 {
     string? _outstanding;
+
+    /// <summary>
+    /// Adopts a press the store still cannot account for, so a restart cannot mint a fresh nonce
+    /// over an unresolved close. Called when the screen is built.
+    /// </summary>
+    public void Restore(string? nonce) { if (nonce is not null) _outstanding = nonce; }
 
     /// <summary>True while the last press has not been shown to have finished.</summary>
     public bool Outstanding => _outstanding is not null;
@@ -77,8 +85,12 @@ public sealed class OperatorPress
     /// <summary>The nonce to use now: the same one again while the last press is outstanding.</summary>
     public string Begin() => _outstanding ??= TradingGateway.NewOperatorPressNonce();
 
-    /// <summary>Retires the press only if the gateway has nothing unconfirmed left from it.</summary>
-    public void Finish(bool clean) { if (clean) _outstanding = null; }
+    /// <summary>
+    /// Retires the press only when the press's OWN records are all settled — judged by
+    /// <see cref="TradingGateway.PressOutcomeAsync"/>, never by whether the gateway happens to have
+    /// unconfirmed work from something else.
+    /// </summary>
+    public void Finish(bool complete) { if (complete) _outstanding = null; }
 }
 
 public sealed record AgentContext(string SessionId)
