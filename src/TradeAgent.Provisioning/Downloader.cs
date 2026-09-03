@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
@@ -275,6 +276,70 @@ public static class Downloader
             return response.IsSuccessStatusCode ? await response.Content.ReadAsStringAsync(ct) : null;
         }
         catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Fetches a text file that we already know must be SMALL, and refuses it while it is arriving
+    /// rather than after.
+    ///
+    /// <see cref="TryGetStringAsync"/> buffers the whole body before anyone can look at it: no
+    /// content-length check, decompression on, and this client's 30-minute timeout. A size limit
+    /// applied to its RESULT is not a limit at all — the allocation has already happened, and on the
+    /// update path the caller is holding a latch that stops the owner trading while it waits. So the
+    /// checksum manifest comes through here: a declared length is refused unopened, the body is read
+    /// through <see cref="ReadLimitedAsync"/> so at most <paramref name="maxBytes"/> + 1 bytes are
+    /// ever pulled off the socket, and the whole thing is on a short leash of its own.
+    /// </summary>
+    public static async Task<string?> TryGetSmallTextAsync(
+        string url, int maxBytes, TimeSpan timeout, CancellationToken ct = default)
+    {
+        using var leash = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        leash.CancelAfter(timeout);
+
+        try
+        {
+            using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, leash.Token);
+            if (!response.IsSuccessStatusCode) return null;
+
+            // The server said how big it is and it is too big. Nothing needs to be read at all.
+            if (response.Content.Headers.ContentLength is { } declared && declared > maxBytes) return null;
+
+            await using var body = await response.Content.ReadAsStreamAsync(leash.Token);
+            return await ReadLimitedAsync(body, maxBytes, leash.Token);
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// Reads a stream as UTF-8, pulling at most <paramref name="maxBytes"/> + 1 bytes, and returns
+    /// null the moment it is clear there are more than <paramref name="maxBytes"/>.
+    ///
+    /// The +1 is the whole trick: one byte past the limit is enough to know the body is too big, and
+    /// it is the last byte this ever asks for. A declared length can lie and a chunked body declares
+    /// nothing, so this is the check that actually holds.
+    ///
+    /// Separate from the fetch so it can be tested against a stream that counts what was taken from
+    /// it — "refused without buffering it all" is a claim about reads, and only a read count can
+    /// prove it.
+    /// </summary>
+    public static async Task<string?> ReadLimitedAsync(Stream body, int maxBytes, CancellationToken ct = default)
+    {
+        var cap = maxBytes + 1;
+        var buffer = new byte[Math.Min(64 * 1024, cap)];
+        using var into = new MemoryStream();
+
+        var total = 0;
+        while (total < cap)
+        {
+            var want = Math.Min(buffer.Length, cap - total);
+            var read = await body.ReadAsync(buffer.AsMemory(0, want), ct);
+            if (read <= 0) break;
+
+            into.Write(buffer, 0, read);
+            total += read;
+        }
+
+        return total > maxBytes ? null : Encoding.UTF8.GetString(into.GetBuffer(), 0, (int)into.Length);
     }
 
     public static async Task<string> Sha256Async(string file, CancellationToken ct = default)
