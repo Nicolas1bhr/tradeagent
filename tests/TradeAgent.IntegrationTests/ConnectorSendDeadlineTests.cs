@@ -64,7 +64,7 @@ public class ConnectorSendDeadlineTests
         };
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         // From here the peer reads nothing at all.
@@ -112,7 +112,7 @@ public class ConnectorSendDeadlineTests
         };
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         // Arithmetic, not measured: 64 KiB of comment is four times the ~16 KiB the macOS kernel
@@ -147,7 +147,7 @@ public class ConnectorSendDeadlineTests
         };
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         var flooding = Enumerable.Range(0, Calls).Select(_ => connector.GetAccountsAsync()).ToArray();
@@ -207,7 +207,7 @@ public class ConnectorSendDeadlineTests
         };
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         // One order big enough that it cannot land in the socket buffer, then the caller gives up.
@@ -305,7 +305,7 @@ public class ConnectorSendDeadlineTests
         Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyGateWait);
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-emerg-1", "ATAS-STALLED", "ES",
@@ -354,7 +354,7 @@ public class ConnectorSendDeadlineTests
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped deadlines
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-intent-1", "ATAS-STALLED", "ES",
@@ -383,35 +383,61 @@ public class ConnectorSendDeadlineTests
     /// and the queue was ours. Reproduced by the review: 1500 concurrent 900 KiB RPCs and one
     /// cancel-all returned in 2.01 s having disconnected a bridge that was perfectly healthy.
     ///
-    /// Here the peer READS EVERYTHING, and the gate is genuinely contended by our own traffic. The
-    /// emergency still fails — its frame was never sent, so its outcome is honestly unknown — but it
-    /// must say BUSY, and it must leave the connection up so the retry it advises has somewhere to go.
+    /// THE MIRROR OF THE TEST ABOVE, ONE VARIABLE CHANGED: this peer READS. Shipped deadlines, one
+    /// oversized write holding the send gate, one emergency queued behind it — identical in every
+    /// other respect — so the only thing that can move the verdict from "not responding, dropped"
+    /// to "busy, still up" is the single question the connector asks on gate expiry: did the writer
+    /// holding the gate get anywhere while we waited.
+    ///
+    /// WHY THE FIXTURE IS A PACED READER AND NOT A PILE OF TRAFFIC. The first version of this test
+    /// fired 400 concurrent 512 KiB RPCs at a real BridgeServer and assumed they would still be
+    /// draining two seconds later. That assumption is a bound in the WRONG DIRECTION — it needs the
+    /// machine to be slow enough — and it does not hold here. Measured on this box, 2026-09-03:
+    /// 73 of the 400 already finished at 312 ms, all 400 at about 1.02 s, and the cancel-all took
+    /// the gate at 0.71 s and returned SENT, so the expiry branch this test exists to pin was never
+    /// reached and the test failed on ThrowsAny with no exception thrown. A peer that accepts at
+    /// most 8 KiB every 200 ms bounds the drain from below instead: no machine can make a 512 KiB
+    /// frame finish inside twelve seconds, so the gate is still held — and still moving — for the
+    /// whole two seconds the emergency waits, on any box, under any load.
+    ///
+    /// The emergency still fails: its frame was never sent, so its outcome is honestly unknown. But
+    /// it must say BUSY, and it must leave the connection up so the retry it advises has somewhere
+    /// to go.
     /// </summary>
     [Fact]
     public async Task An_emergency_behind_a_busy_but_healthy_bridge_says_busy_and_does_not_drop_it()
     {
         var pipe = NewPipe();
-        // No fixed credential: a real BridgeServer authenticates against the installation's own
-        // published secret, and handing this end a different one means the handshake never lands.
-        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(30));
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all deadlines shipped
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyGateWait);
         await connector.ConnectAsync();
 
-        // A real bridge that reads and answers: the far end is never the problem in this test.
-        var adapter = new LoopbackAtasAdapter();
-        await using var bridge = new BridgeServer(adapter, pipe);
-        bridge.Start();
+        // The far end is never the problem in this test: it accepts every byte it is offered. It
+        // just does not accept them quickly, which is what keeps OUR write holding the gate.
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // Our own backlog: big frames, many of them, so the send gate is held continuously by
-        // writes that ARE making progress.
-        var fat = new string('s', 512 * 1024);
-        var backlog = Enumerable.Range(0, 400).Select(_ => connector.GetQuoteAsync(fat)).ToArray();
-        Observe(backlog);
-        await Task.Delay(300);
+        // 512 KiB against a 40 KiB/s ceiling: over ten seconds of writing, against two of waiting.
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-busy-1", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+        Observe([stuck]);
+
+        // Wait for the write to be genuinely in flight instead of sleeping a guessed interval. The
+        // handshake is a few hundred bytes, so 32 KiB accepted can only be the order going out.
+        await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
+        var acceptedBefore = peer.BytesRead;
 
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-LOOPBACK"));
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-READING"));
         timer.Stop();
+
+        // THE FIXTURE'S OWN PREMISE, ASSERTED BEFORE THE VERDICT IS READ. Without these two, a
+        // fixture that failed to contend the gate reports a product defect instead of reporting
+        // itself — which is exactly what the 400-RPC version did.
+        Assert.False(stuck.IsCompleted,
+            "the write holding the send gate finished while the emergency waited — the emergency was never queued behind anything, so this measured nothing");
+        Assert.True(peer.BytesRead > acceptedBefore,
+            $"the peer accepted no bytes between {acceptedBefore} and the emergency returning — that is the STALLED case, not the busy one this test is about");
 
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
@@ -441,7 +467,7 @@ public class ConnectorSendDeadlineTests
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
         await connector.ConnectAsync();
 
-        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await using var peer = await BridgePeer.Stalled(pipe, Cred().Secret);
         await Wait(async () => await connector.IsConnectedAsync());
 
         var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-ordinary-1", "ATAS-STALLED", "ES",
@@ -482,20 +508,64 @@ public class ConnectorSendDeadlineTests
 
     /// <summary>
     /// A peer that authenticates as this installation's bridge, says a compatible hello so the
-    /// connector marks itself connected, and then never reads another byte.
+    /// connector marks itself connected, and then either never reads another byte or reads
+    /// everything at a pace it is given.
     ///
     /// It authenticates for real. Everything the tests measure happens on the far side of a
     /// handshake the connector accepted, which is the point: this is not an impostor being refused,
-    /// it is the legitimate bridge having stopped reading — a suspended ATAS, a blocked strategy
-    /// thread, a machine that went to sleep.
+    /// it is the legitimate bridge — either stopped (a suspended ATAS, a blocked strategy thread, a
+    /// machine that went to sleep) or merely slow.
+    ///
+    /// THE TWO FACTORIES ARE THE EXPERIMENT. <see cref="Stalled"/> and <see cref="ReadingSlowly"/>
+    /// differ in exactly one thing — whether bytes are accepted — and that is the one question the
+    /// emergency path asks before it decides to drop a connection or keep it. Anything else that
+    /// differed between the two fixtures would be a second explanation for a different verdict.
     /// </summary>
-    sealed class StalledBridgePeer(string pipe) : IAsyncDisposable
+    sealed class BridgePeer : IAsyncDisposable
     {
-        readonly NamedPipeClientStream _p = new(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        /// <summary>
+        /// The paced reader's ceiling: at most <see cref="PaceBytes"/> accepted, then this long doing
+        /// nothing. 8 KiB per 200 ms is 40 KiB/s AT MOST, and it is a WALL-CLOCK bound — a faster
+        /// machine cannot beat it, it can only arrive at the delay sooner. That direction is the
+        /// whole point (see <see cref="ReadingSlowly"/>).
+        /// </summary>
+        static readonly TimeSpan Pace = TimeSpan.FromMilliseconds(200);
+        const int PaceBytes = 8192;
 
-        public static async Task<StalledBridgePeer> ConnectAndSayHello(string pipe, string secret)
+        readonly NamedPipeClientStream _p;
+        readonly CancellationTokenSource _stop = new();
+        long _read;
+
+        BridgePeer(string pipe) =>
+            _p = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+
+        /// <summary>
+        /// Bytes accepted since the handshake. This is the fact the connector's emergency path keys
+        /// on — <c>_lastWriteProgressAt</c> moves only when the peer takes bytes — so a test can
+        /// assert the CONDITION it claims to have created rather than assuming it.
+        /// </summary>
+        public long BytesRead => Interlocked.Read(ref _read);
+
+        /// <summary>Handshakes, then never reads another byte.</summary>
+        public static Task<BridgePeer> Stalled(string pipe, string secret) =>
+            ConnectAndSayHello(pipe, secret, "ATAS-STALLED", null);
+
+        /// <summary>
+        /// Handshakes, then reads everything it is offered — slowly, at <see cref="Pace"/>.
+        ///
+        /// WHY A PACED READER AND NOT A PILE OF TRAFFIC. To exercise gate EXPIRY the send gate has
+        /// to still be held two seconds from now, and a fixture that gets there by queueing enough
+        /// work needs the machine to be SLOW ENOUGH — a bound in the wrong direction, which is
+        /// exactly how the first version of the busy test came to pass when it was written and fail
+        /// on a quieter box. A reader that sleeps between reads bounds the drain from BELOW instead:
+        /// no machine can make it finish sooner, so "still writing, still moving" is a guarantee.
+        /// </summary>
+        public static Task<BridgePeer> ReadingSlowly(string pipe, string secret) =>
+            ConnectAndSayHello(pipe, secret, "ATAS-READING", Pace);
+
+        static async Task<BridgePeer> ConnectAndSayHello(string pipe, string secret, string accountId, TimeSpan? pace)
         {
-            var peer = new StalledBridgePeer(pipe);
+            var peer = new BridgePeer(pipe);
             await peer._p.ConnectAsync(10_000);
 
             var nonce = BridgePipeAuth.NewNonce();
@@ -517,11 +587,34 @@ public class ConnectorSendDeadlineTests
                 data = new BridgeHello
                 {
                     BridgeProtocolVersion = Versions.BridgeProtocolVersion,
-                    AccountId = "ATAS-STALLED",
+                    AccountId = accountId,
                     IsSimulated = true
                 }
             });
+
+            // Started only AFTER the handshake, so BytesRead counts nothing but the traffic a test
+            // put on the wire itself.
+            if (pace is { } p) _ = Task.Run(() => peer.Pump(p));
             return peer;
+        }
+
+        async Task Pump(TimeSpan pace)
+        {
+            var buf = new byte[PaceBytes];
+            try
+            {
+                while (!_stop.IsCancellationRequested)
+                {
+                    var n = await _p.ReadAsync(buf, _stop.Token);
+                    if (n == 0) return;
+                    Interlocked.Add(ref _read, n);
+                    await Task.Delay(pace, _stop.Token);
+                }
+            }
+            catch (Exception)
+            {
+                // The connector closing the pipe, or the test finishing, is how this always ends.
+            }
         }
 
         Task WriteAsync(object frame) =>
@@ -541,6 +634,10 @@ public class ConnectorSendDeadlineTests
             }
         }
 
-        public ValueTask DisposeAsync() => _p.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            await _p.DisposeAsync();
+        }
     }
 }
