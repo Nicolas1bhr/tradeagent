@@ -1,0 +1,97 @@
+FINDING 1 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:1284 — “one owner” is operation-scoped, so a second live writer is accepted between calls
+
+`Submitting` and `Identified` acquire and immediately release `.lock`; no instance retains ownership for its lifetime. Two live bridge instances can therefore alternate successful writes. The current test simulates a second writer by externally holding the lock, so it never exercises this sequence. CLASS: witness ownership lifecycle. The structural fix is a lifetime lease held from owner startup until disposal/process death.
+
+Exact check: keep writer A alive after it successfully submits `TA-A`, then create writer B over the same path and submit `TA-B` without overlapping calls. B must return false with `Trouble` containing “another writer owns this witness”; currently it returns true.
+
+FINDING 2 — MED — src/TradeAgent.AtasBridge/CoidWitness.cs:939 — ordinary readers acquire ownership and mutate witness artifacts
+
+`PriorSession`, `PriorSessionIds`, `All`, and `Token` call `EnsureRecovered`, which opportunistically acquires `.lock` and calls `ApplyRecovery`. A probe or other reader can therefore quarantine temps and append the sidecar whenever the lock happens to be free. The existing reader test proves only that a reader does not write while somebody else externally holds the lock. CLASS: the same ownership-role defect as finding 1. Readers need an explicit read-only mode; only the retained owner should perform startup recovery.
+
+Exact check: create an aged rejected temp and snapshot the directory, call `new CoidWitness(path).All()` without externally holding `.lock`, then compare the directory. The temp and sidecar must be unchanged; currently the temp is renamed and the sidecar is written.
+
+FINDING 3 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:982 — the membership rule accepts a full candidate containing none of the committed identifiers
+
+When all committed IDs are absent, the loop advances `i` to the end. If the candidate is at `_cap`, line 987 grants the trim exemption, and the validation loop has nothing left to inspect. Thus committed `{A,B,C}` and perfectly lined-up candidate `{X,Y,Z}` at cap 3 is adopted. Its acknowledged records can immediately become cross-session proof. CLASS: recovery validates broad shape instead of a legal single rewrite. A legal transition should preserve every record except at most the one oldest record removed by one trim, and should reject duplicates.
+
+Exact check: commit acknowledged A/B/C with cap 3, write a generation+1 temp with the correct predecessor and acknowledged X/Y/Z, then call `PriorSession("X")`. It must return null and retain A/B/C; current code adopts X/Y/Z.
+
+FINDING 4 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:786 — deserialized but semantically invalid envelopes can become an unflagged zero and later overwrite committed history
+
+`Parse` performs no validation of version, generation, null records, null record elements, or duplicate IDs. `_loaded` is set before `Take`; an exception from `Take` is swallowed by the public reader, leaving `_loaded=true`, `_readFailed=false`, and possibly an empty in-memory list. A later `Submitting` skips loading, successfully overwrites the anchor, and lets the order proceed. For example, `records:[null,{valid A}]` loses A because iteration fails before reaching it.
+
+Exact check: write a syntactically valid envelope containing `records:[null,<valid acknowledged A>]`; first call `All()` as the startup/describe path does, then submit B. The reader must report unreadable, B must be refused, and the original bytes must remain; currently the reader reports an unflagged empty result and B can replace the file.
+
+FINDING 5 — HIGH — src/TradeAgent.AtasBridge/AtasStrategyAdapter.cs:1758 — operator close-all submits an order to ATAS without a write-ahead witness
+
+`OperatorCloseAllAsync` supplies a client order ID, but `ClosePosition` calls `trading.ClosePosition` without `_witness.Submitting`. ATAS creates the order first; the adapter writes `created.Comment` only afterwards. A witness failure therefore cannot prevent this money-moving order, contrary to the requirement that every order be witnessed before reaching ATAS.
+
+Exact check: on the Windows ATAS stub, make the witness path or lock unavailable, invoke operator close-all, and assert `ITradingManager.ClosePosition` is never called and the result is a definite “nothing was submitted” refusal. It is currently called.
+
+FINDING 6 — MED — tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:1239 — the claimed post-quota safety test never consumes the warning quota
+
+The first 31 events are safety failures. Since `_loggedFailures` increments only for `safety:false`, they consume zero quota. The RESOLVED marker consumes only the first warning slot, so `TA-AFTER-QUOTA` is not actually tested after quota exhaustion. No test independently proves that warnings remain rationed.
+
+Exact check: generate at least 32 non-safety recovery warnings, then generate a safety failure and assert it remains in the sidecar while a 33rd warning is absent. Mutations that remove warning rationing or apply it to safety events must both make tests red.
+
+FINDING 7 — MED — src/TradeAgent.AtasBridge/CoidWitness.cs:1393 — warning-quota exhaustion suppresses RESOLVED and makes a clean witness degraded again after restart
+
+RESOLVED is appended with `safety:false`. After 32 recovery warnings, the marker is silently discarded. `Settled` nevertheless clears `_degraded`, so the running instance looks healthy while a fresh instance reads the last warning and becomes degraded. It also clears the flag when marker I/O itself fails. CLASS: diagnostic quota and resolution state share one lossy channel. RESOLVED needs a reserved or non-rationed slot, and the state should clear only after its durable append succeeds.
+
+Exact check: seed a commit plus 32 aged rejected candidates, run owner recovery, then make a successful submission. Assert the last sidecar line is RESOLVED and a fresh witness has `Trouble == null`; currently no marker is written and the fresh witness remains degraded.
+
+FINDING 8 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:458 — failed `Submitting` restores memory but leaves a temp that a restart adopts as a submitted claim
+
+On false, `Submitting` restores `_records` but retains the failed temp in `_stranded`. After a crash, a fresh instance treats that temp as a viable rewrite and adopts the refused COID. A subsequent successful save commits it. The existing test at line 1800 actually expects the refused claim to appear after constructing a new session. At cap, that phantom can also evict a genuine committed claim. CLASS: recovery cannot distinguish a failed/refused submission temp from a legitimate failed acknowledgement temp. The format or recovery rule needs durable transaction state distinguishing those outcomes.
+
+Exact check: commit A, force B’s `Submitting` to return false while leaving its temp, simulate restart, and successfully submit C. The final committed IDs must exclude B; current recovery adopts and then commits B.
+
+FINDING 9 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:294 — a protocol-v2 bridge is denied RPCs but remains connected enough to publish trusted events
+
+On mismatch, `Dispatch` sets `_connected=false` but returns true, leaving the read loop alive. The event branch checks only `_authenticated`, not protocol compatibility, so an authenticated v2 bridge can continue raising order, execution, position, account, quote, and connection events. Existing mismatch tests check capabilities and RPC refusal only, despite naming the behavior “refused outright.”
+
+Exact check: authenticate a client, send an exact v2 hello, then send each bridge event and assert no application callback fires and the session closes; mirror the test with v3 and assert events are accepted. The v2 event currently reaches `HandleEvent`.
+
+FINDING 10 — LOW — src/TradeAgent.Diagnostics/Doctor.cs:286 — support packages omit the rotated witness failure history
+
+Rotation writes `coid-witness.errors.log.1`, but the collector glob `*.errors.log` matches only the current file. The support-package test creates and checks only the current log.
+
+Exact check: create both `coid-witness.errors.log` and `coid-witness.errors.log.1`, build a support package, and assert both appear. The `.1` file is currently absent.
+
+FINDING 11 — LOW — tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:617 — retry tests do not pin the bounded budget for both exception classes
+
+The IOException test succeeds on attempt five and has only a lower timing bound; changing the maximum from 5 to 500 stays green. The UnauthorizedAccessException test injects only one refusal, so it does not establish the same four-retry budget. The U14 timing figures are manual macOS measurements, not regression gates.
+
+Exact check: add always-throw counting seams for both IOException and UnauthorizedAccessException and assert exactly five calls plus a reasonable upper elapsed bound; also require four refusals followed by success for both exception types.
+
+FINDING 12 — MED — tools/probe/Program.cs:1057 — the probe prints “none recorded” before its later read creates an unresolved witness warning
+
+The probe checks sidecar existence and `Trouble` before calling `All`. `Trouble` scans candidates but does not apply recovery; `All` then acquires ownership, quarantines/reports a candidate, and creates the sidecar. The displayed failure status is consequently stale within the same report, and later zero-record conclusions are not marked provisional. CLASS: probe ordering exposes the reader-as-writer defect from finding 2.
+
+Exact check: run the restart check against a scratch home containing only a valid anchorless temp. Assert the report identifies an unresolved witness warning before interpreting `records:0`, and assert the probe changes no files. Current output says “WITNESS FAILURES none recorded” before `All()` creates the warning.
+
+FINDING 13 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:1018 — an unreadable committed file disables the generation half of LINEAGE and permits phantom adoption
+
+`DescendsFrom` returns true on predecessor fingerprint alone whenever committed bytes exist but do not parse. A parsing temp with any generation is therefore adopted, although U14 requires both generation and predecessor. Its acknowledged records can flow into `PriorSession` even while `_readFailed` is true. CLASS: invalid byte presence is being treated as a validated anchor. An invalid committed envelope must permit no adoption.
+
+Exact check: write non-JSON committed bytes, then a non-empty temp with `generation=999` and `predecessor=FNV1a64(exact corrupt bytes)`. `PriorSession` for the temp’s acknowledged COID must return null and report unreadable/degraded; current code adopts it. Changing only the temp generation must remain rejected.
+
+FINDING 14 — LOW — tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:788 — the committed range fails the whitespace gate
+
+The newly added assertion has trailing whitespace.
+
+Exact check: run `git diff --check 3f1d8f2..HEAD`; it currently reports `tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:788: trailing whitespace` and must produce no output.
+
+FINDING 15 — LOW — tests/TradeAgent.IntegrationTests/CoidWitnessTests.cs:1493 — the Windows gate for an unopenable candidate cannot fail
+
+The test returns immediately on Windows, so the production platform never exercises the branch where a candidate exists but cannot be opened. Parse corruption does not establish Windows ACL or sharing behavior. This claim remains UNVERIFIED on the trading platform.
+
+Exact check: on Windows, introduce a read seam or a second-process/ACL fixture that makes `ReadTolerantly` return `failed=true`; assert `All()` is empty, `Unreadable` is true, and `Token()` contains `records:err`. A mutation clearing `_candidateUnreadable` must make the test red.
+
+FINDING 16 — MED — src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj:30 — the two money-path adapter hunks remain outside every reported build/test gate
+
+The project removes `AtasStrategyAdapter.cs` unless `AtasBridgeBuild=true`. U14’s final 387-test gate was macOS and explicitly did not compile the adapter against ATAS. Inspection confirms the intended branches, but compilation and real adapter dispatch remain UNVERIFIED; the reported suite cannot fail if either hunk breaks.
+
+Exact check: on the Windows ATAS box run `dotnet build src/TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj -p:AtasBridgeBuild=true -p:AtasInstallDir="<actual ATAS install>"`, then force `Submitting=false` through the adapter and assert none of `OpenOrder`, `OpenOrderAsync`, or `RegisterOrderAsync` is invoked.
+
+SUMMARY — 6 HIGH / 6 MED / 4 LOW

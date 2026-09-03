@@ -72,3 +72,14 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   box (D5); the five keyboard minutes fold into the v0.1.2 box session; containment waits for the U12 revision.
 - 20:10 Tailscale up; box reachable (`win-state.sh`: uptime 1d 04h, console session active, ATAS running, TradeAgent
   0.1.1 installed, home present, **UI agent NOT running** — restart with `tools/win-agent.sh start` at the box session).
+- 20:35 **Codex on U14 `e22eec6` (gpt-5.6-sol, ~60 min): 6 HIGH / 6 MED / 4 LOW** (`records/codex-U14-r4.txt`). The
+  HIGHs cluster into two classes the design already names: ownership is a per-call lock, not a lifetime lease (F1);
+  recovery adopts temps it cannot prove legitimate (F3 full replacement at cap, F4 semantically invalid envelope →
+  unflagged zero, F8 a refused submission's temp adopted after restart — pinned by a test at line 1800, F13 corrupt
+  committed bytes still an anchor); plus F5: operator close-all reaches ATAS without `Submitting` (money path, adapter).
+  **Triage:** all six HIGH plausibly real by the record's own design; none refuted from the manager's seat. Round 5
+  bounce written with the manager's direction on each class (`briefs/U14-r5-bounce.md`): lifetime lease = an exclusive
+  handle released by the OS on death; a temp is never adopted as a NEW claim; a legal transition preserves every committed
+  record but at most one trimmed; an unparseable file is not an anchor; close-all witnessed before the wire. The box is
+  up, so the adapter hunks (F5/F16) get their first compiler on the box via the win tools. The bounce goes to the SAME
+  builder (§9.3) once the U14 verifier vacates its slot; the verifier's findings are appended to the same round.
