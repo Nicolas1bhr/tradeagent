@@ -706,6 +706,56 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// LINEAGE AUTHENTICATES THE PARENT, NOT THE CONTENT. A rewrite can descend perfectly well from
+    /// the committed file and still hold fewer records than it — and adopting one displaces
+    /// committed claims, because the adopted set is what the next save commits. At the cap that
+    /// reaches further than it looks: the dropped claims are gone from the file, and an identifier
+    /// the cap had trimmed can come back in their place.
+    /// </summary>
+    [Fact]
+    public void A_candidate_holding_fewer_records_than_the_committed_file_is_ignored()
+    {
+        var first = Session();
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            Submit(first, $"TA-{n}");
+            first.Identified($"TA-{n}", $"BRK-{n}");
+        }
+
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: RecordJson("TA-1", "a-dead-session"));
+
+        var reader = Session();
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Contains("io:degraded", reader.Token());
+    }
+
+    /// <summary>
+    /// Every viable candidate descends from the same commit and so carries the same generation —
+    /// nothing in the files distinguishes them, and letting mtime pick means silently choosing
+    /// between two rewrites that may hold different claims. One writer cannot produce this, so it
+    /// means two writers or a copied file. Decline both and keep what is committed.
+    /// </summary>
+    [Fact]
+    public void Two_rival_candidates_at_the_same_generation_are_both_declined()
+    {
+        var first = Session();
+        Submit(first, "TA-COMMITTED");
+
+        var generation = CommittedGeneration() + 1;
+        var predecessor = Fingerprint(CommittedText());
+        foreach (var (suffix, id) in new[] { ("-a-1", "TA-RIVAL-A"), ("-b-1", "TA-RIVAL-B") })
+            File.WriteAllText(File_ + ".tmp" + suffix,
+                $$"""{"version":1,"generation":{{generation}},"predecessor":"{{predecessor}}","records":[{{RecordJson("TA-COMMITTED", "s")}},{{RecordJson(id, "s")}}]}""");
+
+        var reader = Session();
+        Assert.Equal(["TA-COMMITTED"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("rival uncommitted rewrites",
+                        File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
+    }
+
+    /// <summary>
     /// The fingerprint proves the temp was derived from these exact committed bytes; the generation
     /// proves it is the rewrite that came immediately after them. A candidate with the right
     /// predecessor and the wrong place in the sequence is not this file's next state, however much
