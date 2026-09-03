@@ -46,7 +46,7 @@ public class VerifyR4TimingProbes(ITestOutputHelper o)
     {
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
-        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyGateWait);
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyDeadline);
         Assert.Equal(TimeSpan.FromSeconds(10), connector.WriteTimeout);
         await connector.ConnectAsync();
 
@@ -232,6 +232,6 @@ public class VerifyR4TimingProbes(ITestOutputHelper o)
         o.WriteLine($"connected after = {await connector.IsConnectedAsync()}");
         o.WriteLine($"owner-readable sentence present: NOT confirmed={ex?.Message.Contains("NOT confirmed")}");
 
-        Assert.True(ms > 4000, $"the emergency came back in {ms} ms — the 2 s promise holds even with a free gate");
+        Assert.True(ms > 4000, $"R5: the emergency came back in {ms} ms — V2 is FIXED (this round-4 probe is now expected to fail)");
     }
 }
