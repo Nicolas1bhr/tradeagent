@@ -396,9 +396,10 @@ public class ConnectorSendDeadlineTests
     /// 73 of the 400 already finished at 312 ms, all 400 at about 1.02 s, and the cancel-all took
     /// the gate at 0.71 s and returned SENT, so the expiry branch this test exists to pin was never
     /// reached and the test failed on ThrowsAny with no exception thrown. A peer that accepts at
-    /// most 8 KiB every 200 ms bounds the drain from below instead: no machine can make a 512 KiB
-    /// frame finish inside twelve seconds, so the gate is still held — and still moving — for the
-    /// whole two seconds the emergency waits, on any box, under any load.
+    /// most 8 KiB every 200 ms bounds the drain from BELOW instead — 40 KiB/s is a wall-clock
+    /// ceiling a faster box cannot beat, it can only reach the next sleep sooner. Measured with that
+    /// pace, same day: the 512 KiB order's last byte was accepted at 12.95 s, against the 2 s the
+    /// emergency waits. The gate is still held, and still moving, for the whole of that window.
     ///
     /// The emergency still fails: its frame was never sent, so its outcome is honestly unknown. But
     /// it must say BUSY, and it must leave the connection up so the retry it advises has somewhere
