@@ -36,3 +36,12 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   `u2a-pipe-hardening` stays at `5c716aa` until the probe branch is green. Codex waits for the green sha (a review of
   a sha that will change is a review to redo). Brief: `briefs/U2a-r4b-build.md`.
 - 17:55 Concurrency: U14 builder (Opus) + U2a round-4b builder (Opus) = 2 heavy legs. The U2a verifier waits.
+- 18:05 Rebase dry-runs (probe worktrees, removed afterwards): **U2c-1** `--onto main cb2ce2f` → clean, 21 of 28
+  commits survive (the 7 old U2b commits drop out); **U2c-1 onto the U2a tip `e91293e` → CONFLICT in
+  `src/TradeAgent.Gateway/GatewayTypes.cs`** (so the U2c-1 builder resolves that after U2a lands); **U2d** onto main →
+  clean (12 commits); U2d onto the U2a tip → clean.
+- **Pipeline order (slots, ≤2 heavy):** U2a r4b builder → U2a verifier + Codex → integrate U2a · U14 builder → U14
+  verifier + Codex → integrate U14 · then U2c-1 round 4 (long pole; rebases over U2a with the known conflict) and U2d
+  round 4 items 1–3 (item 10 after U2c-1 merges) as slots free · then v0.1.2 on the box (needs Nicolas: power + Tailscale).
+- Briefs on disk for every remaining leg: `briefs/U2c1-r4-build.md`, `U2d-r4-build.md`, `U14-r4-verify.md`,
+  `U14-r4-codex-prompt.txt` (plus the U2a pair). A killed leg is re-briefed from these, not from memory.
