@@ -1016,6 +1016,53 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// UNREADABLE IS NOT ABSENT, AND MISTAKING THE ONE FOR THE OTHER DESTROYS THE FILE.
+    ///
+    /// The parse half of this was closed: bytes that are there and are not an envelope refuse every
+    /// write. The I/O half was not. A read that FAILED — a scanner holding the file, a denied ACL, a
+    /// disk error — returned no text, and no text was read as "nothing has ever been written here":
+    /// the lineage reset to generation 0 with no predecessor, the compare-and-swap compared null
+    /// against null and passed, and the rewrite replaced a file of acknowledged claims with one
+    /// holding the new claim alone. The post-replace read-back then succeeded, so
+    /// <c>Submitting</c> returned TRUE and <c>Place</c> sent the order — with the machine's whole
+    /// history gone and nothing said about it.
+    ///
+    /// Absent is exactly <see cref="FileNotFoundException"/> on the committed path. Every other way
+    /// of not getting the bytes is unreadable, and unreadable refuses every write.
+    /// </summary>
+    [Fact]
+    public void A_committed_file_that_cannot_be_read_is_not_treated_as_absent()
+    {
+        var a = Session();
+        Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+        a.Identified("TA-A", "BRK-A");
+        a.Dispose();
+        var original = File.ReadAllText(File_);
+
+        // The load's four reads and the compare-and-swap's four are denied; the post-replace
+        // read-back is permitted — which is exactly what makes a denied read look like an empty
+        // directory instead of a locked file.
+        var denied = 0;
+        var w = new CoidWitness(File_, null, CoidWitness.DefaultCap, null,
+            open: p =>
+            {
+                if (string.Equals(p, File_, StringComparison.Ordinal) && denied < 8)
+                {
+                    denied++;
+                    throw new IOException("The process cannot access the file because it is being used by another process.");
+                }
+                return new FileStream(p, FileMode.Open, FileAccess.Read,
+                                      FileShare.ReadWrite | FileShare.Delete);
+            });
+
+        Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(original, File.ReadAllText(File_));
+        Assert.True(w.Unreadable);
+        Assert.NotNull(w.Trouble);
+        Assert.Contains("could not be read", w.Trouble);
+    }
+
+    /// <summary>
     /// INVALID BYTES ARE NOT A VALIDATED ANCHOR, AND FINGERPRINT ALONE IS NOT LINEAGE.
     ///
     /// When the committed file existed but did not parse, its generation was unknowable, so the
