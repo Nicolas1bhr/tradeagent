@@ -104,11 +104,13 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     /// reads it. A DISPATCHING record older than a dispatch can take is, by definition, one where
     /// the wire may have been touched and nobody wrote down what happened.
     ///
-    /// The caller passes an absolute instant rather than an age because this class deliberately owns
-    /// no clock: <c>dispatched_at</c> is written here from <see cref="DateTimeOffset.UtcNow"/> while
-    /// the gateway reads a substitutable <c>TimeProvider</c>. Passing the cutoff keeps the
-    /// comparison in one place instead of splitting it across two clocks. Omit it and the query is
-    /// exactly what it always was: the flag.
+    /// The caller passes an absolute instant rather than an age because THIS CLASS AND THE GATEWAY
+    /// READ DIFFERENT CLOCKS. It is not true that the store owns none: <c>Transition</c> and
+    /// <c>TryCreate</c> stamp <c>dispatched_at</c>, <c>created_at</c> and <c>updated_at</c> from
+    /// <see cref="DateTimeOffset.UtcNow"/> directly, while the gateway reads a substitutable
+    /// <c>TimeProvider</c> that a test can move. Passing the cutoff in keeps the comparison on ONE
+    /// of those clocks — the caller's — instead of straddling both. Omit it and the query is exactly
+    /// what it always was: the flag.
     /// </summary>
     public List<ExecutionRequest> NeedingReconciliation(DateTimeOffset? strandedDispatchBefore = null) =>
         strandedDispatchBefore is { } cutoff
@@ -251,6 +253,18 @@ public sealed class LogStore(Database db)
             ("$exc", ex?.ToString()));
         return c.ExecuteNonQuery();
     });
+
+    /// <summary>
+    /// <see cref="Engineering"/> for a caller that is already handling a failure and must not be
+    /// stopped by a second one. Returns whether the row was written, so nothing has to guess.
+    /// </summary>
+    public bool TryEngineering(string component, string @event, string severity = "info",
+        string? session = null, string? correlationId = null, string? requestId = null,
+        string? metadataJson = null, Exception? ex = null)
+    {
+        try { Engineering(component, @event, severity, session, correlationId, requestId, metadataJson, ex); return true; }
+        catch (Exception) { return false; }
+    }
 
     public void Health(ComponentHealth h) => db.Write(_ =>
     {
