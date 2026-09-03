@@ -1,3 +1,5 @@
+using System.IO.Pipes;
+using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -267,7 +269,92 @@ public class OperatorContextTests
         Assert.Equal(Ops.Buy, op);
     }
 
+    /// <summary>
+    /// THE SAME TRIPWIRE ON THE HELLO FRAME, WHICH IS THE ONE FRAME KIND IT WAS MISSING FROM.
+    ///
+    /// Codex F10 on d25dbb4: the reserved-session check lived only in <c>Handle</c>, and a hello
+    /// frame never reaches <c>Handle</c> — the read loop answers it and continues. So a valid-token
+    /// hello carrying " operator " was answered with SUCCESS. Nothing escalated, because no
+    /// <c>AgentContext</c> is built on that path; what failed is the contract, which says client use
+    /// of the reserved string is refused with INVALID_REQUEST and recorded. On the FIRST frame of
+    /// every connection it was neither, and a tripwire with a hole in the first frame is a tripwire
+    /// an agent walks through on its way in.
+    ///
+    /// The reserved hello is the first frame here rather than a second one after a clean handshake,
+    /// because that is the shape an agent probing for the name would actually send.
+    /// </summary>
+    [Theory]
+    [InlineData("operator")]
+    [InlineData("Operator")]
+    [InlineData("OPERATOR")]
+    [InlineData("oPeRaToR")]
+    [InlineData(" operator")]
+    [InlineData("operator ")]
+    [InlineData("\toperator")]
+    [InlineData("  OPERATOR  ")]
+    public async Task Every_spelling_of_the_reserved_session_is_refused_on_the_hello_frame_too(string spelling)
+    {
+        var (gw, conn, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        using var _1 = db;
+        gw.ActivateLive(true);
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+        var hello = await raw.Send(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Peek(), Session = spelling });
+
+        Assert.False(hello.Ok, $"a hello with session='{spelling}' was accepted: {Json.Write(hello.Data)}");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), hello.Error!.Code);
+
+        // And the channel never became usable under that name: the refusal does not authenticate.
+        var buy = await raw.Send(Buy(spelling));
+        Assert.False(buy.Ok, "the connection was authenticated by a hello that was refused");
+        Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), buy.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+
+        var (found, op) = ReadRefusal(db);
+        Assert.True(found, $"hello session='{spelling}' was refused but nothing was recorded, so the probe is invisible");
+        Assert.Equal(Ops.Hello, op);
+    }
+
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// Frames on the wire with no handshake of its own — <see cref="PipeClient"/> says hello for you,
+    /// which is exactly the frame under test here.
+    /// </summary>
+    sealed class RawFrames : IAsyncDisposable
+    {
+        NamedPipeClientStream _p = null!;
+        StreamReader _r = null!;
+        StreamWriter _w = null!;
+
+        public static async Task<RawFrames> Connect(string pipe)
+        {
+            var c = new RawFrames { _p = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous) };
+            await c._p.ConnectAsync(10_000);
+            c._r = new StreamReader(c._p, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            c._w = new StreamWriter(c._p, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            return c;
+        }
+
+        public async Task<IpcResponse> Send(IpcRequest req)
+        {
+            await _w.WriteLineAsync(Json.Write(req));
+            var line = await _r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10))
+                       ?? throw new IOException("the gateway closed the connection without answering");
+            return Json.Read<IpcResponse>(line)!;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _w.DisposeAsync();
+            _r.Dispose();
+            await _p.DisposeAsync();
+        }
+    }
+
 
     static (bool Found, string Op) ReadRefusal(Database db) => db.Read(_ =>
     {

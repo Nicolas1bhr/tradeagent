@@ -214,6 +214,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                         await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session, req.RequestId);
                         return; // one chance per connection
                     }
+                    // Refused BEFORE the flag flips: a connection that asked for the operator's
+                    // name never becomes usable under it, rather than being refused per-op after.
+                    if (ReservedSessionRefusal(req) is { } helloRefusal)
+                    {
+                        if (!await Send(pipe, helloRefusal, req.Op, req.Session, req.RequestId)) return;
+                        continue;
+                    }
+
                     authenticated = true;
                     if (!await Send(pipe, IpcResponse.Success(req.Id, new
                     {
@@ -228,6 +236,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 {
                     await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session, req.RequestId);
                     return;
+                }
+
+                if (ReservedSessionRefusal(req) is { } refusal)
+                {
+                    if (!await Send(pipe, refusal, req.Op, req.Session, req.RequestId ?? req.Id)) return;
+                    continue;
                 }
 
                 if (!await Send(pipe, await Handle(req, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
@@ -335,21 +349,35 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
     static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
 
+    /// <summary>
+    /// The reserved-session tripwire, for EVERY frame kind — <c>null</c> when the frame may proceed.
+    ///
+    /// The reserved session is refused rather than quietly downgraded. <c>AgentContext.ForAgent</c>
+    /// cannot return an operator context whatever this string says, so nothing here is load bearing
+    /// for safety — it is a tripwire. An agent asking for the operator's name is probing for an
+    /// escalation, and a probe nobody can see afterwards is not evidence.
+    ///
+    /// It used to live inside <see cref="Handle"/>, which a HELLO frame never reaches: the read loop
+    /// answers hello itself and continues. So the one frame kind an agent sends FIRST was the one
+    /// kind the tripwire did not cover, and a valid-token hello carrying " operator " was answered
+    /// with success (Codex F10 on d25dbb4). Being a method called from both places rather than a
+    /// block inside one of them is the point — the next frame kind added to the loop has to walk
+    /// past a named check to skip it.
+    /// </summary>
+    IpcResponse? ReservedSessionRefusal(IpcRequest req)
+    {
+        if (!string.Equals(req.Session?.Trim(), AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        gateway.Log.Engineering("Ipc", "operator_session_refused", "warn",
+            session: req.Session, requestId: req.RequestId ?? req.Id,
+            metadataJson: Json.Write(new { op = req.Op }));
+        return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
+            $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
+    }
+
     async Task<IpcResponse> Handle(IpcRequest req, CancellationToken ct)
     {
-        // The reserved session is refused rather than quietly downgraded. AgentContext.ForAgent
-        // cannot return an operator context whatever this string says, so nothing here is load
-        // bearing for safety — it is a tripwire. An agent asking for the operator's name is probing
-        // for an escalation, and a probe nobody can see afterwards is not evidence.
-        if (string.Equals(req.Session?.Trim(), AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
-        {
-            gateway.Log.Engineering("Ipc", "operator_session_refused", "warn",
-                session: req.Session, requestId: req.RequestId ?? req.Id,
-                metadataJson: Json.Write(new { op = req.Op }));
-            return IpcResponse.Fail(req.Id, ErrorCode.INVALID_REQUEST,
-                $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
-        }
-
         // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
         // that is USED, not on the field that may be absent.
         //
