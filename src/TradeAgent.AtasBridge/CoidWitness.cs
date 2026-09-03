@@ -384,6 +384,14 @@ public sealed class CoidWitness : IDisposable
     readonly List<(string Path, Envelope Envelope)> _viable = new();
     readonly List<(string Path, string Why)> _rejected = new();
     bool _adoptedAlready;
+
+    /// <summary>
+    /// How much the adopted candidate actually gave. Zero is the awkward case: the candidate is a
+    /// legal transition, so it is not rejected, and it contributed nothing, so it is not adopted —
+    /// which left it reported as "recovered" and lying in the glob for every later session to find,
+    /// declare recovered and write another line about. See <see cref="ReportAndQuarantine"/>.
+    /// </summary>
+    int _recovered;
     bool _reported;
     bool _writeFailed;
     int _loggedFailures;
@@ -1189,7 +1197,9 @@ public sealed class CoidWitness : IDisposable
             recovered++;
         }
 
-        // Only a candidate that actually gave something is worth committing over and deleting.
+        // Only a candidate that actually gave something is worth committing over and deleting — and
+        // one that gave nothing is SPENT rather than pending, which ReportAndQuarantine acts on.
+        _recovered = recovered;
         if (recovered > 0) _adopted = _viable[0].Path;
     }
 
@@ -1222,9 +1232,23 @@ public sealed class CoidWitness : IDisposable
             Note($"WARN coid-witness found {_viable.Count} rival uncommitted rewrites of generation " +
                  $"{_viable[0].Envelope.Generation} and adopted none of them: " +
                  string.Join(", ", _viable.Select(v => v.Path)));
-        else if (_viable.Count == 1)
+        else if (_viable.Count == 1 && _recovered > 0)
             Note($"coid-witness recovered an uncommitted rewrite (generation {_viable[0].Envelope.Generation}, " +
-                 $"{_viable[0].Envelope.Records.Count} records) from {_viable[0].Path}");
+                 $"{_recovered} acknowledgement(s)) from {_viable[0].Path}");
+        else if (_viable.Count == 1)
+        {
+            // NOTHING WAS TAKEN FROM IT, SO IT IS SPENT. A legal transition that restates a broker id
+            // already on file, or belongs to another session, or carries no acknowledgement at all,
+            // is neither adopted nor rejected — and was therefore left where it was and re-declared
+            // "recovered" by every session that followed. It is moved out of the candidate glob like
+            // any other leftover: kept, not deleted, and looked at once.
+            var spent = _viable[0].Path;
+            var moved = Quarantine(spent);
+            Note(moved is null
+                ? $"ignored {spent}: it carries nothing this witness does not already have"
+                : $"ignored {spent}: it carries nothing this witness does not already have — " +
+                  $"moved to {System.IO.Path.GetFileName(moved)}");
+        }
 
         _viable.Clear();
     }
