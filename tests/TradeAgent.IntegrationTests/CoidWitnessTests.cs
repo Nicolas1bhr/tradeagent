@@ -1608,6 +1608,76 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(["TA-SEED"], CommittedIds());
         Assert.Null(Session().PriorSession("TA-SECOND"));
     }
+    /// <summary>
+    /// REFUSED WITHOUT THE LOCK — AND THE ACKNOWLEDGEMENT PATH IS REFUSED TOO.
+    ///
+    /// One owner per witness. <see cref="CoidWitnessTests.A_second_writer_is_refused_rather_than_merged_with"/>
+    /// states that for the claim; nothing stated it for the acknowledgement, and that is the harder
+    /// half to argue. There the record is this session's OWN, the broker id is real, and the write is
+    /// a small in-place edit — every reason to let it through. It is still refused, because a writer
+    /// that does not own the file cannot know what it would be overwriting, and a witness this
+    /// process does not own is one it may not touch at all.
+    ///
+    /// The direction is the safe one: the id stays in memory for a save that does own the file, and
+    /// nothing on disk is invented in the meantime.
+    /// </summary>
+    [Fact]
+    public void A_claim_and_an_acknowledgement_are_both_refused_without_the_lock()
+    {
+        var w = Session();
+        Assert.True(w.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+
+        // Somebody else owns the witness from here on — a second bridge, in one line.
+        using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
+                                        FileAccess.ReadWrite, FileShare.None);
+
+        // THE CLAIM PATH. Refused, and Place gets the sentence it needs to say why.
+        Assert.False(w.Submitting("TA-BLOCKED", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("another writer owns this witness", w.Trouble);
+        Assert.DoesNotContain(w.All(), r => r.ClientOrderId == "TA-BLOCKED");
+
+        // THE ACKNOWLEDGEMENT PATH. Same session, its own record, a real broker id — refused all the
+        // same, and nothing reaches the file.
+        w.Identified("TA-LIVE", "BRK-LIVE");
+        Assert.Null(w.All().Single(r => r.ClientOrderId == "TA-LIVE").BrokerOrderId);
+        Assert.Null(CommittedBrokerId("TA-LIVE"));
+
+        // Nothing lost, nothing phantom: the file is exactly as its owner left it.
+        Assert.Equal(["TA-LIVE"], CommittedIds());
+    }
+
+    /// <summary>
+    /// A COMPARE-AND-SWAP MISS IS A REFUSAL ON BOTH PATHS, AND IT IS NOT A MERGE.
+    ///
+    /// This writer holds the lock, so a file that changed underneath it is not another bridge playing
+    /// by the rules — it is an older build, a hand edit or a restored backup. There is no safe merge
+    /// with a party whose semantics this build does not know, so the rewrite is refused and the
+    /// foreign file is left exactly as it was found.
+    ///
+    /// <see cref="CoidWitnessTests.A_witness_file_changed_by_something_else_is_refused_not_merged"/>
+    /// states this for the claim. The acknowledgement path runs through the same
+    /// <c>Save</c> and had nothing asserting it.
+    /// </summary>
+    [Fact]
+    public void A_claim_and_an_acknowledgement_are_both_refused_when_the_file_changed_underneath()
+    {
+        var w = Session();
+        Assert.True(w.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+
+        var foreign = "{\"version\":1,\"generation\":9,\"predecessor\":null,\"records\":[" +
+                      RecordJson("TA-FOREIGN", "somebody-else") + "]}";
+        File.WriteAllText(File_, foreign);
+
+        // THE ACKNOWLEDGEMENT PATH.
+        w.Identified("TA-LIVE", "BRK-LIVE");
+        Assert.Contains("changed underneath this writer", w.LastWriteFailure);
+        Assert.Equal(foreign, File.ReadAllText(File_));
+
+        // THE CLAIM PATH, from the same state.
+        Assert.False(w.Submitting("TA-AFTER", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(foreign, File.ReadAllText(File_));
+        Assert.Contains("io:failed", w.Token());
+    }
 
     /// <summary>
     /// A file that changed under a writer holding the lock cannot be another bridge playing by the
