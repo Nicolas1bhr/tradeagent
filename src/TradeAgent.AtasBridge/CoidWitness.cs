@@ -729,11 +729,13 @@ public sealed class CoidWitness
             if (envelope.Records.Count == 0) { RejectCandidate(candidate, "it contains no records"); continue; }
             if (!DescendsFrom(envelope, committedText, committed))
             {
-                RejectCandidate(candidate,
-                    $"it does not descend from the committed file " +
-                    $"(temp generation={envelope.Generation} predecessor={envelope.Predecessor ?? "<none>"}; " +
-                    $"committed generation={(committed is null ? "<unreadable>" : committed.Generation.ToString())} " +
-                    $"fingerprint={(committedText is null ? "<absent>" : Fingerprint(committedText))})");
+                RejectCandidate(candidate, committedText is null
+                    ? "there is no committed witness file for it to be a rewrite OF, so nothing " +
+                      "anchors it to this machine's own history"
+                    : $"it does not descend from the committed file " +
+                      $"(temp generation={envelope.Generation} predecessor={envelope.Predecessor ?? "<none>"}; " +
+                      $"committed generation={(committed is null ? "<unreadable>" : committed.Generation.ToString())} " +
+                      $"fingerprint={Fingerprint(committedText)})");
                 continue;
             }
 
@@ -747,6 +749,16 @@ public sealed class CoidWitness
     /// Whether one envelope is the rewrite THIS committed content was about to become. See
     /// <see cref="AdoptUncommittedRewrite"/> for the argument; this is only the arithmetic.
     ///
+    /// NO ANCHOR, NO ADOPTION, and this is the correction round 3 forced. With no committed file
+    /// there is nothing to be descended FROM, so "generation 1 and no predecessor" was not a lineage
+    /// test at all — it was a shape test, and any fragment of any other witness's history satisfies
+    /// it. That fragment's records are acknowledged, so they walk into <see cref="PriorSessionIds"/>,
+    /// the cross-session reading, and SupportsClientOrderId: a capability set true out of a file
+    /// this product never wrote. Round 2 narrowed that branch and round 3 removes it, because it has
+    /// no legitimate case left: since <c>Place</c> refuses any order whose write-ahead record did
+    /// not land, "the first write failed and an order went out anyway" cannot happen. A first
+    /// rewrite that never landed protects nothing, so nothing is lost by declining to trust it.
+    ///
     /// The middle case is the awkward one: the committed file EXISTS but does not parse. Its
     /// generation is then unknowable, so the fingerprint is the whole of the test — which is sound,
     /// because the fingerprint is over the exact bytes and is strictly the stronger of the two
@@ -754,7 +766,7 @@ public sealed class CoidWitness
     /// </summary>
     static bool DescendsFrom(Envelope temp, string? committedText, Envelope? committed)
     {
-        if (committedText is null) return temp.Predecessor is null && temp.Generation == 1;
+        if (committedText is null) return false;
         if (!string.Equals(temp.Predecessor, Fingerprint(committedText), StringComparison.Ordinal)) return false;
         if (committed is null) return true;
         return temp.Generation == committed.Generation + 1;
