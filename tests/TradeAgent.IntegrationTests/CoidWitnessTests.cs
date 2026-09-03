@@ -620,6 +620,44 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// THE EMPTY-DIRECTORY CASE, WHICH IS THE EASIEST ONE TO GET WRONG. With no committed file there
+    /// is no fingerprint to match against, so the temptation is to accept any temp that parses and
+    /// has records — and that is an import route: a fragment of some other witness's history,
+    /// dropped in the bridge directory, becomes this machine's record of what it submitted. Those
+    /// records are acknowledged, so they reach PriorSessionIds, the cross-session reading, and
+    /// SupportsClientOrderId — a capability set true out of a file this product never wrote.
+    ///
+    /// With nothing committed, the only thing a rewrite can be is the FIRST one: generation 1, and
+    /// descended from nothing. Anything claiming otherwise is describing a history this file does
+    /// not have.
+    ///
+    /// MEASURED, NOT ASSUMED: this test exists because the round-2 mutation sweep found the branch
+    /// unguarded. Replacing the whole condition with `true` left every other test in this file
+    /// passing.
+    /// </summary>
+    [Fact]
+    public void With_nothing_committed_only_a_first_rewrite_is_adopted()
+    {
+        // Claims descent from something, on a machine where nothing has ever been committed.
+        WriteTemp(generation: 12, predecessor: "some-other-witness-file",
+                  records: RecordJson("TA-IMPORTED", "a-dead-session"), at: DateTime.UtcNow);
+
+        var w = Session();
+        Assert.Empty(w.All());
+        Assert.Null(w.PriorSession("TA-IMPORTED"));
+        Assert.Empty(w.PriorSessionIds(16));
+
+        // And descended from nothing, but not the first rewrite either.
+        File.Delete(Temps().Single());
+        WriteTemp(generation: 5, predecessor: null,
+                  records: RecordJson("TA-ALSO-IMPORTED", "a-dead-session"), at: DateTime.UtcNow);
+
+        var again = Session();
+        Assert.Empty(again.All());
+        Assert.Empty(again.PriorSessionIds(16));
+    }
+
+    /// <summary>
     /// The fingerprint proves the temp was derived from these exact committed bytes; the generation
     /// proves it is the rewrite that came immediately after them. A candidate with the right
     /// predecessor and the wrong place in the sequence is not this file's next state, however much
