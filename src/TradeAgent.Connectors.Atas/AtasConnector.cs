@@ -170,15 +170,20 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     long _lastWriteProgressAt;
 
     /// <summary>
-    /// <see cref="Environment.TickCount64"/> when the peer last did ANYTHING — accepted bytes of
-    /// ours, or sent us a frame of its own.
+    /// <see cref="Environment.TickCount64"/> when the bridge last ANSWERED one of our requests.
     ///
-    /// The write-progress clock above answers "can we get bytes out". This one answers "is anything
-    /// alive over there", which is the question that matters once the frame HAS gone out and the
-    /// reply is what is missing. A bridge that is answering heartbeats while it works through a
-    /// backlog is slow; one that has gone silent in both directions has stopped.
+    /// Not "last sent us a frame", and the distinction is the whole of it. A heartbeat proves a
+    /// thread is running; <c>BridgeServer.StartHeartbeat</c> runs on its own <c>Task.Run</c>,
+    /// independent of the frame read loop, so a freeze inside ATAS that wedges the loop leaves the
+    /// heartbeat beating over a connection that consumes nothing. Measured on the first version of
+    /// this rule: such a bridge was called BUSY and kept in 6 of 12 runs, the verdict decided by
+    /// nothing but which side of the 5 s heartbeat interval the emergency landed on.
+    ///
+    /// An ANSWER cannot be produced that way. It exists only because the read loop took our frame,
+    /// recognised it and replied — which is precisely the faculty an emergency needs and the one a
+    /// freeze removes. So this is the clock the reply-timeout branch reads.
     /// </summary>
-    long _lastPeerActivityAt;
+    long _lastAnswerAt;
 
     Task? _accept;
     volatile bool _connected;
@@ -424,11 +429,6 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { return true; }
         if (f is null) return true;
 
-        // A frame arrived, whatever it says: the far end is alive. Recorded before any branch below
-        // can discard it, because liveness is not a judgement about the CONTENT — a malformed or
-        // unauthenticated frame still proves something over there is running and talking.
-        PeerIsAlive();
-
         // The authentication frames are handled before anything else so that a peer which is about
         // to be refused cannot have its capabilities or its events read first.
         if (f.Op == BridgePipeAuth.Challenge) return await Answer(f);
@@ -546,7 +546,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             return true;
         }
 
-        if (f.Id is not null && _pending.TryRemove(f.Id, out var tcs)) tcs.TrySetResult(f);
+        if (f.Id is not null && _pending.TryRemove(f.Id, out var tcs))
+        {
+            // THE ONE PLACE LIVENESS IS RECORDED. Getting here means the read loop consumed a frame
+            // of ours, matched it to an outstanding request and answered it. No other thread on the
+            // far end can reach this line.
+            PeerAnswered();
+            tcs.TrySetResult(f);
+        }
         return true;
     }
 
@@ -808,27 +815,31 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         catch (JsonException) { /* a malformed event must not take the connector down */ }
     }
 
-    /// <summary>The peer did something. Called from the read loop and from every accepted chunk.</summary>
-    void PeerIsAlive() => Volatile.Write(ref _lastPeerActivityAt, Environment.TickCount64);
+    /// <summary>The bridge answered a request. Called only where a pending RPC is completed.</summary>
+    void PeerAnswered() => Volatile.Write(ref _lastAnswerAt, Environment.TickCount64);
 
     /// <summary>
-    /// Has the peer SENT US ANYTHING since <paramref name="since"/> (a <c>TickCount64</c> stamp)?
+    /// Has the bridge ANSWERED anything since <paramref name="since"/> (a <c>TickCount64</c> stamp)?
     ///
-    /// The keep-signal is "any frame at all", not "a heartbeat", and the difference is the whole
-    /// reason this is safe on a two-second window. The bridge heartbeats every 5 s
-    /// (<c>BridgeServer.HeartbeatInterval</c>), so a healthy connection is routinely silent for
-    /// longer than an emergency waits and a heartbeat-only test would drop healthy bridges — the
-    /// exact defect 9e50559 fixed on the other branch. But a bridge that is working is emitting
-    /// replies and events, and a bridge that is idle answers an emergency in milliseconds. Total
-    /// silence in BOTH directions for the whole window, with an emergency outstanding, is what
-    /// "not responding" means.
+    /// The keep-signal is an answer, and it is deliberately neither of the two weaker things it
+    /// could be. Not "any frame": a heartbeat comes from a thread a freeze does not touch, and
+    /// keying on it made the verdict against a wedged bridge a coin flip on heartbeat phase — kept
+    /// in 6 of 12 runs at the shipped 5 s interval. Not "bytes accepted" either, which was the first
+    /// correction proposed and does not work: the emergency frame is about a hundred bytes and the
+    /// socket buffer is eight kilobytes, so the kernel takes it whether or not anything ever reads
+    /// it, and the clock moves identically for a wedged peer and a healthy one. Measured — with that
+    /// rule the wedged peer was still kept at two of the twelve phases, and a bridge that WAS
+    /// reading everything was dropped, because the write and the caller's start stamp can land on
+    /// the same millisecond tick.
     ///
-    /// The trade, stated: a bridge that is alive but wedged on this one operation is dropped and
-    /// redialled. That costs a reconnect, and a reconnect is the right remedy for a wedged
-    /// connection — it is also the only thing that makes the retry this failure advises worth
-    /// making.
+    /// An answer is the one signal that cannot be produced without the faculty an emergency needs.
+    ///
+    /// The trade, unchanged and still stated: a bridge that reads us but answers nothing at all for
+    /// the whole window is dropped and redialled. That costs a reconnect, and a reconnect is the
+    /// right remedy for a connection that is consuming requests and returning nothing — it is also
+    /// the only thing that makes the retry this failure advises worth making.
     /// </summary>
-    bool PeerMovedSince(long since) => Volatile.Read(ref _lastPeerActivityAt) > since;
+    bool PeerAnsweredSince(long since) => Volatile.Read(ref _lastAnswerAt) > since;
 
     async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
     {
@@ -917,17 +928,18 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             if (!emergency)
                 throw new ConnectorTransportException($"ATAS did not answer '{op}' within {replyWait.TotalSeconds:0}s");
 
-            if (PeerMovedSince(startedAt))
-                // Something is alive over there — it took our bytes, or it is sending us frames.
-                // Slow, or busy with a backlog. Dropping it would cost the reconnect and buy
-                // nothing, and the retry we advise needs somewhere to go.
+            if (PeerAnsweredSince(startedAt))
+                // It answered something while we waited, so the read loop is running and this
+                // operation is merely late — busy, or behind a backlog. Dropping it would cost the
+                // reconnect and buy nothing, and the retry we advise needs somewhere to go.
                 throw new ConnectorTransportException(
                     $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
                     "try again, and check your positions and orders in ATAS.");
 
-            // Nothing at all, in either direction, for the whole window. Drop it: that is what
-            // closes the handle, kills any wedged write and starts the redial, so the retry this
-            // sentence asks for has a connection to run on.
+            // It answered nothing for the whole window. Whatever else it may be doing — beating,
+            // even reading — it is not serving requests. Drop it: that closes the handle, kills any
+            // wedged write and starts the redial, so the retry this sentence asks for has a
+            // connection to run on.
             DropStalledPeer();
             throw new ConnectorTransportException(
                 $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
