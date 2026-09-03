@@ -48,12 +48,38 @@ public sealed class TradingGateway : IAsyncDisposable
     /// read by the authorization gate, and lifted only when something has actually settled the work
     /// (a reconcile pass that finished clean, or a person confirming the record).
     /// </summary>
-    volatile string? _unconfirmed;
+    /// <remarks>
+    /// A SET, keyed by request id, not one flag. One latch for the whole gateway meant that
+    /// confirming ANY record — or one clean reconcile pass — lifted a pause that another, still
+    /// unconfirmed outcome was holding. Each entry is lifted only by evidence about its own request.
+    /// </remarks>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _unconfirmed = new();
 
-    void LatchUnconfirmed(string reason)
+    void LatchUnconfirmed(string requestId, string reason)
     {
-        _unconfirmed = reason;
+        _unconfirmed[requestId] = reason;
         _health.Set(Components.ExecutionCapability, HealthState.PAUSED, reason);
+    }
+
+    /// <summary>Lifts the latch for ONE request. Nothing here may lift another request's.</summary>
+    void ClearLatch(string requestId) => _unconfirmed.TryRemove(requestId, out _);
+
+    /// <summary>
+    /// Lifts every latch whose request the STORE can now account for: a record that is settled and
+    /// no longer flagged is positive, definite evidence about that request, which is exactly what a
+    /// latch is waiting for. A record still DISPATCHING — the write that never landed — is not, and
+    /// keeps its latch. Called after a reconcile pass, so the entries clear one at a time, on their
+    /// own evidence, rather than being swept away together by an unrelated success.
+    /// </summary>
+    void ReleaseLatchesTheStoreCanVouchFor()
+    {
+        foreach (var id in _unconfirmed.Keys)
+        {
+            var row = _requests.Get(id);
+            if (row is null || row.NeedsReconciliation) continue;
+            if (row.State is ExecutionState.DISPATCHING or ExecutionState.UNKNOWN or ExecutionState.RECONCILING) continue;
+            ClearLatch(id);
+        }
     }
 
     public TradingGateway(Database db, ITradingConnector connector, HealthRegistry? health = null,
@@ -101,12 +127,11 @@ public sealed class TradingGateway : IAsyncDisposable
         var stranded = _requests.Dispatching();
         if (stranded.Count == 0) return;
 
-        // In memory before the first write, for the same reason RecordIndefinite does it: the pause
-        // must not depend on the store being writable at the moment we discover the problem.
-        LatchUnconfirmed($"{stranded.Count} request(s) were still being sent when TradeAgent last stopped");
-
         foreach (var req in stranded)
         {
+            // In memory before the write, for the same reason RecordIndefinite does it: the pause
+            // must not depend on the store being writable at the moment we discover the problem.
+            LatchUnconfirmed(req.RequestId, "a request was still being sent when TradeAgent last stopped");
             try
             {
                 _requests.Transition(req.RequestId, ExecutionState.DISPATCHING, ExecutionState.UNKNOWN,
@@ -115,17 +140,28 @@ public sealed class TradingGateway : IAsyncDisposable
                 _log.Engineering("Gateway", "startup_sweep_unknown", "warn", requestId: req.RequestId,
                     metadataJson: Json.Write(new { intent = req.Intent.ToString(), instrument = req.Instrument }));
             }
-            catch (TradeAgentException ex)
+            catch (Exception ex)
             {
-                // The table cannot refuse DISPATCHING → UNKNOWN, so reaching here means the CAS lost
-                // to another writer moving the same row. Flag it anyway: the claim being made is
-                // "this record is not trusted", not "this line moved it".
-                _requests.MarkNeedsReconciliation(req.RequestId, ex.Message);
+                // NOT SWALLOWED. The table cannot refuse DISPATCHING → UNKNOWN, so this is either a
+                // CAS loss to another writer or a store that would not take the write at all — and
+                // the second one used to disappear silently, leaving the pause resting on a row that
+                // was never marked. The latch above already holds it; this says so out loud, and
+                // still tries to flag the row.
+                _log.TryEngineering("Gateway", "startup_sweep_failed", "error", requestId: req.RequestId, ex: ex);
+                try { _requests.MarkNeedsReconciliation(req.RequestId, ex.Message); }
+                catch (Exception) { /* the latch is the guarantee; the row could not be touched */ }
             }
         }
 
-        _log.Activity($"{stranded.Count} order(s) were still being sent when TradeAgent last stopped. " +
-                      "Trading is paused until you or the platform confirm what happened to them.", "warn");
+        // Guarded for the same reason as everything else on this path: the sweep runs in a
+        // constructor, and a store that would not take the sweep's writes must not stop the gateway
+        // from being built. The latches above are already set, so the pause exists either way.
+        try
+        {
+            _log.Activity($"{stranded.Count} order(s) were still being sent when TradeAgent last stopped. " +
+                          "Trading is paused until you or the platform confirm what happened to them.", "warn");
+        }
+        catch (Exception) { /* the activity line is the nicety; the latch is the guarantee */ }
         _health.Set(Components.ExecutionCapability, HealthState.PAUSED, $"{stranded.Count} request(s) unconfirmed");
     }
 
@@ -258,14 +294,26 @@ public sealed class TradingGateway : IAsyncDisposable
     /// this are different questions, and answering the wrong one is how a machine that refuses to
     /// trade told its owner there was nothing outstanding.
     /// </summary>
-    public List<ExecutionRequest> Unreconciled() => _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
+    public List<ExecutionRequest> Unreconciled()
+    {
+        var rows = _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
+        if (_unconfirmed.IsEmpty) return rows;
+
+        // A latched id whose row the store never took is still unconfirmed work, and every surface
+        // that lists the blocking records has to see it — otherwise the card is empty while the gate
+        // refuses, which is the disagreement this method exists to end.
+        var seen = rows.Select(r => r.RequestId).ToHashSet();
+        foreach (var id in _unconfirmed.Keys)
+            if (seen.Add(id) && _requests.Get(id) is { } row) rows.Add(row);
+        return rows;
+    }
 
     /// <summary>
     /// Is there anything this gateway will not trade over — including an outcome it could not write
     /// down. The screen and the background loop ask this rather than counting rows, so neither can
     /// disagree with the gate.
     /// </summary>
-    public bool HasUnconfirmedWork() => _unconfirmed is not null || Unreconciled().Count > 0;
+    public bool HasUnconfirmedWork() => !_unconfirmed.IsEmpty || Unreconciled().Count > 0;
 
     async Task<string> RequireAccountId(CancellationToken ct)
     {
@@ -350,9 +398,9 @@ public sealed class TradingGateway : IAsyncDisposable
         // The in-memory latch is checked AFTER the store, so that when both agree the message is the
         // one that can count. It is checked at all because the store may not have been writable when
         // the outcome had to be recorded.
-        if (_unconfirmed is { } latched)
+        if (!_unconfirmed.IsEmpty)
         {
-            (reason, code) = (latched, ErrorCode.TRADING_PAUSED_UNRECONCILED);
+            (reason, code) = (_unconfirmed.Values.First(), ErrorCode.TRADING_PAUSED_UNRECONCILED);
             return false;
         }
 
@@ -566,7 +614,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // exactly when the disk is full, the file is locked by another connection, or the store is
         // read-only. Persisting first meant a throw skipped the health row, the logs and the pause,
         // leaving a touched wire, an unflagged DISPATCHING row and an open gate.
-        LatchUnconfirmed("an order outcome is unconfirmed");
+        LatchUnconfirmed(requestId, "an order outcome is unconfirmed");
         StateChanged?.Invoke();
 
         try
@@ -1261,7 +1309,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // finds the row no longer in DISPATCHING, files `already_settled` and returns what is stored,
         // and SettleUnknown falls back to flagging. Nothing is resubmitted on either path.
         var pending = Unreconciled();
-        if (pending.Count == 0 && _unconfirmed is { } latched)
+        if (pending.Count == 0 && _unconfirmed.Values.FirstOrDefault() is { } latched)
         {
             // The store says there is nothing to confirm and this gateway knows better: an outcome
             // it could not write down. Clearing the pause here would launder that failure into
@@ -1282,7 +1330,6 @@ public sealed class TradingGateway : IAsyncDisposable
             // ReconcileAsync watched execution stay PAUSED on a book with nothing left to confirm.
             // In the app the background health tick hid this; anything driving the gateway directly
             // saw it. Same two lines the sibling path uses, so the two cannot drift apart again.
-            _unconfirmed = null;
             _health.Set(Components.ExecutionCapability, HealthState.READY);
             StateChanged?.Invoke();
             return new ReconcileResult(0, 0, []);
@@ -1391,11 +1438,13 @@ public sealed class TradingGateway : IAsyncDisposable
             }
         }
 
-        if (inconclusive == 0)
+        ReleaseLatchesTheStoreCanVouchFor();
+
+        if (inconclusive == 0 && _unconfirmed.IsEmpty)
         {
-            // Everything this pass found has a definite outcome now, so the in-memory pause has
-            // nothing left to stand for.
-            _unconfirmed = null;
+            // Everything this pass found has a definite outcome now — and each request that got one
+            // had its own latch entry lifted where it was settled, not here. A latch this pass never
+            // met keeps trading paused.
             _log.Activity("Orders reconciled");
             _health.Set(Components.ExecutionCapability, HealthState.READY);
         }
@@ -1553,7 +1602,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // transition and rewriting a terminal state would only destroy the timestamp on it;
             // what is actually stale is the flag. This is the common ending for the race above.
             var confirmed = _requests.ClearReconciliation(requestId);
-            _unconfirmed = null;   // a person has answered the question the latch was holding open
+            ClearLatch(requestId);   // a person has answered the question this latch was holding open
             _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
             _log.Engineering("Gateway", "force_resolve_confirmed", "warn", requestId: requestId,
                 metadataJson: Json.Write(new { state = finalState.ToString(), note }));
@@ -1577,7 +1626,7 @@ public sealed class TradingGateway : IAsyncDisposable
             _requests.Transition(requestId, from, ExecutionState.RECONCILING);
         var result = _requests.Transition(requestId, _requests.Get(requestId)!.State, finalState,
             needsReconciliation: false, markReconciled: true, error: $"resolved by user: {note}");
-        _unconfirmed = null;   // as above: the override answers it
+        ClearLatch(requestId);   // as above: the override answers this one
         _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
 
         // Every other mutator on this class announces itself and this one did not, so the screen that
@@ -1631,7 +1680,7 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             var unreconciled = Unreconciled().Count;
-            var latched = _unconfirmed;
+            var latched = _unconfirmed.Values.FirstOrDefault();
             _health.Set(Components.ExecutionCapability,
                 unreconciled > 0 || latched is not null ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
