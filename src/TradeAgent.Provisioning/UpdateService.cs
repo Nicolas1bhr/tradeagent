@@ -189,6 +189,11 @@ public sealed record UpdateSources(
 /// carrying two files that both look like the installer, and so does a file whose bytes changed
 /// between being checked and being started. The one thing this object will never do is start a 90 MB
 /// executable it cannot account for.
+///
+/// <b>What that still does not cover:</b> between the hash being read and Windows starting the file
+/// there is an instant no check inside this process can close — a program running as this same user
+/// could replace the installer in that gap. Same-user isolation is the boundary that would answer
+/// it, not another read, and it is somebody else's unit.
 /// </summary>
 public sealed class UpdateService
 {
@@ -399,6 +404,13 @@ public sealed class UpdateService
                     $"The downloaded TradeAgent {info.Version} changed after it was checked, so it was not started. " +
                     "Nothing was installed and the version you are running is untouched.");
 
+            // And the hard stop again, for the same reason as the hash. The first ask happened
+            // before a manifest fetch and a 90 MB download; an order placed while that was running
+            // can have gone UNKNOWN since, and the sample taken minutes ago would launch anyway.
+            // ADDED, not moved: the early ask is what keeps a refusal from costing the owner the
+            // download, and this one is what makes the answer true at the moment it is acted on.
+            if (OutstandingWork(out var late)) return Refuse(late);
+
             Set(UpdateStage.Installing, $"Installing TradeAgent {info.Version}. TradeAgent will close and reopen itself.");
             _sources.Launch(installer);
 
@@ -453,10 +465,10 @@ public sealed class UpdateService
             return null;
         }
 
-        var sha = ChecksumManifest.Find(manifest, info.AssetName);
+        var sha = ChecksumManifest.Find(manifest, info.AssetName, out var bad);
         if (sha is null)
         {
-            Refuse($"{cannot}: the checksum file published with it does not list {info.AssetName}. " +
+            Refuse($"{cannot}: {bad ?? $"the checksum file published with it does not list {info.AssetName}"}. " +
                    "Nothing was installed.");
             return null;
         }
@@ -661,9 +673,58 @@ public static class ChecksumManifest
     /// a case-different file name, and build.ps1's repository-relative paths
     /// (<c>artifacts/TradeAgent-Setup-x64.exe</c>), which are not what the release asset is called.
     /// </summary>
-    public static string? Find(string? manifest, string assetName)
+    /// <summary>
+    /// A manifest larger than this did not come from our packaging and is not going to be read.
+    ///
+    /// The real file is two lines and about 120 characters. 64 KiB is five hundred times that and
+    /// still small enough that reading it costs nothing; a release would have to publish several
+    /// hundred artifacts to approach it. The point is not the exact number — it is that the number
+    /// exists BEFORE the string is split, so a hostile or broken 500 MB "checksum file" is a
+    /// refusal rather than an allocation. ASCII is what build.ps1 writes, so one character is one
+    /// byte here.
+    /// </summary>
+    public const int MaxCharacters = 64 * 1024;
+
+    /// <summary>The same bound, on lines, for a file that is small but pathologically shaped.</summary>
+    public const int MaxLines = 2_000;
+
+    public static string? Find(string? manifest, string assetName) => Find(manifest, assetName, out _);
+
+    /// <summary>
+    /// The same, and says why when the answer is "no hash" for a reason worse than absence: a
+    /// manifest too big to be ours, or one that names our installer twice with two different hashes.
+    ///
+    /// A file listed twice with the SAME hash resolves normally. build.ps1 hashes
+    /// <c>Get-ChildItem -Recurse</c>, so one installer can legitimately appear under two paths, and
+    /// two identical hashes carry no contradiction — there is nothing to disambiguate. Two
+    /// DIFFERENT hashes for one name is the manifest contradicting itself, and picking either one
+    /// (the first, as this used to, or the last) is choosing which of two claims about an executable
+    /// to believe. Neither is a decision anybody made.
+    /// </summary>
+    public static string? Find(string? manifest, string assetName, out string? problem)
     {
+        problem = null;
         if (string.IsNullOrWhiteSpace(manifest) || string.IsNullOrWhiteSpace(assetName)) return null;
+
+        // Before the split, not after: Split allocates one string per line of whatever arrived.
+        if (manifest.Length > MaxCharacters)
+        {
+            problem = "the checksum file published with it is far larger than one of ours could be";
+            return null;
+        }
+
+        var lines = 1;
+        foreach (var c in manifest)
+        {
+            if (c != '\n') continue;
+            if (++lines > MaxLines)
+            {
+                problem = "the checksum file published with it has far more lines than one of ours could have";
+                return null;
+            }
+        }
+
+        string? found = null;
 
         foreach (var raw in manifest.Split('\n'))
         {
@@ -682,8 +743,17 @@ public static class ChecksumManifest
             var slash = file.LastIndexOf('/');
             if (slash >= 0) file = file[(slash + 1)..];
 
-            if (file.Equals(assetName, StringComparison.OrdinalIgnoreCase)) return hash.ToLowerInvariant();
+            if (!file.Equals(assetName, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var candidate = hash.ToLowerInvariant();
+            if (found is null) { found = candidate; continue; }
+            if (found == candidate) continue;
+
+            problem = $"the checksum file published with it lists {assetName} twice, with two different hashes";
+            return null;
         }
-        return null;
+
+        // Every line is read even after a match, so a contradiction later in the file is found.
+        return found;
     }
 }

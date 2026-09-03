@@ -491,6 +491,144 @@ public class UpdateTrustTests
         finally { Cleanup(dir); }
     }
 
+    // ================================ round 2 ====================================================
+
+    // ---- 1. the hard stop is asked again immediately before Launch -------------------------------
+
+    /// <summary>
+    /// The first ask happens before a manifest fetch and a 90 MB download. An order placed while
+    /// that was running can go UNKNOWN in the middle of it, and a sample taken minutes earlier would
+    /// launch the installer anyway. So it is asked twice, and the second ask is the one that is true
+    /// at the moment it is acted on.
+    /// </summary>
+    [Fact]
+    public async Task An_order_that_goes_unconfirmed_during_the_download_stops_the_launch()
+    {
+        var f = Wellformed();
+        var outstanding = 0;
+
+        var sources = f.Sources() with
+        {
+            Download = (_, sha, _, _) =>
+            {
+                f.DownloadStarted = true;
+                f.ShaHandedToTheDownload = sha;
+                outstanding = 1;              // the order goes UNKNOWN while the bytes are arriving
+                return Task.FromResult(f.InstallerPath);
+            }
+        };
+        var service = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources)
+        {
+            UnconfirmedWork = () => outstanding
+        };
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+
+        Assert.True(f.DownloadStarted);       // the early ask passed, as it should have
+        Assert.Equal(0, f.Launches);          // and the late ask caught what changed under it
+        Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.Contains("unconfirmed", service.Message);
+    }
+
+    /// <summary>The control for the pair above: nothing changes during the download, so it installs.</summary>
+    [Fact]
+    public async Task An_order_book_that_stays_clean_through_the_download_still_installs()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        await service.CheckAsync();
+
+        Assert.True(await service.InstallAsync());
+        Assert.True(f.DownloadStarted);
+        Assert.Equal(1, f.Launches);
+    }
+
+    // ---- 4. a manifest that contradicts itself ---------------------------------------------------
+
+    [Fact]
+    public async Task A_manifest_naming_the_installer_twice_with_different_hashes_is_refused()
+    {
+        var manifest = $"{Hash}  artifacts/{Asset}\r\n{OtherHash}  artifacts/copies/{Asset}\r\n";
+
+        Assert.Null(ChecksumManifest.Find(manifest, Asset, out var problem));
+        Assert.Contains("twice, with two different hashes", problem);
+
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = manifest };
+        var service = await Offering(f);
+
+        Assert.False(await service.InstallAsync());
+        Assert.False(f.DownloadStarted);
+        Assert.Equal(0, f.Launches);
+        Assert.Contains("two different hashes", service.Message);
+    }
+
+    /// <summary>
+    /// The same file listed twice with the SAME hash is not a contradiction — build.ps1 hashes
+    /// Get-ChildItem -Recurse, so one installer can legitimately appear under two paths. There is
+    /// nothing to disambiguate, so it resolves.
+    /// </summary>
+    [Fact]
+    public void A_manifest_naming_the_installer_twice_with_the_same_hash_still_resolves()
+    {
+        var manifest = $"{Hash}  artifacts/{Asset}\r\n{Hash}  artifacts/copies/{Asset}\r\n";
+
+        Assert.Equal(Hash, ChecksumManifest.Find(manifest, Asset, out var problem));
+        Assert.Null(problem);
+    }
+
+    /// <summary>A contradiction AFTER the first match is still a contradiction: every line is read.</summary>
+    [Fact]
+    public void A_second_conflicting_line_is_found_even_though_the_first_one_matched()
+    {
+        var manifest =
+            $"{Hash}  {Asset}\n" +
+            $"{OtherHash}  other.exe\n" +
+            $"{OtherHash}  {Asset}\n";
+
+        Assert.Null(ChecksumManifest.Find(manifest, Asset, out var problem));
+        Assert.NotNull(problem);
+    }
+
+    // ---- 5. a checksum file too big to be ours ---------------------------------------------------
+
+    [Fact]
+    public async Task A_checksum_file_far_larger_than_ours_is_refused_before_it_is_split()
+    {
+        var oversized = new string('x', ChecksumManifest.MaxCharacters + 1);
+
+        Assert.Null(ChecksumManifest.Find(oversized, Asset, out var problem));
+        Assert.Contains("far larger", problem);
+
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = oversized };
+        var service = await Offering(f);
+
+        Assert.False(await service.InstallAsync());
+        Assert.False(f.DownloadStarted);
+        Assert.Contains("far larger", service.Message);
+    }
+
+    [Fact]
+    public void A_checksum_file_with_far_more_lines_than_ours_is_refused()
+    {
+        var many = string.Join("\n", Enumerable.Repeat("x", ChecksumManifest.MaxLines + 1));
+
+        Assert.True(many.Length < ChecksumManifest.MaxCharacters);   // refused on lines, not on size
+        Assert.Null(ChecksumManifest.Find(many, Asset, out var problem));
+        Assert.Contains("more lines", problem);
+    }
+
+    /// <summary>And the cap does not bite a manifest of a plausible size: 500 artifacts still read.</summary>
+    [Fact]
+    public void A_large_but_believable_manifest_still_resolves()
+    {
+        var lines = Enumerable.Range(0, 499).Select(i => $"{OtherHash}  artifacts/file{i}.exe").ToList();
+        lines.Add($"{Hash}  artifacts/{Asset}");
+
+        Assert.Equal(Hash, ChecksumManifest.Find(string.Join("\r\n", lines), Asset, out var problem));
+        Assert.Null(problem);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()
