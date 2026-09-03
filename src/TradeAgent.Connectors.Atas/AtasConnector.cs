@@ -71,6 +71,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// Ordinary agent traffic keeps the full <see cref="WriteTimeout"/>. A quote that arrives late
     /// costs nothing, and an ordinary caller has no reason to tear down a connection that is merely
     /// busy.
+    ///
+    /// THE COST THAT REMAINS, and it is not fixed by any of this: an emergency behind a bridge that
+    /// is genuinely busy still waits these two seconds and then returns UNKNOWN. It does not get its
+    /// cancellation through, and it cannot — the frame has not been sent. What it gets is a truthful
+    /// answer in two seconds instead of a wrong one in ten, and a connection left up so the retry it
+    /// is told to make has somewhere to go.
     /// </summary>
     public TimeSpan EmergencyGateWait { get; init; } = TimeSpan.FromSeconds(2);
 
@@ -100,7 +106,15 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         op is BridgeOps.Cancel or BridgeOps.CancelAll or BridgeOps.Close;
 
     NamedPipeServerStream? _pipeStream;
-    StreamWriter? _writer;
+    Stream? _out;
+
+    /// <summary>
+    /// <see cref="Environment.TickCount64"/> when the in-flight write last had bytes ACCEPTED.
+    ///
+    /// It is what lets an emergency caller tell "the bridge stopped reading" from "the bridge is
+    /// busy", which are the same two seconds of waiting and completely different news.
+    /// </summary>
+    long _lastWriteProgressAt;
     Task? _accept;
     volatile bool _connected;
     BridgeHello? _hello;
@@ -224,7 +238,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 _peerImage = BridgePipeAuth.ClientImagePath(_pipeStream);
 
                 var reader = new StreamReader(_pipeStream, new UTF8Encoding(false), false, 8192, leaveOpen: true);
-                _writer = new StreamWriter(_pipeStream, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+                _out = _pipeStream;
 
                 string? line;
                 while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
@@ -327,7 +341,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         _authenticated = false;
         _peerArrived = DateTimeOffset.MaxValue;
         _peerImage = null;
-        _writer = null;
+        _out = null;
         foreach (var kv in _pending)
             if (_pending.TryRemove(kv.Key, out var tcs))
                 tcs.TrySetException(new ConnectorTransportException(why));
@@ -522,7 +536,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <summary>One frame out, sharing the gate with <see cref="Rpc"/> so writes cannot interleave.</summary>
     async Task SendFrame(object frame)
     {
-        var w = _writer;
+        var w = _out;
         if (w is null) return;
         try { _ = await WriteFrame(w, frame, _cts.Token, WriteTimeout, emergency: false); }
         catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
@@ -569,39 +583,71 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
-    async Task<SendOutcome> WriteFrame(StreamWriter w, object frame, CancellationToken ct,
+    async Task<SendOutcome> WriteFrame(Stream w, object frame, CancellationToken ct,
         TimeSpan gateWait, bool emergency)
     {
+        var waitedFrom = Environment.TickCount64;
         if (!await _sendGate.WaitAsync(gateWait, ct))
         {
-            // An emergency does not queue politely. Whatever is holding the gate has had its two
-            // seconds; the connection goes, which frees the gate and starts the reconnect.
-            if (emergency) DropStalledPeer();
-            return emergency ? SendOutcome.PeerStalled : SendOutcome.Busy;
+            if (!emergency) return SendOutcome.Busy;
+
+            // AN EMERGENCY THAT GAVE UP ON THE GATE STILL HAS TO SAY WHICH THING WENT WRONG.
+            //
+            // The first version dropped unconditionally and told the owner the bridge was not
+            // responding — which was a lie whenever the bridge was merely busy with our own
+            // backlog. Reproduced: 1500 concurrent 900 KiB RPCs and one cancel-all returned in
+            // 2.01 s having disconnected a bridge that was reading everything we sent it.
+            //
+            // So ask the writer that is holding the gate whether it got anywhere while we waited.
+            // Bytes accepted in that window means the far end is reading and we are the queue;
+            // nothing accepted means it has stopped, and the connection is worth ending to free
+            // the gate and start the reconnect.
+            if (Volatile.Read(ref _lastWriteProgressAt) > waitedFrom) return SendOutcome.Busy;
+
+            DropStalledPeer();
+            return SendOutcome.PeerStalled;
         }
         try
         {
-            var write = w.WriteLineAsync(Json.Write(frame));
-            try
+            var bytes = Encoding.UTF8.GetBytes(Json.Write(frame) + "\n");
+            var sent = 0;
+            while (sent < bytes.Length)
             {
-                await write.WaitAsync(WriteTimeout, ct);
-                return SendOutcome.Sent;
+                var n = Math.Min(WriteChunkBytes, bytes.Length - sent);
+                var write = w.WriteAsync(bytes.AsMemory(sent, n), ct).AsTask();
+                try
+                {
+                    await write.WaitAsync(WriteTimeout, ct);
+                }
+                catch (TimeoutException)
+                {
+                    Observe(write);
+                    DropStalledPeer();
+                    return SendOutcome.PeerStalled;
+                }
+                catch (OperationCanceledException)
+                {
+                    Observe(write);
+                    DropStalledPeer();
+                    throw;
+                }
+                sent += n;
+                Volatile.Write(ref _lastWriteProgressAt, Environment.TickCount64);
             }
-            catch (TimeoutException)
-            {
-                Observe(write);
-                DropStalledPeer();
-                return SendOutcome.PeerStalled;
-            }
-            catch (OperationCanceledException)
-            {
-                Observe(write);
-                DropStalledPeer();
-                throw;
-            }
+            return SendOutcome.Sent;
         }
         finally { _sendGate.Release(); }
     }
+
+    /// <summary>
+    /// How much of a frame one write deadline covers, mirroring <c>GatewayPipeServer</c>.
+    ///
+    /// ARITHMETIC. Chunking is what makes <see cref="WriteTimeout"/> a stalled-peer detector rather
+    /// than a throughput floor of (frame size / timeout), and it is also what makes progress
+    /// OBSERVABLE — a single WriteLineAsync gives back one task that either finishes or does not,
+    /// and an emergency caller cannot ask it whether the bridge is alive.
+    /// </summary>
+    const int WriteChunkBytes = 8192;
 
     /// <summary>
     /// Ends a connection whose peer has stopped reading. Disposing the handle is what actually kills
@@ -640,7 +686,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
     {
-        if (!_connected || _writer is null)
+        if (!_connected || _out is null)
             throw new ConnectorTransportException("the ATAS bridge is not connected");
 
         var id = Guid.NewGuid().ToString("n");
@@ -652,7 +698,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
             var emergency = IsRiskReducing(op);
-            var outcome = await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
+            var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
                 emergency ? EmergencyGateWait : WriteTimeout, emergency);
             if (outcome is not SendOutcome.Sent)
             {
@@ -663,11 +709,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 // different SENTENCES, because they ask different things of whoever reads them.
                 throw new ConnectorTransportException(outcome switch
                 {
-                    // Written for the owner, not for a log: this one reaches the screen during the
+                    // Written for the owner, not for a log: these reach the screen during the
                     // seconds when someone is trying to stop and needs to know where they stand.
+                    // They are different facts and they get different words — "not responding"
+                    // sends a person to look at ATAS, "busy" tells them to wait and try again.
                     SendOutcome.PeerStalled when emergency =>
                         $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
                         "dropped and will be retried — check your positions and orders in ATAS.",
+                    SendOutcome.Busy when emergency =>
+                        $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
+                        "try again, and check your positions and orders in ATAS.",
                     SendOutcome.PeerStalled =>
                         $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s",
                     _ =>

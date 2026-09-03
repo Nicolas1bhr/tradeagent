@@ -371,6 +371,58 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A BUSY BRIDGE IS NOT A DEAD ONE, and an emergency must not say it is.
+    ///
+    /// The first version of the fast path dropped unconditionally on gate expiry and told the owner
+    /// the bridge was not responding — which was false whenever the bridge was reading everything
+    /// and the queue was ours. Reproduced by the review: 1500 concurrent 900 KiB RPCs and one
+    /// cancel-all returned in 2.01 s having disconnected a bridge that was perfectly healthy.
+    ///
+    /// Here the peer READS EVERYTHING, and the gate is genuinely contended by our own traffic. The
+    /// emergency still fails — its frame was never sent, so its outcome is honestly unknown — but it
+    /// must say BUSY, and it must leave the connection up so the retry it advises has somewhere to go.
+    /// </summary>
+    [Fact]
+    public async Task An_emergency_behind_a_busy_but_healthy_bridge_says_busy_and_does_not_drop_it()
+    {
+        var pipe = NewPipe();
+        // No fixed credential: a real BridgeServer authenticates against the installation's own
+        // published secret, and handing this end a different one means the handshake never lands.
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(30));
+        await connector.ConnectAsync();
+
+        // A real bridge that reads and answers: the far end is never the problem in this test.
+        var adapter = new LoopbackAtasAdapter();
+        await using var bridge = new BridgeServer(adapter, pipe);
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // Our own backlog: big frames, many of them, so the send gate is held continuously by
+        // writes that ARE making progress.
+        var fat = new string('s', 512 * 1024);
+        var backlog = Enumerable.Range(0, 400).Select(_ => connector.GetQuoteAsync(fat)).ToArray();
+        Observe(backlog);
+        await Task.Delay(300);
+
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-LOOPBACK"));
+        timer.Stop();
+
+        Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
+
+        // The honest sentence, and NOT the one that sends a person hunting a dead bridge.
+        Assert.Contains("busy", ex.Message);
+        Assert.Contains("NOT confirmed", ex.Message);
+        Assert.DoesNotContain("not responding", ex.Message);
+
+        // And the bridge is still there, which is what makes "try again" advice worth giving.
+        Assert.True(await connector.IsConnectedAsync(),
+            "a bridge that was reading everything we sent it was disconnected by an emergency");
+    }
+
+    /// <summary>
     /// The other half of the decision: ORDINARY traffic keeps the full deadline. A quote arriving
     /// late costs nothing, and a caller that is merely queued has no business tearing down a
     /// connection. Shipped values, so this one really does take about ten seconds.
