@@ -40,12 +40,14 @@ public static class CliReplayContract
     /// <summary>
     /// What to say when the call failed, or null when there is nothing to recover.
     ///
-    /// <paramref name="sent"/> is the whole distinction. Nothing sent means nothing to reconcile and
-    /// the agent should simply try again. Sent and unanswered means the outcome is UNKNOWN, and
-    /// saying so with the id is the difference between a retry and a duplicate.
+    /// <paramref name="outcome"/> is the whole distinction, and it is now a fact the transport
+    /// reported rather than a boolean the caller set before the write began (Codex F3). Provably
+    /// nothing written means nothing to reconcile and the agent should simply try again. Possibly
+    /// written means the outcome is UNKNOWN, and saying so with the id is the difference between a
+    /// retry and a duplicate order.
     /// </summary>
-    public static string? RecoveryLine(bool sent, string? requestId) =>
-        sent && requestId is not null
+    public static string? RecoveryLine(TransportOutcome outcome, string? requestId) =>
+        outcome is TransportOutcome.PossiblyWritten && requestId is not null
             ? $"reply lost — re-run with --request-id {requestId} or check `trade orders` first"
             : null;
 
@@ -54,12 +56,15 @@ public static class CliReplayContract
         new { ok = reply.Ok, request_id = requestId, data = reply.Data, error = reply.Error };
 
     /// <summary>The --json object for a call that never came back.</summary>
-    public static object UnansweredJson(string? requestId, bool sent, IpcError error) => new
+    public static object UnansweredJson(string? requestId, TransportOutcome outcome, IpcError error) => new
     {
         ok = false,
         request_id = requestId,
-        reply_lost = sent && requestId is not null,
-        recovery = RecoveryLine(sent, requestId),
+        reply_lost = outcome is TransportOutcome.PossiblyWritten && requestId is not null,
+        // Named on the wire, because "reply_lost: false" alone does not tell an agent whether the
+        // order might exist — it only says this process cannot advise a replay.
+        transport = outcome.ToString(),
+        recovery = RecoveryLine(outcome, requestId),
         error
     };
 }
