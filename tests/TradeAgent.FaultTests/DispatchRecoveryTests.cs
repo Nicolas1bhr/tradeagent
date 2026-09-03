@@ -47,6 +47,8 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public bool SortPositionsBySymbol;
     public Exception? ThrowAfterCancelAll;
     public bool ModifyIgnoresTheRequest;
+    /// <summary>Rounds the prices on the returned order to a tick grid, the way a real platform does.</summary>
+    public decimal? ModifyRoundsPricesTo;
     public bool CancelDoesNotReachTheBook;
     public bool CancelAllDoesNotReachTheBook;
     /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
@@ -95,6 +97,12 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
             ? (await inner.GetOrdersAsync(inner.Broker.AccountId, true, null, ct)).First(x => x.ConnectorOrderId == cmd.ConnectorOrderId)
             : await inner.ModifyOrderAsync(cmd, ct);
         if (ThrowAfterModify is { } ex) throw ex;
+        if (ModifyRoundsPricesTo is { } tick and > 0m)
+            o = o with
+            {
+                LimitPrice = o.LimitPrice is { } l ? Math.Round(l / tick, MidpointRounding.AwayFromZero) * tick : null,
+                StopPrice = o.StopPrice is { } st ? Math.Round(st / tick, MidpointRounding.AwayFromZero) * tick : null
+            };
         return o;
     }
 
@@ -1464,5 +1472,87 @@ public class OperatorPressPolicyTests
         c.ThrowAfterCancelAll = null;
         Assert.Empty(await gw.OperatorCancelAllAsync(button.Begin()));
         Assert.Equal(1, c.CancelAlls);             // the same press: the sweep was not repeated
+    }
+}
+
+// =================================================================================================
+// ROUND 2 · item 6 — a price the platform put on its own tick grid still counts as applied
+// =================================================================================================
+
+/// <summary>
+/// `ModificationApplied` compared the raw requested price with the price that came back. Platforms
+/// round to the instrument's tick, so asking for 4242.13 on a 0.25 grid returned 4242.25 — a
+/// modification that definitely WAS applied, recorded UNKNOWN, with trading paused for it.
+/// </summary>
+public class TickNormalizedModifyTests
+{
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, ExecutionRequest Placed)> Working()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "tick-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+        return (gw, c, db, placed);
+    }
+
+    [Fact]
+    public async Task A_price_the_platform_rounded_to_its_tick_is_applied()
+    {
+        var (gw, c, db, placed) = await Working();
+        using var dbh = db;
+        c.ModifyRoundsPricesTo = 0.25m;                       // ES trades in quarter points
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), "tick-mod", placed.ConnectorOrderId!, null, 4242.13m, null);
+
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, r.State);
+        Assert.False(r.NeedsReconciliation);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// The direction that must NOT be lost to the tolerance: a platform that ignored the request
+    /// returns the OLD price, and that is still an unconfirmed modification even when the change
+    /// asked for was small.
+    /// </summary>
+    [Fact]
+    public async Task A_price_that_did_not_move_is_still_unconfirmed_even_within_a_tick()
+    {
+        var (gw, c, db, placed) = await Working();
+        using var dbh = db;
+        c.ModifyIgnoresTheRequest = true;                     // returns the order at 4000, unchanged
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), "tick-ignored", placed.ConnectorOrderId!, null, 4000.13m, null);
+
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    /// <summary>
+    /// And when the grid is unknown — the platform lists no instrument for this symbol — a price
+    /// that differs is not evidence either way, so the reconciler must not call it a definite
+    /// failure. Unknowable stays flagged for a person rather than settling REJECTED.
+    /// </summary>
+    [Fact]
+    public async Task An_unknown_tick_grid_leaves_a_changed_price_for_a_person_to_judge()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking },
+            options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "grid-place",
+            new PlaceIntent("XYZ", OrderSide.Buy, OrderType.Limit, 1m, 4000m, null, TimeInForce.Day, null));
+
+        c.ModifyRoundsPricesTo = 0.25m;
+        c.ThrowAfterModify = new ConnectorTransportException("wire down after the change was sent");
+        await gw.ModifyAsync(new AgentContext("a"), "grid-mod", placed.ConnectorOrderId!, null, 4242.13m, null);
+        c.ThrowAfterModify = null;
+        c.RewriteBook = o => o.ConnectorOrderId == placed.ConnectorOrderId ? o with { LimitPrice = 4242.25m } : o;
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.False(result.Clean);                           // XYZ has no listed tick size
+        var record = gw.GetRequest("grid-mod")!;
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.True(record.NeedsReconciliation);
     }
 }
