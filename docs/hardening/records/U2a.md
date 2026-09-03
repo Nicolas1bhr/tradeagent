@@ -386,7 +386,15 @@ Passed!  - Failed: 0, Passed: 238, Skipped: 0, Total: 238, Duration: 2 m 42 s - 
 ```
 **421 green, 0 red** (391 at `d25dbb4`; this round adds 30 tests).
 
-### Gates — the Windows box (F12, and it closes the oldest NOT-VERIFIED line in this record)
+### Gates — the Windows box (F12) — ⚠ **UNKNOWN STANDING, see the note at the end of Round 6**
+
+> **STANDING WITHDRAWN 2026-09-04.** Everything in this section was measured while another leg (the
+> U14 builder) was pushing to and building the same `C:\ta\repo`. `tools/win-push.sh` deletes
+> `src`/`tests`/`packaging`/`tools` before unpacking, so the box tree was replaced under both of us
+> repeatedly, and I did not verify whose tree was on the box at run time. **Do not rely on any number
+> below.** It is kept because it was honestly recorded and because the round-6 re-run (verified, at
+> the end of this file) reaches the same conclusion by a checked route. The inference drawn here —
+> that the Windows pipe buffer is too small to swallow a 512 KiB frame — is re-established there.
 
 `tools/win-push.sh` (740K, 446 files) then `tools/win-run.sh`, against `DESKTOP-K8VRIT9`, ATAS
 installed and running, console session live. The installed app, ATAS and the real home were not
@@ -461,3 +469,173 @@ fail without the 8 KiB buffer — the tests pass with it, which is weaker than a
 - I did not re-run the full suite a second time on Mac after the last commit's mutants; the 421-green
   run above is at the tip with a clean tree, and each mutant was restored and re-verified by its
   class before moving on.
+
+## Round 6 (build record, 2026-09-04)
+
+Bounce on `0909ada` from the round-5 Opus verifier (FAIL 1H/2M/1L, `records/U2a-verify-r5.md`; the
+Codex delta was pending a quota reset). Same worktree, same builder. **F-A (HIGH) split to U2c-1**
+— the operator's own Close All is still on the ordinary deadline (9759 ms vs the agent's 2018 ms)
+because `RiskReducingScope` is opened only in the pipe server, and the method U2c-1 is rewriting is
+where the scope belongs. `TradingGateway.cs` and `DashboardView.cs` were not opened.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F-B** (M) liveness keyed on frames-in, so a wedged-but-beating bridge is kept | **4 of 12 phases** kept and told "busy" | 12/12 dropped + the answering peer kept | any-frame liveness → **RED 4**; never keep → **RED 1** | `3e241d7` |
+| **F-C** (M) mutant W3 survives all 238 | W3 **survived** at `0909ada` | 10/10 `CliReplayContractTests` | W3 → **RED 1** (`Expected: PossiblyWritten / Actual: NothingWritten`) | `e1cb147` |
+| **F-D** (L) a read inherits an order's wording | the gateway cancel-all's own message: `'orders' is NOT confirmed … check your positions` | 34/34 class | all ops get order wording → **RED 2**; all ops get read wording → **RED 2** | `0bb3712` |
+
+### F-B — the proposed mechanism does not work, and that is measured
+
+The bounce named the fix: key liveness on WRITE progress (`_lastWriteProgressAt`). I implemented it
+and ran it before adopting it, and it fails in both directions:
+
+```
+TRIAL: keep iff _lastWriteProgressAt > startedAt
+  A_bridge_that_only_heartbeats…(phaseMs: 1200)  [FAIL]   ← wedged peer still KEPT
+  A_bridge_that_only_heartbeats…(phaseMs: 1600)  [FAIL]   ← wedged peer still KEPT
+  An_emergency_a_live_bridge_does_not_answer…    [FAIL]   ← a peer that WAS reading got dropped
+  Failed! - Failed: 3, Passed: 11, Total: 14
+```
+
+The reason is arithmetic, not luck: the emergency frame is about a hundred bytes and the socket
+buffer is eight kilobytes, so **the kernel accepts the frame whether or not anything ever reads it**
+— `_lastWriteProgressAt` moves identically for a wedged peer and a healthy one. (The false DROP is
+the other edge: the write and the caller's `startedAt` can land on the same `TickCount64`
+millisecond, so `>` is false for a peer that is reading perfectly.) Write progress is the right
+signal for GATE expiry, where the holder's bytes really are or are not moving, and it carries no
+information at all once our own small frame is already in the buffer.
+
+**What I implemented instead: liveness is an ANSWER.** A heartbeat proves a thread is running —
+`BridgeServer.StartHeartbeat` is its own `Task.Run`, independent of the read loop a freeze wedges.
+An answer proves the read loop took our frame, matched it and replied, which is exactly the faculty
+an emergency needs and the one a freeze removes. It is recorded in one place, where a pending RPC is
+completed, and nothing else votes. **This is a deliberate divergence from the bounce's stated
+mechanism and the manager should confirm it** — the intent (12/12, phase-independent) is met; the
+named mechanism could not meet it.
+
+The keep-direction test had to be rewritten with it. The old one
+(`An_emergency_a_live_bridge_does_not_answer_is_unknown_but_not_a_drop`) used a peer that read
+everything and heartbeated but answered nothing — which is the wedged shape wearing the busy label,
+and it passed for the wrong reason. Its replacement,
+`An_emergency_a_busy_bridge_has_not_answered_yet_is_unknown_but_not_a_drop`, uses a peer that answers
+every frame except the cancel-all, with ordinary traffic kept flowing across the window so answers
+demonstrably arrive while the emergency waits — asserted (`answered > answeredBefore`), not assumed.
+**Consequence of the new rule, stated:** a bridge that reads us and answers nothing at all for the
+whole window is now dropped and redialled, where before it was kept.
+
+### Two tests were deleted by my own editing, and nothing failed
+
+A text slice taken to replace one test swallowed the two that followed it:
+`An_agent_cancel_all_through_the_real_gateway_fails_fast_on_a_stalled_bridge` (F11's only
+through-the-gateway test) and `A_write_that_keeps_making_progress_is_still_bounded_in_total` (F2's
+ceiling test). The class stayed green throughout, because a deleted test is a test that cannot fail.
+Caught by comparing method names against `0909ada`, not by a run:
+
+```
+git show 0909ada:…ConnectorSendDeadlineTests.cs | grep -oE '^    public (async Task|void) [A-Za-z_]+'
+  → 17 methods;  working tree → 16
+LOST: A_write_that_keeps_making_progress_is_still_bounded_in_total
+      An_agent_cancel_all_through_the_real_gateway_fails_fast_on_a_stalled_bridge
+      An_emergency_a_live_bridge_does_not_answer_is_unknown_but_not_a_drop   (this one deliberate)
+```
+
+Both were restored verbatim from `0909ada` in `0bb3712`. **§9.9: a green suite cannot detect a
+removed test, and no gate in this program would have.** The cheap generic check is the one used
+here — diff the test-method names against the base sha whenever a test file is edited structurally —
+and it belongs in the builder's own routine, not in a review round.
+
+### A fixture that crashed the Windows test host — found only because the box was run
+
+`A_bridge_that_only_heartbeats…`'s twelve cases aborted `dotnet test TradeAgent.sln` on the box with
+**"Test host process crashed"** — twice, at 234 and at 209 tests. The same command with only those
+twelve excluded was green end to end (108 + 75 + **241**, exit 0; 241 = 253 − 12, which also confirms
+the tree under that run was mine). Running the integration project alone was green too, so it takes
+three test hosts in parallel to show it.
+
+The fault was mine and it was in the FIXTURE, not the product. `BridgePeer` cancelled its token and
+disposed its pipe in the same breath, leaving a background writer — the heartbeat, the paced read
+pump, the answering loop — mid-`WriteAsync` on a handle being closed underneath it. On macOS that is
+a caught exception and nothing more, which is why six rounds of this suite never saw it; on Windows a
+named pipe is a kernel object with an overlapped operation in flight, and that is precisely the shape
+this record has carried as NOT VERIFIED on Windows since round 1. Every background task is now held,
+cancelled and awaited before the pipe is disposed (`ffa1a3d`). **This is the first defect in this
+unit that only the box could find.**
+
+### Gates — Mac (tip `ffa1a3d`)
+
+```
+dotnet build TradeAgent.sln            → Build succeeded. 0 Warning(s) 0 Error(s)
+dotnet test TradeAgent.sln             (exit 0)
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 587 ms  - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed: 253, Skipped: 0, Total: 253, Duration: 3 m 6 s - TradeAgent.IntegrationTests.dll
+```
+**436 green, 0 red** (421 at `0909ada`; +15 — twelve phase cases, F-C, and two F-D cases, with one
+test replaced one-for-one).
+
+### Gates — the Windows box (tip `ffa1a3d`), with the tree PROVEN to be mine
+
+The box grant is serialised as of 2026-09-04 and this is the only leg holding it. Pushed, then
+verified before running and again after, per the coordinator's rule:
+
+```
+LOCAL                                             BOX (C:\ta\repo)
+e76f63eee4525ecc  ConnectorSendDeadlineTests.cs   e76f63eee4525ecc   ✓
+e76daaa99ecd4c27  CliReplayContractTests.cs       e76daaa99ecd4c27   ✓
+d7f23ec6beae50a1  AtasConnector.cs                d7f23ec6beae50a1   ✓
+f926e525779c6b70  PipeClient.cs                   f926e525779c6b70   ✓
+.cs under src+tests: 88                           88                 ✓   (no foreign file)
+```
+
+Build and both runs then happened in ONE ssh session so nothing could intervene:
+
+```
+dotnet build TradeAgent.sln            → Build succeeded. 0 Warning(s) 0 Error(s)
+
+--filter ConnectorSendDeadlineTests | CliReplayContractTests
+Passed!  - Failed: 0, Passed:  44, Skipped: 0, Total:  44, Duration: 1 m 33 s
+
+dotnet test TradeAgent.sln --no-build   (exit 0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 4 s     - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 253, Skipped: 0, Total: 253, Duration: 3 m 13 s - TradeAgent.IntegrationTests.dll
+```
+
+Re-verified immediately afterwards — the three hashes and the count of 88 were unchanged, so the tree
+was mine for the whole run. **436 green on Windows, 0 red — the same 436 as macOS, test for test.**
+That re-establishes, on a checked tree, the inference round 5 drew on an unchecked one: the paced-peer
+fixture's premise holds on a real Windows named pipe, so the buffer cannot swallow a 512 KiB frame.
+
+### Commits (round 6, on top of `0909ada`) — tip **`ffa1a3d`**
+
+| sha | finding | what |
+|---|---|---|
+| `3e241d7` | F-B | Key an emergency's liveness on an answer, not on the bridge still talking |
+| `e1cb147` | F-C | Test the one transport transition that would place a second real order |
+| `0bb3712` | F-D | Say what a failed READ means, instead of telling the owner to check for an order |
+| `ffa1a3d` | (box) | Stop the test peer writing before its pipe is closed underneath it |
+
+No `Co-Authored-By` trailers. `TradingGateway.cs` and `DashboardView.cs` not opened —
+`git diff --name-only 0909ada..ffa1a3d | grep -E 'TradingGateway.cs|DashboardView.cs'` → no matches.
+
+### What I did NOT do, round 6
+
+- **F-A is untouched** and stays with U2c-1: the operator's own Close All is still on the ordinary
+  deadline (9759 ms vs the agent's 2018 ms). `main` has no fast path for anyone, so integrating U2a
+  does not regress the button — but the asymmetry is real until U2c-1 lands, and it is the round-4
+  principle with the roles swapped.
+- **F-B diverges from the mechanism the bounce named**, and the manager should confirm it. Write
+  progress cannot discriminate the case (measured above); liveness is an ANSWER instead. The intent —
+  12/12, phase-independent — is met.
+- **The new rule changes one behaviour beyond the finding:** a bridge that reads us but answers
+  nothing at all for the whole window is now dropped, where before it was kept. That is a deliberate
+  consequence, not an oversight.
+- I did not establish whether a REAL wedged ATAS keeps heartbeating — `BridgeServer`'s independent
+  `Task.Run` is read from source and reproduced with a synthetic peer, not observed on a live bridge.
+- I did not re-run the round-5 on-box figures whose standing I withdrew above; the round-6 run
+  supersedes them rather than repairing them.
+- I did not investigate the box's `CoidWitnessTests` anomaly (a filtered run reported 118 where macOS
+  reports 25) beyond establishing it was cross-leg contamination — that file is U14's and untouched
+  by rounds 5-6.
+- I did not run the App, `tools/probe`, or any ATAS interaction; the ATAS client-order-id questions
+  stay with v0.1.2.
