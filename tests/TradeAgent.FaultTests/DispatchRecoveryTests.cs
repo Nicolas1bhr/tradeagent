@@ -51,6 +51,8 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public decimal? ModifyRoundsPricesTo;
     public bool CancelDoesNotReachTheBook;
     public bool CancelAllDoesNotReachTheBook;
+    /// <summary>Rewrites the ids the sweep reports back, so a partial answer can be scripted.</summary>
+    public Func<IReadOnlyList<string>, IReadOnlyList<string>>? RewriteCancelAllResult;
     /// <summary>The platform lists no orders at all — the target is genuinely absent.</summary>
     public bool HideOrdersEntirely;
     /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
@@ -119,6 +121,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     {
         CancelAlls++;
         var ids = CancelAllDoesNotReachTheBook ? [] : await inner.CancelAllOrdersAsync(a, ct);
+        if (RewriteCancelAllResult is { } rewrite) ids = rewrite(ids);
         if (ThrowAfterCancelAll is { } ex) throw ex;
         return ids;
     }
@@ -1934,5 +1937,62 @@ public class ConservativeTargetEvidenceTests
         Assert.NotEqual(ExecutionState.REJECTED, record.State);
         Assert.NotEqual(ExecutionState.CANCELLED, record.State);
         Assert.True(record.NeedsReconciliation);
+    }
+}
+
+// =================================================================================================
+// ROUND 3 · R5b — each per-order record is settled from the platform's answer about THAT order
+// =================================================================================================
+
+public class CancelAllPerOrderSettlementTests
+{
+    [Fact]
+    public async Task An_order_the_sweep_did_not_account_for_is_not_recorded_as_cancelled()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var a = await gw.PlaceAsync(AgentContext.Operator, "pa-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        var b = await gw.PlaceAsync(AgentContext.Operator, "pa-2",
+            new PlaceIntent("NQ", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        // The platform reports cancelling only one of the two.
+        c.RewriteCancelAllResult = ids => ids.Where(id => id == a.ConnectorOrderId).ToList();
+
+        await gw.OperatorCancelAllAsync();
+
+        var listed = Assert.Single(gw.Requests.Query($"request_id LIKE 'op-cancel-%' AND parameters LIKE '%{a.ConnectorOrderId}%'"));
+        var missed = Assert.Single(gw.Requests.Query($"request_id LIKE 'op-cancel-%' AND parameters LIKE '%{b.ConnectorOrderId}%'"));
+
+        Assert.Equal(ExecutionState.CANCELLED, listed.State);
+        Assert.False(listed.NeedsReconciliation);
+
+        Assert.Equal(ExecutionState.UNKNOWN, missed.State);       // never CANCELLED on someone else's answer
+        Assert.True(missed.NeedsReconciliation);
+
+        // ...and the press-level record does not claim the sweep was complete either.
+        var press = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.Equal(ExecutionState.UNKNOWN, press.State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+    }
+
+    [Fact]
+    public async Task A_sweep_that_accounted_for_everything_settles_every_record()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "pb-1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        await gw.PlaceAsync(AgentContext.Operator, "pb-2",
+            new PlaceIntent("NQ", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        await gw.OperatorCancelAllAsync();
+
+        var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
+        Assert.Equal(3, records.Count);                          // two orders and the press itself
+        Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
