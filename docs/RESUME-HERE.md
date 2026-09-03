@@ -996,8 +996,12 @@ no repo collisions. What is worth copying:
 
 ## Verifying what you inherited
 
-**The bridge on the Windows machine is CURRENT as of 2026-08-30** — rebuilt from this tree, deployed,
-and answering with `proto=2` and `auth=ok`. One command confirms it rather than assuming:
+**The expected reading is now `proto=3` and `auth=ok`.** The bridge on the Windows machine was
+rebuilt from this tree on 2026-08-30 and answered `proto=2`; U14 bumped the protocol to 3 because the
+write-ahead promise changed, so **that deployed DLL is now out of date and this app refuses it by
+design** — a version-2 bridge sends an order after a failed witness rewrite and cannot report that it
+did. Rebuild and redeploy it with the next release. One command reads back what is actually there
+rather than assuming:
 
 ```bash
 tools/win-run.sh 'cd C:\ta\repo\tools\probe && dotnet run -c Release -- atas --wait 60'
