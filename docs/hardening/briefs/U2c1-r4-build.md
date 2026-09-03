@@ -85,6 +85,13 @@ inconclusive and keeps trading paused.* Implement each as a red-first test that 
   press; a replay of a known outer id returns the stored outcome and sends nothing. Acceptance: sweep order A as
   `sweep-1`, lose the reply, create order B, repeat `sweep-1` → B stays working and the original result is returned.
   Idempotency by request id applies to every mutating op, not only `Place`.
+- **C3 (U2a verifier round 5 F-A, HIGH): the operator's own press gets the fast path.** After U2a, the agent's
+  `close-all` completes in ≈2 s under a stalled bridge while the operator's Close All (`DashboardView.cs` →
+  `OperatorCloseAllAsync` → `GetPositionsAsync`) still waits ≈9.8 s on the ordinary deadline: U2a opened the
+  `RiskReducingScope` only in the pipe server. Open it at the GATEWAY level inside the operator emergency methods (the
+  press you are rewriting), so every caller — button, CLI, agent — inherits the end-to-end emergency bound and the
+  owner-readable sentence. Acceptance: operator Close All against a stalled bridge with a held gate ≈2 s with the
+  "not confirmed — check ATAS" sentence; the position read before the close inherits the scope.
 
 ## Proof obligations
 
