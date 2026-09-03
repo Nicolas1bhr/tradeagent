@@ -906,6 +906,31 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// AND A TEMP CANNOT REVISE A BROKER ID THAT IS ALREADY ON FILE. A broker order id does not
+    /// change once ATAS has assigned it, which is why <c>Identified</c> takes the first non-empty one
+    /// and refuses every later write. Recovery has to keep that rule or it becomes the way around it:
+    /// a rewrite dropped beside the witness could restate the half this product did not write, and
+    /// the read-back would then match an order against an id somebody else chose.
+    /// </summary>
+    [Fact]
+    public void A_temp_cannot_revise_a_broker_id_that_is_already_recorded()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        owner.Identified("TA-LIVE", "BRK-REAL");
+        var session = owner.SessionId;
+        var committed = CommittedText();
+        owner.Dispose();
+
+        // Same session, same identifier, a different broker id.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(committed),
+                  records: $$"""{"client_order_id":"TA-LIVE","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-FORGED","identified_at":"2026-01-01T00:00:01+00:00"}""");
+
+        var reader = Session();
+        Assert.Equal("BRK-REAL", reader.PriorSession("TA-LIVE")!.BrokerOrderId);
+    }
+
+    /// <summary>
     /// AN ENVELOPE THAT DESERIALISES IS NOT AN ENVELOPE THAT MEANS ANYTHING.
     ///
     /// `Parse` asked only whether the JSON deserialised. `records:[null, A]` does — and then
