@@ -152,10 +152,17 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             // they are set up, and learns otherwise from a turned-down order. This says it here.
             r.Add(ReconciliationCheck(gateway.Connector.DisplayName, gateway.Connector.Capabilities));
 
-            var unreconciled = gateway.Requests.NeedingReconciliation();
-            r.Add(unreconciled.Count == 0
+            // The GATEWAY's own count, not the raw needs_reconciliation flag. They are not the same
+            // question: a request stranded in DISPATCHING past the wire's own deadline pauses trading
+            // without carrying the flag yet, and so does an outcome the gateway could not write down
+            // at all. Reading the flag here let the doctor answer "nothing outstanding" about a
+            // machine that was refusing to trade.
+            var unreconciled = gateway.Unreconciled();
+            r.Add(!gateway.HasUnconfirmedWork()
                 ? CheckResult.Ok("Order confirmation", "nothing outstanding")
-                : CheckResult.Warn("Order confirmation", $"{unreconciled.Count} order(s) not yet confirmed",
+                : CheckResult.Warn("Order confirmation",
+                    unreconciled.Count > 0 ? $"{unreconciled.Count} order(s) not yet confirmed"
+                                           : "an order outcome could not be recorded",
                     "Trading stays paused until these are confirmed. This is deliberate.",
                     ErrorCode.TRADING_PAUSED_UNRECONCILED, true));
         }

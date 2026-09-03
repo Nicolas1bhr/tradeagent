@@ -174,10 +174,12 @@ sealed class DashboardPage
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
         RefreshApprovals(waiting);
-        // Read straight from the store rather than from GatewayStatus, which carries only a count.
-        // NeedingReconciliation() is the same query TryAuthorizeExecution refuses on, so the card is
-        // showing exactly the records that are pausing trading — not an approximation of them.
-        RefreshUnconfirmed(_host.Gateway.Requests.NeedingReconciliation());
+        // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
+        // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
+        // request left stranded in DISPATCHING — so the card shows exactly the records that are
+        // pausing trading. Reading the raw flag here left the card empty while the banner said
+        // paused, which reads as the software being broken rather than careful.
+        RefreshUnconfirmed(_host.Gateway.Unreconciled());
 
         var health = _host.Health.Snapshot();
         var hs = string.Join('|', health.Select(h => $"{h.Component}:{h.State}:{h.Detail}"));
