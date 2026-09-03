@@ -127,7 +127,8 @@ public sealed class CoidWitness
     /// nothing in this project writes a log today. A failed rewrite therefore says so here, next to
     /// the file it is about, where <c>tools/probe</c> and a person both already look.
     ///
-    /// Bounded twice: <see cref="MaxLoggedFailures"/> lines per session, and restarted past
+    /// Bounded twice, and asymmetrically: warnings and markers at <see cref="MaxLoggedFailures"/>
+    /// per session, safety events never; the file rotates one generation back past
     /// <see cref="MaxErrorLogBytes"/>. Every part of it is best-effort inside its own catch — a
     /// witness that cannot write must never become a witness that throws.
     /// </summary>
@@ -1363,10 +1364,11 @@ public sealed class CoidWitness
     }
 
     /// <summary>
-    /// Appends one line to <see cref="ErrorLogName"/> beside the witness. Bounded at
-    /// <see cref="MaxLoggedFailures"/> lines per session so a permanently unwritable destination
-    /// cannot turn every order into a log line, and the file is restarted past
-    /// <see cref="MaxErrorLogBytes"/> so it cannot grow without limit across sessions.
+    /// Appends one line to <see cref="ErrorLogName"/> beside the witness. Warnings and markers are
+    /// bounded at <see cref="MaxLoggedFailures"/> per session so a permanently unwritable
+    /// destination cannot turn every order into a log line; SAFETY events — a write-ahead or
+    /// acknowledgement failure — are never rationed. The file is rotated one generation back past
+    /// <see cref="MaxErrorLogBytes"/>, which is what keeps that finite.
     ///
     /// Every failure here is discarded. The operation that just failed was a rename onto a file
     /// something else has open, which says nothing about whether an append to a different name
@@ -1374,14 +1376,35 @@ public sealed class CoidWitness
     /// </summary>
     void AppendToErrorLog(string line, bool safety)
     {
-        if (!safety && _loggedFailures >= MaxLoggedFailures) return;
-        _loggedFailures++;
+        // A SAFETY EVENT IS NEVER DROPPED, AND THE QUOTA IS NOT A SAFETY MECHANISM. It exists so a
+        // permanently unwritable destination cannot turn every order into a log line — a fair worry
+        // about NOISE. Applied to failures it silenced the thing the file exists for: the 33rd event
+        // in a session might be an Identified that never reached the disk for an order that is live
+        // at the broker, and this file is the only cross-process record that the gap happened.
+        // Warnings and markers are what get rationed; failures always go in, and the size bound
+        // below is what keeps that finite.
+        if (!safety)
+        {
+            if (_loggedFailures >= MaxLoggedFailures) return;
+            _loggedFailures++;
+        }
+
         try
         {
             var dir = System.IO.Path.GetDirectoryName(_path);
             if (string.IsNullOrEmpty(dir)) return;
             var log = System.IO.Path.Combine(dir, ErrorLogName);
-            if (File.Exists(log) && new FileInfo(log).Length > MaxErrorLogBytes) File.Delete(log);
+
+            // ROTATED, NOT DELETED. Deleting was fine while the quota capped what could be lost; with
+            // failures unrationed it is not, because the file being thrown away is now the one
+            // holding them. One generation back is kept, which bounds the disk at twice the cap.
+            if (File.Exists(log) && new FileInfo(log).Length > MaxErrorLogBytes)
+            {
+                var rolled = log + ".1";
+                try { File.Delete(rolled); } catch (Exception) { }
+                File.Move(log, rolled);
+            }
+
             File.AppendAllText(log, line + Environment.NewLine);
         }
         catch (Exception) { /* a witness that cannot write must not become one that throws */ }
