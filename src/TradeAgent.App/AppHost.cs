@@ -231,7 +231,7 @@ public sealed class AppHost : IAsyncDisposable
                 // The gateway's own count, not the raw flag: a record stranded in DISPATCHING is
                 // unconfirmed work the moment it outlives a dispatch, and reconciling is what turns
                 // it into a flagged row the rest of the screen can see.
-                if (Gateway.Unreconciled().Count > 0) await Gateway.ReconcileAsync(ct);
+                if (Gateway.HasUnconfirmedWork()) await Gateway.ReconcileAsync(ct);
                 Gateway.Log.Rotate();
 
                 var pass = tick++;
