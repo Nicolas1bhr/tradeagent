@@ -140,6 +140,11 @@ public sealed class AppHost : IAsyncDisposable
             Updates.UnconfirmedWork = () => Gateway.Requests.NeedingReconciliation().Count;
             Updates.Activity = (text, level) => Gateway.Log.Activity(text, level);
 
+            // And the other direction, closing the same window from the other side: while an install
+            // is going the gateway refuses to dispatch anything new, because the process that would
+            // have to reconcile the answer is the one being replaced.
+            Gateway.InstallInProgress = () => Updates.InstallInProgress;
+
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();
             Health.Set(Components.Gateway, HealthState.READY);

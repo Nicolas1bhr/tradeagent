@@ -35,6 +35,25 @@ public sealed class TradingGateway : IAsyncDisposable
     public LogStore Log => _log;
     public MaterialStore Materials => _materials;
 
+    /// <summary>
+    /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
+    /// bool behind a delegate, because the gateway must not know what an update is.
+    ///
+    /// Between the moment the owner confirms Install update and the moment Setup is running, this
+    /// process is about to be closed and its files overwritten. An order dispatched into that window
+    /// is the worst kind this product has: the wire is touched and the program that would have
+    /// reconciled the answer is gone before the answer arrives. The pre-install check refuses to
+    /// START an update while an order is unconfirmed; this is the other side of the same window,
+    /// refusing to START AN ORDER while an update is going.
+    ///
+    /// It does NOT exempt the operator. Approving a parked order by hand while Setup is running is
+    /// exactly the case being closed, and "the human meant it" does not make the answer reconcilable.
+    /// Null means no updater is wired, which is every test that is not about this and is treated as
+    /// "no install in progress" — the fail-closed reading belongs on the updater's side, where not
+    /// knowing means not replacing the program, not on the side that would refuse all trading.
+    /// </summary>
+    public Func<bool>? InstallInProgress { get; set; }
+
     public event Action? StateChanged;
 
     public TradingGateway(Database db, ITradingConnector connector, HealthRegistry? health = null,
@@ -186,6 +205,22 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         reason = null;
         code = null;
+
+        // First, above the mode and above the kill switch, because it outranks intent entirely:
+        // this program is about to stop existing. A hook that throws is read as "installing" —
+        // the one direction that cannot dispatch an order nobody will be left to reconcile.
+        var installing = false;
+        if (InstallInProgress is { } ask)
+        {
+            try { installing = ask(); }
+            catch (Exception) { installing = true; }
+        }
+        if (installing)
+        {
+            (reason, code) = ("TradeAgent is installing a new version of itself and is about to close",
+                ErrorCode.UPDATE_INSTALL_IN_PROGRESS);
+            return false;
+        }
 
         if (!Settings.ModeAllowsExecution)
         {

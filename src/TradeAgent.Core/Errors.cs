@@ -16,7 +16,7 @@ public enum ErrorCode
     APPROVAL_REQUIRED, RISK_LIMIT_EXCEEDED, TRADING_PAUSED_UNRECONCILED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
-    UPDATE_FAILED, UPDATE_INTEGRITY_FAILED
+    UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
@@ -68,6 +68,7 @@ public static class Errors
         // to be reported as AI_INSTALL_FAILED — "The AI assistant could not be installed" — which
         // names the wrong program entirely.
         [ErrorCode.UPDATE_INTEGRITY_FAILED]        = ("The new version of TradeAgent did not match the checksum published with it, so it was not installed.", "Nothing was installed and the version you are running is untouched. Press Install update again; if it keeps happening the published release is at fault, not your computer.", false),
+        [ErrorCode.UPDATE_INSTALL_IN_PROGRESS]     = ("TradeAgent is installing a new version of itself and is about to close, so it is not sending orders.", "Wait for TradeAgent to reopen. Nothing was sent to your broker.", false),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)
