@@ -110,6 +110,17 @@ public class CoidWitnessTests : IDisposable
     static void NeverLands(string tmp, string destination) => throw SharingViolation();
 
     /// <summary>
+    /// A rename that lands until the switch is thrown and never again after — the shape the real
+    /// recoverable case has. <c>Submitting</c> commits and the order goes out; the acknowledgement
+    /// that follows it is what gets stranded.
+    /// </summary>
+    static Action<string, string> LandsUntil(Func<bool> refused) => (tmp, destination) =>
+    {
+        if (refused()) throw SharingViolation();
+        File.Move(tmp, destination, overwrite: true);
+    };
+
+    /// <summary>
     /// A rename refused <paramref name="times"/> times and then allowed — the ordinary contended
     /// case, where a scanner or an indexer had the file open for a moment.
     /// </summary>
@@ -429,22 +440,54 @@ public class CoidWitnessTests : IDisposable
     /// the more complete record.
     /// </summary>
     [Fact]
-    public void A_claim_whose_rename_never_landed_is_still_readable_after_a_restart()
+    public void An_acknowledgement_whose_rename_never_landed_is_still_readable_after_a_restart()
     {
-        // A committed file first, so the rewrite that fails has something to descend FROM. Round 3
-        // removed the anchorless branch: a temp with no committed witness beside it is not evidence
-        // of anything this machine did, and since Place now refuses any order whose write-ahead
-        // record did not land, there is no order out there for it to have been protecting.
-        var seed = Session();
-        Submit(seed, "TA-SEED");
+        // THE SHAPE THIS MECHANISM IS ACTUALLY FOR, once Place refuses an order whose write-ahead
+        // record did not land. A refused Submitting means no order was sent, so its claim describes
+        // nothing and is taken back out — there is nothing there to recover. What CAN be stranded is
+        // the half we did not write: the order is live, ATAS has assigned an id, and the rewrite
+        // that records it is the one the replace refuses.
+        var refused = false;
+        var w = Session(LandsUntil(() => refused));
+        Assert.True(w.Submitting("TA-LOST", "SIM123", "ES", "Buy", 1m, 4200.25m));
 
-        var w = Session(NeverLands);
-        Submit(w, "TA-LOST");
+        refused = true;
+        w.Identified("TA-LOST", "BRK-LOST");
         Assert.NotEmpty(Temps());
 
         // The restart: the process that wrote it is gone, and a new session reads what it left.
         var next = Session();
-        Assert.Equal(["TA-SEED", "TA-LOST"], next.All().Select(r => r.ClientOrderId));
+        Assert.Equal("BRK-LOST", next.PriorSession("TA-LOST")!.BrokerOrderId);
+    }
+
+    /// <summary>
+    /// THE HOLE ROUND 3 FOUND, AND IT MANUFACTURES EVIDENCE. A refused <c>Submitting</c> means
+    /// <c>Place</c> does not send the order — but the claim used to stay in memory, and the
+    /// order-event fan calls <c>Identified</c> for EVERY order it sees carrying a comment. An
+    /// unrelated order in ATAS's book bearing that identifier would complete the abandoned claim
+    /// with its own broker id, and the result is a full prior-session record: a write-ahead claim,
+    /// acknowledged, for an order this product never submitted.
+    /// </summary>
+    [Fact]
+    public void A_refused_claim_cannot_be_completed_by_an_unrelated_order()
+    {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
+        var w = Session(NeverLands);
+        Assert.False(w.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
+
+        // What the fan does, unconditionally, for any order in the book carrying that comment.
+        w.Identified("TA-REFUSED", "BRK-SOMEBODY-ELSES");
+
+        Assert.DoesNotContain(w.All(), r => r.ClientOrderId == "TA-REFUSED");
+        Assert.Null(w.PriorSession("TA-REFUSED"));
+
+        // And no later session can read it as evidence either: the temp still holds the abandoned
+        // claim, but it never acquired a broker id, so it is not evidence of anything.
+        var next = Session();
+        Assert.Null(next.PriorSession("TA-REFUSED"));
+        Assert.Empty(next.PriorSessionIds(16));
     }
 
     /// <summary>
@@ -533,28 +576,25 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// CONVERGENCE. A failed rename keeps the claim in memory, so the next save writes the temp
-    /// again from a list that still contains it and commits both at once. This is what makes the
-    /// durable file catch up without anybody re-submitting anything.
+    /// AND THE REFUSAL IS NOT CARRIED FORWARD EITHER. Round 2 kept a failed claim in memory so the
+    /// next save would commit it — right when the order might still be live, wrong now that
+    /// <c>Place</c> refuses the order outright. A claim that describes no order must not turn up in
+    /// the durable file two orders later, where nothing distinguishes it from one that was sent.
     /// </summary>
     [Fact]
-    public void The_save_after_a_failed_one_commits_what_the_failure_left_behind()
+    public void A_refused_claim_is_not_carried_into_the_next_commit()
     {
-        var landing = false;
-        var w = Session((tmp, destination) =>
-        {
-            if (!landing) throw SharingViolation();
-            File.Move(tmp, destination, overwrite: true);
-        });
+        var refused = true;
+        var w = Session(LandsUntil(() => refused));
 
-        Submit(w, "TA-FIRST");
+        Assert.False(w.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
         Assert.False(File.Exists(File_), "nothing was committed under the real name");
 
-        landing = true;
-        Submit(w, "TA-SECOND");
+        refused = false;
+        Assert.True(w.Submitting("TA-SENT", "SIM", "ES", "Buy", 1m, null));
 
         Assert.Empty(Temps());
-        Assert.Equal(["TA-FIRST", "TA-SECOND"], Session().All().Select(r => r.ClientOrderId));
+        Assert.Equal(["TA-SENT"], CommittedIds());
     }
 
     /// <summary>
@@ -695,11 +735,10 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_failed_rewrite_is_adopted_when_the_timestamps_tie()
     {
-        var first = Session();
-        Submit(first, "TA-COMMITTED");
-
-        var stranded = Session(NeverLands);
-        Submit(stranded, "TA-STRANDED");
+        var refused = false;
+        var stranded = Session(LandsUntil(() => refused));
+        Assert.True(stranded.Submitting("TA-STRANDED", "SIM", "ES", "Buy", 1m, null));
+        refused = true;
         stranded.Identified("TA-STRANDED", "BRK-STRANDED");
         File.SetLastWriteTimeUtc(Temps().Single(), File.GetLastWriteTimeUtc(File_));
 
@@ -737,8 +776,10 @@ public class CoidWitnessTests : IDisposable
         Submit(first, "TA-ONE");
         first.Identified("TA-ONE", "BRK-ONE");
 
-        var stranded = Session(NeverLands);
-        Submit(stranded, "TA-TWO");
+        var refused = false;
+        var stranded = Session(LandsUntil(() => refused));
+        Assert.True(stranded.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+        refused = true;
         stranded.Identified("TA-TWO", "BRK-TWO");
 
         var reader = Session();
@@ -755,11 +796,11 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_record_recovered_from_an_uncommitted_rewrite_is_evidence_like_any_other()
     {
-        var seed = Session();
-        Submit(seed, "TA-SEED");
+        var refused = false;
+        var w = Session(LandsUntil(() => refused));
+        Assert.True(w.Submitting("TA-STRANDED", "SIM123", "ES", "Buy", 1m, 4200.25m));
 
-        var w = Session(NeverLands);
-        Submit(w, "TA-STRANDED");
+        refused = true;
         w.Identified("TA-STRANDED", "BRK-STRANDED");
 
         var next = Session();
@@ -1063,8 +1104,10 @@ public class CoidWitnessTests : IDisposable
         for (var i = 0; i < 5; i++) Submit(w, $"TA-{i}");
 
         Assert.Single(Temps());
-        Assert.Equal(["TA-SEED", "TA-0", "TA-1", "TA-2", "TA-3", "TA-4"],
-                     Session().All().Select(r => r.ClientOrderId));
+        // Each refusal is rolled back before the next attempt, so the surviving rewrite holds the
+        // committed state plus the one claim that was in flight when the writer stopped — not five
+        // abandoned claims for five orders that were never sent.
+        Assert.Equal(["TA-SEED", "TA-4"], Session().All().Select(r => r.ClientOrderId));
     }
 
     /// <summary>
