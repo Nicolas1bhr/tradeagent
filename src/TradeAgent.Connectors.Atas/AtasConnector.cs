@@ -158,6 +158,35 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     static bool OpensExposure(string op) =>
         op is BridgeOps.Place or BridgeOps.Modify or BridgeOps.PlaceViaAsyncOverload;
 
+    /// <summary>Whether this op CHANGES anything at the broker, as opposed to asking it something.</summary>
+    static bool Mutates(string op) =>
+        op is BridgeOps.Place or BridgeOps.Modify or BridgeOps.PlaceViaAsyncOverload
+           or BridgeOps.Cancel or BridgeOps.CancelAll or BridgeOps.Close;
+
+    /// <summary>
+    /// The owner-readable sentence for a risk-reducing operation that ran out of time, WITH THE
+    /// RIGHT WORDS FOR WHAT WAS ACTUALLY ATTEMPTED.
+    ///
+    /// A prerequisite read inherits the emergency deadline — that is F11's point and it stands — and
+    /// it was inheriting the wording with it: "'accounts' is NOT confirmed … check your positions and
+    /// orders in ATAS" (verifier finding F-D). Both halves of that are wrong for a read. Nothing
+    /// about an <c>accounts</c> or <c>positions</c> request needs CONFIRMING, because it never asked
+    /// the broker to do anything; and sending the owner to hunt through ATAS for an order that was
+    /// never placed is the opposite of the service these sentences exist to perform. The whole
+    /// reason f518251 wrote them was that they are the sentence that sends a person to the right
+    /// place — one that sends them to the wrong place is worse than a stack trace, because they will
+    /// believe it.
+    ///
+    /// So a read says what happened and what did not: the bridge did not answer, and nothing was
+    /// placed or cancelled. The deadline and the drop are identical; only the words differ.
+    /// </summary>
+    static string EmergencySentence(string op, string condition, string consequence) =>
+        Mutates(op)
+            ? $"the bridge is {condition}; '{op}' is NOT confirmed. {consequence} — " +
+              "check your positions and orders in ATAS."
+            : $"the bridge is {condition}; '{op}' could not be read, so the operation was not started. " +
+              $"Nothing was placed or cancelled. {consequence}.";
+
     NamedPipeServerStream? _pipeStream;
     Stream? _out;
 
@@ -877,15 +906,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                     // They are different facts and they get different words — "not responding"
                     // sends a person to look at ATAS, "busy" tells them to wait and try again.
                     SendOutcome.PeerStalled when emergency =>
-                        $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
-                        "dropped and will be retried — check your positions and orders in ATAS.",
+                        EmergencySentence(op, "not responding",
+                            "The connection has been dropped and will be retried"),
                     SendOutcome.Busy when emergency =>
-                        $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
-                        "try again, and check your positions and orders in ATAS.",
+                        EmergencySentence(op, "busy", "The connection is still up — try again"),
                     SendOutcome.FrameIncomplete when emergency =>
-                        $"the bridge is too slow; '{op}' is NOT confirmed. It was still being sent when " +
-                        "the deadline passed, so the connection has been dropped and will be retried — " +
-                        "check your positions and orders in ATAS.",
+                        EmergencySentence(op, "too slow",
+                            "It was still being sent when the deadline passed, so the connection has been " +
+                            "dropped and will be retried"),
                     SendOutcome.FrameIncomplete =>
                         $"'{op}' was still being sent to the ATAS bridge after {FrameTimeout.TotalSeconds:0}s " +
                         "and the connection was dropped; it is not known whether ATAS received it",
@@ -933,8 +961,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 // operation is merely late — busy, or behind a backlog. Dropping it would cost the
                 // reconnect and buy nothing, and the retry we advise needs somewhere to go.
                 throw new ConnectorTransportException(
-                    $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
-                    "try again, and check your positions and orders in ATAS.");
+                    EmergencySentence(op, "busy", "The connection is still up — try again"));
 
             // It answered nothing for the whole window. Whatever else it may be doing — beating,
             // even reading — it is not serving requests. Drop it: that closes the handle, kills any
@@ -942,8 +969,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // connection to run on.
             DropStalledPeer();
             throw new ConnectorTransportException(
-                $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
-                "dropped and will be retried — check your positions and orders in ATAS.");
+                EmergencySentence(op, "not responding",
+                    "The connection has been dropped and will be retried"));
         }
     }
 
