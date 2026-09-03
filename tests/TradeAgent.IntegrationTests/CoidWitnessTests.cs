@@ -37,11 +37,42 @@ public class CoidWitnessTests : IDisposable
     }
 
     string File_ => Path.Combine(_dir, "coid-witness.json");
+    string Temp_ => File_ + ".tmp";
 
     CoidWitness Session() => new(File_);
 
+    /// <summary>A session whose rename behaves the way <paramref name="replace"/> says it does.</summary>
+    CoidWitness Session(Action<string, string> replace) =>
+        new(File_, null, CoidWitness.DefaultCap, replace);
+
     static void Submit(CoidWitness w, string id) =>
         w.Submitting(id, "SIM123", "ES", "Buy", 1m, 4200.25m);
+
+    /// <summary>
+    /// WHAT WINDOWS DOES, SAID IN AN EXCEPTION. <c>MoveFileEx(MOVEFILE_REPLACE_EXISTING)</c> refuses
+    /// with a sharing violation — surfaced by .NET as <see cref="IOException"/> — while the
+    /// destination is open without <c>FileShare.Delete</c>. It cannot be provoked on macOS or Linux,
+    /// where <c>rename(2)</c> does not consult open handles at all, so it is injected instead.
+    /// </summary>
+    static IOException SharingViolation() =>
+        new("The process cannot access the file because it is being used by another process.");
+
+    /// <summary>A rename that is refused for good: the destination is never released.</summary>
+    static void NeverLands(string tmp, string destination) => throw SharingViolation();
+
+    /// <summary>
+    /// A rename refused <paramref name="times"/> times and then allowed — the ordinary contended
+    /// case, where a scanner or an indexer had the file open for a moment.
+    /// </summary>
+    static Action<string, string> RefusedTimes(int times, Func<Exception> error)
+    {
+        var seen = 0;
+        return (tmp, destination) =>
+        {
+            if (seen++ < times) throw error();
+            File.Move(tmp, destination, overwrite: true);
+        };
+    }
 
     // ------------------------------------------------------------------ PriorSession, the contract
 
@@ -283,6 +314,12 @@ public class CoidWitnessTests : IDisposable
     /// The replace is a replace, not a delete followed by a move. A window with no file at all
     /// reads, for this file, as "this product never submitted that identifier" — which is the one
     /// answer that must never be produced by accident.
+    ///
+    /// AND THE THING THIS TEST DID NOT ASK, WHICH IS THE THING THAT MATTERS. On 3931c10 this failed
+    /// on `test (windows-latest)` with `missing` at 0 and the temp left behind — a rename refused
+    /// under load. Absence of the file and absence of the temp are both symptoms; the question is
+    /// whether a claim was LOST, and nothing here asked it. It does now: every identifier the writer
+    /// submitted is read back out of the file by a session that did not write it.
     /// </summary>
     [Fact]
     public async Task The_file_is_never_absent_while_it_is_being_rewritten()
@@ -304,7 +341,149 @@ public class CoidWitnessTests : IDisposable
         await writer;
 
         Assert.Equal(0, missing);
-        Assert.False(File.Exists(File_ + ".tmp"), "the temporary file was left behind");
+
+        // DURABILITY, asserted before the tidiness below it, because this is the property the file
+        // exists for and the other one is housekeeping. 301 = the seed plus 300 churn claims, all
+        // inside DefaultCap, so nothing was trimmed and nothing may be missing.
+        var reader = Session();
+        Assert.Equal(301, reader.All().Count);
+        Assert.Equal("TA-CHURN-299", reader.All()[^1].ClientOrderId);
+        Assert.NotNull(reader.All().SingleOrDefault(r => r.ClientOrderId == "TA-SEED"));
+
+        // A leftover temp no longer means a lost record — the assertions above just proved none was
+        // lost, and a reader prefers a newer temp. It means a rename was still refused after the
+        // full retry budget, which on Windows is a fact about the machine worth surfacing.
+        Assert.False(File.Exists(Temp_), "the temporary file was left behind: a replace was refused for the whole retry budget");
+    }
+
+    // ------------------------------------------------------- the rename that does not land
+
+    /// <summary>
+    /// THE ONE THAT MATTERS, AND THE REASON THIS SECTION EXISTS.
+    ///
+    /// GitHub CI on `test (windows-latest)`, commit 3931c10, failed the churn test above with
+    /// "the temporary file was left behind" while `missing` was 0 — so a rename onto the real file
+    /// was refused, permanently, on a contended runner. The leftover file is a symptom. The
+    /// question worth asking is whether the write that failed to land LOST the record, and before
+    /// this test it did: the newer state sat in `coid-witness.json.tmp`, which nothing ever opened,
+    /// and the durable answer to "did this product submit this identifier" became NO for an
+    /// identifier that was handed to ATAS microseconds later. That is rule 1 losing its evidence to
+    /// a scanner holding a file open.
+    ///
+    /// The recovery rule this pins: a reader that finds a temp NEWER than the real file, and that
+    /// parses, uses the temp. A successful save consumes its own temp, so a temp that outlives one
+    /// can only be the product of a rewrite whose rename failed — and it is then, by construction,
+    /// the more complete record.
+    /// </summary>
+    [Fact]
+    public void A_claim_whose_rename_never_landed_is_still_readable_after_a_restart()
+    {
+        var w = Session(NeverLands);
+        Submit(w, "TA-LOST");
+
+        // Every attempt refused, so nothing was ever committed under the real name.
+        Assert.False(File.Exists(File_));
+        Assert.True(File.Exists(Temp_), "the rewrite should have left its temp behind");
+
+        // The restart: the process that wrote it is gone, and a new session reads what it left.
+        var next = Session();
+        Assert.Single(next.All());
+        Assert.Equal("TA-LOST", next.All()[0].ClientOrderId);
+    }
+
+    /// <summary>
+    /// The other direction of the same rule, and the one that keeps it from being a way to lose
+    /// records rather than keep them: an OLDER temp is not evidence that the durable file is behind.
+    /// A tie goes to the committed file — it is the one that was agreed.
+    /// </summary>
+    [Fact]
+    public void A_stale_temp_does_not_displace_a_newer_committed_file()
+    {
+        var first = Session();
+        Submit(first, "TA-COMMITTED");
+        first.Identified("TA-COMMITTED", "BRK-COMMITTED");
+
+        File.WriteAllText(Temp_, "{\"version\":1,\"records\":[]}");
+        File.SetLastWriteTimeUtc(Temp_, File.GetLastWriteTimeUtc(File_) - TimeSpan.FromMinutes(5));
+
+        var reader = Session();
+        Assert.Equal("BRK-COMMITTED", reader.PriorSession("TA-COMMITTED")!.BrokerOrderId);
+    }
+
+    /// <summary>
+    /// The temp is written with <c>File.WriteAllText</c>, which is not atomic, so a crash in the
+    /// middle of one leaves a truncated file. A newer temp that does not parse is ignored in favour
+    /// of the committed file rather than treated as corruption — the committed file is intact and
+    /// the token must not claim otherwise.
+    /// </summary>
+    [Fact]
+    public void A_temp_that_does_not_parse_is_ignored_rather_than_believed()
+    {
+        var first = Session();
+        Submit(first, "TA-GOOD");
+        first.Identified("TA-GOOD", "BRK-GOOD");
+
+        File.WriteAllText(Temp_, "{\"version\":1,\"records\":[{\"client_order");
+        File.SetLastWriteTimeUtc(Temp_, File.GetLastWriteTimeUtc(File_) + TimeSpan.FromMinutes(5));
+
+        var reader = Session();
+        Assert.Equal("BRK-GOOD", reader.PriorSession("TA-GOOD")!.BrokerOrderId);
+        Assert.DoesNotContain("records:err", reader.Token());
+    }
+
+    /// <summary>
+    /// A sharing violation on Windows is transient — the scanner finishes, the reader closes — so
+    /// the replace is retried before it is given up on. Four refusals in a row is past what the
+    /// original three retries covered, and the record still has to land.
+    /// </summary>
+    [Fact]
+    public void A_rename_refused_four_times_running_still_lands()
+    {
+        var w = Session(RefusedTimes(4, SharingViolation));
+        Submit(w, "TA-CONTENDED");
+
+        Assert.False(File.Exists(Temp_), "the successful replace consumes its own temp");
+        Assert.Single(Session().All());
+    }
+
+    /// <summary>
+    /// The same refusal arrives as <see cref="UnauthorizedAccessException"/> when the destination is
+    /// held by something the process may not displace — an anti-virus handle, a read-only attribute
+    /// set by a backup tool. It is as transient as the sharing violation and was not retried at all.
+    /// </summary>
+    [Fact]
+    public void A_rename_refused_with_an_access_error_is_retried_too()
+    {
+        var w = Session(RefusedTimes(1, () => new UnauthorizedAccessException("Access to the path is denied.")));
+        Submit(w, "TA-DENIED");
+
+        Assert.False(File.Exists(Temp_));
+        Assert.Single(Session().All());
+    }
+
+    /// <summary>
+    /// CONVERGENCE. A failed rename keeps the claim in memory, so the next save writes the temp
+    /// again from a list that still contains it and commits both at once. This is what makes the
+    /// durable file catch up without anybody re-submitting anything.
+    /// </summary>
+    [Fact]
+    public void The_save_after_a_failed_one_commits_what_the_failure_left_behind()
+    {
+        var landing = false;
+        var w = Session((tmp, destination) =>
+        {
+            if (!landing) throw SharingViolation();
+            File.Move(tmp, destination, overwrite: true);
+        });
+
+        Submit(w, "TA-FIRST");
+        Assert.False(File.Exists(File_), "nothing was committed under the real name");
+
+        landing = true;
+        Submit(w, "TA-SECOND");
+
+        Assert.False(File.Exists(Temp_), "the temp is cleaned up by the next successful save");
+        Assert.Equal(["TA-FIRST", "TA-SECOND"], Session().All().Select(r => r.ClientOrderId));
     }
 
     /// <summary>
