@@ -47,6 +47,8 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public bool CancelAllDoesNotReachTheBook;
     /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
     public Func<OrderInfo, OrderInfo>? RewriteBook;
+    /// <summary>Runs after the broker accepted and before this connector answers.</summary>
+    public Action? OnPlaced;
     public TaskCompletionSource? HangPlace;
     public int Closes;
     public int CancelAlls;
@@ -73,6 +75,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
         var o = await inner.PlaceOrderAsync(cmd, ct);            // the broker HAS it
+        OnPlaced?.Invoke();
         if (HangPlace is { } hang) await hang.Task;              // ...and the answer never comes back
         if (ThrowAfterPlace is { } ex) throw ex;                 // ...or this happens instead
         return RewritePlaced?.Invoke(o) ?? o;
@@ -1146,5 +1149,123 @@ public class TargetedReconciliationTests
         Assert.All(gw.Requests.Query("request_id LIKE 'op-cancel-%'"),
             r => Assert.Equal(ExecutionState.CANCELLED, r.State));
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
+
+// =================================================================================================
+// ROUND 2 · item 2 — the pause happens in memory, before the database is asked
+// =================================================================================================
+
+/// <summary>
+/// `RecordIndefinite` persisted first and paused afterwards. Every step of it — the UNKNOWN write,
+/// the activity line, the engineering row, the health row — went through the same SQLite connection,
+/// so a locked, full or read-only database threw on the first one and the rest never ran: a wire
+/// that had been touched, a record still saying DISPATCHING, nothing flagged, and trading open until
+/// the aged-dispatch bound noticed thirty seconds later.
+/// </summary>
+public class UnconfirmedLatchTests
+{
+    [Fact]
+    public async Task An_outcome_that_cannot_be_written_down_pauses_trading_anyway()
+    {
+        var file = Path.Combine(TestEnv.Home, $"locked-{Guid.NewGuid():n}.db");
+        using var db = new Database(file);
+        var (gw, c, _) = await Recovery.Ready(db: db);
+
+        // Fail a blocked write on the database's own five-second busy timeout rather than waiting out
+        // the provider's thirty-second command default. Thirty seconds is longer than
+        // DispatchStrandedAfter, so the aged-dispatch bound would rescue the assertion and hide the
+        // very gap this test is about (measured: 31s before this line, 5s after).
+        db.Connection.DefaultTimeout = 1;
+
+        // An external writer holds the database while the connector fails. Both of the gateway's
+        // attempts to write down what happened will time out on it.
+        Microsoft.Data.Sqlite.SqliteConnection? blocker = null;
+        c.OnPlaced = () =>
+        {
+            blocker = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={file};Pooling=False");
+            blocker.Open();
+            using var begin = blocker.CreateCommand();
+            begin.CommandText = "BEGIN IMMEDIATE";
+            begin.ExecuteNonQuery();
+        };
+        c.ThrowAfterPlace = new ConnectorTransportException("connection lost after the order was accepted");
+
+        var thrown = await Record.ExceptionAsync(() => gw.PlaceAsync(new AgentContext("a"), "locked-1", TestEnv.Buy()));
+
+        // The caller is told, because no record of the outcome could be made.
+        Assert.NotNull(thrown);
+        c.OnPlaced = null;
+        c.ThrowAfterPlace = null;
+
+        // THE POINT: nothing in the database says anything is wrong, and trading is refused anyway.
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.Equal(ExecutionState.DISPATCHING, gw.GetRequest("locked-1")!.State);
+        var authorized = gw.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code);
+        Assert.False(authorized, why);
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "locked-2", TestEnv.Buy()));
+        Assert.Single(c.Inner.Broker.Orders);
+
+        // Rolled back explicitly: disposing a connection with an open transaction is not the same as
+        // releasing the write lock, and a pooled one would still be holding it.
+        using (var rollback = blocker!.CreateCommand())
+        {
+            rollback.CommandText = "ROLLBACK";
+            rollback.ExecuteNonQuery();
+        }
+        blocker.Dispose();
+
+        // Still paused with the lock gone: a health refresh must not quietly decide all is well.
+        await gw.RefreshHealthAsync();
+        Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        // ...and a reconcile pass that finds nothing in the database must not clean the pause away.
+        var empty = await gw.ReconcileAsync();
+        Assert.False(empty.Clean);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        // The failure is not silent: the engineering log carries it once the database is writable.
+        var logged = false;
+        for (var i = 0; i < 60 && !logged; i++)
+        {
+            logged = Recovery.Engineering(db, "locked-1").Any(e => e.Event == "record_indefinite_failed" && e.Severity == "error");
+            if (!logged) await Task.Delay(50);
+        }
+        Assert.True(logged, "the persistence failure was never written to the engineering log");
+
+        // The other direction: once the aged bound exposes the stranded row, the reconciler settles
+        // it from the broker and trading resumes on its own.
+        Recovery.Backdate(db, "locked-1", TimeSpan.FromMinutes(10));
+        var result = await gw.ReconcileAsync();
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest("locked-1")!.State);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        Assert.Single(c.Inner.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The latch is not a one-way door: a person confirming the record on the unconfirmed card lifts
+    /// it, exactly as it lifts the database flag.
+    /// </summary>
+    [Fact]
+    public async Task A_person_confirming_the_record_lifts_the_in_memory_pause()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        c.ThrowAfterPlace = new ConnectorTransportException("connection lost after the order was accepted");
+        var r = await gw.PlaceAsync(new AgentContext("a"), "latch-1", TestEnv.Buy());
+        c.ThrowAfterPlace = null;
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        gw.ForceResolve("latch-1", ExecutionState.FILLED, "checked in ATAS: 1 ES filled");
+        await gw.RefreshHealthAsync();
+
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        Assert.Equal(HealthState.READY, gw.Health.Get(Components.ExecutionCapability).State);
     }
 }
