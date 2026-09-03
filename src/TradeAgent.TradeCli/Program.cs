@@ -40,9 +40,10 @@ if (op is null)
 var requestId = CliReplayContract.MintRequestId(op, flags.GetValueOrDefault("request-id"));
 CliReplayContract.AnnounceRequestId(Console.Error, requestId);
 
-// Whether the frame was handed to the pipe at all. False means nothing was sent and there is
-// nothing to reconcile; true means the outcome is UNKNOWN, which is a different sentence.
-var sent = false;
+// What is known about where the frame got to. It is set by the TRANSPORT, from what it observed,
+// and never by this file in advance — the previous version assigned it on the line before the write
+// began, so it could not tell a completed frame from a zero-byte one (Codex F3).
+var outcome = TransportOutcome.NothingWritten;
 
 await using var client = new PipeClient();
 try
@@ -56,8 +57,9 @@ try
         Args = args2.ToDictionary(k => k.Key, v => JsonSerializer.SerializeToElement(v.Value))
     };
 
-    sent = true;
-    var reply = await client.SendAsync(request);
+    var attempt = await client.TrySendAsync(request);
+    outcome = attempt.Outcome;
+    if (attempt.Reply is not { } reply) throw attempt.Failure!;
 
     if (wantJson)
     {
@@ -81,11 +83,11 @@ try
 catch (TradeAgentException ex)
 {
     // A transport failure after the frame went out is not a failed order; see CliReplayContract.
-    var recovery = CliReplayContract.RecoveryLine(sent, requestId);
+    var recovery = CliReplayContract.RecoveryLine(outcome, requestId);
 
     if (wantJson)
     {
-        Console.WriteLine(Json.Write(CliReplayContract.UnansweredJson(requestId, sent, IpcError.From(ex.Info)), true));
+        Console.WriteLine(Json.Write(CliReplayContract.UnansweredJson(requestId, outcome, IpcError.From(ex.Info)), true));
         return 1;
     }
     Console.Error.WriteLine($"{ex.Code}: {ex.Info.UserMessage}");

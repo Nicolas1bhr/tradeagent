@@ -54,16 +54,18 @@ public class CliReplayContractTests
     }
 
     /// <summary>
-    /// The distinction the whole contract turns on: nothing sent is a failed call, sent-and-unanswered
-    /// is an UNKNOWN order. Only the second may tell the agent to re-run with the same id.
+    /// The distinction the whole contract turns on: provably nothing written is a failed call,
+    /// possibly written is an UNKNOWN order. Only the second may tell the agent to re-run with the
+    /// same id — and a reply that came back needs no recovery line at all.
     /// </summary>
     [Fact]
     public void Nothing_sent_and_reply_lost_are_different_sentences()
     {
-        Assert.Null(CliReplayContract.RecoveryLine(sent: false, "cli-abc"));
-        Assert.Null(CliReplayContract.RecoveryLine(sent: true, null));   // a read has nothing to replay
+        Assert.Null(CliReplayContract.RecoveryLine(TransportOutcome.NothingWritten, "cli-abc"));
+        Assert.Null(CliReplayContract.RecoveryLine(TransportOutcome.ReplyReceived, "cli-abc"));
+        Assert.Null(CliReplayContract.RecoveryLine(TransportOutcome.PossiblyWritten, null));   // a read has nothing to replay
 
-        var lost = CliReplayContract.RecoveryLine(sent: true, "cli-abc");
+        var lost = CliReplayContract.RecoveryLine(TransportOutcome.PossiblyWritten, "cli-abc");
         Assert.NotNull(lost);
         Assert.Contains("reply lost", lost);
         Assert.Contains("--request-id cli-abc", lost);
@@ -78,12 +80,14 @@ public class CliReplayContractTests
         Assert.True(answered.GetProperty("ok").GetBoolean());
 
         var err = IpcError.From(new ErrorInfo(ErrorCode.IPC_UNAVAILABLE, "gone", "gone", "restart", true));
-        var unsent = JsonDocument.Parse(Json.Write(CliReplayContract.UnansweredJson("cli-abc", sent: false, err))).RootElement;
+        var unsent = JsonDocument.Parse(Json.Write(CliReplayContract.UnansweredJson("cli-abc", TransportOutcome.NothingWritten, err))).RootElement;
         Assert.Equal("cli-abc", unsent.GetProperty("request_id").GetString());
         Assert.False(unsent.GetProperty("reply_lost").GetBoolean());
+        Assert.Equal("NothingWritten", unsent.GetProperty("transport").GetString());
 
-        var lost = JsonDocument.Parse(Json.Write(CliReplayContract.UnansweredJson("cli-abc", sent: true, err))).RootElement;
+        var lost = JsonDocument.Parse(Json.Write(CliReplayContract.UnansweredJson("cli-abc", TransportOutcome.PossiblyWritten, err))).RootElement;
         Assert.True(lost.GetProperty("reply_lost").GetBoolean());
+        Assert.Equal("PossiblyWritten", lost.GetProperty("transport").GetString());
         Assert.Contains("--request-id cli-abc", lost.GetProperty("recovery").GetString());
     }
 
@@ -134,6 +138,65 @@ public class CliReplayContractTests
         Assert.Contains($"request-id: {id}", stderr);
     }
 
+    /// <summary>
+    /// A TRUNCATED REPLY IS A REPLY WE DID NOT GET, and it must not kill the process.
+    ///
+    /// Codex F7: <c>PipeClient</c> let write/read <c>IOException</c>, <c>ObjectDisposedException</c>
+    /// and a <c>JsonException</c> from a partial response escape unwrapped, while <c>Program.cs</c>
+    /// caught only <c>TradeAgentException</c> — so the most common lost-reply shapes terminated the
+    /// CLI with a stack trace and no structured output at all. The one wrapped path was the only one
+    /// the suite exercised, because the old fake server always closed cleanly on a frame boundary.
+    ///
+    /// Half a JSON object and then a close. The order went out, so this is UNKNOWN and must say so.
+    /// </summary>
+    [Fact]
+    public async Task The_real_cli_reports_a_half_written_reply_as_an_unknown_order()
+    {
+        var token = IpcToken.Ensure();
+        var serving = HalfAReplyThenClose(Paths.PipeName, token);
+
+        var (exit, stdout, stderr) = await RunTrade("buy", "ES", "1", "--json");
+        await serving;
+
+        Assert.Equal(1, exit);
+        Assert.DoesNotContain("Unhandled exception", stderr);
+
+        var json = JsonDocument.Parse(stdout).RootElement;
+        var id = json.GetProperty("request_id").GetString()!;
+        Assert.Equal("PossiblyWritten", json.GetProperty("transport").GetString());
+        Assert.True(json.GetProperty("reply_lost").GetBoolean(),
+            $"a half-written reply was not reported as a lost one: {stdout}");
+        Assert.Contains($"--request-id {id}", json.GetProperty("recovery").GetString());
+    }
+
+    /// <summary>
+    /// The other half of F7: the service goes away while the REQUEST is being written. Whichever
+    /// classification the transport can prove, it must be one of them, reported in the structured
+    /// output, and never an unhandled exception.
+    /// </summary>
+    [Fact]
+    public async Task The_real_cli_reports_a_service_that_vanishes_during_the_request()
+    {
+        var token = IpcToken.Ensure();
+        var serving = CloseRightAfterTheHandshake(Paths.PipeName, token);
+
+        var (exit, stdout, stderr) = await RunTrade("buy", "ES", "1", "--json");
+        await serving;
+
+        Assert.Equal(1, exit);
+        Assert.DoesNotContain("Unhandled exception", stderr);
+
+        var json = JsonDocument.Parse(stdout).RootElement;
+        Assert.StartsWith("cli-", json.GetProperty("request_id").GetString());
+        var transport = json.GetProperty("transport").GetString();
+        Assert.True(transport is "NothingWritten" or "PossiblyWritten",
+            $"the transport state was '{transport}', which is neither of the two things that can be true here");
+
+        // Whatever it decided, the recovery advice has to agree with it — the two used to be able to
+        // disagree, because one came from the transport and the other from a boolean set in advance.
+        Assert.Equal(transport == "PossiblyWritten", json.GetProperty("reply_lost").GetBoolean());
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>Answers the handshake, takes one order frame, then closes without replying.</summary>
@@ -146,7 +209,9 @@ public class CliReplayContractTests
         var r = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
         var w = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
 
-        var hello = Json.Read<IpcRequest>((await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)))!)!;
+        // The client may be killed by the test before it says hello; that is an ending, not a fault.
+        if (await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)) is not { } helloLine) return;
+        var hello = Json.Read<IpcRequest>(helloLine)!;
         await w.WriteLineAsync(Json.Write(IpcResponse.Success(hello.Id, new
         {
             protocol_version = Versions.ProtocolVersion,
@@ -155,6 +220,53 @@ public class CliReplayContractTests
         })));
 
         await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));   // the order, taken and never answered
+        server.Dispose();
+    });
+
+    /// <summary>Answers the handshake, takes the order, writes HALF a reply, then closes.</summary>
+    static async Task HalfAReplyThenClose(string pipe, string token) => await Task.Run(async () =>
+    {
+        using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        await server.WaitForConnectionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        var r = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var w = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        // The client may be killed by the test before it says hello; that is an ending, not a fault.
+        if (await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)) is not { } helloLine) return;
+        var hello = Json.Read<IpcRequest>(helloLine)!;
+        await w.WriteLineAsync(Json.Write(IpcResponse.Success(hello.Id, new
+        {
+            protocol_version = Versions.ProtocolVersion,
+            app_version = Versions.App,
+            compatible = true
+        })));
+
+        await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));   // the order
+        // A line terminator with a truncated object in front of it: the client reads a whole line
+        // and cannot parse it, which is a different failure from never receiving one.
+        await w.WriteLineAsync("{\"ok\":true,\"data\":{\"state\":\"FIL");
+        server.Dispose();
+    });
+
+    /// <summary>Answers the handshake and closes at once, before the order can be written.</summary>
+    static async Task CloseRightAfterTheHandshake(string pipe, string token) => await Task.Run(async () =>
+    {
+        using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1,
+            PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        await server.WaitForConnectionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        var r = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        var w = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        // The client may be killed by the test before it says hello; that is an ending, not a fault.
+        if (await r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30)) is not { } helloLine) return;
+        var hello = Json.Read<IpcRequest>(helloLine)!;
+        await w.WriteLineAsync(Json.Write(IpcResponse.Success(hello.Id, new
+        {
+            protocol_version = Versions.ProtocolVersion,
+            app_version = Versions.App,
+            compatible = true
+        })));
         server.Dispose();
     });
 
