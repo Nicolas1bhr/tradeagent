@@ -45,3 +45,12 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   round 4 items 1–3 (item 10 after U2c-1 merges) as slots free · then v0.1.2 on the box (needs Nicolas: power + Tailscale).
 - Briefs on disk for every remaining leg: `briefs/U2c1-r4-build.md`, `U2d-r4-build.md`, `U14-r4-verify.md`,
   `U14-r4-codex-prompt.txt` (plus the U2a pair). A killed leg is re-briefed from these, not from memory.
+- 18:25 **U14 builder reported** (Opus, 219K tokens, 18 min): tip `e22eec6`, suite 382 → **387 green** (75/111/201),
+  item 6 done. Two REAL gaps it found while pinning: the membership rule's missing-prefix allowance was unconditional
+  (a swap-one candidate under the cap was adopted — RED quoted, fixed in `6e9027c`), and `Identified`'s lock check had
+  no test (mutant M3b survived every pre-existing test). Docs: RESUME-HERE now expects `proto=3`; CONTRACTS.md carries the
+  protocol-3 sentence. Flagged for the verifier: the allowance now reads THIS instance's `_cap`, so a temp from a
+  larger-capped build is refused where `a8b3fb0` adopted it (safe direction, unmeasured).
+- 18:27 Pinned `u14-verify-r4` and `u14-codex-r4` (detached, `e22eec6`); Codex `gpt-5.6-sol` launched detached on the
+  codex worktree, output → `records/codex-U14-r4.txt`; U14 verifier (Opus) dispatched with `briefs/U14-r4-verify.md`.
+  Heavy legs: U2a r4b builder + U14 verifier = 2.
