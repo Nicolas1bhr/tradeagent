@@ -563,6 +563,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // in the dump, so this reads the assembly identity of the ATAS.Strategies.dll in process.
             AtasVersion = typeof(ChartStrategy).Assembly.GetName().Version?.ToString() ?? "unknown",
             AccountId = portfolio?.AccountID,
+            // THE REFUSAL HAS TO BE VISIBLE OR IT IS A SILENT STOP. A permanent local failure at the
+            // witness path — a directory where the temp belongs, a permission — now refuses EVERY
+            // order, forever, and without this the owner sees orders failing with nothing on any
+            // screen saying why. This rides the hello into the ATAS bridge health row.
+            WitnessFailure = _witness.LastWriteFailure,
             // Portfolio.IsRealAccount is the only simulation signal in the dump. When there is no
             // portfolio yet we report NOT simulated, because guessing "simulated" on an unknown
             // account is the guess that costs money.
@@ -1310,6 +1315,42 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             order.TriggerPrice = ATAS.Strategies.ATM.Extensions.ShrinkPrice(security, cmd.StopPrice
                 ?? throw new AtasRejectedException("a stop price is required for this order type; nothing was submitted"));
 
+        // THE WRITE-AHEAD RECORD, AND IT GOES DOWN BEFORE THE ORDER DOES.
+        //
+        // That ordering is the whole evidential value of the file. The claim "this product is about
+        // to submit this identifier" is made while there is still no order to describe, by a process
+        // that will be gone by the time a later run reads it — so it cannot be a story composed
+        // afterwards to fit an order somebody found in ATAS's book. Written after the submission it
+        // would say exactly the same words and prove nothing, and nothing in the data would show
+        // which of the two happened. Do not move this below the OpenOrder call.
+        //
+        // AND THE ORDER IS REFUSED WHEN THE CLAIM DID NOT LAND. Submitting returns whether the
+        // record reached the disk. Rule 1 rests on that record: it is the only thing that can answer
+        // "did this product submit this identifier" for a process that has already ended, and a
+        // claim that lived solely in this process's memory is not one. So an order whose identifier
+        // could not be recorded is not sent.
+        //
+        // IT SITS ABOVE THE LOCK, and that placement is load-bearing. Below it, _submitted, _touched
+        // and _clientOrderIdAttempts have already been written, and refusing there would leave all
+        // three describing an order that was never sent — _clientOrderIdAttempts in particular
+        // answers "was anything ever put to ATAS carrying an id", which would then be false. Here
+        // the order object is fully built and validated and nothing has been recorded anywhere yet.
+        //
+        // THE THROW IS A DEFINITE REFUSAL AND RULE 3 IS INTACT. Rule 3 is about ambiguity AFTER the
+        // order has been handed to ATAS; OpenOrder is a long way below this line and nothing has
+        // reached the platform, so "nothing was submitted" is the literal truth — the same shape as
+        // the four pre-flight refusals above. Still Guarded, because an EXCEPTION out of the witness
+        // must not become the outcome of an order: the false return is the refusal, never a throw
+        // from a diagnostic.
+        var recorded = false;
+        Guard(() => recorded = _witness.Submitting(cmd.ClientOrderId, portfolio.AccountID, cmd.Symbol,
+                                                   cmd.Side.ToString(), cmd.Quantity, cmd.LimitPrice));
+        if (!recorded)
+            throw new AtasRejectedException(
+                $"the write-ahead record for {cmd.ClientOrderId} could not be written to " +
+                $"{_witness.Path ?? "<no witness file>"}; nothing was submitted. " +
+                (_witness.LastWriteFailure ?? ""));
+
         lock (_gate)
         {
             Trim();
@@ -1330,22 +1371,6 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // out was still an attempt.
             if (!string.IsNullOrEmpty(cmd.ClientOrderId)) _clientOrderIdAttempts++;
         }
-
-        // THE WRITE-AHEAD RECORD, AND IT GOES DOWN BEFORE THE ORDER DOES.
-        //
-        // That ordering is the whole evidential value of the file. The claim "this product is about
-        // to submit this identifier" is made while there is still no order to describe, by a process
-        // that will be gone by the time a later run reads it — so it cannot be a story composed
-        // afterwards to fit an order somebody found in ATAS's book. Written after the submission it
-        // would say exactly the same words and prove nothing, and nothing in the data would show
-        // which of the two happened. Do not move this below the OpenOrder call.
-        //
-        // GUARDED BECAUSE A DISK PROBLEM MUST NOT FAIL AN ORDER. CoidWitness swallows IO failure
-        // itself; this is the second belt, because an exception raised HERE — after _submitted has
-        // been written and before ATAS has been asked — would be read by the gateway as an
-        // ambiguous placement for an order that was never submitted. Rule 3 broken by bookkeeping.
-        Guard(() => _witness.Submitting(cmd.ClientOrderId, portfolio.AccountID, cmd.Symbol,
-                                        cmd.Side.ToString(), cmd.Quantity, cmd.LimitPrice));
 
         // Whether ITradingManager will place an order for an instrument or portfolio OTHER than its
         // own selected pair has NOT been measured. Where a connector exists it definitely will, so an

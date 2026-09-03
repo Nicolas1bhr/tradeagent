@@ -105,6 +105,42 @@ public class AtasHealthTests
         }
     }
 
+    /// <summary>
+    /// CONNECTED IS NOT THE SAME AS ABLE TO TRADE. The bridge refuses any order whose client order
+    /// id it could not write to the witness file — rule 1 rests on that record — and a permanent
+    /// local failure at that path refuses EVERY order, forever. A READY row over a bridge in that
+    /// state is this screen lying to the one person who could fix it, and until the row said so the
+    /// owner would see orders failing with no reason anywhere in the app.
+    ///
+    /// DEGRADED rather than FAILED: the pipe is up and everything that does not place an order still
+    /// works. And it names the file, because "orders are being refused" without the path is a
+    /// symptom nobody can act on.
+    /// </summary>
+    [Fact]
+    public void A_bridge_that_cannot_write_its_write_ahead_record_is_not_reported_as_ready()
+    {
+        var hello = new BridgeHello
+        {
+            BridgeVersion = "0.9.1",
+            BridgeProtocolVersion = 2,
+            WitnessFailure = @"ERROR coid-witness rewrite did not land. file=C:\Users\m\AppData\Local\TradeAgent\bridge\coid-witness.json UnauthorizedAccessException: Access to the path is denied."
+        };
+
+        var (state, detail) = AtasHealth.BridgeRow(true, Machine(), HealthState.READY, hello, null);
+
+        Assert.Equal(HealthState.DEGRADED, state);
+        Assert.Contains("orders are being refused", detail);
+        Assert.Contains("coid-witness.json", detail);
+    }
+
+    /// <summary>An older bridge does not report the field at all, and must not read as a failing one.</summary>
+    [Fact]
+    public void A_bridge_that_does_not_report_a_witness_failure_is_still_ready()
+    {
+        var hello = new BridgeHello { BridgeVersion = "0.9.1", BridgeProtocolVersion = 2, WitnessFailure = null };
+        Assert.Equal(HealthState.READY, AtasHealth.BridgeRow(true, Machine(), HealthState.READY, hello, null).State);
+    }
+
     [Fact]
     public void A_connected_bridge_says_what_it_is()
     {
