@@ -785,7 +785,7 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("records:0", again.Token());
         Assert.Contains("io:degraded", again.Token());
         Assert.False(again.Unreadable);
-        Assert.Contains("TA-ALSO-IMPORTED".Length > 0 ? "nothing anchors it" : "", 
+        Assert.Contains("nothing anchors it",
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
 
