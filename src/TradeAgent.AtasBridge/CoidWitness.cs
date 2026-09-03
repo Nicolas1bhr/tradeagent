@@ -1017,9 +1017,37 @@ public sealed class CoidWitness : IDisposable
         // TWO RIVALS MEAN NEITHER IS TRUSTED — nothing in the files distinguishes them.
         if (_viable.Count != 1) return;
 
-        _records.Clear();
-        Take(_viable[0].Envelope);
-        _adopted = _viable[0].Path;
+        // A MERGE, NOT A REPLACEMENT. The candidate may only fill in the half this product did not
+        // write, on a claim the committed file already carries. It cannot add an identifier (that
+        // would be a write-ahead record for an order Place refused to send), it cannot remove one,
+        // and it cannot revise a broker id that is already recorded — a broker id does not change
+        // once assigned, so a second value means the file is being written by something else.
+        //
+        // AND IT CANNOT COMPLETE ANOTHER SESSION'S CLAIM. Identified refuses to write into a record
+        // belonging to a different session, because an order found in ATAS's book carrying a prior
+        // session's comment would otherwise write its own id into that record and match itself.
+        // Recovery must not be the way around that refusal, so the sessions have to agree.
+        var recovered = 0;
+        foreach (var candidate in _viable[0].Envelope.Records)
+        {
+            if (string.IsNullOrEmpty(candidate.BrokerOrderId)) continue;
+
+            var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, candidate.ClientOrderId,
+                                                          StringComparison.Ordinal));
+            if (i < 0) continue;
+            if (!string.IsNullOrEmpty(_records[i].BrokerOrderId)) continue;
+            if (!string.Equals(_records[i].SessionId, candidate.SessionId, StringComparison.Ordinal)) continue;
+
+            _records[i] = _records[i] with
+            {
+                BrokerOrderId = candidate.BrokerOrderId,
+                IdentifiedAt = candidate.IdentifiedAt
+            };
+            recovered++;
+        }
+
+        // Only a candidate that actually gave something is worth committing over and deleting.
+        if (recovered > 0) _adopted = _viable[0].Path;
     }
 
     /// <summary>
@@ -1075,72 +1103,39 @@ public sealed class CoidWitness : IDisposable
 
     /// <summary>
     /// WHETHER A CANDIDATE IS A LEGAL TRANSITION FROM THE COMMITTED STATE — or the reason it is not.
-    /// Null means it is one rewrite of this file and may be adopted.
+    /// Null means it is one rewrite of this file and may be merged.
     ///
-    /// THE CORRECTION THIS IS. The previous rule asked whether the candidate kept the committed
-    /// MEMBERS, with a leading run excused because <see cref="Trim"/> takes one at the cap. Asked
-    /// that way it validates a SHAPE, and the shape has a hole at the end: when NONE of the committed
-    /// identifiers is present the search for the first surviving one walks off the end of the list
-    /// and there is nothing left to check. Committed A/B/C at cap 3 against a perfectly lined-up
-    /// X/Y/Z was therefore adopted — and X/Y/Z are acknowledged records, so they walk into
-    /// <see cref="PriorSessionIds"/>, the cross-session reading and <c>SupportsClientOrderId</c> as
-    /// proof for orders this product never submitted.
+    /// A TEMP IS NEVER A NEW CLAIM, and that single rule is what this collapsed to. Since round 2
+    /// <c>Place</c> refuses the order when <see cref="Submitting"/> returns false, so a claim that is
+    /// in a temp and not in the committed file is, by that contract, a submission THAT DID NOT
+    /// HAPPEN — no order carrying that identifier was ever handed to ATAS. Recovering it writes a
+    /// write-ahead record for an order this product never submitted, and nothing afterwards can tell
+    /// that record from a real one; at the cap it also evicts a genuine committed claim to make room
+    /// for itself. Recovery cannot distinguish a failed SUBMISSION temp from a failed
+    /// ACKNOWLEDGEMENT temp by inspection — both are "the rewrite that did not land" — so the rule
+    /// is stated rather than inferred.
     ///
-    /// THE RULE IS THE TRANSITION, and it comes from what one rewrite can actually do. A rewrite is
-    /// <see cref="Submitting"/> — remove any record under this identifier, append one, then
-    /// <see cref="Trim"/> — or <see cref="Identified"/>, which replaces a record in place. So from
-    /// committed C the only legal C' is:
+    /// What is left for a legal candidate is therefore exactly the committed identifiers, no more
+    /// and no fewer, differing only in the half this product did not write. Which is why the
+    /// arithmetic that used to live here — never shrinks, adds at most one, drops at most the oldest
+    /// at the cap — is gone with the case it existed for. That also removes this rule's dependence on
+    /// <see cref="_cap"/>, and with it the cross-cap upgrade asymmetry the round-4 record described
+    /// backwards: no candidate that trims is adoptable by anybody's cap any more.
     ///
-    ///   1. IT NEVER SHRINKS. |C'| ≥ |C|: a rewrite adds a claim and then trims to the cap, so it
-    ///      cannot end up holding fewer records than the file it came from.
-    ///   2. IT ADDS AT MOST ONE. |C'| ≤ |C| + 1. More than that is not a rewrite, it is somebody's
-    ///      history.
-    ///   3. IT DROPS AT MOST THE ONE OLDEST, AND ONLY AT THE CAP. Every committed identifier is in
-    ///      C' except possibly the FIRST, and that one only when C' is full — because below the cap
-    ///      <see cref="Trim"/> removes nothing, so a missing record has no rewrite that explains it.
-    ///
-    /// WHOSE CAP, AND WHICH UPGRADE THAT COSTS. Rule 3 reads THIS instance's <see cref="_cap"/>,
-    /// while the candidate was written by an instance whose cap this build cannot see. They differ
-    /// only across builds, and the direction is worth naming because the round-4 record named it
-    /// backwards: it is a temp from a SMALLER-capped writer that is refused, so the affected upgrade
-    /// is a cap RAISE. The cost is one un-recovered acknowledgement on the first start of the new
-    /// build — <see cref="PriorSession"/> answers null for that identifier, which refuses a proof
-    /// rather than inventing one, and the committed file is kept whole.
-    ///
-    /// It names the identifier rather than returning a bool because that name is what goes in the
-    /// sidecar. "3 records against 3" is the sentence that made the first version of this invisible.
+    /// Uniqueness is <see cref="Parse"/>'s job, on both sides of this comparison, so identifier
+    /// counts here are set sizes.
     /// </summary>
-    string? IllegalTransition(Envelope candidate, Envelope committed)
+    static string? IllegalTransition(Envelope candidate, Envelope committed)
     {
-        // No duplicate check here: Parse refuses an envelope carrying one, on both sides of this
-        // comparison, so a candidate that reaches this method has unique identifiers by construction.
+        if (candidate.Records.Count != committed.Records.Count)
+            return $"it holds {candidate.Records.Count} records against the committed file's " +
+                   $"{committed.Records.Count}, and a rewrite that did not land can only carry the " +
+                   $"committed claims";
+
         var ids = new HashSet<string>(candidate.Records.Select(r => r.ClientOrderId), StringComparer.Ordinal);
-
-        if (candidate.Records.Count < committed.Records.Count)
-            return $"it holds {candidate.Records.Count} records against the committed file's " +
-                   $"{committed.Records.Count}";
-
-        if (candidate.Records.Count > committed.Records.Count + 1)
-            return $"it holds {candidate.Records.Count} records against the committed file's " +
-                   $"{committed.Records.Count}, and one rewrite adds one claim";
-
-        // The one record a trim at the cap may have taken, and no more.
-        var dropped = 0;
-        while (dropped < committed.Records.Count && !ids.Contains(committed.Records[dropped].ClientOrderId))
-            dropped++;
-
-        if (dropped > 1)
-            return $"{dropped} committed records are missing from it and one rewrite drops at most " +
-                   $"the oldest, so it is not a rewrite of this file";
-
-        if (dropped == 1 && candidate.Records.Count < _cap)
-            return $"{committed.Records[0].ClientOrderId} is committed and not in it, and it holds " +
-                   $"{candidate.Records.Count} records against a cap of {_cap}, so no trim accounts " +
-                   $"for the loss";
-
-        for (var i = dropped; i < committed.Records.Count; i++)
-            if (!ids.Contains(committed.Records[i].ClientOrderId))
-                return $"{committed.Records[i].ClientOrderId} is committed and not in it";
+        foreach (var r in committed.Records)
+            if (!ids.Contains(r.ClientOrderId))
+                return $"{r.ClientOrderId} is committed and not in it";
 
         return null;
     }
