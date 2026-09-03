@@ -35,6 +35,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     const int PipeBuffer = 8192;
 
     /// <summary>
+    /// How much of a reply ONE deadline covers.
+    ///
+    /// ARITHMETIC, not measured, and the arithmetic is the whole point. <see cref="WriteTimeout"/>
+    /// used to bound the WHOLE write, which is not a stalled-peer detector at all — it is a
+    /// THROUGHPUT FLOOR of (reply size / timeout). A ~1 MiB reply against the shipped 10 s deadline
+    /// demanded ~96 KiB/s of the agent forever, so a peer reading steadily at 79 KiB/s was dropped
+    /// at 10.1 s and libelled in the log as having stopped reading. Measured by review of a0aa1a7.
+    ///
+    /// Chunking makes the deadline mean what it says: bytes accepted resets it, so the floor is this
+    /// chunk per timeout — 8 KiB / 10 s ≈ 819 B/s at the shipped default — and a peer that is moving
+    /// at all survives a reply of any size, while one that has genuinely stopped still fails the
+    /// very first chunk that does not fit the buffer.
+    /// </summary>
+    const int WriteChunkBytes = 8192;
+
+    /// <summary>
     /// How long ONE reply gets to reach the agent before that connection is declared dead.
     ///
     /// Same name, same default and same reasoning as <see cref="AtasBridge.BridgeServer.WriteTimeout"/>,
@@ -114,7 +130,6 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             await using var _ = pipe;
             var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
-            var writer = new StreamWriter(pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
 
             while (!ct.IsCancellationRequested && pipe.IsConnected)
             {
@@ -126,12 +141,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 try { req = Json.Read<IpcRequest>(line); }
                 catch (Exception)
                 {
-                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null, null)) return;
+                    if (!await Send(pipe, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null, null)) return;
                     continue;
                 }
                 if (req is null)
                 {
-                    if (!await Send(pipe, writer, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame"), "", null, null)) return;
+                    if (!await Send(pipe, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "empty frame"), "", null, null)) return;
                     continue;
                 }
 
@@ -140,11 +155,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     if (!Security.IpcToken.Matches(req.Token, token))
                     {
                         gateway.Log.Engineering("Ipc", "auth_rejected", "warn");
-                        await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session, req.RequestId);
+                        await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session, req.RequestId);
                         return; // one chance per connection
                     }
                     authenticated = true;
-                    if (!await Send(pipe, writer, IpcResponse.Success(req.Id, new
+                    if (!await Send(pipe, IpcResponse.Success(req.Id, new
                     {
                         protocol_version = Versions.ProtocolVersion,
                         app_version = Versions.App,
@@ -155,11 +170,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
                 if (!authenticated)
                 {
-                    await Send(pipe, writer, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session, req.RequestId);
+                    await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "say hello with a valid token first"), req.Op, req.Session, req.RequestId);
                     return;
                 }
 
-                if (!await Send(pipe, writer, await Handle(req, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
+                if (!await Send(pipe, await Handle(req, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -204,33 +219,62 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
-    async Task<bool> Send(NamedPipeServerStream pipe, StreamWriter w, IpcResponse r,
+    /// <summary>
+    /// One reply to one peer, written in chunks with a deadline on EACH — so the deadline measures
+    /// PROGRESS, not elapsed time. False means this connection is finished.
+    ///
+    /// A peer that authenticates, asks for something large and then stops reading used to park the
+    /// handler here forever: the write had no deadline and takes no cancellation token, and no token
+    /// could have helped anyway — a write the kernel has already accepted cannot be recalled, only
+    /// the handle can be closed. So the deadline closes the handle, ending that ONE connection.
+    /// Other agents are on other handlers and other pipes and never notice; there is deliberately no
+    /// lock here, because a lock shared across connections would turn one stalled peer into an
+    /// outage for everybody.
+    ///
+    /// Writing the bytes straight to the pipe rather than through a StreamWriter is what makes the
+    /// chunking real: a StreamWriter would hand the runtime the whole frame and give back one task
+    /// to wait on, which is exactly the total-duration bound this replaced.
+    /// </summary>
+    async Task<bool> Send(NamedPipeServerStream pipe, IpcResponse r,
         string op, string? session, string? requestId)
     {
-        var write = w.WriteLineAsync(Json.Write(r));
-        try
+        var bytes = Encoding.UTF8.GetBytes(Json.Write(r) + "\n");
+        var sent = 0;
+        while (sent < bytes.Length)
         {
-            await write.WaitAsync(WriteTimeout);
-            return true;
+            var n = Math.Min(WriteChunkBytes, bytes.Length - sent);
+            var write = pipe.WriteAsync(bytes.AsMemory(sent, n)).AsTask();
+            try
+            {
+                await write.WaitAsync(WriteTimeout);
+            }
+            catch (TimeoutException)
+            {
+                Observe(write);
+                // THE REQUEST ID IS THE POINT OF THIS RECORD, not decoration on it. The reply that
+                // was dropped may be the only acknowledgement of an order that already reached the
+                // broker, and this log line is then the sole surviving link between that order and
+                // the id the agent must reuse to reconcile it. It used to be written request_id NULL.
+                //
+                // The byte counts say WHERE it stopped, which is the difference between "this peer
+                // is gone" and "this peer is slow" — the distinction the old total-duration bound
+                // could not make and got wrong.
+                gateway.Log.Engineering("Ipc", "peer_stopped_reading", "warn", session: session,
+                    requestId: requestId,
+                    metadataJson: Json.Write(new
+                    {
+                        op,
+                        request_id = requestId,
+                        bytes_sent = sent,
+                        bytes_total = bytes.Length,
+                        write_timeout_ms = (int)WriteTimeout.TotalMilliseconds
+                    }));
+                try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
+                return false;
+            }
+            sent += n;
         }
-        catch (TimeoutException)
-        {
-            Observe(write);
-            // THE REQUEST ID IS THE POINT OF THIS RECORD, not decoration on it. The reply that was
-            // dropped may be the only acknowledgement of an order that already reached the broker,
-            // and this log line is then the sole surviving link between that order and the id the
-            // agent must reuse to reconcile it. It used to be written with request_id NULL.
-            gateway.Log.Engineering("Ipc", "peer_stopped_reading", "warn", session: session,
-                requestId: requestId,
-                metadataJson: Json.Write(new
-                {
-                    op,
-                    request_id = requestId,
-                    write_timeout_ms = (int)WriteTimeout.TotalMilliseconds
-                }));
-            try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
-            return false;
-        }
+        return true;
     }
 
     static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
