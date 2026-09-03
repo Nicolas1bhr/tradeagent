@@ -56,6 +56,31 @@ FULL suite once at the end with counts pasted. §9.9: for F8 and F13 answer whet
 (committed, temp) shapes could catch the class. Report: tip sha; the table in one line per finding; suite counts;
 on-box build result; "What I did NOT do".
 
-## Verifier findings (appended by the manager when leg [2] reports)
+## Verifier findings (leg [2], Opus, on `e22eec6`) — VERDICT: FAIL — 0H/5M/4L · record `records/U14-verify-r4.md`
 
-_pending_
+Merged with the Codex list where they coincide (fix once, cite both):
+
+- **V1 (MED) = Codex F7.** The RESOLVED marker is written `safety: false`, so the warning quota rations away the line
+  that ends a degradation — a cleanly committed witness reports DEGRADED and `SupportsClientOrderId=false` at the next
+  start (permanent at 100 leftovers). Write it as a safety event; the verifier measured 8/8 sessions flip.
+- **V2 (MED) → folded into Codex F1.** The lock's own exclusion has no biting test (MV2 `FileShare.None`→`ReadWrite`
+  leaves all 80 green) while an interleaving probe shows a claim reported durable absent from the committed file. The
+  lifetime-lease rework must come with a test that goes RED under MV2; lift the verifier's probe into
+  `CoidWitnessTests` (see `records/U14-verify-r4.md` for it).
+- **V3 (MED) = Codex F2.** A reader that runs while no writer holds the lock adopts, quarantines and writes the sidecar
+  (`CoidWitness.cs:930-936`); running `tools/probe` leaves the app DEGRADED with a sentence that misdescribes a quarantine
+  as a write failure. **CLASS (§9.10, adopt it):** `Note()` sets `_degraded` for every line, so a quarantine warning and a
+  lost claim are indistinguishable downstream — make the degraded state a function of unresolved SAFETY lines only.
+- **V4 (MED) ~ Codex F12.** Item 5's probe rendering has no test and is unreachable off Windows (MV7 leaves 81/81 green).
+  Give it a test where the code allows; what stays box-only goes under NOT verified by name.
+- **V5 (MED).** The cap-direction claim in the build record is BACKWARDS: measured, a smaller-capped writer's temp is
+  refused (a cap raise), not a larger one — fail-closed and safe, but the record argues about a case that cannot occur.
+  Correct the record; pin the real direction with a test (the F3 transition rule may subsume it — say which).
+- **V6 (LOW).** In a real race the CAS refusal fires 158/160, not the lock refusal the record names — with the lifetime
+  lease the lock refusal becomes the mechanism; state what refuses what in the record.
+- **V7 (LOW)** `Committed()`'s doc claims a lineage re-sync the code no longer does. **V8 (LOW)** `AtasHealthTests.cs:125`
+  builds a v2 hello for a row a v2 peer can never reach (ties to Codex F9). **V9 (LOW)** `Trouble` skips
+  `EnsureRecovered()` where its siblings run it.
+
+What held (keep it that way): three real processes × 240 concurrent claims → 80 durable / 0 lost / 0 phantom / no
+merge; all nine builder mutants reproduced; v2 refused / v3 accepted / `witness_failure` → DEGRADED over a real pipe.

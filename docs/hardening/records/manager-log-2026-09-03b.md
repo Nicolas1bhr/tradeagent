@@ -83,3 +83,8 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   record but at most one trimmed; an unparseable file is not an anchor; close-all witnessed before the wire. The box is
   up, so the adapter hunks (F5/F16) get their first compiler on the box via the win tools. The bounce goes to the SAME
   builder (§9.3) once the U14 verifier vacates its slot; the verifier's findings are appended to the same round.
+- 21:05 **U14 verifier reported** (Opus, 274K tokens, 31 min): **FAIL 0H/5M/4L**; behaviours held (3 processes × 240
+  claims → 80 durable / 0 lost / 0 phantom, one owner; nine builder mutants reproduced; 387 green twice). Its V1 = Codex
+  F7 (RESOLVED rationed), V3 = Codex F2 (readers write) with the class fix "degraded = unresolved SAFETY lines"; V5 says
+  the builder's cap-direction argument was backwards (safe direction, wrong record). Findings appended to
+  `briefs/U14-r5-bounce.md`; the SAME builder resumed by message (§9.3). Heavy legs: U2a verifier + U14 builder r5 = 2.
