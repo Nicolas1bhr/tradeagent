@@ -169,6 +169,50 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// A SWEEP THAT COULD NOT CANCEL EVERYTHING MUST NOT SAY IT DID.
+    ///
+    /// Two resting orders, and the broker definitively refuses the first cancellation — which is an
+    /// ordinary thing for a broker to do: the order filled a moment ago, or the venue will not take
+    /// a cancel now. One lands, one does not, and the reply has to distinguish them.
+    ///
+    /// This is the test that makes "cancelled counts attempts" fail on its own. Until the fake could
+    /// refuse a cancel, every cancellation succeeded, attempts and successes were the same number,
+    /// and the mutant that swaps them survived the entire suite.
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_that_could_not_cancel_everything_reports_only_what_landed()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("refuse-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await client.SendAsync(Buy("refuse-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+
+        conn.Faults.RefuseCancel = 1;   // exactly one cancellation is refused
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-refuse" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+
+        Assert.Equal(2, sweep.GetProperty("attempted").GetInt32());
+        Assert.Equal(1, sweep.GetProperty("cancelled").GetInt32());
+        Assert.Equal(1, sweep.GetProperty("not_cancelled").GetArrayLength());
+
+        // And the claim is true of the world, not just internally consistent.
+        Assert.Equal(1, (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED));
+
+        // The one still out there is named, with its state, so the agent need not diff two lists.
+        var stranded = sweep.GetProperty("not_cancelled")[0];
+        Assert.Equal(nameof(ExecutionState.REJECTED), stranded.GetProperty("state").GetString());
+        Assert.StartsWith("op-", stranded.GetProperty("request_id").GetString());
+    }
+
+    /// <summary>
     /// The count is of cancellations that LANDED. With nothing working, a sweep cancels nothing and
     /// must say so — and the other direction, a real working order, is cancelled and counted once.
     /// </summary>

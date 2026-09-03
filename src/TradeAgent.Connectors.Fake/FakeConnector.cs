@@ -138,6 +138,10 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public async Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default)
     {
         await Wire(ct);
+        // A definite refusal from the broker, which is a real thing brokers do and the only way a
+        // sweep can honestly report fewer cancellations than attempts.
+        if (Faults.Take(f => f.RefuseCancel, (f, v) => f.RefuseCancel = v))
+            throw new ConnectorRejectedException("the broker refused the cancellation (simulated)");
         if (!Broker.Cancel(connectorOrderId)) throw new ConnectorRejectedException("order is not cancellable");
     }
 
