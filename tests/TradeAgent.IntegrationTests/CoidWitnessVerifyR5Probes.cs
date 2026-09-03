@@ -152,5 +152,119 @@ public class CoidWitnessVerifyR5Probes : IDisposable
         Assert.Equal(["TA-FIRST", "TA-SECOND"], CommittedIds());
         second.Dispose();
     }
+
+    void WriteTemp(long generation, string? predecessor, string records)
+    {
+        var path = File_ + ".tmp";
+        var pred = predecessor is null ? "null" : $"\"{predecessor}\"";
+        File.WriteAllText(path, $$"""{"version":1,"generation":{{generation}},"predecessor":{{pred}},"records":[{{records}}]}""");
+        Age(path);
+    }
+
+    /// <summary>
+    /// F8: A TEMP MAY ONLY ADD THE HALF THIS PRODUCT DID NOT WRITE — AND NOTHING ELSE.
+    ///
+    /// The rule is stated as "fill in the broker id on a claim the committed file already carries".
+    /// A candidate that passes IllegalTransition carries the same identifier SET, so it is free to
+    /// carry different VALUES for every other field: quantity, price, side, symbol, written_at, and
+    /// the session id itself. If the merge took whole records, a temp dropped beside the witness
+    /// could rewrite what this product says it submitted, without adding or removing an identifier.
+    /// </summary>
+    [Fact]
+    public void A_temp_cannot_rewrite_any_field_of_a_committed_claim_except_the_broker_id()
+    {
+        using (var w = new CoidWitness(File_))
+            Assert.True(w.Submitting("TA-1", "ACC-REAL", "ES", "Buy", 3m, 4200.25m));
+
+        var committed = File.ReadAllText(File_);
+        var session = System.Text.Json.JsonDocument.Parse(committed).RootElement
+            .GetProperty("records")[0].GetProperty("session_id").GetString()!;
+
+        // Same identifier set, same count — a legal transition — but every other field is a lie,
+        // and it carries the broker id that makes the merge want it.
+        WriteTemp(2, Fp(committed),
+            $$"""{"client_order_id":"TA-1","session_id":"{{session}}","written_at":"2001-01-01T00:00:00+00:00","account_id":"ACC-FORGED","symbol":"NQ","side":"Sell","quantity":999,"price":1,"broker_order_id":"BRK-1","identified_at":"2026-01-01T00:00:01+00:00"}""");
+
+        var r = new CoidWitness(File_).All().Single();
+
+        Assert.Equal("BRK-1", r.BrokerOrderId);          // the half we did not write IS recovered
+        Assert.Equal("ACC-REAL", r.AccountId);           // and nothing else moves
+        Assert.Equal("ES", r.Symbol);
+        Assert.Equal("Buy", r.Side);
+        Assert.Equal(3m, r.Quantity);
+        Assert.Equal(4200.25m, r.Price);
+        Assert.Equal(session, r.SessionId);
+        Assert.NotEqual(2001, r.WrittenAt.Year);
+    }
+
+    /// <summary>
+    /// F4's anchor, Codex's exact check: `records:[null, A]` deserialises but means nothing. It must
+    /// read UNREADABLE, every write must be refused, and the original bytes must be left alone.
+    /// </summary>
+    [Fact]
+    public void A_null_element_envelope_is_unreadable_and_its_bytes_are_left_alone()
+    {
+        var bytes = $$"""{"version":1,"generation":4,"predecessor":null,"records":[null,{{RecordJson("TA-A", "a-dead-session", "BRK-A")}}]}""";
+        File.WriteAllText(File_, bytes);
+
+        using var w = new CoidWitness(File_);
+        Assert.True(w.Unreadable);
+        Assert.Empty(w.All());
+        Assert.Null(w.PriorSession("TA-A"));                       // the valid element is not evidence
+        Assert.False(w.Submitting("TA-NEW", "SIM", "ES", "Buy", 1m, null));
+        Assert.NotNull(w.Trouble);
+        Assert.Equal(bytes, File.ReadAllText(File_));              // untouched
+    }
+
+    /// <summary>
+    /// F13's anchor: corrupt committed bytes are not a history, so a temp naming their fingerprint
+    /// is not descended from anything. Both halves — the right generation and a wrong one.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(999)]
+    public void Corrupt_committed_bytes_are_never_an_anchor(long generation)
+    {
+        const string corrupt = "this is not an envelope at all {{{";
+        File.WriteAllText(File_, corrupt);
+        WriteTemp(generation, Fp(corrupt), RecordJson("TA-GHOST", "another-machine", "BRK-GHOST"));
+
+        using var w = new CoidWitness(File_);
+        Assert.Null(w.PriorSession("TA-GHOST"));
+        Assert.Empty(w.All());
+        Assert.True(w.Unreadable);
+        Assert.Equal(corrupt, File.ReadAllText(File_));
+    }
+
+    /// <summary>
+    /// THE F8 RESIDUAL, MEASURED RATHER THAN ARGUED: a rename that throws AFTER the replace landed.
+    ///
+    /// The builder names this as not closable and states its direction — "a claim with no order, not
+    /// an order with no claim". This drives it: the replace really happens and then throws, so the
+    /// claim is COMMITTED while Submitting returns false and Place refuses the order.
+    /// </summary>
+    [Fact]
+    public void The_F8_residual_is_a_claim_without_an_order_and_never_becomes_evidence()
+    {
+        using var w = new CoidWitness(File_, null, CoidWitness.DefaultCap, (tmp, dest) =>
+        {
+            File.Move(tmp, dest, overwrite: true);                 // it LANDED
+            throw new IOException("the process cannot access the file");   // and then threw
+        });
+
+        Assert.False(w.Submitting("TA-GHOST", "SIM", "ES", "Buy", 1m, null));   // Place refuses the order
+
+        // The direction: the claim IS on disk (a claim with no order) …
+        Assert.Contains("TA-GHOST", CommittedIds());
+
+        // … and it can never become cross-session evidence, because nothing ever acknowledges it.
+        var next = new CoidWitness(File_);
+        Assert.Null(next.PriorSession("TA-GHOST"));
+        Assert.Empty(next.PriorSessionIds(10));
+        Assert.DoesNotContain("TA-GHOST", next.PriorSessionIds(10));
+
+        // And the rollback did not happen, which is why the in-memory and on-disk states differ here.
+        Assert.NotNull(w.LastWriteFailure);
+    }
 }
 
