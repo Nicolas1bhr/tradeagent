@@ -2641,6 +2641,37 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A WITNESS THAT HAS NOTHING TO RECORD DOES NOT BECOME THE OWNER BY BEING ASKED.
+    ///
+    /// <c>Identified</c> took the lease and then looked for the record. The order-event fan calls it
+    /// for EVERY order in ATAS's book carrying a comment, so a witness belonging to a strategy that
+    /// has already been stopped — its lease released, its adapter torn down — reacquired the witness
+    /// on the next order event about somebody else's identifier, and held it for the life of the
+    /// ATAS process. Every later order from the live bridge is then refused "another writer owns this
+    /// witness" until ATAS itself is restarted.
+    ///
+    /// Nothing is conceded by looking first: the record is read out of memory, which needs no lease,
+    /// and if there is nothing of ours under that identifier there is nothing to write.
+    /// </summary>
+    [Fact]
+    public void An_acknowledgement_for_an_identifier_this_witness_does_not_have_takes_no_lease()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+        owner.Dispose();
+
+        // The stopped strategy's fan, calling about an order that is not ours.
+        var idle = Session();
+        idle.Identified("TA-NOT-MINE", "BRK-SOMEBODY-ELSES");
+
+        // The live bridge must still be able to write.
+        var live = Session();
+        Assert.True(live.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.Null(live.Trouble);
+        Assert.Equal(["TA-A", "TA-B"], CommittedIds());
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
