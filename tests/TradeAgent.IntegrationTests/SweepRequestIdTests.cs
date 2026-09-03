@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TradeAgent.ConnectorSdk;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
@@ -46,7 +47,9 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_sweep_cannot_collide_with_an_id_the_agent_chose_itself()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        // LeaveWorking, or the fake broker fills every order on arrival, the working list is empty
+        // and a sweep with nothing to sweep passes every assertion vacuously.
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -58,6 +61,8 @@ public class SweepRequestIdTests
         var placed = await client.SendAsync(Buy("sweep-1-0", "ES")).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(placed.Ok, Json.Write(placed.Error));
         Assert.Single(conn.Broker.Orders);
+        Assert.Equal(ExecutionState.WORKING, conn.Broker.Orders.Single().State);
+        Assert.Single(await gw.OrdersAsync(false));   // there IS something for the sweep to cancel
 
         var sweep = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-1" })
             .WaitAsync(TimeSpan.FromSeconds(10));
@@ -79,7 +84,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_request_id_containing_the_reserved_separator_is_refused()
     {
-        var (gw, _, db) = await TestEnv.Ready();
+        var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -100,7 +105,9 @@ public class SweepRequestIdTests
     [Fact]
     public async Task The_count_is_what_landed_not_what_was_attempted()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        // LeaveWorking, or the fake broker fills every order on arrival, the working list is empty
+        // and a sweep with nothing to sweep passes every assertion vacuously.
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -118,6 +125,7 @@ public class SweepRequestIdTests
             .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
 
         var claimed = sweep.GetProperty("cancelled").GetInt32();
+        Assert.Equal(1, sweep.GetProperty("attempted").GetInt32());   // not a vacuous sweep
         var reallyCancelled = (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED);
         Assert.Equal(reallyCancelled, claimed);
         Assert.Equal(sweep.GetProperty("attempted").GetInt32() - claimed,
