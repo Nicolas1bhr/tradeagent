@@ -1928,7 +1928,33 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_candidate_that_cannot_be_opened_is_a_failed_read_not_an_empty_one()
     {
-        if (OperatingSystem.IsWindows()) return;
+        var candidate = File_ + ".tmp-unreadable";
+        File.WriteAllText(candidate, "{\"version\":1,\"generation\":1,\"records\":[]}");
+
+        // INJECTED AT THE SEAM, so this runs on Windows too — which is the platform the product
+        // trades on and the one where the old form of this test returned immediately and asserted
+        // nothing. See CoidWitness._open.
+        var w = new CoidWitness(File_, null, CoidWitness.DefaultCap, null,
+            open: p => p == candidate
+                ? throw new UnauthorizedAccessException("Access to the path is denied.")
+                : new FileStream(p, FileMode.Open, FileAccess.Read,
+                                 FileShare.ReadWrite | FileShare.Delete));
+
+        Assert.Empty(w.All());
+        Assert.True(w.Unreadable);
+        Assert.Contains("records:err", w.Token());
+    }
+
+    /// <summary>
+    /// AND THE SEAM IS NOT A LIE, checked where the real refusal can be produced. A seam that stopped
+    /// resembling what the operating system actually does would make the test above assert nothing
+    /// about anything — so on Unix the same case is driven through a real unopenable file, with no
+    /// injection at all, and has to reach the same answer.
+    /// </summary>
+    [Fact]
+    public void A_real_unopenable_candidate_reaches_the_same_answer()
+    {
+        if (OperatingSystem.IsWindows()) return;   // no portable way to produce it here; the seam covers it
 
         var candidate = File_ + ".tmp-unreadable";
         File.WriteAllText(candidate, "{\"version\":1,\"generation\":1,\"records\":[]}");
