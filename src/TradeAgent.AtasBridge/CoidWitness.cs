@@ -908,8 +908,9 @@ public sealed class CoidWitness
     }
 
     /// <summary>
-    /// Temps that might be an uncommitted rewrite of this file, newest first. Time orders them and
-    /// nothing more: <see cref="DescendsFrom"/> decides which one is real.
+    /// Temps that might be an uncommitted rewrite of this file, in whatever order the directory
+    /// gives them. <see cref="DescendsFrom"/> decides which one is real, and
+    /// <see cref="AdoptUncommittedRewrite"/> declines when more than one qualifies.
     /// </summary>
     IEnumerable<string> Candidates()
     {
@@ -918,9 +919,11 @@ public sealed class CoidWitness
         {
             var dir = System.IO.Path.GetDirectoryName(_path);
             if (string.IsNullOrEmpty(dir)) return [];
-            return Directory.GetFiles(dir, System.IO.Path.GetFileName(_path) + ".tmp*")
-                            .OrderByDescending(File.GetLastWriteTimeUtc)
-                            .ToArray();
+            // UNORDERED, AND DELIBERATELY SO. It used to be newest-first, because mtime picked the
+            // winner among several. It no longer picks anything: a candidate qualifies on lineage
+            // alone, and two that both qualify are declined rather than ranked. Sorting by a
+            // property that decides nothing is untested code that looks load-bearing.
+            return Directory.GetFiles(dir, System.IO.Path.GetFileName(_path) + ".tmp*");
         }
         catch (Exception) { return []; }
     }
@@ -983,8 +986,14 @@ public sealed class CoidWitness
     /// nothing else, because it is deployed into ATAS's Strategies folder by filename prefix (trap
     /// 34) and a dependency that is silently not copied fails inside ATAS with no message anywhere.
     /// Eight lines of arithmetic keeps that promise literally.
+    ///
+    /// PUBLIC BECAUSE IT IS PART OF THE FILE FORMAT. The value is written into every rewrite as
+    /// <see cref="Envelope.Predecessor"/>, so anything that reads or writes one of these files needs
+    /// it — and it is testable in its own right, which matters more than it looks: the whole
+    /// discrimination comes from the multiply, and a build with the prime wrong collapses this to an
+    /// XOR fold into the low byte while every lineage test in the suite goes on passing.
     /// </summary>
-    static string Fingerprint(string text)
+    public static string Fingerprint(string text)
     {
         var hash = 14695981039346656037UL;
         foreach (var b in System.Text.Encoding.UTF8.GetBytes(text))

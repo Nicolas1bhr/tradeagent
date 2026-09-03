@@ -1237,6 +1237,91 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(Session().Trouble);
     }
 
+    /// <summary>
+    /// THE FINGERPRINT HAS TO DISCRIMINATE, AND NOTHING ELSE IN THIS FILE CHECKS THAT IT DOES.
+    ///
+    /// FNV-1a is a multiply and an xor per byte, and the MULTIPLY is where all of the discrimination
+    /// lives. Change the prime to 1 and the whole thing collapses to an xor fold into the low byte:
+    /// at most 256 distinct values, every permutation of the same bytes colliding. Every lineage
+    /// test in this file goes on passing, because each of them compares a fingerprint against itself
+    /// — and the lineage rule quietly becomes "any candidate whose parent has the same bytes in any
+    /// order", which is most of the way back to accepting a foreign file.
+    ///
+    /// The decision to keep FNV-1a rather than a cryptographic digest stands (see
+    /// <see cref="CoidWitness.Fingerprint"/>: it authenticates lineage, not authorship, and anyone
+    /// who can write the temp can write the committed file). What the decision requires is that the
+    /// arithmetic actually works, which is what this measures.
+    /// </summary>
+    [Fact]
+    public void The_lineage_fingerprint_discriminates()
+    {
+        // Order-sensitive: an xor fold cannot tell these apart.
+        Assert.NotEqual(CoidWitness.Fingerprint("ab"), CoidWitness.Fingerprint("ba"));
+        Assert.NotEqual(CoidWitness.Fingerprint("TA-12"), CoidWitness.Fingerprint("TA-21"));
+
+        // And wide: 4000 distinct witness-shaped texts, 4000 distinct fingerprints. An 8-bit fold
+        // has 256 values to work with and collides inside the first few hundred.
+        var seen = Enumerable.Range(0, 4000)
+            .Select(i => CoidWitness.Fingerprint($$"""{"version":1,"generation":{{i}},"records":[]}"""))
+            .Distinct().Count();
+        Assert.Equal(4000, seen);
+
+        // It is the value written into the file, so the file's own predecessor must equal it.
+        var w = Session();
+        Submit(w, "TA-ONE");
+        var committed = CommittedText();
+        Submit(w, "TA-TWO");
+        Assert.Equal(CoidWitness.Fingerprint(committed),
+                     System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement
+                         .GetProperty("predecessor").GetString());
+    }
+
+    /// <summary>
+    /// The superseding rewrite is on disk BEFORE the one it replaces is removed. Swapping those two
+    /// leaves an instant with no temp holding the claim at all — and if the new write is what fails,
+    /// that instant is permanent.
+    /// </summary>
+    [Fact]
+    public void A_failed_write_does_not_leave_the_earlier_rewrite_swept_away()
+    {
+        var seed = Session();
+        Submit(seed, "TA-SEED");
+
+        var w = Session(NeverLands);
+        Submit(w, "TA-ONE");
+        Assert.Single(Temps());
+
+        // Block the next rewrite's own temp path, so writing it fails rather than the replace.
+        Directory.CreateDirectory($"{File_}.tmp-{Environment.ProcessId}-{w.SessionId[..8]}-2");
+        Assert.False(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Contains(Temps(), t => t.EndsWith("-1", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The other unreadable branch: a candidate that cannot be opened at all, as opposed to one that
+    /// opens and does not parse. Both have to count as a failed read, or a witness with nothing
+    /// committed beside it reports a confident zero.
+    ///
+    /// UNIX ONLY, AND SAID RATHER THAN HIDDEN: there is no portable way to make a file unopenable on
+    /// Windows from inside a test, so on Windows this asserts nothing. The parse branch beside it is
+    /// covered everywhere.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_cannot_be_opened_is_a_failed_read_not_an_empty_one()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var candidate = File_ + ".tmp-unreadable";
+        File.WriteAllText(candidate, "{\"version\":1,\"generation\":1,\"records\":[]}");
+        File.SetUnixFileMode(candidate, UnixFileMode.None);
+
+        var w = Session();
+        Assert.Empty(w.All());
+        Assert.True(w.Unreadable);
+        Assert.Contains("records:err", w.Token());
+    }
+
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
     [Fact]
     public void The_sidecar_sits_beside_the_witness_file()
