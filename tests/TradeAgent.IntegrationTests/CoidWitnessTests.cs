@@ -466,7 +466,11 @@ public class CoidWitnessTests : IDisposable
 
         var reader = Session();
         Assert.Equal("BRK-GOOD", reader.PriorSession("TA-GOOD")!.BrokerOrderId);
+
+        // And the committed file being intact means the READ did not fail. Reporting records:err
+        // here would call a healthy witness broken because something unrelated was lying beside it.
         Assert.DoesNotContain("records:err", reader.Token());
+        Assert.False(reader.Unreadable);
     }
 
     /// <summary>
@@ -725,6 +729,36 @@ public class CoidWitnessTests : IDisposable
         var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
         Assert.True(File.Exists(log), "the failure belongs on disk beside the witness");
         Assert.Contains("TA-UNWRITABLE", File.ReadAllText(log));
+    }
+
+    /// <summary>
+    /// A CONFIDENT ZERO IS THE WORST ANSWER THIS FILE CAN GIVE. An interrupted rewrite with nothing
+    /// committed beside it hands back no records — and so does a machine where nothing was ever
+    /// submitted. They are opposite answers: the second one says this product never submitted the
+    /// identifier being asked about, which is exactly the claim a lost witness must never make by
+    /// accident. It used to report records:0, io:ok.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_rewrite_with_no_committed_file_is_not_a_confident_zero()
+    {
+        File.WriteAllText(File_ + ".tmp-interrupted",
+            "{\"version\":1,\"generation\":1,\"records\":[{\"client_order");
+
+        var w = Session();
+        Assert.Empty(w.All());
+        Assert.True(w.Unreadable);
+        Assert.Contains("records:err", w.Token());
+    }
+
+    /// <summary>Nothing on disk is not a failed read: it is a clean "nothing was ever written".</summary>
+    [Fact]
+    public void An_absent_witness_file_is_not_an_unreadable_one()
+    {
+        var w = Session();
+        Assert.Empty(w.All());
+        Assert.False(w.Unreadable);
+        Assert.Contains("records:0", w.Token());
+        Assert.False(new CoidWitness(path: null).Unreadable);
     }
 
     // -------------------------------------------------------------- two writers, one file

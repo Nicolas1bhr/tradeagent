@@ -1050,6 +1050,23 @@ static class AtasProbe
 
         var records = witness.All();
         Line("RECORDS ON FILE", records.Count.ToString());
+
+        // ASKED BEFORE THE ZERO IS INTERPRETED. An unreadable witness and an empty one both hand
+        // back no records, and they are opposite answers: one says the claims are unreadable, the
+        // other says this product never submitted anything on this machine. Reporting the second
+        // when the first is true is the worst mistake available in this verb — it reads as evidence
+        // about ATAS produced by an experiment that was never run.
+        if (witness.Unreadable)
+        {
+            Line("VERDICT", "NOT ANSWERED — THE WITNESS FILE COULD NOT BE READ.");
+            Cont("Something is at that path and this build could not parse it: a rewrite that was");
+            Cont("interrupted, a hand edit, or a file belonging to something else. This is NOT the");
+            Cont("same as 'nothing was ever recorded', and it must not be read as one.");
+            Cont("");
+            Cont("Look at the file named above, and at any coid-witness.errors.log beside it.");
+            return new RestartCheckOutcome(0, "unreadable");
+        }
+
         if (records.Count == 0)
         {
             Line("VERDICT", "NOT ANSWERED — NO EXPERIMENT HAS BEEN SET UP.");
