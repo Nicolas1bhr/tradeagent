@@ -331,16 +331,24 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
-    /// THE SAME ACT GETS THE SAME URGENCY WHOEVER ASKED. One stalled bridge, both callers at once.
+    /// THE SAME ACT GETS THE SAME URGENCY WHOEVER ASKED.
     ///
     /// The first version of the fast path keyed on the operator's own button, so the agent's
     /// cancel-all — which the gateway sweeps into per-order <c>Cancel</c> legs — fell through to the
     /// full deadline. Measured: 9707 ms per agent leg against 2006 ms for the button, and the legs
     /// run in sequence, so an agent cancelling N orders through a stalled bridge waited ~10N seconds
-    /// to be told nothing. Both are cancellations. Both reduce risk. Both are urgent.
+    /// to be told nothing.
+    ///
+    /// EACH ONE ALONE, on its own stalled bridge, and that is the point of the shape. The first
+    /// version of this test fired both at once: the button expired at two seconds and dropped the
+    /// connection, which freed the leg — so the leg looked fast while still being classified as
+    /// ordinary, and reverting the classification did not fail anything. Measured by mutation, not
+    /// by reading it.
     /// </summary>
-    [Fact]
-    public async Task A_sweep_leg_and_the_operator_button_both_fail_fast_on_one_stalled_bridge()
+    [Theory]
+    [InlineData("leg")]      // BridgeOps.Cancel — one order of an agent's cancel-all sweep
+    [InlineData("button")]   // BridgeOps.CancelAll — the operator's own control
+    public async Task A_cancellation_fails_fast_on_a_stalled_bridge_whoever_issued_it(string caller)
     {
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped deadlines
@@ -354,20 +362,17 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Task.Delay(250);
 
-        // The agent's sweep leg (BridgeOps.Cancel) and the operator's button (BridgeOps.CancelAll),
-        // against the same stalled writer, at the same moment.
         var timer = Stopwatch.StartNew();
-        var leg = connector.CancelOrderAsync("FB-1");
-        var button = connector.CancelAllOrdersAsync("ATAS-STALLED");
-        var both = await Task.WhenAll(
-            Assert.ThrowsAnyAsync<Exception>(() => leg),
-            Assert.ThrowsAnyAsync<Exception>(() => button));
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => caller == "leg"
+            ? connector.CancelOrderAsync("FB-1")
+            : connector.CancelAllOrdersAsync("ATAS-STALLED"));
         timer.Stop();
 
+        Assert.True(ex is ConnectorTransportException,
+            $"a cancellation of unknown outcome surfaced as {ex.GetType().Name}");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"a cancel took {timer.Elapsed.TotalSeconds:0.00}s behind a stalled write — one of these is still on the full deadline");
-        Assert.All(both, ex => Assert.True(ex is ConnectorTransportException,
-            $"a cancellation of unknown outcome surfaced as {ex.GetType().Name}"));
+            $"the '{caller}' cancellation took {timer.Elapsed.TotalSeconds:0.00}s behind a stalled write — it is still on the full deadline");
+        Assert.Contains("NOT confirmed", ex.Message);
     }
 
     /// <summary>
