@@ -252,9 +252,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// "is there unconfirmed work" asks this, so the refusal, the status field, the health row and
     /// the reconciler cannot drift into three different answers.
     ///
-    /// Public because the app's background loop decides whether to reconcile from it. Surfaces that
-    /// still read <c>Requests.NeedingReconciliation()</c> see the flag alone, which lags this by at
-    /// most one reconcile pass — the reconciler is what writes the flag onto an aged row.
+    /// Public because everything that reports or acts on unconfirmed work asks it: the background
+    /// loop, the doctor, the unconfirmed card, the dev host. Nothing in `src` reads the raw
+    /// <c>needs_reconciliation</c> flag any more — checked by grep, 2026-09-03 — because the flag and
+    /// this are different questions, and answering the wrong one is how a machine that refuses to
+    /// trade told its owner there was nothing outstanding.
     /// </summary>
     public List<ExecutionRequest> Unreconciled() => _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
 
