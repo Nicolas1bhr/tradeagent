@@ -75,13 +75,29 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public TimeSpan EmergencyGateWait { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// The operations a person reaches for when they want something to STOP.
+    /// Whether this operation REDUCES RISK. Classified by intent, not by who asked.
     ///
-    /// Close is here as well as CancelAll because close-all is built out of per-position closes:
-    /// the gateway loops them, so a close that queues for ten seconds is a close-all that queues for
-    /// ten seconds per position.
+    /// The first version keyed on the operator's own button — <c>CancelAll</c> and <c>Close</c> — and
+    /// so gave the fast path to exactly one caller. The agent's <c>cancel-all</c> is not one bridge
+    /// op: the gateway sweeps it into per-order <c>Cancel</c> legs, which fell through to the full
+    /// deadline. Measured: 9707 ms per agent leg against 2006 ms for the operator's button, and the
+    /// legs run in sequence, so an agent cancelling N orders through a stalled bridge waited ~10N
+    /// seconds. Same act, same urgency, ten times the wait, because of where it entered.
+    ///
+    /// So the question is what the frame DOES. Cancelling an order or closing a position can only
+    /// ever reduce exposure, and is worth interrupting a stalled write for whoever sent it.
+    /// <c>Place</c> and <c>Modify</c> can increase it and never get the short wait — an order that
+    /// opens risk has no claim on an emergency path, and would be the obvious way to abuse one.
+    ///
+    /// KNOWN GAP, and it is a consequence of classifying here rather than upstream: the gateway
+    /// implements <c>close</c> as a PLACE of an offsetting order (<c>TradingGateway.CloseAsync</c>
+    /// calls <c>PlaceAsync</c>), so an agent <c>close-all</c> arrives as <c>BridgeOps.Place</c> and
+    /// is indistinguishable at this layer from an order that opens a position. It therefore does NOT
+    /// get the fast path. Closing that would mean carrying the intent down through
+    /// <c>ITradingConnector</c>, which is not this unit's to change.
     /// </summary>
-    static bool IsEmergency(string op) => op is BridgeOps.CancelAll or BridgeOps.Close;
+    static bool IsRiskReducing(string op) =>
+        op is BridgeOps.Cancel or BridgeOps.CancelAll or BridgeOps.Close;
 
     NamedPipeServerStream? _pipeStream;
     StreamWriter? _writer;
@@ -635,7 +651,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
-            var emergency = IsEmergency(op);
+            var emergency = IsRiskReducing(op);
             var outcome = await WriteFrame(_writer, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
                 emergency ? EmergencyGateWait : WriteTimeout, emergency);
             if (outcome is not SendOutcome.Sent)
