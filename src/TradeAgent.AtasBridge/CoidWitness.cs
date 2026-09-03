@@ -191,6 +191,7 @@ public sealed class CoidWitness
 
     bool _loaded;
     bool _readFailed;
+    bool _candidateUnreadable;
 
     /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
@@ -494,6 +495,24 @@ public sealed class CoidWitness
         catch (Exception) { return []; }
     }
 
+    /// <summary>
+    /// WHETHER A ZERO HERE IS A FACT OR A FAILURE. True when something is at the path and this build
+    /// could not read it, so <see cref="All"/> returning nothing means "unreadable", not "nothing
+    /// was ever recorded". Those are opposite answers for this file — the second one says this
+    /// product never submitted the identifier being asked about — and a reader that cannot tell them
+    /// apart will report the wrong one. <c>tools/probe</c> asks this before it says "no experiment
+    /// has been set up".
+    /// </summary>
+    public bool Unreadable
+    {
+        get
+        {
+            if (_path is null) return false;
+            try { lock (_gate) { EnsureLoaded(); return _readFailed; } }
+            catch (Exception) { return true; }
+        }
+    }
+
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
@@ -569,11 +588,19 @@ public sealed class CoidWitness
         // ATAS microseconds later. See AdoptUncommittedRewrite for the rule.
         if (AdoptUncommittedRewrite(committedText, committed)) return;
 
-        _readFailed = unreadable;
-
         // A truncated or hand-edited file is not a crash and is not evidence either. Treat it as
         // unreadable — the token says so — and let this session write a clean one. The records lost
         // were claims about orders from runs that have already ended.
+        //
+        // THE READ FAILED WHEN NOTHING READABLE WAS FOUND AND SOMETHING ON DISK COULD NOT BE READ,
+        // and both halves of that are load-bearing. A truncated TEMP beside an intact committed file
+        // is not a failed read — the records are all there, and saying records:err would report a
+        // healthy witness as broken. But a truncated temp with NO committed file beside it used to
+        // report records:0, io:ok — a confident zero, which for this file means "this product never
+        // submitted that identifier". That is the one answer that must never be produced by
+        // accident, and it was being produced by a file that plainly had something in it.
+        _readFailed = (unreadable || _candidateUnreadable) && committed is null;
+
         if (committed is not null) Take(committed);
     }
 
@@ -639,12 +666,17 @@ public sealed class CoidWitness
             var text = ReadTolerantly(candidate, out var unreadable);
             if (text is null)
             {
-                if (unreadable) RejectCandidate(candidate, "it could not be read");
+                if (unreadable) { _candidateUnreadable = true; RejectCandidate(candidate, "it could not be read"); }
                 continue;
             }
 
             var envelope = Parse(text);
-            if (envelope is null) { RejectCandidate(candidate, "it is not a witness envelope"); continue; }
+            if (envelope is null)
+            {
+                _candidateUnreadable = true;
+                RejectCandidate(candidate, "it is not a witness envelope");
+                continue;
+            }
             if (envelope.Records.Count == 0) { RejectCandidate(candidate, "it contains no records"); continue; }
             if (!DescendsFrom(envelope, committedText, committed))
             {
