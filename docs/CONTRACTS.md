@@ -309,15 +309,36 @@ broker did. Two things follow, and both are the gateway's own behaviour rather t
   the status fields and the health row, without waiting for a restart to notice. Under that bound an
   order in flight is ordinary and pauses nothing.
 
-Unconfirmed work is therefore "flagged, **or** dispatching for too long"; `trade status`'s
-`unreconciled_requests` counts both, and reconciling an aged record is what writes the flag onto it.
+Unconfirmed work is therefore "flagged, **or** dispatching for too long, **or** an outcome TradeAgent
+could not write down"; `trade status`'s `unreconciled_requests` counts the first two, and every
+surface that reports or acts on unconfirmed work — the gate, the health row, the doctor, the
+unconfirmed card, the background reconciler — asks the same question rather than the raw flag.
+
+**The pause does not depend on the database.** Recording an unconfirmed outcome is a write, and a
+write can fail (locked file, full disk, read-only store). Execution is therefore paused in memory
+BEFORE the write is attempted; a failure to persist is reported to the caller as
+`STATE_DATABASE_CORRUPT`, written to the engineering log at error as `record_indefinite_failed`, and
+does not lift the pause. A reconcile pass that finds nothing pending while that pause is held reports
+itself unfinished instead of clearing it.
+
+**A cancel or a modify is reconciled against the order it named**, not against a client order id it
+never transmitted. A cancel whose target is cancelled — or gone from a history the platform can prove
+— is `CANCELLED`; one whose target is still working, filled or refused is `REJECTED`, meaning "the
+cancellation did not take effect", and the agent may ask again under a new request id. A modify is
+`ACKNOWLEDGED` only if the target carries the values asked for, compared on the instrument's own tick
+grid; if it does not, and the order is still live, the request is `REJECTED`. Anything genuinely
+undecided (a cancel still pending at the platform, a target that has finished, a price on an unknown
+grid) stays unconfirmed and keeps trading paused.
 
 **The operator's emergency controls write records too.** "Cancel all working orders" and "Close all
 positions" bypass authorization on purpose — they must work while trading is paused and while the
 kill switch is down — but each individual close and cancel now gets a write-ahead `execution_request`
 before the wire is touched, attributed to the operator, keyed by the press: a retry of the same press
-finds its records already there and sends nothing, a new press is a new decision. An ambiguous
-outcome leaves the record `UNKNOWN` and flagged, and the error still reaches the person who pressed.
+finds its records already there and sends nothing, a new press is a new decision. The screen holds
+one press per control and repeats it while its outcome is unconfirmed, rather than issuing a new one,
+so "it failed, press it again" cannot close a position twice. Close-all continues through every
+position after one of them fails, counts a position closed only when the account reads back flat, and
+says what is still open instead of claiming it closed everything.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
