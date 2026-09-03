@@ -385,6 +385,146 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// A PEER THIS CONNECTOR HAS REFUSED IS NOT ALLOWED TO SPEAK, WHATEVER FRAME IT SPEAKS IN.
+    ///
+    /// Round 5 guarded the EVENT branch and left the heartbeat one, and a heartbeat carries a whole
+    /// <c>BridgeHello</c> — that is how a capability proved after the handshake reaches this end. So
+    /// a peer whose hello was refused as protocol 2 set <c>_hello</c>, and with it
+    /// <c>SupportsClientOrderId</c>, <c>SupportsOrderHistory</c> and <c>ReconciliationProvable</c>,
+    /// by sending ONE heartbeat claiming protocol 3. The connector then displayed "speaks protocol 2
+    /// — reinstall the add-on" and reported <c>ReconciliationProvable = true</c> at the same moment.
+    ///
+    /// That flag is not decoration. `TradingGateway` consults exactly it to refuse LIVE_AUTONOMOUS
+    /// with AUTONOMY_REQUIRES_PROVABLE_STATE, and again to escalate an UNKNOWN order to "needs a
+    /// human to look". Both refusals were removed by one frame from a bridge this build had already
+    /// said it could not speak to.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_bridge_cannot_set_capabilities_through_a_heartbeat()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe, Speaking(2));
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+
+        // The frame that used to buy everything back.
+        await bridge.Heartbeat(Speaking(Versions.BridgeProtocolVersion));
+        await Task.Delay(300);
+
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.SupportsOrderHistory);
+        // The one the gateway reads twice: to refuse LIVE_AUTONOMOUS, and to send an UNKNOWN order
+        // to a person instead of resolving it.
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// AND IT CANNOT TALK ITS WAY BACK EITHER. A mismatched hello poisons the CONNECTION, not the
+    /// frame: nothing clears it but a reconnect. Sending a compatible hello afterwards used to set
+    /// `_hello`, clear `_incompatible` and mark the connector connected — the same unlock as the
+    /// heartbeat, one op to the left, which is why the rule is one decision for the connection
+    /// rather than a guard per frame type.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_bridge_cannot_clear_its_refusal_with_a_later_hello()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe, Speaking(2));
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+
+        await bridge.SaySomethingElse(Speaking(Versions.BridgeProtocolVersion));
+        await Task.Delay(300);
+
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// AND THE OTHER DIRECTION, so the rule is a gate and not a wall: a fresh connection from a peer
+    /// speaking the current protocol is accepted and its capabilities come through.
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_connection_from_a_compatible_bridge_is_still_accepted()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+
+        Assert.Null(connector.Incompatible);
+        Assert.Equal(Versions.BridgeProtocolVersion, connector.Bridge!.BridgeProtocolVersion);
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// AUTHENTICATION IS NOT COMPATIBILITY. The event gate asked whether the peer had proved itself
+    /// and whether a refusal had been recorded — and before any hello arrives, neither is true and
+    /// nothing has been established about what this peer speaks. So an authenticated peer could
+    /// publish order, execution and position events into the application before saying a word about
+    /// its protocol. No trusted event is accepted until a COMPATIBLE hello has been seen on this
+    /// connection.
+    /// </summary>
+    [Fact]
+    public async Task An_authenticated_peer_raises_no_events_before_a_compatible_hello()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var seen = 0;
+        connector.QuoteChanged += _ => Interlocked.Increment(ref seen);
+        connector.ConnectionChanged += _ => Interlocked.Increment(ref seen);
+
+        await using var bridge = new StubBridge(pipe) { SendHello = false };
+        await bridge.ConnectAsync();
+        await Task.Delay(200);
+
+        var before = Volatile.Read(ref seen);
+        await bridge.RaiseEvent(BridgeEvents.Quote,
+                                new QuoteInfo("ES", 4200.25m, 4200.50m, null, null, null, DateTimeOffset.UtcNow));
+        await bridge.RaiseEvent(BridgeEvents.Connection, new { connected = true });
+        await Task.Delay(300);
+
+        Assert.Equal(before, Volatile.Read(ref seen));
+        Assert.Null(connector.Bridge);
+
+        // And it is a gate, not a wall: the hello arrives and the events that follow it are taken.
+        await bridge.SaySomethingElse(Speaking(Versions.BridgeProtocolVersion));
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        await bridge.RaiseEvent(BridgeEvents.Quote,
+                                new QuoteInfo("ES", 4201m, 4202m, null, null, null, DateTimeOffset.UtcNow));
+        await Wait(async () => await Task.FromResult(Volatile.Read(ref seen) > before));
+    }
+
+    /// <summary>One hello, saying whatever protocol the caller wants it to say.</summary>
+    static BridgeHello Speaking(int protocol) => new()
+    {
+        BridgeProtocolVersion = protocol,
+        BridgeVersion = "0.1.1", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+        SupportsClientOrderId = true, SupportsOrderHistory = true,
+        SupportsModify = true, SupportsClosePosition = true
+    };
+
+    /// <summary>
     /// A REFUSED PEER IS REFUSED AS A CONNECTION, NOT ONLY FOR THE CALLS THIS PROCESS MAKES.
     ///
     /// The mismatch branch sets <c>_connected = false</c> and leaves the read loop alive, and the
