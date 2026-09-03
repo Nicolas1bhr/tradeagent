@@ -275,6 +275,22 @@ public sealed class CoidWitness
 
     /// <summary>Why this instance does not own the witness, or null while it does. See <see cref="Own"/>.</summary>
     string? _notOwned;
+
+    /// <summary>
+    /// WHAT THE SCAN FOUND, HELD UNTIL SOMEBODY WHO OWNS THE FILE CAN ACT ON IT.
+    ///
+    /// The scan is pure — it reads and classifies and changes nothing — because it runs on every
+    /// read path, including <see cref="PriorSession"/> on ATAS's event thread and <c>tools/probe</c>
+    /// in another process entirely. A reader that adopted, quarantined and wrote the sidecar could
+    /// do all three in the middle of the owning writer's rewrite: the candidate it "recovers" is the
+    /// rewrite in flight, the sidecar line it leaves says a gap happened, and the rewrite then
+    /// commits perfectly cleanly, leaving an unresolved failure recorded about nothing.
+    ///
+    /// So the findings wait here, and <see cref="ApplyRecovery"/> acts on them only under the lock.
+    /// </summary>
+    readonly List<(string Path, Envelope Envelope)> _viable = new();
+    readonly List<(string Path, string Why)> _rejected = new();
+    bool _recovered;
     bool _writeFailed;
     int _loggedFailures;
 
@@ -420,6 +436,7 @@ public sealed class CoidWitness
                 if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return false; }
 
                 EnsureLoaded();
+                ApplyRecovery();
 
                 // EVERYTHING BEFORE THE ATTEMPT, KEPT, so a refusal can be undone exactly. See the
                 // rollback below for why a refused claim may not be left lying in memory.
@@ -486,6 +503,7 @@ public sealed class CoidWitness
                 if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return; }
 
                 EnsureLoaded();
+                ApplyRecovery();
                 var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
                 if (i < 0) return;
 
@@ -549,6 +567,7 @@ public sealed class CoidWitness
             lock (_gate)
             {
                 EnsureLoaded();
+                EnsureRecovered();
                 foreach (var r in _records)
                 {
                     if (!string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal)) continue;
@@ -582,6 +601,7 @@ public sealed class CoidWitness
             lock (_gate)
             {
                 EnsureLoaded();
+                EnsureRecovered();
                 var ids = new List<string>();
                 for (var i = _records.Count - 1; i >= 0 && ids.Count < max; i--)
                 {
@@ -657,7 +677,7 @@ public sealed class CoidWitness
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
-        try { lock (_gate) { EnsureLoaded(); return _records.ToArray(); } }
+        try { lock (_gate) { EnsureLoaded(); EnsureRecovered(); return _records.ToArray(); } }
         catch (Exception) { return []; }
     }
 
@@ -681,6 +701,7 @@ public sealed class CoidWitness
             lock (_gate)
             {
                 EnsureLoaded();
+                EnsureRecovered();
                 if (_readFailed) return $"session:{session},records:err,prior:err,io:failed";
                 var prior = 0;
                 foreach (var r in _records)
@@ -722,11 +743,7 @@ public sealed class CoidWitness
         try
         {
             if (ErrorLogPath is { } log && File.Exists(log))
-            {
-                var lines = File.ReadAllLines(log);
-                var last = Array.FindLast(lines, l => !string.IsNullOrWhiteSpace(l));
-                _degraded = last is null || !last.EndsWith(ResolvedMarker, StringComparison.Ordinal);
-            }
+                _degraded = !string.Equals(LastSidecarLine(), ResolvedMarker, StringComparison.Ordinal);
         }
         catch (Exception) { }
 
@@ -745,7 +762,9 @@ public sealed class CoidWitness
         // refused, the newer state stays in the temp, the process ends, and the durable answer to
         // "did this product submit this identifier" becomes NO for an identifier that was handed to
         // ATAS microseconds later. See AdoptUncommittedRewrite for the rule.
-        if (AdoptUncommittedRewrite(committedText, committed)) return;
+        // CLASSIFIED, NOT ACTED ON. See _viable / _rejected: this runs on read paths, and a reader
+        // that wrote the sidecar or moved a file could do it in the middle of the owner's rewrite.
+        ScanCandidates(committedText, committed);
 
         // A truncated or hand-edited file is not a crash and is not evidence either. Treat it as
         // unreadable — the token says so — and let this session write a clean one. The records lost
@@ -818,16 +837,14 @@ public sealed class CoidWitness
     ///
     /// Caller holds <see cref="_gate"/>.
     /// </summary>
-    bool AdoptUncommittedRewrite(string? committedText, Envelope? committed)
+    void ScanCandidates(string? committedText, Envelope? committed)
     {
-        var viable = new List<(string Path, Envelope Envelope)>();
-
         foreach (var candidate in Candidates())
         {
             var text = ReadTolerantly(candidate, out var unreadable);
             if (text is null)
             {
-                if (unreadable) { _candidateUnreadable = true; RejectCandidate(candidate, "it could not be read"); }
+                if (unreadable) { _candidateUnreadable = true; _rejected.Add((candidate, "it could not be read")); }
                 continue;
             }
 
@@ -835,60 +852,122 @@ public sealed class CoidWitness
             if (envelope is null)
             {
                 _candidateUnreadable = true;
-                RejectCandidate(candidate, "it is not a witness envelope");
+                _rejected.Add((candidate, "it is not a witness envelope"));
                 continue;
             }
-            if (envelope.Records.Count == 0) { RejectCandidate(candidate, "it contains no records"); continue; }
+            if (envelope.Records.Count == 0) { _rejected.Add((candidate, "it contains no records")); continue; }
             if (!DescendsFrom(envelope, committedText, committed))
             {
-                RejectCandidate(candidate, committedText is null
+                _rejected.Add((candidate, committedText is null
                     ? "there is no committed witness file for it to be a rewrite OF, so nothing " +
                       "anchors it to this machine's own history"
                     : $"it does not descend from the committed file " +
                       $"(temp generation={envelope.Generation} predecessor={envelope.Predecessor ?? "<none>"}; " +
                       $"committed generation={(committed is null ? "<unreadable>" : committed.Generation.ToString())} " +
-                      $"fingerprint={Fingerprint(committedText)})");
+                      $"fingerprint={Fingerprint(committedText)})"));
                 continue;
             }
 
             // LINEAGE AUTHENTICATES THE PARENT, NOT THE CONTENT, and that gap is real. A rewrite
-            // that descends perfectly well from the committed file can still hold FEWER records
-            // than it — and adopting one displaces committed claims, up to and including
-            // resurrecting an identifier the cap had trimmed, since the adopted set becomes what
-            // the next save commits. No legitimate rewrite shrinks: Submitting replaces a record
-            // under the same identifier and Trim only ever brings the count back down to the cap,
-            // never below the committed count.
-            if (committed is not null && envelope.Records.Count < committed.Records.Count)
+            // that descends perfectly well from the committed file can still be missing records it
+            // had — and adopting one drops committed claims, up to and including resurrecting an
+            // identifier the cap had trimmed, since the adopted set becomes what the next save
+            // commits. See KeepsCommittedRecords for what "no legitimate rewrite loses a record"
+            // means once Trim is in the picture.
+            if (committed is not null && !KeepsCommittedRecords(envelope, committed))
             {
-                RejectCandidate(candidate,
-                    $"it holds fewer records than the committed file ({envelope.Records.Count} < " +
-                    $"{committed.Records.Count}), so adopting it would drop committed claims");
+                _rejected.Add((candidate,
+                    $"it does not carry the committed records forward ({envelope.Records.Count} " +
+                    $"records against {committed.Records.Count}), so adopting it would drop claims"));
                 continue;
             }
 
-            viable.Add((candidate, envelope));
+            _viable.Add((candidate, envelope));
         }
+    }
 
-        if (viable.Count == 0) return false;
+    /// <summary>
+    /// ACTING ON THE SCAN, ONCE, AND ONLY AS THE OWNER. Caller holds <see cref="_gate"/> AND the
+    /// file lock — that is what makes it safe to move files and write the sidecar, because the
+    /// writer whose rewrite these candidates might be cannot be running at the same time.
+    ///
+    /// TWO RIVALS MEAN NEITHER IS TRUSTED. Every viable candidate descends from the same commit and
+    /// therefore carries the same generation, so nothing in the files distinguishes them. One writer
+    /// cannot produce this — it keeps at most one uncommitted rewrite — so it means a copied file or
+    /// a writer that is not this build, and guessing is how a claim gets dropped without anybody
+    /// being told.
+    /// </summary>
+    void ApplyRecovery()
+    {
+        if (_recovered) return;
+        _recovered = true;
 
-        // TWO RIVALS MEAN NEITHER IS TRUSTED. Every viable candidate descends from the same commit
-        // and therefore carries the same generation, so nothing in the file distinguishes them —
-        // the previous rule let mtime pick, silently, between two rewrites that may hold different
-        // claims. One writer cannot produce this (it keeps at most one uncommitted rewrite), so it
-        // means two writers or a copied file, and guessing is how a claim gets dropped without
-        // anybody being told. Decline both, keep the committed file, and say so.
-        if (viable.Count > 1)
+        foreach (var (path, why) in _rejected)
         {
-            Note($"WARN coid-witness found {viable.Count} rival uncommitted rewrites of generation " +
-                 $"{viable[0].Envelope.Generation} and adopted none of them: " +
-                 string.Join(", ", viable.Select(v => v.Path)));
-            return false;
+            var moved = Quarantine(path);
+            Note(moved is null
+                ? $"ignored {path}: {why}"
+                : $"ignored {path}: {why} — moved to {System.IO.Path.GetFileName(moved)}");
+        }
+        _rejected.Clear();
+
+        if (_viable.Count > 1)
+        {
+            Note($"WARN coid-witness found {_viable.Count} rival uncommitted rewrites of generation " +
+                 $"{_viable[0].Envelope.Generation} and adopted none of them: " +
+                 string.Join(", ", _viable.Select(v => v.Path)));
+            _viable.Clear();
+            return;
         }
 
-        Take(viable[0].Envelope);
-        _adopted = viable[0].Path;
-        Note($"coid-witness recovered an uncommitted rewrite (generation {viable[0].Envelope.Generation}, " +
-             $"{viable[0].Envelope.Records.Count} records) from {viable[0].Path}");
+        if (_viable.Count == 1)
+        {
+            _records.Clear();
+            Take(_viable[0].Envelope);
+            _adopted = _viable[0].Path;
+            Note($"coid-witness recovered an uncommitted rewrite (generation {_viable[0].Envelope.Generation}, " +
+                 $"{_viable[0].Envelope.Records.Count} records) from {_viable[0].Path}");
+            _viable.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Recovery for a caller that does not already hold the lock — the read paths. A process that
+    /// cannot take the lock does not own the witness, so it recovers nothing and writes nothing: it
+    /// reads the committed file and answers from that. Caller holds <see cref="_gate"/>.
+    /// </summary>
+    void EnsureRecovered()
+    {
+        if (_recovered || _path is null) return;
+        using var owned = Own();
+        if (owned is null) return;
+        ApplyRecovery();
+    }
+
+    /// <summary>
+    /// WHETHER A CANDIDATE CARRIES THE COMMITTED RECORDS FORWARD, and why this is membership rather
+    /// than a count.
+    ///
+    /// A count catches a rewrite that lost records outright and misses the one that swapped them: a
+    /// candidate holding three records where the committed file held three, but a DIFFERENT three,
+    /// passes a count check and quietly drops a claim. Membership is the property that matters —
+    /// every identifier that was committed is still there.
+    ///
+    /// EXCEPT THE ONES TRIM TOOK, which is the whole subtlety. At the cap, the legitimate next
+    /// rewrite drops the OLDEST record to make room, so demanding every committed id would refuse
+    /// every recovery on a full file. Trim only ever removes from the front, so the ids a real
+    /// rewrite may be missing are a PREFIX of the committed order — and anything missing after the
+    /// first one that is present is a record that went missing some other way.
+    /// </summary>
+    static bool KeepsCommittedRecords(Envelope candidate, Envelope committed)
+    {
+        if (candidate.Records.Count < committed.Records.Count) return false;
+
+        var ids = new HashSet<string>(candidate.Records.Select(r => r.ClientOrderId), StringComparer.Ordinal);
+        var i = 0;
+        while (i < committed.Records.Count && !ids.Contains(committed.Records[i].ClientOrderId)) i++;
+        for (; i < committed.Records.Count; i++)
+            if (!ids.Contains(committed.Records[i].ClientOrderId)) return false;
         return true;
     }
 
@@ -941,27 +1020,31 @@ public sealed class CoidWitness
     }
 
     /// <summary>
-    /// A temp beside the witness that is not a rewrite of it is a fact, not noise — SAID ONCE.
+    /// A REJECTED CANDIDATE IS MOVED, NOT JUST LOGGED, AND SAID ONCE.
     ///
-    /// WHY IT IS MOVED AND NOT JUST LOGGED. One crash mid-rewrite used to degrade the witness
-    /// permanently: the rejected candidate stayed where it was, every later session rejected it
-    /// again, every rejection wrote another sidecar line, and the sidecar's mere existence was what
-    /// made the witness look degraded. The file then shouted, forever, about a leftover that
-    /// harmed nothing. Renaming it out of the candidate glob ends that after exactly one report,
-    /// and keeps the file for whoever wants to look at it rather than deleting evidence.
+    /// One crash mid-rewrite used to degrade the witness permanently: the rejected candidate stayed
+    /// where it was, every later session rejected it again, every rejection wrote another sidecar
+    /// line, and the sidecar's mere existence was what made the witness look degraded. Renaming it
+    /// out of the candidate glob ends that after exactly one report, and keeps the file for whoever
+    /// wants to look at it rather than deleting evidence.
     ///
-    /// AND WHY A YOUNG ONE IS LEFT ALONE. A candidate written seconds ago may be another process's
-    /// rewrite in flight, between its write and its rename. Renaming that would make its replace
-    /// fail — safe in itself (that writer reports, and its order is refused rather than sent) but a
-    /// reader has no business breaking a writer. An in-flight rewrite is milliseconds old; anything
-    /// older than the grace is a leftover.
+    /// AND WHY A YOUNG ONE IS LEFT ALONE. A candidate written seconds ago may be a rewrite in
+    /// flight, between its write and its rename. Renaming that would make the replace fail. The lock
+    /// makes this nearly unreachable now — recovery only runs while nothing else can be writing —
+    /// but the grace costs one comparison and covers a writer that is not this build.
     /// </summary>
-    void RejectCandidate(string candidate, string why)
+    /// <summary>The sidecar's last non-blank line with its timestamp stripped, or null.</summary>
+    string? LastSidecarLine()
     {
-        var quarantined = Quarantine(candidate);
-        Note(quarantined is null
-            ? $"ignored {candidate}: {why}"
-            : $"ignored {candidate}: {why} — moved to {System.IO.Path.GetFileName(quarantined)}");
+        try
+        {
+            if (ErrorLogPath is not { } log || !File.Exists(log)) return null;
+            var last = Array.FindLast(File.ReadAllLines(log), l => !string.IsNullOrWhiteSpace(l));
+            if (last is null) return null;
+            var space = last.IndexOf(' ');
+            return space < 0 ? last : last[(space + 1)..];
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>Renames a rejected candidate out of the <c>.tmp*</c> glob. Null when it was left.</summary>
@@ -1285,7 +1368,12 @@ public sealed class CoidWitness
         if (_degraded)
         {
             _degraded = false;
-            AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: false);
+            // RE-READ RATHER THAN TRUST THE FLAG. _degraded was decided when this instance loaded,
+            // and the file has been open to anything since. Appending a second RESOLVED under a
+            // first says a gap was closed twice; worse, appending one at all when the tail already
+            // says RESOLVED means this instance is reporting on a gap that was not its own.
+            if (!string.Equals(LastSidecarLine(), ResolvedMarker, StringComparison.Ordinal))
+                AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: false);
         }
     }
 

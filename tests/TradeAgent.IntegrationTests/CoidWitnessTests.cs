@@ -1367,6 +1367,61 @@ public class CoidWitnessTests : IDisposable
         Assert.Contains("records:err", w.Token());
     }
 
+    /// <summary>
+    /// READERS NEVER WRITE. The scan runs on every read path — <c>PriorSession</c> on ATAS's event
+    /// thread, <c>All()</c> from the probe in another process — and a reader that adopted,
+    /// quarantined and wrote the sidecar could do all three in the middle of the owner's rewrite:
+    /// the candidate it "recovers" is the rewrite in flight, the sidecar line it leaves says a gap
+    /// happened, and the rewrite then commits perfectly cleanly, leaving an unresolved failure
+    /// recorded about nothing. A process that cannot take the lock reads and answers, and that is
+    /// all it does.
+    /// </summary>
+    [Fact]
+    public void A_reader_that_does_not_own_the_witness_changes_nothing_on_disk()
+    {
+        var owner = Session();
+        Submit(owner, "TA-SEED");
+
+        // A leftover the owner would quarantine and report.
+        WriteTemp(generation: 99, predecessor: "some-other-witness", records: RecordJson("TA-GHOST", "s"));
+        Age(Temps().Single());
+
+        using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
+                                        FileAccess.ReadWrite, FileShare.None);
+
+        var reader = Session();
+        Assert.Equal(["TA-SEED"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Null(reader.PriorSession("TA-GHOST"));
+
+        Assert.Single(Temps());
+        Assert.Empty(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
+        Assert.False(File.Exists(Path.Combine(_dir, CoidWitness.ErrorLogName)),
+                     "a reader wrote the sidecar");
+    }
+
+    /// <summary>
+    /// And the owner re-reads the tail before marking a gap resolved. The flag was decided when this
+    /// instance loaded and the file has been open to anything since; a second RESOLVED under a first
+    /// says a gap was closed twice, and writing one at all when the tail already says so means
+    /// reporting on a gap that was not this instance's.
+    /// </summary>
+    [Fact]
+    public void A_resolved_marker_is_not_appended_over_one_that_is_already_there()
+    {
+        var lands = false;
+        var w = Session(VanishesUnless(() => lands));
+        Assert.False(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+
+        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
+        File.AppendAllText(log, $"{DateTimeOffset.UtcNow:O} RESOLVED coid-witness committed cleanly " +
+                                $"after the failures above.{Environment.NewLine}");
+
+        lands = true;
+        Assert.True(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Equal(1, File.ReadAllLines(log).Count(l => l.Contains("RESOLVED")));
+    }
+
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>
     [Fact]
     public void The_sidecar_sits_beside_the_witness_file()
