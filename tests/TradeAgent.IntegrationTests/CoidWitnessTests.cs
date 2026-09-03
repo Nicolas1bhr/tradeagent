@@ -62,6 +62,13 @@ public class CoidWitnessTests : IDisposable
     string CommittedText() => File.ReadAllText(File_);
 
     /// <summary>
+    /// Makes a file look like a leftover rather than a rewrite in flight. A candidate younger than
+    /// the quarantine grace is deliberately left alone: it may be another process between its write
+    /// and its rename, and a reader has no business breaking a writer.
+    /// </summary>
+    static void Age(string path) => File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-5));
+
+    /// <summary>
     /// The identifiers in the COMMITTED file, read straight out of it. Deliberately not through
     /// <see cref="CoidWitness"/>: a durability assertion that goes through the reader can be
     /// satisfied by an uncommitted temp the reader recovered, which is the opposite of what
@@ -962,16 +969,16 @@ public class CoidWitnessTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_dir, CoidWitness.ErrorLogName)));
 
         // The restart. This session writes perfectly well; the gap is still a fact about the file.
+        foreach (var f in Temps()) Age(f);
         var next = Session();
         Assert.Contains("io:degraded", next.Token());
         Assert.DoesNotContain(' ', next.Token());
 
-        // Cleared by deleting it, which takes effect at the next start. The stranded temp goes too:
-        // with no committed file to anchor it, every session rejects it afresh and writes that
-        // rejection to the sidecar, which is the self-sustaining degradation the quarantine in the
-        // next commit exists to stop.
+        // Cleared by deleting it, which takes effect at the next start. The stranded temp does NOT
+        // have to be cleaned up by hand any more: the session above quarantined it out of the
+        // candidate glob, which is what stops one crash degrading the witness for ever.
+        Assert.Empty(Temps());
         File.Delete(Path.Combine(_dir, CoidWitness.ErrorLogName));
-        foreach (var f in Temps()) File.Delete(f);
         Assert.Contains("io:ok", Session().Token());
     }
 
@@ -1090,6 +1097,102 @@ public class CoidWitnessTests : IDisposable
 
         Assert.Null(w.LastWriteFailure);
         Assert.DoesNotContain("io:failed", w.Token());
+    }
+
+    /// <summary>
+    /// ONE CRASH USED TO DEGRADE THE WITNESS FOR EVER. The rejected leftover stayed where it was,
+    /// every later session rejected it again, every rejection wrote another sidecar line, and the
+    /// sidecar's existence was what made the witness look degraded — so the probe shouted about a
+    /// file that harmed nothing, permanently. It is reported once and moved out of the candidate
+    /// glob, kept rather than deleted so somebody can still look at it.
+    /// </summary>
+    [Fact]
+    public void A_rejected_leftover_is_reported_once_and_moved_aside()
+    {
+        var first = Session();
+        Submit(first, "TA-REAL");
+
+        WriteTemp(generation: 99, predecessor: "some-other-witness", records: RecordJson("TA-GHOST", "s"));
+        Age(Temps().Single());
+
+        var reader = Session();
+        Assert.Equal(["TA-REAL"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Empty(Temps());
+        Assert.Single(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
+
+        var linesAfterFirstLook = File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length;
+
+        // Every later session finds nothing to complain about.
+        Assert.Equal(["TA-REAL"], Session().All().Select(r => r.ClientOrderId));
+        Assert.Equal(linesAfterFirstLook,
+                     File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length);
+    }
+
+    /// <summary>
+    /// A candidate written moments ago may be another process between its write and its rename.
+    /// Moving it would make that writer's replace fail — safe in itself, but a reader has no
+    /// business breaking a writer.
+    /// </summary>
+    [Fact]
+    public void A_candidate_written_moments_ago_is_left_where_it_is()
+    {
+        var first = Session();
+        Submit(first, "TA-REAL");
+        WriteTemp(generation: 99, predecessor: "some-other-witness", records: RecordJson("TA-GHOST", "s"),
+                  at: DateTime.UtcNow);
+
+        var reader = Session();
+        Assert.Equal(["TA-REAL"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Single(Temps());
+        Assert.Empty(Directory.GetFiles(_dir, "coid-witness.json.rejected-*"));
+    }
+
+    /// <summary>
+    /// The recovered rewrite is a duplicate once its records are committed, not a safety net. Left
+    /// in place it is re-examined and re-rejected by every later session — the same permanent
+    /// degradation, one step further along.
+    /// </summary>
+    [Fact]
+    public void An_adopted_rewrite_is_deleted_once_it_has_been_committed()
+    {
+        var refused = false;
+        var w = Session(LandsUntil(() => refused));
+        Assert.True(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+        refused = true;
+        w.Identified("TA-ONE", "BRK-ONE");
+        Assert.Single(Temps());
+
+        // A new session recovers it, then writes something of its own.
+        var next = Session();
+        Assert.Equal("BRK-ONE", next.PriorSession("TA-ONE")!.BrokerOrderId);
+        Assert.True(next.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.Empty(Temps());
+        Assert.Contains("TA-ONE", CommittedIds());
+        Assert.Contains("TA-TWO", CommittedIds());
+    }
+
+    /// <summary>
+    /// Degraded asks whether there is an UNRESOLVED failure, not whether anything ever went wrong. A
+    /// witness that has since committed cleanly is working, and a state that stays on for ever is
+    /// useless the moment it matters.
+    /// </summary>
+    [Fact]
+    public void A_gap_that_was_committed_over_stops_reading_as_degraded()
+    {
+        var refused = true;
+        var w = Session(LandsUntil(() => refused));
+        Assert.False(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+
+        refused = false;
+        Assert.True(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        // The history is still on disk; the last line says the problem ended.
+        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
+        Assert.True(File.Exists(log));
+        Assert.Contains("RESOLVED", File.ReadAllLines(log)[^1]);
+
+        Assert.Contains("io:ok", Session().Token());
     }
 
     /// <summary>The sidecar lives beside the witness, so a person told about one has found the other.</summary>

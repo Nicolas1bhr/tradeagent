@@ -175,6 +175,16 @@ public sealed class CoidWitness
     const int LockAttempts = 5;
     const int LockBackoffMs = 10;
 
+    /// <summary>
+    /// How old a rejected candidate must be before it is moved aside. An in-flight rewrite from
+    /// another process is milliseconds old and must not be touched; a leftover from a dead session
+    /// is minutes or days old. Two seconds separates them with room to spare.
+    /// </summary>
+    const int QuarantineGraceSeconds = 2;
+
+    /// <summary>What a resolved sidecar's last line says. See <see cref="_degraded"/>.</summary>
+    const string ResolvedMarker = "RESOLVED coid-witness committed cleanly after the failures above.";
+
     const int MaxLoggedFailures = 32;
     const int MaxNoteChars = 400;
     const long MaxErrorLogBytes = 64 * 1024;
@@ -657,8 +667,17 @@ public sealed class CoidWitness
         _loaded = true;
         if (_path is null) return;
 
-        // Asked before anything below can write one.
-        try { _degraded = ErrorLogPath is { } log && File.Exists(log); } catch (Exception) { }
+        // UNRESOLVED, not merely present. Asked before anything below can write one.
+        try
+        {
+            if (ErrorLogPath is { } log && File.Exists(log))
+            {
+                var lines = File.ReadAllLines(log);
+                var last = Array.FindLast(lines, l => !string.IsNullOrWhiteSpace(l));
+                _degraded = last is null || !last.EndsWith(ResolvedMarker, StringComparison.Ordinal);
+            }
+        }
+        catch (Exception) { }
 
         var committedText = ReadTolerantly(_path, out var unreadable);
         var committed = committedText is null ? null : Parse(committedText);
@@ -867,9 +886,48 @@ public sealed class CoidWitness
         catch (Exception) { return []; }
     }
 
-    /// <summary>A temp beside the witness that is not a rewrite of it is a fact, not noise.</summary>
-    void RejectCandidate(string candidate, string why) =>
-        Note($"ignored {candidate}: {why}");
+    /// <summary>
+    /// A temp beside the witness that is not a rewrite of it is a fact, not noise — SAID ONCE.
+    ///
+    /// WHY IT IS MOVED AND NOT JUST LOGGED. One crash mid-rewrite used to degrade the witness
+    /// permanently: the rejected candidate stayed where it was, every later session rejected it
+    /// again, every rejection wrote another sidecar line, and the sidecar's mere existence was what
+    /// made the witness look degraded. The file then shouted, forever, about a leftover that
+    /// harmed nothing. Renaming it out of the candidate glob ends that after exactly one report,
+    /// and keeps the file for whoever wants to look at it rather than deleting evidence.
+    ///
+    /// AND WHY A YOUNG ONE IS LEFT ALONE. A candidate written seconds ago may be another process's
+    /// rewrite in flight, between its write and its rename. Renaming that would make its replace
+    /// fail — safe in itself (that writer reports, and its order is refused rather than sent) but a
+    /// reader has no business breaking a writer. An in-flight rewrite is milliseconds old; anything
+    /// older than the grace is a leftover.
+    /// </summary>
+    void RejectCandidate(string candidate, string why)
+    {
+        var quarantined = Quarantine(candidate);
+        Note(quarantined is null
+            ? $"ignored {candidate}: {why}"
+            : $"ignored {candidate}: {why} — moved to {System.IO.Path.GetFileName(quarantined)}");
+    }
+
+    /// <summary>Renames a rejected candidate out of the <c>.tmp*</c> glob. Null when it was left.</summary>
+    string? Quarantine(string candidate)
+    {
+        try
+        {
+            if (DateTimeOffset.UtcNow - File.GetLastWriteTimeUtc(candidate) < TimeSpan.FromSeconds(QuarantineGraceSeconds))
+                return null;
+            for (var n = 1; n <= 64; n++)
+            {
+                var target = $"{_path}.rejected-{n}";
+                if (File.Exists(target)) continue;
+                File.Move(candidate, target);
+                return target;
+            }
+        }
+        catch (Exception) { }
+        return null;
+    }
 
     /// <summary>
     /// A NON-CRYPTOGRAPHIC FINGERPRINT, AND THAT IS THE RIGHT CHOICE HERE — FNV-1a, 64 bit, over the
@@ -1199,6 +1257,27 @@ public sealed class CoidWitness
         _writeFailed = false;
         LastWriteFailure = null;
         SweepStranded();
+
+        // The rewrite this session recovered is now committed, records and all, so the file it came
+        // from is a duplicate rather than a safety net. Left in place it is re-examined and
+        // re-rejected by every later session — the permanent-degradation loop again, one step
+        // further along.
+        if (_adopted is not null)
+        {
+            try { File.Delete(_adopted); } catch (Exception) { }
+            _adopted = null;
+        }
+
+        // AND THE GAP IS MARKED RESOLVED RATHER THAN ERASED. _degraded asks whether there is an
+        // UNRESOLVED failure, not whether anything ever went wrong: a witness that has since
+        // committed cleanly is working, and reporting it degraded forever would make the state
+        // useless the moment it mattered. The history stays in the file; the last line says the
+        // problem ended.
+        if (_degraded)
+        {
+            _degraded = false;
+            AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}");
+        }
     }
 
     /// <summary>
