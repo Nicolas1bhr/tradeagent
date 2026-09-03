@@ -174,6 +174,18 @@ public sealed class FaultProfile
 
     public int LatencyMs { get; set; }
 
+    /// <summary>
+    /// Latency that IGNORES the cancellation token — a call that will not let go when asked to.
+    ///
+    /// <see cref="LatencyMs"/> is a well-behaved slow backend: cancel it and it unwinds. That is the
+    /// common case and it is not the case the shutdown drain's error line exists for. Once disposal
+    /// re-awaits a cancelled handler so it can record what it knows, a merely slow handler always
+    /// finishes, and the only way to produce a genuinely abandoned one — the state
+    /// <c>handlers_did_not_finish</c> is the sole trace of — is a call that does not honour the
+    /// token. Real ones exist: a blocking vendor SDK call on a thread nothing can interrupt.
+    /// </summary>
+    public int UncancellableLatencyMs { get; set; }
+
     public bool Take(Func<FaultProfile, int> get, Action<FaultProfile, int> set)
     {
         var n = get(this);

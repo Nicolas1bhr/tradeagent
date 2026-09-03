@@ -51,6 +51,30 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
+    /// How long ONE frame gets in TOTAL, however steadily it is being taken.
+    ///
+    /// <see cref="WriteTimeout"/> is a progress budget: it is spent per chunk and reset by every
+    /// chunk the peer accepts, which is exactly right for telling a slow peer from a stopped one
+    /// and is NOT a bound on anything. A legal order near the 1 MiB frame cap is a thousand chunks,
+    /// and a peer that accepts one just inside the budget each time keeps the write alive for a
+    /// thousand times the budget. <see cref="WorstCaseOrderPath"/> claimed one WriteTimeout for the
+    /// whole write, the shutdown drain was derived from that claim, and so the drain could expire on
+    /// an order that was still legitimately in progress and abandon it DISPATCHING — the exact state
+    /// cc7006e and 02aad9a exist to prevent (Codex F2: "non-composable deadline accounting").
+    ///
+    /// So there are two bounds and they answer different questions. The per-chunk budget answers
+    /// "has this peer stopped?". This answers "is the total bounded at all?" — and it is deliberately
+    /// GENEROUS, because being finite is the point and being fast is not. Thirty seconds against the
+    /// 1 MiB frame cap is a floor of about 34 KiB/s, well under the 79 KiB/s reader de627e3 was
+    /// written to stop dropping, so it does not reintroduce the throughput floor that correction
+    /// removed. It is reached only by a peer that is both enormous and glacial.
+    ///
+    /// An emergency does not use this: its whole caller budget is <see cref="EmergencyDeadline"/>,
+    /// which is shorter than this by a factor of fifteen.
+    /// </summary>
+    public TimeSpan FrameTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// How long an EMERGENCY operation takes in total before the caller is told where it stands —
     /// the send gate, the write and the reply, ONE bound over all three.
     ///
@@ -172,12 +196,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// The longest one order can take before this connector gives up on it, at the current values.
     ///
     /// Three bounded waits in series inside <see cref="Rpc"/>: the send gate, the write, then the
-    /// reply. Published because <c>GatewayPipeServer.HandlerDrainTimeout</c> has to outlast it — a
+    /// reply. The middle term is <see cref="FrameTimeout"/> and NOT <see cref="WriteTimeout"/> —
+    /// that was the defect. WriteTimeout is spent per chunk and reset by every chunk accepted, so
+    /// counting one of it for the whole write made this number a claim rather than a bound, and a
+    /// near-1 MiB order could legally outlive it by three orders of magnitude while the drain
+    /// derived from it expired and abandoned the order DISPATCHING. Published because <c>GatewayPipeServer.HandlerDrainTimeout</c> has to outlast it — a
     /// shutdown drain shorter than this abandons an order that is still legitimately in progress —
     /// and a number in one file derived by hand from constants in another is a claim with an expiry
     /// date. A test asserts the drain still covers this.
     /// </summary>
-    public TimeSpan WorstCaseOrderPath => WriteTimeout + WriteTimeout + _timeout;
+    public TimeSpan WorstCaseOrderPath => WriteTimeout + FrameTimeout + _timeout;
 
     public string Id => "atas";
     public string DisplayName => "ATAS";
@@ -584,7 +612,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         var w = _out;
         if (w is null) return;
-        try { _ = await WriteFrame(w, frame, _cts.Token, WriteTimeout, emergency: false); }
+        try { _ = await WriteFrame(w, frame, _cts.Token, WriteTimeout, emergency: false, FrameTimeout); }
         catch (Exception) { /* the peer went away mid-answer; the read loop reports it */ }
     }
 
@@ -607,7 +635,21 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         /// process under load and nothing at all about the peer, so only this caller fails and the
         /// connection is left alone.
         /// </summary>
-        Busy
+        Busy,
+
+        /// <summary>
+        /// The frame did not finish inside <see cref="FrameTimeout"/> — or, for an emergency, inside
+        /// what was left of <see cref="EmergencyDeadline"/>.
+        ///
+        /// Distinct from <see cref="PeerStalled"/> because it is a different accusation: the peer was
+        /// taking bytes the whole time, it was simply never going to finish in a useful interval. It
+        /// shares the CONSEQUENCE — the connection is dropped — for a reason that has nothing to do
+        /// with blame: the frame is half-written into a StreamWriter every caller shares, so the
+        /// write state is unknown and the next caller would interleave with it. That is the wedge
+        /// 667b9a2 removed, and the only safe end for a half-written frame is the same end a timeout
+        /// gives it.
+        /// </summary>
+        FrameIncomplete
     }
 
     /// <summary>
@@ -630,7 +672,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// later as an unobserved task exception.
     /// </summary>
     async Task<SendOutcome> WriteFrame(Stream w, object frame, CancellationToken ct,
-        TimeSpan gateWait, bool emergency)
+        TimeSpan gateWait, bool emergency, TimeSpan frameBudget)
     {
         var waitedFrom = Environment.TickCount64;
         if (!await _sendGate.WaitAsync(gateWait, ct))
@@ -655,21 +697,37 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         }
         try
         {
+            // The total starts when the gate is ours, not when we joined the queue: waiting for our
+            // own backlog is not this frame's fault, which is the same correction 667b9a2 made to
+            // the per-chunk budget.
+            var startedWriting = Environment.TickCount64;
             var bytes = Encoding.UTF8.GetBytes(Json.Write(frame) + "\n");
             var sent = 0;
             while (sent < bytes.Length)
             {
+                var left = frameBudget - TimeSpan.FromMilliseconds(Environment.TickCount64 - startedWriting);
+                if (left <= TimeSpan.Zero)
+                {
+                    // Out of total time with the frame half-written. Nothing can be recalled, so
+                    // the connection ends the way a timeout ends it.
+                    DropStalledPeer();
+                    return SendOutcome.FrameIncomplete;
+                }
+
                 var n = Math.Min(WriteChunkBytes, bytes.Length - sent);
                 var write = w.WriteAsync(bytes.AsMemory(sent, n), ct).AsTask();
                 try
                 {
-                    await write.WaitAsync(WriteTimeout, ct);
+                    // Whichever bound is nearer: the progress budget for THIS chunk, or what is left
+                    // of the whole frame's.
+                    await write.WaitAsync(left < WriteTimeout ? left : WriteTimeout, ct);
                 }
                 catch (TimeoutException)
                 {
                     Observe(write);
                     DropStalledPeer();
-                    return SendOutcome.PeerStalled;
+                    // Which bound actually expired decides what we are entitled to say.
+                    return left < WriteTimeout ? SendOutcome.FrameIncomplete : SendOutcome.PeerStalled;
                 }
                 catch (OperationCanceledException)
                 {
@@ -792,7 +850,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
             var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
-                emergency ? EmergencyDeadline : WriteTimeout, emergency);
+                emergency ? EmergencyDeadline : WriteTimeout, emergency,
+                emergency ? Remaining(startedAt, EmergencyDeadline) : FrameTimeout);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
@@ -812,6 +871,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                     SendOutcome.Busy when emergency =>
                         $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
                         "try again, and check your positions and orders in ATAS.",
+                    SendOutcome.FrameIncomplete when emergency =>
+                        $"the bridge is too slow; '{op}' is NOT confirmed. It was still being sent when " +
+                        "the deadline passed, so the connection has been dropped and will be retried — " +
+                        "check your positions and orders in ATAS.",
+                    SendOutcome.FrameIncomplete =>
+                        $"'{op}' was still being sent to the ATAS bridge after {FrameTimeout.TotalSeconds:0}s " +
+                        "and the connection was dropped; it is not known whether ATAS received it",
                     SendOutcome.PeerStalled =>
                         $"the ATAS bridge did not read '{op}' within {WriteTimeout.TotalSeconds:0}s",
                     _ =>

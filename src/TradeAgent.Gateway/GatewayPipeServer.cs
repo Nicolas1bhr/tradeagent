@@ -111,21 +111,43 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// The worst case for ONE order through <c>AtasConnector.Rpc</c>, at shipped values:
     ///
     ///     send gate wait      up to WriteTimeout      10 s
-    ///   + the write itself    up to WriteTimeout      10 s
+    ///   + the write itself    up to FrameTimeout      30 s
     ///   + waiting for ATAS    up to rpcTimeout        10 s
-    ///   = 30 s, + 5 s for the settle and its write-back
-    ///   = 35 s
+    ///   = 50 s, + 5 s for the settle and its write-back
+    ///   = 55 s
+    ///
+    /// THE MIDDLE TERM WAS WRONG UNTIL 2026-09-03 and this number with it. It counted one
+    /// WriteTimeout for the whole write, but WriteTimeout is a per-chunk PROGRESS budget reset by
+    /// every chunk the peer accepts — so a legal near-1 MiB order could stay in the write for a
+    /// thousand times that while this drain, derived from the claim, expired and abandoned it
+    /// DISPATCHING (Codex F2). `AtasConnector.FrameTimeout` is the real ceiling and the arithmetic
+    /// above now uses it.
     ///
     /// <c>AtasConnector.WorstCaseOrderPath</c> computes those first three from the live values and a
     /// test asserts this default still covers it, so changing a connector deadline breaks a test
     /// rather than silently reintroducing the abandoned order.
     ///
-    /// THE TRADE IS DELIBERATE: the app may take up to 35 s to close, but ONLY while an order is
+    /// THE TRADE IS DELIBERATE: the app may take up to 55 s to close, but ONLY while an order is
     /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
     /// before this wait. Waiting is the right side of that trade, because the alternative is an
     /// order that reached the broker and is recorded DISPATCHING for ever.
     /// </summary>
-    public TimeSpan HandlerDrainTimeout { get; init; } = TimeSpan.FromSeconds(35);
+    public TimeSpan HandlerDrainTimeout { get; init; } = TimeSpan.FromSeconds(55);
+
+    /// <summary>
+    /// How long a handler gets AFTER its token is cancelled, to write down what it knows.
+    ///
+    /// Cancelling the token and returning was the second half of Codex F2. A handler over the drain
+    /// bound is cancelled and then unwinds — through the catch-all that records an after-the-wire
+    /// failure as UNKNOWN — and disposal used to walk away at exactly that moment, so the gateway
+    /// and then the database closed under a request that was mid-write-back. A request that reached
+    /// the broker and left no record is the state this whole drain exists to prevent; producing it
+    /// at the last step by cancelling and not waiting is the same defect one line later.
+    ///
+    /// Short on purpose. This is not another chance to finish the operation — that chance was the
+    /// drain above, and it is over. It is time to record an outcome that is already decided.
+    /// </summary>
+    public TimeSpan SettleAfterCancelTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     Task? _loop;
     volatile bool _disposed;
@@ -794,7 +816,26 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             try { await Task.WhenAll(handlers).WaitAsync(HandlerDrainTimeout); }
             catch (Exception) { /* faulted or over the bound; the count below is what matters */ }
+        }
 
+        // 4. Only now is it safe to cancel the handlers' token: anything still holding it has had
+        //    its chance and is over the bound, and there is nothing left to settle in good order.
+        await _cts.CancelAsync();
+
+        // 5. AND THEN WAIT AGAIN, briefly, FOR THE UNWIND. Cancelling and returning was a way to
+        //    produce the very state this drain prevents: a cancelled handler unwinds through the
+        //    catch-all that records an after-the-wire failure as UNKNOWN, and disposal used to walk
+        //    away at that exact moment — so AppHost closed the gateway and then the database under a
+        //    request that was mid-write-back, leaving an order that may have reached the broker with
+        //    no record at all. This is not another chance to finish the operation; that was step 3.
+        //    It is time to write down an outcome that is already decided.
+        if (handlers.Length > 0)
+        {
+            try { await Task.WhenAll(handlers).WaitAsync(SettleAfterCancelTimeout); }
+            catch (Exception) { /* the count below is what matters */ }
+
+            // Counted after the unwind, because a handler that recorded its UNKNOWN in step 5 DID
+            // finish. Counting before it reported a settled request as an abandoned one.
             var unfinished = handlers.Count(h => !h.IsCompleted);
             if (unfinished > 0)
                 gateway.Log.Engineering("Ipc", "handlers_did_not_finish", "error",
@@ -802,13 +843,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     {
                         unfinished,
                         of = handlers.Length,
-                        drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds
+                        drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds,
+                        settle_timeout_ms = (int)SettleAfterCancelTimeout.TotalMilliseconds
                     }));
         }
 
-        // 4. Only now is it safe to cancel the handlers' token: anything still holding it has had
-        //    its chance and is over the bound, and there is nothing left to settle in good order.
-        await _cts.CancelAsync();
         _cts.Dispose();
         _accept.Dispose();
     }
