@@ -709,6 +709,11 @@ public sealed class CoidWitness : IDisposable
                 lock (_gate)
                 {
                     EnsureLoaded();
+                    // The same recovery Token/All/PriorSessionIds run. Without it two readings from
+                    // ONE instance could disagree — Trouble null beside a token saying io:degraded —
+                    // and the only production caller was safe by ordering rather than by rule
+                    // (Describe runs PriorSessionIds before it reads this).
+                    EnsureRecovered();
                     if (_committedUnreadable) return UnreadableDetail();
                     if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
@@ -1514,10 +1519,14 @@ public sealed class CoidWitness : IDisposable
     /// Three outcomes, and the middle one is the point:
     ///
     ///   * OURS. The lineage moves forward, this instance's stranded temps are swept, true.
-    ///   * SOMEBODY ELSE'S. Our claim is not on disk. The lineage is re-synced to what actually IS
-    ///     committed so the next rewrite descends from THAT rather than from a file nobody has, the
-    ///     overwrite is reported, and false goes back to the caller — which for <c>Place</c> means
-    ///     refusing the order, which is right: the write-ahead record is not there.
+    ///   * SOMEBODY ELSE'S. Our claim is not on disk. This does NOT re-sync the lineage — round 3
+    ///     did, and round 4 removed it with the rebase. Nothing that plays by the rules can have
+    ///     written this file while we held the lease, so the party that did is one whose semantics
+    ///     this build does not know, and adopting its content as our parent would be negotiating
+    ///     with it. `_committedHash` is left as it was, which means every later save by this
+    ///     instance misses the compare-and-swap too and the whole run is refused rather than one
+    ///     order — measured at 80/80 refusals per rival in the round-4 three-process race. That is
+    ///     the fail-closed direction and it is deliberate.
     ///   * UNREADABLE. Not evidence of an overwriter. The rename is the durability event and it
     ///     succeeded, so this reports true and records that the confirmation could not be taken.
     ///     Refusing an order because a re-read hiccuped would be inventing a failure.

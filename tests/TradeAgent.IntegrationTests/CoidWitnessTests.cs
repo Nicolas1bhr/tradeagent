@@ -659,11 +659,48 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_rename_refused_with_an_access_error_is_retried_too()
     {
-        var w = Session(RefusedTimes(1, () => new UnauthorizedAccessException("Access to the path is denied.")));
+        var w = Session(RefusedTimes(4, () => new UnauthorizedAccessException("Access to the path is denied.")));
         Submit(w, "TA-DENIED");
 
         Assert.Empty(Temps());
+        w.Dispose();
         Assert.Single(Session().All());
+    }
+
+    /// <summary>
+    /// THE BUDGET IS FIVE ATTEMPTS AND IT IS BOUNDED, FOR BOTH REFUSALS — counted, not inferred.
+    ///
+    /// The existing retry tests succeed on the fifth attempt and assert only a LOWER time bound, so
+    /// raising the attempt count from 5 to 500 leaves them green while a wholly contended order
+    /// spends twenty seconds inside Place, past the gateway's 10 s RPC deadline, where the order is
+    /// recorded UNKNOWN and a disk problem becomes a reconciliation. The number is a judgment
+    /// (CoidWitness documents why) but it has to be the number the code actually uses.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_refused_rename_is_attempted_exactly_five_times_and_then_gives_up(bool accessDenied)
+    {
+        var attempts = 0;
+        var w = Session((_, _) =>
+        {
+            attempts++;
+            throw accessDenied
+                ? new UnauthorizedAccessException("Access to the path is denied.")
+                : SharingViolation();
+        });
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(w.Submitting("TA-NEVER", "SIM", "ES", "Buy", 1m, null));
+        clock.Stop();
+
+        Assert.Equal(5, attempts);
+        // 20 + 40 + 60 + 80 = 200 ms of sleeps. The lower bound proves they are taken; the upper one
+        // proves the budget is bounded, which is what the RPC deadline depends on.
+        Assert.True(clock.ElapsedMilliseconds >= 150,
+                    $"the whole retry ran in {clock.ElapsedMilliseconds} ms — the backoff is not taken");
+        Assert.True(clock.ElapsedMilliseconds < 2000,
+                    $"the retry took {clock.ElapsedMilliseconds} ms — the budget is not bounded");
     }
 
     /// <summary>
@@ -1609,22 +1646,28 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_safety_event_after_the_quota_and_after_a_resolved_marker_is_still_recorded()
     {
-        var lands = false;
-        var w = Session(VanishesUnless(() => lands));
-        for (var i = 0; i < 31; i++)
-            Assert.False(w.Submitting($"TA-{i}", "SIM", "ES", "Buy", 1m, null));
+        // THE QUOTA IS SPENT ON WARNINGS, WHICH IS WHAT IT RATIONS. This test used to spend it on
+        // 31 failures — and failures have never counted against it, so the quota was never
+        // exhausted and the assertion below proved nothing. 40 foreign leftovers produce 40
+        // quarantine warnings against a 32-line allowance.
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+        for (var i = 0; i < 40; i++) WriteForeignLeftover(i);
 
-        lands = true;
+        var lands = true;
+        var w = Session(VanishesUnless(() => lands));
         Assert.True(w.Submitting("TA-OK", "SIM", "ES", "Buy", 1m, null));
 
-        var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
-        Assert.Contains("RESOLVED", File.ReadAllLines(log)[^1]);
-        Assert.Null(Session().Trouble);
+        // Rationed: exactly the allowance, and the 33rd warning is absent.
+        Assert.Equal(32, SidecarLines().Count(l => l.Contains("ignored ")));
 
+        // Unrationed: a durability gap after the allowance is spent still reaches the file, and the
+        // next start sees it.
         lands = false;
         Assert.False(w.Submitting("TA-AFTER-QUOTA", "SIM", "ES", "Buy", 1m, null));
-
-        Assert.Contains("TA-AFTER-QUOTA", File.ReadAllText(log));
+        Assert.Contains("TA-AFTER-QUOTA", File.ReadAllText(Sidecar));
+        w.Dispose();
         Assert.NotNull(Session().Trouble);
     }
 
@@ -2618,16 +2661,27 @@ public class CoidWitnessTests : IDisposable
     {
         var sidecar = Path.Combine(Paths.BridgeDir, CoidWitness.ErrorLogName);
         File.WriteAllText(sidecar, "2026-09-03T00:00:00.0000000+00:00 ERROR coid-witness rewrite did not land.");
+
+        // AND THE ROTATED GENERATION, which is the half the collector could not see. The sidecar
+        // rotates one back past its size bound, and rotation happens on exactly the machine whose
+        // support package matters — the one that produced enough durability failures to fill the
+        // file. The older generation holds the FIRST of them, which is where a fault starts.
+        var rolled = sidecar + ".1";
+        File.WriteAllText(rolled, "2026-09-02T00:00:00.0000000+00:00 ERROR the first one, which is the one that explains it.");
         try
         {
             var zip = Doctor.CreateSupportPackage(TestEnv.NewDb(),
                 Path.Combine(_dir, "support.zip"));
 
             using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
-            var entry = archive.Entries.SingleOrDefault(e => e.FullName.Contains(CoidWitness.ErrorLogName));
-            Assert.NotNull(entry);
+            Assert.Contains(archive.Entries, e => e.FullName.EndsWith(CoidWitness.ErrorLogName, StringComparison.Ordinal));
+            Assert.Contains(archive.Entries, e => e.FullName.EndsWith(CoidWitness.ErrorLogName + ".1", StringComparison.Ordinal));
         }
-        finally { try { File.Delete(sidecar); } catch (IOException) { } }
+        finally
+        {
+            try { File.Delete(sidecar); } catch (IOException) { }
+            try { File.Delete(rolled); } catch (IOException) { }
+        }
     }
 
     /// <summary>

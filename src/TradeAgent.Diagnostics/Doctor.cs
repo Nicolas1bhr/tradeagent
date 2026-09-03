@@ -283,7 +283,12 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             // for, and it was the one thing this collector could not see.
             try
             {
-                foreach (var f in Directory.GetFiles(Paths.BridgeDir, "*.errors.log"))
+                // "*.errors.log*", not "*.errors.log": the sidecar ROTATES one generation back past
+                // its size bound, into coid-witness.errors.log.1, and rotation is what happens on
+                // exactly the machine whose support package matters — the one that produced enough
+                // durability failures to fill the file. The older generation holds the FIRST ones,
+                // which is where a fault starts.
+                foreach (var f in Directory.GetFiles(Paths.BridgeDir, "*.errors.log*"))
                     File.Copy(f, Path.Combine(staging, "bridge-" + Path.GetFileName(f)), true);
             }
             catch (IOException) { }
