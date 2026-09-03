@@ -891,6 +891,137 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A REWRITE IS A LEGAL TRANSITION FROM THE COMMITTED STATE, NOT A FILE OF THE RIGHT SHAPE.
+    ///
+    /// The membership rule skipped a LEADING RUN of committed identifiers the candidate did not
+    /// have, on the argument that <c>Trim</c> takes one. When ALL of them are absent that loop
+    /// walked off the end and there was nothing left to check: committed A/B/C at cap 3 against a
+    /// perfectly lined-up X/Y/Z was adopted, and X/Y/Z are acknowledged, so they become cross-session
+    /// proof for orders this product never submitted. The rule was validating the candidate's SHAPE.
+    ///
+    /// One rewrite does one thing: it adds at most one claim and, only at the cap, drops the ONE
+    /// oldest to make room. Anything else is not a rewrite of this file.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_replaces_the_whole_record_set_is_not_a_legal_rewrite()
+    {
+        var first = new CoidWitness(File_, null, cap: 3);
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            first.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
+            first.Identified($"TA-{n}", $"BRK-{n}");
+        }
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], CommittedIds());
+
+        // At the cap, correct predecessor, correct generation — and not one committed claim in it.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: string.Join(",", RecordJson("TA-X", "a-dead-session"),
+                                            RecordJson("TA-Y", "a-dead-session"),
+                                            RecordJson("TA-Z", "a-dead-session")));
+
+        var reader = new CoidWitness(File_, null, cap: 3);
+        Assert.Null(reader.PriorSession("TA-X"));
+        Assert.Equal(["TA-1", "TA-2", "TA-3"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Empty(reader.PriorSessionIds(16).Where(id => id.StartsWith("TA-X") || id.StartsWith("TA-Y")));
+    }
+
+    /// <summary>
+    /// TWO RECORDS UNDER ONE IDENTIFIER MAKE <c>PriorSession</c> AMBIGUOUS — it answers with the
+    /// first it finds, and which one that is depends on the order a foreign file happened to be
+    /// written in. <c>Submitting</c> removes an existing id before adding it, so no rewrite this
+    /// build produces can contain a duplicate; one that does was not produced by this build.
+    /// </summary>
+    [Fact]
+    public void A_candidate_carrying_a_duplicate_identifier_is_not_a_legal_rewrite()
+    {
+        var first = Session();
+        Submit(first, "TA-ONE");
+        first.Identified("TA-ONE", "BRK-ONE");
+
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: string.Join(",", RecordJson("TA-ONE", "a-dead-session"),
+                                            RecordJson("TA-ONE", "a-dead-session")));
+
+        var reader = Session();
+        Assert.Equal(["TA-ONE"], reader.All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// ONE REWRITE ADDS ONE CLAIM. A candidate carrying three new identifiers on top of the
+    /// committed set is not the rewrite this file was about to become — it is somebody's whole
+    /// history, and each of those identifiers is acknowledged.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_adds_more_than_one_rewrite_can_is_ignored()
+    {
+        var first = Session();
+        Submit(first, "TA-ONE");
+        first.Identified("TA-ONE", "BRK-ONE");
+
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: string.Join(",", RecordJson("TA-ONE", "a-dead-session"),
+                                            RecordJson("TA-EXTRA-1", "a-dead-session"),
+                                            RecordJson("TA-EXTRA-2", "a-dead-session"),
+                                            RecordJson("TA-EXTRA-3", "a-dead-session")));
+
+        var reader = Session();
+        Assert.Equal(["TA-ONE"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Null(reader.PriorSession("TA-EXTRA-1"));
+    }
+
+    /// <summary>
+    /// WHICH CROSS-CAP DIRECTION THE TRANSITION RULE REFUSES, MEASURED IN BOTH — because the round-4
+    /// record argued the direction BACKWARDS and no test pinned either.
+    ///
+    /// The rule reads THIS instance's cap to decide whether a missing oldest record is explained by a
+    /// trim; the candidate was written by an instance whose cap this build cannot see. So the temp
+    /// that is refused comes from a SMALLER-capped writer — the affected upgrade is a cap RAISE, not
+    /// a lower, and the round-4 record said the opposite.
+    ///
+    /// The refusal is the safe direction and its cost is stated rather than hidden: the committed
+    /// file is kept whole, and the one un-recovered acknowledgement means `PriorSession` answers null
+    /// for that identifier — a proof refused, never a proof invented.
+    /// </summary>
+    [Theory]
+    [InlineData(5, 3, true)]    // writer's cap LARGER than the reader's — a cap LOWER on upgrade
+    [InlineData(3, 5, false)]   // writer's cap SMALLER than the reader's — a cap RAISE on upgrade
+    public void An_at_cap_rewrite_from_a_differently_capped_build(int writerCap, int readerCap, bool adopted)
+    {
+        var writer = new CoidWitness(File_, null, writerCap);
+        for (var n = 1; n <= writerCap; n++)
+        {
+            writer.Submitting($"TA-{n}", "SIM", "ES", "Buy", 1m, null);
+            writer.Identified($"TA-{n}", $"BRK-{n}");
+        }
+        Assert.Equal(writerCap, CommittedIds().Length);
+        var committedBefore = CommittedIds();
+
+        // The next claim arrived, the writer's Trim dropped TA-1 off the front, the rename never
+        // landed. A perfectly legitimate uncommitted rewrite, at the WRITER's cap.
+        var kept = Enumerable.Range(2, writerCap - 1).Select(n => RecordJson($"TA-{n}", "a-dead-session"));
+        var fresh = RecordJson($"TA-{writerCap + 1}", "a-dead-session");
+        WriteTemp(CommittedGeneration() + 1, Fingerprint(CommittedText()),
+                  string.Join(",", kept.Append(fresh)));
+
+        var reader = new CoidWitness(File_, null, readerCap);
+        var seen = reader.All().Select(r => r.ClientOrderId).ToArray();
+
+        if (adopted)
+        {
+            Assert.Contains($"TA-{writerCap + 1}", seen);
+        }
+        else
+        {
+            // Refused — and nothing is lost by refusing: the committed file is kept whole and the
+            // un-recovered acknowledgement is a proof declined, not a claim dropped.
+            Assert.DoesNotContain($"TA-{writerCap + 1}", seen);
+            Assert.Equal(committedBefore, seen);
+            Assert.Equal(committedBefore, CommittedIds());
+            Assert.Null(reader.PriorSession($"TA-{writerCap + 1}"));
+        }
+    }
+
+    /// <summary>
     /// THE OTHER DIRECTION OF THE SAME RULE, AND IT IS WHY THE RULE IS NOT SIMPLY "KEEP EVERY
     /// COMMITTED IDENTIFIER". At the cap the legitimate next rewrite MUST lose a record: a claim
     /// arrives, <see cref="CoidWitness"/> trims the oldest off the front to make room, and the
