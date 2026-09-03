@@ -822,6 +822,46 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// AN ENVELOPE THAT DESERIALISES IS NOT AN ENVELOPE THAT MEANS ANYTHING.
+    ///
+    /// `Parse` asked only whether the JSON deserialised. `records:[null, A]` does — and then
+    /// iterating it throws on the null before it reaches A, the public reader swallows that, and the
+    /// instance is left LOADED with an empty record list and no read failure recorded. Everything
+    /// downstream then reads a confident zero: `All()` empty, `io:ok`, and the next `Submitting`
+    /// skips loading entirely and replaces the anchor with a file holding one claim — A's record,
+    /// which was in the bytes all along, gone.
+    ///
+    /// So the envelope is validated semantically, `_loaded` is set only once the records are
+    /// actually in memory, and an unreadable committed file refuses every write while it stands:
+    /// the bytes this build could not read are the bytes it must not overwrite.
+    /// </summary>
+    [Fact]
+    public void A_semantically_invalid_envelope_is_unreadable_and_no_write_replaces_it()
+    {
+        File.WriteAllText(File_,
+            $$"""{"version":1,"generation":3,"predecessor":null,"records":[null,{{RecordJson("TA-A", "a-dead-session")}}]}""");
+        var original = File.ReadAllText(File_);
+
+        // The startup/describe path, which is what actually runs first in the bridge.
+        var w = Session();
+        Assert.Empty(w.All());
+        Assert.True(w.Unreadable);
+        Assert.Contains("records:err", w.Token());
+        Assert.NotNull(w.Trouble);
+
+        // And the write does not get to replace the bytes it could not read.
+        Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(original, File.ReadAllText(File_));
+
+        // Repaired by hand, the witness works again — the refusal is a state, not a latch.
+        w.Dispose();
+        File.Delete(File_);
+        var next = Session();
+        Assert.True(next.Submitting("TA-C", "SIM", "ES", "Buy", 1m, null));
+        Assert.Equal(["TA-C"], CommittedIds());
+    }
+
+    /// <summary>
     /// INVALID BYTES ARE NOT A VALIDATED ANCHOR, AND FINGERPRINT ALONE IS NOT LINEAGE.
     ///
     /// When the committed file existed but did not parse, its generation was unknowable, so the
@@ -2323,23 +2363,39 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// A truncated or hand-edited file is not a crash, and it is not evidence either. The claims
-    /// lost were about orders from runs that have already ended, and the token says the read failed
-    /// rather than reporting a confident zero.
+    /// A truncated or hand-edited file is not a crash, and it is not evidence either: the token says
+    /// the read failed rather than reporting a confident zero.
+    ///
+    /// WHAT ROUND 5 REVERSED HERE, deliberately. This test used to end "and it recovers: this session
+    /// can still write", on the argument that the claims lost were about orders from runs that had
+    /// already ended. That argument assumes we know what was in the bytes. We do not — that is what
+    /// unreadable means — and the file may hold an acknowledged identifier for an order still resting
+    /// in ATAS, which is precisely the evidence the restart experiment goes looking for. Writing over
+    /// it destroys that silently and reports success. So the write is refused while the file stands,
+    /// the row says why, and recovery is a person repairing or removing it.
     /// </summary>
     [Fact]
-    public void A_corrupt_file_reads_as_unreadable_rather_than_as_empty()
+    public void A_corrupt_file_reads_as_unreadable_and_is_not_written_over()
     {
         File.WriteAllText(File_, "{\"version\":1,\"records\":[{\"client_order");
+        var original = File.ReadAllText(File_);
 
         var w = Session();
         Assert.Empty(w.All());
         Assert.Null(w.PriorSession("TA-ANY"));
         Assert.Contains("records:err", w.Token());
 
-        // And it recovers: this session can still write, and the next one can read what it wrote.
-        Submit(w, "TA-AFTER");
-        w.Identified("TA-AFTER", "BRK-AFTER");
+        Assert.False(w.Submitting("TA-AFTER", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("could not be read", w.Trouble);
+        Assert.Equal(original, File.ReadAllText(File_));
+
+        // Removed by hand — the refusal is a state, not a latch.
+        w.Dispose();
+        File.Delete(File_);
+        var next = Session();
+        Submit(next, "TA-AFTER");
+        next.Identified("TA-AFTER", "BRK-AFTER");
+        next.Dispose();
         Assert.NotNull(Session().PriorSession("TA-AFTER"));
     }
 

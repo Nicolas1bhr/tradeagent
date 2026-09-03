@@ -241,6 +241,13 @@ public sealed class CoidWitness : IDisposable
 
     bool _loaded;
     bool _readFailed;
+
+    /// <summary>
+    /// SOMETHING IS AT <see cref="Path"/> AND IT IS NOT AN ENVELOPE. Refuses every write while it
+    /// stands — see <see cref="EnsureLoaded"/> — and reports through <see cref="Trouble"/>, which
+    /// puts the reason on the ATAS bridge row and drops <c>SupportsClientOrderId</c>.
+    /// </summary>
+    bool _committedUnreadable;
     bool _candidateUnreadable;
 
     /// <summary>
@@ -473,6 +480,7 @@ public sealed class CoidWitness : IDisposable
                 if (!Lease()) { NotOurs(_notOwned ?? "this witness is not ours to write"); return false; }
 
                 EnsureLoaded();
+                if (_committedUnreadable) { NotOurs(UnreadableDetail()); return false; }
                 AdoptInMemory();
                 ReportAndQuarantine();
 
@@ -540,6 +548,7 @@ public sealed class CoidWitness : IDisposable
                 if (!Lease()) { NotOurs(_notOwned ?? "this witness is not ours to write"); return; }
 
                 EnsureLoaded();
+                if (_committedUnreadable) { NotOurs(UnreadableDetail()); return; }
                 AdoptInMemory();
                 ReportAndQuarantine();
                 var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
@@ -700,6 +709,7 @@ public sealed class CoidWitness : IDisposable
                 lock (_gate)
                 {
                     EnsureLoaded();
+                    if (_committedUnreadable) return UnreadableDetail();
                     if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
                     return _degraded
@@ -779,8 +789,7 @@ public sealed class CoidWitness : IDisposable
     void EnsureLoaded()
     {
         if (_loaded) return;
-        _loaded = true;
-        if (_path is null) return;
+        if (_path is null) { _loaded = true; return; }
 
         // UNRESOLVED SAFETY, not merely present, and not merely non-RESOLVED. Asked before anything
         // below can write a line of its own. A sidecar full of quarantine warnings is NOTED; only an
@@ -828,14 +837,57 @@ public sealed class CoidWitness : IDisposable
         // accident, and it was being produced by a file that plainly had something in it.
         _readFailed = (unreadable || _candidateUnreadable) && committed is null;
 
+        // BYTES THIS BUILD COULD NOT READ ARE BYTES IT MUST NOT OVERWRITE. Something is at the path
+        // and it is not an envelope: a truncated write, a hand edit, another product's file. Writing
+        // over it destroys whatever it holds, and this run cannot say what that was — so every write
+        // is refused while it stands and Trouble says why. It is a state and not a latch: repair or
+        // remove the file and the next start works.
+        _committedUnreadable = committedText is not null && committed is null;
+
         if (committed is not null) Take(committed);
+
+        // LOADED ONLY ONCE THE RECORDS ARE ACTUALLY IN MEMORY. Setting this first meant that an
+        // exception anywhere above left the instance believing it had loaded — with an empty list,
+        // no read failure, and a Submitting that would go on to replace the file it never read.
+        _loaded = true;
     }
 
-    /// <summary>An envelope, or null when the text is not one. Caller holds <see cref="_gate"/>.</summary>
+    /// <summary>
+    /// AN ENVELOPE, OR NULL WHEN THE TEXT IS NOT ONE — AND "IS NOT ONE" IS A QUESTION ABOUT MEANING,
+    /// NOT ABOUT SYNTAX.
+    ///
+    /// This used to ask only whether the JSON deserialised. <c>records:[null, A]</c> does. Iterating
+    /// it then throws on the null before it reaches A, the public reader swallows the exception, and
+    /// the instance is left LOADED with an empty list and no read failure recorded — a confident
+    /// zero, which for this file means "this product never submitted that identifier". Worse, the
+    /// next <see cref="Submitting"/> skips loading (it is loaded) and replaces the anchor with a file
+    /// holding one claim: A's record, which was in the bytes the whole time, is gone.
+    ///
+    /// What is checked is what the rest of this class relies on: a version it can read, a
+    /// non-negative generation, a record list that exists, no null elements, no empty identifiers,
+    /// and no identifier twice — <see cref="PriorSession"/> answers with the first record it meets,
+    /// so a duplicate makes the answer a property of the file's byte order rather than of this
+    /// machine's history. Nothing this build writes can fail any of these.
+    ///
+    /// Caller holds <see cref="_gate"/>.
+    /// </summary>
     static Envelope? Parse(string json)
     {
-        try { return JsonSerializer.Deserialize<Envelope>(json, Opts); }
+        Envelope? envelope;
+        try { envelope = JsonSerializer.Deserialize<Envelope>(json, Opts); }
         catch (JsonException) { return null; }
+        if (envelope is null || envelope.Version < 1 || envelope.Generation < 0) return null;
+
+        var records = envelope.Records;
+        if (records is null) return null;
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var r in records)
+        {
+            if (r is null || string.IsNullOrEmpty(r.ClientOrderId)) return null;
+            if (!ids.Add(r.ClientOrderId)) return null;
+        }
+        return envelope;
     }
 
     /// <summary>Copies an envelope's records in. Caller holds <see cref="_gate"/>.</summary>
@@ -1036,18 +1088,15 @@ public sealed class CoidWitness : IDisposable
     /// <see cref="Trim"/> — or <see cref="Identified"/>, which replaces a record in place. So from
     /// committed C the only legal C' is:
     ///
-    ///   1. NO DUPLICATES. Two records under one identifier make <see cref="PriorSession"/> answer
-    ///      whichever it meets first, which is a property of the file's byte order rather than of
-    ///      this machine's history. Nothing this build writes can contain one.
-    ///   2. IT NEVER SHRINKS. |C'| ≥ |C|: a rewrite adds a claim and then trims to the cap, so it
+    ///   1. IT NEVER SHRINKS. |C'| ≥ |C|: a rewrite adds a claim and then trims to the cap, so it
     ///      cannot end up holding fewer records than the file it came from.
-    ///   3. IT ADDS AT MOST ONE. |C'| ≤ |C| + 1. More than that is not a rewrite, it is somebody's
+    ///   2. IT ADDS AT MOST ONE. |C'| ≤ |C| + 1. More than that is not a rewrite, it is somebody's
     ///      history.
-    ///   4. IT DROPS AT MOST THE ONE OLDEST, AND ONLY AT THE CAP. Every committed identifier is in
+    ///   3. IT DROPS AT MOST THE ONE OLDEST, AND ONLY AT THE CAP. Every committed identifier is in
     ///      C' except possibly the FIRST, and that one only when C' is full — because below the cap
     ///      <see cref="Trim"/> removes nothing, so a missing record has no rewrite that explains it.
     ///
-    /// WHOSE CAP, AND WHICH UPGRADE THAT COSTS. Rule 4 reads THIS instance's <see cref="_cap"/>,
+    /// WHOSE CAP, AND WHICH UPGRADE THAT COSTS. Rule 3 reads THIS instance's <see cref="_cap"/>,
     /// while the candidate was written by an instance whose cap this build cannot see. They differ
     /// only across builds, and the direction is worth naming because the round-4 record named it
     /// backwards: it is a temp from a SMALLER-capped writer that is refused, so the affected upgrade
@@ -1060,9 +1109,9 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     string? IllegalTransition(Envelope candidate, Envelope committed)
     {
+        // No duplicate check here: Parse refuses an envelope carrying one, on both sides of this
+        // comparison, so a candidate that reaches this method has unique identifiers by construction.
         var ids = new HashSet<string>(candidate.Records.Select(r => r.ClientOrderId), StringComparer.Ordinal);
-        if (ids.Count != candidate.Records.Count)
-            return "it carries the same identifier twice, which no rewrite this build writes can do";
 
         if (candidate.Records.Count < committed.Records.Count)
             return $"it holds {candidate.Records.Count} records against the committed file's " +
@@ -1320,6 +1369,11 @@ public sealed class CoidWitness : IDisposable
 
         return Attempt(claim);
     }
+
+    /// <summary>The one sentence for "there is something at the path and it is not an envelope".</summary>
+    string UnreadableDetail() =>
+        $"the write-ahead record at {_path} could not be read, so this run cannot say what it has " +
+        $"submitted and must not write over it; repair or remove the file";
 
     /// <summary>The one refusal shape for "this witness is not ours to write". Caller holds the gate.</summary>
     void NotOurs(string detail)
