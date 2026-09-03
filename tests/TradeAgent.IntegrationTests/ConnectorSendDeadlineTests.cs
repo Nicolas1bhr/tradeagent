@@ -183,6 +183,91 @@ public class ConnectorSendDeadlineTests
         Assert.Equal("ES", quote!.Symbol);
     }
 
+    /// <summary>
+    /// A CALLER GIVING UP MID-WRITE MUST NOT LEAVE THE CONNECTOR WEDGED.
+    ///
+    /// Found by review of a0aa1a7. The wait was cancellable but the write was not, so a cancelled
+    /// caller released the send gate with its frame still going into a StreamWriter every other
+    /// caller shares. The next caller then interleaved with a half-written frame, and the connector
+    /// sat there with Connected still true and no reconnect, failing every later frame for ever.
+    ///
+    /// Latent in the shipped product — only shutdown and connector-swap tokens reach this path today
+    /// — which is exactly why it is worth a test now rather than after something else reaches it.
+    /// The write state is unknown, so the connection ends the way a timeout ends it.
+    /// </summary>
+    [Fact]
+    public async Task A_caller_cancelling_mid_write_drops_the_connection_instead_of_wedging_it()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(1), Cred())
+        {
+            WriteTimeout = TimeSpan.FromSeconds(30)   // long, so cancellation gets there first
+        };
+        await connector.ConnectAsync();
+
+        await using var peer = await StalledBridgePeer.ConnectAndSayHello(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // One order big enough that it cannot land in the socket buffer, then the caller gives up.
+        var order = new PlaceOrderCommand("TA-cancel-1", "ATAS-STALLED", "ES", OrderSide.Buy,
+            OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 64 * 1024));
+        using var cts = new CancellationTokenSource();
+        var call = connector.PlaceOrderAsync(order, cts.Token);
+        await Task.Delay(300);
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<Exception>(() => call);
+
+        // The connection is GONE, not merely reported as unhappy. A connector that still calls
+        // itself connected here is the wedged state: nothing reconnects, every frame fails.
+        await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
+        Assert.False(await connector.IsConnectedAsync());
+    }
+
+    /// <summary>
+    /// OUR OWN SEND QUEUE IS NOT THE PEER'S FAULT.
+    ///
+    /// Found by review of a0aa1a7 (Codex). The deadline started before the send gate was acquired,
+    /// so it timed this process's backlog as well as the bridge's reading: enough concurrent RPCs
+    /// and a perfectly healthy, actively-reading bridge was declared stalled and disconnected.
+    ///
+    /// A real <see cref="BridgeServer"/> on the other end, a deliberately tiny deadline, and enough
+    /// concurrent traffic that callers must queue behind each other. Some of those calls are
+    /// allowed to fail — they are UNKNOWN to their own caller, which is honest — but the CONNECTION
+    /// must survive, and the bridge must still answer afterwards.
+    /// </summary>
+    [Fact]
+    public async Task Local_queueing_under_load_does_not_disconnect_a_healthy_bridge()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            WriteTimeout = TimeSpan.FromMilliseconds(50)   // tiny on purpose: the gate WILL be contended
+        };
+        await connector.ConnectAsync();
+        var adapter = new LoopbackAtasAdapter();
+        await using var bridge = new BridgeServer(adapter, pipe);
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // Big frames on purpose. Small ones land in the socket buffer in microseconds and never
+        // contend the gate at all, so the test would pass without ever exercising the thing it is
+        // about — verified: with small frames the mutant that drops on gate expiry survived this.
+        var fat = new string('s', 128 * 1024);
+        var calls = Enumerable.Range(0, 300).Select(_ => connector.GetQuoteAsync(fat)).ToArray();
+        try { await Task.WhenAll(calls).WaitAsync(TimeSpan.FromSeconds(60)); }
+        catch (Exception) { /* individual callers may time out; the connection is what is on trial */ }
+        Observe(calls);
+
+        // The contention has to be REAL for the rest of this to mean anything: if nothing ever hit
+        // the bound, the connection surviving proves only that nothing happened.
+        Assert.Contains(calls, c => c.IsFaulted);
+
+        Assert.True(await connector.IsConnectedAsync(),
+            "a bridge that was reading everything was disconnected because THIS process queued its own frames");
+        Assert.NotNull(await connector.GetQuoteAsync("ES").WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     static void Observe(IEnumerable<Task> tasks)
