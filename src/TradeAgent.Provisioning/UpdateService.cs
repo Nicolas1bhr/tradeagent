@@ -115,7 +115,7 @@ public sealed record UpdateSources(
 {
     public static UpdateSources GitHub(string repository) => new(
         ct => Downloader.TryGetStringAsync($"https://api.github.com/repos/{repository}/releases/latest", ct),
-        Downloader.TryGetStringAsync,
+        (url, ct) => Downloader.TryGetSmallTextAsync(url, ChecksumManifest.MaxCharacters, ChecksumManifest.FetchTimeout, ct),
         async (info, sha, progress, ct) =>
         {
             var dir = Path.Combine(Paths.Updates, info.Version);
@@ -307,6 +307,13 @@ public sealed class UpdateService
     /// It stays set after a successful Launch. That is deliberately wider than "until Launch
     /// returns": Setup is running, this process is closing, and there is no version of the next few
     /// seconds in which starting an order is a good idea.
+    ///
+    /// <b>The exact point it goes up is after the checksum manifest has been fetched AND resolved,
+    /// immediately before the installer download begins</b> — not on entry to
+    /// <see cref="InstallAsync"/>. It suspends the owner's trading, so it covers only the span they
+    /// confirmed: first byte of the installer to Setup running. A network round trip that can stall
+    /// is not that span, and holding it across one turned a stranger's slow web server into an
+    /// outage of this product's whole purpose.
     /// </summary>
     public bool InstallInProgress { get; private set; }
 
@@ -415,9 +422,7 @@ public sealed class UpdateService
                 return false;
             }
             _busy = true;
-            InstallInProgress = true;
         }
-        Changed?.Invoke();
 
         try
         {
@@ -435,6 +440,18 @@ public sealed class UpdateService
             // trust chain and it is not optional. Nothing here can hand Downloader a null.
             var sha = await ResolveChecksumAsync(info, ct);
             if (sha is null) return false;   // ResolveChecksumAsync has already said why
+
+            // THE LATCH GOES UP HERE, AND NOT ONE LINE EARLIER.
+            //
+            // It stops the owner's trading, so it may only cover the span they actually confirmed:
+            // from the first byte of the installer to Setup running. Everything above this is a
+            // network round trip that can stall, and holding it there meant a slow or oversized
+            // manifest could stop all trading while it waited — a self-inflicted outage triggered by
+            // a stranger's web server. Above this line nothing irreversible has begun and a refusal
+            // costs nothing; below it, an order dispatched now is one that this process will not be
+            // alive to reconcile.
+            InstallInProgress = true;
+            Changed?.Invoke();
 
             var progress = new Progress<ProvisionProgress>(p => Set(UpdateStage.Downloading, p.Message));
             var installer = await _sources.Download(info, sha, progress, ct);
@@ -811,12 +828,26 @@ public static class ChecksumManifest
     ///
     /// The real file is two lines and about 120 characters. 64 KiB is five hundred times that and
     /// still small enough that reading it costs nothing; a release would have to publish several
-    /// hundred artifacts to approach it. The point is not the exact number — it is that the number
-    /// exists BEFORE the string is split, so a hostile or broken 500 MB "checksum file" is a
-    /// refusal rather than an allocation. ASCII is what build.ps1 writes, so one character is one
-    /// byte here.
+    /// hundred artifacts to approach it. ASCII is what build.ps1 writes, so one character is one byte
+    /// here.
+    ///
+    /// This number is enforced in TWO places and only one of them is this class. A 500 MB "checksum
+    /// file" has to be refused while it is ARRIVING — <see cref="Downloader.TryGetSmallTextAsync"/>
+    /// stops after this many bytes plus one — because a limit applied to a string that has already
+    /// been buffered is a limit on nothing. The check here catches what reaches us by any other
+    /// route, and is what keeps <c>Split</c> from allocating a line per line of it.
     /// </summary>
     public const int MaxCharacters = 64 * 1024;
+
+    /// <summary>
+    /// How long the checksum manifest gets to arrive: <b>thirty seconds</b>.
+    ///
+    /// It is at most 64 KiB from the same host that just answered the release query, so thirty
+    /// seconds is already generous by two orders of magnitude. The number matters because the
+    /// alternative was this client's default of thirty MINUTES, and the owner is standing in front
+    /// of a button they just pressed twice.
+    /// </summary>
+    public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>The same bound, on lines, for a file that is small but pathologically shaped.</summary>
     public const int MaxLines = 2_000;

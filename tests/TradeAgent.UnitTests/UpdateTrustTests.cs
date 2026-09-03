@@ -1095,6 +1095,159 @@ public class UpdateTrustTests
         return dir.FullName;
     }
 
+    // ================================ round 3 ====================================================
+
+    // ---- 1. the manifest is refused while it arrives, not after ----------------------------------
+
+    /// <summary>
+    /// A stream that hands out an endless body and counts what was actually taken from it. The claim
+    /// "refused without buffering it all" is a claim about reads, so only a read count can prove it.
+    /// </summary>
+    sealed class EndlessStream : Stream
+    {
+        public long Served;
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            Served += count;
+            Array.Fill(buffer, (byte)'x', offset, count);
+            return count;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+        public override void SetLength(long v) => throw new NotSupportedException();
+        public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+    }
+
+    /// <summary>A stream that never answers, which is what a stalled server is.</summary>
+    sealed class StalledStream : Stream
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return 0;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+        public override void SetLength(long v) => throw new NotSupportedException();
+        public override void Write(byte[] b, int o, int c) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task An_oversized_checksum_file_is_refused_without_being_buffered()
+    {
+        var body = new EndlessStream();
+
+        var text = await Downloader.ReadLimitedAsync(body, ChecksumManifest.MaxCharacters);
+
+        Assert.Null(text);
+        // One byte past the limit is enough to know, and it is the last byte ever asked for.
+        Assert.Equal(ChecksumManifest.MaxCharacters + 1, body.Served);
+    }
+
+    [Fact]
+    public async Task A_checksum_file_exactly_at_the_limit_is_still_read()
+    {
+        var body = new MemoryStream(Encoding.ASCII.GetBytes(new string('x', ChecksumManifest.MaxCharacters)));
+
+        var text = await Downloader.ReadLimitedAsync(body, ChecksumManifest.MaxCharacters);
+
+        Assert.NotNull(text);
+        Assert.Equal(ChecksumManifest.MaxCharacters, text.Length);
+    }
+
+    [Fact]
+    public async Task A_stalled_checksum_fetch_gives_up_instead_of_waiting_out_the_http_timeout()
+    {
+        using var leash = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        var started = DateTime.UtcNow;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Downloader.ReadLimitedAsync(new StalledStream(), ChecksumManifest.MaxCharacters, leash.Token));
+
+        // The number that matters is that it is not the HttpClient's thirty minutes.
+        Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10));
+        Assert.Equal(TimeSpan.FromSeconds(30), ChecksumManifest.FetchTimeout);
+    }
+
+    /// <summary>
+    /// The latch suspends the owner's trading, so it may only cover the span they confirmed. A
+    /// manifest fetch is a network round trip that can stall; holding the latch across one turned a
+    /// stranger's slow web server into an outage of the whole product.
+    /// </summary>
+    [Fact]
+    public async Task The_latch_is_down_while_the_manifest_is_fetched_and_up_from_the_download_onward()
+    {
+        var f = Wellformed();
+        bool? duringFetch = null, duringDownload = null;
+        UpdateService? service = null;
+
+        var sources = f.Sources() with
+        {
+            Text = (_, _) =>
+            {
+                duringFetch = service!.InstallInProgress;
+                return Task.FromResult(f.ChecksumText);
+            },
+            Download = (_, sha, _, _) =>
+            {
+                duringDownload = service!.InstallInProgress;
+                f.DownloadStarted = true;
+                f.ShaHandedToTheDownload = sha;
+                return Task.FromResult(f.InstallerPath);
+            }
+        };
+        service = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources)
+        {
+            UnconfirmedWork = () => 0
+        };
+        await service.CheckAsync();
+
+        Assert.True(await service.InstallAsync());
+
+        Assert.False(duringFetch);          // trading continues while we are only asking a web server
+        Assert.True(duringDownload);        // and stops from the first byte of the installer
+        Assert.True(service.InstallInProgress);
+    }
+
+    /// <summary>A manifest we refuse must not leave trading switched off behind it.</summary>
+    [Fact]
+    public async Task A_manifest_that_is_refused_never_raises_the_latch_at_all()
+    {
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = Service(f);
+        await service.CheckAsync();
+
+        Assert.False(await service.InstallAsync());
+
+        Assert.False(service.InstallInProgress);
+        Assert.False(f.DownloadStarted);
+    }
+
+    [Fact]
+    public void The_real_sources_fetch_the_manifest_through_the_capped_reader()
+    {
+        // The GitHub sources' Text delegate must not be the unbounded TryGetStringAsync it used to
+        // be; UpdateService cannot enforce a size on a string that has already been allocated.
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(),
+            "src", "TradeAgent.Provisioning", "UpdateService.cs"));
+
+        Assert.Contains("Downloader.TryGetSmallTextAsync(url, ChecksumManifest.MaxCharacters, ChecksumManifest.FetchTimeout, ct)", text);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()
