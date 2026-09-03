@@ -1125,6 +1125,69 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public static string NewOperatorPressNonce() => Guid.NewGuid().ToString("n")[..16];
 
+    /// <summary>The two emergency controls, as request-id prefixes. One press writes rows under one.</summary>
+    public const string ClosePress = "op-close";
+    public const string CancelPress = "op-cancel";
+
+    static string PressPrefix(string kind, string nonce) => $"{kind}-{nonce}";
+
+    /// <summary>
+    /// How ONE press stands, judged only by the records that press made.
+    ///
+    /// It used to be judged by <see cref="HasUnconfirmedWork"/> — anything unconfirmed anywhere — so
+    /// an unrelated order kept the control locked, and, worse, a press whose own close was still
+    /// unconfirmed could be released by someone else's record settling. A press is its own business.
+    /// </summary>
+    public async Task<PressOutcome> PressOutcomeAsync(string kind, string nonce, CancellationToken ct = default)
+    {
+        var rows = _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(kind, nonce)}%"));
+        if (rows.Count == 0)
+            return new PressOutcome(nonce, 0, 0, true, "Nothing was sent.");
+
+        var unfinished = rows.Count(r => !OrderStateMachine.IsTerminal(r.State)
+                                         || r.NeedsReconciliation
+                                         || _unconfirmed.ContainsKey(r.RequestId));
+
+        var open = new List<string>();
+        if (kind == ClosePress)
+        {
+            // A close is not done because its order is done: it is done when the position is flat.
+            try
+            {
+                var targeted = rows.Select(r => r.Instrument).ToHashSet();
+                foreach (var p in await Connector.GetPositionsAsync(await RequireAccountId(ct), ct))
+                    if (p.Quantity != 0 && targeted.Contains(p.Symbol)) open.Add($"{p.Symbol} {p.Quantity}");
+            }
+            catch (Exception)
+            {
+                open.Add("the account could not be read back");
+            }
+        }
+
+        var complete = unfinished == 0 && open.Count == 0;
+        var summary = complete
+            ? $"{rows.Count} record(s), all settled."
+            : open.Count > 0
+                ? $"{unfinished} record(s) still unconfirmed; still open: {string.Join(", ", open)}."
+                : $"{unfinished} record(s) from this press are still unconfirmed.";
+        return new PressOutcome(nonce, rows.Count, unfinished, complete, summary);
+    }
+
+    /// <summary>
+    /// The nonce of a press this store still cannot account for, so a restart does not mint a fresh
+    /// one over an unresolved close. Without it, closing the app was a way to unlock the control.
+    /// </summary>
+    public string? OutstandingPressNonce(string kind)
+    {
+        foreach (var r in _requests.Query("request_id LIKE $p", ("$p", $"{kind}-%")).OrderByDescending(r => r.CreatedAt))
+            if (!OrderStateMachine.IsTerminal(r.State) || r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId))
+            {
+                var parts = r.RequestId.Split('-');
+                if (parts.Length >= 3) return parts[2];
+            }
+        return null;
+    }
+
     /// <summary>
     /// Deliberately separate from the kill switch: stopping the AI must not move money.
     ///
@@ -1136,6 +1199,17 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var nonce = pressNonce ?? NewOperatorPressNonce();
         var accountId = await RequireAccountId(ct);
+
+        // A RETRY ACTS ONLY ON WHAT THE FIRST PRESS CAPTURED. The sweep is one call for the whole
+        // account, so re-issuing it would cancel orders that arrived after the press — orders the
+        // person never asked about. The records this press already wrote are its captured set, and
+        // if it has any, there is nothing left for this press to do on the wire.
+        if (_opt.IdempotencyEnabled &&
+            _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(CancelPress, nonce)}%")).Count > 0)
+        {
+            _log.Engineering("Gateway", "operator_press_replayed", requestId: PressPrefix(CancelPress, nonce));
+            return [];
+        }
 
         // What is on the book at the moment of the press, so each order can be written ahead by name.
         // If the platform cannot say, the press is still carried out — an emergency control that
@@ -1229,10 +1303,20 @@ public sealed class TradingGateway : IAsyncDisposable
         var nonce = pressNonce ?? NewOperatorPressNonce();
         var accountId = await RequireAccountId(ct);
         var positions = await Connector.GetPositionsAsync(accountId, ct);
+
+        // As for cancel-all: a retry may only touch what the FIRST press captured. A position opened
+        // after the press was never part of it, and closing it would be a decision nobody made.
+        var captured = _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(ClosePress, nonce)}-%"));
+        var targets = captured.Count > 0
+            ? captured.Select(r => (Symbol: r.Instrument,
+                Quantity: Json.Read<PlaceIntent>(r.ParametersJson)?.Quantity ?? 0m)).ToList()
+            : positions.Where(p => p.Quantity != 0).Select(p => (Symbol: p.Symbol, Quantity: p.Quantity)).ToList();
+
         var attempted = new List<string>();
+        var replayed = 0;
         var n = 0;
 
-        foreach (var p in positions.Where(p => p.Quantity != 0))
+        foreach (var p in targets)
         {
             var rid = $"op-close-{nonce}-{p.Symbol}";
             var intent = new PlaceIntent(p.Symbol, p.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
@@ -1241,6 +1325,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 RequestIntent.PLACE, p.Symbol, Json.Write(intent)));
             if (!created && _opt.IdempotencyEnabled)
             {
+                replayed++;
                 _log.Engineering("Gateway", "operator_press_replayed", requestId: rid);
                 continue;
             }
@@ -1304,14 +1389,23 @@ public sealed class TradingGateway : IAsyncDisposable
             return 0;
         }
 
-        var open = after.Where(p => p.Quantity != 0 && attempted.Contains(p.Symbol)).ToList();
-        var flat = attempted.Count - open.Count;
+        // On a pure replay `attempted` is empty, so the captured symbols are what "still open" means.
+        var watched = attempted.Count > 0 ? attempted : targets.Select(t => t.Symbol).ToList();
+        var open = after.Where(p => p.Quantity != 0 && watched.Contains(p.Symbol)).ToList();
+        // Counted over what this call actually attempted, so a replay (which attempted nothing)
+        // reports zero rather than a negative number of positions closed.
+        var flat = attempted.Count(sym => open.All(p => p.Symbol != sym));
 
+        var stillOpen = string.Join(", ", open.Select(p => $"{p.Symbol} {p.Quantity}"));
         _log.Activity(
-            attempted.Count == 0 ? "You closed all positions (0)"
+            // A PRESS THAT SENT NOTHING MUST SAY SO. "You closed all positions (0)" over an open
+            // position is the sentence that made a repeated press look like it had worked.
+            replayed > 0 && attempted.Count == 0
+                ? "You pressed Close all positions again. Nothing further was sent, because the previous press is still unconfirmed" +
+                  (open.Count > 0 ? $". Still open: {stillOpen}." : ".")
+            : attempted.Count == 0 ? "You pressed Close all positions; there was nothing open to close."
             : open.Count == 0 ? $"You closed all positions ({flat})"
-            : $"You asked to close {attempted.Count} position(s); {flat} confirmed flat. Still open: " +
-              string.Join(", ", open.Select(p => $"{p.Symbol} {p.Quantity}")) +
+            : $"You asked to close {attempted.Count} position(s); {flat} confirmed flat. Still open: {stillOpen}" +
               ". A close order can rest on the book before it fills.",
             "warn");
 

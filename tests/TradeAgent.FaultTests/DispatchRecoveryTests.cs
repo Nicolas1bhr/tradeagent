@@ -907,32 +907,48 @@ public class OperatorEmergencyRecordTests
     /// not sell the position twice — which is what "close #1 failed, so I pressed again" did to a
     /// 2-contract long: two market sells, a position reversed rather than flattened, and no record
     /// that either was sent.
+    ///
+    /// ROUND 3: this used to end by minting a fresh nonce by hand and asserting that a second close
+    /// WAS sent — pinning the unsafe release the screen no longer performs. What the control does
+    /// while a press is unresolved is repeat it; a new press exists only after the old one is
+    /// accounted for, and that is what is asserted now.
     /// </summary>
     [Fact]
-    public async Task A_retried_press_submits_nothing_and_a_new_press_is_a_new_request()
+    public async Task A_retried_press_submits_nothing_and_no_new_press_exists_until_it_is_resolved()
     {
         var (gw, c, db) = await Recovery.Ready();
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "rp-1", TestEnv.Buy(qty: 2m));
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;      // the close sits working, position still open
-        var press = TradingGateway.NewOperatorPressNonce();
 
-        // Zero "flat", because the close rests on the book — see CloseAllOutcomeTests. What matters
-        // here is how many closes were SENT.
-        Assert.Equal(0, await gw.OperatorCloseAllAsync(press));
+        var button = new OperatorPress();
+        var first = button.Begin();
+        Assert.Equal(0, await gw.OperatorCloseAllAsync(first));
         Assert.Equal(1, c.Closes);
+        button.Finish((await gw.PressOutcomeAsync(TradingGateway.ClosePress, button.Begin())).Complete);
+        Assert.True(button.Outstanding);                      // the position is not flat
 
         // The same press again — a retry, not a new decision.
-        Assert.Equal(0, await gw.OperatorCloseAllAsync(press));
+        Assert.Equal(0, await gw.OperatorCloseAllAsync(button.Begin()));
         Assert.Equal(1, c.Closes);
         Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
         Assert.Single(c.Inner.Broker.Orders, o => o.Side == OrderSide.Sell);
 
-        // A NEW press is a new decision and is carried out — the owner looking at a position that is
-        // still open must be able to press again and have it mean something.
-        Assert.Equal(0, await gw.OperatorCloseAllAsync(TradingGateway.NewOperatorPressNonce()));
-        Assert.Equal(2, c.Closes);
-        Assert.Equal(2, gw.Requests.Query("request_id LIKE 'op-close-%'").Count);
+        // The control cannot mint a new press while the old one is unaccounted for.
+        Assert.True(button.Outstanding);
+
+        // Completion takes BOTH: the position flat AND this press's own record accounted for. The
+        // close filling at the platform is not enough on its own — nothing has told the ledger — so
+        // the record is settled the way the product settles one, through the card.
+        c.Inner.Broker.FillWorking(c.Inner.Broker.Orders.Single(o => o.Side == OrderSide.Sell).ConnectorOrderId);
+        Assert.False((await gw.PressOutcomeAsync(TradingGateway.ClosePress, first)).Complete);
+
+        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
+        gw.ForceResolve(record.RequestId, ExecutionState.FILLED, "checked in ATAS: the close filled");
+        button.Finish((await gw.PressOutcomeAsync(TradingGateway.ClosePress, first)).Complete);
+
+        Assert.False(button.Outstanding);
+        Assert.NotEqual(first, button.Begin());   // only now is the next press a new decision
     }
 
     /// <summary>
@@ -1994,5 +2010,157 @@ public class CancelAllPerOrderSettlementTests
         Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
         Assert.Empty(gw.Requests.NeedingReconciliation());
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
+
+// =================================================================================================
+// ROUND 3 · R2 — a press owns a target set, judges itself by its own records, and survives a restart
+// =================================================================================================
+
+public class PressOwnsItsSetTests
+{
+    [Fact]
+    public async Task A_retried_close_press_does_not_touch_a_position_that_arrived_after_it()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "set-es", TestEnv.Buy("ES", 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+
+        var press = TradingGateway.NewOperatorPressNonce();
+        await gw.OperatorCloseAllAsync(press);
+        c.ThrowAfterClose = null;
+        Assert.Equal(1, c.Closes);
+
+        // A position in another instrument appears — placed by hand at the platform, since TradeAgent
+        // is paused by the press's own unconfirmed record.
+        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
+            OrderType.Market, 3m, null, null, TimeInForce.Day, null), FillBehaviour.FillImmediately);
+        Assert.Contains(c.Inner.Broker.Positions, p => p.Symbol == "NQ");
+
+        await gw.OperatorCloseAllAsync(press);               // the SAME press, retried
+
+        Assert.Equal(1, c.Closes);                           // nothing was sent at all
+        Assert.Empty(gw.Requests.Query("instrument='NQ' AND request_id LIKE 'op-close-%'"));
+        Assert.Contains(c.Inner.Broker.Positions, p => p.Symbol == "NQ");   // untouched by that press
+
+        // ...and it says so rather than reporting a clean sweep.
+        var said = Recovery.Activity(db).Last(t => t.StartsWith("You pressed") || t.StartsWith("You closed"));
+        Assert.Contains("Nothing further was sent", said);
+        Assert.DoesNotContain("You closed all positions", said);
+    }
+
+    [Fact]
+    public async Task A_retried_cancel_all_press_does_not_sweep_orders_that_arrived_after_it()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "set-w1",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
+
+        var press = TradingGateway.NewOperatorPressNonce();
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync(press));
+        c.ThrowAfterCancelAll = null;
+        Assert.Equal(1, c.CancelAlls);
+
+        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
+            OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null), FillBehaviour.LeaveWorking);
+
+        Assert.Empty(await gw.OperatorCancelAllAsync(press));   // the same press again
+
+        Assert.Equal(1, c.CancelAlls);                          // the wire was never touched again
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single(o => o.Symbol == "NQ").State);
+    }
+
+    [Fact]
+    public async Task A_press_is_judged_by_its_own_records_and_not_by_unrelated_work()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "own-pos", TestEnv.Buy("ES", 2m));
+
+        // Something unrelated is unconfirmed — an agent order that never came back. It rests on the
+        // book rather than filling, so it adds no position for the press to find.
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        c.ThrowAfterPlace = new ConnectorTransportException("connection lost after the order was accepted");
+        await gw.PlaceAsync(new AgentContext("a"), "own-unrelated",
+            new PlaceIntent("NQ", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.ThrowAfterPlace = null;
+        c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
+        Assert.True(gw.HasUnconfirmedWork());
+
+        var press = TradingGateway.NewOperatorPressNonce();
+        Assert.Equal(1, await gw.OperatorCloseAllAsync(press));      // the escape hatch still works
+
+        // The press itself is complete: its own record filled and the position is flat. The
+        // unrelated order does not hold the control, and the control does not lift on it either.
+        var outcome = await gw.PressOutcomeAsync(TradingGateway.ClosePress, press);
+        Assert.True(outcome.Complete);
+        Assert.Equal(1, outcome.Records);
+        Assert.True(gw.HasUnconfirmedWork());                        // still paused, for the other one
+    }
+
+    [Fact]
+    public async Task A_press_whose_own_close_is_unconfirmed_is_not_complete()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "own-2", TestEnv.Buy("ES", 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+
+        var press = TradingGateway.NewOperatorPressNonce();
+        await gw.OperatorCloseAllAsync(press);
+        c.ThrowAfterClose = null;
+
+        var outcome = await gw.PressOutcomeAsync(TradingGateway.ClosePress, press);
+        Assert.False(outcome.Complete);
+        Assert.Equal(1, outcome.Unfinished);
+        Assert.Contains("still open", outcome.Summary);
+
+        // Confirming the record through the card is what completes it, once the position is gone.
+        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
+        gw.ForceResolve(record.RequestId, ExecutionState.CANCELLED, "checked in ATAS: the close never went");
+        Assert.False((await gw.PressOutcomeAsync(TradingGateway.ClosePress, press)).Complete);  // still open
+        c.Inner.Broker.FillWorking(c.Inner.Broker.Orders.Single(o => o.Side == OrderSide.Sell).ConnectorOrderId);
+        Assert.True((await gw.PressOutcomeAsync(TradingGateway.ClosePress, press)).Complete);
+    }
+
+    [Fact]
+    public async Task An_unresolved_press_is_reconstructed_after_a_restart()
+    {
+        var file = Path.Combine(TestEnv.Home, $"press-{Guid.NewGuid():n}.db");
+        var broker = new FakeBroker();
+        string press;
+
+        using (var db = new Database(file))
+        {
+            var c = new RecoveryConnector(new FakeConnector(broker));
+            var gw = new TradingGateway(db, c, new HealthRegistry());
+            gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; s.Risk.MaxOrderQuantity = 10m; });
+            await c.ConnectAsync();
+            await gw.RefreshHealthAsync();
+            await gw.PlaceAsync(AgentContext.Operator, "restart-pos", TestEnv.Buy("ES", 2m));
+            c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+            c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
+            press = TradingGateway.NewOperatorPressNonce();
+            await gw.OperatorCloseAllAsync(press);
+            await gw.DisposeAsync();
+        }
+
+        using (var db = new Database(file))
+        {
+            var gw = new TradingGateway(db, new FakeConnector(broker), new HealthRegistry());
+
+            // Exactly what SafetyPage does when it is built.
+            var button = new OperatorPress();
+            button.Restore(gw.OutstandingPressNonce(TradingGateway.ClosePress));
+
+            Assert.True(button.Outstanding);
+            Assert.Equal(press, button.Begin());     // the same press, not a fresh one
+            await gw.DisposeAsync();
+        }
     }
 }

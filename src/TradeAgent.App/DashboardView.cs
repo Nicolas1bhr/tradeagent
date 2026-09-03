@@ -515,27 +515,44 @@ sealed class SafetyPage
     /// uses, that the previous one has to be resolved first. Anything that goes wrong while deciding
     /// counts as "not finished" — the safe direction for a control that moves money.
     /// </summary>
-    async Task PressAsync(OperatorPress press, Func<string, Task> run, string what)
+    async Task PressAsync(OperatorPress press, string kind, Func<string, Task> run, string what)
     {
         var repeat = press.Outstanding;
-        try { await run(press.Begin()); }
+        var nonce = press.Begin();
+        var summary = "";
+        try { await run(nonce); }
         finally
         {
-            bool clean;
-            try { clean = !_host.Gateway.HasUnconfirmedWork(); }
-            catch (Exception) { clean = false; }
-            press.Finish(clean);
+            // Judged on THIS press's own records — not on whether the gateway has unconfirmed work
+            // from something else, which both locked the control over unrelated orders and released
+            // it while this press's own close was still unconfirmed.
+            try
+            {
+                var outcome = await _host.Gateway.PressOutcomeAsync(kind, nonce);
+                summary = outcome.Summary;
+                press.Finish(outcome.Complete);
+            }
+            catch (Exception)
+            {
+                summary = "TradeAgent could not check what the press did.";
+                press.Finish(false);
+            }
         }
 
         if (press.Outstanding)
             Ui.ReportError?.Invoke(repeat
-                ? $"Still unconfirmed. Nothing further was sent — {what} again would repeat the same press. Confirm the unconfirmed order on the Dashboard first."
-                : $"TradeAgent could not confirm the result of {what}. Nothing more will be sent until you confirm the unconfirmed order on the Dashboard.");
+                ? $"Still unconfirmed, so nothing further was sent — pressing {what} again repeats the same press. {summary} Confirm it on the Dashboard first."
+                : $"TradeAgent could not confirm the result of {what}. {summary} Nothing more will be sent until you confirm it on the Dashboard.");
     }
 
     public SafetyPage(AppHost host)
     {
         _host = host;
+
+        // A press the store still cannot account for survives a restart: without this, closing the
+        // app was a way to mint a fresh nonce over an unresolved close and send a second one.
+        _closeAllPress.Restore(_host.Gateway.OutstandingPressNonce(TradingGateway.ClosePress));
+        _cancelAllPress.Restore(_host.Gateway.OutstandingPressNonce(TradingGateway.CancelPress));
 
         foreach (var mode in Enum.GetValues<TradingMode>())
         {
@@ -571,12 +588,12 @@ sealed class SafetyPage
             // the gateway sends nothing twice. Minting a fresh nonce here — which is what this did
             // until 2026-09-03 — made the retry a new decision and closed the position twice.
             Ui.With(Ui.Confirm("Cancel all working orders", "Confirm: cancel all working orders",
-                    () => PressAsync(_cancelAllPress, p => _host.Gateway.OperatorCancelAllAsync(p),
-                        "cancelling all working orders")),
+                    () => PressAsync(_cancelAllPress, TradingGateway.CancelPress,
+                        p => _host.Gateway.OperatorCancelAllAsync(p), "Cancel all working orders")),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch),
             Ui.With(Ui.Confirm("Close all positions", "Confirm: close all positions with market orders",
-                    () => PressAsync(_closeAllPress, p => _host.Gateway.OperatorCloseAllAsync(p),
-                        "closing all positions")),
+                    () => PressAsync(_closeAllPress, TradingGateway.ClosePress,
+                        p => _host.Gateway.OperatorCloseAllAsync(p), "Close all positions")),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
         emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
