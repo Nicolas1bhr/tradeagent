@@ -59,6 +59,33 @@ table `finding · real/refuted · RED · GREEN · mutant · commit`, plus the on
 F2, answer whether a test could catch "a derived bound whose inputs changed" generically. Report: tip sha; the table one
 line per finding; suite counts (Mac + box); "What I did NOT do".
 
-## Verifier findings (appended by the manager when leg [2] reports)
+## Verifier findings (leg [2], Opus, on `d25dbb4`) — VERDICT: FAIL — 2H/1M/1L · record `records/U2a-verify-r4.md`
 
-_pending_
+- **V1 (HIGH) = Codex F1, PROVEN.** Omitting `request_id` sent a 200-char frame id with `#`, `/` and a space to the broker
+  as a **203-character `ClientOrderId`**, and `op-deadbeef-cancelall-0` became a live idempotency key — the "uncollidable
+  by construction" sweep guarantee is false. One class, two instances: validate `rid` (the effective id), never the
+  field that may be absent. Both of those exploits become tests.
+- **V2 (HIGH, new).** An emergency `cancel-all` on a STALLED bridge with a FREE send gate took **10005 ms**, returned
+  "ATAS did not answer 'cancel-all' within 10s" instead of the owner-readable "not confirmed — check ATAS" sentence, and
+  left the dead connection UP with no reconnect; `EmergencyGateWait` bounds only the queue wait, and every emergency
+  test parks a 128 KiB write first, so no test reaches this path. **Decision:** the emergency window is ONE end-to-end
+  deadline for what the caller waits (queue + write + reply; the same class as Codex F11's prerequisite reads) — on
+  expiry the caller gets the owner-readable "not confirmed; check ATAS" sentence and the record is UNKNOWN (rule 3:
+  ambiguous → UNKNOWN and reconcile). The connection's fate is decided by LIVENESS, not by the caller's wait: a peer
+  with no progress for the stall threshold is dropped so the health loop reconnects; a merely slow peer is kept (the
+  round-4 busy/stalled distinction, applied after the wire too). Test: stalled bridge, free gate, emergency cancel-all →
+  ≈ 2 s, the sentence, UNKNOWN, dropped when no progress; and the both-directions half — a slow-but-answering bridge
+  is kept and its reply lands.
+- **V3 (MED).** The ordinary half of `SendOutcome` is pinned by wall-clock only: mutant M14 (swap the two ordinary
+  sentences at `AtasConnector.cs:723`/`:725`) survived the whole suite, and
+  `An_ordinary_op_behind_a_stalled_write_still_gets_the_full_deadline` never reaches a gate-expiry branch — it is freed
+  by the gate-holder's own drop. Pin each ordinary sentence with a test that provably reaches its branch (the round-4b
+  premise-assertion pattern), and re-run M14 to RED.
+- **V4 (LOW).** Mutant M12 (`MaxRequestIdChars` → literal 61) survived but is equivalent (M13 and M12+M13 RED): note it,
+  no action unless the constant gains a second consumer.
+
+What held (keep it that way): per-caller emergency timings 2002/2002/2002 ms vs 9605/9602/9602 ms; saturation 1500 ×
+900 KiB → 2002 ms "bridge is busy" connected=True; stalled → 2006 ms "not responding" dropped; all seven `operator`
+spellings refused with STOP pressed; U2b's re-check bites (M15/M16 RED); 391 green, 0 flakes, 2 m 04 s under load; the
+round-4b fixture is a tooth (no machine state yields a false green). Probes on `u2a-verify-r4-probes`
+(`355d948`, `9885603`, `77abc37` in the `u2a-verify-r4` worktree) — lift what is useful into the suite.

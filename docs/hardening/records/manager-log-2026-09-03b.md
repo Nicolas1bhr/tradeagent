@@ -100,3 +100,12 @@ leave the merged combination unverified. Probe rebase in `u2a-rebase-probe`: **c
   session accepted on hello frames) is mandatory despite LOW. The box being up turns F12 ("NOT VERIFIED on Windows")
   into an on-box test run in round 5. Bounce: `briefs/U2a-r5-bounce.md`; the SAME builder is resumed when the U2a
   verifier vacates its slot.
+- 21:35 **U2a verifier reported** (Opus, 256K tokens, 33 min): **FAIL 2H/1M/1L**. V1 = Codex F1 PROVEN (a 203-char
+  `ClientOrderId` reached the fake broker; a forged `op-…` id became a live idempotency key). V2 NEW: emergency
+  cancel-all on a stalled bridge with a FREE gate → 10005 ms, non-owner wording, dead connection left up — decision:
+  one end-to-end emergency deadline for the caller's wait, UNKNOWN + the owner sentence on expiry, the connection's fate
+  by liveness. V3: ordinary `SendOutcome` sentences pinned by wall-clock only (M14 survived). Everything targeted held
+  with numbers (2002 ms emergency vs 9602 ms ordinary; saturation kept; seven spellings refused; 391 green, 0 flakes).
+  Findings appended to `briefs/U2a-r5-bounce.md`; the SAME builder resumed. Heavy legs: U14 builder r5 + U2a builder
+  r5 = 2. Both Codex worktrees (`u14-codex-r4`, `u2a-codex-r4`) and the verify worktrees stay until integration (the
+  probe branches hold reusable tests).
