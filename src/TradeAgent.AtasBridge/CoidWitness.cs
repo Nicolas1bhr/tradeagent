@@ -106,7 +106,7 @@ public sealed record CoidWitnessRecord
 /// find after a restart, and writes an engineering event to <see cref="ErrorLogName"/>. What must
 /// never happen is the write disappearing with nobody able to tell.
 /// </summary>
-public sealed class CoidWitness
+public sealed class CoidWitness : IDisposable
 {
     /// <summary>
     /// How many records the file keeps. Small on purpose: it is read into memory whole, and the
@@ -302,8 +302,16 @@ public sealed class CoidWitness
     /// <summary>The candidate this instance adopted at load, or null. Deleted once it is committed.</summary>
     string? _adopted;
 
-    /// <summary>Why this instance does not own the witness, or null while it does. See <see cref="Own"/>.</summary>
+    /// <summary>Why this instance does not own the witness, or null while it does. See <see cref="Lease"/>.</summary>
     string? _notOwned;
+
+    /// <summary>
+    /// THE LEASE: an exclusive handle on the lock file, taken at this instance's FIRST WRITE and held
+    /// until <see cref="Dispose"/> or process death. Null while this instance has never written —
+    /// which is every reader, for ever. See <see cref="Lease"/> for why it is a lifetime and not a
+    /// call.
+    /// </summary>
+    FileStream? _lease;
 
     /// <summary>
     /// WHAT THE SCAN FOUND, HELD UNTIL SOMEBODY WHO OWNS THE FILE CAN ACT ON IT.
@@ -319,7 +327,8 @@ public sealed class CoidWitness
     /// </summary>
     readonly List<(string Path, Envelope Envelope)> _viable = new();
     readonly List<(string Path, string Why)> _rejected = new();
-    bool _recovered;
+    bool _adoptedAlready;
+    bool _reported;
     bool _writeFailed;
     int _loggedFailures;
 
@@ -459,13 +468,13 @@ public sealed class CoidWitness
         {
             lock (_gate)
             {
-                // NO LOCK, NO WRITE. See Own: one owner per witness, and a writer that cannot take
-                // the lock refuses the order rather than racing a party whose semantics are unknown.
-                using var owned = Own();
-                if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return false; }
+                // NO LEASE, NO WRITE. See Lease: one owner per witness, and a writer that is not
+                // the owner refuses the order rather than racing a party whose semantics are unknown.
+                if (!Lease()) { NotOurs(_notOwned ?? "this witness is not ours to write"); return false; }
 
                 EnsureLoaded();
-                ApplyRecovery();
+                AdoptInMemory();
+                ReportAndQuarantine();
 
                 // EVERYTHING BEFORE THE ATTEMPT, KEPT, so a refusal can be undone exactly. See the
                 // rollback below for why a refused claim may not be left lying in memory.
@@ -528,11 +537,11 @@ public sealed class CoidWitness
         {
             lock (_gate)
             {
-                using var owned = Own();
-                if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return; }
+                if (!Lease()) { NotOurs(_notOwned ?? "this witness is not ours to write"); return; }
 
                 EnsureLoaded();
-                ApplyRecovery();
+                AdoptInMemory();
+                ReportAndQuarantine();
                 var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
                 if (i < 0) return;
 
@@ -924,12 +933,20 @@ public sealed class CoidWitness
 
             _viable.Add((candidate, envelope));
         }
+
+        // A REFUSAL IS FLAGGED EVEN BY A READER THAT WRITES NOTHING, and this is what keeps a zero
+        // from reading as a confident one. The owner also puts the reason in the sidecar; a reader
+        // must not, but it still KNOWS it refused something, and `records:0,io:ok` from a directory
+        // holding a candidate this build declined is the one answer that must never be produced by
+        // accident — for this file it means "this product never submitted that identifier".
+        //
+        // A clean single recovery is not flagged: nothing was refused.
+        if (_rejected.Count > 0 || _viable.Count > 1) _noted = true;
     }
 
     /// <summary>
-    /// ACTING ON THE SCAN, ONCE, AND ONLY AS THE OWNER. Caller holds <see cref="_gate"/> AND the
-    /// file lock — that is what makes it safe to move files and write the sidecar, because the
-    /// writer whose rewrite these candidates might be cannot be running at the same time.
+    /// ACTING ON THE SCAN IN MEMORY ONLY — SAFE FOR ANY READER, IN ANY PROCESS, AT ANY TIME, because
+    /// it changes no file. Caller holds <see cref="_gate"/>.
     ///
     /// TWO RIVALS MEAN NEITHER IS TRUSTED. Every viable candidate descends from the same commit and
     /// therefore carries the same generation, so nothing in the files distinguishes them. One writer
@@ -937,10 +954,34 @@ public sealed class CoidWitness
     /// a writer that is not this build, and guessing is how a claim gets dropped without anybody
     /// being told.
     /// </summary>
-    void ApplyRecovery()
+    void AdoptInMemory()
     {
-        if (_recovered) return;
-        _recovered = true;
+        if (_adoptedAlready) return;
+        _adoptedAlready = true;
+
+        // TWO RIVALS MEAN NEITHER IS TRUSTED — nothing in the files distinguishes them.
+        if (_viable.Count != 1) return;
+
+        _records.Clear();
+        Take(_viable[0].Envelope);
+        _adopted = _viable[0].Path;
+    }
+
+    /// <summary>
+    /// THE HALF THAT TOUCHES THE DISK, AND IT BELONGS TO THE OWNER ALONE. Caller holds
+    /// <see cref="_gate"/> AND the lease — that is what makes it safe to move files and write the
+    /// sidecar, because the writer whose rewrite these candidates might be cannot be running.
+    ///
+    /// It is separate from <see cref="AdoptInMemory"/> because a READER has to answer correctly
+    /// about a stranded rewrite — that is the whole point of the recovery — while changing nothing.
+    /// Adoption into this instance's own list is invisible outside the process; quarantining a file
+    /// and writing a sidecar line are not, and a reader that did them was making a diagnostic run
+    /// (`tools/probe`, on a machine where the bridge is not running) into a witness-modifying event.
+    /// </summary>
+    void ReportAndQuarantine()
+    {
+        if (_reported) return;
+        _reported = true;
 
         foreach (var (path, why) in _rejected)
         {
@@ -952,36 +993,29 @@ public sealed class CoidWitness
         _rejected.Clear();
 
         if (_viable.Count > 1)
-        {
             Note($"WARN coid-witness found {_viable.Count} rival uncommitted rewrites of generation " +
                  $"{_viable[0].Envelope.Generation} and adopted none of them: " +
                  string.Join(", ", _viable.Select(v => v.Path)));
-            _viable.Clear();
-            return;
-        }
-
-        if (_viable.Count == 1)
-        {
-            _records.Clear();
-            Take(_viable[0].Envelope);
-            _adopted = _viable[0].Path;
+        else if (_viable.Count == 1)
             Note($"coid-witness recovered an uncommitted rewrite (generation {_viable[0].Envelope.Generation}, " +
                  $"{_viable[0].Envelope.Records.Count} records) from {_viable[0].Path}");
-            _viable.Clear();
-        }
+
+        _viable.Clear();
     }
 
     /// <summary>
-    /// Recovery for a caller that does not already hold the lock — the read paths. A process that
-    /// cannot take the lock does not own the witness, so it recovers nothing and writes nothing: it
-    /// reads the committed file and answers from that. Caller holds <see cref="_gate"/>.
+    /// RECOVERY FOR A READ PATH, AND IT NEVER TAKES THE LEASE. It used to take the lock
+    /// opportunistically and treat getting it as being the owner, so a reader over a witness nobody
+    /// happened to own quarantined temps, created the lock file and wrote the sidecar —
+    /// <c>tools/probe</c> being precisely a thing an operator runs while the bridge is NOT running.
+    ///
+    /// A reader still has to ANSWER correctly about a stranded rewrite, so it adopts in memory,
+    /// which nothing outside this process can observe. Caller holds <see cref="_gate"/>.
     /// </summary>
     void EnsureRecovered()
     {
-        if (_recovered || _path is null) return;
-        using var owned = Own();
-        if (owned is null) return;
-        ApplyRecovery();
+        if (_path is null) return;
+        AdoptInMemory();
     }
 
     /// <summary>
@@ -1322,7 +1356,7 @@ public sealed class CoidWitness
     }
 
     /// <summary>
-    /// ONE OWNER PER WITNESS, AND THE LOCK IS HOW THAT IS DECIDED.
+    /// ONE OWNER PER WITNESS, AND THE LEASE IS HOW THAT IS DECIDED — FOR A LIFETIME, NOT A CALL.
     ///
     /// Round 3 treated this as a contention reducer that a writer could proceed without, on the
     /// argument that the compare-and-swap made the result correct anyway. That was wrong in the
@@ -1331,36 +1365,66 @@ public sealed class CoidWitness
     /// survive is an interleaving of a scenario the product does not support. Hardening a path
     /// nobody is meant to take costs correctness arguments forever; refusing it costs one branch.
     ///
-    /// So: no lock, no write. A writer that cannot take the lock inside the budget reports the
-    /// reason through <see cref="Trouble"/> and <see cref="Submitting"/> returns false, which makes
+    /// So: no lease, no write. A writer that cannot take it inside the budget reports the reason
+    /// through <see cref="Trouble"/> and <see cref="Submitting"/> returns false, which makes
     /// <c>Place</c> refuse the order — the same refusal as any other unwritable witness, and the
     /// safe direction. A read-only directory or a denied ACL lands here too, which is correct: a
     /// witness that cannot take its own lock cannot be written either.
     ///
-    /// The handle is released by process death like any other, so a crash cannot wedge it.
+    /// AND IT IS HELD, NOT RETAKEN. Taking and releasing it per call left two live instances taking
+    /// turns: A writes, releases, B writes, releases, and each is perfectly polite while the file
+    /// has two authors. The exclusion has to last as long as the writer does, so the handle is taken
+    /// at the first write and held until <see cref="Dispose"/> or process death — the OS releases it
+    /// either way, so a crashed bridge strands nothing and needs no timeout to recover from.
+    ///
+    /// READERS NEVER COME HERE. Ownership is a property of writing; a reader answers from the
+    /// committed file and its own memory. See <see cref="EnsureRecovered"/>.
     /// </summary>
-    IDisposable? Own()
+    bool Lease()
     {
-        if (_path is null) return null;
+        if (_path is null) return false;
+        if (_lease is not null) return true;          // already the owner, for the life of this instance
+
         var lockPath = _path + ".lock";
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                var held = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                _lease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                 _notOwned = null;
-                return held;
+                return true;
             }
             catch (Exception e)
             {
                 if (attempt >= LockAttempts)
                 {
                     _notOwned = $"another writer owns this witness ({lockPath}): {e.GetType().Name}";
-                    return null;
+                    return false;
                 }
                 Thread.Sleep(LockBackoffMs);
             }
         }
+    }
+
+    /// <summary>
+    /// Releases the lease. The instance stays usable — a later write takes the lease again — because
+    /// that is exactly the ATAS strategy stop/start cycle inside one process: the adapter is taken
+    /// down, must not go on owning the witness, and may be started again against the same object.
+    ///
+    /// Not the only release. The OS closes the handle when the process dies, which is what makes a
+    /// crashed bridge harmless: there is no lease file to clean up and no stale owner to time out.
+    /// </summary>
+    public void Dispose()
+    {
+        try
+        {
+            lock (_gate)
+            {
+                _lease?.Dispose();
+                _lease = null;
+            }
+        }
+        catch (Exception) { }
     }
 
     /// <summary>

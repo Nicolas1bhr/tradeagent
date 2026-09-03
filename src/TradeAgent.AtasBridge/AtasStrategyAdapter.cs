@@ -459,6 +459,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         }
 
         UntrackSecurities();
+
+        // AND THE WITNESS STOPS BEING OURS. The lease is held for the life of the owner, and a
+        // strategy ATAS has taken down is not the owner of anything — leaving it held would refuse
+        // the witness to a bridge started afterwards in the same ATAS process, for no reason. The
+        // instance stays usable: if this strategy is started again, its next write takes the lease
+        // back. Process death releases it too, which is what makes a crash harmless.
+        try { _witness.Dispose(); } catch (Exception) { /* teardown must finish */ }
     }
 
     // ---------------------------------------------------------------- the bound surfaces
