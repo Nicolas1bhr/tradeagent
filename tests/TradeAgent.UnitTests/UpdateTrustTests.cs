@@ -1,5 +1,6 @@
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Diagnostics;
 using TradeAgent.Gateway;
 using TradeAgent.Provisioning;
 using Xunit;
@@ -1052,30 +1053,131 @@ public class UpdateTrustTests
         Assert.Equal(ErrorCode.UPDATE_FAILED, ex.Info.Code);
     }
 
+    // ---- 2. the coupling is a seam a test can run --------------------------------------------------
+
     /// <summary>
-    /// A source-text gate, and it says so. TradeAgent.App is not built by this test suite, so the
-    /// three lines in AppHost that hand UpdateService its dependencies cannot be exercised here — a
-    /// verifier deleted them and the whole suite stayed green. Without the first two the updater
-    /// refuses every install (fail-closed, but bricked); without the third the gateway would keep
-    /// dispatching orders while Setup replaces the program. This asserts they are still written.
+    /// The three assignments that used to live in AppHost, exercised rather than grepped for.
+    ///
+    /// TradeAgent.App is not built by this suite, so a reviewer deleted one of them and watched all
+    /// 354 tests stay green; the source-text assertion that replaced it caught a deletion but not a
+    /// comment. UpdateGatewayCoupling.Attach is the same wiring somewhere a test can call it.
     /// </summary>
     [Fact]
-    public void The_composition_root_still_hands_the_updater_its_dependencies()
+    public async Task Attaching_the_updater_to_the_gateway_wires_both_halves_of_the_contract()
     {
-        var appHost = Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "AppHost.cs");
-        Assert.True(File.Exists(appHost), appHost);
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
 
-        var text = File.ReadAllText(appHost);
-        Assert.Contains("Updates.UnconfirmedWork =", text);
-        Assert.Contains("NeedingReconciliation().Count", text);
-        Assert.Contains("Updates.Activity =", text);
-        Assert.Contains("Gateway.InstallInProgress = () => Updates.InstallInProgress", text);
+        var f = Wellformed();
+        var updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, f.Sources());
+
+        // Before: neither side can see the other. The updater refuses because it cannot tell.
+        await updates.CheckAsync();
+        Assert.Null(updates.UnconfirmedWork);
+        Assert.Null(gw.InstallInProgress);
+
+        UpdateGatewayCoupling.Attach(gw, updates);
+
+        Assert.NotNull(updates.UnconfirmedWork);
+        Assert.NotNull(gw.InstallInProgress);
+        Assert.Equal(0, updates.UnconfirmedWork!());
+    }
+
+    /// <summary>
+    /// The provider half, against a real order the real gateway has flagged — not a lambda returning
+    /// a number chosen by the test.
+    /// </summary>
+    [Fact]
+    public async Task An_order_the_gateway_has_flagged_stops_the_install_through_the_seam()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+
+        var f = Wellformed();
+        var updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, f.Sources());
+        UpdateGatewayCoupling.Attach(gw, updates);
+        await updates.CheckAsync();
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), Guid.NewGuid().ToString("n"), TestEnv.Buy());
+        gw.Requests.MarkNeedsReconciliation(placed.RequestId, "the broker never answered");
+
+        Assert.Equal(1, updates.UnconfirmedWork!());
+        Assert.False(await updates.InstallAsync());
+        Assert.False(f.DownloadStarted);
+        Assert.Equal(0, f.Launches);
+        Assert.Contains("unconfirmed", updates.Message);
+    }
+
+    /// <summary>The log half: a refusal reaches the owner's own activity history, not a test list.</summary>
+    [Fact]
+    public async Task A_refusal_reaches_the_activity_history_through_the_seam()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, f.Sources());
+        UpdateGatewayCoupling.Attach(gw, updates);
+        await updates.CheckAsync();
+
+        Assert.False(await updates.InstallAsync());
+
+        var written = gw.Log.RecentActivity().Where(r => r.Text.Contains("cannot be verified")).ToList();
+        var row = Assert.Single(written);
+        Assert.Equal("warn", row.Level);
+    }
+
+    /// <summary>The latch half: a real install stops the real gateway dispatching, and lets go after.</summary>
+    [Fact]
+    public async Task An_install_running_through_the_seam_stops_the_gateway_dispatching()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var handle = db;
+
+        var f = Wellformed();
+        bool? authorizedDuringDownload = null;
+        UpdateService? updates = null;
+
+        var sources = f.Sources() with
+        {
+            Download = (_, sha, _, _) =>
+            {
+                f.DownloadStarted = true;
+                f.ShaHandedToTheDownload = sha;
+                authorizedDuringDownload = gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _);
+                return Task.FromResult(f.InstallerPath);
+            }
+        };
+        updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources);
+        UpdateGatewayCoupling.Attach(gw, updates);
+        await updates.CheckAsync();
+
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));   // control
+        Assert.True(await updates.InstallAsync());
+
+        Assert.False(authorizedDuringDownload);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.UPDATE_INSTALL_IN_PROGRESS, code);
+    }
+
+    /// <summary>
+    /// What remains a source assertion, and what it cannot catch: that AppHost CALLS the seam. This
+    /// is defeated by commenting the call out, exactly as the assertion it replaces was — the
+    /// difference is that everything the call DOES is now behavioural above, so the only thing left
+    /// unproved is one line of composition in a project no test builds.
+    /// </summary>
+    [Fact]
+    public void The_composition_root_still_calls_the_seam()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "AppHost.cs"));
+        Assert.Contains("UpdateGatewayCoupling.Attach(Gateway, Updates);", text);
     }
 
     /// <summary>
     /// The same kind of gate, for the same reason, on the two banner rules that a failed re-check
     /// used to walk through: the strip renders a REFUSAL rather than any Failed message, and it
-    /// expires the one refusal that stops being true. Both live in a file this suite cannot run.
+    /// expires the one refusal that stops being true. Both live in a file this suite cannot run,
+    /// and like the Attach call above, this catches a deletion or a revert and not a rewrite.
     /// </summary>
     [Fact]
     public void The_banner_still_distinguishes_a_refusal_from_a_failed_re_check()
