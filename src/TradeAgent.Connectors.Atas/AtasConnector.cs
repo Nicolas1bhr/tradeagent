@@ -51,8 +51,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// How long an EMERGENCY frame waits behind this process's own send queue before it stops
-    /// waiting and takes the connection down with it.
+    /// How long an EMERGENCY operation takes in total before the caller is told where it stands —
+    /// the send gate, the write and the reply, ONE bound over all three.
+    ///
+    /// It used to bound only the gate wait, and that was measured to be nowhere near enough. With
+    /// the gate FREE — a frozen ATAS, the owner pressing stop, nothing else in flight, which is the
+    /// most likely real shape of this — the emergency's ~100-byte frame lands in the socket buffer,
+    /// the write returns Sent, and the caller then served the ORDINARY ten-second reply timeout:
+    /// 10005 ms, the generic "ATAS did not answer" sentence with no instruction in it, and the dead
+    /// connection left up so no reconnect ever started (round-4 verify, V2). Five times the wait
+    /// the two seconds were chosen to prevent, on the path the feature exists for.
     ///
     /// A JUDGMENT, not a measurement, and the number is two seconds. Measured beforehand: at the
     /// shipped deadline an emergency cancel-all queued behind one stalled write took 9.76 s to come
@@ -60,25 +68,30 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// anything had been cancelled. Ten seconds is a long time to be told nothing while trying to
     /// stop.
     ///
-    /// So an emergency gets two seconds, and then the truth: the connection is dropped, the call
-    /// fails as INDEFINITE, and the reason says the bridge is not responding and the cancel is not
-    /// confirmed. That is worse information than a confirmed cancellation and far better than
-    /// silence, because it is the sentence that sends a person to their platform to look.
+    /// So an emergency gets two seconds — wherever they are spent — and then the truth: the call
+    /// fails as INDEFINITE and the reason says the operation is NOT confirmed and where to look.
+    /// That is worse information than a confirmed cancellation and far better than silence, because
+    /// it is the sentence that sends a person to their platform to look.
     ///
-    /// Dropping is not collateral damage, it is the point: the stalled writer holding the gate is
-    /// what made the emergency wait, and closing the handle frees it and starts the reconnect.
+    /// WHAT HAPPENS TO THE CONNECTION IS A SEPARATE QUESTION, decided by the peer's LIVENESS and not
+    /// by the caller's clock. A peer that has done nothing at all during the window is dropped, so
+    /// the handle closes, any wedged write dies and the health loop redials. A peer that is moving —
+    /// accepting our bytes, or sending us frames — is left alone, because it is our queue or its own
+    /// slowness and disconnecting it helps nobody. That is round 4's busy/stalled distinction,
+    /// applied after the wire as well as before it.
     ///
     /// Ordinary agent traffic keeps the full <see cref="WriteTimeout"/>. A quote that arrives late
     /// costs nothing, and an ordinary caller has no reason to tear down a connection that is merely
     /// busy.
     ///
-    /// THE COST THAT REMAINS, and it is not fixed by any of this: an emergency behind a bridge that
-    /// is genuinely busy still waits these two seconds and then returns UNKNOWN. It does not get its
-    /// cancellation through, and it cannot — the frame has not been sent. What it gets is a truthful
-    /// answer in two seconds instead of a wrong one in ten, and a connection left up so the retry it
-    /// is told to make has somewhere to go.
+    /// THE COST THAT REMAINS, and it is not fixed by any of this: an emergency against a bridge that
+    /// is genuinely busy, or slow to answer, still waits these two seconds and then returns UNKNOWN.
+    /// Its outcome is honestly unknown — the frame was queued, or sent and unanswered — and no
+    /// amount of classification changes that. What it gets is a truthful answer in two seconds
+    /// instead of a wrong one in ten, and a connection left up so the retry it is told to make has
+    /// somewhere to go.
     /// </summary>
-    public TimeSpan EmergencyGateWait { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan EmergencyDeadline { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Whether this operation REDUCES RISK. Classified by intent, not by who asked.
@@ -115,6 +128,18 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// busy", which are the same two seconds of waiting and completely different news.
     /// </summary>
     long _lastWriteProgressAt;
+
+    /// <summary>
+    /// <see cref="Environment.TickCount64"/> when the peer last did ANYTHING — accepted bytes of
+    /// ours, or sent us a frame of its own.
+    ///
+    /// The write-progress clock above answers "can we get bytes out". This one answers "is anything
+    /// alive over there", which is the question that matters once the frame HAS gone out and the
+    /// reply is what is missing. A bridge that is answering heartbeats while it works through a
+    /// backlog is slow; one that has gone silent in both directions has stopped.
+    /// </summary>
+    long _lastPeerActivityAt;
+
     Task? _accept;
     volatile bool _connected;
     BridgeHello? _hello;
@@ -354,6 +379,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         BridgeFrame? f;
         try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { return true; }
         if (f is null) return true;
+
+        // A frame arrived, whatever it says: the far end is alive. Recorded before any branch below
+        // can discard it, because liveness is not a judgement about the CONTENT — a malformed or
+        // unauthenticated frame still proves something over there is running and talking.
+        PeerIsAlive();
 
         // The authentication frames are handled before anything else so that a peer which is about
         // to be refused cannot have its capabilities or its events read first.
@@ -633,6 +663,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 }
                 sent += n;
                 Volatile.Write(ref _lastWriteProgressAt, Environment.TickCount64);
+                // Deliberately NOT PeerIsAlive(). The kernel taking our bytes means the socket
+                // buffer had room, not that anything read them — an 8 KiB buffer swallows a whole
+                // emergency frame while the far end is a corpse. Buffer-level progress answers "can
+                // we get bytes out" (the gate-expiry question) and nothing about whether the peer
+                // is alive (the reply question).
             }
             return SendOutcome.Sent;
         }
@@ -684,6 +719,28 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         catch (JsonException) { /* a malformed event must not take the connector down */ }
     }
 
+    /// <summary>The peer did something. Called from the read loop and from every accepted chunk.</summary>
+    void PeerIsAlive() => Volatile.Write(ref _lastPeerActivityAt, Environment.TickCount64);
+
+    /// <summary>
+    /// Has the peer SENT US ANYTHING since <paramref name="since"/> (a <c>TickCount64</c> stamp)?
+    ///
+    /// The keep-signal is "any frame at all", not "a heartbeat", and the difference is the whole
+    /// reason this is safe on a two-second window. The bridge heartbeats every 5 s
+    /// (<c>BridgeServer.HeartbeatInterval</c>), so a healthy connection is routinely silent for
+    /// longer than an emergency waits and a heartbeat-only test would drop healthy bridges — the
+    /// exact defect 9e50559 fixed on the other branch. But a bridge that is working is emitting
+    /// replies and events, and a bridge that is idle answers an emergency in milliseconds. Total
+    /// silence in BOTH directions for the whole window, with an emergency outstanding, is what
+    /// "not responding" means.
+    ///
+    /// The trade, stated: a bridge that is alive but wedged on this one operation is dropped and
+    /// redialled. That costs a reconnect, and a reconnect is the right remedy for a wedged
+    /// connection — it is also the only thing that makes the retry this failure advises worth
+    /// making.
+    /// </summary>
+    bool PeerMovedSince(long since) => Volatile.Read(ref _lastPeerActivityAt) > since;
+
     async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
     {
         if (!_connected || _out is null)
@@ -693,13 +750,18 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         var tcs = new TaskCompletionSource<BridgeFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
 
+        // THE CALLER'S CLOCK STARTS HERE, not at each phase. For an emergency the whole of what
+        // follows — the gate, the write and the reply — has to fit inside one bound, because the
+        // person waiting is not waiting for a phase.
+        var startedAt = Environment.TickCount64;
+        var emergency = IsRiskReducing(op) || RiskReducingScope.IsActive;
+
         try
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
-            var emergency = IsRiskReducing(op);
             var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
-                emergency ? EmergencyGateWait : WriteTimeout, emergency);
+                emergency ? EmergencyDeadline : WriteTimeout, emergency);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
@@ -729,8 +791,15 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         catch (ConnectorTransportException) { throw; }
         catch (Exception ex) { _pending.TryRemove(id, out _); throw new ConnectorTransportException("could not reach the ATAS bridge", ex); }
 
+        // WHAT IS LEFT OF THE CALLER'S BUDGET, not a fresh one. An emergency that spent 1.9 s
+        // getting its frame out does not then get a further ten seconds to wait for the answer —
+        // that arithmetic is what produced a 10005 ms "emergency" against an idle stalled bridge.
+        var replyWait = emergency
+            ? Remaining(startedAt, EmergencyDeadline)
+            : _timeout;
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(_timeout);
+        timeout.CancelAfter(replyWait);
         try
         {
             var frame = await tcs.Task.WaitAsync(timeout.Token);
@@ -743,9 +812,41 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _pending.TryRemove(id, out _);
-            // Timed out: we do not know whether ATAS acted. Indefinite by construction.
-            throw new ConnectorTransportException($"ATAS did not answer '{op}' within {_timeout.TotalSeconds:0}s");
+
+            // Timed out waiting for the answer. The frame WENT OUT, so this is the most indefinite
+            // state there is and stays UNKNOWN either way — but an emergency gets the sentence
+            // written for the owner rather than the one written for a log, and the connection's
+            // fate is decided by the PEER, not by the fact that this caller ran out of patience.
+            if (!emergency)
+                throw new ConnectorTransportException($"ATAS did not answer '{op}' within {replyWait.TotalSeconds:0}s");
+
+            if (PeerMovedSince(startedAt))
+                // Something is alive over there — it took our bytes, or it is sending us frames.
+                // Slow, or busy with a backlog. Dropping it would cost the reconnect and buy
+                // nothing, and the retry we advise needs somewhere to go.
+                throw new ConnectorTransportException(
+                    $"the bridge is busy; '{op}' is NOT confirmed. The connection is still up — " +
+                    "try again, and check your positions and orders in ATAS.");
+
+            // Nothing at all, in either direction, for the whole window. Drop it: that is what
+            // closes the handle, kills any wedged write and starts the redial, so the retry this
+            // sentence asks for has a connection to run on.
+            DropStalledPeer();
+            throw new ConnectorTransportException(
+                $"the bridge is not responding; '{op}' is NOT confirmed. The connection has been " +
+                "dropped and will be retried — check your positions and orders in ATAS.");
         }
+    }
+
+    /// <summary>
+    /// What is left of <paramref name="budget"/> since <paramref name="startedAt"/>, never negative
+    /// and never zero — a zero would cancel before the already-arrived answer could be read.
+    /// </summary>
+    static TimeSpan Remaining(long startedAt, TimeSpan budget)
+    {
+        var spent = TimeSpan.FromMilliseconds(Environment.TickCount64 - startedAt);
+        var left = budget - spent;
+        return left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1);
     }
 
     async Task<T> Rpc<T>(string op, object? args, CancellationToken ct)
