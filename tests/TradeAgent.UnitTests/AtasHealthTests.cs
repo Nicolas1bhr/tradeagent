@@ -122,7 +122,7 @@ public class AtasHealthTests
         var hello = new BridgeHello
         {
             BridgeVersion = "0.9.1",
-            BridgeProtocolVersion = 2,
+            BridgeProtocolVersion = Versions.BridgeProtocolVersion,   // a v2 peer never reaches BridgeRow: _hello stays null for it
             WitnessFailure = @"ERROR coid-witness rewrite did not land. file=C:\Users\m\AppData\Local\TradeAgent\bridge\coid-witness.json UnauthorizedAccessException: Access to the path is denied."
         };
 

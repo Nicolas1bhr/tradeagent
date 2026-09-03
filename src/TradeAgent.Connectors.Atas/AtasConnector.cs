@@ -285,7 +285,17 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // challenge has been answered is not evidence of anything, and dropping the connection for
         // it would add a disconnect path that buys nothing. Discarding the frame already leaves the
         // peer with no effect on this process at all, and the status row still names it.
-        if (f.Event is not null) { if (_authenticated) HandleEvent(f); return true; }
+        // AND A REFUSED PEER RAISES NOTHING. This asked only whether the peer had authenticated, so a
+        // version-2 bridge — which authenticates perfectly well, it is this product's own older DLL —
+        // went on raising order, execution, position, account, quote and connection events into the
+        // application while this same connector reported FAILED and refused it every RPC. "Refused
+        // outright" was true of what this process ASKS and false of what it BELIEVES. A peer whose
+        // protocol this build does not speak is refused as a connection, both directions.
+        if (f.Event is not null)
+        {
+            if (_authenticated && _incompatible is null) HandleEvent(f);
+            return true;
+        }
 
         if (f.Op == BridgeOps.Hello)
         {

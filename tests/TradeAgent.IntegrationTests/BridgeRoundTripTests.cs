@@ -385,6 +385,57 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// A REFUSED PEER IS REFUSED AS A CONNECTION, NOT ONLY FOR THE CALLS THIS PROCESS MAKES.
+    ///
+    /// The mismatch branch sets <c>_connected = false</c> and leaves the read loop alive, and the
+    /// event branch asked only whether the peer had AUTHENTICATED. So a version-2 bridge — which
+    /// authenticates perfectly well, it is this product's own older DLL — could go on raising order,
+    /// execution, position, account, quote and connection events into the application, while the
+    /// same connector reported FAILED and refused it every RPC. "Refused outright" was true of what
+    /// this process ASKS and false of what it BELIEVES.
+    ///
+    /// This is the version the bump exists for: the DLL actually deployed in ATAS's Strategies
+    /// folder answers 2, and its events would describe orders placed by a build that sends them
+    /// after a failed witness rewrite.
+    /// </summary>
+    [Fact]
+    public async Task A_bridge_speaking_the_previous_protocol_raises_no_events_into_the_application()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var seen = 0;
+        connector.QuoteChanged += _ => Interlocked.Increment(ref seen);
+        connector.ConnectionChanged += _ => Interlocked.Increment(ref seen);
+        connector.OrderChanged += _ => Interlocked.Increment(ref seen);
+
+        // A REAL, AUTHENTICATED peer — the whole point is that it passes every other gate.
+        await using var bridge = new StubBridge(pipe, new BridgeHello
+        {
+            BridgeProtocolVersion = 2,
+            BridgeVersion = "0.1.1", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+            SupportsClientOrderId = true, SupportsOrderHistory = true
+        });
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+
+        // One branch gates all six event kinds, so two of them settle it — and these two are the
+        // ones that need no record shape to be built by hand.
+        var before = Volatile.Read(ref seen);
+        await bridge.RaiseEvent(BridgeEvents.Quote,
+                                new QuoteInfo("ES", 4200.25m, 4200.50m, null, null, null, DateTimeOffset.UtcNow));
+        await bridge.RaiseEvent(BridgeEvents.Connection, new { connected = true });
+        await Task.Delay(300);
+
+        Assert.Equal(before, Volatile.Read(ref seen));
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+    }
+
+    /// <summary>
     /// A bridge speaking the wrong protocol version is still allowed to say which version it is —
     /// and still allowed nothing else.
     ///
