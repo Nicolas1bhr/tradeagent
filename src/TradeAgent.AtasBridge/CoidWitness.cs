@@ -191,6 +191,15 @@ public sealed class CoidWitness
 
     bool _loaded;
     bool _readFailed;
+
+    /// <summary>
+    /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
+    /// file carries, and the fingerprint of its exact bytes (null when nothing is committed). Every
+    /// rewrite this instance writes names them, and every rewrite this instance ADOPTS has to name
+    /// them. Updated only by a replace that actually landed.
+    /// </summary>
+    long _generation;
+    string? _committedHash;
     bool _writeFailed;
     int _loggedFailures;
 
@@ -515,93 +524,184 @@ public sealed class CoidWitness
         _loaded = true;
         if (_path is null) return;
 
-        // THE REWRITE THAT NEVER LANDED, READ FIRST. Without this the claim in an uncommitted temp
-        // is invisible to every reader forever, which is the whole of the failure this file was
-        // rewritten to close: on a contended Windows machine a replace is refused, the newer state
-        // stays in the temp, the process ends, and the durable answer to "did this product submit
-        // this identifier" becomes NO for an identifier that was handed to ATAS microseconds later.
-        // See UncommittedRewrite for the rule and for why an OLDER temp is ignored.
-        if (Adopt(UncommittedRewrite(_path))) return;
+        var committedText = ReadTolerantly(_path, out var unreadable);
+        var committed = committedText is null ? null : Parse(committedText);
+        if (committedText is not null && committed is null) unreadable = true;
 
-        var json = ReadTolerantly(_path, out var failed);
-        _readFailed = failed;
-        if (json is null) return;
-        if (Adopt(json)) return;
+        // The lineage of what is committed, fixed before anything is adopted: every rewrite this
+        // instance writes will name these, and every rewrite it adopts has to name them already.
+        _committedHash = committedText is null ? null : Fingerprint(committedText);
+        _generation = committed?.Generation ?? 0;
+
+        // THE REWRITE THAT NEVER LANDED, PREFERRED WHEN IT DESCENDS FROM WHAT IS COMMITTED. Without
+        // this the claim in an uncommitted temp is invisible to every reader forever, which is the
+        // failure this file was rewritten to close: on a contended Windows machine a replace is
+        // refused, the newer state stays in the temp, the process ends, and the durable answer to
+        // "did this product submit this identifier" becomes NO for an identifier that was handed to
+        // ATAS microseconds later. See AdoptUncommittedRewrite for the rule.
+        if (AdoptUncommittedRewrite(committedText, committed)) return;
+
+        _readFailed = unreadable;
 
         // A truncated or hand-edited file is not a crash and is not evidence either. Treat it as
         // unreadable — the token says so — and let this session write a clean one. The records lost
         // were claims about orders from runs that have already ended.
-        _readFailed = true;
+        if (committed is not null) Take(committed);
+    }
+
+    /// <summary>An envelope, or null when the text is not one. Caller holds <see cref="_gate"/>.</summary>
+    static Envelope? Parse(string json)
+    {
+        try { return JsonSerializer.Deserialize<Envelope>(json, Opts); }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>Copies an envelope's records in. Caller holds <see cref="_gate"/>.</summary>
+    void Take(Envelope envelope)
+    {
+        foreach (var r in envelope.Records)
+            if (!string.IsNullOrEmpty(r.ClientOrderId)) _records.Add(r);
     }
 
     /// <summary>
-    /// Parses one envelope into <see cref="_records"/>. False — with the list left empty — when the
-    /// text is not an envelope at all, which is how a truncated temp is refused in favour of the
-    /// committed file. Caller holds <see cref="_gate"/>.
+    /// THE RECOVERY RULE, AND IT IS LINEAGE RATHER THAN TIME.
+    ///
+    /// An uncommitted temp is adopted ONLY when it is provably the rewrite that this exact committed
+    /// file was about to become. Three conditions, all of them required:
+    ///
+    ///   1. IT HAS RECORDS. An envelope deserialises with <c>Records</c> defaulting to an empty
+    ///      list, so a file containing <c>{}</c> — or a legitimately empty rewrite — parses
+    ///      perfectly and says nothing. Adopting one would shadow a good committed file with a void
+    ///      and the next <see cref="Save"/> would COMMIT that void: permanent loss of every claim,
+    ///      caused by the recovery meant to prevent loss. Zero records is never adopted.
+    ///
+    ///   2. ITS PREDECESSOR IS THE COMMITTED CONTENT. <see cref="Envelope.Predecessor"/> must equal
+    ///      the fingerprint of the committed file's exact bytes. This is what makes it descent
+    ///      rather than resemblance.
+    ///
+    ///   3. ITS GENERATION IS THE NEXT ONE. Exactly <c>committed.Generation + 1</c> — or exactly 1
+    ///      with no predecessor, when nothing is committed at all.
+    ///
+    /// WHY TIME IS NOT IN THAT LIST ANY MORE, and this is the correction that matters. A rule that
+    /// adopted "the newest temp" was wrong in both directions. An OLDER envelope preserved with a
+    /// later mtime — a backup tool, a copy, a hand-restored file — resurrects identifiers that
+    /// <see cref="Trim"/> removed, and those go straight into <see cref="PriorSessionIds"/>, then
+    /// into the cross-session reading, and set SupportsClientOrderId TRUE from state that is not in
+    /// the committed file at all. And equal timestamps or a clock that went backwards would refuse a
+    /// perfectly good recovery. Under lineage neither is possible: a preserved older envelope does
+    /// not descend from the current commit whatever its mtime says, and a genuine failed rewrite
+    /// does whatever its mtime says. Time is now used ONLY to order candidates, never to qualify
+    /// one.
+    ///
+    /// A REJECTED CANDIDATE IS REPORTED, not silently skipped — a temp lying beside the witness that
+    /// does not descend from it is a fact somebody needs. It goes in the sidecar with the reason.
+    ///
+    /// It writes nothing else: the adopted content is not committed here. A reader may be
+    /// <c>tools/probe</c> or <see cref="PriorSession"/> on ATAS's event thread, and committing from
+    /// a read path would race the writer that owns the temp. Convergence happens on this session's
+    /// next <see cref="Save"/>, which serialises the adopted records back out under the next
+    /// generation and renames over the top.
+    ///
+    /// Caller holds <see cref="_gate"/>.
     /// </summary>
-    bool Adopt(string? json)
+    bool AdoptUncommittedRewrite(string? committedText, Envelope? committed)
     {
-        if (json is null) return false;
-        try
+        foreach (var candidate in Candidates())
         {
-            if (JsonSerializer.Deserialize<Envelope>(json, Opts)?.Records is { } list)
+            var text = ReadTolerantly(candidate, out var unreadable);
+            if (text is null)
             {
-                foreach (var r in list)
-                    if (!string.IsNullOrEmpty(r.ClientOrderId)) _records.Add(r);
-                return true;
+                if (unreadable) RejectCandidate(candidate, "it could not be read");
+                continue;
             }
+
+            var envelope = Parse(text);
+            if (envelope is null) { RejectCandidate(candidate, "it is not a witness envelope"); continue; }
+            if (envelope.Records.Count == 0) { RejectCandidate(candidate, "it contains no records"); continue; }
+            if (!DescendsFrom(envelope, committedText, committed))
+            {
+                RejectCandidate(candidate,
+                    $"it does not descend from the committed file " +
+                    $"(temp generation={envelope.Generation} predecessor={envelope.Predecessor ?? "<none>"}; " +
+                    $"committed generation={(committed is null ? "<unreadable>" : committed.Generation.ToString())} " +
+                    $"fingerprint={(committedText is null ? "<absent>" : Fingerprint(committedText))})");
+                continue;
+            }
+
+            Take(envelope);
+            return true;
         }
-        catch (JsonException) { }
-        _records.Clear();
         return false;
     }
 
     /// <summary>
-    /// THE CONTENT OF A REWRITE WHOSE RENAME NEVER LANDED, or null when there is no such thing.
+    /// Whether one envelope is the rewrite THIS committed content was about to become. See
+    /// <see cref="AdoptUncommittedRewrite"/> for the argument; this is only the arithmetic.
     ///
-    /// THE RULE, STATED SO IT CAN BE ARGUED WITH. The temp is used instead of the committed file
-    /// when all three hold: it exists and can be read; **it parses** (checked by the caller); and
-    /// either the committed file does not exist, or the temp's last-write time is **strictly newer**
-    /// than the committed file's.
-    ///
-    ///   * IT PARSES, because <see cref="Save"/> writes the temp with <c>File.WriteAllText</c>,
-    ///     which is not atomic — a crash in the middle of one leaves a truncated file. This envelope
-    ///     ends <c>]}</c>, so a truncation that still parses is not reachable in practice, and a
-    ///     temp that does not parse is ignored in favour of the committed file rather than treated
-    ///     as corruption.
-    ///
-    ///   * STRICTLY NEWER, because a successful save CONSUMES its own temp: the replace moves it
-    ///     onto the real name. A temp that outlives a save can therefore only be the product of a
-    ///     rewrite whose rename failed — and it is then, by construction, the more complete record,
-    ///     since it was serialised from the same in-memory list plus the claim that failed to land.
-    ///     A tie goes to the committed file: that one was agreed, and equal timestamps are not
-    ///     evidence that the temp is ahead.
-    ///
-    ///   * AND THE COST OF THAT LAST CHOICE, STATED. On a filesystem with coarse timestamps — FAT32
-    ///     is 2 seconds — a tie is reachable and the recovery would not happen. The real path is
-    ///     %LOCALAPPDATA% on NTFS (100 ns) and the dev and CI paths are APFS and ext4. NOT VERIFIED
-    ///     on FAT, and not worth a sequence number on the record to close.
-    ///
-    /// READ-ONLY. It does not try to commit what it adopts. A reader here may be <c>tools/probe</c>
-    /// or <see cref="PriorSession"/> on ATAS's event thread, neither of which may start writing
-    /// files, and committing from a read path would race the writer that owns the temp. Convergence
-    /// happens instead on this session's next <see cref="Save"/>, which serialises the adopted
-    /// records back out and renames over the top.
+    /// The middle case is the awkward one: the committed file EXISTS but does not parse. Its
+    /// generation is then unknowable, so the fingerprint is the whole of the test — which is sound,
+    /// because the fingerprint is over the exact bytes and is strictly the stronger of the two
+    /// checks. The generation comparison adds confirmation, never permission.
     /// </summary>
-    static string? UncommittedRewrite(string path)
+    static bool DescendsFrom(Envelope temp, string? committedText, Envelope? committed)
     {
+        if (committedText is null) return temp.Predecessor is null && temp.Generation == 1;
+        if (!string.Equals(temp.Predecessor, Fingerprint(committedText), StringComparison.Ordinal)) return false;
+        if (committed is null) return true;
+        return temp.Generation == committed.Generation + 1;
+    }
+
+    /// <summary>
+    /// Temps that might be an uncommitted rewrite of this file, newest first. Time orders them and
+    /// nothing more: <see cref="DescendsFrom"/> decides which one is real.
+    /// </summary>
+    IEnumerable<string> Candidates()
+    {
+        if (_path is null) return [];
         try
         {
-            var tmp = TempPathFor(path);
-            if (!File.Exists(tmp)) return null;
-            if (File.Exists(path) && File.GetLastWriteTimeUtc(tmp) <= File.GetLastWriteTimeUtc(path)) return null;
-            return ReadTolerantly(tmp, out _);
+            var dir = System.IO.Path.GetDirectoryName(_path);
+            if (string.IsNullOrEmpty(dir)) return [];
+            return Directory.GetFiles(dir, System.IO.Path.GetFileName(_path) + ".tmp*")
+                            .OrderByDescending(File.GetLastWriteTimeUtc)
+                            .ToArray();
         }
-        catch (Exception) { return null; }
+        catch (Exception) { return []; }
     }
+
+    /// <summary>A temp beside the witness that is not a rewrite of it is a fact, not noise.</summary>
+    void RejectCandidate(string candidate, string why) =>
+        Note($"ignored {candidate}: {why}");
 
     /// <summary>The rewrite in progress, and the rewrite that never landed. One name, two meanings.</summary>
     static string TempPathFor(string path) => path + ".tmp";
+
+    /// <summary>
+    /// A NON-CRYPTOGRAPHIC FINGERPRINT, AND THAT IS THE RIGHT CHOICE HERE — FNV-1a, 64 bit, over the
+    /// UTF-8 bytes.
+    ///
+    /// What it has to do is tell "this rewrite was derived from that exact committed content" from
+    /// "this file merely looks like a rewrite". Accidental collision is around one in 1.8e19, which
+    /// is far below every other risk on this path.
+    ///
+    /// What it deliberately does NOT do is resist a forger, and nothing is lost by that: anyone who
+    /// can write <c>coid-witness.json.tmp</c> in this directory can write <c>coid-witness.json</c>
+    /// itself, so a cryptographic digest would move no boundary — it would only be recomputable by
+    /// the same attacker. Against that, this file promises to use System.Text.Json and System.IO and
+    /// nothing else, because it is deployed into ATAS's Strategies folder by filename prefix (trap
+    /// 34) and a dependency that is silently not copied fails inside ATAS with no message anywhere.
+    /// Eight lines of arithmetic keeps that promise literally.
+    /// </summary>
+    static string Fingerprint(string text)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes(text))
+        {
+            hash ^= b;
+            hash *= 1099511628211UL;
+        }
+        return hash.ToString("x16");
+    }
 
     /// <summary>
     /// A read that survives the file being REPLACED under it.
@@ -665,15 +765,32 @@ public sealed class CoidWitness
         if (_path is null) return false;
         var tmp = TempPathFor(_path);
 
+        // THE LINEAGE GOES IN THE FILE, not in the timestamps. It names the generation after the
+        // committed one and the fingerprint of the committed content it was derived from, which is
+        // what lets a later reader tell this rewrite from any other file lying beside the witness.
+        var envelope = new Envelope
+        {
+            Generation = _generation + 1,
+            Predecessor = _committedHash,
+            Records = _records
+        };
+        var text = JsonSerializer.Serialize(envelope, Opts);
+
         // Not retried: a temp that cannot be written at all is a directory problem, not contention,
         // and the retry budget belongs to the replace. It is reported on the same path as a refused
         // replace, because a claim that never reached even the temp is just as lost.
-        try { File.WriteAllText(tmp, JsonSerializer.Serialize(new Envelope { Records = _records }, Opts)); }
+        try { File.WriteAllText(tmp, text); }
         catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
 
         for (var attempt = 1; ; attempt++)
         {
-            try { _replace(tmp, _path); return true; }
+            try
+            {
+                _replace(tmp, _path);
+                _generation = envelope.Generation;
+                _committedHash = Fingerprint(text);
+                return true;
+            }
             catch (Exception e) when (Transient(e) && attempt < ReplaceAttempts)
             {
                 Thread.Sleep(ReplaceBackoffMs * attempt);
@@ -704,12 +821,15 @@ public sealed class CoidWitness
     {
         _writeFailed = true;
         var newest = _records.Count > 0 ? _records[^1].ClientOrderId : "<none>";
-        var line = $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. file={_path} " +
+        var line = $"ERROR coid-witness rewrite did not land. file={_path} " +
                    $"temp_holding_newer_state={tmp} newest_claim={newest} records_in_memory={_records.Count} " +
                    $"{e.GetType().Name}: {e.Message}";
         LastWriteFailure = line;
-        AppendToErrorLog(line);
+        Note(line);
     }
+
+    /// <summary>One line into the sidecar. Caller holds <see cref="_gate"/>.</summary>
+    void Note(string line) => AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {line}");
 
     /// <summary>
     /// Appends one line to <see cref="ErrorLogName"/> beside the witness. Bounded at
@@ -763,6 +883,21 @@ public sealed class CoidWitness
     sealed class Envelope
     {
         [JsonPropertyName("version")] public int Version { get; set; } = 1;
+
+        /// <summary>
+        /// WHICH REWRITE THIS IS, counted from the file rather than from the process. Loaded from
+        /// whatever is committed and incremented by one on every successful replace, so it survives
+        /// a restart and is a property of the FILE's history, not of any run's memory.
+        /// </summary>
+        [JsonPropertyName("generation")] public long Generation { get; set; }
+
+        /// <summary>
+        /// THE FINGERPRINT OF THE COMMITTED CONTENT THIS REWRITE WAS DERIVED FROM, or null when it
+        /// was derived from no committed file at all. This is the whole of the lineage test — see
+        /// <see cref="DescendsFrom"/>.
+        /// </summary>
+        [JsonPropertyName("predecessor")] public string? Predecessor { get; set; }
+
         [JsonPropertyName("records")] public List<CoidWitnessRecord> Records { get; set; } = new();
     }
 }

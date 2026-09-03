@@ -37,7 +37,44 @@ public class CoidWitnessTests : IDisposable
     }
 
     string File_ => Path.Combine(_dir, "coid-witness.json");
-    string Temp_ => File_ + ".tmp";
+
+    /// <summary>
+    /// Every temp lying beside the witness. A glob rather than one name because a writer gives its
+    /// own rewrites unique names — see <see cref="CoidWitness"/> — so "was a temp left behind" is a
+    /// question about a set.
+    /// </summary>
+    string[] Temps() => Directory.Exists(_dir) ? Directory.GetFiles(_dir, "coid-witness.json.tmp*") : [];
+
+    /// <summary>
+    /// FNV-1a 64 over UTF-8 — the same arithmetic <see cref="CoidWitness"/> uses, restated here
+    /// deliberately. A test that asked the production code for the fingerprint could not notice the
+    /// production fingerprint changing; this way a change to it shows up as a failing lineage test.
+    /// </summary>
+    static string Fingerprint(string text)
+    {
+        var hash = 14695981039346656037UL;
+        foreach (var b in System.Text.Encoding.UTF8.GetBytes(text)) { hash ^= b; hash *= 1099511628211UL; }
+        return hash.ToString("x16");
+    }
+
+    string CommittedText() => File.ReadAllText(File_);
+
+    long CommittedGeneration() =>
+        System.Text.Json.JsonDocument.Parse(CommittedText()).RootElement.GetProperty("generation").GetInt64();
+
+    /// <summary>One acknowledged record, in the shape the file stores.</summary>
+    static string RecordJson(string id, string session) =>
+        $$"""{"client_order_id":"{{id}}","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-{{id}}","identified_at":"2026-01-01T00:00:01+00:00"}""";
+
+    /// <summary>Writes a temp beside the witness with exactly the lineage a test wants to try.</summary>
+    void WriteTemp(long generation, string? predecessor, string records, DateTime? at = null)
+    {
+        var path = File_ + ".tmp";
+        var pred = predecessor is null ? "null" : $"\"{predecessor}\"";
+        File.WriteAllText(path,
+            $$"""{"version":1,"generation":{{generation}},"predecessor":{{pred}},"records":[{{records}}]}""");
+        File.SetLastWriteTimeUtc(path, at ?? File.GetLastWriteTimeUtc(File_).AddMinutes(5));
+    }
 
     CoidWitness Session() => new(File_);
 
@@ -353,7 +390,7 @@ public class CoidWitnessTests : IDisposable
         // A leftover temp no longer means a lost record — the assertions above just proved none was
         // lost, and a reader prefers a newer temp. It means a rename was still refused after the
         // full retry budget, which on Windows is a fact about the machine worth surfacing.
-        Assert.False(File.Exists(Temp_), "the temporary file was left behind: a replace was refused for the whole retry budget");
+        Assert.Empty(Temps());
     }
 
     // ------------------------------------------------------- the rename that does not land
@@ -383,7 +420,7 @@ public class CoidWitnessTests : IDisposable
 
         // Every attempt refused, so nothing was ever committed under the real name.
         Assert.False(File.Exists(File_));
-        Assert.True(File.Exists(Temp_), "the rewrite should have left its temp behind");
+        Assert.NotEmpty(Temps());
 
         // The restart: the process that wrote it is gone, and a new session reads what it left.
         var next = Session();
@@ -392,19 +429,20 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// The other direction of the same rule, and the one that keeps it from being a way to lose
-    /// records rather than keep them: an OLDER temp is not evidence that the durable file is behind.
-    /// A tie goes to the committed file — it is the one that was agreed.
+    /// A temp that is a perfectly good envelope, with records, but that is not descended from THIS
+    /// committed file. Something else's rewrite, a copy, a hand-restored file. It is not a recovery
+    /// and it does not displace anything.
     /// </summary>
     [Fact]
-    public void A_stale_temp_does_not_displace_a_newer_committed_file()
+    public void A_temp_that_does_not_descend_from_the_committed_file_is_ignored()
     {
         var first = Session();
         Submit(first, "TA-COMMITTED");
         first.Identified("TA-COMMITTED", "BRK-COMMITTED");
 
-        File.WriteAllText(Temp_, "{\"version\":1,\"records\":[]}");
-        File.SetLastWriteTimeUtc(Temp_, File.GetLastWriteTimeUtc(File_) - TimeSpan.FromMinutes(5));
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: "not-this-file",
+                  records: RecordJson("TA-FOREIGN", "some-other-session"),
+                  at: File.GetLastWriteTimeUtc(File_) - TimeSpan.FromMinutes(5));
 
         var reader = Session();
         Assert.Equal("BRK-COMMITTED", reader.PriorSession("TA-COMMITTED")!.BrokerOrderId);
@@ -423,8 +461,8 @@ public class CoidWitnessTests : IDisposable
         Submit(first, "TA-GOOD");
         first.Identified("TA-GOOD", "BRK-GOOD");
 
-        File.WriteAllText(Temp_, "{\"version\":1,\"records\":[{\"client_order");
-        File.SetLastWriteTimeUtc(Temp_, File.GetLastWriteTimeUtc(File_) + TimeSpan.FromMinutes(5));
+        File.WriteAllText(File_ + ".tmp", "{\"version\":1,\"records\":[{\"client_order");
+        File.SetLastWriteTimeUtc(File_ + ".tmp", File.GetLastWriteTimeUtc(File_) + TimeSpan.FromMinutes(5));
 
         var reader = Session();
         Assert.Equal("BRK-GOOD", reader.PriorSession("TA-GOOD")!.BrokerOrderId);
@@ -442,7 +480,7 @@ public class CoidWitnessTests : IDisposable
         var w = Session(RefusedTimes(4, SharingViolation));
         Submit(w, "TA-CONTENDED");
 
-        Assert.False(File.Exists(Temp_), "the successful replace consumes its own temp");
+        Assert.Empty(Temps());
         Assert.Single(Session().All());
     }
 
@@ -457,7 +495,7 @@ public class CoidWitnessTests : IDisposable
         var w = Session(RefusedTimes(1, () => new UnauthorizedAccessException("Access to the path is denied.")));
         Submit(w, "TA-DENIED");
 
-        Assert.False(File.Exists(Temp_));
+        Assert.Empty(Temps());
         Assert.Single(Session().All());
     }
 
@@ -482,8 +520,133 @@ public class CoidWitnessTests : IDisposable
         landing = true;
         Submit(w, "TA-SECOND");
 
-        Assert.False(File.Exists(Temp_), "the temp is cleaned up by the next successful save");
+        Assert.Empty(Temps());
         Assert.Equal(["TA-FIRST", "TA-SECOND"], Session().All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// THE ONE THAT WOULD HAVE DESTROYED THE FILE. An envelope deserialises with <c>Records</c>
+    /// defaulting to an empty list, so <c>{}</c> — or any rewrite that happens to carry no records —
+    /// parses perfectly and says nothing at all. A recovery rule that asked only "is this temp
+    /// newer" adopts it, shadows a good committed file with a void, and the very next save COMMITS
+    /// the void: every claim on the machine gone, permanently, caused by the mechanism that exists
+    /// to stop claims being lost.
+    ///
+    /// The lineage here is otherwise PERFECT — the right predecessor and the right generation — so
+    /// what refuses it is the record count and nothing else.
+    /// </summary>
+    [Fact]
+    public void A_temp_with_no_records_never_shadows_the_committed_file()
+    {
+        var first = Session();
+        Submit(first, "TA-REAL");
+        first.Identified("TA-REAL", "BRK-REAL");
+
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(CommittedText()),
+                  records: "");
+
+        var reader = Session();
+        Assert.Equal("BRK-REAL", reader.PriorSession("TA-REAL")!.BrokerOrderId);
+
+        // And it did not merely read past it: the next save must not commit the void either.
+        Submit(reader, "TA-AFTER");
+        Assert.Equal(["TA-REAL", "TA-AFTER"], Session().All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// THE OTHER HALF OF THE SAME HOLE, AND THE ONE THAT REACHES A CAPABILITY. A genuine, older
+    /// envelope of this same file — preserved by a backup tool, a copy, a hand-restore — given a
+    /// later mtime. Under a newest-wins rule it is adopted, and the identifiers <see cref="Trim"/>
+    /// removed come back to life. Those go straight into <c>PriorSessionIds</c>, into the
+    /// cross-session reading, and set SupportsClientOrderId TRUE out of state that is not in the
+    /// committed file at all.
+    ///
+    /// Lineage refuses it whatever its mtime says, and the cap's promise — a trimmed identifier is
+    /// permanently unprovable — stays true.
+    /// </summary>
+    [Fact]
+    public void A_preserved_older_envelope_cannot_resurrect_trimmed_identifiers()
+    {
+        var writer = new CoidWitness(File_, null, cap: 4);
+        writer.Submitting("TA-1", "SIM", "ES", "Buy", 1m, null);
+        writer.Identified("TA-1", "BRK-TA-1");
+        var earlyGeneration = CommittedGeneration();
+        var earlyRecords = RecordJson("TA-1", "a-dead-session");
+
+        for (var i = 2; i <= 7; i++)
+        {
+            writer.Submitting($"TA-{i}", "SIM", "ES", "Buy", 1m, null);
+            writer.Identified($"TA-{i}", $"BRK-{i}");
+        }
+
+        // TA-1 has been trimmed out of the committed file. Put it back as a "newer" temp.
+        WriteTemp(generation: earlyGeneration + 1, predecessor: Fingerprint(CommittedText()),
+                  records: earlyRecords);
+
+        var reader = new CoidWitness(File_, null, cap: 4);
+        Assert.Null(reader.PriorSession("TA-1"));
+        Assert.DoesNotContain("TA-1", reader.PriorSessionIds(16));
+        Assert.Equal(["TA-7", "TA-6", "TA-5", "TA-4"], reader.PriorSessionIds(16));
+    }
+
+    /// <summary>
+    /// Time no longer qualifies a candidate, only orders one — so a genuine failed rewrite is
+    /// adopted even when the filesystem gives it the same timestamp as the committed file. That case
+    /// is not hypothetical: FAT32 records 2-second timestamps, and the previous rule silently
+    /// declined to recover on any filesystem coarse enough to tie.
+    /// </summary>
+    [Fact]
+    public void A_failed_rewrite_is_adopted_when_the_timestamps_tie()
+    {
+        var first = Session();
+        Submit(first, "TA-COMMITTED");
+
+        var stranded = Session(NeverLands);
+        Submit(stranded, "TA-STRANDED");
+        stranded.Identified("TA-STRANDED", "BRK-STRANDED");
+        File.SetLastWriteTimeUtc(Temps().Single(), File.GetLastWriteTimeUtc(File_));
+
+        var reader = Session();
+        Assert.Equal("BRK-STRANDED", reader.PriorSession("TA-STRANDED")!.BrokerOrderId);
+    }
+
+    /// <summary>
+    /// And adopted when the clock went BACKWARDS between the commit and the failed rewrite — an NTP
+    /// correction, a VM resuming, a dual-boot machine. Under a newest-wins rule the recovery is
+    /// declined and the claim is lost for a reason that has nothing to do with the claim.
+    /// </summary>
+    [Fact]
+    public void A_failed_rewrite_is_adopted_when_the_clock_went_backwards()
+    {
+        var first = Session();
+        Submit(first, "TA-COMMITTED");
+
+        var stranded = Session(NeverLands);
+        Submit(stranded, "TA-STRANDED");
+        File.SetLastWriteTimeUtc(Temps().Single(), File.GetLastWriteTimeUtc(File_).AddHours(-1));
+
+        var reader = Session();
+        Assert.Equal(["TA-COMMITTED", "TA-STRANDED"], reader.All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// The genuine case, on top of a committed file rather than in place of one: the rewrite carries
+    /// everything the commit had plus the claim that failed to land, and it is adopted.
+    /// </summary>
+    [Fact]
+    public void A_failed_rewrite_on_top_of_a_committed_file_is_adopted()
+    {
+        var first = Session();
+        Submit(first, "TA-ONE");
+        first.Identified("TA-ONE", "BRK-ONE");
+
+        var stranded = Session(NeverLands);
+        Submit(stranded, "TA-TWO");
+        stranded.Identified("TA-TWO", "BRK-TWO");
+
+        var reader = Session();
+        Assert.Equal(["TA-ONE", "TA-TWO"], reader.All().Select(r => r.ClientOrderId));
+        Assert.Equal("BRK-TWO", reader.PriorSession("TA-TWO")!.BrokerOrderId);
     }
 
     /// <summary>
@@ -556,7 +719,7 @@ public class CoidWitnessTests : IDisposable
         Assert.NotNull(w.LastWriteFailure);
         Assert.Contains("TA-UNWRITABLE", w.LastWriteFailure);
         Assert.Contains(File_, w.LastWriteFailure);
-        Assert.Contains(Temp_, w.LastWriteFailure);
+        Assert.Contains(Temps().Single(), w.LastWriteFailure);
         Assert.Contains("io:failed", w.Token());
 
         var log = Path.Combine(_dir, CoidWitness.ErrorLogName);
