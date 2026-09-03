@@ -763,6 +763,15 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(w.PriorSession("TA-IMPORTED"));
         Assert.Empty(w.PriorSessionIds(16));
 
+        // A FLAGGED ZERO, AND BOTH WORDS ARE LOAD-BEARING. Zero, because nothing was ever committed
+        // here and the refused candidate does not change that. FLAGGED, because a confident zero
+        // from this file means "this product never submitted that identifier" — the one answer that
+        // must never be produced by accident — and something WAS refused, so a reader is told.
+        // Unreadable stays false: the zero is a fact about the disk, not a failure to read it.
+        Assert.Contains("records:0", w.Token());
+        Assert.Contains("io:degraded", w.Token());
+        Assert.False(w.Unreadable);
+
         // And the shape that round 2 still accepted: generation 1, descended from nothing. It is
         // not a lineage test — every first rewrite of every witness on earth looks exactly like
         // this — and it is refused too.
@@ -773,7 +782,9 @@ public class CoidWitnessTests : IDisposable
         var again = Session();
         Assert.Empty(again.All());
         Assert.Empty(again.PriorSessionIds(16));
+        Assert.Contains("records:0", again.Token());
         Assert.Contains("io:degraded", again.Token());
+        Assert.False(again.Unreadable);
         Assert.Contains("TA-ALSO-IMPORTED".Length > 0 ? "nothing anchors it" : "", 
                         File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName)));
     }
