@@ -145,10 +145,19 @@ public sealed class CoidWitness
     /// enough to ride out a scanner and short enough that a genuinely locked file refuses the order
     /// promptly rather than hanging it.
     ///
-    /// NOT MEASURED. The one data point is a GitHub CI failure on `test (windows-latest)` which says
-    /// only that the previous budget — three retries, 60 ms — was not enough at least once. There is
-    /// no distribution behind these numbers and there will not be one until a Windows run produces
-    /// it.
+    /// NOT MEASURED ON WINDOWS. The one data point there is a GitHub CI failure on
+    /// `test (windows-latest)` which says only that the previous budget — three retries, 60 ms — was
+    /// not enough at least once. There is no distribution behind these numbers and there will not be
+    /// one until a Windows run produces it.
+    ///
+    /// WHAT IS MEASURED IS THE HEADROOM, and it is what bounds the choice. A refusal that runs the
+    /// whole budget costs 205 ms (U14 round-2 verifier) and 229 ms (builder, same day, same machine)
+    /// of wall clock — the 200 ms of sleeps plus scheduling — and the worst path a single pipe call
+    /// can take, every save in one operation running its full budget, was measured by the verifier
+    /// at 8.42 s against the 10 s RPC deadline the gateway allows. So this
+    /// budget fits, with about 1.5 s of margin, and it is the largest one that does: doubling the
+    /// attempts would put a wholly contended order past the deadline, where the gateway stops
+    /// waiting and records the order UNKNOWN — turning a disk problem into a reconciliation.
     /// </summary>
     const int ReplaceAttempts = 5;
 
@@ -392,7 +401,7 @@ public sealed class CoidWitness
                     Price = price
                 });
                 Trim();
-                return Save();
+                return Save(clientOrderId);
             }
         }
         catch (Exception) { MarkWriteFailed(); return false; }
@@ -431,7 +440,7 @@ public sealed class CoidWitness
                 if (!string.IsNullOrEmpty(record.BrokerOrderId)) return;
 
                 _records[i] = record with { BrokerOrderId = brokerOrderId, IdentifiedAt = DateTimeOffset.UtcNow };
-                Save();
+                Save(clientOrderId);
             }
         }
         catch (Exception) { MarkWriteFailed(); }
@@ -857,7 +866,7 @@ public sealed class CoidWitness
     ///
     /// Caller holds <see cref="_gate"/>.
     /// </summary>
-    bool Save()
+    bool Save(string claim)
     {
         if (_path is null) return false;
         var tmp = _tempPrefix + (++_tempSeq);
@@ -876,8 +885,11 @@ public sealed class CoidWitness
         // Not retried: a temp that cannot be written at all is a directory problem, not contention,
         // and the retry budget belongs to the replace. It is reported on the same path as a refused
         // replace, because a claim that never reached even the temp is just as lost.
+        // NOT "the temp holds the newer state" on this branch, because it does not: the write is
+        // what failed. Saying otherwise sends whoever reads the sidecar to a file that is absent or
+        // half-written, looking for a claim that is not in it.
         try { File.WriteAllText(tmp, text); }
-        catch (Exception e) { ReportWriteFailure(e, tmp); return false; }
+        catch (Exception e) { ReportWriteFailure(e, tmp, claim, tempHoldsTheClaim: false); return false; }
 
         // THE NEW REWRITE SUPERSEDES THIS INSTANCE'S EARLIER FAILED ONE, and the ordering here is
         // the whole of the safety: the new temp is already on disk before the old one is removed, so
@@ -898,7 +910,7 @@ public sealed class CoidWitness
             {
                 Thread.Sleep(ReplaceBackoffMs * attempt);
             }
-            catch (Exception e) { _stranded.Add(tmp); ReportWriteFailure(e, tmp); return false; }
+            catch (Exception e) { _stranded.Add(tmp); ReportWriteFailure(e, tmp, claim, tempHoldsTheClaim: true); return false; }
         }
     }
 
@@ -988,13 +1000,17 @@ public sealed class CoidWitness
     /// claim durable has had a gap, and reporting <c>io:ok</c> again after the next success would
     /// hide it.
     /// </summary>
-    void ReportWriteFailure(Exception e, string tmp)
+    void ReportWriteFailure(Exception e, string tmp, string claim, bool tempHoldsTheClaim)
     {
         _writeFailed = true;
-        var newest = _records.Count > 0 ? _records[^1].ClientOrderId : "<none>";
+        // THE CLAIM AT RISK IS THE ONE BEING WRITTEN, not the newest record on the list. For
+        // Submitting those are the same; for Identified they are not — it updates a record wherever
+        // it sits — so reading the last entry named an unrelated identifier and sent whoever was
+        // holding the sidecar looking for the wrong order.
         var line = $"ERROR coid-witness rewrite did not land. file={_path} " +
-                   $"temp_holding_newer_state={tmp} newest_claim={newest} records_in_memory={_records.Count} " +
-                   $"{e.GetType().Name}: {e.Message}";
+                   (tempHoldsTheClaim ? $"temp_holding_newer_state={tmp} " : $"temp_not_written={tmp} ") +
+                   $"claim={(string.IsNullOrEmpty(claim) ? "<none>" : claim)} " +
+                   $"records_in_memory={_records.Count} {e.GetType().Name}: {e.Message}";
         LastWriteFailure = line;
         Note(line);
     }
