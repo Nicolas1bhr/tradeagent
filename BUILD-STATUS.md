@@ -2713,3 +2713,65 @@ Two things this cannot change, and the brief does not claim otherwise:
 - Every safety property is proven against a simulator and a loopback bridge. They are *designed* to
   hold against ATAS and a real broker; they are not yet *proven* to. That is what the staged live
   trial is for.
+
+## 2026-09-02 / 2026-09-03 — the hardening program, the update path proven, the setup journey walked
+
+**Read `docs/hardening/HANDOFF-2026-09-03.md` first.** A program to reach a "trustable first deployment and monitoring
+phase" was started on 2026-09-02 and run as units with an adversarial Claude verifier and a Codex cross-model review on
+every one. The session's primary records (command logs, screenshots, mutation tables) were LOST when the Claude Code
+process restarted on 2026-09-03 at 15:02 — the section below is reconstructed from the session transcript; every figure
+quoted was quoted in an agent's report from a command that ran, and where the primary log is gone it says so. Full
+per-unit detail: `docs/hardening/records/`.
+
+### The update path, end to end on real Windows — VERIFIED (record: `docs/hardening/records/U3-update-proof.md`)
+
+The published v0.1.0 was installed on the box from GitHub (sha256 `f243bdcc…0a1b` == manifest; Setup's own window only;
+`/relaunch=1` started it, pid 7552). v0.1.1 was built on the box from `3931c10` (manifest: `version 0.1.1`,
+`ATAS adapter PRESENT`, installer 112.2 MB; Windows test run 45/108/146 green), hashed identically on the box, the Mac,
+`SHA256SUMS.txt`, the GitHub asset and the app's own download (`9b238179…a668`, 117,649,031 B), and published as
+`v0.1.1` (target = full sha; a short sha is rejected). The running 0.1.0 offered it, was armed in two presses, Setup
+replaced the RUNNING app (old pid last seen 23:13:32.168, Setup 23:13:32→41, new pid 9840 at 23:13:42), no console, no
+UAC, no SmartScreen; **ATAS bridge READY 23:13:48.5** (~6 s after relaunch); `open_requests 1` unchanged (database
+intact). **NOT VERIFIED:** signing/SmartScreen on a browser download; update while the AI runs; rollback or an
+interrupted install; no Setup log for the app-driven install (no `/LOG`, no `SetupLogging`).
+
+### One test read the real machine — FIXED (main `3931c10`)
+
+The first v0.1.1 build on the box failed `AtasHealthTests.The_reporter_asks_the_platform_afresh_but_not_the_filesystem`
+(expected FAILED, got READY: ATAS is installed and running there). The reporter's platform probe is now behind
+`IAtasProbe`; production default byte-identical; the repro executed both ways on the Mac; 4 mutants bite; 299 green on
+both machines.
+
+### The setup journey, the override card and the refusal sentence — SEEN ON WINDOWS (record: `docs/hardening/records/U4-windows-eyes.md`)
+
+In a scratch home with the installed 0.1.1: the journey walked end to end (8 of 16 screens shown, 8 self-verified;
+no terminal, no admin, no credential typed); resume works; the override card reached through a genuinely ambiguous
+order (bridge strategy stopped → approval → UNKNOWN + flagged + PAUSED → card → resolved with a note); the refusal
+sentence rendered on the Dashboard and Checks rows; `probe atas` afterwards `orders=0 … client_order_id_attempts=0`;
+the real home's database mtime unchanged throughout. **Sixteen UX defects** recorded for unit U6 — the first is that
+the "Connecting to ATAS" setup screen never surfaces the connector's refusal detail. **NOT VERIFIED:** the eight
+auto-passed screens (need a clean machine); the Inbox drop/picker COPY path (needs a person); the `PresentedNoProof`
+sentence.
+
+### Approval re-authorization — INTEGRATED (main `133c1bd..3f1d8f2`, record: `docs/hardening/records/U2b.md`)
+
+`ApproveAsync` re-checks every gate at the moment a person approves (age first — 15-minute TTL, a judgment — then mode,
+the authorization chain with the proposer's context so the kill switch refuses, platform identity, account, risk
+limits), all under `_dispatchGate`; one clock governs the gateway and the request store. 30 new tests; verifier
+PASS WITH LOW; 329 green; CI green on all three OS + package (run 33716906666).
+
+### A confirmed hole, fixed on a branch not yet integrated (record: `docs/hardening/records/U2a.md`)
+
+`TRADEAGENT_SESSION=operator trade buy …` made `AgentContext.IsOperator` true on the wire and skipped LIVE_CONFIRM parking
+and the kill switch (proven over the pipe: a `session:"operator"` buy FILLED with STOP pressed). Fixed on
+`u2a-pipe-hardening` (`AgentContext` is a sealed class; the pipe refuses the reserved word in seven spellings). **The
+build on `main` and the published v0.1.1 still have the hole**; nobody is deployed. Integration order and the other
+branches (`u2c1-dispatch-recovery`, `u2d-updater-fail-closed`, `u14-coid-witness-rewrite`) are in the handoff.
+
+### Tests
+
+Mac, `main` @ 3f1d8f2: `dotnet test TradeAgent.sln` → 75 / 108 / 146 = 329 passed, 0 failed; `dotnet build TradeAgent.sln`
+0 warnings 0 errors. Branch tips: U2a 360, U2c-1 419, U2d 373, U14 377 (round 3; round 4 not re-run before the kill).
+CI windows-latest on 3931c10 failed ONCE on `CoidWitnessTests.The_file_is_never_absent_while_it_is_being_rewritten`
+("the temporary file was left behind") and passed on the next push — a load-dependent rename race that unit U14 turned
+into a rule-1 durability fix.

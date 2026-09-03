@@ -10,6 +10,15 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
+**2026-09-03 — the hardening program is the current work; read `docs/hardening/HANDOFF-2026-09-03.md` FIRST.** It holds
+the state of every unit branch (`u2a-pipe-hardening`, `u2c1-dispatch-recovery`, `u2d-updater-fail-closed`,
+`u14-coid-witness-rewrite`), the integration order, the decisions Nicolas still owes, and the process facts that cost
+real time. `main` is 3f1d8f2 (v0.1.1 published and its self-update PROVEN on the box; approval re-authorization
+integrated). The bridge protocol becomes 3 when U14 lands — the box's deployed bridge DLL must be rebuilt then. The text
+below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is superseded by
+`docs/hardening/PROGRAM.md`.
+
+
 **Tasks 1, 2, 3 and 7 are done and verified; task 4 is done bar two things nobody can look at without
 setting them up first. The machine is working, CI is green on all three platforms, and nothing is
 blocked.** What is left is in **The work queue**; if you only do one, finish task 7 —
