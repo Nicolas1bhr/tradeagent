@@ -1034,9 +1034,10 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_temp_that_could_not_be_written_is_not_reported_as_holding_the_claim()
     {
-        var blocker = Path.Combine(_dir, "not-a-directory");
-        File.WriteAllText(blocker, "a file, so nothing can be written underneath it");
-        var w = new CoidWitness(Path.Combine(blocker, "coid-witness.json"));
+        // The lock has to be takeable, or the refusal happens before the temp is ever attempted —
+        // a witness that cannot take its own lock is refused earlier and for a different reason.
+        var w = Session();
+        Directory.CreateDirectory($"{File_}.tmp-{Environment.ProcessId}-{w.SessionId[..8]}-1");
 
         Submit(w, "TA-NO-TEMP");
 
@@ -1045,16 +1046,20 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// A permanently unwritable destination turns every order into a log line. The per-session line
-    /// cap is what stops the report about a disk problem from becoming one.
+    /// A SAFETY EVENT IS NEVER DROPPED. The per-session quota used to silence everything after the
+    /// 32nd line — including a later write-ahead or acknowledgement failure, which for a live order
+    /// is the only cross-process record that the gap happened at all. The quota now applies to
+    /// warnings and markers; failures always go in.
     /// </summary>
     [Fact]
-    public void The_sidecar_stops_after_a_bounded_number_of_failures_in_one_session()
+    public void A_write_failure_is_never_dropped_by_the_sidecar_quota()
     {
         var w = Session((tmp, destination) => throw new FileNotFoundException("gone", tmp));
         for (var i = 0; i < 40; i++) Submit(w, $"TA-{i}");
 
-        Assert.Equal(32, File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length);
+        var text = File.ReadAllText(Path.Combine(_dir, CoidWitness.ErrorLogName));
+        Assert.Contains("TA-39", text);
+        Assert.True(File.ReadAllLines(Path.Combine(_dir, CoidWitness.ErrorLogName)).Length >= 40);
     }
 
     /// <summary>
@@ -1351,33 +1356,57 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// TWO WRITERS LOADED AT THE SAME GENERATION, AND NEITHER CLAIM IS LOST. Before the
-    /// compare-and-swap, B — loaded when the file was at generation N — would replace A's freshly
-    /// committed N+1 with its own N+1, deleting A's claim silently and AFTER A's read-back had
-    /// already told A the claim was durable. B now notices the file is not what its lineage says,
-    /// rebases onto A's commit, and carries both.
+    /// ONE OWNER PER WITNESS, AND A SECOND WRITER IS REFUSED RATHER THAN MERGED WITH.
+    ///
+    /// Round 3 tried to make two writers work: compare-and-swap, then rebase onto whatever the other
+    /// one committed. Every interleaving that design has to survive is an interleaving of a scenario
+    /// the product does not support — trap 35 calls a second bridge a misconfiguration — and
+    /// hardening a path nobody is meant to take costs correctness arguments for ever. Refusing it
+    /// costs one branch, and the refusal is the safe direction: <c>Place</c> declines the order
+    /// rather than sending one whose write-ahead record is racing somebody.
+    ///
+    /// What must hold is what the verifier's three-process harness measures: nothing lost and
+    /// nothing phantom. The owner's file is exactly as the owner left it.
     /// </summary>
     [Fact]
-    public void Two_writers_at_the_same_generation_both_keep_their_claims()
+    public void A_second_writer_is_refused_rather_than_merged_with()
     {
-        var seed = Session();
-        Submit(seed, "TA-SEED");
+        var owner = Session();
+        Submit(owner, "TA-SEED");
 
-        // BOTH LOAD BEFORE EITHER WRITES, which is the whole of the scenario: B's idea of what is
-        // committed is already stale by the time it saves. Loading is what All() forces —
-        // PriorSessionIds(0) returns early without touching the file, and using it here quietly
-        // made this test pass with no compare-and-swap at all.
-        var a = Session();
-        var b = Session();
-        Assert.Single(a.All());
-        Assert.Single(b.All());
+        // Somebody else holds the witness for the duration — a second bridge, in one line.
+        using var held = new FileStream(File_ + ".lock", FileMode.OpenOrCreate,
+                                        FileAccess.ReadWrite, FileShare.None);
 
-        Assert.True(a.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
-        Assert.True(b.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+        var second = Session();
+        Assert.False(second.Submitting("TA-SECOND", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("another writer owns this witness", second.Trouble);
+        Assert.Contains(".lock", second.Trouble);
 
-        Assert.Contains("TA-A", CommittedIds());
-        Assert.Contains("TA-B", CommittedIds());
-        Assert.Contains("TA-SEED", CommittedIds());
+        // Nothing lost, nothing phantom.
+        Assert.Equal(["TA-SEED"], CommittedIds());
+        Assert.Null(Session().PriorSession("TA-SECOND"));
+    }
+
+    /// <summary>
+    /// A file that changed under a writer holding the lock cannot be another bridge playing by the
+    /// rules — it is an older build, a hand edit or a restored backup. There is no safe merge with a
+    /// party whose semantics are unknown, so the write is refused.
+    /// </summary>
+    [Fact]
+    public void A_witness_file_changed_by_something_else_is_refused_not_merged()
+    {
+        var w = Session();
+        Assert.True(w.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+
+        // Something that is not this build rewrites the file between saves.
+        File.WriteAllText(File_,
+            "{\"version\":1,\"generation\":9,\"predecessor\":null,\"records\":[" +
+            RecordJson("TA-FOREIGN", "somebody-else") + "]}");
+
+        Assert.False(w.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("changed underneath this writer", w.LastWriteFailure);
+        Assert.DoesNotContain("TA-TWO", File.ReadAllText(File_));
     }
 
     /// <summary>

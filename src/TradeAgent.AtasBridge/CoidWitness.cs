@@ -170,14 +170,7 @@ public sealed class CoidWitness
     /// <summary>Multiplied by the attempt number, so the waits lengthen: 20, 40, 60, 80 ms.</summary>
     const int ReplaceBackoffMs = 20;
 
-    /// <summary>
-    /// How many times a save re-bases onto another writer's commit before giving up. A miss costs
-    /// one read, so this is cheap; it is bounded at all because two writers hammering the same file
-    /// must not keep one of them here forever with an order waiting on it.
-    /// </summary>
-    const int CasRounds = 3;
-
-    /// <summary>50 ms of waiting for the lock file, then proceed without it. See ExclusiveAccess.</summary>
+    /// <summary>50 ms of waiting for the lock file, then refuse the write. See <see cref="Own"/>.</summary>
     const int LockAttempts = 5;
     const int LockBackoffMs = 10;
 
@@ -278,6 +271,9 @@ public sealed class CoidWitness
 
     /// <summary>The candidate this instance adopted at load, or null. Deleted once it is committed.</summary>
     string? _adopted;
+
+    /// <summary>Why this instance does not own the witness, or null while it does. See <see cref="Own"/>.</summary>
+    string? _notOwned;
     bool _writeFailed;
     int _loggedFailures;
 
@@ -417,6 +413,11 @@ public sealed class CoidWitness
         {
             lock (_gate)
             {
+                // NO LOCK, NO WRITE. See Own: one owner per witness, and a writer that cannot take
+                // the lock refuses the order rather than racing a party whose semantics are unknown.
+                using var owned = Own();
+                if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return false; }
+
                 EnsureLoaded();
 
                 // EVERYTHING BEFORE THE ATTEMPT, KEPT, so a refusal can be undone exactly. See the
@@ -480,6 +481,9 @@ public sealed class CoidWitness
         {
             lock (_gate)
             {
+                using var owned = Own();
+                if (owned is null) { NotOurs(_notOwned ?? "this witness is not ours to write"); return; }
+
                 EnsureLoaded();
                 var i = _records.FindIndex(r => string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal));
                 if (i < 0) return;
@@ -637,6 +641,7 @@ public sealed class CoidWitness
                 lock (_gate)
                 {
                     EnsureLoaded();
+                    if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
                     return _degraded
                         ? $"an earlier run could not write the write-ahead record; the account of it " +
@@ -1071,39 +1076,30 @@ public sealed class CoidWitness
     {
         if (_path is null) return false;
 
-        // ONE LOCK FOR THE WHOLE READ-MODIFY-WRITE, taken once rather than per round: the cost of
-        // waiting for it must not multiply. See ExclusiveAccess for why a failure to take it is not
-        // a failure to save.
-        using var exclusive = ExclusiveAccess();
-
-        for (var round = 1; ; round++)
+        // COMPARE AND SWAP, AND A MISS IS A REFUSAL. This writer's rewrite says it descends from a
+        // particular committed content. It holds the lock, so nothing that plays by the rules can
+        // have changed the file — if it changed anyway, something is writing this witness that is
+        // not this build: an older bridge, a hand edit, a restored backup. There is no safe merge
+        // with a party whose semantics are unknown, and this product does not support two writers
+        // (trap 35: a second bridge is a misconfiguration). Refuse, and let Place refuse the order.
+        var current = ReadTolerantly(_path, out _);
+        var currentHash = current is null ? null : Fingerprint(current);
+        if (!string.Equals(currentHash, _committedHash, StringComparison.Ordinal))
         {
-            // COMPARE AND SWAP. This writer's rewrite says it descends from a particular committed
-            // content; if the file no longer holds that content, another writer has committed since
-            // this one loaded and replacing it now would delete their claim — silently, and after
-            // their own read-back had already told them it was durable. So the lineage is checked
-            // against the disk immediately before the replace rather than assumed from load time.
-            //
-            // A MISS COSTS A READ AND NOTHING ELSE. It short-circuits before the temp is written and
-            // long before the replace's retry budget, so a contended save is not a slow one.
-            var current = ReadTolerantly(_path, out var unreadable);
-            var currentHash = current is null ? null : Fingerprint(current);
-            if (!string.Equals(currentHash, _committedHash, StringComparison.Ordinal))
-            {
-                if (round >= CasRounds || !Rebase(current, unreadable))
-                {
-                    _writeFailed = true;
-                    LastWriteFailure = $"ERROR coid-witness could not commit: the committed file kept " +
-                                       $"changing underneath this writer. file={_path} claim={claim}";
-                    Note(LastWriteFailure);
-                    return false;
-                }
-                continue;
-            }
-
-            if (Attempt(claim)) return true;
+            NotOurs($"the witness file changed underneath this writer, so something else is writing " +
+                    $"it. file={_path} claim={claim}");
             return false;
         }
+
+        return Attempt(claim);
+    }
+
+    /// <summary>The one refusal shape for "this witness is not ours to write". Caller holds the gate.</summary>
+    void NotOurs(string detail)
+    {
+        _writeFailed = true;
+        LastWriteFailure = "ERROR " + detail;
+        Note(LastWriteFailure, safety: true);
     }
 
     /// <summary>
@@ -1159,62 +1155,45 @@ public sealed class CoidWitness
     }
 
     /// <summary>
-    /// ANOTHER WRITER GOT THERE FIRST, SO THIS ONE MOVES ON TOP OF THEIRS rather than over it.
+    /// ONE OWNER PER WITNESS, AND THE LOCK IS HOW THAT IS DECIDED.
     ///
-    /// Their committed records become the base, and this session's own claims are re-applied on top
-    /// — its own, identified by <see cref="SessionId"/>, because those are the ones it is
-    /// responsible for and the ones an order may already be resting on. The result descends from
-    /// what is actually committed, so the next attempt's compare-and-swap passes and neither
-    /// writer's claims are lost.
+    /// Round 3 treated this as a contention reducer that a writer could proceed without, on the
+    /// argument that the compare-and-swap made the result correct anyway. That was wrong in the
+    /// direction that matters. Two writers were never a supported configuration — trap 35 calls a
+    /// second bridge a misconfiguration — and every interleaving that a lock-optional design has to
+    /// survive is an interleaving of a scenario the product does not support. Hardening a path
+    /// nobody is meant to take costs correctness arguments forever; refusing it costs one branch.
     ///
-    /// It refuses when the committed file cannot be parsed: rebasing onto content this build does
-    /// not understand would mean discarding it, and a witness may not delete claims it merely failed
-    /// to read. Caller holds <see cref="_gate"/> and the file lock.
-    /// </summary>
-    bool Rebase(string? current, bool unreadable)
-    {
-        var envelope = current is null ? null : Parse(current);
-        if (current is not null && (envelope is null || unreadable)) return false;
-
-        var mine = _records.FindAll(r => string.Equals(r.SessionId, SessionId, StringComparison.Ordinal));
-        _records.Clear();
-        if (envelope is not null) Take(envelope);
-        _records.RemoveAll(r => mine.Exists(m => string.Equals(m.ClientOrderId, r.ClientOrderId, StringComparison.Ordinal)));
-        _records.AddRange(mine);
-        Trim();
-
-        _committedHash = current is null ? null : Fingerprint(current);
-        _generation = envelope?.Generation ?? 0;
-        Note($"WARN coid-witness rebased onto another writer's commit (generation {_generation}). file={_path}");
-        return true;
-    }
-
-    /// <summary>
-    /// A LOCK FILE, SO TWO BRIDGES TAKE TURNS INSTEAD OF RACING. Trap 35 says a second bridge can be
-    /// running, and the compare-and-swap above narrows the window between checking the committed
-    /// content and replacing it without closing it. An exclusive handle on a file beside the witness
-    /// closes it for any two processes that both take it.
+    /// So: no lock, no write. A writer that cannot take the lock inside the budget reports the
+    /// reason through <see cref="Trouble"/> and <see cref="Submitting"/> returns false, which makes
+    /// <c>Place</c> refuse the order — the same refusal as any other unwritable witness, and the
+    /// safe direction. A read-only directory or a denied ACL lands here too, which is correct: a
+    /// witness that cannot take its own lock cannot be written either.
     ///
-    /// FAILING TO TAKE IT IS NOT A FAILURE TO SAVE. The lock reduces contention; the compare-and-swap
-    /// and the read-back are what make the result correct, and they hold whether or not the lock was
-    /// taken. So the wait is short and bounded — a save runs on the pipe thread before an order —
-    /// and a save proceeds unlocked rather than refusing an order because another process is busy.
     /// The handle is released by process death like any other, so a crash cannot wedge it.
     /// </summary>
-    IDisposable? ExclusiveAccess()
+    IDisposable? Own()
     {
         if (_path is null) return null;
         var lockPath = _path + ".lock";
-        for (var attempt = 1; attempt <= LockAttempts; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                var held = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                _notOwned = null;
+                return held;
             }
-            catch (IOException) { Thread.Sleep(LockBackoffMs); }
-            catch (Exception) { return null; }
+            catch (Exception e)
+            {
+                if (attempt >= LockAttempts)
+                {
+                    _notOwned = $"another writer owns this witness ({lockPath}): {e.GetType().Name}";
+                    return null;
+                }
+                Thread.Sleep(LockBackoffMs);
+            }
         }
-        return null;
     }
 
     /// <summary>
@@ -1238,58 +1217,32 @@ public sealed class CoidWitness
     /// </summary>
     bool Committed(string text, string claim)
     {
-        var ours = Fingerprint(text);
         var actual = _path is null ? null : ReadTolerantly(_path, out _);
 
         // ABSENT OR UNREADABLE IS NOT DURABLE. The rename returning success is not evidence that a
         // record exists to be found later, and rule 1 is a question about evidence: if this cannot
         // read back what it just wrote, it does not know the claim is there, and the honest answer
         // to "is the write-ahead record durable" is no. The caller refuses the order.
-        if (actual is null)
+        //
+        // AND NOTHING BUT OUR OWN BYTES COUNTS. Round 3 accepted an overtaker's file when it
+        // happened to contain a matching record, which meant trusting a writer whose semantics this
+        // build knows nothing about to have carried the claim faithfully. With one owner per witness
+        // there is no legitimate overtaker: anything other than exactly what was just written means
+        // something else is writing this file, and that is a refusal, not a negotiation.
+        if (actual is null || !string.Equals(Fingerprint(actual), Fingerprint(text), StringComparison.Ordinal))
         {
-            _writeFailed = true;
-            LastWriteFailure = $"ERROR coid-witness rewrite landed but the file could not be read back, " +
-                               $"so the claim is not known to be durable. file={_path} claim={claim}";
-            Note(LastWriteFailure);
+            NotOurs(actual is null
+                ? $"the rewrite landed but the file could not be read back, so the claim is not " +
+                  $"known to be durable. file={_path} claim={claim}"
+                : $"the rewrite landed and the file already holds something else, so something is " +
+                  $"writing this witness that is not this build. file={_path} claim={claim}");
             return false;
         }
 
-        if (string.Equals(Fingerprint(actual), ours, StringComparison.Ordinal))
-        {
-            _generation++;
-            _committedHash = ours;
-            Settled();
-            return true;
-        }
-
-        // SOMEBODY ELSE COMMITTED IN BETWEEN, AND THE QUESTION IS NOT WHOSE BYTES WON. It is whether
-        // THIS claim is in what got committed. Another writer that rebased onto this one's content
-        // carries this claim forward inside its own rewrite, and refusing an order whose write-ahead
-        // record is demonstrably on disk would be inventing a failure. What must be refused is the
-        // case where the claim is genuinely not there.
-        var envelope = Parse(actual);
-        var wrote = _records.Find(r => string.Equals(r.ClientOrderId, claim, StringComparison.Ordinal));
-        var landed = envelope is not null && wrote is not null && envelope.Records.Exists(r =>
-            string.Equals(r.ClientOrderId, wrote.ClientOrderId, StringComparison.Ordinal) &&
-            string.Equals(r.SessionId, wrote.SessionId, StringComparison.Ordinal) &&
-            string.Equals(r.BrokerOrderId ?? "", wrote.BrokerOrderId ?? "", StringComparison.Ordinal));
-
-        _committedHash = Fingerprint(actual);
-        _generation = envelope?.Generation ?? 0;
-
-        if (landed)
-        {
-            Note($"WARN coid-witness rewrite was overtaken by another writer, which carried this " +
-                 $"claim forward. file={_path} claim={claim}");
-            Settled();
-            return true;
-        }
-
-        _writeFailed = true;
-        LastWriteFailure = $"ERROR coid-witness rewrite was overwritten by another writer and the " +
-                           $"claim is not in what got committed. file={_path} claim={claim}";
-        Note(LastWriteFailure);
-        return false;
+        _generation++;
+        _committedHash = Fingerprint(text);
+        Settled();
+        return true;
     }
 
     /// <summary>
@@ -1331,7 +1284,7 @@ public sealed class CoidWitness
         if (_degraded)
         {
             _degraded = false;
-            AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}");
+            AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: false);
         }
     }
 
@@ -1382,17 +1335,17 @@ public sealed class CoidWitness
                    $"claim={(string.IsNullOrEmpty(claim) ? "<none>" : claim)} " +
                    $"records_in_memory={_records.Count} {e.GetType().Name}: {e.Message}";
         LastWriteFailure = line;
-        Note(line);
+        Note(line, safety: true);
     }
 
     /// <summary>
     /// One line into the sidecar, and it is ONE line however hard the input tries. Caller holds
     /// <see cref="_gate"/>.
     /// </summary>
-    void Note(string line)
+    void Note(string line, bool safety = false)
     {
         _degraded = true;
-        AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}");
+        AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}", safety);
     }
 
     /// <summary>
@@ -1419,9 +1372,9 @@ public sealed class CoidWitness
     /// something else has open, which says nothing about whether an append to a different name
     /// works — but if it does not, the answer is silence, not an exception out of <c>Place</c>.
     /// </summary>
-    void AppendToErrorLog(string line)
+    void AppendToErrorLog(string line, bool safety)
     {
-        if (_loggedFailures >= MaxLoggedFailures) return;
+        if (!safety && _loggedFailures >= MaxLoggedFailures) return;
         _loggedFailures++;
         try
         {
