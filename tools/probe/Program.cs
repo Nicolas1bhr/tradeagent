@@ -1056,11 +1056,30 @@ static class AtasProbe
         var sidecar = witness.ErrorLogPath;
         if (sidecar is not null && File.Exists(sidecar))
         {
+            // RESOLVED IS NOT THE SAME AS FAILING, and shouting at both is how a report stops being
+            // read. The witness itself decides — Trouble is null once a clean commit has closed the
+            // gap and the file's last line says so — so this asks rather than inferring from the
+            // file merely existing. A historical record of a gap that ended is worth printing and
+            // is not a reason to distrust anything below it.
             var notes = ReadTail(sidecar, 10);
-            Line("WITNESS FAILURES", $"{sidecar} — THIS FILE SHOULD NOT EXIST.");
+            var unresolved = witness.Trouble is not null;
+
+            Line("WITNESS FAILURES", unresolved
+                ? $"{sidecar} — UNRESOLVED. THIS FILE SHOULD NOT EXIST."
+                : $"{sidecar} — historical.");
             foreach (var note in notes) Cont(note);
-            Cont("Each line is a rewrite of the witness that did not reach the disk. Treat every");
-            Cont("verdict below as provisional until this is understood.");
+
+            if (unresolved)
+            {
+                Cont("Each line is a rewrite of the witness that did not reach the disk. Treat every");
+                Cont("verdict below as provisional until this is understood.");
+            }
+            else
+            {
+                Cont("The last entry says the witness committed cleanly after those failures, so the");
+                Cont("gap is closed and nothing below is provisional on account of this file. It is");
+                Cont("kept as history; delete it once it has been read.");
+            }
         }
         else
         {
