@@ -70,3 +70,17 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    nothing" rather than "does not fit our record"; the other direction (`A_state_the_broker_asserts_is_still_adopted`,
    WORKING/FILLED/CANCELLED) green throughout. Mutant `if (false && !IsDefinite(...))` → the same one RED. Fault suite
    177 green. VERIFIED.
+4. "Held still" is not a verdict. RED `A_working_target_never_condemns_the_cancel_however_still_it_holds` and
+   `Captured_orders_that_are_merely_still_working_do_not_condemn_the_press` (both `Assert.False((await
+   gw.ReconcileAsync()).Clean)` — `Expected: False / Actual: True`; the pass called itself clean on stillness) → GREEN by
+   deleting `_settleWatch`/`HeldStill`/`SignatureOf` and returning inconclusive for a working target and for working
+   captured orders; a terminal target, absence past the grace and a definite CANCELLED still settle. Other directions,
+   green: `A_target_the_platform_takes_to_a_terminal_state_still_settles_the_cancel` (FILLED → REJECTED, clean) and
+   `The_owners_card_still_settles_a_cancel_the_platform_will_not_judge` (ForceResolve + the refresh its own screen does).
+   Two round-2 tests asserted the deleted verdict and were rewritten in place, names kept:
+   `A_cancel_whose_target_is_still_working_is_never_reconciled_as_cancelled` and
+   `A_cancel_all_press_is_reconciled_by_what_is_left_on_the_book`; R1d was renamed from
+   `A_working_target_must_hold_still_before_the_cancel_is_called_failed` (its name asserted the verdict this item
+   removes) — no test dropped, and neither name exists on `main`. CONTRACTS.md bullet rewritten to match. Mutant
+   `IsTerminal(match.State)` → `IsLive(match.State)` → 6 RED including both new ones. Unit 201 / Fault 180 /
+   Integration 506, 0 failed. VERIFIED.
