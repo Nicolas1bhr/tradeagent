@@ -400,6 +400,27 @@ public class BridgeRoundTripTests
         try { await send(); } catch (IOException) { } catch (ObjectDisposedException) { }
     }
 
+    /// <summary>
+    /// Dials the way a real bridge does: it redials. The pipe has ONE server instance and the accept
+    /// loop recreates it only after the previous read loop ends, so a bridge arriving while the
+    /// connector is recycling can land on a connection that is already going away — which the real
+    /// bridge answers by trying again a moment later, and which a test that dialled exactly once
+    /// would record as a failure of the connector.
+    /// </summary>
+    static async Task<StubBridge> Redial(string pipe, BridgeHello hello, int attempts = 8)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var bridge = new StubBridge(pipe, hello);
+            try { await bridge.ConnectAsync(); return bridge; }
+            catch (Exception) when (attempt < attempts)
+            {
+                await Unheard(async () => await bridge.DisposeAsync());
+                await Task.Delay(100);
+            }
+        }
+    }
+
     static async Task<System.IO.Pipes.NamedPipeClientStream> Park(string pipe, int protocolVersion)
     {
         var client = new System.IO.Pipes.NamedPipeClientStream(
@@ -456,8 +477,7 @@ public class BridgeRoundTripTests
         Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
 
         // The operator does what the row says, and a current bridge dials in.
-        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
-        await repaired.ConnectAsync();
+        await using var repaired = await Redial(pipe, Speaking(Versions.BridgeProtocolVersion));
         await Wait(async () => await Task.FromResult(connector.Bridge is not null));
 
         Assert.Equal(Versions.BridgeProtocolVersion, connector.Bridge!.BridgeProtocolVersion);
@@ -515,8 +535,7 @@ public class BridgeRoundTripTests
 
         for (var attempt = 1; attempt <= 2; attempt++)
         {
-            var old = new StubBridge(pipe, Speaking(2));
-            await old.ConnectAsync();
+            var old = await Redial(pipe, Speaking(2));
             await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
             Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
             Assert.Null(connector.Bridge);
@@ -525,8 +544,7 @@ public class BridgeRoundTripTests
         }
 
         // And the pipe is still free for a bridge that is right.
-        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
-        await repaired.ConnectAsync();
+        await using var repaired = await Redial(pipe, Speaking(Versions.BridgeProtocolVersion));
         await Wait(async () => await Task.FromResult(connector.Bridge is not null));
         Assert.Null(connector.Incompatible);
     }
@@ -861,8 +879,7 @@ public class BridgeRoundTripTests
         Assert.Contains("9.9.9", connector.StatusDetail);
 
         // And a bridge that is right is what ends it.
-        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
-        await repaired.ConnectAsync();
+        await using var repaired = await Redial(pipe, Speaking(Versions.BridgeProtocolVersion));
         await Wait(async () => await Task.FromResult(connector.Bridge is not null));
         Assert.Null(connector.Incompatible);
         Assert.Null(connector.StatusDetail);
