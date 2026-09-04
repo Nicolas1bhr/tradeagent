@@ -544,6 +544,27 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// A STATE NOTHING MAPS MUST FAIL LOUDLY, NOT BECOME THE MOST DANGEROUS WORD IN THE SET.
+    ///
+    /// Verifier round-9 F-3. `Describe()` had its catch-all removed for exactly this reason and the
+    /// commit message for it was right — a new outcome must not be reported as something wrong and
+    /// dangerous in silence — while `Classify` one switch over kept <c>_ => NotConfirmed</c>. So a
+    /// new `ExecutionState` would have been reported as <c>sent-not-confirmed</c>: the word that
+    /// promises UNKNOWN and reconciliation, with no compiler complaint and no failing test.
+    ///
+    /// Both switches are exhaustive now, and this is the assertion that keeps them so. A value
+    /// outside the enum is the only way to reach the arm from a test — which is the point: for every
+    /// value INSIDE it, the cross-product test above proves there is a real mapping.
+    /// </summary>
+    [Fact]
+    public void An_execution_state_nothing_maps_throws_rather_than_becoming_a_word()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => GatewayPipeServer.LegWordFor((ExecutionState)999, TransportOutcome.ReplyReceived));
+        Assert.Contains("999", ex.Message);
+    }
+
+    /// <summary>
     /// `nothing-to-do` IS A FACT ABOUT THE OPERATION, AND IT IS REPORTED THERE.
     ///
     /// It was a per-leg word, which cannot be right: a leg exists because there was something for it
