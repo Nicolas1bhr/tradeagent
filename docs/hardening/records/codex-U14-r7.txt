@@ -1,0 +1,71 @@
+PRIOR 5 — PARTIAL — the Windows gate asserts zero `ITradingManager.ClosePosition` calls when the witness is unavailable, but no committed execution evidence exists, so runtime behavior remains UNVERIFIED (tools/atas-gate/Gate.cs:63).
+
+PRIOR 9 — FIXED — protocol mismatch now poisons the connection and returns false, preventing a later hello on that session (AtasConnector.cs:383).
+
+PRIOR 16 — FIXED — an executable gate now invokes the real adapter close path and asserts that unavailable-witness dispatch never reaches ATAS (tools/atas-gate/Gate.cs:54).
+
+PRIOR 17 — NOT FIXED — `DirectoryNotFoundException` is still classified as absence although the decision permits only `FileNotFoundException`, allowing replacement without a readable committed lineage (CoidWitness.cs:1539).
+
+PRIOR 18 — FIXED — the deciding-line scan now searches both current and rotated canonical generations and skips diagnostics (CoidWitness.cs:1446).
+
+PRIOR 19 — FIXED — historical status now depends on `_gapClosed`, so a diagnostic-only sidecar remains Noted and its zero provisional (CoidWitnessReport.cs:50).
+
+PRIOR 20 — FIXED — inbound events require both authentication and an accepted compatible hello (AtasConnector.cs:356).
+
+PRIOR 21 — PARTIAL — the stopped guard exists, but its unsynchronized check can race with lease disposal and enter `Identified` afterward, reacquiring the lease (AtasStrategyAdapter.cs:2038).
+
+PRIOR 22 — FIXED — a viable candidate producing zero acknowledgements is quarantined as spent instead of being reported recovered repeatedly (CoidWitness.cs:1254).
+
+PRIOR R1 — FIXED — a refused peer is dropped and heartbeat capability updates require `_compatible`, so it cannot restore reconciliation claims (AtasConnector.cs:460).
+
+PRIOR R2 — PARTIAL — disposal now reaches `StopBridge`, but an exception from `UntrackSecurities` still bypasses the later witness disposal (AtasStrategyAdapter.cs:501).
+
+PRIOR R3 — FIXED — refused writers append to session-specific files rather than racing the owner’s canonical sidecar (CoidWitness.cs:452).
+
+PRIOR R4 — NOT FIXED — the lease remains an unlinkable pathname lock, so deleting it on macOS can permit a second live owner on a new inode (CoidWitness.cs:1712).
+
+PRIOR R5 — PARTIAL — source comments locate the comparison before `Attempt`, but the referenced audit record is absent from this checkout, so the requested wording correction is UNVERIFIED (CoidWitness.cs:1577).
+
+PRIOR V1 — FIXED — mismatch returns false, after which `finally` drops and disposes the sole server instance before accepting again (AtasConnector.cs:182).
+
+PRIOR V2 — FIXED — `_noted` is now computed over `SidecarSet`, including per-writer refusal files without requiring the canonical file (CoidWitness.cs:946).
+
+PRIOR V3 — NOT FIXED — the “cannot be produced” assertion excludes a process death between diagnostic rotation and the following durable deciding line, which can produce exactly the defensive F18 shape (CoidWitnessTests.cs:2887).
+
+RULING (a) — Actual refusal, Drop, or pipe EOF releases the sole instance; however, a live peer that stalls before a newline or stops heartbeats without closing remains inside `ReadLineAsync` indefinitely and prevents the next bridge from connecting (AtasConnector.cs:175).
+
+RULING (b) — A health probe and later unrelated disconnect do not clear `_incompatible`; connector restart or `SwitchConnectorAsync` replacement does, because the marker exists only in the discarded connector instance, without any compatible hello (AtasConnector.cs:39).
+
+RULING (c) — Yes: a real defect hides in the mutant gap. The guard and deciding-line scan jointly exclude per-writer safety lines, while the current test oracle expressly expects that exclusion; either single mutant remains masked by the other (CoidWitness.cs:957).
+
+RULING (d) — The Redial helper models the real bridge’s reconnect loop with shorter bounded retries, and the subsequent bridge-state wait prevents an early successful dial from hiding failed acceptance; it does not conceal the recycle failure it was added for (BridgeRoundTripTests.cs:410).
+
+FINDING 23 — MED — AtasConnector.cs:175 — a silent, partial-frame, or stale-but-open peer can monopolize the only pipe instance indefinitely because heartbeat degradation never terminates the read loop.
+
+CHECK — Complete a compatible handshake, leave that client open without further frames, wait beyond `HeartbeatTimeout`, then dial a second bridge with a deadline; it currently times out rather than replacing the stale peer.
+
+FINDING 24 — LOW — AtasConnector.cs:39 — `_incompatible` is instance-only, so connector restart or switching away and back erases the mandated refusal marker without a compatible hello.
+
+CHECK — Establish a mismatch, recreate the connector for the same pipe through restart and through `SwitchConnectorAsync`, send no compatible hello, and assert the original incompatibility remains; it currently becomes null.
+
+FINDING 25 — MED — CoidWitness.cs:957 — degraded/resolved state still scans only canonical sidecars, contrary to the decision that safety state is computed over the whole per-writer set.
+
+CHECK — Make a refused writer append a per-writer `ERROR`, then open a new reader and assert `Trouble != null` and unsettled until a later global `RESOLVED`; the current reader reports only Noted.
+
+FINDING 26 — MED — AtasStrategyAdapter.cs:501 — teardown lacks a `finally`, so failure while removing security subscriptions skips witness disposal and retains the lease on a terminal path.
+
+CHECK — Inject an exception from `UntrackSecurities` during both stopping and disposal, then attempt acquisition from a replacement adapter; the replacement is currently refused.
+
+FINDING 27 — MED — CoidWitness.cs:1982 — rotation deletes the previous generation before the unresolved safety state is durably carried forward, permitting a crash window that permanently loses the last safety line.
+
+CHECK — Seed `.1` with the latest unresolved `ERROR` and an oversized diagnostic current log, terminate after deletion but before a later deciding append, restart, and assert degraded state survives; it currently disappears.
+
+FINDING 28 — MED — CoidWitness.cs:949 — an existing but unreadable sidecar is silently treated as containing no notes or safety decision, allowing a falsely Clean, non-provisional zero.
+
+CHECK — Hold `errors.log` containing `ERROR` with `FileShare.None`, construct a reader, and assert the standing is unreadable/degraded and zero provisional; it currently evaluates clean.
+
+FINDING 29 — LOW — CoidWitnessReport.cs:68 — Noted now includes per-writer ownership refusals, but the report still describes every Noted state as a rejected candidate beside the witness.
+
+CHECK — Produce only a per-writer lease-refusal sidecar and inspect the headline/explanation; it currently reports a candidate-recovery scenario that never occurred.
+
+SUMMARY — 1 HIGH / 5 MED / 4 LOW
