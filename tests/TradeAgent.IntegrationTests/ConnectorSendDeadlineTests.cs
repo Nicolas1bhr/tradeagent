@@ -859,6 +859,57 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// EVERY CALL INSIDE ONE OPERATION SHARES ITS DEADLINE — measured on the CONNECTOR, not on the
+    /// simulator.
+    ///
+    /// The round-8 acceptance for F1 runs through the gateway onto `FakeConnector`, which honours
+    /// the ambient deadline itself — so it cannot tell whether `AtasConnector` does. It did not:
+    /// reverting the connector's half of the fix left all of those tests green (mutant M-F1a
+    /// survived, measured). This is the test that reaches it.
+    ///
+    /// Two risk-reducing calls inside one scope against a bridge that reads nothing, with the send
+    /// gate already held. Under one shared deadline the first spends the budget and the second is
+    /// refused at once; under a budget per call each waits its own two seconds and the operation
+    /// costs twice what it promised.
+    /// </summary>
+    [Fact]
+    public async Task Two_emergency_calls_inside_one_operation_share_its_deadline()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all shipped
+        await connector.ConnectAsync();
+        // A peer that READS, so the gate holder makes progress and the first call is answered "busy"
+        // with the connection kept — otherwise the first call drops the bridge and the second fails
+        // as "not connected", which measures nothing about deadlines.
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-share-hold", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+        Observe([stuck]);
+        await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
+
+        using var scope = RiskReducingScope.Begin(connector.EmergencyDeadline);
+        var timer = Stopwatch.StartNew();
+        var first = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelOrderAsync("FB-1"));
+        var afterFirst = timer.Elapsed;
+        var second = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-READING"));
+        timer.Stop();
+
+        Assert.True(await connector.IsConnectedAsync(),
+            "the bridge was reading throughout and was dropped anyway, so the second call never reached the deadline path");
+
+        // The premise: the first call really did spend the operation's budget on the gate.
+        Assert.True(afterFirst >= TimeSpan.FromMilliseconds(1900),
+            $"the first call returned in {afterFirst.TotalSeconds:0.00}s — it never queued, so the second had a budget to inherit anyway");
+
+        Assert.True(timer.Elapsed < TimeSpan.FromMilliseconds(3500),
+            $"two calls in one operation took {timer.Elapsed.TotalSeconds:0.00}s — each is still starting its own two seconds");
+        Assert.Contains("NOT confirmed", first.Message);
+        Assert.Contains("NOT confirmed", second.Message);
+    }
+
+    /// <summary>
     /// THE AGENT'S CANCEL-ALL, THROUGH THE REAL GATEWAY, WHICH IS WHERE THE TIME WAS ACTUALLY GOING.
     ///
     /// Codex F11 on d25dbb4. The test that claimed to measure "the agent's sweep leg" called

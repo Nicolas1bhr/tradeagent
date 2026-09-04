@@ -992,6 +992,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 : startedAt + (long)EmergencyDeadline.TotalMilliseconds)
             : 0L;
 
+        // A LEG WHOSE TURN NEVER CAME IS NOT EVIDENCE ABOUT THE PEER.
+        //
+        // With one deadline for the operation, a leg reached after it has expired has nothing left
+        // to spend. Letting it queue for its one remaining millisecond and then judging the bridge
+        // on whether anything moved in that millisecond is not a measurement — it dropped a bridge
+        // that was reading throughout, which the shared-deadline test caught. So it fails here,
+        // before the gate, saying exactly what happened: nothing was sent, and the connection is
+        // untouched because this call learned nothing about it.
+        if (emergency && deadlineAt <= Environment.TickCount64)
+        {
+            _pending.TryRemove(id, out _);
+            throw new ConnectorTransportException(Mutates(op)
+                ? $"'{op}' is NOT confirmed — check your positions and orders in ATAS. It was not sent: " +
+                  "the operation ran out of time before this leg's turn came."
+                : $"'{op}' was not sent: the operation ran out of time before this read's turn came. " +
+                  "Nothing was placed or cancelled.");
+        }
+
         try
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
