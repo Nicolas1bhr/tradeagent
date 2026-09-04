@@ -1,0 +1,79 @@
+STRUCTURAL VERDICT — FAIL — the snapshot improves consistency, but it is not the sole read surface, two prior high-risk races remain reachable, and some consumers still collapse `Unreadable`.
+
+PRIOR 27 — FIXED — sidecar names, lengths, and mtimes are compared before and after reading, with one retry then `Unreadable("changing")` at CoidWitness.cs:1712.
+
+PRIOR 28 — FIXED — sidecar enumeration/read exceptions, including `DirectoryNotFoundException`, reach the encompassing catch and become `Unreadable` at CoidWitness.cs:1705.
+
+PRIOR 31 — FIXED — rotation sizing now comes from the snapshot rather than `File.Exists`/attribute probes at CoidWitness.cs:2486.
+
+PRIOR 33 — NOT FIXED — `LastDecidingLine()` still converts an unreadable snapshot to null, allowing `Settled()` to append `RESOLVED` without seeing the unresolved marker at CoidWitness.cs:2346.
+
+PRIOR 34 — FIXED — rotation returns before writing or renaming when the snapshot is unreadable at CoidWitness.cs:1631.
+
+PRIOR 35 — NOT FIXED — overlapping `Stop()` calls can let one finalizer publish `Stopped` while another still executes, making `Started()` legal during that teardown at AdapterTeardown.cs:233.
+
+PRIOR 36 — FIXED — `SidecarPaths` now uses the same derived snapshot and cannot independently suppress enumeration failure at CoidWitness.cs:1007.
+
+PRIOR 37 — FIXED — unreadable sidecars receive a distinct `UnreadableSidecar` explanation instead of the three-cause Noted wording at CoidWitnessReport.cs:109.
+
+PRIOR 38 — FIXED — authenticated-without-hello now derives a stamped “has not said hello” status at AtasConnector.cs:201.
+
+PRIOR R9-1 — FIXED — an unreadable rotation snapshot causes no rename or replacement at CoidWitness.cs:1631.
+
+PRIOR R9-2 — FIXED — every substantive public reading runs the common load, recovery, and snapshot preparation through `Ready()` at CoidWitness.cs:1100.
+
+PRIOR R9-3 — FIXED — both across-connection credential/silence precedence directions are now covered at PeerRowTests.cs:152 and PeerRowTests.cs:183.
+
+PRIOR R9-4 — FIXED — carry selection uses `Generations(log)` for the actual sidecar being rotated at CoidWitness.cs:1633.
+
+PRIOR R9-5 — FIXED — candidate enumeration occurs inside the snapshot try, and a refused enumeration makes the snapshot unreadable at CoidWitness.cs:1719.
+
+### Structural questions
+
+(a) Yes. Legitimate sidecar mutations remain outside the reader at CoidWitness.cs:654, CoidWitness.cs:1650, and CoidWitness.cs:2490. More importantly, read consumers bypass the claimed complete snapshot:
+
+- `Listing()` performs `FileInfo` access outside the body of `ReadSidecarSet()` at CoidWitness.cs:1745.
+- Candidate contents are reopened later by `ReadTolerantly()` at CoidWitness.cs:1300.
+- The probe reopens every returned path through `ReadTail()` at tools/probe/Program.cs:1078 and tools/probe/Program.cs:2664.
+- The support package independently enumerates and copies sidecars at Doctor.cs:291.
+- `CoidWitnessReport` itself performs no filesystem access.
+
+(b) Yes. Exceptions escaping the try beginning at CoidWitness.cs:1705 are mapped to `Unreadable`, but `ErrorLogPath` is evaluated before that try and internally converts exceptions to null, producing `Nothing`, at CoidWitness.cs:1704 and CoidWitness.cs:577. `FileInfo.Exists` is also a failure-suppressing attribute probe at CoidWitness.cs:1746. Candidate-content failures occur outside this operation and become `_candidateUnreadable`, not `SidecarSnapshot.Unreadable`.
+
+(c) With `L=current`, `N=.new`, `R=.1`, and `O=.2`:
+
+1. Entry: `{L,R,O}`.
+2. Durable carry written: `{L,N,R,O}`.
+3. `R→O` with overwrite: `{L,N,O}`.
+4. `L→R`: `{N,R,O}`.
+5. `N→L`: `{L,R,O}`.
+
+Every name is matched by `coid-witness.errors.log*` and enumerated by `Generations()`. On the production writer, `N` is flushed before step 3, so there is no listed state where an existing unresolved marker is outside the reader glob or an older generation is removed before the carry is durable. Failure after step 4 is readable but not resumable in-process; see Finding 41.
+
+(d) All `_state` accesses and `_witness` calls inside `AdapterTeardown` are under `_gate`. The transition graph is nevertheless not the required one: `Started()` accepts `Running→Running` at AdapterTeardown.cs:110, and `Stop()` permits `Stopping→Stopping` and `Stopped→Stopping` at AdapterTeardown.cs:233. With overlapping stops, the first completion exposes `Stopped` while the second still runs, so `Started()` can return true during the second teardown. The adapter also ignores a refused `Started()` result at AtasStrategyAdapter.cs:457.
+
+(e) Yes. Before `AuthGrace` expires, a newly connected unauthenticated peer derives no current status at AtasConnector.cs:171. With an older marker, that marker continues winning; without one, `StatusDetail` is null. A compatible, fully connected hello also produces null detail intentionally because the row derives READY elsewhere.
+
+FINDING 39 — MED — CoidWitness.cs:999 — the snapshot exposes paths but not captured lines, forcing the probe and support collector to reopen files and combine one snapshot’s standing with another filesystem state.
+
+CHECK — Compute `Standing`, rotate or resolve the sidecar, then render its tail; the headline and displayed lines come from different states.
+
+FINDING 40 — MED — CoidWitness.cs:1300 — candidate contents are read after the snapshot’s before/after comparison, so recovery classification and adoption use a mixed-time filesystem view.
+
+CHECK — Change or replace a candidate after its name is returned at CoidWitness.cs:1719 but before line 1300; the changed envelope is adopted or rejected without invalidating the snapshot.
+
+FINDING 41 — MED — CoidWitness.cs:1652 — rotation cannot resume after `current→.1` succeeds but `.new→current` throws, permanently suppressing later sidecar appends until process restart.
+
+CHECK — On Windows, hold `.new` without `FileShare.Delete` after its durable write; after line 1652, line 1653 fails, every retry starts with missing `current`, and subsequent notes never append.
+
+FINDING 42 — MED — AtasConnector.cs:171 — a newly arrived peer has no stamped current status during `AuthGrace`, allowing a previous connection’s refusal to remain the displayed winner.
+
+CHECK — Record an incompatibility, connect a silent replacement, and read `StatusDetail` before `AuthGrace`; it still names the previous peer.
+
+FINDING 43 — LOW — CoidWitness.cs:1915 — `_sidecarBytes` counts UTF-16 characters while `MaxErrorLogBytes` is a byte limit, allowing non-ASCII logs to substantially exceed the intended bound.
+
+CHECK — Append emoji-heavy 400-character notes until UTF-8 size exceeds 64 KiB while the character count remains below it; rotation is delayed.
+
+Static audit only; no .NET command was run because it would create build artifacts contrary to the read-only instruction.
+
+SUMMARY — 2 HIGH / 4 MED / 1 LOW
