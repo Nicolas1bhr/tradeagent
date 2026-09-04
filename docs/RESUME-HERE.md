@@ -13,14 +13,13 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `64cdb73`: **U2a, U2d, U14 (a+b) and the U2a-fix test rewrite landed** (the agent pipe, deadlines, replay and fast path; the updater refusing
-instead of degrading; the write-ahead record surviving its rewrite, protocol 3; all in `BUILD-STATUS.md` 2026-09-04; the ubuntu/macos deadline-test reds are fixed at `7e60973`; windows CI is red on two witness tests whose SETUP throws
-on Windows — fix unit `docs/briefs/U14-win.md`, dispatched after U14b lands because it owns the same files). The queue, in order: U14-win (the Windows witness
-harness) and U2c1a (rebase + the reconciliation rule) are building; then U2c-1 as three units
-(U2c1a `docs/briefs/U2c1a.md`: rebase + class A; U2c1b: the emergency-press rewrite with C2/C3; U2c1c: C1/C4/C5, the
-dispatch-layer class — cut b and c from `docs/hardening/briefs/U2c1-r4-build.md` when their turn comes); then the milestone review of
-the money path on `main`; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
-`docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
+`main` is `73a1c85`: **U2a, U2d, U14 (a+b), the U2a-fix test rewrite and the U14-win harness fix landed** — all in
+`BUILD-STATUS.md` under 2026-09-04/05. CI on `main`: ubuntu and macos green; windows fails one unrelated test per run
+(teardown/timing shapes) — fix unit `docs/briefs/U-win-flakes.md`. The queue, in order: U2c1a (rebase + the
+reconciliation rule) is building; U-win-flakes next; then U2c1b (the emergency-press rewrite with C2/C3) and U2c1c
+(C1/C4/C5, the dispatch-layer class), cut from `docs/hardening/briefs/U2c1-r4-build.md` when their turn comes; then
+the milestone review of the money path on `main`; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the
+items in `docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
 

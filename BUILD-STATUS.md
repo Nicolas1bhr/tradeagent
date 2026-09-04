@@ -2969,3 +2969,37 @@ in `docs/briefs/U14-win.md`, dispatched next. **Known gap, stated by the builder
 returns whether the append may proceed when its own resume fails, and no test reaches that branch — under the
 one-writer rule the byte counter is already negative whenever a rotation may be half done; it is there so the
 invariant is local, not claimed as covered. No out-of-process SIGKILL run this unit.
+
+## 2026-09-05 — U14-win landed: the witness tests reach their preconditions the way Windows allows
+
+A fix unit under `docs/HOW-WE-BUILD.md`: one fresh fixer on `docs/briefs/U14-win.md`, product code untouched, two test
+files changed (+152/−19 with the brief). Merge `73a1c85`. Three harness fixes, no `Skip`:
+
+- **The rotating writer.** The harness appended with `File.AppendAllText` (shares READ only) while readers read the same
+  sidecar with `File.ReadAllLines` (also READ only): a sharing violation on Windows that APFS never arbitrates. It now
+  opens `FileMode.Append` sharing `ReadWrite | Delete` and waits a holder out, as the product's own append does. Mutant
+  (`Standing` always `Clean`) → RED, 0 vs 51.
+- **The missing bridge directory.** Windows refuses `Directory.Move` on a tree holding an open handle, and the witness
+  lease (`FileShare.None`, instance lifetime) is one; disposing first loses the point, because `Submitting` leases BEFORE
+  it reads and a re-lease into a gone folder answers "another writer owns this witness". The directory is now a
+  removable link — a junction on Windows (no privilege), a symlink elsewhere. Mutant (`DirectoryNotFoundException`
+  swallowed as not-failed) → RED, "changed underneath".
+- **The churn test, the varying one.** `Expected 301 Actual 300` was NOT a leftover temp: `Submit` threw `Submitting`'s
+  answer away, so a rename refused for its whole budget — order refused, claim rolled back, the mechanism WORKING — read
+  as a lost record. It now asserts the promise: the seed plus exactly the accepted claims, temps ≤ refusals. Two
+  whole-budget refusals injected at `replace`: new form green, old form RED 301 vs 299. Mutant (a record dropped after
+  `Save` returned true) → RED, 301 vs 300.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** local at `f136a1b`, Release: 0 warnings; each test
+3× green; both witness classes 191/191; suite 795, 0 failed. CI run 33924375698 on draft PR #2 (merged with `main`):
+ubuntu SUCCESS, macos SUCCESS, windows 518/519 with all three target tests PASSED in the trx. Manager's gate at the
+rebased tip `73a1c85`, Release: build → 0 warnings, 0 errors; suite → 75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 0 added; scan clean;
+CI at the merge sha was in progress when this was written; its windows result is recorded with U-win-flakes.
+
+**NOT VERIFIED:** nothing on the box. **A new Windows-only class, not this unit's:** on each PR run a different unrelated
+test failed on windows-latest — `GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled`
+(0 vs 1) on one run, `AtasProtocolTests.Capabilities_and_accounts_come_from_the_bridge_handshake` on the one before —
+teardown and timing shapes, not product assertions, NOT investigated here; fixer `docs/briefs/U-win-flakes.md`.
+**For the milestone review, stated by the fixer:** `CoidWitness` reads its sidecar with `File.ReadAllLines`, which shares
+READ only, so on Windows a concurrent reader can push the product's own append into its retry budget — no red reachable
+without a Windows machine, unchanged, NOT VERIFIED.
