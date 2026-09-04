@@ -1032,11 +1032,20 @@ public class ConnectorSendDeadlineTests
     /// promised two-second end-to-end ceiling was false, and the way to see it is Codex's own check:
     /// hold the gate until just under two seconds, then release it into a pipe with no room.
     ///
-    /// That is what this peer does. It drains at a fixed rate until it has taken (frame − buffer)
-    /// bytes and then stops for good: the holder's write completes — the kernel has the rest — the
-    /// gate is released at about 1.8 s, and the emergency inherits a full buffer that will never
-    /// drain again. Under one clock it is cut at the caller's deadline; under two it is cut two
-    /// seconds after the gate, near four.
+    /// That is what this peer does, and the RELEASE IS A CLOCK THE TEST HOLDS rather than a rate it
+    /// hopes for. The peer takes a priming gulp, then nothing; 1.2 s into the emergency's two the
+    /// test hands it the rest of the holder's frame, it swallows that at full speed and stops for
+    /// good. The holder's write completes — the kernel has the tail — the gate is released at about
+    /// 1.2 s, and the emergency inherits a buffer that will never drain again. Under one clock it is
+    /// cut at the caller's deadline; under two it is cut two seconds after the gate, near 3.2.
+    ///
+    /// WHY NOT A PACED DRAIN. It was one: 8 KiB every 80 ms, nineteen times, for a release "at about
+    /// 1.5 s". A paced reader bounds the drain from below only while every read returns a full 8 KiB
+    /// — and when the writer is the slow one each read returns less, the loop needs more turns, and
+    /// each turn costs another whole 80 ms. So a slower machine released the gate LATER than the
+    /// fixture claimed, past the 2 s deadline, and the emergency expired on the queue with the
+    /// gate's sentence instead of the write's. macos-latest, both runs of CI 33898144843. One wait
+    /// of 1.2 s cannot compound like nineteen of 80 ms can.
     ///
     /// The message is the premise as well as the verdict: "still being sent" is the FrameIncomplete
     /// branch, so it proves the call got past the gate and into the write rather than expiring on
@@ -1050,16 +1059,18 @@ public class ConnectorSendDeadlineTests
         Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyDeadline);
         await connector.ConnectAsync();
 
-        // 8 KiB every 80 ms ≈ 100 KiB/s, stopping just after 152 KiB — so the ~153 KiB holder frame
-        // is fully accepted at about 1.5 s, the gate is released there, and nothing is read again.
-        await using var peer = await BridgePeer.ReadingThenStopping(
-            pipe, Cred().Secret, 152 * 1024, 8192, TimeSpan.FromMilliseconds(80));
+        // Far past any pipe buffer on any of the three platforms, so the holder's write is certainly
+        // blocked on the peer and the gate is certainly held until this test says otherwise.
+        const int holderPayload = 512 * 1024;
+        const int prime = 8 * 1024;
+
+        await using var peer = await BridgePeer.ReadingOnCommand(pipe, Cred().Secret, prime);
         await Wait(async () => await connector.IsConnectedAsync());
 
-        var holder = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-c1-hold", "ATAS-HALFWAY", "ES",
-            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 150 * 1024)));
+        var holder = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-c1-hold", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', holderPayload)));
         Observe([holder]);
-        await Wait(() => Task.FromResult(peer.BytesRead >= 8 * 1024));
+        await Wait(() => Task.FromResult(peer.BytesRead >= prime));
 
         // The emergency's OWN frame is oversized on purpose. A cancel-all is normally a hundred
         // bytes, which the socket buffer swallows whether or not the far end is reading — so a small
@@ -1067,10 +1078,27 @@ public class ConnectorSendDeadlineTests
         // buffer that nobody is draining, which is what makes the write cost real time and puts both
         // phases of the call on trial in one measurement.
         var timer = Stopwatch.StartNew();
-        var ex = await Assert.ThrowsAnyAsync<Exception>(
-            () => connector.CancelAllOrdersAsync(new string('a', 64 * 1024)));
+        var emergency = Record.ExceptionAsync(() => connector.CancelAllOrdersAsync(new string('a', 64 * 1024)));
+
+        // Most of the emergency's budget spent on the queue, then the gate. The peer's allowance
+        // stops one JSON envelope short of the holder's frame, so the tail stays in the kernel: the
+        // holder's write returns, the gate moves, and the pipe the emergency gets has no room in it.
+        await Task.Delay(1200);
+        var heldFor = timer.Elapsed;
+        peer.Accept(holderPayload - prime);
+
+        var ex = await emergency;
         timer.Stop();
 
+        // THE FIXTURE'S OWN PREMISE FIRST. Neither of these is a claim about the product: they are
+        // the arrangement this test creates, and a run that failed to create it must say so in those
+        // words rather than reporting a two-clock defect that was never measured.
+        Assert.True(heldFor > TimeSpan.FromSeconds(1),
+            $"the gate was released {heldFor.TotalSeconds:0.00}s in, so the emergency did not spend most of its budget queueing — this run measured nothing about ONE clock versus two");
+        Assert.True(heldFor < connector.EmergencyDeadline,
+            $"the gate was still held at {heldFor.TotalSeconds:0.00}s, at or past the {connector.EmergencyDeadline.TotalSeconds:0}s deadline — the emergency expired on the QUEUE and never reached the write");
+
+        Assert.NotNull(ex);
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
         Assert.Contains("still being sent", ex.Message);   // it reached the write; the gate was not what expired
         Assert.Contains("NOT confirmed", ex.Message);
@@ -1775,40 +1803,6 @@ public class ConnectorSendDeadlineTests
 
         /// <summary><c>BridgeServer.HeartbeatInterval</c>, read from that file, not guessed.</summary>
         public static readonly TimeSpan ShippedHeartbeatInterval = TimeSpan.FromSeconds(5);
-
-        /// <summary>
-        /// Drains at a paced rate until it has taken <paramref name="thresholdBytes"/>, then stops
-        /// reading for good.
-        ///
-        /// It exists to release the send gate at a chosen moment INTO A FULL BUFFER. A writer's
-        /// frame completes when the kernel has taken the last of it, not when the peer has read it,
-        /// so stopping at (frame size − buffer) hands the next caller the gate and a pipe with no
-        /// room in it — which is the only way to make the gate wait and the write both cost real
-        /// time in one call.
-        /// </summary>
-        public static async Task<BridgePeer> ReadingThenStopping(
-            string pipe, string secret, int thresholdBytes, int bytes, TimeSpan pace)
-        {
-            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-HALFWAY", null, PaceBytes);
-            peer.Track(Task.Run(() => peer.PumpUntil(thresholdBytes, bytes, pace)));
-            return peer;
-        }
-
-        async Task PumpUntil(int threshold, int bytes, TimeSpan pace)
-        {
-            var buf = new byte[bytes];
-            try
-            {
-                while (!_stop.IsCancellationRequested && BytesRead < threshold)
-                {
-                    var n = await _p.ReadAsync(buf, _stop.Token);
-                    if (n == 0) return;
-                    Interlocked.Add(ref _read, n);
-                    await Task.Delay(pace, _stop.Token);
-                }
-            }
-            catch (Exception) { /* the test ending is how this always ends */ }
-        }
 
         /// <summary>
         /// A PEER THAT TAKES A MEASURED GULP WHEN IT IS TOLD TO, AND NOTHING AT ALL IN BETWEEN.
