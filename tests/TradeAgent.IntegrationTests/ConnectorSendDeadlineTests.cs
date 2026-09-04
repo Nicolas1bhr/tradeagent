@@ -245,10 +245,28 @@ public class ConnectorSendDeadlineTests
     /// so it timed this process's backlog as well as the bridge's reading: enough concurrent RPCs
     /// and a perfectly healthy, actively-reading bridge was declared stalled and disconnected.
     ///
-    /// A real <see cref="BridgeServer"/> on the other end, a deliberately tiny deadline, and enough
-    /// concurrent traffic that callers must queue behind each other. Some of those calls are
-    /// allowed to fail — they are UNKNOWN to their own caller, which is honest — but the CONNECTION
-    /// must survive, and the bridge must still answer afterwards.
+    /// A real <see cref="BridgeServer"/> on the other end, and enough concurrent traffic that
+    /// callers must queue behind each other. Some of those calls are allowed to fail — they are
+    /// UNKNOWN to their own caller, which is honest — but the CONNECTION must survive, and the
+    /// bridge must still answer afterwards.
+    ///
+    /// THE QUEUE IS MADE OF TIME, NOT OF BYTES, and that is the correction this test needed. It used
+    /// to hold the gate with bulk alone — three hundred 128 KiB frames against a 50 ms deadline —
+    /// and bulk drains at whatever speed the machine has. Measured 2026-09-04: this Mac drained all
+    /// three hundred in 220 ms, so anything above a 250 ms deadline saw NO caller expire and the
+    /// test proved nothing; a Linux runner throttled to half a core needed more than 50 ms for a
+    /// single 1 KiB chunk and reported the bridge as not reading, which is the accusation this test
+    /// exists to forbid. Failed 3 of 5 that way, and macos-latest failed it that way in CI
+    /// 33898144843. There is no constant that is above one runner's stall and below another's drain.
+    ///
+    /// So the bridge is given the shape a real one has: every quote costs a synchronous call into
+    /// ATAS. <see cref="QuotesAtAPace"/> makes that 20 ms, which puts a WALL-CLOCK FLOOR under the
+    /// queue — three hundred calls cannot clear in less than six seconds on any machine — while
+    /// leaving each individual chunk write nothing worse than one 20 ms pause to survive. The
+    /// deadline can then sit at two seconds with a wide margin on both sides instead of a narrow one
+    /// on neither: two hundred of the three hundred callers still expire on the gate, and a chunk
+    /// write would have to stall a hundred times longer than the bridge's own pause to be misread.
+    /// Verified at that setting 8 of 8 on half a core and 8 of 8 on two cores.
     /// </summary>
     [Fact]
     public async Task Local_queueing_under_load_does_not_disconnect_a_healthy_bridge()
@@ -256,17 +274,22 @@ public class ConnectorSendDeadlineTests
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
         {
-            WriteTimeout = TimeSpan.FromMilliseconds(50)   // tiny on purpose: the gate WILL be contended
+            // Far below the six seconds of queue below, a hundred times one 20 ms pause: the gate
+            // WILL be contended, and no chunk write can miss this by being unlucky with the
+            // scheduler. 500 ms was not enough — it lost one run in six on a two-core Linux runner,
+            // which is about what a thread-pool injection costs.
+            WriteTimeout = TimeSpan.FromSeconds(2)
         };
         await connector.ConnectAsync();
-        var adapter = new LoopbackAtasAdapter();
+        var adapter = new QuotesAtAPace(new LoopbackAtasAdapter(), TimeSpan.FromMilliseconds(20));
         await using var bridge = new BridgeServer(adapter, pipe);
         bridge.Start();
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // Big frames on purpose. Small ones land in the socket buffer in microseconds and never
-        // contend the gate at all, so the test would pass without ever exercising the thing it is
-        // about — verified: with small frames the mutant that drops on gate expiry survived this.
+        // Big frames on purpose. Small ones land in the socket buffer in microseconds, so the write
+        // half of this never costs anything and the test drifts towards measuring the adapter's
+        // pace alone — verified in the round-4 record: with small frames the mutant that drops on
+        // gate expiry survived this.
         var fat = new string('s', 128 * 1024);
         var calls = Enumerable.Range(0, 300).Select(_ => connector.GetQuoteAsync(fat)).ToArray();
         try { await Task.WhenAll(calls).WaitAsync(TimeSpan.FromSeconds(60)); }
@@ -1403,6 +1426,50 @@ public class ConnectorSendDeadlineTests
             await Task.Delay(25);
         }
         throw new TimeoutException("condition was not met in time");
+    }
+
+    /// <summary>
+    /// A BRIDGE THAT IS SERVING, AND SLOW ABOUT IT — which is what a real one is.
+    ///
+    /// <see cref="LoopbackAtasAdapter"/> answers a quote out of a dictionary, so a bridge built on it
+    /// consumes frames as fast as the machine can copy bytes, and how long a queue of them takes is
+    /// a fact about the machine rather than about the test. <c>AtasStrategyAdapter</c> does not: a
+    /// quote is a synchronous call into ATAS, <see cref="BridgeServer"/> handles frames strictly one
+    /// at a time, and the pipe therefore stops being drained for the length of that call.
+    ///
+    /// Charging a fixed <paramref name="perQuote"/> for it is what gives a queue of N calls a
+    /// wall-clock floor of N × perQuote on every runner — the property the gate-contention test
+    /// needs and could not get from volume. It is a floor, never a ceiling: a slower machine takes
+    /// longer, which is the harmless direction.
+    /// </summary>
+    sealed class QuotesAtAPace(LoopbackAtasAdapter inner, TimeSpan perQuote) : IAtasAdapter
+    {
+        public QuoteInfo? GetQuote(string symbol)
+        {
+            // Deliberately blocking, on the bridge's own frame-handling thread, because that is what
+            // a synchronous call into a charting platform does to it.
+            Thread.Sleep(perQuote);
+            return inner.GetQuote(symbol);
+        }
+
+        public BridgeHello Describe() => inner.Describe();
+        public IReadOnlyList<AccountInfo> GetAccounts() => inner.GetAccounts();
+        public IReadOnlyList<InstrumentInfo> GetInstruments() => inner.GetInstruments();
+        public IReadOnlyList<PositionInfo> GetPositions(string a) => inner.GetPositions(a);
+        public IReadOnlyList<OrderInfo> GetOrders(string a, bool i, DateTimeOffset? s) => inner.GetOrders(a, i, s);
+        public IReadOnlyList<ExecutionInfo> GetExecutions(string a, DateTimeOffset? s) => inner.GetExecutions(a, s);
+        public OrderInfo Place(PlaceOrderCommand cmd) => inner.Place(cmd);
+        public OrderInfo Modify(ModifyOrderCommand cmd) => inner.Modify(cmd);
+        public void Cancel(string id) => inner.Cancel(id);
+        public IReadOnlyList<string> CancelAll(string a) => inner.CancelAll(a);
+        public OrderInfo? ClosePosition(string a, string sym, string cid) => inner.ClosePosition(a, sym, cid);
+
+        public event Action<bool>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
     }
 
     /// <summary>
