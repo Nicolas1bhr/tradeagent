@@ -24,6 +24,24 @@ overstating it is the most dangerous lie a connector can tell.
 Any other exception is treated as indefinite. Getting these backwards is the one mistake that can
 produce a live position nobody asked for.
 
+**The transport ledger — an obligation on every mutating call, and it is not a method on the
+interface.** `PlaceOrderAsync`, `ModifyOrderAsync`, `CancelOrderAsync`, `CancelAllOrdersAsync` and
+`ClosePositionAsync` must each call `TransportLedger.Attempt()` the moment they START — before
+anything can go wrong — and `TransportLedger.Record(...)` at every site that KNOWS where the frame
+got to. Both are no-ops outside a leg, so a connector may call them unconditionally. **Reads must
+not record**: a leg is a read to find its target and then the thing it came to do, and recording the
+read would report a reply for a mutation that never left.
+
+Why it carries safety: one of the five per-leg words, `not-sent`, is an ASSURANCE, and an empty
+transport record is what produces it. A connector that mutates and never marks the attempt turns
+"nothing was recorded" from *no mutation was started* into *nobody wrote it down* — measured on a
+connector written to this interface that really cancelled at the broker: `not-sent`, `attempted: 0`.
+**A connector that ignores this is safe and imprecise, never dangerous**: the gateway does not take
+silence for an assurance — a leg whose own record proves a mutating step was dispatched is
+`sent-not-confirmed` whatever the ledger says. Marking the attempt is what buys the precision back,
+and `NothingWritten` — which only a connector can prove — is the one report allowed to overrule the
+record.
+
 ## `IAgentRuntime` — `src/TradeAgent.AgentRuntime/IAgentRuntime.cs`
 
 Detect · Install · Update · GetVersion · BeginAuthentication · GetAuthenticationState ·
@@ -175,8 +193,8 @@ transport result — what is known about where the frame got to — never from t
 | `confirmed` | the broker said this leg's own intent is done | `CANCELLED` / `FILLED` | anything but `NothingWritten` |
 | `rejected` | a DEFINITE refusal. Nothing is working from this leg and there is nothing to reconcile | `REJECTED` | anything but `NothingWritten` |
 | `sent-still-working` | sent, answered, and the order is still out there | `WORKING` / `ACKNOWLEDGED` / `PARTIALLY_FILLED` / `CANCEL_PENDING` | anything but `NothingWritten` |
-| `sent-not-confirmed` | it reached the wire, or may have, and the outcome is not known | `UNKNOWN` + `needs_reconciliation`, or still `DISPATCHING` / `RECONCILING` | `PossiblyWritten` / `ReplyReceived` |
-| `not-sent` | it never reached the wire — nothing is at the broker from this leg | no record, or `CREATED` / `AWAITING_APPROVAL` — **or any record at all** when the transport proves it | `NothingWritten`, or no mutating call attempted |
+| `sent-not-confirmed` | it reached the wire, or may have, and the outcome is not known | `UNKNOWN` + `needs_reconciliation`, or still `DISPATCHING` / `RECONCILING` | `PossiblyWritten` / `ReplyReceived`, **or nothing reported at all** |
+| `not-sent` | it never reached the wire — nothing is at the broker from this leg | no record, or `CREATED` / `AWAITING_APPROVAL` — **or any record at all** when the transport proves it | `NothingWritten`, or nothing reported on a record that never reached the wire |
 
 **Every arm consults the transport, including the three that read a definite answer.**
 `NothingWritten` is a PROOF that this leg's frame never left the process, and a record can be in a
@@ -186,10 +204,23 @@ therefore the one report allowed to overrule the record. Everything else defers 
 the record can answer, including a leg with no transport of its own: an idempotent replay dispatches
 nothing and is `confirmed`, not `not-sent`.
 
-**An empty transport record means no mutating call was ever attempted**, and that is producible only
-by work that never started one — a target resolution that failed, a leg parked for approval, a
-`close-all` symbol with nothing left to close. A mutation that STARTED and reported nothing is
-`PossiblyWritten`, so an unenumerated exit cannot become an assurance.
+**An empty transport record is not by itself an assurance, and the RECORD's own state is what says
+whether it may be read as one.** A connector that marks its attempts makes an empty record mean "no
+mutating call was ever started" — that is the obligation stated above, both shipped connectors keep
+it, and a mutation that STARTED and reported nothing is `PossiblyWritten`, so an unenumerated exit
+cannot become an assurance. **A connector that does not is not allowed to produce one either.**
+`TradingGateway` writes `DISPATCHING` immediately before a mutating connector call and `UNKNOWN` and
+`RECONCILING` are reachable only through it, so a leg holding one of those three states is the pipe
+server's OWN proof that a mutating step of this leg was dispatched: with nothing reported it is
+`sent-not-confirmed`, whatever the connector did or did not write down. `not-sent` from an empty
+record therefore needs a record that never got to the wire — no record at all, `CREATED`, or
+`AWAITING_APPROVAL` — which is what the three legs that legitimately produce it have: a target
+resolution that failed before its record existed, a leg parked for approval, and a `close-all` symbol
+with nothing left to close.
+
+**The `transport` field is always present, and it is `null` when the connector reported nothing.**
+It is the EVIDENCE for the word beside it, and it used to be omitted by the serializer in exactly the
+case where the word rests on the pipe server's own knowledge rather than on a connector's report.
 
 `nothing-to-do` is **not** a per-leg word. It is a whole-operation result: `nothing_to_do` is true on
 a sweep that found zero targets. A `close-all` leg whose symbol turns out to have nothing to close is

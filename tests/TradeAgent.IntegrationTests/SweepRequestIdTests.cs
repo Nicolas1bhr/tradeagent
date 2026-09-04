@@ -659,6 +659,13 @@ public class SweepRequestIdTests
             [ExecutionState.CANCEL_PENDING] = "sent-still-working"
         };
 
+        // THE STATES THAT ARE THE PIPE SERVER'S OWN PROOF THAT A MUTATING STEP WAS DISPATCHED.
+        // `TradingGateway` writes DISPATCHING immediately before the connector's mutating call and
+        // the other two are reachable only through it. Written down here rather than derived, so
+        // this stays a table and does not become a second copy of the mapping.
+        ExecutionState[] dispatched =
+            [ExecutionState.DISPATCHING, ExecutionState.UNKNOWN, ExecutionState.RECONCILING];
+
         List<TransportOutcome?> transports = [null, .. Enum.GetValues<TransportOutcome>().Cast<TransportOutcome?>()];
         List<ExecutionState?> states = [null, .. Enum.GetValues<ExecutionState>().Cast<ExecutionState?>()];
 
@@ -674,8 +681,12 @@ public class SweepRequestIdTests
                     // The record knows which answer came back, and only the record knows.
                     _ when state is { } s && answered.TryGetValue(s, out var word) => word,
 
-                    // The record cannot settle it, so the wire decides — and fail-closed.
-                    null => "not-sent",
+                    // NOTHING WAS REPORTED, so the RECORD decides whether a mutating step of this
+                    // leg was ever dispatched — and only a record that never got that far may
+                    // produce the assurance (verifier round-11 F-2).
+                    null => state is { } d && dispatched.Contains(d) ? "sent-not-confirmed" : "not-sent",
+
+                    // The record cannot settle it and the connector says the frame may have gone.
                     _ => "sent-not-confirmed"
                 };
 
@@ -709,15 +720,31 @@ public class SweepRequestIdTests
     public void An_attempted_mutation_that_reported_nothing_is_not_confirmed_and_an_unattempted_one_is_not_sent()
     {
         // Nothing was ever attempted: the strongest form of "nothing was sent", and unchanged.
+        //
+        // THE STATE IS AWAITING_APPROVAL AND THAT IS NOT INCIDENTAL. It used to be UNKNOWN, which
+        // round 12 made a state the pipe server reads as its OWN proof that a mutating step was
+        // dispatched — so the pair "no ledger report" + "a record that reached the wire" is now
+        // `sent-not-confirmed` whatever the connector did or did not write down (verifier round-11
+        // F-2). What this test is about is the LEDGER, so its record is one that proves the leg
+        // never got that far, and the UNKNOWN case is asserted below as the new fact it is.
         var untouched = new TransportRecord();
         Assert.Null(untouched.Outcome);
-        Assert.Equal("not-sent", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, untouched.Outcome));
+        Assert.Equal("not-sent", GatewayPipeServer.LegWordFor(ExecutionState.AWAITING_APPROVAL, untouched.Outcome));
 
-        // A mutation started and no site reported where it got to: fail-closed.
+        // The same empty record on a leg whose own record proves a mutation WAS dispatched: the
+        // assurance is not available, and it is not available for a connector that says nothing.
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, untouched.Outcome));
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.DISPATCHING, untouched.Outcome));
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.RECONCILING, untouched.Outcome));
+
+        // A mutation started and no site reported where it got to: fail-closed, and it is the
+        // fail-closed word on a pre-dispatch record too, where the pipe server has no proof of its
+        // own and the connector's attempt marker is the only thing that knows.
         var attempted = new TransportRecord();
         using (TransportLedger.Attach(attempted)) TransportLedger.Attempt();
         Assert.Equal(TransportOutcome.PossiblyWritten, attempted.Outcome);
         Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, attempted.Outcome));
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.AWAITING_APPROVAL, attempted.Outcome));
 
         // And a site that KNOWS still overrides the fallback, in both directions — otherwise the
         // fallback would have swallowed the one report that can honestly say `not-sent`.
@@ -909,6 +936,132 @@ public class SweepRequestIdTests
         foreach (var leg in legs)
             Assert.Null(gw.GetRequest(leg.Id));
         Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+    }
+
+    /// <summary>
+    /// `not-sent` IS AN ASSURANCE, AND UNTIL NOW IT WAS ONE EVERY CONNECTOR HAD TO OPT INTO.
+    ///
+    /// Verifier round-11 F-2. `TransportLedger.Attempt()` is what makes an empty transport record
+    /// mean "no mutating call was ever started" — and it is called by the CONNECTOR. Both connectors
+    /// in this tree call it; `ITradingConnector`, which is what a third party implements, said nothing
+    /// about it. So a connector written to the public contract that really cancels an order at the
+    /// broker and never touches the ledger reported <c>not-sent</c> with <c>attempted: 0</c> — the
+    /// exact report the attempt marker exists to make impossible, produced by an absence of
+    /// information, and with the `transport` evidence field omitted from the answer exactly then.
+    ///
+    /// THE FIX IS NOT A THIRD PARTY'S TO APPLY, and that is the point of it. The pipe server knows
+    /// something it was not using: which of a leg's own steps are MUTATING. `TradingGateway` writes
+    /// DISPATCHING before it touches the wire and every state downstream of it — UNKNOWN, RECONCILING
+    /// — is reachable only through it, so a record in one of those states is the pipe server's OWN
+    /// proof that a mutating step was dispatched. A leg holding that proof and no transport report is
+    /// <c>sent-not-confirmed</c>; a leg whose record never got there keeps <c>not-sent</c>. The
+    /// obligation is now also STATED on `ITradingConnector` and in `docs/CONTRACTS.md`, so a connector
+    /// that opts in gets the sharper answer and one that does not is no longer dangerous.
+    ///
+    /// The connector below is the verifier's: it implements the public interface, cancels the order
+    /// at the broker for real, then loses the acknowledgement, and never calls `TransportLedger`.
+    /// </summary>
+    [Fact]
+    public async Task A_mutating_step_the_connector_never_marked_is_not_reported_as_never_sent()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var fake = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking })
+        {
+            EmergencyBudget = TimeSpan.FromSeconds(20)
+        };
+        var conn = new LedgerBlindConnector(fake);
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = fake.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("blind-working", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "blind-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+
+        // The premise: the cancel really reached the broker. Without this the word could be right.
+        Assert.Equal(1, conn.CancelsThatReachedTheBroker);
+
+        var leg = sweep.GetProperty("outcomes").EnumerateArray().Single();
+        var word = leg.GetProperty("outcome").GetString();
+        Assert.True(word != "not-sent",
+            $"a cancel that reached the broker was reported '{word}' — the assurance was produced by " +
+            "an absence of information, from a connector that never called TransportLedger");
+        Assert.Equal("sent-not-confirmed", word);
+        Assert.Equal(1, sweep.GetProperty("attempted").GetInt32());
+        Assert.Equal(0, sweep.GetProperty("not_sent").GetInt32());
+
+        // THE EVIDENCE IS IN THE ANSWER EVEN WHEN THERE IS NONE. The field used to be omitted by the
+        // serializer exactly when the leg had no transport report, which is exactly when the reader
+        // most needs to know that the word rests on the pipe server's knowledge and not the
+        // connector's.
+        Assert.True(leg.TryGetProperty("transport", out var transport),
+            "the leg carries no `transport` key at all, so its claim arrived without its evidence");
+        Assert.Equal(JsonValueKind.Null, transport.ValueKind);
+    }
+
+    /// <summary>
+    /// A connector that MUTATES and never writes the ledger — the third party this contract is for.
+    /// It is the round-11 verifier's `LedgerBlind`, kept because it is the only fixture in which
+    /// `not-sent` can be produced for something that really happened at the broker.
+    /// </summary>
+    sealed class LedgerBlindConnector(FakeConnector inner) : ITradingConnector
+    {
+        public int CancelsThatReachedTheBroker;
+
+        public string Id => inner.Id;
+        public string DisplayName => "Ledger-blind connector";
+        public ConnectorCapabilities Capabilities => inner.Capabilities;
+        public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
+        public TimeSpan EmergencyBudget => inner.EmergencyBudget;
+
+        public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+
+        public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
+        public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
+        public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);
+        public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => inner.GetAccountsAsync(ct);
+        public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
+        public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
+        public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
+        public Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => inner.GetPositionsAsync(a, ct);
+        public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool i, DateTimeOffset? s, CancellationToken ct = default) => inner.GetOrdersAsync(a, i, s, ct);
+        public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? s, CancellationToken ct = default) => inner.GetExecutionsAsync(a, s, ct);
+        public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand c, CancellationToken ct = default) => inner.PlaceOrderAsync(c, ct);
+        public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default) => inner.ModifyOrderAsync(c, ct);
+        public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) => inner.CancelAllOrdersAsync(a, ct);
+        public Task<OrderInfo?> ClosePositionAsync(string a, string s, string c, CancellationToken ct = default) => inner.ClosePositionAsync(a, s, c, ct);
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+        /// <summary>The frame went out and the broker acted; the acknowledgement was then lost.</summary>
+        public async Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default)
+        {
+            await Task.Yield();
+            inner.Broker.Cancel(connectorOrderId);            // it REALLY happened at the broker
+            Interlocked.Increment(ref CancelsThatReachedTheBroker);
+            throw new ConnectorTransportException("the acknowledgement was lost after the cancel was sent");
+        }
     }
 
     /// <summary>
