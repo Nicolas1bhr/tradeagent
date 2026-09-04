@@ -219,6 +219,115 @@ public class WitnessSnapshotTests : IDisposable
         refused.Dispose();
     }
 
+    /// <summary>
+    /// THE CRASH POINTS, BUILT ON DISK AND READ. Rotation is four acts with nothing between them —
+    /// write <c>log.new</c>, <c>log.1</c>→<c>log.2</c>, <c>log</c>→<c>log.1</c>,
+    /// <c>log.new</c>→<c>log</c> — so there are five instants a machine can die at, counting the one
+    /// before it starts. The claim is one sentence: every one of those states is a SUBSET of the
+    /// files a reader reads, and the carried line is on the disk before the first act that removes
+    /// anything. Each state is constructed here with the real filenames and read by a real witness.
+    ///
+    /// The states are built rather than raced because the three renames have no observation point
+    /// between them in this process; a real <c>SIGKILL</c> landing in them at random is
+    /// <c>scratchpad/rotkill10</c>, out of process, and is recorded in the round's build record.
+    /// </summary>
+    [Theory]
+    [InlineData(0, "entry — nothing has run yet")]
+    [InlineData(1, "the carry is written, before any generation moves")]
+    [InlineData(2, "the oldest generation has been renamed out")]
+    [InlineData(3, "the current log has become the rolled generation")]
+    [InlineData(4, "the rotation has completed")]
+    public void A_gap_is_readable_at_every_instant_of_the_rotation(int crashPoint, string _)
+    {
+        Seed();
+        var restatement =
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness carried an unresolved failure across a " +
+            "sidecar rotation: ERROR coid-witness rewrite did not land. claim=TA-GAP" + Environment.NewLine;
+
+        // The ordinary state: the unresolved line is in the CURRENT log, which is where safety
+        // events land and where nothing but a rotation moves them from.
+        File.WriteAllText(Sidecar, Gap(9));
+        File.WriteAllText(Sidecar + ".1", $"{DateTimeOffset.UtcNow.AddMinutes(-20):O} WARN older" + Environment.NewLine);
+        File.WriteAllText(Sidecar + ".2", $"{DateTimeOffset.UtcNow.AddMinutes(-30):O} WARN oldest" + Environment.NewLine);
+
+        if (crashPoint >= 1) File.WriteAllText(Sidecar + ".new", restatement);
+        if (crashPoint >= 2) File.Move(Sidecar + ".1", Sidecar + ".2", overwrite: true);
+        if (crashPoint >= 3) File.Move(Sidecar, Sidecar + ".1");
+        if (crashPoint >= 4) File.Move(Sidecar + ".new", Sidecar);
+
+        var reader = Session();
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.Equal(WitnessStanding.Unresolved, CoidWitnessReport.Standing(reader));
+        Assert.Contains("TA-GAP", Everything());
+        reader.Dispose();
+    }
+
+    /// <summary>
+    /// AND THE SAME FIVE INSTANTS FOR A GAP THAT WAS ALREADY A GENERATION BACK — round 8's
+    /// arrangement, which is the one its own tests built and the one that hid the ordinary case.
+    /// The oldest generation is the one the rotation removes, so this is where the carry has to be
+    /// right or the line is gone.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void A_gap_in_the_oldest_generation_is_readable_at_every_instant_of_the_rotation(int crashPoint)
+    {
+        Seed();
+        var restatement =
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness carried an unresolved failure across a " +
+            "sidecar rotation: ERROR coid-witness rewrite did not land. claim=TA-GAP" + Environment.NewLine;
+
+        File.WriteAllText(Sidecar, $"{DateTimeOffset.UtcNow:O} WARN current" + Environment.NewLine);
+        File.WriteAllText(Sidecar + ".1", $"{DateTimeOffset.UtcNow.AddMinutes(-20):O} WARN rolled" + Environment.NewLine);
+        File.WriteAllText(Sidecar + ".2", Gap(30));
+
+        if (crashPoint >= 1) File.WriteAllText(Sidecar + ".new", restatement);
+        if (crashPoint >= 2) File.Move(Sidecar + ".1", Sidecar + ".2", overwrite: true);
+        if (crashPoint >= 3) File.Move(Sidecar, Sidecar + ".1");
+        if (crashPoint >= 4) File.Move(Sidecar + ".new", Sidecar);
+
+        var reader = Session();
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.Contains("TA-GAP", Everything());
+        reader.Dispose();
+    }
+
+    /// <summary>
+    /// AND A GAP THAT WAS CLOSED BEFORE THE ROTATION STAYS CLOSED THROUGH ALL FIVE — the other
+    /// direction, without which "always degraded" would satisfy every assertion above.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void A_closed_gap_stays_closed_at_every_instant_of_the_rotation(int crashPoint)
+    {
+        Seed();
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} RESOLVED coid-witness committed cleanly after the failures above."
+            + Environment.NewLine);
+        File.WriteAllText(Sidecar + ".1", Gap(20));
+
+        if (crashPoint >= 1) File.WriteAllText(Sidecar + ".new", "");
+        if (crashPoint >= 2) File.Move(Sidecar + ".1", Sidecar + ".2", overwrite: true);
+        if (crashPoint >= 3) File.Move(Sidecar, Sidecar + ".1");
+        if (crashPoint >= 4) File.Move(Sidecar + ".new", Sidecar);
+
+        var reader = Session();
+        Assert.Null(reader.Trouble);
+        Assert.True(reader.GapClosed);
+        Assert.Equal(WitnessStanding.Historical, CoidWitnessReport.Standing(reader));
+        reader.Dispose();
+    }
+
     // ================================================================= directive 1, every consumer
 
     /// <summary>
