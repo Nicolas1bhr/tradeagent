@@ -108,3 +108,16 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    `Either_rounding_of_the_request_still_reads_as_applied` (both) and `A_reconciler_still_confirms_a_change_the_platform
    _carried_out` green throughout. Mutant: prior-price clause → `return true` → 2 RED. CONTRACTS.md bullet rewritten.
    Unit 201 / Fault 191 / Integration 506, 0 failed. VERIFIED.
+Gate, VERIFIED on `8205dae` + this line: `dotnet build TradeAgent.sln -c Release --no-incremental` → all 17 projects,
+`0 Warning(s) 0 Error(s)`; `dotnet test TradeAgent.sln -c Release` → Fault 191, Unit 201, Integration 506, `Failed: 0`
+in all three. Test-name diff vs the item-0 baseline `b30628a`: 712 → 730 names, 19 added, ONE removed —
+`A_working_target_must_hold_still_before_the_cancel_is_called_failed`, renamed in item 4 to
+`A_working_target_never_condemns_the_cancel_however_still_it_holds` because the old name asserted the verdict item 4
+deletes; the name is not on `main`, so the landing diff vs `main` shows no removal.
+NOT done: no Windows box (none granted, nothing claimed that needs one); no rebase onto `main` at 5af456b (the manager
+rebases at landing); no push. Untouched, as the brief says: the updater, `CoidWitness*`, `DashboardView.cs`, the
+emergency-press rewrite (U2c1b), the cancelled-handler settle (U2c1c), the pipe server, `AgentContext`. Item 5's throw
+shape is unchanged from before it, so `OperatorCloseAllAsync`'s per-position `Settle` loop can still be abandoned by a
+store failure mid-sweep — pre-existing, in U2c1b's area, NOT fixed and NOT tested here. A persist failure inside the
+reconciler's own `Resolve` is caught by `ReconcileAsync`'s per-request `catch` and counted inconclusive: read, NOT
+tested.
