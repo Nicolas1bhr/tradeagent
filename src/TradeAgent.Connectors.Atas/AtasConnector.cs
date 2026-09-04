@@ -1027,6 +1027,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // came to do, and only the second one can leave an order at a broker.
         var mutating = Mutates(op);
 
+        // THE ATTEMPT IS MARKED BEFORE ANYTHING CAN GO WRONG, and that is what makes "nothing was
+        // recorded" mean "no mutation was ever started" rather than "no site happened to write it
+        // down". Every exit below that KNOWS says so and overrides this; an exit that does not know
+        // — a caller's own cancellation during the reply wait was one, and the frame was already
+        // whole on the far side (Codex round-10 F2) — leaves `PossiblyWritten`, which is the
+        // fail-closed answer and this connector's honest one.
+        if (mutating) TransportLedger.Attempt();
+
         if (!_connected || _out is null)
         {
             if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);

@@ -1396,6 +1396,64 @@ public class ConnectorSendDeadlineTests
         }
     }
 
+    /// <summary>
+    /// A FRAME THE PEER HAS ALREADY READ WHOLE IS NOT `not-sent`, WHATEVER ENDS THE WAIT FOR ITS
+    /// ANSWER — and this is the DANGEROUS direction (Codex round-10 F2).
+    ///
+    /// The transport state used to be written down at the moment a REPLY arrived, or at one of the
+    /// enumerated ways the send could fail. Between those two moments the frame is fully on the far
+    /// side and nothing has been recorded, so any exit that was not in the list left the record
+    /// EMPTY — and an empty record means "no mutating call was ever attempted", which the mapper
+    /// reads as <c>not-sent</c>. Caller cancellation is such an exit: the reply wait's catch is
+    /// filtered <c>when (!ct.IsCancellationRequested)</c> precisely so a caller's own cancellation
+    /// passes through it.
+    ///
+    /// The result is the worst report this system can produce: the owner is told nothing was sent
+    /// for a cancel that IS at the broker. `not-sent` is the one word that carries no reconciliation
+    /// and no pause — it is an assurance, and an assurance is the thing that must never be produced
+    /// by an absence of information.
+    ///
+    /// So the fix is not another arm on that catch. An ATTEMPT is recorded when a mutating call
+    /// starts, and a record that was attempted and never reported reads
+    /// <see cref="TransportOutcome.PossiblyWritten"/> — the fail-closed answer — for every exit,
+    /// including ones nobody has enumerated yet.
+    ///
+    /// The peer here reads the whole frame and withholds its reply (Codex's own check), the scope
+    /// is deliberately wide so the emergency deadline cannot be what ends the wait, and the count of
+    /// muted frames is the premise asserted rather than assumed.
+    /// </summary>
+    [Fact]
+    public async Task A_frame_the_peer_read_whole_is_not_reported_as_never_sent_when_its_caller_gives_up()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, BridgeOps.Cancel);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        using var caller = new CancellationTokenSource();
+        var record = new TransportRecord();
+        Task cancel;
+
+        // THIRTY SECONDS, so the thing that ends the wait is unambiguously the caller. At the
+        // shipped two-second deadline the reply timeout would record `PossiblyWritten` on its own
+        // and the test would pass over the defect it is about.
+        using (TransportLedger.Attach(record))
+        using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
+            cancel = connector.CancelOrderAsync("FB-1", caller.Token);
+
+        await Wait(() => Task.FromResult(peer.MutedFramesSeen > 0));
+        await caller.CancelAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(TransportOutcome.PossiblyWritten, record.Outcome);
+
+        // AND THE WORD THE OWNER READS, which is the whole reason the state is recorded. The record
+        // for such a leg is UNKNOWN — `TradingGateway` settles every ambiguous connector failure
+        // that way — so this is the combination a real sweep leg arrives at the mapper with.
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, record.Outcome));
+    }
+
     sealed class BridgePeer : IAsyncDisposable
     {
         /// <summary>
@@ -1545,7 +1603,15 @@ public class ConnectorSendDeadlineTests
                         from = i + 1;
                         BridgeFrame? f;
                         try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { continue; }
-                        if (f?.Id is null || f.Op == mute) continue;
+                        if (f?.Id is null) continue;
+                        if (f.Op == mute)
+                        {
+                            // COUNTED, because "the peer read the WHOLE frame" is the premise of the
+                            // reply-wait tests and a byte count cannot assert it. A frame that parses
+                            // is a frame that arrived complete, newline and all.
+                            Interlocked.Increment(ref _muted);
+                            continue;
+                        }
                         var answer = new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data = Array.Empty<object>() };
                         if (delay <= TimeSpan.Zero) { await WriteAsync(answer); continue; }
 
@@ -1567,6 +1633,15 @@ public class ConnectorSendDeadlineTests
         }
 
         long _beats;
+        long _muted;
+
+        /// <summary>
+        /// Complete frames of the MUTED op this peer has read and deliberately not answered. It is
+        /// the evidence that the frame is entirely on the far side, which is what separates "the
+        /// caller gave up while the frame was still going out" from "the caller gave up waiting for
+        /// an answer to a frame that had fully landed".
+        /// </summary>
+        public long MutedFramesSeen => Interlocked.Read(ref _muted);
 
         /// <summary>Heartbeats this peer has put on the wire since the handshake.</summary>
         public long HeartbeatsSent => Interlocked.Read(ref _beats);

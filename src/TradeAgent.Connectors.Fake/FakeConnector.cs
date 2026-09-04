@@ -85,6 +85,12 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// </summary>
     async Task Wire(CancellationToken ct, bool mutating = false)
     {
+        // Marked before anything can go wrong, for the reason the shipped connector marks it: an
+        // exit nobody enumerated must not leave the record empty, because empty means "no mutation
+        // was ever started" and reads as `not-sent`. `Task.Delay(LatencyMs, ct)` below is such an
+        // exit — a cancelled mutation used to record nothing at all.
+        if (mutating) TransportLedger.Attempt();
+
         // THE SIMULATOR HONOURS THE OPERATION DEADLINE, because a connector that ignored it could not
         // be used to measure the rule. A real bridge stops waiting and reports UNKNOWN; so does this.
         // Deliberately NOT applied to PlaceOrderAsync, which has its own latency and is never
@@ -193,6 +199,9 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
+        // A placement does not go through Wire (it is never risk-reducing and has its own latency),
+        // so it marks its own attempt — including the one a `close` leg ends in.
+        TransportLedger.Attempt();
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected)
