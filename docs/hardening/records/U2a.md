@@ -980,3 +980,372 @@ before anything touches `Paths` (read, not assumed — `TestEnv.Init()`).
 - Two ssh calls beyond the single granted run, both read-only and neither producing a figure quoted
   above: `win-state.sh` before pushing, and one `Select-String` over `C:\ta\r8-build.log` — the log
   the granted run itself wrote — to recover the text of the one warning.
+
+## Round 9 (build record, 2026-09-04)
+
+Bounce on `5624cd1` from the Codex delta on round 8 (`records/codex-U2a-r8.txt`: 0H/2M/3L, 10 of 11
+priors FIXED) plus the round-8 finisher's addendum (F5). **Fresh builder** — the round 4–8 builder's
+session is gone; nothing in the round-8 table below was re-measured by me except where this section
+says it was. No box access this round: everything here is the Mac. `TradingGateway.cs`,
+`DashboardView.cs`, `Stores.cs` and `GatewayTypes.cs` were **read but not modified** (the drain
+derivation below is a count of the call chain those handlers issue, which cannot be made without
+reading them; `git diff --name-only` at the end of this section proves no edit).
+
+**The build gate changed this round, per the addendum:** `dotnet build TradeAgent.sln
+--no-incremental`. An incremental build recompiles nothing and re-emits no warning, so its
+"0 Warning(s)" is not a claim about the code.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F5** (gate) `RunLegs` nullable variance warns | `--no-incremental` → `GatewayPipeServer.cs(626,32): warning CS8619` … `1 Warning(s)` | `0 Warning(s)  0 Error(s)`; 28/28 `SweepRequestIdTests` | lambda back to the direct call → **CS8619 at (633,32), 1 Warning(s)** | `456b1cd` |
+| **F4** (L) `Left` hands out 1 ms past an absolute deadline | `Expected: 00:00:00 / Actual: 00:00:00.0010000` | 39/39 `ConnectorSendDeadlineTests` | unclamp it → **RED, `Actual: -00:00:05`** | `f6e5ddf` |
+| **F3** (L) the simulator maxes two serial latencies | `a 2400 ms call completed inside a 2000 ms operation, in 2410 ms` | 29/29 `SweepRequestIdTests`; 14/14 backpressure | precheck ignores the uncancellable half → **RED, 2407 ms** | `0bbe5fe` |
+| **F2** (L) `_abandoned` leaks when the grace ends early | **RED 2** — `1 request(s) still awaiting a late answer after the bridge disconnects` / `… after the connector is disposed` | 41/41 `ConnectorSendDeadlineTests` | drop the removal from the early exit → **RED 2**, same two sentences | `a0b0472` |
+| **PRIOR 2** (M) drain assumes 3 serial RPCs; an override can shorten it | chain at 3: `a cold placement issues 5 connector calls in series (account -> positions -> quote -> instruments -> place) against a drain derived from 3` and `1 request(s) left DISPATCHING: the drain came out at 3.20s against a five-call chain that needs 5.00s`; override unclamped: `the drain came out at 0s against a 500s chain` | 17/17 backpressure; 70/70 sweep + deadline classes | chain **4** (one short) → **RED 2**; clamp inverted (`<` for `>`) → **RED 2** | `74aeef6` |
+| **F1** (M, class) the leg vocabulary is not 1:1 with the record | **RED 3** — `rejected` and `sent-still-working` absent; both pre-send legs read `Expected: "not-sent" / Actual: "sent-not-confirmed"` | 33/33 `SweepRequestIdTests`; 69/69 with backpressure + slice + CLI | one per mapping arm, five arms → **five REDs** (the fifth arm survived until its test was written) | `4e1396f`, `088c059` |
+
+### F5 — and why its mutant is watched on the build, not on a test
+
+`RunLegs` takes the WIDER contract, `Func<string,string,Task<ExecutionRequest?>>`, because
+`close-all` has a leg that legitimately produces no record and `cancel-all` does not. `Task<T>` is
+invariant, so handing it `CancelAsync`'s `Task<ExecutionRequest>` is a mismatch. The fix converts the
+VALUE rather than the task — `async (legId, target) => await gateway.CancelAsync(…)` — which is the
+widening C# does allow. No `!`, no `#pragma`, no `SuppressMessage`, and no signature on
+`TradingGateway` was touched.
+
+**Stated plainly: nullability annotations are erased at run time, so no xUnit assertion can observe
+this.** The gate that catches the class is the build itself, and the mutant is watched there: reverting
+the lambda re-emits the identical CS8619 (at line 633 after the comment this commit adds). **§9.9
+candidate for the manager, NOT done here:** `<TreatWarningsAsErrors>` in `Directory.Build.props` would
+make every future warning a RED instead of a line somebody has to read. It is a program-wide policy
+change outside this unit's brief, so it is proposed, not taken.
+
+### F4 — and the sibling that keeps the millisecond on purpose
+
+There were three copies of "how long until this absolute deadline": the connector's write budget, its
+reply budget, and the simulator's precheck — and they had drifted to two different answers for
+*expired*. They are now one function, `RiskReducingScope.LeftUntil`, next to the deadline it measures
+against, and it returns `TimeSpan.Zero`.
+
+`AtasConnector.Remaining` still returns a millisecond and still says why, because it is a different
+thing: a RELATIVE budget handed to a grace that is only just opening. A caller that arrives there with
+nothing left has already spent its ordinary timeout, and a moment to collect an answer that has
+already landed costs nobody anything. An ABSOLUTE deadline is a promise to a person, and one more
+millisecond of it is a promise broken. The reason given for "never zero" — that zero would cancel
+before an already-arrived answer could be read — turns out not to hold anyway: `Task.WaitAsync` checks
+`IsCompleted` before it looks at the token, so a completed task comes back whatever the token's state.
+
+**Pinned as arithmetic, and that is the honest bar for it.** The wait is milliseconds; no end-to-end
+timing can separate one millisecond from zero, so an integration assertion here would be theatre. What
+is asserted end-to-end is that the 41 tests of `ConnectorSendDeadlineTests` still hold with the
+millisecond gone.
+
+### F3 — the instrument was outrunning the deadline it is used to measure
+
+`FakeConnector.Wire` asks whether the injected latency fits inside the operation deadline and then
+awaits `LatencyMs` and `UncancellableLatencyMs` ONE AFTER THE OTHER — but the question was asked about
+`Math.Max` of the two. Codex's own check reproduces exactly: both at 1200 ms inside a 2000 ms
+operation, and the call **returns successfully at 2410 ms**, four hundred milliseconds after the
+operation promised to be over.
+
+`WorstCaseOperationPath` had the same `Math.Max` and it is the worse half, because
+`GatewayPipeServer`'s shutdown drain is DERIVED from it: the connector used to prove the drain covers
+a handler was telling the drain to be shorter than the connector. Both are sums now. **No existing
+test set both latencies** (`grep` over `tests/`: `LatencyMs` in six places, `UncancellableLatencyMs` in
+one, never together) — which is why a wrong `Math.Max` survived 455 tests.
+
+The RED is a RETURN-versus-THROW discriminator rather than a stopwatch reading: summed, the call
+cannot fit and says so at the deadline; maxed, it succeeds past it. The test asserts both directions —
+two latencies that DO fit are still served — so "refuse everything" is not a passing mutant.
+
+### F2 — the two other ways a grace can end
+
+When the caller gives up at two seconds the request is parked in `_abandoned` and the CONNECTION's
+verdict is deferred to the grace (round 7's F-E). The waiter removed the entry on the timeout path
+only, and both other exits went through one `catch (Exception) { return; }`. `Drop` faults every
+pending request, so **a disconnect during the grace and a disposal each returned without removing
+anything** — the id stayed for the life of the process.
+
+It is a few dozen bytes per abandoned emergency, which is why it is LOW. What makes it worth closing
+is what the number is FOR: `AwaitingLateAnswer` is the only external evidence that the deferred
+verdict cleans up after itself, so a counter that can stick at one for a reason nobody intended can no
+longer prove anything about the ones that do. Both of Codex's triggers are now a `[Theory]` arm.
+
+### PRIOR 2 — the longest chain, named, and why it is that one
+
+**The longest ORDINARY handler is a cold `buy`/`sell`, and it issues FIVE connector calls in series.**
+Not read off a comment — counted over the real pipe by a connector decorator that records which calls
+it was asked for, in order:
+
+```
+account -> positions -> quote -> instruments -> place
+```
+
+1. `TradingGateway.PlaceAsync` → `AccountAsync` (the chosen account);
+2. `RiskCheckOrThrow` → `GetPositionsAsync`, for the `MaxOpenPositions` check;
+3. → `GetQuoteAsync`, required for EVERY order so a stale price cannot size one;
+4. → `GetInstrumentsAsync`, read once and cached — only a cold process pays it;
+5. `DispatchPlaceAsync` → `PlaceOrderAsync`.
+
+Round 8 used **three** — "a prerequisite read, a target resolution, the mutation" — which is the shape
+of a `modify` and is not the longest.
+
+**"Cold" is the ordinary state of a configured installation, not a corner case.** The first version of
+the count test measured four, because `RefreshHealthAsync` reads the instrument list to pick a symbol
+to quote and so warms the cache within seconds of startup. It does that **only when nothing is
+allowlisted** (`TradingGateway.cs:1017`): with a `Risk.InstrumentAllowlist` set — which is what a
+configured install has, and the safe configuration — health never reads instruments, the cache stays
+empty, and the first placement pays for it. The measurement above is on that configuration, and the
+test says why in its own comment. **Worth flagging for U2c-1:** on a NON-allowlisted install the chain
+is four, so the bound over-covers there. Over-covering is the safe direction and is what a bound is.
+
+**Why not seven, which is what a cold `close` issues.** `close` → `RequireAccountId` + a positions read
++ all five of `PlaceAsync` = 7. But `close` is RISK-REDUCING, so six of those seven share ONE
+`EmergencyBudget` between them (round 8's one-deadline-per-operation), and only the trailing `Place` is
+served the ordinary bound — `Place` is excluded from the emergency deadline on purpose. Counting its
+calls at the ordinary rate would over-cover by minutes and would be arithmetic about a thing that
+cannot happen. The sweeps are excluded for the same reason and one more: **their legs are issued
+concurrently, so their call count is not their serial depth at all.**
+
+So the derivation is two shapes, MAXED rather than added, because one handler is one or the other:
+
+```
+drain = max( 5 × WorstCaseOperationPath ,  EmergencyBudget + WorstCaseOperationPath )
+      + SettleAfterCancelTimeout
+```
+
+The second term is not a rounding allowance and it is not theoretical: **the suite's own
+`Disposal_covers_a_handler_that_makes_several_connector_calls_in_series` fixture uses a 30 s emergency
+budget over a 4 s connector, which needs 34 s against 20 s from the ordinary term alone.** Round 8's
+formula under-covered that fixture and the test passed anyway, because it only asserted `> 12 s`.
+
+**The trailing term is `SettleAfterCancelTimeout` itself, not a second literal five seconds.** The two
+numbers always meant the same thing — time for a handler to write down what it knows — and writing it
+twice is exactly how a derived number stops being derived, which is the class this unit has now fixed
+three times (round 4b, round 5 §9.9, round 7 C3).
+
+### PRIOR 2 — the override, and the invariant that replaces it
+
+`HandlerDrainTimeout`'s getter was `_drain ?? DerivedDrainTimeout`: an explicit value won outright,
+which put the whole derivation one constructor argument away from meaningless. **Measured on the
+suite's own case: `{ HandlerDrainTimeout = 7 seconds }` against a 100 s worst path gave 7 seconds** —
+and the round-8 test asserted that as correct behaviour. It now clamps: an explicit value may only
+LENGTHEN. A caller naming a longer value means it and gets it (asserted, so this is a clamp and not an
+override quietly ignored); one naming a shorter value is asking for an order to be abandoned at
+shutdown, which is not theirs to ask for.
+
+`No_combination_of_settings_makes_the_drain_shorter_than_the_chain` asserts the invariant over every
+knob a caller can turn — an undersized drain, a zero settle, both together — against a 60 s-RPC
+connector. With the old getter it reports `the drain came out at 0s against a 500s chain`.
+
+**Two suite tests needed the old short drain and now get it honestly.** `Disposal_waits_for_a_cancelled_
+handler_to_record_what_it_knows` and `A_handler_that_outlasts_the_drain_is_recorded_as_an_error` both
+set a 300 ms drain to reach the cancelled/abandoned paths. They now use a connector that
+**under-reports its own worst case** (`FakeConnector.WorstCaseOperationPath` gained an `init`) — which
+is the realistic shape of that failure anyway: a vendor SDK call that blocks for longer than the vendor
+admits is exactly what `handlers_did_not_finish` exists to report. The drain derives itself correctly
+from what it is told; what it is told is wrong.
+
+### PRIOR 2 — "disposal never returns unsettled", and what is still only logged
+
+Codex's CHECK (d) named three mechanisms. Two are causes and are closed above (the undersized
+multiplier, the undersized override). The third — `DisposeAsync` returning after merely LOGGING an
+unfinished handler — is the symptom, and it is reached now only by a handler that outlasts a bound
+derived correctly from what the connector declares. **That remaining exit is deliberate and stays:** a
+handler that will not finish must not be able to hold the app open for ever, and the only thing that
+still produces one is a call that does not honour its cancellation token. It is logged at `error`
+because it is the sole trace that an order may have been left unsettled.
+
+The acceptance is Codex's cold-placement check, and it is the new test
+`Disposal_covers_a_cold_placement_and_not_just_the_call_it_is_inside`: five calls of 1 s each, the
+latency **uncancellable** on purpose (a merely slow broker unwinds at the cancel and records UNKNOWN,
+which hides the harm as "an order that needs reconciling"; a call that ignores the token is what leaves
+the row DISPATCHING with nothing coming to change it), disposal called 1.2 s in with three calls still
+ahead. At the round-8 count of three: **`1 request(s) left DISPATCHING: the drain came out at 3.20s
+against a five-call chain that needs 5.00s`**. At five: FILLED, no `handlers_did_not_finish`, one order
+on the broker, all read the instant `DisposeAsync` returns.
+
+**THE PRICE WENT UP AND IT IS A PRODUCT DECISION, NOT AN ARITHMETIC ONE — the manager's to take.** At
+shipped ATAS values the drain is now **5 × 50 + 5 = 255 s**, and disposal's ceiling **5 + 255 + 5 =
+265 s** (round 8: 155 s / 165 s). It is paid ONLY while a request is genuinely in flight — an idle
+handler is freed when its pipe closes, before this wait. The alternative is the order that reached the
+broker and is recorded DISPATCHING for ever.
+
+**WHAT THE BOUND STILL DOES NOT COVER, named rather than left to be found.** It is the bound for ONE
+handler. `TradingGateway._dispatchGate` is a mutex, so N placements in flight together queue on each
+other and cost N chains, while `DisposeAsync` waits for all of them under this one bound. That was true
+before this round and this round does not change it; it is now stated in the source next to the number
+so the 255 s is not read as covering everything. **NOT verified: what N can be in practice** — it is
+bounded by how many agent connections are live, which this unit does not fix.
+
+### F1 — the per-leg vocabulary, and the fifth word the rule turned out to need
+
+There were THREE words for six situations, and two of them were lies. `Collect` decided the word from
+the shape of the return rather than from the record:
+
+- `RefuseCancel=1` → the broker definitively refuses, the gateway records **REJECTED**, and the reply
+  said `sent-not-confirmed` — which means "UNKNOWN, and the gateway will reconcile it". It sent the
+  owner to hunt through ATAS for the state of an order the broker had already answered about, and
+  safety rule 3 exists to keep those two apart in the other direction.
+- a target resolution that expired before `_requests.TryCreate` → `sent-not-confirmed` with
+  `attempted=0` and **no record anywhere**: two claims contradicting each other in the same object,
+  and the dangerous one is the word — it says an order may be live at the broker when this process
+  never touched the wire.
+
+**The rule that replaces them: `Classify(record)` reads the outcome OFF the record**, and nothing else
+may construct one. A word can only be produced by the state that means it, so `sent-not-confirmed` now
+really does imply UNKNOWN + reconciliation, which is the guarantee Codex asked for and the only reason
+the word is worth having.
+
+| word | record states | what the owner is being told |
+|---|---|---|
+| `sent-and-confirmed` | CANCELLED, FILLED | this leg's own intent is done |
+| `rejected` | REJECTED | a definite refusal; nothing is working from this leg, nothing to reconcile |
+| `sent-still-working` | WORKING, ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING | sent, answered, and still out there |
+| `sent-not-confirmed` | UNKNOWN, DISPATCHING, RECONCILING | it reached the wire, or may have; UNKNOWN + reconciliation |
+| `not-sent` | no record, or CREATED / AWAITING_APPROVAL | it never reached the wire |
+| `nothing-to-do` | (no record, and the leg returned none) | there was nothing for this leg to act on |
+
+**`sent-still-working` is a FIFTH word where the bounce named four, and the bounce's own rule is what
+requires it.** `sent-not-confirmed` is defined as UNKNOWN + reconciliation. A `close-all` leg places an
+offsetting order, and an offsetting order that rests rather than filling is WORKING — sent, answered,
+definitely not unknown and definitely not done. With four words it fell into `sent-not-confirmed` and
+promised a reconciliation that will never happen, which is the same defect Codex named, reached by a
+third route. It is reachable, not hypothetical: `A_close_leg_whose_order_rests_reads_still_working_not_unknown`
+produces it through the pipe. **Flagged for the manager as the one place this round widened the brief's
+vocabulary, with that reason.**
+
+`Describe()` also lost its `_ => "not-sent"` catch-all, which would have reported a new outcome as
+"nothing was even attempted" — the most dangerous of the six to be wrong about — silently. A new
+member now throws in the first test that reaches it.
+
+**`attempted` is counted from the outcomes** (`Outcome is not NotSent and not NothingToDo`) rather
+than from "legs holding a record", so it cannot disagree with the words beside it. **This CHANGES
+`close-all`'s number:** a symbol with nothing to close was counted as attempted, while already being
+listed by name in `nothing_to_close` — the same over-claim `bdf9a24` removed from `cancelled`, one
+field over. `cancel-all`'s number is unchanged at every value the suite exercises (asserted by the two
+pre-existing count tests, which still pass unedited).
+
+**One existing assertion had to be relaxed, and it is worth naming.** `A_five_order_sweep…` asserted
+that every `not-sent` leg's error contains "not sent". There are now two honest reasons for the word:
+a leg whose turn came after the deadline (the pre-issue branch, whose message says exactly that) and a
+leg that WAS issued and gave up on its own target resolution before the wire. The second carries the
+underlying failure verbatim — from the simulator, `the operation deadline passed before the simulator
+answered; it is not known whether it acted`. The test now requires every `not-sent` leg to carry a
+reason and at least one to carry the pre-issue reason, so that branch is still proven reachable.
+**The design point, stated: the WORD is the claim and the `error` is the cause.** A read that failed is
+honestly "not known whether it acted" about the READ, while the leg it belonged to reached nothing —
+and on the real connector that sentence is already correct for a read (round 6's F-D:
+`'orders' could not be read, so the operation was not started. Nothing was placed or cancelled.`). The
+mismatch is in the SIMULATOR's generic wording, which does not know which op it is serving. **NOT
+fixed, and not verified beyond reading `FakeConnector.Wire`:** making it op-aware is a fixture change
+with no product consequence, and it is left for the manager to decide.
+
+**Five mapping arms, five mutants, all five bit** (`SweepRequestIdTests`, 33 tests):
+
+| arm mutated to `NotConfirmed` | who bit |
+|---|---|
+| CANCELLED/FILLED → | `A_definite_broker_refusal…` (the cancelled leg starts reading `sent-not-confirmed`) |
+| REJECTED → | `A_definite_broker_refusal…` |
+| no record (the exception path) → | `A_leg_that_failed_before_the_wire…` |
+| WORKING/ACKNOWLEDGED/… → | `A_close_leg_whose_order_rests…` |
+| CREATED/AWAITING_APPROVAL → | `A_close_leg_parked_for_approval…` |
+
+**The last one is honest bookkeeping: that arm SURVIVED first.** Mutating it passed all 32 tests,
+because nothing in the suite produced a parked leg. `A_close_leg_parked_for_approval_reads_not_sent_and_is_not_counted_as_attempted`
+was written for it — a `close-all` in LIVE_CONFIRM parks its offsetting order as AWAITING_APPROVAL and
+`PlaceAsync` refuses, so a record exists and nothing reached the broker. Classifying by "the leg threw"
+would call that `sent-not-confirmed` and ask the owner to reconcile an order sitting on their own
+screen waiting for them to press Approve. With the test, the mutant bites.
+
+### Round 9 close — gates, counts and the test-name diff (2026-09-04)
+
+Tip **`088c059`** (7 commits on `5624cd1`), branch `u2a-rebase-probe`, tree clean.
+
+**Build gate — `dotnet build TradeAgent.sln --no-incremental`** (the addendum's rule; an incremental
+build recompiles nothing and re-emits no warning):
+
+```
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:01.53                                                        (exit 0)
+```
+
+**FULL suite, once, on the Mac — `dotnet test TradeAgent.sln`:**
+
+```
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 977 ms   - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s      - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 283, Skipped: 0, Total: 283, Duration: 5 m 53 s - TradeAgent.IntegrationTests.dll (net10.0)
+EXIT=0
+```
+
+**466 green (75 / 108 / 283), 0 failed, 0 skipped** — 455 at `5624cd1` plus 11.
+
+**Test-name diff `5624cd1` → `088c059` — REMOVED: 0.** Method names extracted at both shas
+(`git grep -n -E 'public (async Task|void) ' <sha> -- 'tests/*.cs'`, reduced to `path::method`, sorted
+unique): **362 → 372**, ten new methods. Eleven test CASES, because one of them is a two-row `[Theory]`:
+
+```
+tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs::An_absolute_deadline_that_has_passed_leaves_nothing_not_a_millisecond
+tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs::Nothing_is_left_awaiting_a_late_answer_when_the_grace_ends_early   [Theory ×2]
+tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs::A_cold_placement_issues_no_more_connector_calls_than_the_drain_assumes
+tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs::Disposal_covers_a_cold_placement_and_not_just_the_call_it_is_inside
+tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs::No_combination_of_settings_makes_the_drain_shorter_than_the_chain
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_close_leg_parked_for_approval_reads_not_sent_and_is_not_counted_as_attempted
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_close_leg_whose_order_rests_reads_still_working_not_unknown
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_definite_broker_refusal_reads_rejected_and_needs_no_reconciliation
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_leg_that_failed_before_the_wire_reads_not_sent_and_writes_no_record
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::The_simulators_two_latencies_add_up_rather_than_competing
+```
+
+272 + 11 = 283, which is what ran. The diff was taken after every structural edit, not only at the end.
+
+**Scope.** Seven files changed, and none of them is a forbidden one
+(`git diff --name-only 5624cd1..HEAD | grep -E 'TradingGateway.cs|DashboardView.cs|Stores.cs|GatewayTypes.cs'`
+→ no match):
+
+```
+src/TradeAgent.ConnectorSdk/RiskReducingScope.cs      +29
+src/TradeAgent.Connectors.Atas/AtasConnector.cs       +40 −…
+src/TradeAgent.Connectors.Fake/FakeConnector.cs       +34 −…
+src/TradeAgent.Gateway/GatewayPipeServer.cs          +246 −…
+tests/…/ConnectorSendDeadlineTests.cs                 +90
+tests/…/GatewayPipeBackpressureTests.cs              +304
+tests/…/SweepRequestIdTests.cs                       +271
+```
+
+No `Co-Authored-By` trailers (`git log 5624cd1..HEAD --format=%B | grep -ci co-authored` → `0`).
+Every mutant was applied to a `cp` copy's original, `touch`ed, run, then restored from the `cp` copy
+and `touch`ed again — never `git checkout --`; `git status --short` empty after each.
+
+### What I did NOT do (round 9)
+
+- **Did not run on the Windows box.** No grant this round. **NOT verified on Windows: every figure in
+  this section**, including the 466 and the 0-warning build. The round-8 section's box run was at
+  `5624cd1`; this round's seven commits have not been on the box.
+- **Did not run the Codex leg or any adversarial-verify leg.** This session is the builder, and under
+  R1 nothing here is a verdict.
+- **Did not re-measure any earlier round's evidence.** Rounds 4b–8 above are carried forward as their
+  builders left them. What I verified about them is that the tree they produced still builds clean and
+  is green with my changes on top.
+- **Did not modify `TradingGateway.cs`, `DashboardView.cs`, `Stores.cs` or `GatewayTypes.cs`.** I
+  **read** `TradingGateway.cs` — counting the connector chain a handler issues cannot be done without
+  it — and changed nothing there; the `git diff --name-only` above is the proof.
+- **Did not change the CS8619 class of gate program-wide.** `<TreatWarningsAsErrors>` is proposed in
+  the F5 note and not taken.
+- **Did not close the `close-all` fan-out question.** `RunLegs` issues legs in waves of four and each
+  close leg's trailing `Place` is served the ordinary bound, so a book with many positions costs more
+  than one `RiskReducingHandlerPath`. The drain covers ONE wave's shape. **NOT verified: what that
+  costs at a realistic book size** — it needs a fixture with many positions and belongs with whoever
+  owns the sweep's concurrency.
+- **Did not bound cross-handler queueing.** `TradingGateway._dispatchGate` is a mutex; N concurrent
+  placements cost N chains under one drain. Named in the source and above; not fixed, and it is not
+  new this round.
+- **Did not make the simulator's deadline message op-aware.** Named under F1; a fixture-wording issue
+  with no product consequence.
+- **Did not touch the installed app, ATAS, the real home, or any branch other than
+  `u2a-rebase-probe`.** Nothing pushed, merged, rebased or moved; `u2a-pipe-hardening` untouched; no
+  git command run in the main worktree.
+- **Did not run `probe atas`, place, modify or cancel any real order.**
