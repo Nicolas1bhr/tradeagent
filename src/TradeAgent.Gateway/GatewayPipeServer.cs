@@ -127,12 +127,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// test asserts this default still covers it, so changing a connector deadline breaks a test
     /// rather than silently reintroducing the abandoned order.
     ///
-    /// THE TRADE IS DELIBERATE: the app may take up to 55 s to close, but ONLY while an order is
+    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 55 s here — 65 s over
+    /// the whole of disposal — but ONLY while an order is
     /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
     /// before this wait. Waiting is the right side of that trade, because the alternative is an
     /// order that reached the broker and is recorded DISPATCHING for ever.
     /// </summary>
-    public TimeSpan HandlerDrainTimeout { get; init; } = TimeSpan.FromSeconds(55);
+    public TimeSpan HandlerDrainTimeout
+    {
+        get => _drain ?? DerivedDrainTimeout;
+        init => _drain = value;
+    }
+
+    readonly TimeSpan? _drain;
+
+    /// <summary>
+    /// The drain, DERIVED from the connector's live deadlines rather than written down.
+    ///
+    /// 55 s was a literal, correct for the shipped values and silently wrong for any others — and
+    /// constructing a connector with different deadlines is a supported thing to do. Codex C3's
+    /// arithmetic: an `AtasConnector` with a 60 s RPC timeout has a 100 s worst path against a 55 s
+    /// drain, which is the abandoned-DISPATCHING order cc7006e and 02aad9a exist to prevent,
+    /// reintroduced by a constructor argument.
+    ///
+    /// So it is read off the connector, and a test changes the deadlines and asserts the drain
+    /// follows. The five seconds are the settle and its write-back, as before.
+    ///
+    /// WHAT THIS IS NOT: the whole of disposal. `DisposeAsync` also waits up to 5 s for the accept
+    /// loop before this, and up to <see cref="SettleAfterCancelTimeout"/> after it, so the ceiling
+    /// on closing is 5 + this + 5 rather than this. Stated because the trade below quotes a number
+    /// an operator will experience.
+    /// </summary>
+    TimeSpan DerivedDrainTimeout => gateway.Connector.WorstCaseOperationPath + TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// How long a handler gets AFTER its token is cancelled, to write down what it knows.

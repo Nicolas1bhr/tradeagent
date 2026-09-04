@@ -726,6 +726,7 @@ public class ApprovalReauthorizationTests
         public string Id => id ?? inner.Id;
         public string DisplayName => inner.DisplayName;
         public ConnectorCapabilities Capabilities => capabilities ?? inner.Capabilities;
+        public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
 
         public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
         public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }

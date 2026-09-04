@@ -13,6 +13,14 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public FaultProfile Faults { get; } = faults ?? new FaultProfile();
 
     public string Id => "fake";
+
+    /// <summary>
+    /// In-process and unbounded by any wire, so the only thing that can make one call take time is a
+    /// deliberately injected latency fault. It is reported rather than assumed to be zero, because a
+    /// shutdown drain derived from it has to cover the faults the tests inject.
+    /// </summary>
+    public TimeSpan WorstCaseOperationPath =>
+        TimeSpan.FromMilliseconds(Math.Max(Faults.LatencyMs, Faults.UncancellableLatencyMs));
     public string DisplayName => "Simulator (built in)";
 
     public ConnectorCapabilities Capabilities => new(

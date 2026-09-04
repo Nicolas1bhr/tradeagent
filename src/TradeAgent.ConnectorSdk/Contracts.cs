@@ -81,6 +81,18 @@ public interface ITradingConnector : IAsyncDisposable
     string DisplayName { get; }
     ConnectorCapabilities Capabilities { get; }
 
+    /// <summary>
+    /// The longest ONE operation can take on this connector before it gives up, at its current
+    /// values — every bounded wait it puts in series, added up.
+    ///
+    /// It is on the interface because a shutdown drain that is shorter than it abandons an order
+    /// that is still legitimately in progress, and the drain is chosen by a component that holds an
+    /// <see cref="ITradingConnector"/> and nothing more specific. A literal there is a number that
+    /// silently stops being true the moment a connector is constructed with different deadlines —
+    /// which is a supported thing to do (Codex C3).
+    /// </summary>
+    TimeSpan WorstCaseOperationPath { get; }
+
     Task ConnectAsync(CancellationToken ct = default);
     Task<HealthState> GetHealthAsync(CancellationToken ct = default);
     Task<bool> IsConnectedAsync(CancellationToken ct = default);
