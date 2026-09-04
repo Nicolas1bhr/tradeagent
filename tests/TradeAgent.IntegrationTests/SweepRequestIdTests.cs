@@ -317,8 +317,7 @@ public class SweepRequestIdTests
         var outcomes = data.GetProperty("outcomes").EnumerateArray().ToList();
         Assert.Equal(5, outcomes.Count);
         foreach (var o in outcomes)
-            Assert.Contains(o.GetProperty("outcome").GetString(),
-                new[] { "sent-and-confirmed", "sent-not-confirmed", "not-sent", "nothing-to-do" });
+            Assert.Contains(o.GetProperty("outcome").GetString(), LegVocabulary);
 
         // A LEG THAT IS NEVER SENT SAYS SO, and that is the distinction an owner needs: "nothing was
         // even attempted on this order" is different news from "we tried and do not know". Legs are
@@ -326,7 +325,14 @@ public class SweepRequestIdTests
         Assert.True(data.GetProperty("not_sent").GetInt32() > 0,
             "no leg was reported as not sent, so either the budget was not spent or a leg was dropped in silence");
         var unsent = outcomes.Where(o => o.GetProperty("outcome").GetString() == "not-sent").ToList();
-        Assert.All(unsent, o => Assert.Contains("not sent", o.GetProperty("error").GetString()!));
+
+        // EVERY not-sent leg says WHY, and there are now two honest reasons for it rather than one.
+        // A leg whose turn came after the deadline was never issued; a leg that was issued and gave
+        // up on its own target resolution never reached the wire either, and since round 9 it reads
+        // `not-sent` too instead of claiming to have been sent (round-9 F1). The word is the claim;
+        // the error is the cause, and it is the underlying failure verbatim.
+        Assert.All(unsent, o => Assert.False(string.IsNullOrWhiteSpace(o.GetProperty("error").GetString())));
+        Assert.Contains(unsent, o => o.GetProperty("error").GetString()!.Contains("before this leg was issued"));
 
         // Every order is accounted for exactly once, whatever became of it.
         Assert.Equal(5, outcomes.Select(o => o.GetProperty("request_id").GetString()).Distinct().Count());
@@ -381,6 +387,168 @@ public class SweepRequestIdTests
             new FaultProfile { LatencyMs = 300, UncancellableLatencyMs = 300 });
         using (RiskReducingScope.Begin(TimeSpan.FromSeconds(2)))
             Assert.NotNull(await fits.GetPositionsAsync(fits.Broker.AccountId).WaitAsync(TimeSpan.FromSeconds(20)));
+    }
+
+    // ------------------------------------- the per-leg vocabulary is 1:1 with the record (round 9, F1)
+
+    /// <summary>Every word a leg is allowed to answer with. A leg saying anything else is a defect.</summary>
+    static readonly string[] LegVocabulary =
+        ["sent-and-confirmed", "rejected", "sent-still-working", "sent-not-confirmed", "not-sent", "nothing-to-do"];
+
+    /// <summary>Reads the per-leg outcomes out of a sweep reply as (outcome, state) pairs.</summary>
+    static List<(string Outcome, string? State, string Id)> Outcomes(JsonElement sweep) =>
+        sweep.GetProperty("outcomes").EnumerateArray()
+            .Select(o => (
+                o.GetProperty("outcome").GetString()!,
+                // Absent, not null, when the leg has no record — which is itself the evidence that
+                // nothing was written down for it.
+                o.TryGetProperty("state", out var st) ? st.GetString() : null,
+                o.GetProperty("request_id").GetString()!))
+            .ToList();
+
+    /// <summary>
+    /// A DEFINITE BROKER REFUSAL IS NOT AN UNKNOWN, AND IT MUST NOT READ AS ONE.
+    ///
+    /// Codex round-8 F1, first check, verbatim: set `RefuseCancel=1`, and the leg came back
+    /// <c>sent-not-confirmed</c> while its record was REJECTED. That word means "the gateway has
+    /// recorded UNKNOWN and will reconcile", so it sent the owner to hunt through ATAS for the state
+    /// of an order the broker had already given a final answer about — and safety rule 3 exists
+    /// precisely to keep those two apart in the other direction.
+    ///
+    /// The word now comes off the record, so it cannot be produced by any state but REJECTED.
+    /// </summary>
+    [Fact]
+    public async Task A_definite_broker_refusal_reads_rejected_and_needs_no_reconciliation()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("vocab-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await client.SendAsync(Buy("vocab-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        conn.Faults.RefuseCancel = 1;   // exactly one cancellation is definitively refused
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "vocab-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Data!;
+        var legs = Outcomes(sweep);
+
+        Assert.All(legs, l => Assert.Contains(l.Outcome, LegVocabulary));
+        var refused = Assert.Single(legs, l => l.Outcome == "rejected");
+        Assert.Equal(nameof(ExecutionState.REJECTED), refused.State);
+
+        // The lie this replaces: nothing here is unknown, so nothing may say it is.
+        Assert.DoesNotContain(legs, l => l.Outcome == "sent-not-confirmed");
+
+        // And the record agrees with the word, which is the whole property: a definite refusal is
+        // final, so the gateway is not asking anybody to reconcile it.
+        var record = gw.GetRequest(refused.Id)!;
+        Assert.Equal(ExecutionState.REJECTED, record.State);
+        Assert.False(record.NeedsReconciliation,
+            "a definite refusal was flagged for reconciliation — then 'rejected' promises something it does not deliver");
+    }
+
+    /// <summary>
+    /// A LEG THAT NEVER REACHED THE WIRE SAYS SO, AND LEAVES NO RECORD TO RECONCILE.
+    ///
+    /// Codex round-8 F1, second check: expire the target resolution before `_requests.TryCreate`, and
+    /// the reply still said <c>sent-not-confirmed</c> — with <c>attempted=0</c> and no leg record
+    /// anywhere. Two claims that contradict each other in the same object, and the dangerous one is
+    /// the word: it tells the owner an order may be live at the broker when this process never
+    /// touched the wire.
+    ///
+    /// The fixture is the shape the deadline really produces. The orders read spends most of the
+    /// operation's budget, so each leg is ISSUED — the deadline has not passed when its turn comes,
+    /// which is the pre-issue `not-sent` branch and is already covered elsewhere — and then fails
+    /// INSIDE, on the resolution read, before any record is written.
+    /// </summary>
+    [Fact]
+    public async Task A_leg_that_failed_before_the_wire_reads_not_sent_and_writes_no_record()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(1));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("presend-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await client.SendAsync(Buy("presend-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+
+        // Seven tenths of a one-second operation goes on the orders read, so each leg's own
+        // resolution cannot fit and gives up before it writes anything down.
+        conn.Faults.LatencyMs = 700;
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "presend-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var legs = Outcomes(sweep);
+
+        Assert.Equal(2, legs.Count);
+        Assert.All(legs, l => Assert.Equal("not-sent", l.Outcome));
+        Assert.DoesNotContain(legs, l => l.Outcome == "sent-not-confirmed");
+
+        // `attempted` counted legs holding a record; now it counts legs that got as far as the wire,
+        // so it cannot disagree with the words beside it.
+        Assert.Equal(0, sweep.GetProperty("attempted").GetInt32());
+        Assert.Equal(0, sweep.GetProperty("cancelled").GetInt32());
+        Assert.Equal(2, sweep.GetProperty("not_sent").GetInt32());
+
+        // THE PROOF THAT NOTHING WAS SENT: the record is written before the wire is touched, so its
+        // absence is not an inference. Neither is the book — both orders are still working.
+        foreach (var leg in legs)
+            Assert.Null(gw.GetRequest(leg.Id));
+        Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+    }
+
+    /// <summary>
+    /// AN ORDER THAT IS RESTING AT THE BROKER IS NOT AN UNKNOWN EITHER.
+    ///
+    /// The fifth word, and the bounce's own rule is what requires it: <c>sent-not-confirmed</c> is
+    /// defined as "UNKNOWN, and the gateway will reconcile it". A `close-all` leg places an
+    /// offsetting order, and an offsetting order that rests instead of filling is WORKING — sent,
+    /// answered, definitely not unknown, and definitely not done. With four words it fell into
+    /// <c>sent-not-confirmed</c> and promised a reconciliation that will never happen.
+    /// </summary>
+    [Fact]
+    public async Task A_close_leg_whose_order_rests_reads_still_working_not_unknown()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // Fills on arrival, so there is a position to close.
+        Assert.True((await client.SendAsync(Buy("rest-open", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Contains(conn.Broker.Positions, p => p.Symbol == "ES" && p.Quantity != 0);
+
+        // And now the broker rests everything, so the offsetting order sits WORKING.
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "rest-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var legs = Outcomes(sweep);
+
+        Assert.All(legs, l => Assert.Contains(l.Outcome, LegVocabulary));
+        var resting = Assert.Single(legs, l => l.Outcome == "sent-still-working");
+        Assert.Equal(nameof(ExecutionState.WORKING), resting.State);
+        Assert.DoesNotContain(legs, l => l.Outcome == "sent-not-confirmed");
+
+        // Nothing closed, one attempted, and the record says the same thing the word does.
+        Assert.Equal(0, sweep.GetProperty("closed").GetInt32());
+        Assert.Equal(1, sweep.GetProperty("attempted").GetInt32());
+        var record = gw.GetRequest(resting.Id)!;
+        Assert.Equal(ExecutionState.WORKING, record.State);
+        Assert.False(record.NeedsReconciliation,
+            "a resting order was flagged for reconciliation — nothing about it is unknown");
     }
 
     // ---------------------------------------------------------- the sweep nonce (F9)
