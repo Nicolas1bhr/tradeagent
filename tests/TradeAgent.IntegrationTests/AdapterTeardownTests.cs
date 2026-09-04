@@ -256,6 +256,56 @@ public class AdapterTeardownTests : IDisposable
     }
 
     /// <summary>
+    /// R8-4, THE DETERMINISTIC HALF. THE FLAG THAT DECIDES IS THE ONE READ UNDER THE LOCK.
+    ///
+    /// PRIOR 21's rule is "the check and the write are ONE act, under the lock the release takes",
+    /// and nothing distinguished that from "the write is under the lock" — a mutant that moved only
+    /// the CHECK out survived every case here AND the forty-round race below, on this machine. A
+    /// guard on a T1 surface whose only witness is a race that may or may not land is not pinned.
+    ///
+    /// So the interleaving is staged rather than raced, and only the LOCK is staged: a first caller
+    /// holds the guard's lock, a write-ahead record arrives and waits for it, and ATAS stops the
+    /// strategy while both are in that position — `Stop` raises the flag as its very first statement
+    /// and only then runs its steps, so the flag goes up while the lock is still held and the write
+    /// is still waiting. When the lock is let go the waiting write is the only contender, so it gets
+    /// it with no race at all. What it must find there is the flag that went up WHILE it was
+    /// waiting, not the one it read before it started to wait.
+    /// </summary>
+    [Fact]
+    public void The_stopped_flag_that_decides_is_the_one_read_under_the_lock()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+        var teardown = new AdapterTeardown(witness);
+
+        using var holding = new ManualResetEventSlim();
+        using var letGo = new ManualResetEventSlim();
+        using var stopping = new ManualResetEventSlim();
+        using var finishStop = new ManualResetEventSlim();
+
+        var holder = Task.Run(() => teardown.Record(() => { holding.Set(); letGo.Wait(5_000); }));
+        Assert.True(holding.Wait(5_000));
+
+        bool? recorded = null;
+        var writer = Task.Run(() => recorded = teardown.Submitting("TA-LATE", "SIM", "ES", "Buy", 1m, null));
+        Thread.Sleep(200);                      // long enough for the write to be parked on the lock
+
+        var stopper = Task.Run(() => teardown.Stop(steps: () => { stopping.Set(); finishStop.Wait(5_000); }));
+        Assert.True(stopping.Wait(5_000));
+        Assert.True(teardown.Stopped);
+
+        letGo.Set();
+        Assert.True(holder.Wait(5_000));
+        Assert.True(writer.Wait(5_000));
+        Assert.False(recorded,
+            "the flag was read before the lock, so a write got in for a strategy ATAS had stopped");
+
+        finishStop.Set();
+        Assert.True(stopper.Wait(5_000));
+        Assert.True(Submit(Session(), "TA-REPLACEMENT"));
+    }
+
+    /// <summary>
     /// R8-4. THE CHECK AND THE WRITE ARE ONE ACT, AND A HALF-MOVED GUARD MUST NOT SURVIVE.
     ///
     /// PRIOR 21's rule is "the check and the write are ONE act, under the lock the release takes" —
@@ -264,14 +314,16 @@ public class AdapterTeardownTests : IDisposable
     /// survived every case above, and it is a real weakening: the fan reads the flag, the stop
     /// completes and releases, and the fan then takes the lock and re-leases.
     ///
-    /// It is not deterministic from one round — the losing interleaving needs the stop to complete
-    /// between the check and the lock — so the probe is repeated, with a fresh directory, a fresh
-    /// witness and a real lease each round. Forty rounds is what the verifier's own harness used and
-    /// what it takes to make the half-moved guard fail reliably; each round is a few milliseconds of
-    /// file IO.
+    /// It is not deterministic from one round — the losing interleaving needs the whole stop to
+    /// complete between the check and the lock — so it is a genuine race, run forty times with a
+    /// fresh directory, a fresh witness and a real lease each round, both threads released together
+    /// from one event and nothing staged between them. A barrier that forced the interleaving would
+    /// prove the lock and not the race. This is the verifier's own harness, lifted into the suite
+    /// where it was the only thing that caught the shape; each round is a few milliseconds of file
+    /// IO.
     /// </summary>
     [Fact]
-    public async Task A_stop_that_lands_mid_write_never_leaves_the_lease_held()
+    public void A_stop_that_lands_mid_write_never_leaves_the_lease_held()
     {
         for (var round = 0; round < 40; round++)
         {
@@ -280,31 +332,30 @@ public class AdapterTeardownTests : IDisposable
             var path = Path.Combine(dir, "coid-witness.json");
 
             var witness = new CoidWitness(path);
-            Assert.True(witness.Submitting("TA-RESTING", "SIM", "ES", "Buy", 1m, null));
-
             var teardown = new AdapterTeardown(witness);
-            using var entered = new ManualResetEventSlim();
+            teardown.Started();
 
-            var fan = Task.Run(() => teardown.Record(() =>
+            using var go = new ManualResetEventSlim();
+            var writer = Task.Run(() =>
             {
-                entered.Set();
-                witness.Identified("TA-RESTING", "BROKER-9");
-            }));
-
-            // The stop lands while the write is in flight, and its own steps throw — the terminal
-            // path, so the release has to come from the finally rather than from reaching the end.
-            var stop = Task.Run(() =>
-            {
-                entered.Wait(5_000);
-                try { teardown.Stop(() => throw new InvalidOperationException("UntrackSecurities")); }
-                catch (InvalidOperationException) { }
+                go.Wait();
+                teardown.Submitting("TA-1", "SIM", "ES", "Buy", 1m, null);
             });
+            // The terminal path: the steps throw, so the release has to come from the finally rather
+            // than from reaching the end of the method.
+            var stopper = Task.Run(() =>
+            {
+                go.Wait();
+                teardown.Stop(steps: () => throw new InvalidOperationException("UntrackSecurities blew up"));
+            });
+            go.Set();
+            try { Task.WaitAll(writer, stopper); } catch (AggregateException) { /* the steps throw by design */ }
 
-            await fan.WaitAsync(TimeSpan.FromSeconds(10));
-            await stop.WaitAsync(TimeSpan.FromSeconds(10));
-
-            Assert.True(new CoidWitness(path).Submitting("TA-REPLACEMENT", "SIM", "ES", "Buy", 1m, null),
-                $"round {round}: a stopped strategy still holds the witness against the live one");
+            var replacement = new CoidWitness(path);
+            Assert.True(replacement.Submitting("TA-2", "SIM", "ES", "Buy", 1m, null),
+                $"round {round}: the lease survived a terminal path: {replacement.Trouble}");
+            replacement.Dispose();
+            witness.Dispose();
         }
     }
 }
