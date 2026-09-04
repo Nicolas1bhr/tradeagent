@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Diagnostics;
@@ -1532,6 +1535,236 @@ public class UpdateTrustTests
         Assert.True(service.Refused);
         Assert.Contains("each look like the installer", service.Message);
         Assert.DoesNotContain("database is locked", service.Message);
+    }
+
+    // ---- 2. the same fetch, over a real socket ---------------------------------------------------
+
+    /// <summary>
+    /// An HTTP server on the loopback interface, one handler per request.
+    ///
+    /// Everything that matters about the manifest fetch happens between the response headers and the
+    /// body: a declared length refused before the body is opened, a chunked body abandoned one byte
+    /// past the cap, a body that never arrives. A hand-written <see cref="Stream"/> can prove
+    /// <see cref="Downloader.ReadLimitedAsync"/> and nothing above it — round 3's fix was revertible
+    /// to the unbounded <see cref="Downloader.TryGetStringAsync"/> with the whole suite still green,
+    /// because no test drove <see cref="UpdateSources.GitHub"/> at a socket. These do.
+    ///
+    /// The handler is given the response and a token that is cancelled on dispose, so a test can hold
+    /// a response open — which is what "refused without waiting for the rest of it" needs.
+    /// </summary>
+    sealed class Server : IAsyncDisposable
+    {
+        readonly HttpListener _listener = new();
+        readonly CancellationTokenSource _stop = new();
+        readonly Task _loop;
+
+        /// <summary>The URL of the checksum manifest this server is standing in for.</summary>
+        public string Url { get; }
+
+        public Server(Func<HttpListenerResponse, CancellationToken, Task> handle)
+        {
+            var port = Bind(_listener);
+            Url = $"http://127.0.0.1:{port}/SHA256SUMS.txt";
+            _listener.Start();
+
+            _loop = Task.Run(async () =>
+            {
+                while (!_stop.IsCancellationRequested)
+                {
+                    HttpListenerContext context;
+                    try { context = await _listener.GetContextAsync(); }
+                    catch (Exception) { return; }        // Stop() during the wait; that is the shutdown
+
+                    // Per request, so one held-open response cannot stop the next one being served.
+                    _ = Task.Run(async () =>
+                    {
+                        try { await handle(context.Response, _stop.Token); }
+                        catch (Exception) { /* the client hung up, which is what these tests do */ }
+                        finally { try { context.Response.Close(); } catch (Exception) { } }
+                    });
+                }
+            });
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            try { _listener.Stop(); } catch (Exception) { }
+            try { _listener.Close(); } catch (Exception) { }
+            try { await _loop; } catch (Exception) { }
+            _stop.Dispose();
+        }
+
+        /// <summary>
+        /// A port nobody else is on. HttpListener will not take port 0, so one is borrowed from the
+        /// OS and handed straight over; the retry covers losing that race to another process.
+        /// </summary>
+        static int Bind(HttpListener listener)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                var probe = new TcpListener(IPAddress.Loopback, 0);
+                probe.Start();
+                var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+                probe.Stop();
+
+                listener.Prefixes.Clear();
+                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+                try
+                {
+                    listener.Start();
+                    listener.Stop();
+                    return port;
+                }
+                catch (HttpListenerException) when (attempt < 4) { }
+                catch (SocketException) when (attempt < 4) { }
+            }
+        }
+
+        /// <summary>Writes <paramref name="count"/> bytes and pushes them at the client now.</summary>
+        public static async Task Write(HttpListenerResponse res, int count, CancellationToken ct)
+        {
+            var block = new byte[Math.Min(count, 64 * 1024)];
+            Array.Fill(block, (byte)'x');
+            var left = count;
+            while (left > 0)
+            {
+                var take = Math.Min(block.Length, left);
+                await res.OutputStream.WriteAsync(block.AsMemory(0, take), ct);
+                left -= take;
+            }
+            await res.OutputStream.FlushAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// A test's own deadline, so a fetch that waits for a body it should have refused FAILS instead
+    /// of hanging. The correct code answers in milliseconds in every case below; fifteen seconds is
+    /// only far enough from that to be unambiguous, and far below the thirty MINUTES the shared
+    /// HttpClient would otherwise wait.
+    /// </summary>
+    static async Task<T> Within<T>(Task<T> fetch, string what)
+    {
+        var finished = await Task.WhenAny(fetch, Task.Delay(TimeSpan.FromSeconds(15)));
+        Assert.True(finished == fetch, $"{what}: still waiting after 15s — it did not refuse, it queued up behind the body");
+        return await fetch;
+    }
+
+    /// <summary>
+    /// The server says the file is bigger than we will read. Nothing needs to be read at all: the
+    /// answer is in the headers, and this returns while 64 KiB of the declared body is still unsent
+    /// and never coming. Waiting for it would be the latch-holding stall the cap exists to stop —
+    /// except this one is triggered by a single header a stranger's web server chose.
+    /// </summary>
+    [Fact]
+    public async Task A_manifest_whose_declared_length_is_too_big_is_refused_without_opening_the_body()
+    {
+        var wrote = 0;
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.ContentLength64 = ChecksumManifest.MaxCharacters + 1;
+            await Server.Write(res, 1, stop);          // headers, and one byte of 65537
+            Interlocked.Increment(ref wrote);
+            await Task.Delay(Timeout.Infinite, stop);  // the other 65536 never arrive
+        });
+
+        var sources = UpdateSources.GitHub("owner/repo");
+        var text = await Within(sources.Text(server.Url, default), "a declared-oversized manifest");
+
+        Assert.Null(text);
+        Assert.Equal(1, wrote);
+    }
+
+    /// <summary>
+    /// Chunked, so the length is declared nowhere and the header check above has nothing to work
+    /// with. This is the limit that actually holds: the read stops one byte past the cap, which is
+    /// enough to know the body is too big and is the last byte ever asked for — proved here by the
+    /// server sending exactly that many and then going silent for good.
+    /// </summary>
+    [Fact]
+    public async Task A_chunked_manifest_past_the_cap_is_refused_at_one_byte_over_it()
+    {
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.SendChunked = true;
+            await Server.Write(res, ChecksumManifest.MaxCharacters + 1, stop);
+            await Task.Delay(Timeout.Infinite, stop);  // the response is never completed
+        });
+
+        var sources = UpdateSources.GitHub("owner/repo");
+        var text = await Within(sources.Text(server.Url, default), "a chunked oversized manifest");
+
+        Assert.Null(text);
+    }
+
+    /// <summary>The other side of that boundary: exactly the cap, chunked, is read in full.</summary>
+    [Fact]
+    public async Task A_chunked_manifest_of_exactly_the_cap_is_still_read()
+    {
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.SendChunked = true;
+            await Server.Write(res, ChecksumManifest.MaxCharacters, stop);
+        });
+
+        var sources = UpdateSources.GitHub("owner/repo");
+        var text = await Within(sources.Text(server.Url, default), "a chunked manifest at the cap");
+
+        Assert.NotNull(text);
+        Assert.Equal(ChecksumManifest.MaxCharacters, text.Length);
+    }
+
+    /// <summary>
+    /// A server that accepts the request and then says nothing. The leash is what ends this; without
+    /// it the caller waits out the shared HttpClient's thirty minutes with the owner standing in
+    /// front of a button they pressed. The timeout is shortened here so the test does not sit for
+    /// thirty seconds — that the real fetch passes <see cref="ChecksumManifest.FetchTimeout"/>, and
+    /// that it is 30 s, are pinned by <see cref="The_real_sources_fetch_the_manifest_through_the_capped_reader"/>
+    /// and <see cref="A_stalled_checksum_fetch_gives_up_instead_of_waiting_out_the_http_timeout"/>.
+    /// </summary>
+    [Fact]
+    public async Task A_manifest_that_stops_arriving_is_cut_at_the_leash_rather_than_waited_out()
+    {
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.SendChunked = true;
+            await Server.Write(res, 40, stop);         // a plausible first line, and then nothing
+            await Task.Delay(Timeout.Infinite, stop);
+        });
+
+        var clock = Stopwatch.StartNew();
+        var text = await Within(
+            Downloader.TryGetSmallTextAsync(server.Url, ChecksumManifest.MaxCharacters, TimeSpan.FromMilliseconds(500)),
+            "a stalled manifest");
+        clock.Stop();
+
+        Assert.Null(text);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"took {clock.Elapsed}");
+    }
+
+    /// <summary>
+    /// And the case the other four exist to protect: the real thing, off a real socket, through the
+    /// sources the product uses, resolving to the hash the installer is checked against.
+    /// </summary>
+    [Fact]
+    public async Task A_healthy_manifest_arrives_and_resolves_to_the_installers_hash()
+    {
+        var body = Encoding.ASCII.GetBytes($"{Hash}  artifacts/{Asset}\r\n{OtherHash}  artifacts/notes.txt\r\n");
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.ContentType = "text/plain";
+            res.ContentLength64 = body.Length;
+            await res.OutputStream.WriteAsync(body, stop);
+        });
+
+        var clock = Stopwatch.StartNew();
+        var sources = UpdateSources.GitHub("owner/repo");
+        var text = await Within(sources.Text(server.Url, default), "a healthy manifest");
+        clock.Stop();
+
+        Assert.NotNull(text);
+        Assert.Equal(Hash, ChecksumManifest.Find(text, Asset));
+        Assert.True(clock.Elapsed < ChecksumManifest.FetchTimeout, $"took {clock.Elapsed}");
     }
 
     // ---- helpers ---------------------------------------------------------------------------------
