@@ -648,4 +648,92 @@ public class WitnessSnapshotTests : IDisposable
 
         Assert.Equal(0, clean);
     }
+    // ============================================================ U14a item 1: the deciding line
+
+    /// <summary>
+    /// U14a ITEM 1. "I COULD NOT READ IT" IS NOT "THERE IS NO RESOLVED LINE YET".
+    ///
+    /// <c>LastDecidingLine()</c> collapsed an <c>Unreadable</c> snapshot to null — the same answer a
+    /// clean set gives — so the clean-commit path in <c>Settled()</c> read "no marker there yet" and
+    /// appended the line that CLOSES a durability gap, over a set nobody had managed to read. The
+    /// line is durable and it outranks everything under it, so the next run that CAN read the file
+    /// is told the gap was closed: <c>GapClosed</c> comes back true and the standing goes Historical
+    /// over a claim that is known not to have reached the disk. The gap below is real and is this
+    /// session's own — the rewrite failed — which is what makes the marker a false statement rather
+    /// than a redundant one.
+    /// </summary>
+    [Fact]
+    public void A_commit_over_an_unreadable_sidecar_does_not_say_the_gap_was_closed()
+    {
+        Seed();
+
+        var refuseReplace = true;
+        var denyRead = false;
+        var witness = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+            replace: (tmp, dest) =>
+            {
+                if (refuseReplace) throw new IOException("the destination is open");
+                File.Move(tmp, dest, overwrite: true);
+            },
+            readSidecar: p => denyRead
+                ? throw new UnauthorizedAccessException("the sidecar could not be read")
+                : File.ReadAllLines(p));
+
+        // The gap, and it is real: the claim did not reach the disk and the sidecar says so.
+        Assert.False(witness.Submitting("TA-GAP", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("ERROR", Everything());
+
+        // Now nothing can read the set, and a later order commits cleanly on top of it.
+        denyRead = true;
+        refuseReplace = false;
+        Assert.True(witness.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+
+        // The standing stays degraded while this run cannot look.
+        Assert.NotNull(witness.Trouble);
+        Assert.False(witness.GapClosed);
+        witness.Dispose();
+
+        // Nothing was written over a set nobody could read...
+        Assert.DoesNotContain("RESOLVED", Everything());
+
+        // ...so the run that CAN read it still finds the gap open.
+        var next = Session();
+        Assert.False(next.GapClosed);
+        Assert.NotNull(next.Trouble);
+        Assert.Equal(WitnessStanding.Unresolved, CoidWitnessReport.Standing(next));
+        next.Dispose();
+    }
+
+    /// <summary>
+    /// THE CONTROL, and it is what keeps the test above from being satisfied by never writing the
+    /// marker at all. Same sequence, same real gap, one difference: the set can be read. A clean
+    /// commit then DOES close the gap, and the next run reads it closed.
+    /// </summary>
+    [Fact]
+    public void CONTROL_a_commit_over_a_readable_sidecar_does_say_the_gap_was_closed()
+    {
+        Seed();
+
+        var refuseReplace = true;
+        var witness = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+            replace: (tmp, dest) =>
+            {
+                if (refuseReplace) throw new IOException("the destination is open");
+                File.Move(tmp, dest, overwrite: true);
+            });
+
+        Assert.False(witness.Submitting("TA-GAP", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("ERROR", Everything());
+
+        refuseReplace = false;
+        Assert.True(witness.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        witness.Dispose();
+
+        Assert.Contains("RESOLVED", Everything());
+
+        var next = Session();
+        Assert.True(next.GapClosed);
+        Assert.Null(next.Trouble);
+        next.Dispose();
+    }
 }

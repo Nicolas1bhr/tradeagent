@@ -1630,11 +1630,8 @@ public sealed class CoidWitness : IDisposable
         // read into a permanent cost.
         if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
 
-        var deciding = snapshot.LastLineWhere(Generations(log), Deciding);
-        var carry = deciding is not null
-                    && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal)
-            ? Restatement(deciding)
-            : "";
+        var deciding = DecidingIn(snapshot, Generations(log));
+        var carry = deciding.IsUnresolved ? Restatement(deciding.Line!) : "";
 
         var pending = log + PendingSuffix;
         var rolled = log + RolledSuffix;
@@ -1829,9 +1826,9 @@ public sealed class CoidWitness : IDisposable
         // SupportsClientOrderId over somebody else's misconfiguration. It must only stop a zero
         // being read as a fact about what was submitted. The F25 boundary, kept: what crosses it is
         // UNREADABILITY, which is this run's own problem whoever the file belonged to.
-        var deciding = snapshot.LastLineWhere(Generations(canonical), Deciding);
-        _diskDegraded = deciding is not null && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
-        _diskGapClosed = string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
+        var deciding = DecidingIn(snapshot, Generations(canonical));
+        _diskDegraded = deciding.IsUnresolved;
+        _diskGapClosed = deciding.Says(ResolvedMarker);
     }
 
     /// <summary>
@@ -2343,17 +2340,88 @@ public sealed class CoidWitness : IDisposable
             // silently failed — the one direction this file must never fail in. The append
             // invalidates the snapshot, so the next reading re-derives from what is on disk:
             // RESOLVED if the line landed, still degraded if it did not.
-            if (!string.Equals(LastDecidingLine(), ResolvedMarker, StringComparison.Ordinal))
-                AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: true);
+            //
+            // AND "I COULD NOT READ IT" IS NOT "THERE IS NO MARKER YET". That is the third state,
+            // and losing it cost the one thing this file exists to protect: the re-read answered
+            // null for a set nobody could look in — the same answer a set with no marker gives — so
+            // this appended RESOLVED over it. The marker is durable and it outranks every line under
+            // it, so the next run that CAN read the file is told a gap was closed that this run
+            // never saw. Nothing is written, the session's own latch is left standing, and the
+            // machine goes on reading degraded until somebody can read the set again.
+            var deciding = LastDecidingLine();
+            if (!deciding.CouldNotRead)
+            {
+                _degraded = false;
+                if (!deciding.Says(ResolvedMarker))
+                    AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: true);
+            }
         }
+    }
+
+    /// <summary>
+    /// THE ONE PLACE THE DECIDING LINE IS ASKED FOR, so no caller can invent a fourth answer.
+    /// <see cref="Derive"/>, <see cref="Rotate"/> and <see cref="Settled"/> all come through here.
+    /// </summary>
+    static DecidingLine DecidingIn(SidecarSnapshot snapshot, IEnumerable<string> generations) =>
+        snapshot.Refusal is not null
+            ? DecidingLine.Unread
+            : snapshot.LastLineWhere(generations, Deciding) is { } line
+                ? DecidingLine.Found(line)
+                : DecidingLine.None;
+
+    /// <summary>
+    /// THE DECIDING LINE IS A TRI-STATE — a line, no line, or no reading — and the third state is
+    /// the one that kept being lost.
+    ///
+    /// The first two are facts about the sidecar. The third is a fact about THIS RUN, and it is not
+    /// representable as null, because null already means the second. Collapsing them is what let a
+    /// clean commit append the RESOLVED marker over a set nobody had managed to read: a durable
+    /// claim that a durability gap was closed, made by a run that could not see whether one was
+    /// open. Every caller has to take the third state; none of them can be handed it as an absence.
+    /// </summary>
+    readonly record struct DecidingLine
+    {
+        DecidingLine(string? line, bool couldNotRead)
+        {
+            Line = line;
+            CouldNotRead = couldNotRead;
+        }
+
+        /// <summary>
+        /// The line, timestamp stripped, or null when there is none — and also null when there was
+        /// no reading, which is why <see cref="CouldNotRead"/> is asked first and not second.
+        /// </summary>
+        public string? Line { get; }
+
+        /// <summary>The set could not be read, so there is NO ANSWER. Not "there is no line".</summary>
+        public bool CouldNotRead { get; }
+
+        /// <summary>The set was read and holds nothing that decides anything.</summary>
+        public static readonly DecidingLine None = new(null, false);
+
+        /// <summary>There was no reading of the set at all.</summary>
+        public static readonly DecidingLine Unread = new(null, true);
+
+        public static DecidingLine Found(string line) => new(line, false);
+
+        /// <summary>True only when the set WAS read and its last deciding line is this one.</summary>
+        public bool Says(string marker) =>
+            !CouldNotRead && string.Equals(Line, marker, StringComparison.Ordinal);
+
+        /// <summary>True only when the set WAS read and its last deciding line leaves a gap open.</summary>
+        public bool IsUnresolved => !CouldNotRead && Line is not null && !Says(ResolvedMarker);
     }
 
     /// <summary>
     /// The canonical machine's last deciding line, out of the snapshot — a fresh one whenever
     /// something has written since the last was taken. Caller holds <see cref="_gate"/>.
+    ///
+    /// A witness with nowhere to live answers <see cref="DecidingLine.None"/> and not
+    /// <see cref="DecidingLine.Unread"/>: there is no set, so there was no read to fail. What that
+    /// answer reaches is <see cref="AppendToErrorLog"/>, which has no file to write to either.
     /// </summary>
-    string? LastDecidingLine() =>
-        ErrorLogPath is { } log ? Snapshot().LastLineWhere(Generations(log), Deciding) : null;
+    DecidingLine LastDecidingLine() =>
+        ErrorLogPath is { } log ? DecidingIn(Snapshot(), Generations(log)) : DecidingLine.None;
 
     /// <summary>
     /// Deletes this instance's uncommitted leftovers. Called after the superseding rewrite is
