@@ -237,6 +237,23 @@ public sealed class CoidWitness : IDisposable
     /// <summary>The generation one back, and the name the current log is moved aside under while a
     /// rotation is in flight. Both are SCANNED — see <see cref="SidecarGenerations"/>.</summary>
     const string RolledSuffix = ".1";
+    const string SecondSuffix = ".2";
+
+    /// <summary>
+    /// WHERE THE NEXT CURRENT LOG IS BUILT BEFORE ANY GENERATION MOVES. <see cref="Rotate"/> writes
+    /// the carried-forward line into this name and flushes it to the disk, and only then renames the
+    /// generations underneath it. The name is inside the reader's glob on purpose: every state a
+    /// crash can leave behind is then a SUBSET of the files a reader already reads.
+    /// </summary>
+    const string PendingSuffix = ".new";
+
+    /// <summary>
+    /// A GENERATION NO BUILD WRITES ANY MORE, AND THAT IS WHY IT IS STILL READ. Rounds 8 and 9
+    /// rotated by moving the current log aside under this name; a machine that died inside one of
+    /// those rotations, and was then upgraded to this build, has the only copy of its unresolved
+    /// line sitting here. Nothing creates it now and nothing deletes it; it is read like any other
+    /// generation so that the upgrade does not lose the gap.
+    /// </summary>
     const string StagingSuffix = ".rotating";
 
     static readonly JsonSerializerOptions Opts = new()
@@ -307,14 +324,56 @@ public sealed class CoidWitness : IDisposable
     readonly Action<string, string> _writeSidecar;
 
     /// <summary>
-    /// THE TWO PROBES ON THE SIDECAR PATH, AS SEAMS, AND FOR THE SAME REASON <see cref="_open"/> IS
-    /// ONE: the failures they have to classify correctly — an ACL that denies the attributes, a
-    /// directory whose enumeration is refused — cannot be provoked on the machine the code is
-    /// written on without also breaking every other read in the same directory, which is a different
-    /// state from the one under test. Null in every production use.
+    /// THE TWO CALLS <see cref="ReadSidecarSet"/> MAKES, AS SEAMS, AND FOR THE SAME REASON
+    /// <see cref="_open"/> IS ONE: some of the failures the snapshot has to classify — an ACL that
+    /// denies a file's attributes on Windows, a set that keeps changing under the read — cannot be
+    /// provoked on the machine the code is written on. Null in every production use.
+    ///
+    /// They are reachable from <see cref="ReadSidecarSet"/> and from nowhere else, which is what
+    /// makes the class-closure argument a sentence: a consumer cannot conflate "I could not read it"
+    /// with "there is nothing there" because a consumer never asks the filesystem anything.
     /// </summary>
     readonly Func<string, string[]> _readSidecar;
     readonly Func<string, string, string[]> _listSidecars;
+
+    /// <summary>
+    /// THE ONE SNAPSHOT EVERY READING COMES OUT OF, or null when one has not been taken since the
+    /// last write. See <see cref="ReadSidecarSet"/> and <see cref="Derive"/>.
+    /// </summary>
+    SidecarSnapshot? _snapshot;
+
+    /// <summary>
+    /// WHY THERE IS NO SNAPSHOT, or null when there is one. Set by <see cref="Derive"/> and by
+    /// nothing else. Non-null means, at every consumer and with no exceptions: standing UNRESOLVED,
+    /// a provisional zero, a non-null <see cref="Trouble"/> and a report that says the sidecar could
+    /// not be read.
+    /// </summary>
+    string? _snapshotRefusal;
+
+    /// <summary>
+    /// WHAT THE SNAPSHOT SAID, COMPUTED ONCE, READ BY EVERY PROPERTY IN ANY ORDER. R9-2: round 9
+    /// gave <see cref="Noted"/> a cause that only the recovery discovers and left <c>Noted</c>
+    /// running the load and not the recovery, so a fresh instance answered <c>false</c> while
+    /// another answered <c>io:noted</c>, and the operator's sentence was right only because C#
+    /// evaluates arguments left to right. These five are written in <see cref="Derive"/> and nowhere
+    /// else; the instance and session latches beside them are separate fields, and every public
+    /// member runs <see cref="Ready"/> so that all of them are complete before any is read.
+    /// </summary>
+    bool _diskNoted;
+    bool _diskDegraded;
+    bool _diskGapClosed;
+    WitnessNotes _diskNotes;
+    string[] _sidecars = [];
+
+    /// <summary>
+    /// This writer's own account of how big its sidecar is: the length the snapshot recorded, plus
+    /// everything appended since. There is exactly ONE writer per sidecar file (see
+    /// <see cref="SidecarPath"/>), so the rotation trigger needs no filesystem probe — and the probe
+    /// it replaces was a <c>File.Exists</c> plus an attribute read that answered "no" for a denial
+    /// as readily as for an absence, which is the conflation this whole round exists to end.
+    /// Negative until the first snapshot supplies it.
+    /// </summary>
+    long _sidecarBytes = -1;
 
     bool _loaded;
     bool _readFailed;
@@ -338,6 +397,13 @@ public sealed class CoidWitness : IDisposable
     /// Cleared by deleting the file, which takes effect at the next start — checked once at load
     /// rather than on every heartbeat, because <see cref="Token"/> runs on the heartbeat and has no
     /// business stat-ing a file five times a minute forever.
+    ///
+    /// THIS FIELD IS THIS SESSION'S OWN LATCH ONLY. What the FILES say is <see cref="_diskDegraded"/>,
+    /// computed in <see cref="Derive"/> from one snapshot; the reading an operator gets is the two of
+    /// them together (<see cref="Degraded"/>). They are separate because a safety line this session
+    /// wrote must degrade the machine even when the append that would have recorded it failed — the
+    /// disk cannot be the only source — while the disk must be the only source for everything this
+    /// session did not write, so that no property depends on another having run first.
     /// </summary>
     bool _degraded;
 
@@ -348,6 +414,10 @@ public sealed class CoidWitness : IDisposable
     /// operator that orders are being refused. What it is for is the reading a zero needs: a reader
     /// that sees <c>records:0</c> beside <c>io:noted</c> knows something was refused, and does not
     /// take the zero for "this product never submitted that identifier".
+    ///
+    /// THIS FIELD IS THE IN-PROCESS CAUSES ONLY — a candidate this instance declined, a rewrite it
+    /// recovered, a line it wrote. What the FILES say is <see cref="_diskNoted"/>. See
+    /// <see cref="_degraded"/> for why the two are apart, and <see cref="Noted"/> for the reading.
     /// </summary>
     bool _noted;
 
@@ -358,19 +428,6 @@ public sealed class CoidWitness : IDisposable
     /// lists the files instead. See <see cref="WitnessNotes"/>.
     /// </summary>
     WitnessNotes _notes;
-
-    /// <summary>The last deciding line is the RESOLVED marker. See <see cref="GapClosed"/>.</summary>
-    bool _gapClosed;
-
-    /// <summary>
-    /// A SIDECAR IS THERE AND THIS BUILD COULD NOT READ IT — held exclusively by a scanner, a viewer
-    /// or another process's writer. Every read here was wrapped in a catch that answered "no lines",
-    /// so such a file counted as EMPTY: nothing noted, no deciding line, a Clean standing and a
-    /// non-provisional zero, stated on the strength of a file nobody could open. It is its own
-    /// answer in both directions — something IS written down, and this run cannot tell whether the
-    /// gap it describes is open.
-    /// </summary>
-    bool _sidecarUnreadable;
 
     /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
@@ -555,7 +612,10 @@ public sealed class CoidWitness : IDisposable
         _open = open ?? DefaultOpen;
         _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
         _readSidecar = readSidecar ?? File.ReadAllLines;
-        _listSidecars = listSidecars ?? Directory.GetFiles;
+        // ENTRIES, NOT FILES, and the reason is on Listing: `Directory.GetFiles` does not return a
+        // DIRECTORY sitting at a sidecar's name, so that name would never be read and would answer
+        // "absent" — the round-9 finding one turn further out.
+        _listSidecars = listSidecars ?? Directory.GetFileSystemEntries;
         if (_path is not null)
             _tempPrefix = $"{_path}.tmp-{Environment.ProcessId}-{(SessionId.Length >= 8 ? SessionId[..8] : SessionId)}-";
     }
@@ -793,8 +853,7 @@ public sealed class CoidWitness : IDisposable
         {
             lock (_gate)
             {
-                EnsureLoaded();
-                EnsureRecovered();
+                Ready();
                 foreach (var r in _records)
                 {
                     if (!string.Equals(r.ClientOrderId, clientOrderId, StringComparison.Ordinal)) continue;
@@ -827,8 +886,7 @@ public sealed class CoidWitness : IDisposable
         {
             lock (_gate)
             {
-                EnsureLoaded();
-                EnsureRecovered();
+                Ready();
                 var ids = new List<string>();
                 for (var i = _records.Count - 1; i >= 0 && ids.Count < max; i--)
                 {
@@ -856,7 +914,7 @@ public sealed class CoidWitness : IDisposable
         get
         {
             if (_path is null) return false;
-            try { lock (_gate) { EnsureLoaded(); return _readFailed; } }
+            try { lock (_gate) { Ready(); return _readFailed; } }
             catch (Exception) { return true; }
         }
     }
@@ -888,19 +946,15 @@ public sealed class CoidWitness : IDisposable
             {
                 lock (_gate)
                 {
-                    EnsureLoaded();
-                    // The same recovery Token/All/PriorSessionIds run. Without it two readings from
-                    // ONE instance could disagree — Trouble null beside a token saying io:degraded —
-                    // and the only production caller was safe by ordering rather than by rule
-                    // (Describe runs PriorSessionIds before it reads this).
-                    EnsureRecovered();
+                    // ONE PREPARATION FOR EVERY READING, whichever is asked first. See Ready.
+                    Ready();
                     if (_committedUnreadable) return UnreadableDetail();
                     if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
-                    if (_sidecarUnreadable)
-                        return $"the account of earlier write failures at {ErrorLogPath} could not be " +
-                               $"read, so this run cannot tell whether a durability gap is open";
-                    return _degraded
+                    if (_snapshotRefusal is { } why)
+                        return $"the account of earlier write failures beside {ErrorLogPath} could not " +
+                               $"be read ({why}), so this run cannot tell whether a durability gap is open";
+                    return Degraded
                         ? $"an earlier run could not write the write-ahead record; the account of it " +
                           $"is in {ErrorLogPath}"
                         : null;
@@ -928,7 +982,10 @@ public sealed class CoidWitness : IDisposable
         get
         {
             if (_path is null) return false;
-            try { lock (_gate) { EnsureLoaded(); return _gapClosed; } }
+            // A SAFETY EVENT IN THIS SESSION REOPENS IT whatever the files said when they were
+            // read: the line that closes a gap is written when the commit lands, and until then this
+            // session's own failure is the newest word there is.
+            try { lock (_gate) { Ready(); return _diskGapClosed && !_degraded; } }
             catch (Exception) { return false; }
         }
     }
@@ -943,10 +1000,11 @@ public sealed class CoidWitness : IDisposable
     {
         get
         {
-            // The enumeration returns files that are there, so there is nothing left to ask — and
-            // asking `File.Exists` again would put a probe that cannot report a denial back on this
-            // path, which is the whole of F31.
-            try { lock (_gate) { return SidecarSet().ToArray(); } }
+            // F36: THE SAME SNAPSHOT AS EVERY OTHER READING, so this list cannot disagree with the
+            // standing printed beside it. It used to run its own enumeration under its own catch, so
+            // a directory this run could not look in reached the operator as an empty file list
+            // under a clean headline — the report saying "none recorded" about a set it never saw.
+            try { lock (_gate) { Ready(); return _sidecars; } }
             catch (Exception) { return []; }
         }
     }
@@ -956,7 +1014,7 @@ public sealed class CoidWitness : IDisposable
         get
         {
             if (_path is null) return false;
-            try { lock (_gate) { EnsureLoaded(); return _noted; } }
+            try { lock (_gate) { Ready(); return NotedNow; } }
             catch (Exception) { return false; }
         }
     }
@@ -971,7 +1029,7 @@ public sealed class CoidWitness : IDisposable
         get
         {
             if (_path is null) return WitnessNotes.None;
-            try { lock (_gate) { EnsureLoaded(); EnsureRecovered(); return _notes; } }
+            try { lock (_gate) { Ready(); return _notes | _diskNotes; } }
             catch (Exception) { return WitnessNotes.None; }
         }
     }
@@ -979,7 +1037,7 @@ public sealed class CoidWitness : IDisposable
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
-        try { lock (_gate) { EnsureLoaded(); EnsureRecovered(); return _records.ToArray(); } }
+        try { lock (_gate) { Ready(); return _records.ToArray(); } }
         catch (Exception) { return []; }
     }
 
@@ -1002,8 +1060,7 @@ public sealed class CoidWitness : IDisposable
         {
             lock (_gate)
             {
-                EnsureLoaded();
-                EnsureRecovered();
+                Ready();
                 if (_readFailed) return $"session:{session},records:err,prior:err,io:failed";
                 var prior = 0;
                 foreach (var r in _records)
@@ -1020,7 +1077,7 @@ public sealed class CoidWitness : IDisposable
                 // disk, most usefully one from a session that has already ended. "noted" is a
                 // sidecar with diagnostics in it and no open gap, which is what makes a zero here a
                 // flagged zero rather than a confident one. Only "degraded" reaches Trouble.
-                var io = _writeFailed ? "failed" : _degraded ? "degraded" : _noted ? "noted" : "ok";
+                var io = _writeFailed ? "failed" : Degraded ? "degraded" : NotedNow ? "noted" : "ok";
                 return $"session:{session},records:{_records.Count},prior:{prior},io:{io}";
             }
         }
@@ -1028,6 +1085,40 @@ public sealed class CoidWitness : IDisposable
     }
 
     // ---------------------------------------------------------------- the file
+
+    /// <summary>
+    /// EVERY PUBLIC MEMBER RUNS THIS, AND THAT IS THE WHOLE OF R9-2. The load reads the committed
+    /// file and takes the snapshot; the recovery adopts a stranded rewrite in memory and is a cause
+    /// of <see cref="Noted"/> in its own right. Round 9 had properties running one, the other, or
+    /// both, so a fresh instance answered <c>Noted=false</c> while another answered <c>io:noted</c>
+    /// about the same machine, and the operator's sentence came out right only because C# evaluates
+    /// arguments left to right. No reading may depend on another having run first, so they all run
+    /// the same two steps in the same order.
+    ///
+    /// Caller holds <see cref="_gate"/>.
+    /// </summary>
+    void Ready()
+    {
+        EnsureLoaded();
+        EnsureRecovered();
+        // AND A SNAPSHOT THAT IS STILL CURRENT. The load runs once; the files do not stop moving
+        // when it has. Anything this session appends invalidates the snapshot, and this is where the
+        // next one is taken — so the reading after a write is of the file as it is now and not of
+        // the set as it was at construction.
+        Snapshot();
+    }
+
+    /// <summary>
+    /// A DURABILITY GAP IS OPEN — what the files say, together with what this session has done. The
+    /// two halves are separate fields for the reason on <see cref="_degraded"/>: a safety line this
+    /// session wrote counts even when the append that would have recorded it failed, and everything
+    /// else comes from one snapshot so that no two readings can disagree. Caller holds the gate and
+    /// has run <see cref="Ready"/>.
+    /// </summary>
+    bool Degraded => _diskDegraded || _degraded;
+
+    /// <summary>Something is written down, from any of the three kinds of cause.</summary>
+    bool NotedNow => _diskNoted || _noted;
 
     /// <summary>
     /// Loaded once, then held. The records a PREVIOUS session wrote cannot change — the process
@@ -1045,68 +1136,18 @@ public sealed class CoidWitness : IDisposable
         if (_loaded) return;
         if (_path is null) { _loaded = true; return; }
 
-        // UNRESOLVED SAFETY, not merely present, and not merely non-RESOLVED. Asked before anything
-        // below can write a line of its own. A sidecar full of quarantine warnings is NOTED; only an
-        // unresolved safety line is a durability gap.
-        try
-        {
-            // SOMETHING WAS WRITTEN DOWN — ASKED OF THE WHOLE SET, AND OUTSIDE THE CANONICAL GUARD.
-            //
-            // Splitting the sidecar per writer put a refused bridge's account of itself beside the
-            // canonical file instead of in it. On the machine that split was built for the OWNER
-            // never fails, so the canonical file does not exist — and this was computed over the set
-            // but gated on the canonical file, so `_noted` stayed false with five refusals sitting
-            // on disk. `Standing` then reads Clean, `ZeroIsProvisional` false, and the probe prints
-            // "none recorded" before reading records:0 as a confident zero, which for this file
-            // means "this product never submitted that identifier". That is the flagged-zero rule
-            // reopened by the fix that split the file.
-            // UNREADABLE COUNTS AS WRITTEN DOWN. See _sidecarUnreadable: a catch that answered
-            // "no lines" made a file nobody could open indistinguishable from one with nothing in it.
-            // AND AN ENUMERATION THIS RUN COULD NOT PERFORM COUNTS AS WRITTEN DOWN. The question is
-            // "is there anything written down at all", and a directory that would not list its
-            // contents has not answered it — answering "no" on its behalf is the flagged-zero rule
-            // reopened one probe further out.
-            // AND AN UNREADABLE CANONICAL GENERATION IS A GAP THIS RUN CANNOT RULE OUT. Scoped to the
-            // canonical file for the same reason the deciding line is (below): a refused writer's own
-            // file being locked is not this machine's durability problem.
-            _sidecarUnreadable = SidecarGenerations().Any(f => { HasNotes(f, out var bad); return bad; });
+        // ONE SNAPSHOT, TAKEN HERE, DERIVED FROM ONCE. Everything the sidecar files say — whether
+        // anything is written down, whether a durability gap is open, whether it was closed, which
+        // files are there, who wrote them, and whether any of that could be read at all — is
+        // computed in Derive from this one value. There is no second read to disagree with it and
+        // no probe left for a later edit to add.
+        var snapshot = Snapshot();
 
-            // It counts as written down as well, and by NAME rather than by whether the enumeration
-            // happened to include it. Round 8 got that for free — the file it could not open was one
-            // the glob had already listed — which left `Noted` false, and the token reading `io:ok`,
-            // for a canonical generation whose very existence this run could not establish.
-            var set = SidecarSet(out var setUnreadable).ToArray();
-            _noted = _sidecarUnreadable || setUnreadable || set.Any(f => HasNotes(f, out _));
-
-            // A REFUSED WRITER IS THE ONE CAUSE THAT IS VISIBLE IN THE NAMES. Its sidecar is
-            // `<canonical>-<pid>-<session>`; the canonical file and its two generations are the only
-            // other names in this glob, so anything else in the set is somebody the lease turned
-            // away. The other two causes are discovered by the candidate scan and the recovery.
-            if (ErrorLogPath is { } canonical
-                && set.Any(f => !string.Equals(f, canonical, StringComparison.Ordinal)
-                                && !string.Equals(f, canonical + RolledSuffix, StringComparison.Ordinal)
-                                && !string.Equals(f, canonical + StagingSuffix, StringComparison.Ordinal)))
-                _notes |= WitnessNotes.RefusedWriter;
-
-            // THE DEGRADED STATE STAYS THE CANONICAL FILE'S QUESTION, and that is not an oversight
-            // being preserved. A second bridge turned away cost no order — the refusal is what stops
-            // the order being sent — so its lines must not mark this machine degraded for ever, which
-            // would drop SupportsClientOrderId over somebody else's misconfiguration. It must only
-            // stop a zero being read as a fact about what was submitted.
-            // NO `File.Exists` IN FRONT OF THIS EITHER, AND THAT WAS THE THIRD PROBE. It guarded
-            // nothing — `LastDecidingLine()` answers null when there is no sidecar, which produces
-            // exactly the same two values — while doing the one thing this class must not do: asking
-            // a question that answers "no" for a denial as readily as for an absence. A canonical
-            // generation this run could not read therefore set `_sidecarUnreadable`, said "could not
-            // be read" through `Trouble`, and left the token reading `io:ok` beside it.
-            var deciding = LastDecidingLine();
-            _degraded = _sidecarUnreadable
-                        || (deciding is not null
-                            && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal));
-            _gapClosed = !_sidecarUnreadable
-                         && string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
-        }
-        catch (Exception) { }
+        // AND AN ENUMERATION THIS RUN COULD NOT PERFORM IS NOT AN EMPTY DIRECTORY, on the recovery
+        // path either: with no listing there is no way to know whether a rewrite is stranded beside
+        // the witness, and a zero read out of that is the one answer that must never be produced by
+        // accident.
+        if (snapshot.Refusal is not null) _candidateUnreadable = true;
 
         // ONE PREDICATE FOR "THIS BUILD DOES NOT HAVE THE COMMITTED CONTENT", and it covers both
         // ways of not having it. ABSENT is exactly FileNotFound on this path — the file has never
@@ -1133,7 +1174,7 @@ public sealed class CoidWitness : IDisposable
         // ATAS microseconds later. See AdoptUncommittedRewrite for the rule.
         // CLASSIFIED, NOT ACTED ON. See _viable / _rejected: this runs on read paths, and a reader
         // that wrote the sidecar or moved a file could do it in the middle of the owner's rewrite.
-        ScanCandidates(committedText, committed);
+        ScanCandidates(committedText, committed, snapshot);
 
         // A truncated or hand-edited file is not a crash and is not evidence either. Treat it as
         // unreadable — the token says so — and let this session write a clean one. The records lost
@@ -1252,9 +1293,9 @@ public sealed class CoidWitness : IDisposable
     ///
     /// Caller holds <see cref="_gate"/>.
     /// </summary>
-    void ScanCandidates(string? committedText, Envelope? committed)
+    void ScanCandidates(string? committedText, Envelope? committed, SidecarSnapshot snapshot)
     {
-        foreach (var candidate in Candidates())
+        foreach (var candidate in Candidates(snapshot))
         {
             var text = ReadTolerantly(candidate, out var unreadable);
             if (text is null)
@@ -1515,22 +1556,18 @@ public sealed class CoidWitness : IDisposable
     /// Temps that might be an uncommitted rewrite of this file, in whatever order the directory
     /// gives them. <see cref="DescendsFrom"/> decides which one is real, and
     /// <see cref="AdoptUncommittedRewrite"/> declines when more than one qualifies.
+    ///
+    /// R9-5: OUT OF THE SNAPSHOT, LIKE EVERYTHING ELSE. This used to run its own
+    /// <c>Directory.GetFiles</c> under a catch that returned an empty list, so a refused enumeration
+    /// reached the RECOVERY path as "there is no stranded rewrite here" — the same conflation the
+    /// read paths were fixed for, one glob over, in the same directory. It is now the same
+    /// enumeration as the sidecar set's, so it cannot answer where that one refused.
+    ///
+    /// UNORDERED, AND DELIBERATELY SO. It used to be newest-first, because mtime picked the winner
+    /// among several. It no longer picks anything: a candidate qualifies on lineage alone, and two
+    /// that both qualify are declined rather than ranked.
     /// </summary>
-    IEnumerable<string> Candidates()
-    {
-        if (_path is null) return [];
-        try
-        {
-            var dir = System.IO.Path.GetDirectoryName(_path);
-            if (string.IsNullOrEmpty(dir)) return [];
-            // UNORDERED, AND DELIBERATELY SO. It used to be newest-first, because mtime picked the
-            // winner among several. It no longer picks anything: a candidate qualifies on lineage
-            // alone, and two that both qualify are declined rather than ranked. Sorting by a
-            // property that decides nothing is untested code that looks load-bearing.
-            return Directory.GetFiles(dir, System.IO.Path.GetFileName(_path) + ".tmp*");
-        }
-        catch (Exception) { return []; }
-    }
+    IReadOnlyList<string> Candidates(SidecarSnapshot snapshot) => snapshot.Candidates;
 
     /// <summary>
     /// A REJECTED CANDIDATE IS MOVED, NOT JUST LOGGED, AND SAID ONCE.
@@ -1547,80 +1584,76 @@ public sealed class CoidWitness : IDisposable
     /// but the grace costs one comparison and covers a writer that is not this build.
     /// </summary>
     /// <summary>
-    /// ROTATION CARRIES THE UNRESOLVED STATE ACROSS BEFORE IT DESTROYS THE COPY THAT HOLDS IT.
+    /// ROTATION IS ATOMIC RENAMES OVER A SNAPSHOT, AND THE CARRIED LINE IS WRITTEN FIRST.
     ///
-    /// The old order was: delete the older generation, then move the current log onto its name. So
-    /// between those two acts the only copy of the last safety line was gone. The session that
-    /// rotates does go on to write a deciding line of its own — round 7's invariant — but it writes
-    /// it AFTERWARDS, and a machine that dies in between leaves a current log holding one diagnostic
-    /// and a rotated generation holding the rest, with the gap itself nowhere. The next start reads a
-    /// healthy witness over an open durability gap.
+    /// THREE THINGS IT WILL NOT DO, and each of them was a finding.
     ///
-    /// So the state is restated FIRST, into a file that exists before anything is deleted:
+    /// It will not rotate what it cannot read (R9-1 / F34). <c>LastDecidingLine</c> used to answer
+    /// null both for "nothing unresolved anywhere" and for "every generation that could have
+    /// answered threw", and the second reading ran two <c>File.Delete</c> calls over files this run
+    /// had never read — measured with a real <c>chmod 000</c> and a real <c>SIGKILL</c>: the marker
+    /// gone from every file, <c>Trouble</c> null, and the gateway still trading fully automatically.
+    /// Now the snapshot is either complete or <c>Unreadable</c>, and an unreadable one does not
+    /// rotate at all. The log then grows past its cap, which is the direction to fail in: a bounded
+    /// file is a convenience and a safety event is not.
     ///
-    ///   1. read the last deciding line while both generations are still intact;
-    ///   2. move the current log aside under a staging name — the older generation is untouched, so
-    ///      the gap is still readable from it;
-    ///   3. create the new log with the restatement as its FIRST line, flushed — now it is readable
-    ///      from the current log instead;
-    ///   4. only now delete the older generation, and move the staging file onto its name.
+    /// It will not decide from somebody else's file (R9-4). The carry comes from the generations OF
+    /// THE FILE BEING ROTATED, so a writer the lease refused rotates on its own unresolved line
+    /// rather than restating the canonical machine's gap into its own file and deleting its own
+    /// history to make room for it.
     ///
-    /// A crash at any point leaves the unresolved line readable from one of the two files a reader
-    /// scans. When there is nothing unresolved to carry there is nothing to protect, and the plain
-    /// two-step rotation is used.
+    /// And it will not destroy anything before the replacement is on the disk. The new current log
+    /// is built under <see cref="PendingSuffix"/> — a name inside the reader's glob — with the
+    /// carried line FIRST and <c>Flush(flushToDisk: true)</c>, and only then do the generations
+    /// move, oldest first. There is no staging file and no branch: one path, four acts, and every
+    /// state a crash can leave behind is a SUBSET of the files a reader already reads. That is the
+    /// whole class-closure argument, and it is a sentence rather than a table of interleavings:
+    ///
+    ///   1. write <c>log.new</c> — carry line first, flushed;
+    ///   2. <c>log.1</c> → <c>log.2</c>, which is the one act that removes a generation, and by then
+    ///      that generation's deciding line, if it was the last one, is already in <c>log.new</c>;
+    ///   3. <c>log</c> → <c>log.1</c>;
+    ///   4. <c>log.new</c> → <c>log</c>.
     ///
     /// Caller is inside <see cref="AppendToErrorLog"/>'s try, so a failure here is reported the same
     /// way any other sidecar failure is: not at all, because a witness that cannot write must never
-    /// become one that throws.
+    /// become one that throws. A rotation that stops half way leaves <c>log.new</c> holding the
+    /// carried line, which the next reader reads and the next rotation consumes.
     /// </summary>
     void Rotate(string log)
     {
-        var rolled = log + RolledSuffix;
-        var staging = log + StagingSuffix;
+        var snapshot = Snapshot();
 
-        // ASKED OF EVERY FILE A READER SCANS, AND ASKED BEFORE ANYTHING IS REMOVED.
-        //
-        // The staging name is one of those files now (see <see cref="SidecarGenerations"/>), so a
-        // leftover from a crash inside a PREVIOUS rotation is evidence rather than litter, and the
-        // line in it is carried like any other. It used to be deleted here, first, under the reading
-        // that its content is already restated in the current log — which is true of every rotation
-        // that COMPLETED and false of exactly the one that did not. Two rotations then did between
-        // them what neither does alone: the first hid the only unresolved line, the second removed
-        // it.
-        var deciding = LastDecidingLine();
+        // A ROTATION THAT CANNOT READ WHAT IT ROTATES DOES NOT ROTATE. The count is reset so the
+        // attempt is made again after another cap's worth rather than on every single append: a
+        // denial is usually transient, and re-reading the whole set per line would turn one refused
+        // read into a permanent cost.
+        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
+
+        var deciding = snapshot.LastLineWhere(Generations(log), Deciding);
         var carry = deciding is not null
                     && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal)
-            ? deciding
-            : null;
+            ? Restatement(deciding)
+            : "";
 
-        if (carry is null)
-        {
-            // Nothing unresolved anywhere in the scanned set — a leftover has just been read and
-            // holds nothing that decides the state, so removing it destroys no evidence.
-            try { if (File.Exists(staging)) File.Delete(staging); } catch (Exception) { }
-            try { File.Delete(rolled); } catch (Exception) { }
-            File.Move(log, rolled);
-            return;
-        }
+        var pending = log + PendingSuffix;
+        var rolled = log + RolledSuffix;
+        var second = log + SecondSuffix;
 
-        // A LEFTOVER STAGING FILE MAY BE THE ONLY COPY OF THE LINE JUST READ, and the move below
-        // needs its name. So the line goes into the CURRENT log first — the file that is about to
-        // become the rotated generation — and only then is the leftover removed. Durably, because
-        // the next act destroys the copy this one replaces.
-        if (File.Exists(staging))
-        {
-            AppendDurably(log, Restatement(carry));
-            try { File.Delete(staging); } catch (Exception) { }
-        }
+        _writeSidecar(pending, carry);
 
-        File.Move(log, staging);
-        _writeSidecar(log, Restatement(carry));
+        // THE OLDEST GENERATION LEAVES IN ONE ACT, and it leaves after the carry is on the disk. As
+        // an atomic rename rather than a delete followed by a move, so there is no instant at which
+        // neither `.1` nor `.2` exists — the reader's set is a superset of the previous one at every
+        // step, which is what makes the crash argument a subset argument.
+        if (snapshot.Sidecars.Contains(rolled, StringComparer.Ordinal))
+            File.Move(rolled, second, overwrite: true);
 
-        // AND ONLY NOW. Everything above this line is readable from one of the THREE files a reader
-        // scans; the delete is the first act that destroys anything, so it comes last. Reverse these
-        // two and a restatement that does not land takes the gap with it.
-        try { File.Delete(rolled); } catch (Exception) { }
-        File.Move(staging, rolled);
+        File.Move(log, rolled);
+        File.Move(pending, log);
+
+        _sidecarBytes = carry.Length;
+        Invalidate();
     }
 
     /// <summary>The one wording for a carried-forward failure, so both places that write it agree.</summary>
@@ -1628,111 +1661,271 @@ public sealed class CoidWitness : IDisposable
         $"{DateTimeOffset.UtcNow:O} {SafetyPrefix}coid-witness carried an unresolved failure across a " +
         $"sidecar rotation: {OneLine(carry)}" + Environment.NewLine;
 
-    /// <summary>
-    /// Whether a sidecar file has anything in it — and, separately, whether asking was even possible.
-    /// A file that exists and cannot be opened is NOT a file with nothing in it; see
-    /// <see cref="_sidecarUnreadable"/>.
-    /// </summary>
-    bool HasNotes(string path, out bool unreadable)
-    {
-        unreadable = false;
-        try
-        {
-            return _readSidecar(path).Any(l => !string.IsNullOrWhiteSpace(l));
-        }
-        // ABSENCE IS THE TWO EXCEPTIONS THAT MEAN "THERE IS NOTHING AT THIS NAME", and nothing else.
-        // The committed read has said this since PRIOR 17; the sidecar said it only about the READ,
-        // and asked File.Exists first — which never throws and answers FALSE for a denial as readily
-        // as for an absence. A directory whose attributes this account may not stat therefore
-        // reported a sidecar with nothing in it, which is the exact conflation F28 closed one step
-        // further along the same path.
-        catch (FileNotFoundException) { return false; }
-        catch (DirectoryNotFoundException) { return false; }
-        catch (Exception) { unreadable = true; return true; }
-    }
-
-    /// <summary>The sidecar's last non-blank line with its timestamp stripped, or null.</summary>
-    string? LastSidecarLine() => LastLineWhere(_ => true);
+    // ================================================================ THE ONE READER
 
     /// <summary>
-    /// THE SIDECAR IS A SET, NOT A FILE, and the state has to be read off the set.
+    /// THE ONLY CODE IN THIS CLASS THAT READS THE SIDECAR FILESYSTEM. Everything else — the notes,
+    /// the deciding line, the file list, the degraded state, the report, the probe, the support
+    /// package, the recovery glob and ROTATION — is handed what this returns.
     ///
-    /// <see cref="AppendToErrorLog"/> bounds the file by rotating it one generation back and writing
-    /// into a fresh one. Reading only the current log was right as long as whoever tipped the file
-    /// over also put a deciding line in the new one — which a WRITING session does, RESOLVED if its
-    /// commit landed and a fresh failure if it did not. But the line that tips it over can be a
-    /// quarantine WARNING from a session that commits nothing (`Identified` for an identifier the
-    /// file does not carry does exactly that), and then the new log holds one diagnostic, every
-    /// safety event is in <c>.1</c>, and the next process reads a witness with an open durability
-    /// gap as perfectly healthy.
+    /// WHY IT IS ONE FUNCTION (§9.10). Rounds 6 to 9 closed "a file I could not read is not a file
+    /// with nothing in it" seven times, at seven different call sites: F17 and PRIOR 17 on the
+    /// committed read, F28 on the sidecar read, F31 and PRIOR 28 on the three <c>File.Exists</c>
+    /// probes in front of it, F33 on the second read of the same file, F36 on
+    /// <see cref="SidecarPaths"/>, F37 on the report's wording, R9-1 and F34 inside
+    /// <see cref="Rotate"/> — where the wrong answer is a <c>File.Delete</c> rather than a wrong
+    /// sentence — and R9-5 on the recovery glob. Each fix was right where it stood and the next
+    /// reviewer found the site beside it, because the conflation was reachable from anywhere that
+    /// could call the filesystem. So the filesystem is callable from exactly one place, that place
+    /// returns a VALUE the caller has to handle, and the class-closure argument stops being an
+    /// enumeration of call sites: there is one.
     ///
-    /// Newest first: the current log, then the rotated one. The LAST deciding line wins wherever it
-    /// is, so a gap closed before the rotation stays closed and one left open stays open.
+    /// ONE <c>try</c>, AROUND EVERYTHING. Enumerating, stat-ing, opening, reading, a file that
+    /// vanishes mid-read, a directory at a sidecar's name, a denied <c>readdir</c>, a
+    /// <see cref="DirectoryNotFoundException"/> for a bridge folder that is gone — every exception
+    /// of every type at every step is the same answer, <c>Unreadable</c>, because they are the same
+    /// news: this run does not know what is beside the witness. There is no exception filter to
+    /// forget to widen and no second catch to disagree with the first.
+    ///
+    /// ABSENCE IS STILL ABSENCE, and it is the enumeration that says so rather than an exception: a
+    /// name the listing does not contain is a name with nothing at it, and a directory that listed
+    /// cleanly and held nothing is a clean-empty sidecar set. Both directions matter — a machine
+    /// that has never had a failure must not report one.
+    ///
+    /// AND A SET THAT IS CHANGING UNDER THE READ WAS NEVER READ (PRIOR 27). The listing — names,
+    /// lengths and modification times — is taken before and after; if it moved, the whole snapshot
+    /// is taken again, and if it moved twice the answer is <c>Unreadable("changing")</c>. That is
+    /// what closes "a marker moved into an already-scanned file while a rotation was running"
+    /// without putting a lock on readers: <c>tools/probe</c> runs against a live bridge and must
+    /// never be able to block it.
     /// </summary>
-    IEnumerable<string> SidecarGenerations()
+    SidecarSnapshot ReadSidecarSet()
     {
-        if (ErrorLogPath is not { } log) yield break;
-        yield return log;
-        // THE STAGING NAME IS SCANNED, AND THAT IS WHAT MAKES THE ROTATION WINDOW OBSERVABLE.
-        //
-        // `Rotate` moves the current log aside under this name before it can write the restatement
-        // into a fresh one. While it is not scanned, an unresolved failure living in the CURRENT log
-        // — the ordinary state, since safety events are unrationed and nothing moves one out of that
-        // file except a rotation — is invisible from the move until the restatement lands, and lost
-        // outright when the restatement never lands. Between the two generations because that is
-        // where it sits in age: newer than `.1`, older than whatever the new log now holds.
-        yield return log + StagingSuffix;
-        yield return log + RolledSuffix;
-    }
-
-    /// <summary>
-    /// Every sidecar beside the witness, the canonical one and each refused writer's own. Used only
-    /// to answer "is there anything written down at all" — <see cref="Noted"/> — never to decide
-    /// whether a gap is open, which is the canonical file's question alone.
-    /// </summary>
-    IEnumerable<string> SidecarSet() => SidecarSet(out _);
-
-    /// <summary>
-    /// AND AN ENUMERATION THAT FAILED IS NOT AN EMPTY DIRECTORY. Same rule as the read one line up:
-    /// this is a probe, a probe that fails is a read that failed, and the answer is "I could not
-    /// look", never "there is nothing there". It feeds <see cref="Noted"/> and not the degraded
-    /// state, because what it hides is the per-writer set — the canonical generations are read by
-    /// NAME and answer for themselves. That is the F25 boundary, kept: a zero this run cannot stand
-    /// behind is flagged, and somebody else's directory permissions do not drop
-    /// <c>SupportsClientOrderId</c>.
-    /// </summary>
-    IEnumerable<string> SidecarSet(out bool unreadable)
-    {
-        unreadable = false;
-        if (ErrorLogPath is not { } log) return [];
+        if (_path is null || ErrorLogPath is not { } log) return SidecarSnapshot.Nothing;
         try
         {
             var dir = System.IO.Path.GetDirectoryName(log);
-            if (string.IsNullOrEmpty(dir)) return [];
-            return _listSidecars(dir, ErrorLogName + "*");
+            if (string.IsNullOrEmpty(dir)) return SidecarSnapshot.Nothing;
+
+            for (var attempt = 1; ; attempt++)
+            {
+                var before = Listing(dir);
+                var lines = new Dictionary<string, string[]>(StringComparer.Ordinal);
+                foreach (var (path, _, _) in before) lines[path] = _readSidecar(path);
+                var after = Listing(dir);
+
+                if (Same(before, after))
+                {
+                    var candidates = _listSidecars(dir, System.IO.Path.GetFileName(_path) + ".tmp*");
+                    return new SidecarSnapshot(before.Select(e => e.Path).ToArray(), candidates, lines);
+                }
+                if (attempt == 2) return SidecarSnapshot.Unreadable("the set is changing under this reader");
+            }
         }
-        catch (DirectoryNotFoundException) { return []; }
-        catch (Exception) { unreadable = true; return []; }
+        catch (Exception e) { return SidecarSnapshot.Unreadable(e.GetType().Name); }
     }
 
     /// <summary>
-    /// THE LAST LINE THAT DECIDES THE STATE: a safety event or the marker that closes one. Warnings
-    /// are skipped, because they say nothing about whether a durability gap is open — that is the
-    /// whole of the class fix (see <see cref="SafetyPrefix"/>). Null when the sidecar holds nothing
-    /// but diagnostics, which is the ordinary case on a machine that has merely tidied a leftover.
+    /// Every entry the sidecar glob matches, with the two facts that say whether it moved. Sorted so
+    /// two listings of an unchanged directory compare equal whatever order the filesystem gave them.
+    ///
+    /// ENTRIES AND NOT FILES. <c>Directory.GetFiles</c> does not return a DIRECTORY sitting at a
+    /// sidecar's name, so such a name would never be read at all and would answer "absent" — which
+    /// is the round-9 finding one turn further out. A directory here is listed, then read, and the
+    /// read fails, which is the correct answer.
+    ///
+    /// Caller is inside <see cref="ReadSidecarSet"/>'s try, which is the only place this is called.
     /// </summary>
-    string? LastDecidingLine() =>
-        LastLineWhere(l => l.StartsWith(SafetyPrefix, StringComparison.Ordinal)
-                           || string.Equals(l, ResolvedMarker, StringComparison.Ordinal));
-
-    /// <summary>The last sidecar line matching <paramref name="want"/>, timestamp stripped.</summary>
-    string? LastLineWhere(Func<string, bool> want)
+    List<(string Path, long Length, DateTime Modified)> Listing(string dir)
     {
-        foreach (var log in SidecarGenerations())
+        var names = _listSidecars(dir, ErrorLogName + "*");
+        var listing = new List<(string, long, DateTime)>(names.Length);
+        foreach (var name in names)
         {
-            try
+            var info = new FileInfo(name);
+            listing.Add((name, info.Exists ? info.Length : -1, info.LastWriteTimeUtc));
+        }
+        listing.Sort((a, b) => string.CompareOrdinal(a.Item1, b.Item1));
+        return listing;
+    }
+
+    static bool Same(List<(string Path, long Length, DateTime Modified)> before,
+                     List<(string Path, long Length, DateTime Modified)> after)
+    {
+        if (before.Count != after.Count) return false;
+        for (var i = 0; i < before.Count; i++)
+            if (!string.Equals(before[i].Path, after[i].Path, StringComparison.Ordinal)
+                || before[i].Length != after[i].Length
+                || before[i].Modified != after[i].Modified) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// The snapshot every reading comes out of, taken once and held until something writes. Caller
+    /// holds <see cref="_gate"/>.
+    /// </summary>
+    SidecarSnapshot Snapshot()
+    {
+        if (_snapshot is not null) return _snapshot;
+        _snapshot = ReadSidecarSet();
+        Derive(_snapshot);
+        return _snapshot;
+    }
+
+    /// <summary>
+    /// A WRITE MAKES THE SNAPSHOT STALE, so the next reading takes a fresh one. Called from the one
+    /// place that appends to a sidecar and from <see cref="Rotate"/>.
+    /// </summary>
+    void Invalidate() => _snapshot = null;
+
+    /// <summary>
+    /// EVERYTHING THE FILES SAY, COMPUTED ONCE FROM ONE SNAPSHOT — the only writer of the five
+    /// <c>_disk…</c> fields. Every public member runs <see cref="Ready"/> first, so no reading can
+    /// depend on another having run: that is R9-2, and it is a property of this method being the
+    /// only one that derives.
+    ///
+    /// Unreadable is not a middle state. It is the fail-closed end of both scales at once: written
+    /// down (so the zero is flagged) AND a gap this run cannot rule out (so the machine is degraded
+    /// and <c>SupportsClientOrderId</c> drops), with its own flag so the report says which of the
+    /// two problems it is rather than naming a refusal nobody observed.
+    ///
+    /// Caller holds <see cref="_gate"/>.
+    /// </summary>
+    void Derive(SidecarSnapshot snapshot)
+    {
+        _snapshotRefusal = snapshot.Refusal;
+        _diskNotes = WitnessNotes.None;
+
+        if (snapshot.Refusal is not null)
+        {
+            _sidecars = [];
+            _diskNoted = true;
+            _diskDegraded = true;
+            _diskGapClosed = false;
+            _diskNotes = WitnessNotes.UnreadableSidecar;
+            return;
+        }
+
+        _sidecars = snapshot.Sidecars.ToArray();
+        _diskNoted = _sidecars.Any(snapshot.HasNotes);
+
+        if (ErrorLogPath is not { } canonical)
+        {
+            _diskDegraded = false;
+            _diskGapClosed = false;
+            return;
+        }
+
+        // A REFUSED WRITER IS THE ONE CAUSE THAT IS VISIBLE IN THE NAMES. Its sidecar is
+        // `<canonical>-<pid>-<session>` and its own generations hang off that, so anything in the
+        // set that is not one of the canonical generations is somebody the lease turned away. The
+        // other two causes are discovered by the candidate scan and by the recovery.
+        var family = new HashSet<string>(Generations(canonical), StringComparer.Ordinal);
+        if (_sidecars.Any(f => !family.Contains(f))) _diskNotes |= WitnessNotes.RefusedWriter;
+
+        // THE DEGRADED STATE IS THE CANONICAL FILE'S QUESTION, and that is not an oversight being
+        // preserved. A second bridge turned away cost no order — the refusal is what stops the order
+        // being sent — so its lines must not mark this machine degraded for ever, which would drop
+        // SupportsClientOrderId over somebody else's misconfiguration. It must only stop a zero
+        // being read as a fact about what was submitted. The F25 boundary, kept: what crosses it is
+        // UNREADABILITY, which is this run's own problem whoever the file belonged to.
+        var deciding = snapshot.LastLineWhere(Generations(canonical), Deciding);
+        _diskDegraded = deciding is not null && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
+        _diskGapClosed = string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE LINE THAT DECIDES THE STATE: a safety event, or the marker that closes one. Warnings are
+    /// skipped, because they say nothing about whether a durability gap is open — that is the whole
+    /// of the class fix (see <see cref="SafetyPrefix"/>).
+    /// </summary>
+    static bool Deciding(string line) =>
+        line.StartsWith(SafetyPrefix, StringComparison.Ordinal)
+        || string.Equals(line, ResolvedMarker, StringComparison.Ordinal);
+
+    /// <summary>
+    /// THE SIDECAR IS A SET OF GENERATIONS, NOT A FILE, and the state is read off the set.
+    ///
+    /// <see cref="AppendToErrorLog"/> bounds the file by rotating it, and the line that tips it over
+    /// can be a quarantine WARNING from a session that commits nothing — so reading only the current
+    /// log would leave every safety event in an older generation and report an open durability gap
+    /// as perfect health.
+    ///
+    /// NEWEST FIRST, AND BY NAME RATHER THAN BY TIMESTAMP. The last deciding line wins wherever it
+    /// is, so a gap closed before a rotation stays closed and one left open stays open. The two
+    /// in-flight names can only ever hold a RESTATEMENT of a line that is also in an older
+    /// generation, so ordering them after the current log is what makes a rotation that is followed
+    /// by a clean commit read as resolved: the newest word is always the current log's.
+    /// </summary>
+    static IEnumerable<string> Generations(string log)
+    {
+        yield return log;
+        yield return log + PendingSuffix;
+        yield return log + StagingSuffix;
+        yield return log + RolledSuffix;
+        yield return log + SecondSuffix;
+    }
+
+    /// <summary>
+    /// EVERY SIDECAR BESIDE THE WITNESS, READ ONCE, HELD IN MEMORY — or the reason there is no
+    /// reading. It is a VALUE: a consumer that wants to know whether anything is written down has to
+    /// take an answer that may be "I could not look", and cannot get "there is nothing there"
+    /// instead, because it has no way to ask.
+    /// </summary>
+    sealed class SidecarSnapshot
+    {
+        readonly Dictionary<string, string[]> _lines;
+
+        SidecarSnapshot(string refusal)
+        {
+            Refusal = refusal;
+            _lines = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            Sidecars = [];
+            Candidates = [];
+        }
+
+        internal SidecarSnapshot(IReadOnlyList<string> sidecars, IReadOnlyList<string> candidates,
+                                 Dictionary<string, string[]> lines)
+        {
+            Sidecars = sidecars;
+            Candidates = candidates;
+            _lines = lines;
+        }
+
+        /// <summary>Why there is no snapshot, or null when this one is complete.</summary>
+        public string? Refusal { get; }
+
+        /// <summary>Every name the sidecar glob matched, in ordinal order. Empty when refused.</summary>
+        public IReadOnlyList<string> Sidecars { get; }
+
+        /// <summary>Every name the uncommitted-rewrite glob matched. Empty when refused.</summary>
+        public IReadOnlyList<string> Candidates { get; }
+
+        /// <summary>A witness with no home: nothing to read, and nothing wrong with that.</summary>
+        public static readonly SidecarSnapshot Nothing =
+            new([], [], new Dictionary<string, string[]>(StringComparer.Ordinal));
+
+        public static SidecarSnapshot Unreadable(string reason) => new(reason);
+
+        /// <summary>Whether a name held anything. A name not in the snapshot held nothing.</summary>
+        public bool HasNotes(string path) =>
+            _lines.TryGetValue(path, out var lines) && lines.Any(l => !string.IsNullOrWhiteSpace(l));
+
+        /// <summary>What the listing said this file weighs. Zero for a name that is not there.</summary>
+        public long Length(string path) =>
+            _lines.TryGetValue(path, out var lines)
+                ? lines.Sum(l => (long)l.Length + Environment.NewLine.Length)
+                : 0;
+
+        /// <summary>
+        /// The last line matching <paramref name="want"/> across <paramref name="generations"/> in
+        /// the order given, timestamp stripped. No IO and no catch: there is nothing left to fail.
+        /// </summary>
+        public string? LastLineWhere(IEnumerable<string> generations, Func<string, bool> want)
+        {
+            foreach (var log in generations)
             {
-                var lines = _readSidecar(log);
+                if (!_lines.TryGetValue(log, out var lines)) continue;
                 for (var i = lines.Length - 1; i >= 0; i--)
                 {
                     if (string.IsNullOrWhiteSpace(lines[i])) continue;
@@ -1741,9 +1934,8 @@ public sealed class CoidWitness : IDisposable
                     if (want(text)) return text;
                 }
             }
-            catch (Exception) { /* the next generation may still answer */ }
+            return null;
         }
-        return null;
     }
 
     /// <summary>Renames a rejected candidate out of the <c>.tmp*</c> glob. Null when it was left.</summary>
@@ -2130,7 +2322,7 @@ public sealed class CoidWitness : IDisposable
         // committed cleanly is working, and reporting it degraded forever would make the state
         // useless the moment it mattered. The history stays in the file; the last line says the
         // problem ended.
-        if (_degraded)
+        if (Degraded)
         {
             _degraded = false;
             // RE-READ RATHER THAN TRUST THE FLAG. _degraded was decided when this instance loaded,
@@ -2145,11 +2337,23 @@ public sealed class CoidWitness : IDisposable
             // process read DEGRADED over a witness that had just committed cleanly. It is a state
             // transition, at most once per session, guarded against duplication by the re-read
             // above — it cannot flood the file the quota exists to bound.
+            //
+            // AND THE READING THAT FOLLOWS COMES BACK OFF THE FILES. It used to latch a closed gap
+            // in memory here, which said the gap was closed even when the append that closes it had
+            // silently failed — the one direction this file must never fail in. The append
+            // invalidates the snapshot, so the next reading re-derives from what is on disk:
+            // RESOLVED if the line landed, still degraded if it did not.
             if (!string.Equals(LastDecidingLine(), ResolvedMarker, StringComparison.Ordinal))
                 AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {ResolvedMarker}", safety: true);
-            _gapClosed = true;
         }
     }
+
+    /// <summary>
+    /// The canonical machine's last deciding line, out of the snapshot — a fresh one whenever
+    /// something has written since the last was taken. Caller holds <see cref="_gate"/>.
+    /// </summary>
+    string? LastDecidingLine() =>
+        ErrorLogPath is { } log ? Snapshot().LastLineWhere(Generations(log), Deciding) : null;
 
     /// <summary>
     /// Deletes this instance's uncommitted leftovers. Called after the superseding rewrite is
@@ -2216,7 +2420,9 @@ public sealed class CoidWitness : IDisposable
         // ONLY A SAFETY EVENT OPENS A DURABILITY GAP. This used to set _degraded for every line, so
         // a quarantined leftover and a lost claim were the same state downstream — see
         // <see cref="SafetyPrefix"/> for what that cost.
-        if (safety) { _degraded = true; _gapClosed = false; }
+        // The closed-gap reading follows from this one (see GapClosed) rather than being latched
+        // beside it, so no path can set one and leave the other disagreeing.
+        if (safety) _degraded = true;
         AppendToErrorLog($"{DateTimeOffset.UtcNow:O} {OneLine(line)}", safety);
     }
 
@@ -2262,24 +2468,38 @@ public sealed class CoidWitness : IDisposable
 
         if (SidecarPath is not { } log) return;
 
+        var text = line + Environment.NewLine;
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                // ROTATED, NOT DELETED. Deleting was fine while the quota capped what could be lost;
-                // with failures unrationed it is not, because the file being thrown away is now the
-                // one holding them. One generation back is kept, which bounds the disk at twice the
-                // cap — and both generations are read when the state is decided, so a rotation
-                // between a gap and the line that closes it loses neither.
-                if (File.Exists(log) && new FileInfo(log).Length > MaxErrorLogBytes)
-                    Rotate(log);
+                // ROTATED, NOT DELETED, AND DECIDED WITHOUT A PROBE. Deleting was fine while the
+                // quota capped what could be lost; with failures unrationed it is not, because the
+                // file being thrown away is now the one holding them.
+                //
+                // PRIOR 31: the trigger used to be `File.Exists` plus an attribute read — two calls
+                // that answer "no" for a denial exactly as readily as for an absence, on the one path
+                // where a wrong answer costs a rename rather than a sentence. There is exactly one
+                // writer per sidecar file, so this writer knows its own file's size: the snapshot
+                // supplies the length it started at and every append since is counted. A wrong count
+                // costs a rotation that is late, which costs a bigger file and nothing else.
+                if (_sidecarBytes < 0) _sidecarBytes = Snapshot().Length(log);
+                if (_sidecarBytes + text.Length > MaxErrorLogBytes) Rotate(log);
 
                 // ONE WRITER PER FILE, so this append has nobody to race. See SidecarPath.
-                File.AppendAllText(log, line + Environment.NewLine);
+                File.AppendAllText(log, text);
+                _sidecarBytes += text.Length;
                 return;
             }
             catch (Exception) when (attempt < SidecarAttempts) { Thread.Sleep(SidecarBackoffMs * attempt); }
             catch (Exception) { return; /* a witness that cannot write must not become one that throws */ }
+            finally
+            {
+                // THE FILES HAVE MOVED UNDER THE SNAPSHOT, whether or not the append landed: a
+                // rotation may have run, and an append that threw may still have written. The next
+                // reading takes a fresh one rather than answering out of a stale set.
+                Invalidate();
+            }
         }
     }
 

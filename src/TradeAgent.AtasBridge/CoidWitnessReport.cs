@@ -41,7 +41,17 @@ public enum WitnessNotes
     RejectedCandidate = 2,
 
     /// <summary>A rewrite that never reached the witness was read back and its claims recovered.</summary>
-    RecoveredRewrite = 4
+    RecoveredRewrite = 4,
+
+    /// <summary>
+    /// THE SIDECAR SET COULD NOT BE READ AT ALL, so none of the three above was observed and none may
+    /// be named. Codex F37: a machine whose directory this run could not look in was told that
+    /// something "was refused, declined or recovered" — three events, no evidence for any of them,
+    /// and the one thing an operator could have acted on left out. It rides beside
+    /// <see cref="WitnessStanding.Unresolved"/>, because a set nobody could read is a gap nobody can
+    /// rule out.
+    /// </summary>
+    UnreadableSidecar = 8
 }
 
 /// <summary>
@@ -92,6 +102,12 @@ public static class CoidWitnessReport
     public static string Headline(WitnessStanding standing, string sidecarPath,
                                   WitnessNotes notes = WitnessNotes.None) => standing switch
     {
+        // AN UNREADABLE SET IS NOT AN UNRESOLVED FAILURE, and it is not a clean machine either. It
+        // stands where UNRESOLVED stands — everything below it is provisional — and it says which of
+        // the two it is, because the repair is completely different: one is a durability gap to
+        // investigate, the other is a permission or a lock to clear.
+        WitnessStanding.Unresolved when notes.HasFlag(WitnessNotes.UnreadableSidecar) =>
+            $"{sidecarPath} — COULD NOT BE READ. This run cannot tell whether a gap is open.",
         WitnessStanding.Unresolved => $"{sidecarPath} — UNRESOLVED. THIS FILE SHOULD NOT EXIST.",
         WitnessStanding.Historical => $"{sidecarPath} — historical.",
         // THREE CAUSES, THREE SENTENCES, AND ONE OF THEM IS A SUCCESS. It was written when the only
@@ -118,6 +134,13 @@ public static class CoidWitnessReport
     public static string[] Explanation(WitnessStanding standing,
                                        WitnessNotes notes = WitnessNotes.None) => standing switch
     {
+        WitnessStanding.Unresolved when notes.HasFlag(WitnessNotes.UnreadableSidecar) =>
+        [
+            "The files beside the witness could not be read — a permission, a lock, a directory",
+            "that would not list, or a set being rewritten while it was read. Nothing here says a",
+            "failure happened; it says this run could not find out. Treat every verdict below as",
+            "provisional until the files can be read, then look again."
+        ],
         WitnessStanding.Unresolved =>
         [
             "Each line is a rewrite of the witness that did not reach the disk. Treat every",
