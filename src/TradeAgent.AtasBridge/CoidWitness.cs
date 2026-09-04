@@ -1407,6 +1407,64 @@ public sealed class CoidWitness : IDisposable
     /// but the grace costs one comparison and covers a writer that is not this build.
     /// </summary>
     /// <summary>
+    /// ROTATION CARRIES THE UNRESOLVED STATE ACROSS BEFORE IT DESTROYS THE COPY THAT HOLDS IT.
+    ///
+    /// The old order was: delete the older generation, then move the current log onto its name. So
+    /// between those two acts the only copy of the last safety line was gone. The session that
+    /// rotates does go on to write a deciding line of its own — round 7's invariant — but it writes
+    /// it AFTERWARDS, and a machine that dies in between leaves a current log holding one diagnostic
+    /// and a rotated generation holding the rest, with the gap itself nowhere. The next start reads a
+    /// healthy witness over an open durability gap.
+    ///
+    /// So the state is restated FIRST, into a file that exists before anything is deleted:
+    ///
+    ///   1. read the last deciding line while both generations are still intact;
+    ///   2. move the current log aside under a staging name — the older generation is untouched, so
+    ///      the gap is still readable from it;
+    ///   3. create the new log with the restatement as its FIRST line, flushed — now it is readable
+    ///      from the current log instead;
+    ///   4. only now delete the older generation, and move the staging file onto its name.
+    ///
+    /// A crash at any point leaves the unresolved line readable from one of the two files a reader
+    /// scans. When there is nothing unresolved to carry there is nothing to protect, and the plain
+    /// two-step rotation is used.
+    ///
+    /// Caller is inside <see cref="AppendToErrorLog"/>'s try, so a failure here is reported the same
+    /// way any other sidecar failure is: not at all, because a witness that cannot write must never
+    /// become one that throws.
+    /// </summary>
+    void Rotate(string log)
+    {
+        var rolled = log + ".1";
+        var staging = log + ".rotating";
+
+        // A leftover from a crash inside a previous rotation. Its content is already restated in the
+        // current log by step 3, so it is a duplicate rather than evidence.
+        try { if (File.Exists(staging)) File.Delete(staging); } catch (Exception) { }
+
+        var deciding = LastDecidingLine();
+        var carry = deciding is not null
+                    && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal)
+            ? deciding
+            : null;
+
+        if (carry is null)
+        {
+            try { File.Delete(rolled); } catch (Exception) { }
+            File.Move(log, rolled);
+            return;
+        }
+
+        File.Move(log, staging);
+        File.WriteAllText(log,
+            $"{DateTimeOffset.UtcNow:O} {SafetyPrefix}coid-witness carried an unresolved failure across a " +
+            $"sidecar rotation: {OneLine(carry)}" + Environment.NewLine);
+
+        try { File.Delete(rolled); } catch (Exception) { }
+        File.Move(staging, rolled);
+    }
+
+    /// <summary>
     /// Whether a sidecar file has anything in it — and, separately, whether asking was even possible.
     /// A file that exists and cannot be opened is NOT a file with nothing in it; see
     /// <see cref="_sidecarUnreadable"/>.
@@ -2022,11 +2080,7 @@ public sealed class CoidWitness : IDisposable
                 // cap — and both generations are read when the state is decided, so a rotation
                 // between a gap and the line that closes it loses neither.
                 if (File.Exists(log) && new FileInfo(log).Length > MaxErrorLogBytes)
-                {
-                    var rolled = log + ".1";
-                    try { File.Delete(rolled); } catch (Exception) { }
-                    File.Move(log, rolled);
-                }
+                    Rotate(log);
 
                 // ONE WRITER PER FILE, so this append has nobody to race. See SidecarPath.
                 File.AppendAllText(log, line + Environment.NewLine);

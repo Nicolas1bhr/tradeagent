@@ -2890,6 +2890,54 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// AN OPEN GAP SURVIVES A CRASH INSIDE THE ROTATION WINDOW.
+    ///
+    /// Rotation deleted the older generation and THEN moved the current log onto its name, so between
+    /// those two acts the only copy of the last safety line was gone. The session that rotates goes on
+    /// to write a deciding line of its own — that is the invariant round 7 pinned — but it writes it
+    /// AFTERWARDS, and a machine that dies in between (or a power cut, or ATAS being killed) leaves a
+    /// current log holding one diagnostic and a rotated generation holding the rest of them, with the
+    /// gap itself nowhere. The next start reads a healthy witness over an unresolved durability gap.
+    ///
+    /// The window is observed here where it actually is: inside the rename seam, after the quarantine
+    /// line has been appended and the rotation has happened, and before the save has committed
+    /// anything. A reader constructed at that instant is exactly what the next process would see.
+    /// </summary>
+    [Fact]
+    public void An_unresolved_gap_survives_a_crash_inside_the_rotation_window()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // The state a busy machine reaches on its own: the latest unresolved failure has already been
+        // rotated back a generation, and the current log is oversized and holds only diagnostics.
+        File.WriteAllText(Sidecar + ".1",
+            $"{DateTimeOffset.UtcNow.AddMinutes(-5):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        File.AppendAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow.AddMinutes(-1):O} ignored {File_}.tmp-old: it does not descend from the committed file"
+            + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);      // the gap is plainly visible before any rotation
+
+        WriteForeignLeftover(1);                // the diagnostic that tips the file over
+
+        string? atTheWindow = null;
+        var w = Session((tmp, dest) =>
+        {
+            // Rotation has happened; nothing has been committed and no deciding line written yet.
+            atTheWindow = new CoidWitness(File_).Trouble;
+            throw new IOException("the machine went away");
+        });
+        w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        Assert.NotNull(atTheWindow);
+        Assert.NotNull(Session().Trouble);
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
@@ -2903,14 +2951,24 @@ public class CoidWitnessTests : IDisposable
     /// `An_acknowledgement_for_an_identifier_this_witness_does_not_have_takes_no_lease`, which stops
     /// that call reaching the recovery at all — so the shape is built here directly.
     ///
-    /// AND NO SESSION OF THIS BUILD CAN PRODUCE IT ANY MORE, which is worth saying rather than
-    /// leaving a later reader to assume this is a live path. `ReportAndQuarantine` is reached only
-    /// after `Lease()`, in both `Submitting` and `Identified`, and both then run `Save` — which
-    /// writes either a RESOLVED marker or an `ERROR ` line into whatever log the rotation left
-    /// current. `A_rotation_by_this_build_always_leaves_a_deciding_line` pins that, both ways. So the
-    /// guard here is DEFENSIVE: the shape is reachable by a foreign writer, an older build, or a
-    /// hand-edited directory, and by nothing this build does. It is kept because the reading rule is
-    /// about the bytes on disk and not about who wrote them.
+    /// WHETHER THIS BUILD CAN PRODUCE IT — CORRECTED IN ROUND 8, BECAUSE THE ROUND-7 ANSWER WAS
+    /// WRONG. Round 7 said no session can write a diagnostic without also writing a deciding line,
+    /// because `ReportAndQuarantine` is reached only after `Lease()` and both write paths then run
+    /// `Save`. True of a session that RUNS TO COMPLETION, and the gap is between those two acts: a
+    /// machine that dies after the rotation and before the save left exactly this shape, and the
+    /// deciding line it was going to write never existed. Codex found that; round 7's claim excluded
+    /// it by assumption.
+    ///
+    /// It is closed at the rotation now rather than argued about — `Rotate` restates an unresolved
+    /// failure as the first line of the new log before deleting the generation that held it, so the
+    /// crash window carries the state instead of losing it
+    /// (`An_unresolved_gap_survives_a_crash_inside_the_rotation_window`). When there is nothing
+    /// unresolved to carry, a rotation that leaves only a diagnostic loses nothing, because there was
+    /// no gap to lose.
+    ///
+    /// So the guard here is still DEFENSIVE, and now for a stated reason rather than an assumed one:
+    /// what remains reachable is a foreign writer, an older build, or a hand-edited directory. It is
+    /// kept because the reading rule is about the bytes on disk and not about who wrote them.
     /// </summary>
     [Fact]
     public void An_unresolved_gap_is_not_lost_when_the_sidecar_rotates()
@@ -2967,11 +3025,18 @@ public class CoidWitnessTests : IDisposable
     /// The session that rotates the sidecar is always a WRITING session — `ReportAndQuarantine` sits
     /// after `Lease()` on both write paths — and it always runs `Save` afterwards, which writes a
     /// deciding line either way: RESOLVED when its commit lands, an `ERROR ` when it does not. So a
-    /// rotation caused by this build never leaves the current log holding diagnostics alone.
+    /// rotation caused by a session that RUNS TO COMPLETION never leaves the current log holding
+    /// diagnostics alone.
     ///
-    /// That is the invariant the F18 guard is defensive ABOUT. If a later change breaks it — a
-    /// quarantine that can happen without a save, a read path that writes again — the guard silently
-    /// becomes load-bearing and nothing would say so. This is what says so.
+    /// THAT QUALIFIER IS ROUND 8'S CORRECTION, and it is the whole of what round 7 got wrong: a
+    /// machine that dies between the rotation and the save completes neither. The window is covered
+    /// separately, at the rotation itself, by
+    /// `An_unresolved_gap_survives_a_crash_inside_the_rotation_window`; this test is about the
+    /// completed session.
+    ///
+    /// If a later change breaks the completed-session half — a quarantine that can happen without a
+    /// save, a read path that writes again — the F18 guard silently becomes load-bearing and nothing
+    /// would say so. This is what says so.
     /// </summary>
     [Theory]
     [InlineData(true)]
