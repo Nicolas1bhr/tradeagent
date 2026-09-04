@@ -33,3 +33,24 @@ messages, no trailers, no other worktree.
 
 ## Report — append as you go, commit it, ≤20 lines: tip sha; per test what the harness did on Windows and what you
 changed; local counts; CI per platform; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+Tip `f136a1b` on `u14-win`; PR #2, draft, not merged, not rebased (`main`'s new `a4af744` is BUILD-STATUS.md only). Three harness fixes, NO product change, no `Skip`.
+1. **Rotating writer.** The harness appended with `File.AppendAllText` (shares READ only) while readers read the same sidecar
+with `File.ReadAllLines` (also READ only): a sharing violation on Windows, unarbitrated on APFS. It now opens `FileMode.Append`
+sharing `ReadWrite | Delete` and waits a holder out, as the product's append does. Mutant, `Standing` always `Clean`: RED, 0 vs 51.
+2. **Missing bridge directory.** Windows refuses `Directory.Move` on a tree holding an open handle and the lease
+(`FileShare.None`, instance-lifetime) is one; disposing first loses the point, since `Submitting` leases BEFORE it reads and a
+re-lease into a gone folder answers "another writer owns this witness". The directory is now a removable link — junction on
+Windows (no privilege), symlink elsewhere. Mutant `catch (DirectoryNotFoundException) { failed = false; }`: RED, "changed underneath".
+3. **Churn, the varying one.** `Expected 301 Actual 300` at line 467, NOT a leftover temp: `Submit` threw `Submitting`'s answer
+away, so a rename refused for its whole budget — order refused, claim rolled back, the mechanism WORKING — read as a lost record.
+It now asserts the promise: the seed plus exactly the accepted claims, temps <= refusals. Two whole-budget refusals injected at
+`replace`: new form green, old form RED `301 vs 299`. Mutant, a record dropped after `Save` returned true: RED, `301 vs 300`.
+
+Local at the tip, Release: 0 warnings; each test 3x green; both witness classes 191/191; suite 795 passed, 0 failed.
+CI 33924375698 @`f136a1b`: ubuntu SUCCESS, macos SUCCESS, windows FAILURE 518/519 — and the windows trx says all THREE tests Passed.
+NOT done: no product change. Windows' one remaining red is `GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_
+leaves_nothing_unsettled` (`0 vs 1`, line 1308); at `b4cb122` it was `AtasProtocolTests.Capabilities_and_accounts_come_from_the_
+bridge_handshake` instead — a different windows test each run, new, not in this brief, NOT investigated.
