@@ -1475,6 +1475,88 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A CALLER THAT GIVES UP RELEASES ITS SLOT, AND THE ANSWER THAT ARRIVES ANYWAY IS COUNTED.
+    ///
+    /// Verifier round-11 L-1, measured: `_pending` went 0 -> 1 -> 1 across a cancelled emergency and
+    /// `AwaitingLateAnswer` stayed at 0. The reply wait's catch is filtered
+    /// <c>when (!ct.IsCancellationRequested)</c> — deliberately, so a caller's own cancellation is
+    /// not mistaken for a reply timeout — and that filter also skipped the `_pending.TryRemove` every
+    /// other exit performs. Two costs, and the second is the one that matters: the entry grew by one
+    /// per cancelled emergency within a connection, and because the id never reached `_abandoned`, an
+    /// answer arriving for it was delivered to a `TaskCompletionSource` nobody awaited and counted in
+    /// NEITHER `LateAnswers` NOR the late-answer event — the two counters round 9's F2 exists to keep
+    /// honest.
+    ///
+    /// The exit now goes through the same bounded machinery every other abandoned request uses, with
+    /// one difference that is stated rather than inherited: IT PASSES NO VERDICT ON THE CONNECTION.
+    /// A reply TIMEOUT is evidence about the bridge; a caller cancelling for its own reasons — the
+    /// app closing, an operator pressing stop — is evidence about nothing at all, and tearing a
+    /// working bridge down on it is the round-6 mistake in a new place.
+    /// </summary>
+    [Fact]
+    public async Task A_caller_that_cancels_an_emergency_releases_its_slot_and_still_counts_a_late_answer()
+    {
+        // ANSWERED LATE. The peer answers everything, 1.5 s after it reads it, and the caller gives
+        // up long before that — so the answer is unambiguously a late one.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.AnsweringAfter(pipe, Cred().Secret, TimeSpan.FromMilliseconds(1500));
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            Assert.Equal(0, connector.PendingRequests);
+
+            using var caller = new CancellationTokenSource();
+            Task cancel;
+            using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
+                cancel = connector.CancelOrderAsync("FB-1", caller.Token);
+
+            await Wait(() => Task.FromResult(connector.PendingRequests == 1));
+            await caller.CancelAsync();
+            await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            // The slot is still held — on purpose, and that is what makes the count below possible.
+            Assert.Equal(1, connector.AwaitingLateAnswer);
+
+            await Wait(() => Task.FromResult(connector.LateAnswers == 1), 10_000);
+            Assert.Equal(1, connector.LateAnswers);
+            Assert.Equal(0, connector.PendingRequests);
+            Assert.Equal(0, connector.AwaitingLateAnswer);
+            Assert.True(await connector.IsConnectedAsync(),
+                "a bridge that answered was dropped because a caller of ours gave up");
+        }
+
+        // NEVER ANSWERED. Both counters still return to zero when the grace runs out, and the
+        // connection is left exactly where the caller found it.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromMilliseconds(800), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, BridgeOps.Cancel);
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            using var caller = new CancellationTokenSource();
+            Task cancel;
+            using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
+                cancel = connector.CancelOrderAsync("FB-1", caller.Token);
+
+            await Wait(() => Task.FromResult(peer.MutedFramesSeen > 0));
+            await caller.CancelAsync();
+            await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
+
+            await Wait(() => Task.FromResult(connector.PendingRequests == 0), 10_000);
+            Assert.Equal(0, connector.PendingRequests);
+            Assert.Equal(0, connector.AwaitingLateAnswer);
+            Assert.Equal(0, connector.LateAnswers);
+
+            // NO VERDICT. Our own cancellation is not evidence about the bridge.
+            Assert.True(await connector.IsConnectedAsync(),
+                "the connection was judged on a cancellation that came from this side");
+        }
+    }
+
+    /// <summary>
     /// A CALLER WHO GIVES UP WHILE STILL QUEUED FOR THE SEND GATE SENT NOTHING, AND SAYING OTHERWISE
     /// COSTS A RECONCILIATION FOR A FRAME THAT NEVER EXISTED (Codex round-10 F1).
     ///

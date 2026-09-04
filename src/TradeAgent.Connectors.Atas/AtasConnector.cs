@@ -931,6 +931,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     public int AwaitingLateAnswer => _abandoned.Count;
 
+    /// <summary>
+    /// Requests this connector is still holding a slot for — the far end may still answer them.
+    ///
+    /// Exposed for the same reason <see cref="AwaitingLateAnswer"/> is: it must return to zero, and
+    /// a number that only grows is a leak that nothing outside this class could see. `Drop` faults
+    /// everything here, so it is bounded by the connection's life either way — but "bounded by a
+    /// disconnect" is not the same promise as "released when the work ends".
+    /// </summary>
+    public int PendingRequests => _pending.Count;
+
     void RecordLateAnswer(BridgeFrame f)
     {
         Interlocked.Increment(ref _lateAnswers);
@@ -950,7 +960,33 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// delayed by it; only the teardown is.
     /// </summary>
     void JudgeTheConnectionWhenTheGraceRunsOut(string id, string op, long startedAt,
-        TaskCompletionSource<BridgeFrame> caller)
+        TaskCompletionSource<BridgeFrame> caller) =>
+        AwaitALateAnswer(id, op, startedAt, caller, judgeTheConnection: true);
+
+    /// <summary>
+    /// THE CALLER GAVE UP FOR ITS OWN REASONS, AND THAT IS EVIDENCE ABOUT NOTHING.
+    ///
+    /// Same bounded machinery as the reply timeout — the slot is released when the answer arrives or
+    /// when the grace runs out, and an answer that does arrive is COUNTED — with the one difference
+    /// this method exists to state: no verdict is passed on the connection. A reply timeout is a fact
+    /// about the bridge; the app closing, or an operator pressing stop, is a fact about us, and
+    /// tearing down a bridge that is serving perfectly well on that basis is the round-6 mistake in a
+    /// new place.
+    ///
+    /// Before this, the exit did neither. The reply wait's catch is filtered
+    /// <c>when (!ct.IsCancellationRequested)</c> so that a caller's own cancellation is not read as a
+    /// timeout, and the filter also skipped the `_pending.TryRemove` every other exit performs:
+    /// `_pending` grew by one per cancelled emergency (bounded only by the connection's life), and
+    /// because the id never reached `_abandoned` a late answer for it was delivered to a
+    /// `TaskCompletionSource` nobody awaited and counted in neither <see cref="LateAnswers"/> nor the
+    /// event (verifier round-11 L-1, measured: 0 -> 1 -> 1 with `AwaitingLateAnswer` at 0).
+    /// </summary>
+    void ReleaseTheSlotAndStillCountALateAnswer(string id, string op, long startedAt,
+        TaskCompletionSource<BridgeFrame> caller) =>
+        AwaitALateAnswer(id, op, startedAt, caller, judgeTheConnection: false);
+
+    void AwaitALateAnswer(string id, string op, long startedAt,
+        TaskCompletionSource<BridgeFrame> caller, bool judgeTheConnection)
     {
         _abandoned[id] = op;
 
@@ -988,6 +1024,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
             _pending.TryRemove(id, out _);
             _abandoned.TryRemove(id, out _);
+
+            // Nothing was learned about the bridge, because nothing was asked of it: this caller
+            // stopped waiting of its own accord. See ReleaseTheSlotAndStillCountALateAnswer.
+            if (!judgeTheConnection) return;
 
             // Something else came back while we waited: the read loop is running and this one
             // operation was simply lost or slow. A connection that is serving is not torn down.
@@ -1215,6 +1255,15 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // seconds nothing is yet known that would justify dropping it.
             throw new ConnectorTransportException(
                 EmergencySentence(op, "busy", "The connection is still up — try again"));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // THE CALLER STOPPED WAITING. Nothing is recorded about the transport here on purpose —
+            // the attempt marked at the top of `Rpc` already reports `PossiblyWritten` for an exit
+            // that cannot say more, and the frame really may have landed. What was missing is the
+            // BOOKKEEPING: the slot, and the answer that may still arrive for it.
+            ReleaseTheSlotAndStillCountALateAnswer(id, op, startedAt, tcs);
+            throw;
         }
     }
 
