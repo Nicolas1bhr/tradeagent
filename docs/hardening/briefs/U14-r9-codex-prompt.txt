@@ -7,3 +7,7 @@ PRIOR 29 — PARTIAL — the report covered refused writers and rejected candida
 FINDING 30 — MED — CoidWitness.cs:1497 — moving the current generation to an unscanned .rotating file could hide its only unresolved marker before the carry-forward existed; File.WriteAllText without Flush(true) before old-generation deletion.
 FINDING 31 — MED — CoidWitness.cs:1519 — sidecar existence probes suppressed accessibility failures, allowing an unreadable sidecar to classify as empty.
 FINDING 32 — MED — AtasConnector.cs:134 — an older refusal suppressed the derived state of a newly connected silent peer, leaving a stale status sentence.
+R8-1 — HIGH — (verifier, 10fa21f) the rotation staging file .rotating was unscanned; an unresolved ERROR in the CURRENT log was lost across a SIGKILL inside the window (restart read Trouble = null over a lost write-ahead record).
+R8-2 — HIGH — (verifier, 10fa21f) AdapterTeardown.Record guarded one of four witness write sites (AtasStrategyAdapter.cs:1409, :1562, :1824 unguarded, on the frame loop that outlives teardown); an unguarded write re-leased after Stop and a replacement adapter was refused.
+R8-3 — HIGH — (verifier, 10fa21f) the F23 heartbeat drop was consulted only when the idle poll won the race; a peer sending {"op":"ping"} every 200 ms with no heartbeat was never dropped and the replacement bridge could not connect.
+R8-4 — MED — (verifier, 10fa21f) a half-move of the PRIOR 21 guard (check outside the lock, write inside) survived every AdapterTeardownTests case.
