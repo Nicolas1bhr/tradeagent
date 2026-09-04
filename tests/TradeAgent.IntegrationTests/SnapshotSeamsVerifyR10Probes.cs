@@ -455,4 +455,38 @@ public class SnapshotSeamsVerifyR10Probes : IDisposable
         Assert.DoesNotContain("coid-witness.errors.log.rotating", duringRotation);
         Assert.Empty(Directory.GetFiles(_dir, CoidWitness.ErrorLogName + ".rotating*"));
     }
+
+    /// <summary>
+    /// MR10-3a, PINNED. The builder records the rotation's refusal of an unreadable snapshot as
+    /// REDUNDANT with the snapshot-based trigger, because both come from the same snapshot. That is
+    /// true of the FIRST append only: `_sidecarBytes` is seeded from the snapshot once, and every
+    /// append after that decides from the COUNTER while `Rotate` takes a FRESH snapshot — which may
+    /// be unreadable when the seed was not. A long-lived bridge whose bridge directory stops being
+    /// readable mid-session is exactly that state, and there the refusal is the only guard.
+    /// </summary>
+    [Fact]
+    public void A_rotation_entered_from_the_counter_still_refuses_an_unreadable_snapshot()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, GapLine() + new string('x', 64 * 1024 - 2_000) + Environment.NewLine);
+
+        var deny = false;
+        var w = new CoidWitness(File_,
+            replace: (_, _) => throw new IOException("no space left on device"),
+            listSidecars: (dir, glob) => deny
+                ? throw new UnauthorizedAccessException("denied")
+                : Directory.GetFileSystemEntries(dir, glob));
+
+        w.Submitting("TA-1", "SIM", "ES", "Buy", 1m, null);      // seeds the counter from a READABLE set
+        deny = true;
+        for (var i = 2; i <= 9; i++) w.Submitting($"TA-{i}", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        var files = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+                             .Select(Path.GetFileName).Order().ToArray();
+        Assert.True(new FileInfo(Sidecar).Length > 64 * 1024,
+            $"the appends did not reach the cap: {new FileInfo(Sidecar).Length}");
+        Assert.Equal(["coid-witness.errors.log"], files);
+        Assert.Contains("TA-GAP", File.ReadAllText(Sidecar));
+    }
 }
