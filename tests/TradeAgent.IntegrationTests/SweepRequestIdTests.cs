@@ -1017,6 +1017,41 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// THE OBLIGATION IS WRITTEN WHERE A CONNECTOR AUTHOR WILL FIND IT — asserted, because the
+    /// finding was that it was not (§9.9: a finding becomes an assertion).
+    ///
+    /// Verifier round-11 F-2's shape: a safety property was made true of the two implementations in
+    /// this tree and left untrue of the thing that DEFINES the obligation. The classification arm is
+    /// the guarantee and it is tested above; this is the other half of the same fix, and it is the
+    /// half that a future connector author reads. Both places are checked — the interface a third
+    /// party implements, and the frozen-contract document — because a rule stated in only one of
+    /// them is the same class of miss one level down.
+    /// </summary>
+    [Fact]
+    public void The_ledger_obligation_is_stated_on_the_interface_and_in_the_frozen_contract()
+    {
+        var contract = File.ReadAllText(Path.Combine(Build.RepoRoot, "src", "TradeAgent.ConnectorSdk", "Contracts.cs"));
+        var iface = contract[contract.IndexOf("public interface ITradingConnector", StringComparison.Ordinal)..];
+        var doc = contract[..contract.IndexOf("public interface ITradingConnector", StringComparison.Ordinal)];
+
+        // The statement is on ITradingConnector's own doc comment, not merely somewhere in the file.
+        Assert.Contains("TransportLedger", doc[doc.LastIndexOf("/// <summary>", StringComparison.Ordinal)..]);
+        Assert.Contains("TransportLedger", iface[..iface.IndexOf("ClosePositionAsync", StringComparison.Ordinal)]);
+
+        var frozen = File.ReadAllText(Path.Combine(Build.RepoRoot, "docs", "CONTRACTS.md"));
+        var section = frozen[frozen.IndexOf("## `ITradingConnector`", StringComparison.Ordinal)..];
+        section = section[..section.IndexOf("\n## ", StringComparison.Ordinal)];
+        Assert.Contains("TransportLedger.Attempt()", section);
+        foreach (var mutation in new[]
+                 {
+                     "PlaceOrderAsync", "ModifyOrderAsync", "CancelOrderAsync",
+                     "CancelAllOrdersAsync", "ClosePositionAsync"
+                 })
+            Assert.True(section.Contains(mutation),
+                $"the frozen contract's connector section does not name {mutation} as owing the transport ledger");
+    }
+
+    /// <summary>
     /// A connector that MUTATES and never writes the ledger — the third party this contract is for.
     /// It is the round-11 verifier's `LedgerBlind`, kept because it is the only fixture in which
     /// `not-sent` can be produced for something that really happened at the broker.
