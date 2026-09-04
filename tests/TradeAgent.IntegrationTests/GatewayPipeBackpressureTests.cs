@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Connectors.Atas;
@@ -922,6 +923,76 @@ public class GatewayPipeBackpressureTests
     }
 
     /// <summary>
+    /// THE TABLE IS EXHAUSTIVE BECAUSE THE DISPATCHER SAYS SO, NOT BECAUSE SOMEBODY LISTED IT
+    /// (Codex round-10 F3, CHECK (a)).
+    ///
+    /// <see cref="GatewayPipeServer.HandlerPaths"/> is the drain's derivation and it calls itself
+    /// exhaustive, but it was checked against a hand-written list of the handlers somebody had in
+    /// mind — so four handled operations were missing from it (`schema`, `connectors`,
+    /// `material-list`, `material-note`), and `schema` makes a connector-backed `StatusAsync` call.
+    /// A hand list cannot catch that class: the omission and the check come from the same memory.
+    ///
+    /// So the set is read off THE DISPATCHER ITSELF. Every operation in the protocol's vocabulary is
+    /// sent over the real pipe, and the reply says whether the dispatcher has an arm for it: an op it
+    /// does not handle answers `unknown operation '…'`, and anything else — a refusal for missing
+    /// arguments, an empty sweep, a real answer — means an arm ran. Both directions are asserted, so
+    /// a row for an operation that no longer exists fails here too.
+    ///
+    /// The arguments are deliberately omitted. What is being discovered is whether an arm EXISTS,
+    /// and a handler that refuses a frame for want of a symbol has already proved that.
+    /// </summary>
+    [Fact]
+    public async Task Every_operation_the_dispatcher_handles_has_a_row_in_the_drain_table()
+    {
+        var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-table-coverage");
+        using var _1 = db;
+        await using var _2 = server;
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // The protocol's whole op vocabulary, read off the constants rather than retyped.
+        // `hello` is excluded because it is not a handler: the read loop answers it before the
+        // dispatcher is reached, so it has no chain of connector calls to bound.
+        var vocabulary = typeof(Ops).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .Where(op => op != Ops.Hello)
+            .Distinct()
+            .OrderBy(op => op, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Contains(Ops.CloseAll, vocabulary);       // the vocabulary really was found
+        Assert.True(vocabulary.Count >= 15, $"only {vocabulary.Count} operations were discovered");
+
+        async Task<bool> Handles(string op)
+        {
+            var reply = await client.SendAsync(new IpcRequest { Op = op }).WaitAsync(TimeSpan.FromSeconds(30));
+            return reply.Ok || reply.Error?.Message != $"unknown operation '{op}'";
+        }
+
+        // THE DISCRIMINATOR'S OWN PREMISE: an operation the dispatcher does not have must come back
+        // unhandled, or "handled" would mean nothing and every row would pass.
+        Assert.False(await Handles("not-an-operation"), "the dispatcher claimed to handle a made-up op");
+
+        var handled = new List<string>();
+        foreach (var op in vocabulary)
+            if (await Handles(op))
+                handled.Add(op);
+
+        var rows = server.HandlerPaths.Select(p => p.Handler).ToList();
+        Assert.Equal(rows.Count, rows.Distinct().Count());
+
+        var missing = handled.Except(rows).ToList();
+        Assert.True(missing.Count == 0,
+            $"the dispatcher handles {string.Join(", ", missing)} and the drain table has no row for " +
+            "them, so their chains do not participate in the maximum the shutdown drain is derived from");
+
+        var stale = rows.Except(handled).ToList();
+        Assert.True(stale.Count == 0,
+            $"the drain table has rows for {string.Join(", ", stale)}, which the dispatcher does not handle");
+    }
+
+    /// <summary>
     /// EVERY HANDLER, MEASURED — the class fix, third time of asking (§9.10).
     ///
     /// Three rounds have now found the drain derived from ONE handler's shape and silently wrong for
@@ -949,6 +1020,10 @@ public class GatewayPipeBackpressureTests
     [InlineData(Ops.CloseAll)]
     [InlineData(Ops.Orders)]
     [InlineData(Ops.Positions)]
+    // `schema` is here because it is the one row added in round 11 that actually calls the
+    // connector: it builds the same status the `status` handler does, and a row's number is worth
+    // more measured than declared.
+    [InlineData(Ops.Schema)]
     public async Task Every_handlers_measured_chain_fits_inside_the_drain_derived_for_it(string op)
     {
         var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-table-" + op.Replace("-", ""));
