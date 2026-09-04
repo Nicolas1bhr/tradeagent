@@ -102,6 +102,15 @@ inconclusive and keeps trading paused.* Implement each as a red-first test that 
   `NothingWritten`) must settle as not-sent (no UNKNOWN, no pause), and only `PossiblyWritten` as UNKNOWN; U2a exposes
   the transport result from the connector for this.
 
+- **C5 (U2a verifier rounds 10+11 F-2, MED): mark the attempt at the gateway's dispatch sites.** `not-sent` is an
+  assurance a connector must opt into via the attempt marker (`TransportLedger`); a third-party connector written to
+  the public contract that never calls it would report `not-sent` for a cancel it really performed. U2a closed the gap
+  on the pipe-server side (a dispatched mutating step with a null transport reads `sent-not-confirmed`) and stated the
+  obligation on `ITradingConnector`; the better fix is yours: the gateway marks the attempt itself at every dispatch
+  site of a mutating connector call, so no connector can under-report. Acceptance: a fake connector that performs a
+  mutating call without touching the ledger still yields UNKNOWN + reconciliation at the record, never a clean
+  `not-sent`.
+
 ## Proof obligations
 
 - Every item above: RED quoted before the fix, GREEN after, and a mutant that reverts the guard watched to bite (commit
