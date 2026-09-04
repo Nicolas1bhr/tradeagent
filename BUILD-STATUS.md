@@ -2775,3 +2775,48 @@ Mac, `main` @ 3f1d8f2: `dotnet test TradeAgent.sln` → 75 / 108 / 146 = 329 pas
 CI windows-latest on 3931c10 failed ONCE on `CoidWitnessTests.The_file_is_never_absent_while_it_is_being_rewritten`
 ("the temporary file was left behind") and passed on the next push — a load-dependent rename race that unit U14 turned
 into a rule-1 durability fix.
+
+## 2026-09-04 — U2a landed: the agent pipe, the connector deadlines, the replay contract and the emergency fast path
+
+First unit landed under `docs/HOW-WE-BUILD.md`: built on its branch through twelve rounds of the old process, landed by
+the manager's checklist alone. Merge sha `6138fdd`; 76 commits over `f2e2346`; 31 files, +9738/−309. Rounds 1–12 are
+in `docs/hardening/records/U2a.md`; what follows is what the code on `main` now does.
+
+- **The operator-context hole is closed.** `AgentContext.IsOperator` is `private init`, only the static `Operator` sets
+  it, the pipe refuses seven spellings of the reserved session string with INVALID_REQUEST. Before: `TRADEAGENT_SESSION=operator trade buy …`
+  skipped LIVE_CONFIRM parking and the kill switch (Codex finding 4 on 283d942, proven over the pipe).
+- **The agent pipe has a buffer, a progress-measured write deadline, and tracked handlers.** 8 KiB buffer; a stalled
+  peer is dropped (`peer_stopped_reading`) while a slow reader making progress is not; disposal drains in-flight handlers
+  (was: `DisposeAsync returned in 15 ms` mid-order) and logs `handlers_did_not_finish` with the request id whenever a
+  DISPATCHING row survives disposal, unconditionally.
+- **Replay contract.** The CLI prints `request-id:` before sending; "nothing sent" is distinguished from "reply lost —
+  re-run with --request-id"; minted ids `op-{nonce}-{intent}-{index}` with `[A-Za-z0-9-]` enforced and a 61-character
+  budget (64 − `TA-`) at the pipe; `docs/CONTRACTS.md` states it. `transport` is always emitted, `null` when unknown.
+- **Connector deadlines and outcome words.** Every mutating operation has one absolute deadline; `Sent` / `PeerStalled`
+  / `Busy` tri-state; a mutating step dispatched with no transport result reads `sent-not-confirmed` by the pipe server's
+  own knowledge, a leg that never dispatched stays `not-sent`; five per-leg words (confirmed / rejected / not-sent /
+  sent-not-confirmed / sent-still-working). Liveness = an answer within the ordinary deadline, 10 s grace.
+- **Risk-reducing fast path keyed on intent.** `Cancel`/`CancelAll`/`Close` whoever asks; `EmergencyDeadline` 2 s, then
+  "NOT confirmed — check your positions and orders in ATAS" and the connection detail; a busy-but-progressing bridge is
+  kept, a stalled one dropped. Drain bound derived from the connector's worst path; worst-case shutdown with an order in
+  flight ≈ 265 s at shipped values (owed to the UI as a sentence — `docs/hardening/briefs/U6-U9-backlog.md`).
+
+**Verified by running on this Mac at `51bf230` (the merge sha's tree, docs aside — `git diff --stat` over `src tests
+tools packaging` between the two is empty):** Debug `dotnet build --no-incremental` → `0 Warning(s) 0 Error(s)`; Debug
+`dotnet test` → FaultTests 75, UnitTests 108, IntegrationTests 314, 0 failed; test-name diff against `main` → 0 removed,
+168 added; secret scan of the whole diff → clean; at `6138fdd` Release build → 0 warnings and `ConnectorSendDeadlineTests`
+47/47 twice (3 m 57 s each). **CI run 33898144843 at `6138fdd`: windows-latest GREEN 497; ubuntu-latest and
+macos-latest RED, twice (rerun on the same sha)** — ubuntu `A_peer_reading_below_one_chunk_per_window_is_busy_and_not_dropped`
+both times; macos `An_emergency_spends_one_budget_across_the_gate_and_the_write` both times plus
+`Local_queueing_under_load_does_not_disconnect_a_healthy_bridge` on the rerun; `package` skipped. Decided fix-forward
+(`docs/briefs/U2a-fix.md`), not reset: the target platform is green, the class had never run on a hosted runner before
+this merge, and a reset would strand two running builders. `main` is red on two hosted runners until that lands.
+
+**NOT VERIFIED:** the box was not run at this tip (the last hash-verified box run of this branch is round 7's tree in
+the record); no independent verifier and no Codex read round 12 — under the new process the money path is reviewed once,
+on `main`, before v0.1.2; mutant B4 (the Windows no-buffer pipe stall) has been run by nobody; ATAS's real
+client-order-id limit and whether it accepts the `op-…` shape (a deliberate 64/65-character probe at v0.1.2).
+
+**Deferred with an owner:** agent-side `close-all` legs with no fast path, sweep replay repeating effects, the operator
+Close All deadline, a cancelled handler settling, gateway-side attempt marking → U2c-1 (C1–C5 in its brief); the LOW
+batch → `docs/hardening/briefs/U6-U9-backlog.md`.
