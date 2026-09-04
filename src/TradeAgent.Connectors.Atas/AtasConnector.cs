@@ -268,22 +268,39 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 // cancelling one mid-flight can consume bytes that are then lost. So the same task is
                 // carried across polls, and staleness ends the loop — the finally below disposes the
                 // stream, which is what actually aborts the read.
+                // AND THE QUESTION IS ASKED ON EVERY TURN, WHICHEVER SIDE OF THE RACE WON.
+                //
+                // Round 8 asked it only when the delay beat the read. Those are two different
+                // questions — "has this peer gone quiet" and "did nothing arrive in the last poll" —
+                // and the gap between them is a hole the width of the whole guard: a peer that
+                // completes ANY line more often than IdlePoll never lets the poll win, so it was
+                // never asked, and it held the only server instance there is while this connector's
+                // own health reported DEGRADED about it. A frame that is neither a hello nor a
+                // heartbeat is not evidence of liveness under this class's own definition —
+                // _lastHeartbeat is written by those two and by nothing else — so it must not be
+                // able to buy a peer another window.
+                //
+                // AFTER THE DISPATCH, NOT BEFORE IT. The frame in hand may BE the heartbeat, and
+                // Dispatch is what records it; asking first would drop a healthy bridge whose beat
+                // arrived one tick late.
                 Task<string?>? pending = null;
                 while (!ct.IsCancellationRequested)
                 {
                     pending ??= reader.ReadLineAsync(ct).AsTask();
                     var settled = await Task.WhenAny(pending, Task.Delay(IdlePoll, ct));
-                    if (settled != pending)
+                    if (settled == pending)
                     {
-                        if (!PeerHasGoneQuiet()) continue;
-                        Observe(pending);
-                        break;
+                        var line = await pending;
+                        pending = null;
+                        if (line is null) break;
+                        if (!await Dispatch(line)) break; // a peer we have refused gets no second frame
                     }
 
-                    var line = await pending;
-                    pending = null;
-                    if (line is null) break;
-                    if (!await Dispatch(line)) break; // a peer we have refused gets no second frame
+                    if (PeerHasGoneQuiet())
+                    {
+                        if (pending is not null) Observe(pending);
+                        break;
+                    }
                 }
             }
             catch (OperationCanceledException) { break; }
