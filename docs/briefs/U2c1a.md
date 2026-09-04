@@ -12,10 +12,10 @@ minted `op-{nonce}-{intent}-{index}` ids with the 61-character budget; U2c-1 add
 sides; never drop a U2a guard to compile. Then Release build `--no-incremental` (0 warnings) + full suite in Release as
 the baseline; a red test after the rebase is a real interaction, fix it as part of item 0.
 
-The rule (already written in CONTRACTS.md, keep it): *a request leaves the unconfirmed set only on positive, definite,
-stable evidence about its own target; anything else is inconclusive and keeps trading paused.* Each item is a red-first
-test that FAILS today, then the fix. Both directions every time: the wrong evidence is refused AND the right evidence
-still settles (a definite CANCELLED from the right connector still clears; a correctly applied modify still reads applied).
+The rule (in CONTRACTS.md, keep it): *a request leaves the unconfirmed set only on positive, definite, stable evidence
+about its own target; anything else is inconclusive and keeps trading paused.* Each item: a red-first test that FAILS
+today, then the fix, both directions (the wrong evidence refused AND the right evidence still settles — a definite
+CANCELLED from the right connector still clears; a correctly applied modify still reads applied).
 
 1. Reconciliation uses only the connector whose id the record carries: a record placed on A while B is connected is
    inconclusive, reason "placed on A; connected to B" — an empty book on B settles nothing.
@@ -35,7 +35,5 @@ emergency-press rewrite (U2c1b), the cancelled-handler settle (U2c1c). Every fix
 red (commit before mutating; `cp` restore; `touch`). Test-name diff vs baseline: nothing removed. Commit per item, no
 trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
-## Report
-
-Append here as you go and commit it with each item, ≤20 lines: tip sha; the rebase conflicts and how each was resolved;
+## Report — append as you go, commit with each item, ≤20 lines: tip sha; rebase conflicts and how each was resolved;
 baseline counts; one line per item (RED → GREEN → mutant); final counts; what you did NOT do. Verified or NOT VERIFIED.
