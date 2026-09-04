@@ -623,6 +623,74 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// EVERY ARM CONSULTS THE TRANSPORT RESULT, INCLUDING THE ARMS THAT READ A DEFINITE ANSWER
+    /// (Codex round-10 PRIOR R9-F4, PARTIAL).
+    ///
+    /// Round 10 made the UNRESOLVED states consult the connector's report and left the definite ones
+    /// reading the record alone. That is one rule short of the guarantee the word set is worth
+    /// having: `confirmed`, `rejected` and `sent-still-working` are all claims that this leg's frame
+    /// reached the broker, and the connector can PROVE that it did not. A record can be in a definite
+    /// state for a reason that has nothing to do with this leg — the connector's event stream updates
+    /// request records, and a sweep leg can find one already settled — so "the record says CANCELLED"
+    /// and "this leg cancelled it" are not the same sentence.
+    ///
+    /// The rule, in one line: <c>NothingWritten</c> is the only report strong enough to overrule the
+    /// record, and it overrules every arm. Everything else defers to the record where the record can
+    /// answer (a broker's answer is the only thing that knows WHICH answer came back, and an
+    /// idempotent replay arrives with a settled record and no transport of its own), and to the
+    /// transport where it cannot.
+    ///
+    /// EXHAUSTIVE BY CONSTRUCTION: every <see cref="ExecutionState"/> plus "no record" against every
+    /// <see cref="TransportOutcome"/> plus "nothing attempted". The expected words are written down
+    /// here rather than derived, so this is a table and not a second copy of the mapping.
+    /// </summary>
+    [Fact]
+    public void Every_arm_of_the_leg_classifier_consults_the_transport_result()
+    {
+        // What the RECORD says, where the record is in a state only a broker's answer can produce.
+        var answered = new Dictionary<ExecutionState, string>
+        {
+            [ExecutionState.CANCELLED] = "confirmed",
+            [ExecutionState.FILLED] = "confirmed",
+            [ExecutionState.REJECTED] = "rejected",
+            [ExecutionState.WORKING] = "sent-still-working",
+            [ExecutionState.ACKNOWLEDGED] = "sent-still-working",
+            [ExecutionState.PARTIALLY_FILLED] = "sent-still-working",
+            [ExecutionState.CANCEL_PENDING] = "sent-still-working"
+        };
+
+        List<TransportOutcome?> transports = [null, .. Enum.GetValues<TransportOutcome>().Cast<TransportOutcome?>()];
+        List<ExecutionState?> states = [null, .. Enum.GetValues<ExecutionState>().Cast<ExecutionState?>()];
+
+        var wrong = new List<string>();
+        foreach (var state in states)
+            foreach (var transport in transports)
+            {
+                var expected = transport switch
+                {
+                    // Proven: not one byte of this leg's frame left the process.
+                    TransportOutcome.NothingWritten => "not-sent",
+
+                    // The record knows which answer came back, and only the record knows.
+                    _ when state is { } s && answered.TryGetValue(s, out var word) => word,
+
+                    // The record cannot settle it, so the wire decides — and fail-closed.
+                    null => "not-sent",
+                    _ => "sent-not-confirmed"
+                };
+
+                var actual = GatewayPipeServer.LegWordFor(state, transport);
+                if (actual != expected)
+                    wrong.Add($"{state?.ToString() ?? "no record"} + {transport?.ToString() ?? "nothing attempted"}: " +
+                              $"expected '{expected}', got '{actual}'");
+            }
+
+        // Every failing combination at once, so a mutated arm names itself rather than stopping the
+        // run at the first pair it broke.
+        Assert.True(wrong.Count == 0, string.Join("\n", wrong));
+    }
+
+    /// <summary>
     /// `not-sent` IS AN ASSURANCE, SO IT MAY NEVER COME FROM AN ABSENCE OF INFORMATION.
     ///
     /// The empty transport record used to carry two different facts: a leg that never started a

@@ -899,31 +899,75 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     ///      can show wrote nothing, is <c>not-sent</c>; anything else is <c>sent-not-confirmed</c>,
     ///      which is the fail-closed direction.
     ///
+    /// AND EVERY ARM CONSULTS THE TRANSPORT, INCLUDING (1). Round 10 shipped that half only for the
+    /// unresolved states (Codex round-10 PRIOR R9-F4, PARTIAL). <see cref="TransportOutcome.NothingWritten"/>
+    /// is a PROOF that this leg's frame never left the process, and a definite record state can have
+    /// been produced by something other than this leg — the connector's event stream updates request
+    /// records — so it is the one report allowed to overrule the record. See <see cref="TheAnswer"/>.
+    ///
     /// NO CATCH-ALL. Every <see cref="ExecutionState"/> is named, and a new one must fail to compile
     /// or fail a test rather than quietly becoming the most dangerous word in the set — the same
     /// reason <c>Describe()</c> lost its own default arm (verifier round-9 F-3).
     /// </summary>
     static LegOutcome Classify(ExecutionState? state, TransportOutcome? transport) => state switch
     {
-        ExecutionState.CANCELLED or ExecutionState.FILLED => LegOutcome.Confirmed,
+        ExecutionState.CANCELLED or ExecutionState.FILLED => TheAnswer(LegOutcome.Confirmed, transport),
 
-        ExecutionState.REJECTED => LegOutcome.Rejected,
+        ExecutionState.REJECTED => TheAnswer(LegOutcome.Rejected, transport),
 
         ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED
-            or ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING => LegOutcome.StillWorking,
+            or ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING =>
+            TheAnswer(LegOutcome.StillWorking, transport),
 
         // Written but never dispatched, still mid-dispatch, or settled to an unknown: none of these
         // says where the frame got to, so none of them chooses the word.
         null or ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL
             or ExecutionState.DISPATCHING or ExecutionState.UNKNOWN or ExecutionState.RECONCILING =>
-            transport switch
-            {
-                null or TransportOutcome.NothingWritten => LegOutcome.NotSent,
-                TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => LegOutcome.NotConfirmed,
-                _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
-            },
+            Unresolved(transport),
 
         _ => throw new InvalidOperationException($"no leg outcome for execution state '{state}'")
+    };
+
+    /// <summary>
+    /// A RECORD IN A STATE ONLY A BROKER'S ANSWER CAN PRODUCE IS THAT ANSWER — UNLESS THE CONNECTOR
+    /// PROVED THIS LEG'S FRAME NEVER LEFT THE PROCESS.
+    ///
+    /// Round 10 gave the unresolved states a transport result and left these three arms reading the
+    /// record alone (Codex round-10 PRIOR R9-F4, PARTIAL). But `confirmed`, `rejected` and
+    /// `sent-still-working` are each a claim that this leg reached the broker, and a record can be in
+    /// a definite state for a reason that has nothing to do with this leg: the connector's event
+    /// stream updates request records, so a sweep leg can find one already settled by something else.
+    /// "The record says CANCELLED" and "this leg cancelled it" are different sentences, and
+    /// <see cref="TransportOutcome.NothingWritten"/> is the only report strong enough to tell them
+    /// apart — it is a PROOF, not an inference from a failure.
+    ///
+    /// Everything else defers to the record, INCLUDING a null transport: an idempotent replay dispatches
+    /// nothing and arrives here with a settled record and no transport of its own, and it is not
+    /// `not-sent`.
+    /// </summary>
+    static LegOutcome TheAnswer(LegOutcome answer, TransportOutcome? transport) => transport switch
+    {
+        TransportOutcome.NothingWritten => LegOutcome.NotSent,
+        null or TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => answer,
+        _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
+    };
+
+    /// <summary>
+    /// A record that cannot settle the question, so the CONNECTOR's report decides it. Nothing
+    /// attempted or nothing written is <c>not-sent</c>; anything else is the fail-closed word.
+    ///
+    /// <c>DISPATCHING</c> and <c>RECONCILING</c> reach <c>sent-not-confirmed</c> from here, and that
+    /// is deliberate: the word is about the WIRE, and a frame that may have landed is exactly what it
+    /// means. Their record is not `UNKNOWN + needs_reconciliation` — a mutation cancelled by disposal
+    /// stays `DISPATCHING` and unflagged, which is `TradingGateway`'s half and is routed to U2c-1 —
+    /// so the leg carries the connector's own <c>transport</c> beside the word rather than the pipe
+    /// server editing a row it does not own.
+    /// </summary>
+    static LegOutcome Unresolved(TransportOutcome? transport) => transport switch
+    {
+        null or TransportOutcome.NothingWritten => LegOutcome.NotSent,
+        TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => LegOutcome.NotConfirmed,
+        _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
     };
 
     /// <summary>

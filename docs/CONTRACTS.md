@@ -163,13 +163,26 @@ practice.**
 words**, each 1:1 with what is known about that leg, and the word is derived from the CONNECTOR's
 transport result — what is known about where the frame got to — never from the record state alone.
 
-| word | what happened | record |
-|---|---|---|
-| `confirmed` | the broker said this leg's own intent is done | `CANCELLED` / `FILLED` |
-| `rejected` | a DEFINITE refusal. Nothing is working from this leg and there is nothing to reconcile | `REJECTED` |
-| `sent-still-working` | sent, answered, and the order is still out there | `WORKING` / `ACKNOWLEDGED` / `PARTIALLY_FILLED` / `CANCEL_PENDING` |
-| `sent-not-confirmed` | it reached the wire, or may have, and the outcome is not known | `UNKNOWN` + `needs_reconciliation` |
-| `not-sent` | it never reached the wire — nothing is at the broker from this leg | no record, or `CREATED` / `AWAITING_APPROVAL` |
+| word | what happened | record | transport |
+|---|---|---|---|
+| `confirmed` | the broker said this leg's own intent is done | `CANCELLED` / `FILLED` | anything but `NothingWritten` |
+| `rejected` | a DEFINITE refusal. Nothing is working from this leg and there is nothing to reconcile | `REJECTED` | anything but `NothingWritten` |
+| `sent-still-working` | sent, answered, and the order is still out there | `WORKING` / `ACKNOWLEDGED` / `PARTIALLY_FILLED` / `CANCEL_PENDING` | anything but `NothingWritten` |
+| `sent-not-confirmed` | it reached the wire, or may have, and the outcome is not known | `UNKNOWN` + `needs_reconciliation`, or still `DISPATCHING` / `RECONCILING` | `PossiblyWritten` / `ReplyReceived` |
+| `not-sent` | it never reached the wire — nothing is at the broker from this leg | no record, or `CREATED` / `AWAITING_APPROVAL` — **or any record at all** when the transport proves it | `NothingWritten`, or no mutating call attempted |
+
+**Every arm consults the transport, including the three that read a definite answer.**
+`NothingWritten` is a PROOF that this leg's frame never left the process, and a record can be in a
+definite state for a reason that has nothing to do with this leg — the connector's event stream
+updates request records, so a sweep leg can find one already settled by something else. It is
+therefore the one report allowed to overrule the record. Everything else defers to the record where
+the record can answer, including a leg with no transport of its own: an idempotent replay dispatches
+nothing and is `confirmed`, not `not-sent`.
+
+**An empty transport record means no mutating call was ever attempted**, and that is producible only
+by work that never started one — a target resolution that failed, a leg parked for approval, a
+`close-all` symbol with nothing left to close. A mutation that STARTED and reported nothing is
+`PossiblyWritten`, so an unenumerated exit cannot become an assurance.
 
 `nothing-to-do` is **not** a per-leg word. It is a whole-operation result: `nothing_to_do` is true on
 a sweep that found zero targets. A `close-all` leg whose symbol turns out to have nothing to close is
@@ -179,6 +192,10 @@ The distinction the words exist for is `not-sent` versus `sent-not-confirmed`. `
 sets `needs_reconciliation`, which **pauses all further execution** (`TRADING_PAUSED_UNRECONCILED`) —
 including the retry the message itself advises. Claiming it for a leg the connector PROVED it never
 sent is therefore not a wording problem, and it is why the word comes from the transport result.
+`DISPATCHING` and `RECONCILING` are in that row because the word is about the WIRE: a mutation
+cancelled by disposal stays `DISPATCHING` and unflagged (`TradingGateway`'s half, routed to U2c-1),
+and the leg carries the connector's own `transport` beside the word rather than the pipe server
+editing a row it does not own.
 
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
