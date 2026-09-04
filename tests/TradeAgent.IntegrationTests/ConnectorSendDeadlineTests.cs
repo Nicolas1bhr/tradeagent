@@ -557,21 +557,28 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
-    /// AN EMERGENCY IS TWO SECONDS OF WAITING, NOT TWO SECONDS OF QUEUEING.
+    /// AN EMERGENCY IS TWO SECONDS OF WAITING, NOT TWO SECONDS OF QUEUEING — AND NOT TWO SECONDS OF
+    /// EVIDENCE ABOUT THE CONNECTION EITHER.
     ///
-    /// Verifier V2 on d25dbb4, and it is the shape f518251 was written for in its most likely real
-    /// form: ATAS frozen, the owner presses stop, NOTHING ELSE IN FLIGHT. The gate is free, so the
-    /// emergency's ~100-byte frame lands in the socket buffer, the write returns Sent, and the
-    /// caller then served the ORDINARY ten-second reply timeout. Measured: 10005 ms, the generic
-    /// "ATAS did not answer 'cancel-all' within 10s" with no instruction in it, and the dead
-    /// connection left UP so the reconnect that would restore service never started. Five times the
-    /// wait the two seconds exist to prevent, on the path the feature exists for — and no test in
-    /// the unit reached it, because every emergency test parked a 128 KiB write first.
+    /// Verifier V2 on d25dbb4 was the first half: with the gate FREE — a frozen ATAS, the owner
+    /// presses stop, nothing else in flight — the ~100-byte frame landed in the socket buffer, the
+    /// write returned Sent, and the caller then served the ORDINARY ten-second reply timeout.
+    /// Measured: 10005 ms and the generic "ATAS did not answer" sentence. That is fixed and this
+    /// test still pins it: the caller is answered in about two seconds, with the owner's words.
     ///
-    /// Nothing is parked here. That is the entire fixture.
+    /// THE SECOND HALF IS ROUND 7 (F-E) AND IT IS THE PART THAT MOVED. Rounds 6 dropped the
+    /// connection on the caller's clock, at two seconds, which is a judgement the caller's clock
+    /// cannot support: `BridgeServer` handles frames one at a time, so a bridge in the middle of a
+    /// slow synchronous ATAS call has our frame in hand and can emit nothing at all — silence at two
+    /// seconds is what a BUSY bridge looks like as well as a dead one. So the connection is judged
+    /// on the deadline this system already uses for "did not answer", `_timeout`, and this peer —
+    /// which reads nothing and says nothing, ever — is dropped when that runs out.
+    ///
+    /// Both clocks are asserted: the caller at ~2 s, still connected a second later, dropped by the
+    /// grace.
     /// </summary>
     [Fact]
-    public async Task An_emergency_on_an_idle_stalled_bridge_answers_in_two_seconds_and_drops_it()
+    public async Task An_emergency_on_an_idle_stalled_bridge_answers_in_two_seconds_and_drops_it_at_the_grace()
     {
         var pipe = NewPipe();
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all deadlines shipped
@@ -583,20 +590,73 @@ public class ConnectorSendDeadlineTests
 
         var timer = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-STALLED"));
-        timer.Stop();
+        var caller = timer.Elapsed;
 
         Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s with a FREE gate — the deadline is still only on the queue");
-
-        // The sentence an owner can act on, not the one written for a log.
-        Assert.Contains("not responding", ex.Message);
+        Assert.InRange(caller, TimeSpan.FromMilliseconds(1900), TimeSpan.FromSeconds(6));
         Assert.Contains("NOT confirmed", ex.Message);
         Assert.Contains("ATAS", ex.Message);
         Assert.DoesNotContain("did not answer", ex.Message);
 
-        // And the dead connection is gone, which is what starts the redial the message promises.
-        await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
+        // At two seconds nothing is known that would justify a teardown, and nothing has been torn
+        // down. This assertion is the whole of F-E: it fails on round 6's rule.
+        await Task.Delay(1000);
+        Assert.True(await connector.IsConnectedAsync(),
+            $"the connection was dropped on the caller's clock, at {caller.TotalSeconds:0.00}s — a bridge working on a slow ATAS call looks exactly like this");
+
+        // And then the grace runs out, and it goes.
+        await Wait(async () => !await connector.IsConnectedAsync(), 15_000);
+        Assert.InRange(timer.Elapsed, TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(15));
+    }
+
+    /// <summary>
+    /// A BRIDGE THAT ANSWERS LATE IS A BRIDGE, AND ITS ANSWER IS NOT THROWN AWAY.
+    ///
+    /// Verifier finding F-E, measured: a peer that had read our frame and answered it at 2500 ms or
+    /// 3500 ms was disconnected at ~2000 ms and told the owner it was not responding. `frames read by
+    /// peer=1` — it was working on us. The cause is documented in this repo rather than
+    /// hypothesised: `BridgeServer` handles frames strictly sequentially, and `BridgeProtocol.cs`
+    /// records that the obsolete synchronous ATAS call sites "cannot be given a deadline, so a block
+    /// inside one wedges the bridge's frame loop". A >2 s synchronous call is a state this unit
+    /// already expects.
+    ///
+    /// The caller is still answered at two seconds — that bound is untouched, and asserted here. The
+    /// connection survives, and the late answer is DELIVERED rather than dropped on the floor:
+    /// keeping a connection because the bridge answered, and then discarding the answer, would be
+    /// incoherent. Whether the gateway settles a request on one is U2c-1's to decide.
+    /// </summary>
+    [Theory]
+    [InlineData(2500)]
+    [InlineData(3500)]
+    public async Task An_emergency_a_bridge_answers_late_keeps_it_and_records_the_answer(int answerAfterMs)
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+
+        await using var peer = await BridgePeer.AnsweringAfter(
+            pipe, Cred().Secret, TimeSpan.FromMilliseconds(answerAfterMs));
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-ANSWERING"));
+        var caller = timer.Elapsed;
+
+        // The caller's bound is unchanged, which is half the decision.
+        Assert.InRange(caller, TimeSpan.FromMilliseconds(1900), TimeSpan.FromSeconds(6));
+        Assert.Contains("busy", ex.Message);
+        Assert.Contains("NOT confirmed", ex.Message);
+        Assert.DoesNotContain("not responding", ex.Message);
+
+        // The answer arrives after the caller has gone, and is recorded rather than discarded.
+        await Wait(() => Task.FromResult(connector.LateAnswers > 0), 15_000);
+        Assert.Equal(1, connector.LateAnswers);
+
+        // And the connection is still there once the grace it would have been judged by has passed,
+        // which is the other half.
+        await Wait(() => Task.FromResult(timer.Elapsed > TimeSpan.FromSeconds(11)), 20_000);
+        Assert.True(await connector.IsConnectedAsync(),
+            $"a bridge that answered at {answerAfterMs} ms was disconnected anyway");
     }
 
     /// <summary>
@@ -692,17 +752,20 @@ public class ConnectorSendDeadlineTests
     /// <summary>
     /// A BRIDGE THAT TALKS BUT DOES NOT LISTEN IS NOT ALIVE IN THE DIRECTION THAT MATTERS.
     ///
-    /// Verifier finding F-B on 0909ada. The reply-timeout rule kept the connection whenever ANY frame
-    /// had arrived during the window, and a heartbeat is a frame. But
-    /// <c>BridgeServer.StartHeartbeat</c> runs on its own <c>Task.Run</c>, independent of the frame
-    /// read loop — so a freeze inside ATAS that wedges the loop leaves the heartbeat running, and the
-    /// emergency was told the bridge was merely BUSY and left the dead connection up. Measured by the
-    /// verifier at the shipped 5 s interval: KEPT in 6 of 12 runs, the verdict decided by heartbeat
-    /// phase. A coin flip on whether stop works.
+    /// Verifier finding F-B: the rule kept the connection whenever ANY frame had arrived, and a
+    /// heartbeat is a frame — but `BridgeServer.StartHeartbeat` runs on its own `Task.Run`,
+    /// independent of the frame read loop a freeze wedges, so a wedged ATAS beats over a connection
+    /// that consumes nothing. Measured at the shipped 5 s interval: KEPT in 6 of 12 runs, the verdict
+    /// decided by heartbeat phase. A coin flip on whether stop works.
     ///
-    /// Twelve phases across that interval, and the answer has to be the same for all of them. The
-    /// peer accepts NOTHING — asserted, not assumed — so whatever it is doing with its other thread,
-    /// the frame this emergency is waiting on was never read.
+    /// Twelve phases across that interval, and the answer has to be the same for all of them. Since
+    /// round 7 the grace is `_timeout` rather than `EmergencyDeadline`, so every phase now has at
+    /// least one heartbeat inside the judging window — which makes this test STRONGER than when it
+    /// was written: there is no phase left in which the peer is silent by luck, so the twelve cases
+    /// all turn on heartbeats being refused as evidence.
+    ///
+    /// The cost of that change is here in plain sight: this peer is detected at the grace, about ten
+    /// seconds, where round 6 detected it at about two. The CALLER is not delayed by it — asserted.
     /// </summary>
     [Theory]
     [InlineData(0)] [InlineData(400)] [InlineData(800)] [InlineData(1200)]
@@ -719,21 +782,23 @@ public class ConnectorSendDeadlineTests
             pipe, Cred().Secret, TimeSpan.FromMilliseconds(phaseMs));
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // Nothing parked: the gate is free, the small frame lands in the socket buffer, and what is
-        // on trial is the REPLY timeout rather than the queue.
         var timer = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-WEDGED"));
-        timer.Stop();
+        var caller = timer.Elapsed;
 
         // The fixture's own premise: it read nothing at all, so any liveness it appears to have is
         // coming from the thread a freeze does not stop.
         Assert.Equal(0, peer.BytesRead);
-        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
-            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s");
 
-        Assert.Contains("not responding", ex.Message);
-        Assert.DoesNotContain("busy", ex.Message);
-        await Wait(async () => !await connector.IsConnectedAsync(), 5_000);
+        // The caller's bound is untouched by the grace.
+        Assert.InRange(caller, TimeSpan.FromMilliseconds(1900), TimeSpan.FromSeconds(6));
+        Assert.Contains("NOT confirmed", ex.Message);
+
+        // And it is dropped when the grace runs out, whatever its heartbeats say.
+        await Wait(async () => !await connector.IsConnectedAsync(), 15_000);
+        Assert.InRange(timer.Elapsed, TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(15));
+        Assert.True(peer.HeartbeatsSent > 0,
+            "the peer never beat, so this phase did not test whether a heartbeat can save a wedged bridge");
     }
 
     /// <summary>
@@ -1070,11 +1135,26 @@ public class ConnectorSendDeadlineTests
         public static async Task<BridgePeer> AnsweringAllBut(string pipe, string secret, string mute)
         {
             var peer = await ConnectAndSayHello(pipe, secret, "ATAS-ANSWERING", null, PaceBytes);
-            peer.Track(Task.Run(() => peer.AnswerEverythingBut(mute)));
+            peer.Track(Task.Run(() => peer.AnswerEverythingBut(mute, TimeSpan.Zero)));
             return peer;
         }
 
-        async Task AnswerEverythingBut(string mute)
+        /// <summary>
+        /// A BRIDGE THAT IS WORKING ON OUR FRAME AND ANSWERS IT LATE.
+        ///
+        /// It reads everything and answers everything, just not within two seconds. This is not a
+        /// contrived peer: <c>BridgeServer</c> handles frames strictly sequentially, so a bridge in
+        /// the middle of a slow synchronous ATAS call looks exactly like this — it has our frame in
+        /// hand and can emit nothing at all until it is done with it.
+        /// </summary>
+        public static async Task<BridgePeer> AnsweringAfter(string pipe, string secret, TimeSpan delay)
+        {
+            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-ANSWERING", null, PaceBytes);
+            peer.Track(Task.Run(() => peer.AnswerEverythingBut(null, delay)));
+            return peer;
+        }
+
+        async Task AnswerEverythingBut(string? mute, TimeSpan delay)
         {
             var buf = new byte[8192];
             var pending = new MemoryStream();
@@ -1098,7 +1178,18 @@ public class ConnectorSendDeadlineTests
                         BridgeFrame? f;
                         try { f = Json.Read<BridgeFrame>(line); } catch (Exception) { continue; }
                         if (f?.Id is null || f.Op == mute) continue;
-                        await WriteAsync(new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data = Array.Empty<object>() });
+                        var answer = new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data = Array.Empty<object>() };
+                        if (delay <= TimeSpan.Zero) { await WriteAsync(answer); continue; }
+
+                        // Answered on its own schedule, so the read loop is free to carry on — which
+                        // is the one way this differs from a real BridgeServer and the difference
+                        // does not matter here: what is on trial is what OUR end concludes from
+                        // silence, and this end sees silence either way.
+                        Track(Task.Run(async () =>
+                        {
+                            try { await Task.Delay(delay, _stop.Token); await WriteAsync(answer); }
+                            catch (Exception) { /* torn down with the test */ }
+                        }));
                     }
                     pending = new MemoryStream();
                     pending.Write(all, from, all.Length - from);
