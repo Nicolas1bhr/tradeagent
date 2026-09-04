@@ -83,7 +83,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// a call that CHANGES something at the broker is worth recording, because a leg is a read to
     /// find its target and then the thing it came to do.
     /// </summary>
-    async Task Wire(CancellationToken ct, bool mutating = false)
+    async Task Wire(CancellationToken ct, string op, bool mutating = false)
     {
         // Marked before anything can go wrong, for the reason the shipped connector marks it: an
         // exit nobody enumerated must not leave the record empty, because empty means "no mutation
@@ -105,8 +105,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
                 // arrives after the operation is over, and reporting it as an unknown is what sent
                 // an owner to hunt for an order that never existed (verifier round-9 F-1).
                 if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
-                throw new ConnectorTransportException(
-                    "the operation deadline had already passed; nothing was sent to the simulator");
+                throw new ConnectorTransportException(DeadlineSentence(op, mutating,
+                    "the operation deadline had already passed and nothing was sent to the simulator"));
             }
 
             // The SUM, because the two delays below run in series. Taking the max let a profile with
@@ -119,8 +119,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
                 await Task.Delay(left, ct);
                 // The call was under way when the deadline passed, so it may have acted. Fail-closed.
                 if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
-                throw new ConnectorTransportException(
-                    "the operation deadline passed before the simulator answered; it is not known whether it acted");
+                throw new ConnectorTransportException(DeadlineSentence(op, mutating,
+                    "the operation deadline passed before the simulator answered"));
             }
         }
 
@@ -155,15 +155,34 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         }
     }
 
+    /// <summary>
+    /// THE SENTENCE AGREES WITH THE WORD THE LEG WILL CARRY, and that is what this exists for.
+    ///
+    /// One message was thrown for reads and mutations alike — "it is not known whether it acted" —
+    /// so a leg the gateway correctly reports as <c>not-sent</c> carried, in the SAME object, a
+    /// sentence telling the owner the outcome was unknown (verifier round-11 L-4, measured through
+    /// the real pipe). The word is what the machine reads and the sentence is what the person reads;
+    /// they are about the same leg and must not disagree.
+    ///
+    /// The split is the shipped <c>AtasConnector.EmergencySentence</c>'s, which has distinguished
+    /// them since round 7: a MUTATION that was under way may have acted and the owner is told where
+    /// to look; a READ that timed out means the operation was never started, and saying so is the
+    /// whole content of <c>not-sent</c>.
+    /// </summary>
+    static string DeadlineSentence(string op, bool mutating, string what) =>
+        mutating
+            ? $"'{op}' is NOT confirmed — check your positions and orders. {what}; it is not known whether it acted."
+            : $"'{op}' could not be read, so the operation was not started. Nothing was placed or cancelled. {what}.";
+
     public async Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default)
-    { await Wire(ct); return [Broker.Account()]; }
+    { await Wire(ct, "accounts"); return [Broker.Account()]; }
 
     public async Task<AccountInfo?> GetAccountAsync(string accountId, CancellationToken ct = default)
-    { await Wire(ct); return accountId == Broker.AccountId ? Broker.Account() : null; }
+    { await Wire(ct, "account"); return accountId == Broker.AccountId ? Broker.Account() : null; }
 
     public async Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, "instruments");
         return
         [
             new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, 50m),
@@ -174,18 +193,18 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<QuoteInfo?> GetQuoteAsync(string symbol, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, "quote");
         var q = Broker.Quote(symbol, DateTimeOffset.UtcNow - Faults.QuoteAge);
         QuoteChanged?.Invoke(q);
         return q;
     }
 
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string accountId, CancellationToken ct = default)
-    { await Wire(ct); return Broker.Positions; }
+    { await Wire(ct, "positions"); return Broker.Positions; }
 
     public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string accountId, bool includeInactive, DateTimeOffset? since, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, "orders");
         if (Faults.HideOrderHistory && includeInactive)
             throw new ConnectorTransportException("this backend cannot serve order history");
         return Broker.Orders
@@ -195,7 +214,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     }
 
     public async Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string accountId, DateTimeOffset? since, CancellationToken ct = default)
-    { await Wire(ct); return Broker.Executions.Where(e => since is null || e.At >= since).ToList(); }
+    { await Wire(ct, "executions"); return Broker.Executions.Where(e => since is null || e.At >= since).ToList(); }
 
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
@@ -252,7 +271,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default)
     {
-        await Wire(ct, mutating: true);
+        await Wire(ct, "modify", mutating: true);
         TransportLedger.Record(TransportOutcome.ReplyReceived);
         var existing = Broker.Orders.FirstOrDefault(o => o.ConnectorOrderId == cmd.ConnectorOrderId)
             ?? throw new ConnectorRejectedException("order not found");
@@ -268,7 +287,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default)
     {
-        await Wire(ct, mutating: true);
+        await Wire(ct, "cancel", mutating: true);
 
         // Past the wire: whatever the broker says next, it answered. A definite refusal is an ANSWER,
         // which is why it is recorded here rather than only on the success path.
@@ -283,7 +302,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string accountId, CancellationToken ct = default)
     {
-        await Wire(ct, mutating: true);
+        await Wire(ct, "cancel-all", mutating: true);
         TransportLedger.Record(TransportOutcome.ReplyReceived);
         var ids = Broker.Orders.Where(o => !OrderStateMachine.IsTerminal(o.State)).Select(o => o.ConnectorOrderId).ToList();
         foreach (var id in ids) Broker.Cancel(id);
@@ -292,7 +311,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<OrderInfo?> ClosePositionAsync(string accountId, string symbol, string clientOrderId, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, "positions");
         var pos = Broker.Positions.FirstOrDefault(p => p.Symbol == symbol);
         if (pos is null || pos.Quantity == 0) return null;
         return await PlaceOrderAsync(new PlaceOrderCommand(clientOrderId, accountId, symbol,
