@@ -50,6 +50,35 @@ public static class RiskReducingScope
     public static long? DeadlineAt => Current.Value?.DeadlineAt;
 
     /// <summary>
+    /// How long is left until an ABSOLUTE deadline — <see cref="TimeSpan.Zero"/> once it has passed,
+    /// and never negative.
+    ///
+    /// ZERO IS THE POINT OF THIS FUNCTION. The connector's own version returned a fresh millisecond
+    /// after expiry (Codex round-8 F4), on the reasoning that a zero wait would cancel before an
+    /// answer that had already arrived could be read. That reasoning belongs to a RELATIVE budget
+    /// measured from a start stamp — <c>AtasConnector.Remaining</c>, which still keeps it and says
+    /// so. It does not belong to an absolute one: a deadline that has passed has nothing left, and
+    /// handing its caller one more millisecond lets a gate or a reply race finish AFTER the instant
+    /// the whole operation promised to be over. A millisecond is also not long enough to be a
+    /// measurement of anything — the same reason a leg reached after the deadline now fails before
+    /// the send gate rather than queueing for its millisecond and judging the bridge on it.
+    ///
+    /// Safe for the already-answered case that motivated the millisecond, and that is a property of
+    /// the framework rather than of this number: <c>Task.WaitAsync</c> checks <c>IsCompleted</c>
+    /// BEFORE it looks at the token, so a task that has already completed is returned whatever the
+    /// token's state.
+    ///
+    /// It lives here because the deadline it measures against is this scope's, and three separate
+    /// copies of the subtraction — the connector's write budget, its reply budget and the
+    /// simulator's precheck — had drifted to two different answers for "expired".
+    /// </summary>
+    public static TimeSpan LeftUntil(long deadlineAt)
+    {
+        var left = deadlineAt - Environment.TickCount64;
+        return left > 0 ? TimeSpan.FromMilliseconds(left) : TimeSpan.Zero;
+    }
+
+    /// <summary>
     /// Opens the scope with NO operation deadline: the intent is marked, and each RPC inside keeps
     /// its own per-call bound. For callers that want the urgency without a total.
     /// </summary>

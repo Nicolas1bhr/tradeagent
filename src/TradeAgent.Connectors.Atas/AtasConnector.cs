@@ -774,7 +774,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             var sent = 0;
             while (sent < bytes.Length)
             {
-                var left = TimeSpan.FromMilliseconds(deadlineAt - Environment.TickCount64);
+                var left = RiskReducingScope.LeftUntil(deadlineAt);
                 if (left <= TimeSpan.Zero)
                 {
                     // Out of total time with the frame half-written. Nothing can be recalled, so
@@ -1140,6 +1140,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <summary>
     /// What is left of <paramref name="budget"/> since <paramref name="startedAt"/>, never negative
     /// and never zero — a zero would cancel before the already-arrived answer could be read.
+    ///
+    /// DELIBERATELY UNLIKE <see cref="Left"/>, which returns zero past its deadline. This one is a
+    /// RELATIVE budget handed to a grace that is only just opening, so a caller that lands here with
+    /// nothing left is one whose ordinary timeout was already spent — and giving it a moment to
+    /// collect an answer that has arrived costs nothing anybody is waiting on. An absolute deadline
+    /// is a promise to a person, and one more millisecond of it is a promise broken.
     /// </summary>
     static TimeSpan Remaining(long startedAt, TimeSpan budget)
     {
@@ -1149,17 +1155,17 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     }
 
     /// <summary>
-    /// What is left until an ABSOLUTE deadline, never negative and never zero.
+    /// What is left until an ABSOLUTE deadline: <see cref="TimeSpan.Zero"/> once it has passed.
     ///
-    /// A leg whose turn comes after the operation's deadline gets one millisecond, which is enough
-    /// to fail on the send gate and be reported as never sent — the point being that it FAILS
-    /// rather than being skipped, so the caller can say which orders may still be working.
+    /// It used to hand a caller past the deadline a fresh millisecond, on the same "never zero"
+    /// reasoning <see cref="Remaining"/> still uses — and that reasoning does not transfer. A
+    /// millisecond after the operation was promised to be over is not a budget, it is a race the
+    /// gate or the reply can win AFTER the stated deadline (Codex round-8 F4). The arithmetic and
+    /// the argument for zero now live on <see cref="RiskReducingScope.LeftUntil"/>, next to the
+    /// deadline they are about, so the simulator's copy of the same subtraction cannot drift from
+    /// this one.
     /// </summary>
-    static TimeSpan Left(long deadlineAt)
-    {
-        var left = TimeSpan.FromMilliseconds(deadlineAt - Environment.TickCount64);
-        return left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1);
-    }
+    static TimeSpan Left(long deadlineAt) => RiskReducingScope.LeftUntil(deadlineAt);
 
     async Task<T> Rpc<T>(string op, object? args, CancellationToken ct)
     {
