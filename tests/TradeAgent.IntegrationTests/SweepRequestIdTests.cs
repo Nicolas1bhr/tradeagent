@@ -337,6 +337,52 @@ public class SweepRequestIdTests
         Assert.True(claimed <= really, $"claimed cancelled={claimed} while {really} are actually cancelled");
     }
 
+    /// <summary>
+    /// THE INSTRUMENT MUST NOT OVERRUN THE DEADLINE IT IS USED TO MEASURE.
+    ///
+    /// Codex round-8 F3, and its own check. The simulator honours the operation deadline — that is
+    /// what makes every measurement in this section mean anything — but its precheck asked whether
+    /// the LONGER of its two injected latencies fitted, while it then awaits them one after the
+    /// other. With both set to 1200 ms inside a two-second operation it accepted a 1200 ms wait and
+    /// spent 2400: the call returned successfully 400 ms after the whole operation had promised to
+    /// be over, and <c>WorstCaseOperationPath</c> — which the shutdown drain is derived from —
+    /// under-reported by the same amount.
+    ///
+    /// The discriminator here is not a stopwatch reading. It is RETURN versus THROW: summed, the
+    /// call cannot fit and says so at the deadline; maxed, it succeeds past it.
+    /// </summary>
+    [Fact]
+    public async Task The_simulators_two_latencies_add_up_rather_than_competing()
+    {
+        var conn = new FakeConnector(new FakeBroker(),
+            new FaultProfile { LatencyMs = 1200, UncancellableLatencyMs = 1200 });
+
+        // The reported worst case is the sum, because that is what one call costs.
+        Assert.Equal(TimeSpan.FromMilliseconds(2400), conn.WorstCaseOperationPath);
+
+        var timer = Stopwatch.StartNew();
+        ConnectorTransportException? refused = null;
+        using (RiskReducingScope.Begin(TimeSpan.FromSeconds(2)))
+        {
+            try { await conn.GetPositionsAsync(conn.Broker.AccountId).WaitAsync(TimeSpan.FromSeconds(20)); }
+            catch (ConnectorTransportException ex) { refused = ex; }
+        }
+        timer.Stop();
+
+        Assert.True(refused is not null,
+            $"a 2400 ms call completed inside a 2000 ms operation, in {timer.Elapsed.TotalMilliseconds:0} ms");
+        Assert.Contains("deadline", refused!.Message);
+        Assert.True(timer.Elapsed < TimeSpan.FromMilliseconds(2400),
+            $"it took {timer.Elapsed.TotalMilliseconds:0} ms — it ran the latency out rather than stopping at the deadline");
+
+        // The other direction, so a simulator that simply refuses everything is not a passing one:
+        // two latencies that DO fit are still served.
+        var fits = new FakeConnector(new FakeBroker(),
+            new FaultProfile { LatencyMs = 300, UncancellableLatencyMs = 300 });
+        using (RiskReducingScope.Begin(TimeSpan.FromSeconds(2)))
+            Assert.NotNull(await fits.GetPositionsAsync(fits.Broker.AccountId).WaitAsync(TimeSpan.FromSeconds(20)));
+    }
+
     // ---------------------------------------------------------- the sweep nonce (F9)
 
     /// <summary>

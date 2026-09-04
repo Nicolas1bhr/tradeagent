@@ -18,9 +18,16 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// In-process and unbounded by any wire, so the only thing that can make one call take time is a
     /// deliberately injected latency fault. It is reported rather than assumed to be zero, because a
     /// shutdown drain derived from it has to cover the faults the tests inject.
+    ///
+    /// THE TWO LATENCIES ADD, THEY DO NOT COMPETE. <see cref="Wire"/> awaits them one after the
+    /// other, so a profile with both set costs the sum — and this said <c>Math.Max</c>, which made
+    /// the simulator's own reported worst case shorter than the simulator (Codex round-8 F3). A
+    /// harness that under-reports its worst case is worse than one with no figure at all: the
+    /// shutdown drain is DERIVED from this number, so the connector used to measure whether the
+    /// drain covers a handler was quietly telling the drain to be too short.
     /// </summary>
     public TimeSpan WorstCaseOperationPath =>
-        TimeSpan.FromMilliseconds(Math.Max(Faults.LatencyMs, Faults.UncancellableLatencyMs));
+        TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
 
     /// <summary>The same two seconds the real connector gives an emergency, so tests measure the rule.</summary>
     public TimeSpan EmergencyBudget { get; init; } = TimeSpan.FromSeconds(2);
@@ -66,7 +73,11 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
                 throw new ConnectorTransportException(
                     "the operation deadline had already passed; nothing was sent to the simulator");
 
-            var wait = TimeSpan.FromMilliseconds(Math.Max(Faults.LatencyMs, Faults.UncancellableLatencyMs));
+            // The SUM, because the two delays below run in series. Taking the max let a profile with
+            // both set pass a precheck for 1200 ms and then spend 2400 — so the instrument the
+            // operation-deadline tests measure with could overrun the very deadline it exists to
+            // demonstrate (Codex round-8 F3).
+            var wait = TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
             if (wait > left)
             {
                 await Task.Delay(left, ct);
