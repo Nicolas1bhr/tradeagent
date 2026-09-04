@@ -10,7 +10,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**2026-09-03 — the hardening program is the current work; read `docs/hardening/HANDOFF-2026-09-03.md` FIRST.** It holds
+**2026-09-03 — the hardening program is the current work; read `docs/hardening/HANDOFF-2026-09-04.md` FIRST (it supersedes the 09-03 handoff).** It holds
 the state of every unit branch (`u2a-pipe-hardening`, `u2c1-dispatch-recovery`, `u2d-updater-fail-closed`,
 `u14-coid-witness-rewrite`), the integration order, the decisions Nicolas still owes, and the process facts that cost
 real time. `main` is 3f1d8f2 (v0.1.1 published and its self-update PROVEN on the box; approval re-authorization

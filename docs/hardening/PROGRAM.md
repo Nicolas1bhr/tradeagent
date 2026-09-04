@@ -2,7 +2,7 @@
 
 Started 2026-09-02. Process modelled on `/Users/nicolasbeeckman/Projects/innovision-os/innovision-os/docs/ORCHESTRATION-STANDARD.md`
 (a mandatory read-gate before any delegated build/verify work) and venture-agent's unattended-operation doctrine; the
-twelve ported patterns are in `sibling-process-survey.md`. Current state and the pick-up point: `HANDOFF-2026-09-03.md`.
+twelve ported patterns are in `sibling-process-survey.md`. Current state and the pick-up point: `HANDOFF-2026-09-04.md` (supersedes `HANDOFF-2026-09-03.md`).
 
 ## Definition of "finished" for this phase
 
