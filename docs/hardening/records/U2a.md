@@ -60,11 +60,20 @@ charset/length restriction on `--request-id` (a release-note fact).
   budget with the CLI's own ids as positive control; suite stability at 2 m 01 s under load.
 - Known gap (deliberate, → U2c-2): the agent's `close-all` legs are offsetting `Place`s and get no fast path; fixing it
   means carrying intent through `ITradingConnector` (TradingGateway is another unit's file).
-- **NOT VERIFIED on Windows (all rounds):** named-pipe buffer semantics, the handle-dispose killing an accepted write,
-  the no-buffer stall (mutant B4 cannot bite on macOS); and two guesses about ATAS on the same open question — does ATAS
-  accept the `op-…` id shape, and is 64 at or under its real client-order-id limit. One `close-all` on the box settles
-  both. The integration suite runs the shipped-default tests (≈2 min); if that becomes a problem the answer is a
-  slow-test category, not shorter deadlines.
+- **Windows — rewritten 2026-09-04 (Codex PRIOR 12 / PRIOR 14); the sweeping "NOT VERIFIED on Windows (all rounds)"
+  that stood here was out of date.** What IS measured, on a tree proven identical to the builder's by SHA-256 before
+  and after the run (round 6's section, and again in round 7): the pipe and connector classes and the whole suite pass
+  on the box at shipped defaults — backpressure drops, the shutdown drain, the emergency classification, and the
+  paced-peer fixture whose premise needs the named-pipe buffer to be far smaller than a 512 KiB frame. The
+  handle-dispose kill of an accepted overlapped write is exercised by every test that asserts a drop, since the drop
+  depends on it. **What is still NOT verified:** mutant **B4** (the no-buffer stall) has been run by nobody on either
+  platform, so the 8 KiB buffer is unproven BY MUTATION even though the tests that need it pass; and **ATAS's real
+  client-order-id limit and whether it accepts the `op-…` shape**. The old claim that "one `close-all` settles both" is
+  wrong and is withdrawn: a generated sweep id is about 23 characters, so it can demonstrate the CHARSET and nothing
+  about the 64-character boundary. Settling that needs a deliberate probe at v0.1.2 — one order at exactly 64 and one
+  at 65, read back from ATAS history after a restart.
+- The integration suite runs the shipped-default tests; if that becomes a problem the answer is a slow-test category,
+  not shorter deadlines.
 - Integrate FIRST among the open units (disjoint files from U14; U2c-1/U2d touch `GatewayTypes.cs` too but different
   regions).
 
@@ -539,7 +548,14 @@ LOST: A_write_that_keeps_making_progress_is_still_bounded_in_total
       An_emergency_a_live_bridge_does_not_answer_is_unknown_but_not_a_drop   (this one deliberate)
 ```
 
-Both were restored verbatim from `0909ada` in `0bb3712`. **§9.9: a green suite cannot detect a
+Both were restored from `0909ada` in `0bb3712`, and "verbatim" was accurate for only one of them —
+corrected here (Codex/verifier F-F). `A_write_that_keeps_making_progress_is_still_bounded_in_total`
+is byte-identical. `An_agent_cancel_all_through_the_real_gateway_fails_fast_on_a_stalled_bridge` was
+restored with its assertions CHANGED: its single `Assert.Contains("NOT confirmed", …)` became five,
+because the same commit gave reads their own wording (F-D) and that test's sweep dies on its `orders`
+READ. The change strengthens it — it now asserts the read sentence and the absence of both wrong
+halves — but it is a strengthening, not a restoration, and this round exists partly because a silent
+test deletion survived a green suite. Precision about what went back is the compensating control. **§9.9: a green suite cannot detect a
 removed test, and no gate in this program would have.** The cheap generic check is the one used
 here — diff the test-method names against the base sha whenever a test file is edited structurally —
 and it belongs in the builder's own routine, not in a review round.
@@ -639,3 +655,141 @@ No `Co-Authored-By` trailers. `TradingGateway.cs` and `DashboardView.cs` not ope
   by rounds 5-6.
 - I did not run the App, `tools/probe`, or any ATAS interaction; the ATAS client-order-id questions
   stay with v0.1.2.
+
+## Round 7 (build record, 2026-09-04)
+
+Bounce on `ffa1a3d` from the round-6 Opus verifier (FAIL 0H/1M/1L, `records/U2a-verify-r6.md`) and,
+mid-round, the Codex delta review of rounds 5+6 (`records/codex-U2a-r6.txt`: 13 priors FIXED, 4
+deferred by decision, 1H/4M/3L new). F-A stays with U2c-1; `TradingGateway.cs` and `DashboardView.cs`
+were not opened.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F-E / C2** (M) liveness judged on the caller's 2 s | a bridge answering at 2500/3500 ms was dropped at ~2000 ms as "not responding" (verifier) | 37/37 class; the late answer recorded | any-frame liveness → **RED 4**; never keep → **RED 1** (round 6, still bite) | `3c046a1` |
+| **C5** (L) `>` discards a same-tick answer | — (folded into the liveness rework as directed) | same | — | `3c046a1` |
+| **C1** (H) two clocks in one emergency | **3.40 s against a 2 s promise** | 2.0 s | budget restarts at the gate → **RED 1** | `923cdb6` |
+| **C3** (M) the 55 s drain is a literal | a 100 s worst path drained for 55 s | 13/13 class | drain back to a literal → **RED 1** | `dca6519` |
+| **C4** (L) a frame with both ids null | `the trading service closed the connection` | 26/26 class | — (the test is the fix's own proof) | `606890d` |
+| **PRIOR 8 CLI half** — the note overpromised | every mutating op promised a replay only Place performs | 20/20 class, pinned per op | — | `6850e83` |
+| **PRIOR 4** residual documented | — | — | — | `a974142` |
+| **F-F, PRIOR 12/14** record corrections | — | — | — | (this file) |
+
+### C1 — the one that mattered, and how it was made observable
+
+`EmergencyDeadline` was captured before the gate wait and then started against a NEW clock the moment
+the gate was acquired, so a call could spend nearly the whole deadline queueing and be handed a fresh
+one for its write. Codex's own check is the fixture, and it needed two things no existing peer could
+do:
+
+- **a peer that drains at a fixed rate and then stops for good**, so the gate is released at a chosen
+  moment INTO A FULL BUFFER — a writer's frame completes when the kernel takes the last of it, not
+  when the peer reads it;
+- **an oversized emergency frame.** A cancel-all is ~100 bytes, which an 8 KiB buffer swallows whether
+  or not anything is reading, so a small frame can only ever measure the gate. Two earlier fixtures
+  failed for exactly that reason before this was understood, and both are on the record: the first
+  released the gate too late (the emergency expired queueing, "busy"), the second released it into a
+  buffer with room (the write succeeded and the reply timed out, also "busy").
+
+With a 64 KiB emergency frame behind a gate released at ~1.5 s: **3.40 s** before, **2.0 s** after.
+The test asserts `"still being sent"` as its premise — that is the `FrameIncomplete` branch, so it
+proves the call reached the WRITE rather than expiring on the queue, which is the only arrangement in
+which C1 is observable at all.
+
+### F-E — what changed, and the cost
+
+Two bounds, two meanings. `EmergencyDeadline` bounds what the CALLER waits and nothing else: two
+seconds, NOT confirmed, check ATAS, UNKNOWN — unchanged, and asserted unchanged in all three new
+fixtures. Liveness gets the deadline this system already uses for "ATAS did not answer" — `_timeout`,
+**no new number** — as its grace, the verdict is deferred to it, the pending request stays registered,
+and a late answer is delivered rather than dropped on the floor (`LateAnswers`, `LateAnswerReceived`).
+**Whether the gateway settles a request on a late answer is U2c-1's**, which is why these are exposed
+rather than consumed.
+
+**The stated cost: a wedged-but-heartbeating bridge is now detected at ≈10 s instead of ≈2 s. The
+caller's answer is not delayed by it — only the teardown is.** One wording consequence the manager
+should note: on the reply path the caller now always gets the "busy / still up" sentence at two
+seconds, because at that instant nothing has been dropped and "not responding … has been dropped"
+would be false. The "not responding" wording still reaches the drop itself, as the disconnect reason.
+
+The twelve heartbeat phases are now STRONGER than when they were written: with a 10 s judging window
+and a 5 s beat, every phase has at least one heartbeat inside the window, so no case is silent by
+luck — all twelve turn on heartbeats being refused as evidence.
+
+### Commits (round 7, on top of `ffa1a3d`) — tip **`a974142`**
+
+| sha | finding | what |
+|---|---|---|
+| `3c046a1` | F-E / C2 / C5 | Judge the connection on the grace, not on the two seconds the caller waited |
+| `923cdb6` | C1 | Spend one budget across the gate and the write, not one each |
+| `dca6519` | C3 | Derive the shutdown drain from the connector instead of writing it down |
+| `606890d` | C4 | Refuse a frame that names no request instead of hanging up on the agent |
+| `6850e83` | PRIOR 8 (CLI) | Stop the CLI promising a replay the gateway does not perform |
+| `a974142` | PRIOR 4 | Write the bridge deadlines down where an operator meets them |
+
+No `Co-Authored-By` trailers. `TradingGateway.cs` and `DashboardView.cs` not opened. One mechanical
+addition to a U2b test file (`ApprovalReauthorizationTests.ConnectorFacade` forwards the new
+interface member) — what compiles, nothing more.
+
+Test-method names diffed against `ffa1a3d` after every structural edit — the control this program
+adopted after round 6's silent deletion. The only loss is the deliberate rename
+(`…_drops_it` → `…_drops_it_at_the_grace`); three tests added.
+
+### Gates — Mac (tip `a974142`)
+
+```
+dotnet build TradeAgent.sln            → Build succeeded. 0 Warning(s) 0 Error(s)
+dotnet test TradeAgent.sln             (exit 0)
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 565 ms  - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed: 268, Skipped: 0, Total: 268, Duration: 5 m 19 s - TradeAgent.IntegrationTests.dll
+```
+**451 green, 0 red** (436 at `ffa1a3d`). **The integration suite is now 5 m 19 s, up from 3 m 06 s** —
+the twelve heartbeat phases and the idle-stalled case each wait out the 10 s grace, and the two
+late-answer cases wait past it. That is the direct, visible price of F-E's decision and it is a number
+the manager may want to rule on; the alternative is a shorter grace, which is a new number the
+decision explicitly refused.
+
+### Gates — the Windows box (tip `a974142`), tree PROVEN mine, ONE run as granted
+
+```
+LOCAL                                              BOX (C:\ta\repo)
+e7255869ab8e7abe  ConnectorSendDeadlineTests.cs    e7255869ab8e7abe   ✓
+4ea4f892102a2185  GatewayPipeBackpressureTests.cs  4ea4f892102a2185   ✓
+4ea8675ca08f1a4a  AtasConnector.cs                 4ea8675ca08f1a4a   ✓
+4133a88bd9295743  GatewayPipeServer.cs             4133a88bd9295743   ✓
+6cd3f1050600f183  CliReplayContract.cs             6cd3f1050600f183   ✓
+.cs under src+tests: 88                            88                 ✓  (no foreign file)
+```
+
+Build and both runs in ONE ssh session, and the tree re-verified unchanged afterwards:
+
+```
+dotnet build TradeAgent.sln            → Build succeeded. 0 Warning(s) 0 Error(s)
+
+--filter ConnectorSendDeadlineTests | GatewayPipeBackpressureTests | CliReplayContractTests
+Passed!  - Failed: 0, Passed:  70, Skipped: 0, Total:  70, Duration: 5 m 5 s
+
+dotnet test TradeAgent.sln --no-build   (exit 0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s      - TradeAgent.UnitTests.dll
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 4 s      - TradeAgent.FaultTests.dll
+Passed!  - Failed: 0, Passed: 268, Skipped: 0, Total: 268, Duration: 5 m 17 s - TradeAgent.IntegrationTests.dll
+```
+
+**451 green on Windows, 0 red — the same 451 as macOS, test for test, and the same durations.**
+
+### What I did NOT do, round 7
+
+- **F-A untouched**, still with U2c-1: the operator's Close All remains on the ordinary deadline.
+- **F-E's mechanism is the manager's decision, implemented as given** (grace = the existing ordinary
+  RPC deadline, no new number). Two consequences are mine to flag rather than to have settled: the
+  reply-path caller now always reads the "busy / still up" sentence at two seconds, because nothing
+  has been dropped at that instant; and the suite is two minutes longer.
+- **`LateAnswerReceived` / `LateAnswers` are exposed and not consumed.** Whether the gateway settles a
+  request on a late answer is U2c-1's; nothing in this unit reads them except a test.
+- I did not verify that a real ATAS synchronous call exceeds two seconds in practice — F-E's premise
+  is read from `BridgeProtocol.cs` and reproduced with a synthetic peer, as the verifier also stated.
+- **Mutant B4 (the Windows no-buffer stall) is still not run by anyone**, so the 8 KiB buffer remains
+  unproven by mutation on either platform even though every test that depends on it passes on the box.
+- ATAS's real client-order-id limit and the `op-…` shape still need the deliberate 64/65-character
+  probe at v0.1.2; the old "one `close-all` settles both" claim is withdrawn above.
+- I did not run the App, `tools/probe`, or any ATAS interaction, and I used the box grant once.
