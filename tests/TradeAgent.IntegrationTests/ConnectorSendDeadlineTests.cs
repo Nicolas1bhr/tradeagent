@@ -802,6 +802,63 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// TWO SECONDS IS THE WHOLE CALL, NOT TWO SECONDS PER PHASE.
+    ///
+    /// Codex C1 (HIGH). The emergency's frame budget was computed at the call site, before the gate
+    /// wait, and then started against a NEW clock the moment the gate was acquired — so a call could
+    /// spend nearly the whole deadline queueing and then be handed a fresh one for its write. The
+    /// promised two-second end-to-end ceiling was false, and the way to see it is Codex's own check:
+    /// hold the gate until just under two seconds, then release it into a pipe with no room.
+    ///
+    /// That is what this peer does. It drains at a fixed rate until it has taken (frame − buffer)
+    /// bytes and then stops for good: the holder's write completes — the kernel has the rest — the
+    /// gate is released at about 1.8 s, and the emergency inherits a full buffer that will never
+    /// drain again. Under one clock it is cut at the caller's deadline; under two it is cut two
+    /// seconds after the gate, near four.
+    ///
+    /// The message is the premise as well as the verdict: "still being sent" is the FrameIncomplete
+    /// branch, so it proves the call got past the gate and into the write rather than expiring on
+    /// the queue, which is the only arrangement in which C1 is observable at all.
+    /// </summary>
+    [Fact]
+    public async Task An_emergency_spends_one_budget_across_the_gate_and_the_write()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // all shipped
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyDeadline);
+        await connector.ConnectAsync();
+
+        // 8 KiB every 80 ms ≈ 100 KiB/s, stopping just after 152 KiB — so the ~153 KiB holder frame
+        // is fully accepted at about 1.5 s, the gate is released there, and nothing is read again.
+        await using var peer = await BridgePeer.ReadingThenStopping(
+            pipe, Cred().Secret, 152 * 1024, 8192, TimeSpan.FromMilliseconds(80));
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var holder = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-c1-hold", "ATAS-HALFWAY", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 150 * 1024)));
+        Observe([holder]);
+        await Wait(() => Task.FromResult(peer.BytesRead >= 8 * 1024));
+
+        // The emergency's OWN frame is oversized on purpose. A cancel-all is normally a hundred
+        // bytes, which the socket buffer swallows whether or not the far end is reading — so a small
+        // frame can only ever measure the gate. Sixty-four kilobytes cannot land in an eight-kilobyte
+        // buffer that nobody is draining, which is what makes the write cost real time and puts both
+        // phases of the call on trial in one measurement.
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(
+            () => connector.CancelAllOrdersAsync(new string('a', 64 * 1024)));
+        timer.Stop();
+
+        Assert.True(ex is ConnectorTransportException, $"surfaced as {ex.GetType().Name}");
+        Assert.Contains("still being sent", ex.Message);   // it reached the write; the gate was not what expired
+        Assert.Contains("NOT confirmed", ex.Message);
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
+            $"the emergency returned in {timer.Elapsed.TotalSeconds:0.00}s — it never queued, so this measures nothing");
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(3),
+            $"the emergency took {timer.Elapsed.TotalSeconds:0.00}s against a two-second promise — the gate wait and the write each started their own clock");
+    }
+
+    /// <summary>
     /// THE AGENT'S CANCEL-ALL, THROUGH THE REAL GATEWAY, WHICH IS WHERE THE TIME WAS ACTUALLY GOING.
     ///
     /// Codex F11 on d25dbb4. The test that claimed to measure "the agent's sweep leg" called
@@ -1123,6 +1180,40 @@ public class ConnectorSendDeadlineTests
 
         /// <summary><c>BridgeServer.HeartbeatInterval</c>, read from that file, not guessed.</summary>
         public static readonly TimeSpan ShippedHeartbeatInterval = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Drains at a paced rate until it has taken <paramref name="thresholdBytes"/>, then stops
+        /// reading for good.
+        ///
+        /// It exists to release the send gate at a chosen moment INTO A FULL BUFFER. A writer's
+        /// frame completes when the kernel has taken the last of it, not when the peer has read it,
+        /// so stopping at (frame size − buffer) hands the next caller the gate and a pipe with no
+        /// room in it — which is the only way to make the gate wait and the write both cost real
+        /// time in one call.
+        /// </summary>
+        public static async Task<BridgePeer> ReadingThenStopping(
+            string pipe, string secret, int thresholdBytes, int bytes, TimeSpan pace)
+        {
+            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-HALFWAY", null, PaceBytes);
+            peer.Track(Task.Run(() => peer.PumpUntil(thresholdBytes, bytes, pace)));
+            return peer;
+        }
+
+        async Task PumpUntil(int threshold, int bytes, TimeSpan pace)
+        {
+            var buf = new byte[bytes];
+            try
+            {
+                while (!_stop.IsCancellationRequested && BytesRead < threshold)
+                {
+                    var n = await _p.ReadAsync(buf, _stop.Token);
+                    if (n == 0) return;
+                    Interlocked.Add(ref _read, n);
+                    await Task.Delay(pace, _stop.Token);
+                }
+            }
+            catch (Exception) { /* the test ending is how this always ends */ }
+        }
 
         /// <summary>
         /// A BRIDGE THAT IS PLAINLY SERVING, with one operation outstanding: it reads every frame and

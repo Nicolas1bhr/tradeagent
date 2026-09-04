@@ -712,8 +712,19 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// The abandoned write is observed rather than dropped, so its inevitable fault does not surface
     /// later as an unobserved task exception.
     /// </summary>
+    /// <param name="writeDeadlineAt">
+    /// An ABSOLUTE <see cref="Environment.TickCount64"/> stamp the write must finish by, or null to
+    /// derive one from <paramref name="frameBudget"/> once the gate is ours.
+    ///
+    /// The two forms are not a convenience, they are the two different promises this connector
+    /// makes. An ORDINARY frame is bounded from the moment the gate is acquired, because queueing
+    /// behind our own backlog is not that frame's fault — 667b9a2's correction, unchanged. An
+    /// EMERGENCY is bounded from the moment the CALLER asked, because what it promises is a total:
+    /// two seconds until somebody is told where they stand, however that time is divided between
+    /// waiting for the gate and getting the bytes out.
+    /// </param>
     async Task<SendOutcome> WriteFrame(Stream w, object frame, CancellationToken ct,
-        TimeSpan gateWait, bool emergency, TimeSpan frameBudget)
+        TimeSpan gateWait, bool emergency, TimeSpan frameBudget, long? writeDeadlineAt = null)
     {
         var waitedFrom = Environment.TickCount64;
         if (!await _sendGate.WaitAsync(gateWait, ct))
@@ -738,15 +749,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         }
         try
         {
-            // The total starts when the gate is ours, not when we joined the queue: waiting for our
-            // own backlog is not this frame's fault, which is the same correction 667b9a2 made to
-            // the per-chunk budget.
-            var startedWriting = Environment.TickCount64;
+            // ONE CLOCK FOR THE CALLER'S WAIT, and this line is where it was two.
+            //
+            // The budget used to be captured before the gate wait and then started AGAIN here, so an
+            // emergency could spend nearly its whole deadline queueing and be handed a fresh one for
+            // its write: the two-second end-to-end promise was false by construction. Measured on
+            // the fixture Codex specified — hold the gate until just under the deadline, release it
+            // into a pipe with no room — 3.40 s against a 2 s promise.
+            //
+            // An ordinary frame still starts its ceiling when the gate is ours (667b9a2: our own
+            // backlog is not that frame's fault). An emergency's deadline is absolute and was set
+            // when the caller asked.
+            var deadlineAt = writeDeadlineAt
+                ?? Environment.TickCount64 + (long)frameBudget.TotalMilliseconds;
             var bytes = Encoding.UTF8.GetBytes(Json.Write(frame) + "\n");
             var sent = 0;
             while (sent < bytes.Length)
             {
-                var left = frameBudget - TimeSpan.FromMilliseconds(Environment.TickCount64 - startedWriting);
+                var left = TimeSpan.FromMilliseconds(deadlineAt - Environment.TickCount64);
                 if (left <= TimeSpan.Zero)
                 {
                     // Out of total time with the frame half-written. Nothing can be recalled, so
@@ -956,8 +976,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
             var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
-                emergency ? EmergencyDeadline : WriteTimeout, emergency,
-                emergency ? Remaining(startedAt, EmergencyDeadline) : FrameTimeout);
+                emergency ? Remaining(startedAt, EmergencyDeadline) : WriteTimeout, emergency, FrameTimeout,
+                emergency ? startedAt + (long)EmergencyDeadline.TotalMilliseconds : null);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
