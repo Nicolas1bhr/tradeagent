@@ -46,14 +46,33 @@ public static class AtasHealth
     ///
     /// <paramref name="connection"/> is what the connector already reported for
     /// <see cref="Components.TradingConnection"/>; this never opens a second connection to decide.
-    /// A named refusal always wins over anything derived from the connection state, because a peer
-    /// that spoke and was turned down is more specific news than a pipe that is quiet.
+    /// A named refusal wins over anything derived from the CONNECTION state, because a peer that
+    /// spoke and was turned down is more specific news than a pipe that is quiet.
+    ///
+    /// IT DOES NOT WIN OVER THE MACHINE. Both refusals are permanent now — a protocol mismatch until
+    /// a compatible hello, a credential failure until a peer proves itself — and a refusal describes
+    /// a PEER, which cannot be on the pipe from a platform that is not running or from a strategy
+    /// file that is not there. Whether ATAS is up and whether the DLL is installed are read fresh on
+    /// every pass; they are the newer facts and they lead, with the refusal kept after them because
+    /// it is the repair that will be needed once the platform is back. Otherwise the row tells
+    /// somebody to reinstall an add-on inside a program that is closed.
     /// </summary>
     public static (HealthState State, string Detail) BridgeRow(
         bool atasSelected, AtasDetection d, HealthState connection, BridgeHello? hello, string? refusal)
     {
         if (!atasSelected) return (HealthState.UNKNOWN, NotInUse);
-        if (!string.IsNullOrWhiteSpace(refusal)) return (HealthState.FAILED, refusal);
+
+        var recorded = string.IsNullOrWhiteSpace(refusal) ? null : refusal;
+        if (recorded is not null)
+        {
+            if (!d.BridgeInstalled)
+                return (HealthState.FAILED, "not installed in ATAS — press Install bridge on the Checks page · " +
+                                            "last refusal recorded on the pipe: " + recorded);
+            if (!d.Running)
+                return (HealthState.FAILED, "installed — waiting for ATAS to start · " +
+                                            "last refusal recorded on the pipe: " + recorded);
+            return (HealthState.FAILED, recorded);
+        }
 
         if (connection == HealthState.READY)
         {
