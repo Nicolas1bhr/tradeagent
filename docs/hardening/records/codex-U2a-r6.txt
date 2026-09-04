@@ -1,0 +1,77 @@
+Audit basis: `d25dbb4..ffa1a3d` (14 commits). Working tree remained unchanged.
+
+PRIOR 1 — FIXED — The effective `request_id ?? id` is now computed before validation and both restrictions apply to it at src/TradeAgent.Gateway/GatewayPipeServer.cs:414.
+
+PRIOR 2 — FIXED — `FrameTimeout` now caps the complete write stage and `WorstCaseOrderPath` uses 10+30+10 at src/TradeAgent.Connectors.Atas/AtasConnector.cs:242; shutdown also re-awaits cancelled handlers at src/TradeAgent.Gateway/GatewayPipeServer.cs:834.
+
+PRIOR 3 — FIXED — Transmission state now comes from `TrySendAsync` after the attempted write rather than being asserted beforehand at src/TradeAgent.TradeCli/Program.cs:60.
+
+PRIOR 4 — PARTIAL — Reducing chunks to 1 KiB lowers the false-stall threshold, but progress is still recognized only after a whole chunk completes at src/TradeAgent.Connectors.Atas/AtasConnector.cs:775.
+
+PRIOR 5 — DEFERRED-BY-DECISION — src/TradeAgent.Gateway/TradingGateway.cs, src/TradeAgent.App/DashboardView.cs, src/TradeAgent.Core/Db/Stores.cs and src/TradeAgent.Gateway/GatewayTypes.cs retain their `d25dbb4` blobs.
+
+PRIOR 6 — DEFERRED-BY-DECISION — The four U2c-1-owned files retain their `d25dbb4` blobs.
+
+PRIOR 7 — FIXED — Expected write, read, EOF and malformed-reply failures now become `TransportResult` values at src/TradeAgent.TradeCli/PipeClient.cs:51.
+
+PRIOR 8 (gateway half) — DEFERRED-BY-DECISION — The four U2c-1-owned files retain their `d25dbb4` blobs.
+
+PRIOR 8 (CLI half) — NOT FIXED — The CLI still promises every order command that same-id replay “returns the original outcome” although U2c-1 has not implemented that blanket contract at src/TradeAgent.TradeCli/Program.cs:234.
+
+PRIOR 9 — FIXED — Sweep nonces are full GUIDs and are checked against durable leg-zero history before use at src/TradeAgent.Gateway/GatewayPipeServer.cs:612.
+
+PRIOR 10 — FIXED — Reserved operator spellings are refused before a hello authenticates the connection at src/TradeAgent.Gateway/GatewayPipeServer.cs:241.
+
+PRIOR 11 — FIXED — Agent risk-reducing operations open an ambient scope before prerequisite gateway reads at src/TradeAgent.Gateway/GatewayPipeServer.cs:451.
+
+PRIOR 12 — NOT FIXED — Windows pipe-buffer, accepted-write disposal and no-buffer behavior remain explicitly UNVERIFIED at docs/hardening/records/U2a.md:63.
+
+PRIOR 13 — FIXED — The test now observes stderr while the request remains outstanding and asserts the process has not exited at tests/TradeAgent.IntegrationTests/CliReplayContractTests.cs:276.
+
+PRIOR 14 — NOT FIXED — The record still claims one `close-all` settles the 64-character limit, although its shorter generated identifier cannot establish that boundary at docs/hardening/records/U2a.md:65.
+
+PRIOR V2 — FIXED — A free-gate emergency now uses the remaining two-second budget for its reply and drops an unanswered peer with owner-readable wording at src/TradeAgent.Connectors.Atas/AtasConnector.cs:933.
+
+PRIOR V3 — FIXED — Ordinary Busy and PeerStalled sentences are independently asserted at tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs:285.
+
+PRIOR F-A — DEFERRED-BY-DECISION — The four U2c-1-owned files retain their `d25dbb4` blobs.
+
+PRIOR F-B — FIXED — Only a response matching an outstanding RPC updates liveness; heartbeats do not at src/TradeAgent.Connectors.Atas/AtasConnector.cs:578.
+
+PRIOR F-C — FIXED — Read failure returns `PossiblyWritten`, and the restored test checks `reply_lost` plus recovery containing the same id at tests/TradeAgent.IntegrationTests/CliReplayContractTests.cs:113.
+
+PRIOR F-D — FIXED — Emergency prerequisite reads now say nothing was placed or cancelled instead of using order-confirmation wording at src/TradeAgent.Connectors.Atas/AtasConnector.cs:183.
+
+### Explicit rulings
+
+(a) The ordinary RPC bound itself is real at shipped values: gate ≤10 s, whole frame ≤30 s, reply ≤10 s. The 55-second shutdown claim is not fully composable: it is an unrelated server constant, total `DisposeAsync` can reach approximately 65 seconds, and the second wait remains bounded, so an uncooperative handler can still be left unsettled. See Finding 3.
+
+(b) `EmergencyGateWait` remains only as historical documentation; executable code uses `EmergencyDeadline`. The free-gate V2 path is fixed, but gate and write do not share one absolute deadline: the write receives an almost-full two-second budget before the gate wait begins. See Finding 1.
+
+(c) Heartbeats alone cannot preserve a dead connection. A merely slow bridge can be dropped if it answers no pending RPC in two seconds. The actual bridge serializes frames around synchronous adapter calls, so a legitimate long synchronous ATAS call is classified as dead. See Findings 2 and 5.
+
+(d) Expected mutating-call transport paths are tri-stated, and read failure produces `PossiblyWritten` with a recovery line naming the id. `PipeClient` as a whole is not exclusively tri-state: `ConnectAsync` and the compatibility `SendAsync` remain throwing APIs, and non-filtered programming/resource exceptions can escape; these are not normal post-order CLI transport paths.
+
+(e) The two tests deleted in `3e241d7` and restored in `0bb3712` are present and meaningful at HEAD: tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs:755 exercises the real gateway prerequisite-read path, and :821 exercises the total frame ceiling. Execution is UNVERIFIED because no prebuilt artifacts existed and building would violate the no-file-creation instruction.
+
+FINDING 1 — HIGH — src/TradeAgent.Connectors.Atas/AtasConnector.cs:894 — `EmergencyDeadline` can be spent once waiting for the gate and almost again writing, so the promised two-second end-to-end emergency ceiling is false.
+
+CHECK — Hold `_sendGate` for just under two seconds, then release it with insufficient pipe-buffer capacity for the emergency frame; `frameBudget` was captured before the gate wait and starts against a new clock at line 739, allowing elapsed time to approach four seconds.
+
+FINDING 2 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:959 — Answer-only liveness drops a responsive but legitimately occupied bridge whenever one synchronous ATAS command holds its serialized command loop longer than two seconds.
+
+CHECK — Block an ordinary `BridgeServer.Invoke` synchronously for more than two seconds, enqueue an emergency, and allow no unrelated RPC reply; the emergency frame enters the pipe buffer but `PeerAnsweredSince` is false, so line 970 drops the connection.
+
+FINDING 3 — MED — src/TradeAgent.Gateway/GatewayPipeServer.cs:135 — The 55-second drain is hard-coded independently of the actual connector deadlines, so supported timeout customization can again abandon a DISPATCHING request.
+
+CHECK — Construct `AtasConnector(rpcTimeout: 60s)` with 10-second `WriteTimeout` and 30-second `FrameTimeout`; `WorstCaseOrderPath` becomes 100 seconds while a default `GatewayPipeServer` still drains for 55 seconds. Its total disposal ceiling is also 5+55+5, not 55 seconds.
+
+FINDING 4 — LOW — src/TradeAgent.Gateway/GatewayPipeServer.cs:424 — A syntactically valid frame with both ids explicitly null throws before the handler’s error boundary and closes the connection without an `INVALID_REQUEST` reply.
+
+CHECK — After a valid hello, send `{"v":1,"id":null,"op":"status","request_id":null}`; `rid` is null and `rid.StartsWith(...)` throws before the `try` beginning at line 453.
+
+FINDING 5 — LOW — src/TradeAgent.Connectors.Atas/AtasConnector.cs:871 — Millisecond timestamp equality can discard a genuine pending-RPC answer and falsely classify the bridge as dead.
+
+CHECK — Let an unrelated pending RPC answer after the emergency starts but within the same `Environment.TickCount64` tick, then send no further answers; `_lastAnswerAt == startedAt`, so the strict `>` predicate returns false and the bridge is dropped.
+
+SUMMARY — 1 HIGH / 4 MED / 3 LOW

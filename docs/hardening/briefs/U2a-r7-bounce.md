@@ -23,3 +23,28 @@ Process as before; append `## Round 7 (build record, <date>)` to `records/U2a.md
 `ConnectorSendDeadlineTests`, then `dotnet build TradeAgent.sln` + FULL suite once on the Mac; **the box grant is yours
 for ONE run**: push, verify the tree identity as in round 6, run the two pipe classes and the full suite once, quote it.
 Report: tip sha, RED → GREEN → mutant, suite counts (Mac + box), "What I did NOT do".
+
+## Addendum — Codex delta review of rounds 5+6 (`records/codex-U2a-r6.txt`): 13 priors FIXED, 4 deferred by decision, plus:
+
+- **C1 (HIGH, new).** `EmergencyDeadline` is spent once waiting for the gate and almost again writing: `frameBudget` is
+  captured before the gate wait and starts against a NEW clock at `AtasConnector.cs:739`, so hold `_sendGate` just under
+  2 s, release it into insufficient pipe-buffer capacity, and the emergency takes ≈4 s. Rule: ONE clock for the caller's
+  wait — gate + write + reply share the same 2 s budget; Codex's check is the acceptance (measured ≈2 s, not ≈4 s).
+- **C2 (MED) = F-E** (answer-only liveness drops an occupied bridge > 2 s) — covered by the decision above.
+- **C3 (MED).** The 55 s drain is hard-coded at `GatewayPipeServer.cs:135` independently of the connector's deadlines,
+  so a supported timeout customisation can again abandon a DISPATCHING request. Derive the drain from the connector's
+  LIVE deadline values (one function, no literal); a test that changes the deadlines and asserts the drain follows.
+- **C4 (LOW).** A syntactically valid frame with BOTH ids explicitly null throws before the handler's error boundary
+  and closes the connection without `INVALID_REQUEST` (`GatewayPipeServer.cs:424`). Refuse it with `INVALID_REQUEST`.
+- **C5 (LOW).** Millisecond timestamp EQUALITY at `AtasConnector.cs:871` can discard a genuine pending-RPC answer and
+  classify the bridge dead — fix with the liveness rework (≥, or a monotonic counter).
+- **PRIOR 8 (CLI half) NOT FIXED.** `Program.cs:234` promises every order command that a same-id replay "returns the
+  original outcome", which only Place honours until U2c-1 lands. The CLI text must not overpromise: word it for what
+  the gateway does TODAY, and pin it with a test; U2c-1 widens both later.
+- **PRIOR 4 PARTIAL.** Progress is recognised only when a whole 1 KiB chunk completes: accept as the residual, state
+  the exact threshold in `docs/CONTRACTS.md` and the record (a peer slower than one chunk per progress window is
+  "stalled") — no further code.
+- **PRIOR 12 / PRIOR 14 (record).** `records/U2a.md:63-65` still says the Windows pipe behaviours are UNVERIFIED and
+  that one `close-all` settles the 64-char limit. Rewrite that NOT-VERIFIED list to today's truth: what the round-6
+  verified-tree box run measured (the pipe classes), what still is not (mutant B4's no-buffer stall; ATAS's real limit
+  needs a deliberate 64/65-char probe at v0.1.2 — a shorter generated id proves nothing).
