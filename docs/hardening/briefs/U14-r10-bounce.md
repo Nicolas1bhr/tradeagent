@@ -65,6 +65,27 @@ Targeted classes; `dotnet build TradeAgent.sln --no-incremental` (0 warnings) + 
 RED that motivated it → GREEN → the mutant that bites, the crash-point list, the mapping table, suite counts, the box
 result, "What I did NOT do".
 
-## Verifier round-9 findings (appended by the manager when leg [2] reports)
+## Verifier round-9 findings (fresh Opus, on `e113c4c`) — VERDICT: FAIL — 1H/2M/2L · record `records/U14-verify-r9.md`
 
-_pending_
+Every one maps to a directive above; the mapping table must show it.
+
+- **R9-1 (HIGH) = Codex F34, measured.** `Rotate` destroys a generation it could not READ: `LastDecidingLine()` answers
+  null both for "nothing unresolved" and for "every generation threw", so `carry is null` deletes the `.rotating`/`.1`
+  that held the only gap — real `chmod 000` (`TA-GAP` gone from every file) and a real SIGKILL between rotation and
+  save (`Trouble = null`, `io:noted`). → directives 1 + 3: unreadability is a VALUE the caller must handle; a rotation
+  that cannot read does not rotate.
+- **R9-5 (LOW), same class.** `Candidates()` returns an empty list for a refused enumeration (the recovery path). →
+  directive 1 (the snapshot is the only reader; `Unreadable` propagates).
+- **R9-2 (MED).** `_noted` is written in `EnsureRecovered()`, which `Noted` does not run: a fresh instance answers
+  `Noted=false` while `Token()` answers `io:noted`; `Standing` is right only by C#'s argument-evaluation order. →
+  directive 1: ONE derived state from ONE snapshot, computed once, read by every property; no property may depend on
+  another having run first (test: every public property on a fresh instance in every order).
+- **R9-3 (MED).** The "explicit credential refusal vs derived silence, across two connections" cell is untested (MV9-a
+  survives everything but the verifier's probe). → directive 5: the precedence table gets a test per cell; lift the
+  verifier's probe (`u14-verify-r9-probes`).
+- **R9-4 (LOW).** `Rotate(SidecarPath)` decides its carry from `ErrorLogPath`, so a refused writer's own oversized sidecar
+  rotates on the canonical machine's deciding line and deletes its own `.1`. → directive 3: rotation computes the carry
+  from the snapshot OF THE FILE SET BEING ROTATED.
+
+Closed by the verifier: R8-2 (`_witness` in the adapter = 0; MD-R9-2 RED), R8-3 (dribbler dropped; MR9-3 RED), R8-4;
+the quiet-but-heartbeating bridge held 130 s; R3 harness 160/0 three times; 477 twice.

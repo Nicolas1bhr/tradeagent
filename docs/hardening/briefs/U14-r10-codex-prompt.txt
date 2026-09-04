@@ -10,3 +10,8 @@ FINDING 35 — HIGH — AdapterTeardown.cs:55 — Started() could clear _stopped
 FINDING 36 — MED — CoidWitness.cs:949 — SidecarPaths discarded the enumeration's unreadable flag, so a failed report-time probe became an empty file list.
 FINDING 37 — MED — CoidWitnessReport.cs:112 — the claimed three-cause closure for Noted omitted unreadable per-writer-set enumeration.
 FINDING 38 — MED — AtasConnector.cs:156 — a current peer that authenticated but had not sent Hello suppressed Silent without supplying a newer status.
+R9-1 — HIGH — (verifier, e113c4c) Rotate destroyed a generation it could not read: LastDecidingLine() answered null both for "nothing unresolved" and for "every generation threw", so carry-is-null deleted the file holding the only gap (chmod 000 and SIGKILL harnesses).
+R9-2 — MED — (verifier, e113c4c) _noted was written only in EnsureRecovered(), which Noted did not run; a fresh instance answered Noted=false while Token() answered io:noted — correct only by argument-evaluation order.
+R9-3 — MED — (verifier, e113c4c) the "explicit credential refusal vs derived silence across two connections" precedence cell was untested (a mutant survived every suite).
+R9-4 — LOW — (verifier, e113c4c) Rotate(SidecarPath) decided its carry from ErrorLogPath, so a per-writer sidecar rotated on the canonical file's deciding line.
+R9-5 — LOW — (verifier, e113c4c) Candidates() returned an empty list for a refused enumeration on the recovery path.
