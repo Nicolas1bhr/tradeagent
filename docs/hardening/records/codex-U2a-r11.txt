@@ -1,0 +1,35 @@
+PRIOR 2 — DEFERRED-BY-DECISION — U2a logs unsettled request IDs, but cancelled handlers still require settlement in src/TradeAgent.Gateway/TradingGateway.cs:696-700.
+
+PRIOR 5 — DEFERRED-BY-DECISION — exhaustive connector-return settlement remains U2c-1-owned; unexpected placement states still default to ACKNOWLEDGED at src/TradeAgent.Gateway/TradingGateway.cs:460-466.
+
+PRIOR 6 — DEFERRED-BY-DECISION — cancellation and timeout exceptions remain outside the cancel/modify transport catches at src/TradeAgent.Gateway/TradingGateway.cs:660-696.
+
+PRIOR 8-gateway — DEFERRED-BY-DECISION — cancel-all still creates a fresh sweep nonce instead of replaying the outer request at src/TradeAgent.Gateway/GatewayPipeServer.cs:799.
+
+PRIOR F-A — DEFERRED-BY-DECISION — operator close-all still opens no risk-reducing scope at src/TradeAgent.Gateway/TradingGateway.cs:734-742.
+
+PRIOR R9-F2 — DEFERRED-BY-DECISION — a close’s offsetting Place remains excluded from the emergency scope at src/TradeAgent.Connectors.Atas/AtasConnector.cs:158-159.
+
+PRIOR R9-F4 — FIXED — every execution-state arm now delegates through a transport-aware helper, with NothingWritten overriding definite and unresolved states at src/TradeAgent.Gateway/GatewayPipeServer.cs:922-980.
+
+PRIOR V-F1 — DEFERRED-BY-DECISION — NothingWritten is exposed to U2a, but the gateway still settles every cancellation transport exception UNKNOWN at src/TradeAgent.Gateway/TradingGateway.cs:660-664.
+
+PRIOR FINDING 1 — FIXED — cancellation thrown before send-gate acquisition records NothingWritten, and the outer catch no longer overwrites it at src/TradeAgent.Connectors.Atas/AtasConnector.cs:747-751.
+
+PRIOR FINDING 2 — NOT FIXED — SendOutcome.Sent still records no PossiblyWritten state, relying instead on an attempt-derived fallback, while null still maps to not-sent at src/TradeAgent.Connectors.Atas/AtasConnector.cs:842 and src/TradeAgent.Gateway/GatewayPipeServer.cs:978.
+
+PRIOR FINDING 3 — FIXED — all four omitted operations now have drain rows, and coverage probes every protocol operation through the dispatcher at src/TradeAgent.Gateway/GatewayPipeServer.cs:211-241.
+
+CHECK (a) — FAIL — a full frame reaches SendOutcome.Sent without `Record(PossiblyWritten)`; `Attempt()` merely synthesizes that outcome from src/TradeAgent.ConnectorSdk/TransportLedger.cs:104-107. Null remains reachable when a leg exits before starting a mutation and is passed into classification at src/TradeAgent.Gateway/GatewayPipeServer.cs:1114.
+
+CHECK (b) — PASS — no state arm wholly bypasses transport; definite states first permit NothingWritten to override, while unresolved states distinguish NothingWritten/PossiblyWritten at src/TradeAgent.Gateway/GatewayPipeServer.cs:922-980.
+
+CHECK (c) — PASS — the table contains all 21 non-hello operations accepted by the dispatcher, including every read and every mutation operation; replay uses those same handler arms and cannot have a longer path at tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs:945-992.
+
+CHECK (d) — FAIL — the changed test proves answers occurred and that the connection survives the two-second caller deadline, but it samples connectivity before the ordinary ten-second grace verdict and therefore does not prove the busy side of the busy-vs-stalled distinction at tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs:848.
+
+FINDING 1 — LOW — tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs:848 — the Windows-flake rewrite can pass even if the delayed liveness judge later drops a bridge that answered other requests.
+
+CHECK — Force `PeerAnsweredSince` to return false at src/TradeAgent.Connectors.Atas/AtasConnector.cs:1030; the named test captures `connectedAtTheVerdict` before that branch runs and disposes the connector before grace expiry, so the regression is not observed.
+
+SUMMARY — 0 HIGH / 1 MED / 1 LOW
