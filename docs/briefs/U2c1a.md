@@ -84,3 +84,13 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    removes) — no test dropped, and neither name exists on `main`. CONTRACTS.md bullet rewritten to match. Mutant
    `IsTerminal(match.State)` → `IsLive(match.State)` → 6 RED including both new ones. Unit 201 / Fault 180 /
    Integration 506, 0 failed. VERIFIED.
+5. Latch on the definite settle path. RED `A_place_the_broker_took_pauses_trading_when_its_outcome_cannot_be_written`
+   and `A_cancel_the_platform_carried_out_pauses_trading_when_it_cannot_be_written` (both
+   `Assert.True(gw.HasUnconfirmedWork())` → `Expected: True / Actual: False`; the store is put in `PRAGMA query_only`
+   from the connector's own OnPlaced/OnCancelled hook, so the wire is touched and only the write fails) → GREEN with a
+   persist catch in `Settle` that latches, files `settle_failed` off-thread and throws
+   `STATE_DATABASE_CORRUPT`, plus `Settle` moved BEFORE the activity line in `CancelAsync` and `ModifyAsync` (the log
+   write went first, so the store refused there and the settle was never reached); `RecordIndefinite`'s retry loop and
+   the new one are now one helper. Control `A_definite_outcome_the_store_took_settles_and_latches_nothing` green
+   throughout. Mutant `LatchUnconfirmed(...)` → `ClearLatch(requestId)` → both RED again. Unit 201 / Fault 183 /
+   Integration 506, 0 failed. VERIFIED.
