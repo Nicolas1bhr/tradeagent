@@ -397,4 +397,45 @@ public class VerifyR7Probes(ITestOutputHelper o)
             await _p.DisposeAsync();
         }
     }
+
+    /// <summary>
+    /// R7P5. THE GRACE'S OWN TIMING, measured rather than taken from the builder's test. The wedged
+    /// heartbeating peer: when does the DROP actually land, at each of twelve phases against the
+    /// shipped 5 s beat, and is the caller's 2 s answer unchanged? PASSES if any phase survives the
+    /// grace or the caller's answer moves.
+    /// </summary>
+    [Fact]
+    public async Task R7P5_when_the_drop_lands_for_a_wedged_heartbeating_peer()
+    {
+        var survived = 0; var callerMax = 0;
+        for (var i = 0; i < 12; i++)
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await VerifyR6Probes.Peer.Connect(pipe, Cred().Secret,
+                VerifyR6Probes.PeerMode.HeartbeatOnly);
+            await Wait(async () => await connector.IsConnectedAsync());
+            await Task.Delay(i * 420);                       // twelve phases across the 5 s beat
+
+            var t = Stopwatch.StartNew();
+            Exception? ex = null;
+            try { await connector.CancelAllOrdersAsync("ATAS-X"); } catch (Exception e) { ex = e; }
+            var callerMs = (int)t.Elapsed.TotalMilliseconds;
+            callerMax = Math.Max(callerMax, callerMs);
+
+            int? dropAt = null;
+            while (t.Elapsed < TimeSpan.FromSeconds(14))
+            {
+                if (!await connector.IsConnectedAsync()) { dropAt = (int)t.Elapsed.TotalMilliseconds; break; }
+                await Task.Delay(100);
+            }
+            if (dropAt is null) survived++;
+            o.WriteLine($"  phase {i,2}: caller {callerMs,5} ms  drop at {(dropAt?.ToString() ?? "NEVER"),6} ms  " +
+                        $"beats={peer.FramesSent}  said={(ex!.Message.Contains("busy") ? "busy" : "not-responding")}");
+        }
+        o.WriteLine($"survived the grace = {survived} of 12;  caller's worst answer = {callerMax} ms");
+        Assert.True(survived > 0 || callerMax > 2600,
+            $"all twelve dropped at the grace and no caller waited longer than {callerMax} ms");
+    }
 }

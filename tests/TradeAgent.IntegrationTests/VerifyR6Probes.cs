@@ -164,10 +164,10 @@ public class VerifyR6Probes(ITestOutputHelper o)
         Assert.False(connected, "the answering bridge was KEPT — the keep direction holds");
     }
 
-    internal enum PeerMode { HeartbeatOnly, AnswersSlowly, ReadsButMute, AnswersAllButCancelAll }
+    public enum PeerMode { HeartbeatOnly, AnswersSlowly, ReadsButMute, AnswersAllButCancelAll }
 
     /// <summary>A peer whose single variable is what it does with the frames it is sent.</summary>
-    internal sealed class Peer : IAsyncDisposable
+    public sealed class Peer : IAsyncDisposable
     {
         readonly NamedPipeClientStream _p;
         readonly CancellationTokenSource _stop = new();
