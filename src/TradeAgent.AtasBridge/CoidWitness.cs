@@ -234,6 +234,11 @@ public sealed class CoidWitness : IDisposable
     const int MaxNoteChars = 400;
     const long MaxErrorLogBytes = 64 * 1024;
 
+    /// <summary>The generation one back, and the name the current log is moved aside under while a
+    /// rotation is in flight. Both are SCANNED — see <see cref="SidecarGenerations"/>.</summary>
+    const string RolledSuffix = ".1";
+    const string StagingSuffix = ".rotating";
+
     static readonly JsonSerializerOptions Opts = new()
     {
         WriteIndented = true,
@@ -547,8 +552,28 @@ public sealed class CoidWitness : IDisposable
     static Stream DefaultOpen(string path) =>
         new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
-    /// <summary>The real write: create or replace, whole file, one call. See <see cref="_writeSidecar"/>.</summary>
-    static void DefaultWriteSidecar(string path, string text) => File.WriteAllText(path, text);
+    /// <summary>
+    /// The real write: create or replace, whole file, one call — and FLUSHED TO THE DISK before it
+    /// returns. See <see cref="_writeSidecar"/>.
+    ///
+    /// The caller is <see cref="Rotate"/>, whose very next act destroys the generation this text
+    /// replaces. `File.WriteAllText` returns once the bytes are in the operating system's cache, so
+    /// the delete could reach the platter first and a power cut between them would leave neither
+    /// copy. <c>Flush(flushToDisk: true)</c> is what makes "written before destroyed" a fact about
+    /// the disk rather than about this process's view of it.
+    /// </summary>
+    static void DefaultWriteSidecar(string path, string text) => WriteDurably(path, text, FileMode.Create);
+
+    /// <summary>Appends and flushes to the disk. Same reason as <see cref="DefaultWriteSidecar"/>.</summary>
+    static void AppendDurably(string path, string text) => WriteDurably(path, text, FileMode.Append);
+
+    static void WriteDurably(string path, string text, FileMode mode)
+    {
+        using var stream = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        stream.Write(bytes, 0, bytes.Length);
+        stream.Flush(flushToDisk: true);
+    }
 
     /// <summary>
     /// Resolving the default path touches <see cref="Paths"/>, which creates directories. Guarded
@@ -1474,13 +1499,18 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     void Rotate(string log)
     {
-        var rolled = log + ".1";
-        var staging = log + ".rotating";
+        var rolled = log + RolledSuffix;
+        var staging = log + StagingSuffix;
 
-        // A leftover from a crash inside a previous rotation. Its content is already restated in the
-        // current log by step 3, so it is a duplicate rather than evidence.
-        try { if (File.Exists(staging)) File.Delete(staging); } catch (Exception) { }
-
+        // ASKED OF EVERY FILE A READER SCANS, AND ASKED BEFORE ANYTHING IS REMOVED.
+        //
+        // The staging name is one of those files now (see <see cref="SidecarGenerations"/>), so a
+        // leftover from a crash inside a PREVIOUS rotation is evidence rather than litter, and the
+        // line in it is carried like any other. It used to be deleted here, first, under the reading
+        // that its content is already restated in the current log — which is true of every rotation
+        // that COMPLETED and false of exactly the one that did not. Two rotations then did between
+        // them what neither does alone: the first hid the only unresolved line, the second removed
+        // it.
         var deciding = LastDecidingLine();
         var carry = deciding is not null
                     && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal)
@@ -1489,22 +1519,38 @@ public sealed class CoidWitness : IDisposable
 
         if (carry is null)
         {
+            // Nothing unresolved anywhere in the scanned set — a leftover has just been read and
+            // holds nothing that decides the state, so removing it destroys no evidence.
+            try { if (File.Exists(staging)) File.Delete(staging); } catch (Exception) { }
             try { File.Delete(rolled); } catch (Exception) { }
             File.Move(log, rolled);
             return;
         }
 
-        File.Move(log, staging);
-        _writeSidecar(log,
-            $"{DateTimeOffset.UtcNow:O} {SafetyPrefix}coid-witness carried an unresolved failure across a " +
-            $"sidecar rotation: {OneLine(carry)}" + Environment.NewLine);
+        // A LEFTOVER STAGING FILE MAY BE THE ONLY COPY OF THE LINE JUST READ, and the move below
+        // needs its name. So the line goes into the CURRENT log first — the file that is about to
+        // become the rotated generation — and only then is the leftover removed. Durably, because
+        // the next act destroys the copy this one replaces.
+        if (File.Exists(staging))
+        {
+            AppendDurably(log, Restatement(carry));
+            try { File.Delete(staging); } catch (Exception) { }
+        }
 
-        // AND ONLY NOW. Everything above this line is recoverable from one of the two generations a
-        // reader scans; the delete is the first act that destroys anything, so it comes last. Reverse
-        // these two and a restatement that does not land takes the gap with it.
+        File.Move(log, staging);
+        _writeSidecar(log, Restatement(carry));
+
+        // AND ONLY NOW. Everything above this line is readable from one of the THREE files a reader
+        // scans; the delete is the first act that destroys anything, so it comes last. Reverse these
+        // two and a restatement that does not land takes the gap with it.
         try { File.Delete(rolled); } catch (Exception) { }
         File.Move(staging, rolled);
     }
+
+    /// <summary>The one wording for a carried-forward failure, so both places that write it agree.</summary>
+    string Restatement(string carry) =>
+        $"{DateTimeOffset.UtcNow:O} {SafetyPrefix}coid-witness carried an unresolved failure across a " +
+        $"sidecar rotation: {OneLine(carry)}" + Environment.NewLine;
 
     /// <summary>
     /// Whether a sidecar file has anything in it — and, separately, whether asking was even possible.
@@ -1544,7 +1590,16 @@ public sealed class CoidWitness : IDisposable
     {
         if (ErrorLogPath is not { } log) yield break;
         yield return log;
-        yield return log + ".1";
+        // THE STAGING NAME IS SCANNED, AND THAT IS WHAT MAKES THE ROTATION WINDOW OBSERVABLE.
+        //
+        // `Rotate` moves the current log aside under this name before it can write the restatement
+        // into a fresh one. While it is not scanned, an unresolved failure living in the CURRENT log
+        // — the ordinary state, since safety events are unrationed and nothing moves one out of that
+        // file except a rotation — is invisible from the move until the restatement lands, and lost
+        // outright when the restatement never lands. Between the two generations because that is
+        // where it sits in age: newer than `.1`, older than whatever the new log now holds.
+        yield return log + StagingSuffix;
+        yield return log + RolledSuffix;
     }
 
     /// <summary>

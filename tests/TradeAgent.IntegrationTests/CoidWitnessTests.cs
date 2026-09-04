@@ -3048,6 +3048,151 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// THE ORDINARY STATE, AND THE WHOLE OF THE WINDOW RATHER THAN ONE POINT IN IT.
+    ///
+    /// The two tests above seed the unresolved failure into `.1` — one generation BACK — and then
+    /// rotate. In that arrangement `.1` is untouched until the last two statements of `Rotate`, so
+    /// the gap is readable throughout by construction: the tests prove the ordering they were
+    /// written for and cannot see the state next door.
+    ///
+    /// The ordinary state is the other one. Safety events are unrationed and the cap is 64 KiB, so
+    /// the usual way a machine arrives here is an unresolved ERROR sitting in the CURRENT log with a
+    /// lot of ordinary traffic after it, and nothing in `.1` at all. That log is the one being
+    /// rotated — it is moved aside, and if the staging name is not scanned the gap is invisible from
+    /// the move until the restatement lands, and lost outright if the restatement never lands.
+    ///
+    /// So the rule is stated as a rule about EVERY instant, and the instants are enumerated. Four of
+    /// them exist inside `Rotate`; each is built here and read by a witness constructed at that
+    /// moment, which is exactly what the next process would see.
+    /// </summary>
+    [Fact]
+    public void A_gap_in_the_current_log_is_readable_at_every_instant_of_the_rotation()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // No `.1` whatever: a machine whose sidecar has never rotated, holding one unresolved
+        // failure and then enough ordinary traffic to tip the file over.
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow.AddMinutes(-5):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+        File.AppendAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+
+        var readings = new List<string>();
+        void Read(string step) => readings.Add($"{step}: {new CoidWitness(File_).Trouble ?? "<null>"}");
+
+        Read("1 before the rotation");
+        WriteForeignLeftover(1);                // the diagnostic whose append tips the file over
+
+        var w = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            // 2 — the current log has been moved aside and the restatement has not landed. This is
+            //     the instant a machine that died mid-rotation leaves behind.
+            Read("2 after the move, before the restatement");
+            File.WriteAllText(path, text);
+            // 3 — the restatement is on the disk and the older generation has not been deleted.
+            Read("3 after the restatement, before the delete");
+            // 4 — the older generation is destroyed and the staging file has not yet taken its name.
+            //     Built here rather than seamed: it is a STATE, and the reading is what matters.
+            try { File.Delete(Sidecar + ".1"); } catch (IOException) { }
+            Read("4 after the delete, before the staging file takes its name");
+        });
+        Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        w.Dispose();
+
+        Assert.DoesNotContain("<null>", string.Join(Environment.NewLine, readings));
+    }
+
+    /// <summary>
+    /// AND THE WINDOW DOES NOT CLOSE WHEN THE RESTATEMENT NEVER LANDS.
+    ///
+    /// That is the exact failure `_writeSidecar` exists to stand in for — a full disk, a directory a
+    /// backup tool made read-only, a scanner holding the name — and `Rotate` runs inside
+    /// `AppendToErrorLog`'s catch, so none of them stops the process. They leave the sidecar in
+    /// whatever state the ordering produced, and that state is what the next start reads.
+    ///
+    /// With the gap in the current log and the staging name unscanned, the next start read a healthy
+    /// witness: `Trouble` null, `io:noted`, and `SupportsClientOrderId` therefore true over a lost
+    /// write-ahead record. The last copy was then scheduled for deletion by the next rotation.
+    /// </summary>
+    [Fact]
+    public void A_restatement_that_never_lands_leaves_the_gap_where_a_reader_still_finds_it()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow.AddMinutes(-5):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+        File.AppendAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);
+
+        WriteForeignLeftover(1);
+
+        string? whatTheNextStartSees = null;
+        string[] filesThen = [];
+        var w = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            whatTheNextStartSees = new CoidWitness(File_).Trouble;
+            filesThen = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+                                 .Select(Path.GetFileName).Order().ToArray()!;
+            throw new IOException("no space left on device");
+        });
+        w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        // THE STAGING FILE IS THE ONLY COPY THERE IS at that instant — the current log has been
+        // moved into it and the replacement does not exist — so the whole of the claim is that a
+        // reader scans that name. Asserted rather than assumed, because if a later change gives the
+        // rotation a second copy somewhere this test should say so rather than quietly still pass.
+        Assert.Equal(["coid-witness.errors.log.rotating"], filesThen);
+        Assert.NotNull(whatTheNextStartSees);
+    }
+
+    /// <summary>
+    /// AND THE ROTATION AFTER IT DOES NOT FINISH THE JOB OF LOSING IT.
+    ///
+    /// A staging file left by a crash was deleted at the top of the next rotation, under a comment
+    /// saying its content is already restated in the current log — which is true of every rotation
+    /// that COMPLETED and false of exactly the one that did not. Two rotations then combine to do
+    /// what neither does alone: the first hides the only unresolved line, the second removes it.
+    ///
+    /// The leftover is scanned now, so the line is read before anything is removed and carried like
+    /// any other — and it is carried BEFORE the leftover is deleted, because at that instant the
+    /// leftover is the only copy there is.
+    /// </summary>
+    [Fact]
+    public void A_rotation_does_not_delete_a_staging_file_that_still_holds_the_gap()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // Exactly what the previous test leaves behind: the gap in the staging file, nothing in
+        // `.1`, and a current log holding ordinary traffic and no deciding line.
+        File.WriteAllText(Sidecar + ".rotating",
+            $"{DateTimeOffset.UtcNow.AddMinutes(-9):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);      // the leftover is evidence, and is read as evidence
+
+        WriteForeignLeftover(1);                // tips the current log over into a second rotation
+
+        var w = Session();
+        Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        w.Dispose();
+
+        // The rotating session resolved the gap it carried, which is round 7's invariant — so what
+        // is asserted is that the CARRY happened at all: the line reached the scanned set before the
+        // leftover was removed. Without it the sidecar has no memory of TA-GAP anywhere.
+        var everything = string.Join("\n", Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+                                                    .Select(File.ReadAllText));
+        Assert.Contains("TA-GAP", everything);
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
