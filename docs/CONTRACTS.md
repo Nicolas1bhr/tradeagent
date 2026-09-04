@@ -14,6 +14,18 @@ Two things carry the safety of the whole system:
 safe, and refuses `LIVE_AUTONOMOUS` when it is false. A connector must report this truthfully;
 overstating it is the most dangerous lie a connector can tell.
 
+**The residual under `SupportsClientOrderId`, and it is a write permission rather than a bug.** The
+capability is `ClientOrderIdProof.ProvesRoundTrip() && AdapterTeardown.Trouble is null`, and `Trouble`
+is non-null whenever this run cannot READ the sidecar set beside `coid-witness.json` — deliberately,
+because a run that cannot tell whether a durability gap is open must not claim rule 1 is proven. The
+consequence is that **any process that can write in `Paths.BridgeDir` can drop the capability with one
+unreadable file**: a `coid-witness.errors.log*` name it holds open, or one whose ACL denies this
+process, and the bridge falls back from `LIVE_AUTONOMOUS` to asking. It fails in the safe direction and
+it is not fixable by classifying harder — the alternative is reading an unreadable file as an empty one,
+which is the conflation U14 exists to end. `Paths.BridgeDir` is under `%LOCALAPPDATA%\TradeAgent`, so
+the party that can do this is already the logged-in user or something running as them; it is recorded
+here as the price of the fail-closed reading, not as a defence.
+
 **The exception distinction** —
 
 | Throw | Meaning | Gateway's response |

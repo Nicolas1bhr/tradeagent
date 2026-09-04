@@ -1002,4 +1002,45 @@ public class WitnessSnapshotTests : IDisposable
         Assert.True(reader.Notes.HasFlag(WitnessNotes.RefusedWriter));
         reader.Dispose();
     }
+
+    // ============================================== U14b item 5, the cap is in bytes and so is the count
+
+    /// <summary>
+    /// U14b ITEM 5. THE SIZE BOUND WAS COUNTED IN UTF-16 CODE UNITS AND COMPARED AGAINST A BYTE CAP.
+    ///
+    /// <c>MaxErrorLogBytes</c> is 64 KiB of DISK, the file is written as UTF-8, and the running total
+    /// was <c>string.Length</c> — one per UTF-16 code unit. Every accented character in an OS error
+    /// message weighs two bytes and counted as one; every CJK character in a path weighs three and
+    /// counted as one. On a machine whose error strings are not ASCII the log grew to two or three
+    /// times its cap before anything rotated it, and the bound is not decorative: it is what keeps an
+    /// unrationed stream of safety events finite.
+    ///
+    /// IT HAS TO BITE PAST THE FIRST APPEND. The count is SEEDED once, from the snapshot, and the
+    /// seed is a property of the file rather than of the arithmetic — so one append over a
+    /// pre-loaded file measures nothing. What is wrong is the accumulation, and only a run of
+    /// appends shows it.
+    ///
+    /// The wide characters get in through the CLAIM, which is the caller's own string and is the
+    /// first thing the failure line says.
+    /// </summary>
+    [Fact]
+    public void The_size_bound_counts_the_bytes_the_sidecar_is_written_in()
+    {
+        var wide = new string('あ', 300);        // three bytes each in UTF-8, one unit each in Length
+
+        // Every rewrite is refused, so every call writes one unrationed SAFETY line naming the claim.
+        var witness = new CoidWitness(File_, replace: (_, _) =>
+            throw new InvalidOperationException("the rewrite is refused"));
+
+        for (var i = 0; i < 110; i++)
+            Assert.False(witness.Submitting(wide + i, "SIM", "ES", "Buy", 1m, null));
+        witness.Dispose();
+
+        // 110 lines of about 1 kB each is ~113 kB against a 64 kB cap. Counted as UTF-16 units the
+        // same 110 lines come to ~48 kB and nothing rotates at all.
+        var current = new FileInfo(Sidecar).Length;
+        Assert.True(File.Exists(Sidecar + ".1"),
+            $"the log passed the cap without rotating: {current} bytes in the current log");
+        Assert.True(current <= 64 * 1024, $"the current log is {current} bytes, past the 65536 byte cap");
+    }
 }

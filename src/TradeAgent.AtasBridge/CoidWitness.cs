@@ -709,9 +709,6 @@ public sealed class CoidWitness : IDisposable
     static void DefaultMoveSidecar(string source, string destination, bool overwrite) =>
         File.Move(source, destination, overwrite);
 
-    /// <summary>Appends and flushes to the disk. Same reason as <see cref="DefaultWriteSidecar"/>.</summary>
-    static void AppendDurably(string path, string text) => WriteDurably(path, text, FileMode.Append);
-
     /// <summary>
     /// WHICH SIDECAR WRITES ARE FLUSHED TO THE PLATTER, AND WHICH ARE NOT, IN ONE PLACE.
     ///
@@ -733,6 +730,16 @@ public sealed class CoidWitness : IDisposable
     /// does not, because the page cache survives it. What IS measured is the ORDER — see
     /// <see cref="Rotate"/>.
     /// </summary>
+    /// <summary>
+    /// WHAT THE DISK WILL WEIGH, NOT HOW MANY <c>char</c>s THE STRING HOLDS. The sidecar is written
+    /// as UTF-8 and bounded in BYTES, and a <c>string.Length</c> counts UTF-16 code units: every
+    /// accented character in an OS error message weighs two bytes and counted as one, every CJK
+    /// character in a path weighs three and counted as one. The bound is not decorative — it is what
+    /// keeps an unrationed stream of safety events finite — so a log on a machine whose error
+    /// strings are not ASCII grew to two or three times its cap before anything rotated it.
+    /// </summary>
+    static long ByteCount(string text) => System.Text.Encoding.UTF8.GetByteCount(text);
+
     static void WriteDurably(string path, string text, FileMode mode)
     {
         using var stream = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
@@ -1856,7 +1863,7 @@ public sealed class CoidWitness : IDisposable
         _moveSidecar(log, rolled, false);
         _moveSidecar(pending, log, false);
 
-        _sidecarBytes = carry.Length;
+        _sidecarBytes = ByteCount(carry);
         Invalidate();
     }
 
@@ -2180,10 +2187,17 @@ public sealed class CoidWitness : IDisposable
         public IReadOnlyList<string> Lines(string path) =>
             _lines.TryGetValue(path, out var lines) ? lines : [];
 
-        /// <summary>What the listing said this file weighs. Zero for a name that is not there.</summary>
+        /// <summary>
+        /// What this file weighs IN BYTES. Zero for a name that is not there.
+        ///
+        /// It is the seed for the writer's own byte count, and it is compared against a byte cap, so
+        /// it is measured the way the file is written: UTF-8. Summing <c>string.Length</c> counted
+        /// UTF-16 code units, which is the same number only for ASCII — and the lines that land here
+        /// are exception messages and filesystem paths, which on most machines are not.
+        /// </summary>
         public long Length(string path) =>
             _lines.TryGetValue(path, out var lines)
-                ? lines.Sum(l => (long)l.Length + Environment.NewLine.Length)
+                ? lines.Sum(l => (long)System.Text.Encoding.UTF8.GetByteCount(l) + Environment.NewLine.Length)
                 : 0;
 
         /// <summary>
@@ -2833,11 +2847,11 @@ public sealed class CoidWitness : IDisposable
                     if (!Resume(log)) return;
                     _sidecarBytes = Snapshot().Length(log);
                 }
-                if (_sidecarBytes + text.Length > MaxErrorLogBytes) Rotate(log);
+                if (_sidecarBytes + ByteCount(text) > MaxErrorLogBytes) Rotate(log);
 
                 // ONE WRITER PER FILE, so this append has nobody to race. See SidecarPath.
                 File.AppendAllText(log, text);
-                _sidecarBytes += text.Length;
+                _sidecarBytes += ByteCount(text);
                 return;
             }
             catch (Exception) when (attempt < SidecarAttempts) { Thread.Sleep(SidecarBackoffMs * attempt); }
