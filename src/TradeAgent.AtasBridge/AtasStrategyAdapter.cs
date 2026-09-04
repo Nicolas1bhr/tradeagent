@@ -224,8 +224,16 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// The witness side of that is closed too — `Identified` no longer leases before it knows it has
     /// something to write — but a stopped strategy should not be reaching for the file at all, and
     /// this says so at the one place that decides whether this instance is still anybody's bridge.
+    ///
+    /// IT IS A SEPARATE CLASS BECAUSE THIS FILE CANNOT BE COMPILED OFF A WINDOWS BOX WITH ATAS ON
+    /// IT. Two defects were found in the teardown below — a check taken outside the lock the release
+    /// takes, and a release that an exception could skip — and neither could be given a failing test
+    /// while it lived here. The rule needs no ATAS type at all, so it lives in
+    /// <see cref="AdapterTeardown"/>, where <c>AdapterTeardownTests</c> drives both interleavings
+    /// against a real <see cref="CoidWitness"/> on any machine. Same move, same reason, as
+    /// <see cref="AdapterTouchedOrders"/> and <see cref="AtasCall"/>.
     /// </summary>
-    volatile bool _stopped;
+    readonly AdapterTeardown _teardown = new();
 
     /// <summary>
     /// How many prior-session identifiers <see cref="Describe"/> re-checks per call.
@@ -436,7 +444,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     void StartBridge()
     {
         TryBind();
-        _stopped = false;
+        _teardown.Started();
         BridgeServer bridge;
         lock (_gate)
         {
@@ -481,12 +489,8 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// That is a visibly dead bridge, which the heartbeat timeout already handles, and it is
     /// strictly better than holding ATAS's thread forever.
     /// </summary>
-    void StopBridge()
+    void StopBridge() => _teardown.Stop(steps: () =>
     {
-        // FIRST, so that anything still holding a reference to this instance stops acting through it
-        // before the teardown below has finished — the fan runs on ATAS's thread and does not wait.
-        _stopped = true;
-
         BridgeServer? bridge;
         lock (_gate) { bridge = _bridge; _bridge = null; }
 
@@ -498,15 +502,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             catch (Exception) { /* see above: nothing is pending on this, and teardown must finish */ }
         }
 
+        // NOT WRAPPED IN A CATCH OF ITS OWN, AND THAT IS THE POINT OF THE finally IT NOW SITS IN.
+        // This calls into ATAS while ATAS is taking the strategy down — the one moment the platform
+        // is most likely to answer with an exception — and as two plain statements an unsubscribe
+        // that threw skipped the witness release below and left the lease held on a terminal path.
+        // AdapterTeardown.Stop releases in a finally, so the exception still reaches Guard and no
+        // longer decides whether the release happens.
         UntrackSecurities();
-
-        // AND THE WITNESS STOPS BEING OURS. The lease is held for the life of the owner, and a
-        // strategy ATAS has taken down is not the owner of anything — leaving it held would refuse
-        // the witness to a bridge started afterwards in the same ATAS process, for no reason. The
-        // instance stays usable: if this strategy is started again, its next write takes the lease
-        // back. Process death releases it too, which is what makes a crash harmless.
-        try { _witness.Dispose(); } catch (Exception) { /* teardown must finish */ }
-    }
+    },
+    // AND THE WITNESS STOPS BEING OURS. The lease is held for the life of the owner, and a strategy
+    // ATAS has taken down is not the owner of anything — leaving it held would refuse the witness to
+    // a bridge started afterwards in the same ATAS process, for no reason. The instance stays usable:
+    // if this strategy is started again, its next write takes the lease back. Process death releases
+    // it too, which is what makes a crash harmless.
+    releaseWitness: _witness.Dispose);
 
     // ---------------------------------------------------------------- the bound surfaces
 
@@ -2033,13 +2042,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // comment — restored from a workspace, or placed by hand with the same text — is a
                 // no-op here, which is exactly the guard that stops such an order writing its own
                 // id into the record and then matching itself on the next read-back.
-                // A STOPPED STRATEGY RECORDS NOTHING. See _stopped: this fan is still subscribed
-                // after the teardown, and every call here reaches for the witness.
-                if (!_stopped)
-                {
-                    _witness.Identified(o.Comment, o.Id);
+                // A STOPPED STRATEGY RECORDS NOTHING. See _teardown: this fan is still subscribed
+                // after the teardown, and every call here reaches for the witness. The check and the
+                // write are one act under the lock the release takes — asking the flag and then
+                // writing left a window the width of the whole write, in which the lease was
+                // released and then taken straight back by a strategy that no longer exists.
+                //
+                // ProveClientOrderId is deliberately OUTSIDE it: it scans ATAS's order book, and
+                // holding a lock that teardown waits on across that scan would put an unbounded wait
+                // on ATAS's own thread — the shape AtasCall exists to keep out of this file. It runs
+                // only when the write was allowed, and it takes no lease.
+                if (_teardown.Record(() => _witness.Identified(o.Comment, o.Id)))
                     ProveClientOrderId(o.Comment);
-                }
             }
             OrderChanged?.Invoke(ToOrder(o, null));
         }

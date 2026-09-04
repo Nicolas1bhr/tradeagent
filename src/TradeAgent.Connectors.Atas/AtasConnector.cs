@@ -746,13 +746,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // claiming an old version buys an impostor nothing at all.
             if (!_authenticated)
             {
-                NoteUnauthenticated(UnauthenticatedBridge.PresentedNoProof(hello.BridgeVersion, hello.AtasVersion));
+                var unproved = UnauthenticatedBridge.PresentedNoProof(hello.BridgeVersion, hello.AtasVersion);
+                NoteUnauthenticated(unproved);
                 _hello = null;
                 _connected = false;
                 // Told on the wire too, exactly as Answer() tells a peer whose proof was wrong. A
                 // bridge of this build never reaches here, so this reaches only something that is
                 // not one — but a refusal nobody can read is how a session gets spent.
-                await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = _unauthenticated.Reason });
+                await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = unproved.Reason });
                 ConnectionChanged?.Invoke(HealthState.FAILED);
                 return false;
             }
@@ -840,13 +841,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // proof is the bridge this installation published a secret for, so it is dropped rather
             // than tolerated. In practice this is a stale bridge.auth, not an attack, which is why
             // the reason names the file.
-            NoteUnauthenticated(new UnauthenticatedBridge(
+            var wrongProof = new UnauthenticatedBridge(
                 "the peer on the bridge pipe could not prove it holds this installation's bridge " +
-                $"secret ({BridgePipeAuth.CredentialFile})"));
+                $"secret ({BridgePipeAuth.CredentialFile})");
+            NoteUnauthenticated(wrongProof);
             _authenticated = false;
             _connected = false;
             _hello = null;
-            await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = _unauthenticated.Reason });
+            await SendFrame(new { v = Versions.BridgeProtocolVersion, op = BridgePipeAuth.Refused, error = wrongProof.Reason });
             ConnectionChanged?.Invoke(HealthState.FAILED);
             return false;
         }
