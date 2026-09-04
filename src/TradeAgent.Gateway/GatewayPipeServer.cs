@@ -101,6 +101,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     readonly System.Collections.Concurrent.ConcurrentDictionary<Task, byte> _handlers = new();
 
     /// <summary>
+    /// How many CONNECTION handlers are still running. Exposed so a test can assert the premise it
+    /// claims to have created — that the agent has gone and its handler is finished — rather than
+    /// assuming it from a sleep.
+    /// </summary>
+    public int LiveHandlerCount => _handlers.Count;
+
+    /// <summary>
     /// How long <see cref="DisposeAsync"/> waits for in-flight handlers once their pipes are shut.
     ///
     /// ARITHMETIC, not measured, and DERIVED FROM THE CONNECTOR'S WORST CASE rather than picked.
@@ -1390,40 +1397,53 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         //    request that was mid-write-back, leaving an order that may have reached the broker with
         //    no record at all. This is not another chance to finish the operation; that was step 3.
         //    It is time to write down an outcome that is already decided.
+        //    It is skipped when there is nothing to wait for; the REPORT below is not, because the
+        //    report is about REQUESTS.
         if (handlers.Length > 0)
         {
             try { await Task.WhenAll(handlers).WaitAsync(SettleAfterCancelTimeout); }
-            catch (Exception) { /* the count below is what matters */ }
-
-            // COUNTED AFTER THE UNWIND, and counted on the STATE rather than on the symptom.
-            //
-            // It counted handler TASKS still running, which is not what this line is about. A
-            // connector that HONOURS its cancellation token unwinds the instant disposal cancels it,
-            // so the handler finishes — while `TradingGateway.ModifyAsync` catches only
-            // `ConnectorRejectedException` and `ConnectorTransportException` and lets the
-            // cancellation escape, leaving the row DISPATCHING and unflagged. `ReconcileAsync` scans
-            // `NeedingReconciliation()` alone, so nothing will ever settle it, and the only trace an
-            // operator gets said nothing at all (verifier round-9 F-2, measured: `DISPATCHING rows =
-            // 1`, `handlers_did_not_finish = (not logged)`).
-            //
-            // So both are reported, and the REQUEST is the one that decides whether this fires. It
-            // is named, because "something was abandoned" is not something anybody can act on.
-            // Settling the row belongs to whoever owns the request — routed to U2c-1; refusing to
-            // return silently belongs here.
-            var unfinished = handlers.Count(h => !h.IsCompleted);
-            var unsettled = gateway.Requests.Query("execution_state='DISPATCHING'");
-            if (unfinished > 0 || unsettled.Count > 0)
-                gateway.Log.Engineering("Ipc", "handlers_did_not_finish", "error",
-                    metadataJson: Json.Write(new
-                    {
-                        unfinished,
-                        of = handlers.Length,
-                        unsettled = unsettled.Count,
-                        requests = unsettled.Select(r => r.RequestId).ToArray(),
-                        drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds,
-                        settle_timeout_ms = (int)SettleAfterCancelTimeout.TotalMilliseconds
-                    }));
+            catch (Exception) { /* the report below is what matters */ }
         }
+
+        // 6. AND THE REPORT, UNCONDITIONALLY — there is no `if` in front of it, and that is the
+        //    whole of this step rather than an accident of where it sits.
+        //
+        //    COUNTED AFTER THE UNWIND, and counted on the STATE rather than on the symptom. It
+        //    counted handler TASKS still running, which is not what this line is about. A connector
+        //    that HONOURS its cancellation token unwinds the instant disposal cancels it, so the
+        //    handler finishes — while `TradingGateway.ModifyAsync` catches only
+        //    `ConnectorRejectedException` and `ConnectorTransportException` and lets a cancellation
+        //    or a timeout escape, leaving the row DISPATCHING and unflagged. `ReconcileAsync` scans
+        //    `NeedingReconciliation()` alone, so nothing will ever settle it, and the only trace an
+        //    operator gets said nothing at all (verifier round-9 F-2, measured: `DISPATCHING rows =
+        //    1`, `handlers_did_not_finish = (not logged)`).
+        //
+        //    ROUND 10 FIXED THE COUNT AND LEFT THE GUARD, and the guard is the same defect one level
+        //    up. `_handlers` holds per-CONNECTION tasks, each of which removes itself on completion,
+        //    read AFTER step 2 disposed every connection — so `handlers.Length` is a fact about
+        //    whether an AGENT WAS STILL ATTACHED, and the promise not to return silently was
+        //    conditioned on it. In the most ordinary shutdown there is — the agent CLI exits, the
+        //    operator then closes the app — it is zero, and disposal returned in 3 ms with an
+        //    unsettled DISPATCHING row and nothing logged (verifier round-11 F-1, measured with two
+        //    probes differing in that one thing).
+        //
+        //    The query is about REQUESTS, so it runs whatever became of the connections that made
+        //    them. Both facts are reported and either one fires it; the requests are NAMED, because
+        //    "something was abandoned" is not something anybody can act on. Settling the row belongs
+        //    to whoever owns the request — routed to U2c-1; refusing to return silently belongs here.
+        var unfinished = handlers.Count(h => !h.IsCompleted);
+        var unsettled = gateway.Requests.Query("execution_state='DISPATCHING'");
+        if (unfinished > 0 || unsettled.Count > 0)
+            gateway.Log.Engineering("Ipc", "handlers_did_not_finish", "error",
+                metadataJson: Json.Write(new
+                {
+                    unfinished,
+                    of = handlers.Length,
+                    unsettled = unsettled.Count,
+                    requests = unsettled.Select(r => r.RequestId).ToArray(),
+                    drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds,
+                    settle_timeout_ms = (int)SettleAfterCancelTimeout.TotalMilliseconds
+                }));
 
         _cts.Dispose();
         _accept.Dispose();
