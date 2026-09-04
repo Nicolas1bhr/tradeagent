@@ -26,8 +26,23 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// shutdown drain is DERIVED from this number, so the connector used to measure whether the
     /// drain covers a handler was quietly telling the drain to be too short.
     /// </summary>
-    public TimeSpan WorstCaseOperationPath =>
-        TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
+    public TimeSpan WorstCaseOperationPath
+    {
+        get => _worstCase ?? TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
+
+        // A CONNECTOR THAT UNDER-REPORTS ITS OWN WORST CASE, which is a real shape and not only a
+        // test convenience: a vendor SDK call that blocks for longer than the vendor admits is
+        // exactly what the shutdown drain's `handlers_did_not_finish` error exists to report.
+        //
+        // It replaces what the two tests of that error used to do — set a deliberately undersized
+        // `HandlerDrainTimeout` — which stopped being possible when an explicit drain was made
+        // unable to shorten the bound. Setting it HERE is the more honest fixture anyway: the drain
+        // is left to derive itself correctly from what it is told, and what it is told is wrong,
+        // which is a situation an operator can actually be in.
+        init => _worstCase = value;
+    }
+
+    readonly TimeSpan? _worstCase;
 
     /// <summary>The same two seconds the real connector gives an emergency, so tests measure the rule.</summary>
     public TimeSpan EmergencyBudget { get; init; } = TimeSpan.FromSeconds(2);
