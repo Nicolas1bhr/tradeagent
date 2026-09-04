@@ -12,6 +12,13 @@ or explicitly marked not verified. **Keep it that way.** If you cannot quote the
 "NOT VERIFIED" and say what you tried. There is no third category, and the words *should work*,
 *looks correct*, *probably* and *I believe* do not belong in it.
 
+## How we build
+
+**`docs/HOW-WE-BUILD.md` is the process, and it is short on purpose.** A fresh builder builds a unit in one pass, the
+manager lands it in one pass, the money path is reviewed once per milestone, and a builder that cannot fix an item is
+replaced by a fresh one rather than asked again. It deliberately does not import the sibling projects' round-based
+triad; `docs/hardening/` is the frozen record of the three days that did. Work in flight is whatever is in `docs/briefs/`.
+
 ## The product rule that overrides convenience
 
 **The user never sees a terminal. Not once.** That is what is being sold — the underlying capability
@@ -62,7 +69,7 @@ them and do not let a note touch a material row — a record the observed party 
 
 ```bash
 dotnet build TradeAgent.sln
-dotnet test TradeAgent.sln        # 298 tests; green is a precondition for packaging, not a report
+dotnet test TradeAgent.sln        # 329 tests; green is a precondition for packaging, not a report
 tools/mac-run.sh                  # run the UI locally — seconds per iteration
 tools/mac-shot.sh /tmp/ui.png     # capture only the app window
 ```
