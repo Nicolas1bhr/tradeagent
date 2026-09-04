@@ -1535,8 +1535,19 @@ public sealed class CoidWitness : IDisposable
                 failed = false;
                 return reader.ReadToEnd();
             }
+            // ABSENCE IS THIS ONE EXCEPTION AND NO OTHER. The file has never been written here, which
+            // is the only outcome a write may proceed against.
             catch (FileNotFoundException) { failed = false; return null; }
-            catch (DirectoryNotFoundException) { failed = false; return null; }
+
+            // AND A MISSING DIRECTORY IS THE OPPOSITE KIND OF FACT, however similar the exception
+            // looks. It says the folder this machine's whole history lives in is gone — unmounted,
+            // removed, renamed by a cleanup — not that nothing was ever written. Classified as
+            // absence it invites the build to write a fresh file over a history it could not see,
+            // and it told an operator the witness "changed underneath this writer", which sends them
+            // hunting a second bridge instead of the folder that is missing. The ratified rule for
+            // this case is already on the record: a machine with no bridge directory refuses every
+            // order rather than trade without a write-ahead record.
+            catch (DirectoryNotFoundException) { failed = true; return null; }
             catch (Exception) when (attempt < 3) { Thread.Sleep(20); }
             catch (Exception) { failed = true; return null; }
         }

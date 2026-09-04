@@ -1072,6 +1072,47 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A MISSING BRIDGE DIRECTORY IS UNREADABLE, NOT ABSENT — the last member of the F17 family.
+    ///
+    /// Absence is exactly `FileNotFoundException` on the committed path: the file has never been
+    /// written, and that is the only outcome a write may proceed against. `DirectoryNotFoundException`
+    /// was classified with it, and it is the opposite kind of fact — the folder this machine's whole
+    /// history lives in is gone: unmounted, removed, renamed by a cleanup. The ratified consequence
+    /// for that case is already on the record ("a machine with no bridge directory refuses every
+    /// order rather than trade without a write-ahead record"), and classifying it as absence is how a
+    /// build would come to write a fresh file over a history it could not see.
+    ///
+    /// What it costs today is the DIAGNOSIS, which is the same thing round 6 measured for the read
+    /// and the compare-and-swap: the writer is refused either way, and it is told the witness
+    /// "changed underneath this writer" — sending an operator to hunt a second bridge that is not
+    /// there, instead of to the folder that is missing.
+    /// </summary>
+    [Fact]
+    public void A_missing_bridge_directory_is_unreadable_rather_than_absent()
+    {
+        var w = Session();
+        Assert.True(w.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
+        w.Identified("TA-A", "BRK-A");
+
+        // The folder goes out from under a LIVE witness that already holds its lease, so the refusal
+        // has to come from the read rather than from the lock.
+        var moved = _dir + "-moved";
+        Directory.Move(_dir, moved);
+        try
+        {
+            Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
+            Assert.Contains("could not be read", w.Trouble);
+            Assert.DoesNotContain("changed underneath", w.Trouble);
+            Assert.False(Directory.Exists(_dir), "nothing was recreated under the witness path");
+        }
+        finally
+        {
+            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch (IOException) { }
+            Directory.Move(moved, _dir);
+        }
+    }
+
+    /// <summary>
     /// INVALID BYTES ARE NOT A VALIDATED ANCHOR, AND FINGERPRINT ALONE IS NOT LINEAGE.
     ///
     /// When the committed file existed but did not parse, its generation was unknowable, so the
