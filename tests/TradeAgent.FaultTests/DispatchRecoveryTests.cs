@@ -49,6 +49,8 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public bool ModifyIgnoresTheRequest;
     /// <summary>Rounds the prices on the returned order to a tick grid, the way a real platform does.</summary>
     public decimal? ModifyRoundsPricesTo;
+    /// <summary>Rewrites the order a modify ANSWERS with, without touching the book.</summary>
+    public Func<OrderInfo, OrderInfo>? RewriteModified;
     public bool CancelDoesNotReachTheBook;
     public bool CancelAllDoesNotReachTheBook;
     /// <summary>Rewrites the ids the sweep reports back, so a partial answer can be scripted.</summary>
@@ -124,7 +126,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
                 LimitPrice = o.LimitPrice is { } l ? Math.Round(l / tick, MidpointRounding.AwayFromZero) * tick : null,
                 StopPrice = o.StopPrice is { } st ? Math.Round(st / tick, MidpointRounding.AwayFromZero) * tick : null
             };
-        return o;
+        return RewriteModified?.Invoke(o) ?? o;
     }
 
     public async Task CancelOrderAsync(string id, CancellationToken ct = default)
@@ -1660,11 +1662,13 @@ public class TickNormalizedModifyTests
     }
 
     /// <summary>
-    /// A price that did not move is unconfirmed — with one stated exception. ROUND 3 accepts any
-    /// on-grid price within ONE TICK of the request as applied, whichever way the platform rounded,
-    /// so a request smaller than the grid can express (4000.13 against a 0.25 grid, order at 4000)
-    /// now reads as applied. That is the cost of not pausing on every rounded price, and it is
-    /// bounded by one tick: this test pins the boundary on both sides.
+    /// A PRICE THAT DID NOT MOVE IS UNCONFIRMED, WITH NO EXCEPTION — and round 2 had one.
+    ///
+    /// It accepted any on-grid price within one tick of the request, so a request smaller than the
+    /// grid can express (4000.13 against a 0.25 grid, on an order resting at 4000) came back as the
+    /// UNTOUCHED price and read as applied. Rounding cannot be told from being ignored by the price
+    /// alone — but it can be told by the price that was there before, which the dispatcher now
+    /// records. Both halves of this test are a platform that did nothing; both are unconfirmed.
     /// </summary>
     [Fact]
     public async Task A_price_that_did_not_move_by_more_than_a_tick_is_still_unconfirmed()
@@ -1673,12 +1677,16 @@ public class TickNormalizedModifyTests
         using var dbh = db;
         c.ModifyIgnoresTheRequest = true;                     // returns the order at 4000, unchanged
 
-        // Inside one tick of the untouched price: indistinguishable from a rounding, so it is taken
-        // as applied. Stated, not hidden.
+        // Inside one tick of the untouched price: it IS the untouched price, so it settles nothing.
         var inside = await gw.ModifyAsync(new AgentContext("a"), "tick-inside", placed.ConnectorOrderId!, null, 4000.13m, null);
-        Assert.Equal(ExecutionState.ACKNOWLEDGED, inside.State);
+        Assert.Equal(ExecutionState.UNKNOWN, inside.State);
+        Assert.True(inside.NeedsReconciliation);
 
-        // Further than one tick and unmoved: no rounding explains that, so it is unconfirmed.
+        // The owner settles that one by hand, so the next modification is allowed to be sent at all.
+        gw.ForceResolve("tick-inside", ExecutionState.REJECTED, "checked in ATAS: the price never moved");
+        await gw.RefreshHealthAsync();
+
+        // Further than one tick and unmoved: no rounding explains that either.
         var outside = await gw.ModifyAsync(new AgentContext("a"), "tick-outside", placed.ConnectorOrderId!, null, 4242m, null);
         Assert.Equal(ExecutionState.UNKNOWN, outside.State);
         Assert.True(outside.NeedsReconciliation);
@@ -2628,5 +2636,143 @@ public class DefiniteOutcomeThatCannotBeWrittenTests
         Assert.False(placed.NeedsReconciliation);
         Assert.False(gw.HasUnconfirmedWork());
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
+
+// =================================================================================================
+// ROUND 3 · R6 — a modify is confirmed by the ORDER THAT WAS NAMED carrying what was ASKED
+// =================================================================================================
+
+public class ModifyVerdictTests
+{
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, ExecutionRequest Placed)> Resting(
+        decimal limit = 4000m, GatewayOptions? options = null)
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "r6-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, limit, null, TimeInForce.Day, null));
+        return (gw, c, db, placed);
+    }
+
+    /// <summary>
+    /// AN ANSWER ABOUT ANOTHER ORDER IS NOT THIS ORDER'S ANSWER, and nothing used to check.
+    ///
+    /// The verdict read the state, the quantity and the prices off whatever came back without once
+    /// asking whether it was the order that had been named. A platform that answers about a
+    /// different order — the replacement it minted under a new id, the wrong one on a busy account,
+    /// the same id on another account — was believed, and the ledger recorded a stop moved on an
+    /// order nobody had touched. All three shapes are the same defect and settle nothing.
+    /// </summary>
+    [Theory]
+    [InlineData("id")]
+    [InlineData("symbol")]
+    [InlineData("account")]
+    public async Task An_answer_about_another_order_confirms_nothing(string which)
+    {
+        var (gw, c, db, placed) = await Resting();
+        using var dbh = db;
+        c.RewriteModified = o => which switch
+        {
+            "id" => o with { ConnectorOrderId = o.ConnectorOrderId + "-REPLACED" },
+            "symbol" => o with { Symbol = "NQ" },
+            _ => o with { AccountId = o.AccountId + "-OTHER" }
+        };
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), $"r6-other-{which}", placed.ConnectorOrderId!, null, 4242.25m, null);
+
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// A NEIGHBOURING GRID POINT IS A DIFFERENT PRICE. The old test was "on the grid and within one
+    /// tick", which for a request already ON the grid accepts the tick above and the tick below —
+    /// so asking 4242.25 and being handed 4242.50 read as applied. A request is carried by exactly
+    /// two prices: the grid point below it and the one above.
+    /// </summary>
+    [Fact]
+    public async Task A_price_one_grid_point_past_the_request_is_not_the_request()
+    {
+        var (gw, c, db, placed) = await Resting();
+        using var dbh = db;
+        c.RewriteModified = o => o with { LimitPrice = 4242.50m };      // ES trades in quarters
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), "r6-past", placed.ConnectorOrderId!, null, 4242.25m, null);
+
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION: both roundings of an off-grid request are still the request. 4242.13 on
+    /// a quarter grid is carried by 4242.00 and by 4242.25, and neither is the price that was there.
+    /// </summary>
+    [Theory]
+    [InlineData("4242.00")]
+    [InlineData("4242.25")]
+    public async Task Either_rounding_of_the_request_still_reads_as_applied(string returned)
+    {
+        var (gw, c, db, placed) = await Resting();
+        using var dbh = db;
+        c.RewriteModified = o => o with { LimitPrice = decimal.Parse(returned, System.Globalization.CultureInfo.InvariantCulture) };
+
+        var r = await gw.ModifyAsync(new AgentContext("a"), $"r6-round-{returned}", placed.ConnectorOrderId!, null, 4242.13m, null);
+
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, r.State);
+        Assert.False(r.NeedsReconciliation);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// The reconciler judges the same modification from the record the dispatcher wrote, so it must
+    /// reach the same verdict on the same evidence: an order still showing the price it had before
+    /// has not carried a change, however small the change was. Round 2 settled this ACKNOWLEDGED —
+    /// a modification that demonstrably did nothing, recorded as done, from the reconciler this
+    /// time rather than the dispatcher.
+    /// </summary>
+    [Fact]
+    public async Task A_reconciler_will_not_confirm_a_change_against_the_price_that_was_already_there()
+    {
+        var (gw, c, db, placed) = await Resting(options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+        using var dbh = db;
+
+        // The change is asked for, the platform never moves the order, and the answer is lost on the
+        // way home — so the verdict is the reconciler's to make, off the book alone.
+        c.ModifyIgnoresTheRequest = true;
+        c.ThrowAfterModify = new ConnectorTransportException("wire down after the change was sent");
+        await gw.ModifyAsync(new AgentContext("a"), "r6-recon", placed.ConnectorOrderId!, null, 4000.13m, null);
+        c.ThrowAfterModify = null;
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest("r6-recon")!;
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+        Assert.NotEqual(ExecutionState.ACKNOWLEDGED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.Equal(4000m, c.Inner.Broker.Orders.Single().LimitPrice);   // it really did not move
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION for the reconciler: a change the platform really applied still reads as
+    /// applied from the book alone.
+    /// </summary>
+    [Fact]
+    public async Task A_reconciler_still_confirms_a_change_the_platform_carried_out()
+    {
+        var (gw, c, db, placed) = await Resting(options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+        using var dbh = db;
+        c.ThrowAfterModify = new ConnectorTransportException("wire down after the change was sent");
+        await gw.ModifyAsync(new AgentContext("a"), "r6-recon-ok", placed.ConnectorOrderId!, null, 4242.13m, null);
+        c.ThrowAfterModify = null;
+        c.RewriteBook = o => o.ConnectorOrderId == placed.ConnectorOrderId ? o with { LimitPrice = 4242.25m } : o;
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest("r6-recon-ok")!;
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.ACKNOWLEDGED, record.State);
+        Assert.False(record.NeedsReconciliation);
     }
 }

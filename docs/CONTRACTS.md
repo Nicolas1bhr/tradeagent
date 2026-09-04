@@ -349,11 +349,18 @@ derived from that one rule:
   makes the request `REJECTED`, after which the agent may ask again under a new request id;
   otherwise it stays unconfirmed and trading stays paused. The same rule judges a cancel-all: its
   captured orders still working leave the press unconfirmed rather than condemning it.
-- **A modify is `ACKNOWLEDGED` only if the target carries what was asked for**, and is never recorded
-  as a definite failure without a definite refusal. Prices are judged on the instrument's tick grid:
-  an on-grid price within one tick of the request is the request, whichever way the platform rounded.
-  `OrderInfo.Quantity` is **not** defined by this contract as total or remaining, so a quantity that
-  does not match is inconclusive rather than a refusal.
+- **A modify is `ACKNOWLEDGED` only if the ORDER THAT WAS NAMED carries what was asked for**, and is
+  never recorded as a definite failure without a definite refusal. The answer has to be about that
+  order: the returned order id must be the target's, and its symbol and account must be the target's
+  too — an answer about a replacement minted under a new id, or about somebody else's order, settles
+  nothing. Prices are judged on the instrument's tick grid, and a request is carried by exactly two
+  prices: the grid point below it and the one above (not a band of one tick, which accepts a
+  neighbouring grid point when the request is already on the grid). **A returned price that is the
+  price the order already had is not evidence of a change** when the request differed from it — that
+  is a platform ignoring a sub-tick change, and the dispatcher records the target's prior prices so
+  the reconciler can tell the two apart. `OrderInfo.Quantity` **is** defined, in
+  `TradeAgent.ConnectorSdk.Contracts`, as the order's TOTAL and never the remainder, so a quantity
+  that does not match is a change that is not there — still inconclusive rather than a refusal.
 - **A cancel-all is judged on the orders its press captured**, never on whatever is live now; an
   order that arrived after the press belongs to no press.
 

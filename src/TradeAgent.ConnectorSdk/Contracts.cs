@@ -22,6 +22,21 @@ public sealed record QuoteInfo(string Symbol, decimal? Bid, decimal? Ask, decima
 public sealed record PositionInfo(string Id, string AccountId, string Symbol, decimal Quantity,
     decimal AveragePrice, decimal? UnrealizedPnl);
 
+/// <summary>
+/// One order as the platform holds it.
+///
+/// <para><b>Quantity is the TOTAL the order is for — never what is left of it.</b> FilledQuantity is
+/// how much of that total has filled, so the remainder is <c>Quantity - FilledQuantity</c> and a
+/// connector must never subtract fills from Quantity as they arrive. This sentence exists because
+/// without it the number was undecidable: the gateway could not tell a platform reporting a
+/// different convention from a platform refusing a change, so a modification that named a quantity
+/// could never be confirmed and every one of them paused trading for a person to look at. A backend
+/// whose native field is the remaining amount converts it here (ATAS: QuantityToFill is the total,
+/// Unfilled is the remainder) rather than passing it through.</para>
+///
+/// <para>LimitPrice and StopPrice are the prices the platform currently holds for the order, on the
+/// instrument's own tick grid, and null when the order type does not carry that price.</para>
+/// </summary>
 public sealed record OrderInfo(string ConnectorOrderId, string? ClientOrderId, string AccountId, string Symbol,
     OrderSide Side, OrderType Type, decimal Quantity, decimal FilledQuantity, decimal? LimitPrice,
     decimal? StopPrice, ExecutionState State, string? RejectReason, DateTimeOffset At);

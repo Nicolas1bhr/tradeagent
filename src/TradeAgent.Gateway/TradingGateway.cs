@@ -1010,11 +1010,26 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!Connector.Capabilities.SupportsModify)
             throw new GatewayDeniedException(ErrorCode.TRADING_PERMISSION_UNAVAILABLE, $"{Connector.DisplayName} cannot modify orders");
         var target = await ResolveConnectorOrderId(orderRef, ct);
+        var accountId = await RequireAccountId(ct);
+
+        // THE TARGET AS IT STANDS BEFORE THE CHANGE, and it is written down rather than only used
+        // here, because the reconciler judges the same modification later from the record alone. It
+        // is what makes "the platform handed back the price it already had" distinguishable from
+        // "the platform applied the change": a returned price is only evidence of a change if it is
+        // not the price that was there before. Best effort — a book we cannot read leaves it null,
+        // and the verdict below then simply has one fewer thing to check.
+        var before = await TargetBeforeAsync(accountId, target, ct);
+
         var record = new ExecutionRequest
         {
             RequestId = requestId, AgentSessionId = ctx.SessionId, ConnectorId = Connector.Id,
-            AccountId = await RequireAccountId(ct), Instrument = "-", Intent = RequestIntent.MODIFY,
-            ParametersJson = Json.Write(new { order = target, quantity, limitPrice, stopPrice }),
+            AccountId = accountId, Instrument = "-", Intent = RequestIntent.MODIFY,
+            ParametersJson = Json.Write(new
+            {
+                order = target, quantity, limitPrice, stopPrice,
+                symbol = before?.Symbol, account = accountId,
+                wasLimit = before?.LimitPrice, wasStop = before?.StopPrice
+            }),
             ClientOrderId = ClientOrderIdFor(requestId), CreatedAt = Now,
             State = ExecutionState.CREATED, Mode = Settings.Mode
         };
@@ -1043,7 +1058,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // saying a stop had been moved when it had not. At dispatch time both "no" and "cannot tell"
         // are unconfirmed; the reconciler is where they part company.
         await EnsureInstrumentsAsync(ct);
-        if (CheckModification(command, o) != ModifyVerdict.Applied)
+        if (CheckModification(command, o, TargetFacts.Of(before, accountId)) != ModifyVerdict.Applied)
             return RecordIndefinite(current.RequestId,
                 $"the platform returned the order as {o.State} qty={o.Quantity} limit={o.LimitPrice?.ToString() ?? "none"} " +
                 $"stop={o.StopPrice?.ToString() ?? "none"}, which does not show the change that was asked for",
@@ -1069,55 +1084,111 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// What the target was before the change, as far as anything could see. Both the dispatcher (from
+    /// the book, a moment before the wire) and the reconciler (from the record the dispatcher wrote)
+    /// judge a modification through this, so the two cannot drift apart. Every field is optional:
+    /// what is not known is not checked, and is never guessed.
+    /// </summary>
+    sealed record TargetFacts(string? Symbol, string? Account, decimal? LimitPrice, decimal? StopPrice)
+    {
+        public static TargetFacts? Of(OrderInfo? before, string? account) =>
+            before is null && account is null ? null
+            : new TargetFacts(before?.Symbol, account ?? before?.AccountId, before?.LimitPrice, before?.StopPrice);
+    }
+
+    /// <summary>Reads the target as the platform holds it now. A book we cannot read yields null.</summary>
+    async Task<OrderInfo?> TargetBeforeAsync(string accountId, string target, CancellationToken ct)
+    {
+        try
+        {
+            return (await Connector.GetOrdersAsync(accountId, true, null, ct))
+                .FirstOrDefault(o => string.Equals(o.ConnectorOrderId, target, StringComparison.Ordinal));
+        }
+        catch (Exception)
+        {
+            // Judged without it. This runs BEFORE the wire, so failing here costs a check, not an
+            // order, and refusing the modification because the book was briefly unreadable would
+            // be a worse trade than making the verdict one notch more conservative.
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Did the platform actually do what the modification asked?
     ///
-    /// Every field the command NAMED has to come back carrying the value asked for — a null field
-    /// asked for nothing and proves nothing — and the order has to still be in a state where a
-    /// working modification means anything. A terminal order (it filled, or was cancelled, while the
-    /// change was in flight) is not evidence that the change applied; it is evidence that we do not
-    /// know at what price the fill happened, which is precisely an UNKNOWN.
+    /// FOUR THINGS, and the first is the one that used to be missing: the answer has to be about the
+    /// ORDER THAT WAS NAMED. A returned order id that is not the target — or a symbol or account
+    /// that is not the target's — is an answer about something else, and reading it as this order's
+    /// meant a platform that replaced an order under a new id (or answered about the wrong one)
+    /// left the ledger saying a stop had been moved on an order nobody had touched.
     ///
-    /// PRICES ARE COMPARED ON THE INSTRUMENT'S OWN GRID. Platforms round a request to the tick, so
-    /// asking 4242.13 of an instrument that trades in quarters comes back as 4242.25 — applied, and
-    /// the first version of this called it unconfirmed and paused trading over it. The comparison is
-    /// against the request rounded to the NEAREST tick, and nothing wider: a tolerance band of one
-    /// tick would swallow the case this method exists for, where the platform ignored a small change
-    /// and handed back the old price. If the tick size is not known, a differing price is not
-    /// evidence either way and says so, rather than being called a definite failure.
+    /// Then the order has to still be in a state where a working modification means anything. A
+    /// terminal order (it filled, or was cancelled, while the change was in flight) is not evidence
+    /// that the change applied; it is evidence that we do not know at what price the fill happened,
+    /// which is precisely an UNKNOWN.
+    ///
+    /// Then quantity, which is decidable now that the SDK says what OrderInfo.Quantity means — the
+    /// TOTAL the order is for, never the remainder (see Contracts.cs). A number that does not match
+    /// the request is a change that is not there; it is still never a definite refusal, because only
+    /// a ConnectorRejectedException is one and it never reaches here.
+    ///
+    /// Then prices, ON THE INSTRUMENT'S OWN GRID. Platforms round a request to the tick, so asking
+    /// 4242.13 of an instrument that trades in quarters comes back as 4242.25 — applied, and pausing
+    /// trading over that was the defect this replaces.
     /// </summary>
-    ModifyVerdict CheckModification(ModifyOrderCommand cmd, OrderInfo o)
+    ModifyVerdict CheckModification(ModifyOrderCommand cmd, OrderInfo o, TargetFacts? was)
     {
+        if (!string.Equals(o.ConnectorOrderId, cmd.ConnectorOrderId, StringComparison.Ordinal))
+            return ModifyVerdict.Unknowable;
+        if (was?.Symbol is { } symbol && !string.Equals(o.Symbol, symbol, StringComparison.Ordinal))
+            return ModifyVerdict.Unknowable;
+        if (was?.Account is { } account && !string.Equals(o.AccountId, account, StringComparison.Ordinal))
+            return ModifyVerdict.Unknowable;
+
         if (o.State is not (ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING or ExecutionState.PARTIALLY_FILLED))
             return ModifyVerdict.Unknowable;
 
-        // QUANTITY IS NOT A DECIDABLE FIELD. docs/CONTRACTS.md does not say whether OrderInfo.Quantity
-        // is the order's total or what is left of it, and connectors differ, so a number that does
-        // not match the request is as likely to be a different convention as a refused change.
         if (cmd.Quantity is { } q && o.Quantity != q) return ModifyVerdict.Unknowable;
 
         var tick = _instrumentCache.FirstOrDefault(i => i.Symbol == o.Symbol)?.TickSize ?? 0m;
-        return PriceCarries(o.LimitPrice, cmd.LimitPrice, tick) && PriceCarries(o.StopPrice, cmd.StopPrice, tick)
+        return PriceCarries(o.LimitPrice, cmd.LimitPrice, tick, was?.LimitPrice)
+            && PriceCarries(o.StopPrice, cmd.StopPrice, tick, was?.StopPrice)
             ? ModifyVerdict.Applied : ModifyVerdict.Unknowable;
     }
 
     /// <summary>
-    /// Does the price that came back carry the price that was asked for? Platforms put a request on
-    /// the instrument's own grid, and in either direction — so a price ON the grid and within one
-    /// tick of the request is the request, as applied. Anything further, anything off the grid, and
-    /// anything at all when the grid is unknown, is not evidence either way.
+    /// Does the price that came back carry the price that was asked for?
     ///
-    /// THE COST OF THIS, STATED: asking for a change smaller than one tick and being ignored reads
-    /// as applied, because the returned old price is itself within a tick. A change the grid cannot
-    /// express is not a change; the alternative — pausing trading on every rounded price — was the
-    /// defect this replaces.
+    /// TWO CANDIDATES, NOT A BAND. A platform puts a request on the instrument's grid and may round
+    /// either way, so the request is carried by exactly two prices: the grid point below it and the
+    /// grid point above. Nothing else. A tolerance of "within one tick" — which is what this used to
+    /// be — accepts a NEIGHBOURING grid point when the request is already on the grid, so asking
+    /// 4242.25 and being handed 4242.50 read as applied: a real, different price, called the one
+    /// that was asked for.
+    ///
+    /// AND THE PRICE THAT WAS ALREADY THERE IS NOT EVIDENCE OF A CHANGE. A request smaller than the
+    /// grid can express (4000.13 against a quarter grid on an order resting at 4000) comes back as
+    /// the untouched price, which is one of those two candidates — so rounding alone cannot tell it
+    /// from a platform that ignored the request. When the old price is known and the request differs
+    /// from it, the answer has to differ from it too, or it settles nothing.
+    ///
+    /// A price off the grid, a grid that is unknown, or a price asked for and not returned at all:
+    /// not evidence either way, which here means not applied.
     /// </summary>
-    static bool PriceCarries(decimal? shown, decimal? asked, decimal tick)
+    static bool PriceCarries(decimal? shown, decimal? asked, decimal tick, decimal? was)
     {
         if (asked is not { } want) return true;        // nothing was asked of this field
         if (shown is not { } have) return false;       // asked for a price, got none
-        if (have == want) return true;
-        if (tick <= 0m) return false;                  // no grid to judge against
-        return Math.Abs(have - want) <= tick && decimal.Remainder(have, tick) == 0m;
+
+        if (have != want)
+        {
+            if (tick <= 0m) return false;              // no grid to judge against
+            var down = Math.Floor(want / tick) * tick;
+            var up = Math.Ceiling(want / tick) * tick;
+            if (have != down && have != up) return false;
+        }
+
+        return was is not { } had || had == want || have != had;
     }
 
     /// <summary>Tick sizes come from the instrument list, so it has to be there before judging one.</summary>
@@ -1683,7 +1754,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
     // What a CANCEL / MODIFY / CANCEL_ALL record stored about the order it was aimed at. Read back
     // rather than re-derived: the target is the only evidence these requests leave behind.
-    sealed record TargetRef(string? Order, decimal? Quantity, decimal? LimitPrice, decimal? StopPrice);
+    //
+    // The `Was*` fields are the target as it stood BEFORE the change, written by the dispatcher.
+    // They are absent on every record written before they existed, and on any record whose book
+    // could not be read at the time, so nothing may require them — they sharpen the verdict when
+    // they are there and are simply not checked when they are not.
+    sealed record TargetRef(string? Order, decimal? Quantity, decimal? LimitPrice, decimal? StopPrice,
+        string? Symbol = null, string? Account = null, decimal? WasLimit = null, decimal? WasStop = null);
 
     /// <summary>
     /// Reconciles a request whose outcome lives in ANOTHER order's state.
@@ -1837,7 +1914,10 @@ public sealed class TradingGateway : IAsyncDisposable
 
         await EnsureInstrumentsAsync(ct);
         var asked = new ModifyOrderCommand(target, stored.Quantity, stored.LimitPrice, stored.StopPrice);
-        if (CheckModification(asked, match) == ModifyVerdict.Applied)
+        // The same facts the dispatcher judged on, out of the record it wrote. The account falls back
+        // to the request's own, which every record carries.
+        var was = new TargetFacts(stored.Symbol, stored.Account ?? req.AccountId, stored.WasLimit, stored.WasStop);
+        if (CheckModification(asked, match, was) == ModifyVerdict.Applied)
         {
             Resolve(ExecutionState.ACKNOWLEDGED, $"order {target} carries the change");
             return (true, $"order {target} carries the change");
