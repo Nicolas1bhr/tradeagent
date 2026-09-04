@@ -521,6 +521,79 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// Connects to the pipe and leaves again without saying anything at all — an unrelated peer
+    /// arriving and going, which ends a read loop and runs `Drop` for a reason that has nothing to do
+    /// with any refusal.
+    /// </summary>
+    static async Task TouchAndLeave(string pipe, int attempts = 8)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var client = new System.IO.Pipes.NamedPipeClientStream(
+                ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            try
+            {
+                await client.ConnectAsync(2_000);
+                await client.DisposeAsync();
+                return;
+            }
+            catch (Exception) when (attempt < attempts)
+            {
+                await Unheard(async () => await client.DisposeAsync());
+                await Task.Delay(100);
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE REPAIR INSTRUCTION SURVIVES EVERY DISCONNECT UNTIL THE REPAIR ARRIVES.
+    ///
+    /// Round 7 kept the mismatch across the disconnection OUR OWN refusal caused, which was the case
+    /// that mattered then. It left an edge: the reason was still cleared by the NEXT `Drop` for any
+    /// other cause — an unrelated peer connecting and going, a silent hang-up — so the row went blank
+    /// with nothing having been repaired and nothing having replaced the bridge. The operator is told
+    /// to reinstall the add-on and the instruction disappears while they are doing it.
+    ///
+    /// `_unauthenticated` has always been kept on exactly this argument: it is not a fact that leaves
+    /// with the peer, and only a peer proving itself ends it. A mismatch is the same shape — "the
+    /// thing that holds this pipe speaks a protocol this build cannot" — and the event that ends it
+    /// is a COMPATIBLE HELLO, not a disconnection.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_survives_an_unrelated_disconnect_until_a_good_bridge_arrives()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var old = await Redial(pipe, Speaking(2));
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        await Unheard(async () => await old.DisposeAsync());
+
+        // Something else arrives on the pipe and leaves without a word. Nothing was repaired.
+        await TouchAndLeave(pipe);
+        await Task.Delay(300);
+
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+        Assert.Contains("reinstall the add-on", connector.StatusDetail);
+
+        // And a second one, so this is a rule and not a one-drop grace.
+        await TouchAndLeave(pipe);
+        await Task.Delay(300);
+        Assert.NotNull(connector.Incompatible);
+        Assert.Contains("protocol 2", connector.StatusDetail);
+
+        // THE OTHER DIRECTION: the repair itself is what ends it.
+        await using var repaired = await Redial(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.Null(connector.Incompatible);
+        Assert.Null(connector.StatusDetail);
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
     /// AND A REFUSED BRIDGE THAT REDIALS IS REFUSED AGAIN. The refusal is a fact about the CONNECTION,
     /// so a new connection is heard out from the beginning — and says the same wrong thing, and is
     /// turned away again. What must not happen is a redial being taken for a repair.

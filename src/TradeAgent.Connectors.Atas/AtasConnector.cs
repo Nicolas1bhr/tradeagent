@@ -453,29 +453,28 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // no longer on the pipe. Clearing the reason without re-announcing the row leaves the model
         // and the screen disagreeing, which on a status display is the whole of the bug.
         var wasExplained = _incompatible is not null || Unauthenticated is not null;
-
-        // WHOSE DOING WAS THIS? Read before the per-connection flags are reset below, because it
-        // decides whether the reason on the row survives.
-        var ourOwnRefusal = _refused;
-
         _connected = false;
         _hello = null;
 
-        // "Wrong version" stops being the live explanation the moment there is nothing on the pipe
-        // to be the wrong version — UNLESS OUR OWN REFUSAL IS WHAT TOOK IT OFF THE PIPE.
+        // A MISMATCH IS NOT CLEARED HERE EITHER, AND IT IS THE SAME ARGUMENT AS THE ONE BELOW.
         //
-        // That is the same distinction the paragraph below draws for a credential refusal, and for
-        // the same reason: the refusal is what CAUSES the disconnection, so clearing it here erases
-        // the reason microseconds after writing it and leaves the dashboard reading FAILED with
-        // nothing on it while the bridge redials every two seconds. A mismatch we refused is not a
-        // fact that left with the peer; it is "the last thing that held this pipe speaks a protocol
-        // this build cannot", which is still true afterwards and is the whole of the repair
-        // instruction. A compatible hello ends it — the event that actually resolves it, exactly as
-        // proving itself is for an unproved peer.
+        // This used to clear it unconditionally, on the reading that a wrong version is a fact about
+        // the peer and leaves with the peer. Round 7 kept it across the disconnection our own refusal
+        // caused — necessary, because the refusal is what CAUSES that disconnection, so clearing it
+        // there erased the reason microseconds after writing it. That left an edge: the NEXT Drop for
+        // any other cause — an unrelated peer arriving and going, a silent hang-up — still wiped it,
+        // so the row went blank with nothing repaired and nothing having replaced the bridge. The
+        // operator is told to reinstall the add-on and the instruction disappears while they do it.
         //
-        // A peer that hangs up on its own still clears it, which is what keeps the row from
-        // describing a bridge that simply went away.
-        if (!ourOwnRefusal) _incompatible = null;
+        // So it is kept outright, exactly as a credential refusal is kept below and for the reason
+        // stated there: it is not a fact that leaves with the peer, it is "the thing that holds this
+        // pipe speaks a protocol this build cannot", and the event that ends it is a COMPATIBLE
+        // HELLO — the accepted-hello branch clears it — not a disconnection. A peer proving itself
+        // is what resolves the credential refusal; a peer speaking the right protocol is what
+        // resolves this one. Neither is resolved by hanging up.
+        //
+        // The silent-peer reading is the one that DOES leave with the peer: it is derived from
+        // _peerArrived, reset below, so a pipe with nobody on it stops claiming anybody is there.
 
         // A REFUSAL IS NOT CLEARED HERE, AND THAT IS THE DIFFERENCE BETWEEN THE TWO.
         //
