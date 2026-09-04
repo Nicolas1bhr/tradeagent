@@ -439,6 +439,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // and counting it as cancelled) restored one field over.
         var rid = req.RequestId ?? req.Id;
 
+        // A FRAME THAT NAMES NO REQUEST IS MALFORMED, and it is answered rather than fatal.
+        //
+        // `id` has a GUID default so it is never absent — but a client can send it explicitly null,
+        // and then this fallback is null too. The two checks below dereference it, and they run
+        // BEFORE the handler's try/catch, so such a frame took the whole connection down with a
+        // NullReferenceException: every other request on that channel died with it and the agent
+        // learned nothing about why (Codex C4). Answering inside the boundary would only turn it
+        // into UNKNOWN_ERROR; the honest code is the one the rest of this method already uses.
+        if (string.IsNullOrEmpty(rid))
+            return IpcResponse.Fail(req.Id ?? "", ErrorCode.INVALID_REQUEST,
+                "a request must carry an id: send 'request_id', or leave 'id' to its default rather than sending it null");
+
         // Two checks, and they are not the same check. The PREFIX keeps an agent's id from
         // colliding with one this gateway mints for a sweep leg. The CHARSET keeps whatever the
         // agent chose from reaching the broker as ClientOrderId ("TA-" + this) in a shape safety
