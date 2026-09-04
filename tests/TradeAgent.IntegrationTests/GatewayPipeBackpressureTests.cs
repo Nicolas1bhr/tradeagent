@@ -995,6 +995,17 @@ public class GatewayPipeBackpressureTests
         Assert.Contains(Ops.CloseAll, vocabulary);       // the vocabulary really was found
         Assert.True(vocabulary.Count >= 15, $"only {vocabulary.Count} operations were discovered");
 
+        // AND THE CANDIDATE SET IS CHECKED AGAINST THE SWITCH, because `Ops`'s constants are not the
+        // dispatcher (verifier round-11 L-3). Every arm uses an `Ops` constant TODAY, which is what
+        // makes the vocabulary a sound candidate set — but a handler added with a literal op string
+        // would be invisible to this test in exactly the way `schema` was invisible to the hand list
+        // that preceded it, and the round's own argument is that the omission and the check must not
+        // come from the same place. So the switch's own arm labels are read, each one is required to
+        // BE an `Ops` constant rather than a string, and the two sets are compared both ways.
+        var fromSwitch = DispatchSwitchOps();
+        Assert.True(fromSwitch.Count >= 15, $"only {fromSwitch.Count} arms were read off the dispatch switch");
+        Assert.Empty(fromSwitch.Except(vocabulary));
+
         async Task<bool> Handles(string op)
         {
             var reply = await client.SendAsync(new IpcRequest { Op = op }).WaitAsync(TimeSpan.FromSeconds(30));
@@ -1021,6 +1032,65 @@ public class GatewayPipeBackpressureTests
         var stale = rows.Except(handled).ToList();
         Assert.True(stale.Count == 0,
             $"the drain table has rows for {string.Join(", ", stale)}, which the dispatcher does not handle");
+
+        // THE TWO SETS ARE THE SAME SET. The runtime half asks the dispatcher and the source half
+        // reads it; either alone can be fooled by the other's blind spot.
+        Assert.Equal(fromSwitch.OrderBy(o => o, StringComparer.Ordinal),
+            handled.OrderBy(o => o, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// THE OPERATIONS THE DISPATCH SWITCH ITSELF NAMES, read off its source.
+    ///
+    /// Reflection cannot see a switch's arm labels and the pipe can only be asked about ops somebody
+    /// already thought of, so the one place the arms exist is the source — and reading it is what
+    /// makes "every arm is an `Ops` constant" a checked premise instead of an assumed one. It fails
+    /// loudly rather than skipping if the source is not where the tests run from, because a check
+    /// that quietly stops checking is the failure this whole test is about.
+    /// </summary>
+    static List<string> DispatchSwitchOps()
+    {
+        var path = Path.Combine(Build.RepoRoot, "src", "TradeAgent.Gateway", "GatewayPipeServer.cs");
+        Assert.True(File.Exists(path), $"the dispatcher's source is not at {path}");
+        var source = File.ReadAllText(path);
+
+        const string opener = "req.Op switch";
+        var from = source.IndexOf(opener, StringComparison.Ordinal);
+        Assert.True(from >= 0, "the dispatch switch was not found — this test can no longer read what it checks");
+        var to = source.IndexOf("\n            };", from, StringComparison.Ordinal);
+        Assert.True(to > from, "the dispatch switch's end was not found");
+
+        var constants = typeof(Ops).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .ToDictionary(f => f.Name, f => (string)f.GetRawConstantValue()!);
+
+        var ops = new List<string>();
+        foreach (var raw in source[from..to].Split('\n').Skip(1))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith("//", StringComparison.Ordinal)) continue;
+            var arrow = line.IndexOf("=>", StringComparison.Ordinal);
+            if (arrow < 0) continue;
+
+            var label = line[..arrow].Trim();
+            if (label == "_") continue;                       // the unknown-operation arm
+
+            foreach (var token in label.Split(" or ", StringSplitOptions.TrimEntries))
+            {
+                var name = token.StartsWith("Core.Ops.", StringComparison.Ordinal) ? token["Core.Ops.".Length..]
+                    : token.StartsWith("Ops.", StringComparison.Ordinal) ? token["Ops.".Length..]
+                    : null;
+                Assert.True(name is not null,
+                    $"the dispatch switch has an arm labelled `{token}`, which is not an `Ops` constant — an " +
+                    "operation named by a literal is one no test that enumerates `Ops` can discover, and its " +
+                    "handler's chain would sit outside the shutdown drain unnoticed");
+                Assert.True(constants.TryGetValue(name!, out var op), $"`Ops.{name}` does not exist");
+                ops.Add(op!);
+            }
+        }
+
+        Assert.Equal(ops.Count, ops.Distinct().Count());
+        return ops;
     }
 
     /// <summary>
