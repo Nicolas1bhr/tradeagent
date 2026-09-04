@@ -920,6 +920,87 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// THE VERDICT ITSELF, WATCHED — the busy bridge is still there AFTER the liveness judge has run.
+    ///
+    /// Codex round-11 FINDING 1. The busy-bridge test above reads its verdict at the CALLER's
+    /// deadline, about two seconds, and disposes the connector before the grace expires. The judge
+    /// that decides whether to keep or drop the connection runs at the END of the grace, on
+    /// `PeerAnsweredSince` — so forcing that method to return false leaves every test in the suite
+    /// green while a bridge that was answering throughout gets torn down. The keep half of the rule
+    /// was stated, relied on and never observed.
+    ///
+    /// This one observes it, and the way it does so is by making the grace SHORT rather than by
+    /// waiting ten seconds: the grace is what is left of the ordinary RPC deadline, so a three-second
+    /// connector puts the verdict about a second after the caller's two. The chatter keeps answers
+    /// arriving across the whole window — its own count is asserted, before and after — so the peer
+    /// really is the busy case and not the wedged one, and the connection is read AFTER the judge has
+    /// had its say.
+    ///
+    /// THE OTHER DIRECTION IS ALREADY IN THIS CLASS: a peer that only heartbeats is dropped at the
+    /// grace, at twelve phases of the shipped heartbeat interval. Between them both answers
+    /// `PeerAnsweredSince` can give are observed.
+    /// </summary>
+    [Fact]
+    public async Task A_bridge_that_keeps_answering_survives_the_liveness_verdict_not_just_the_caller()
+    {
+        var pipe = NewPipe();
+        // Three seconds of ordinary RPC deadline, so the grace after the two-second emergency is
+        // about one — the verdict lands inside this test instead of after it.
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(3), Cred());
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyDeadline);
+        await connector.ConnectAsync();
+
+        await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, BridgeOps.CancelAll);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stop = 0;
+        var answered = 0;
+        using var chatter = new CancellationTokenSource();
+        var talking = Task.Run(async () =>
+        {
+            while (Volatile.Read(ref stop) == 0)
+            {
+                try { await connector.GetAccountsAsync(); Interlocked.Increment(ref answered); }
+                catch (Exception) { /* the emergency's own failure must not end the chatter */ }
+                try { await Task.Delay(120, chatter.Token); } catch (Exception) { return; }
+            }
+        });
+
+        await Wait(() => Task.FromResult(Volatile.Read(ref answered) > 0));
+
+        var timer = Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-ANSWERING"));
+        var atTheCallersDeadline = timer.Elapsed;
+        var answeredWhenTheCallerGaveUp = Volatile.Read(ref answered);
+
+        // PAST THE GRACE. The judge is armed when the caller gives up and fires `Remaining(startedAt,
+        // rpc timeout)` later; waiting to twice the RPC deadline from the START of the emergency puts
+        // this assertion unambiguously after it.
+        while (timer.Elapsed < TimeSpan.FromSeconds(6)) await Task.Delay(100);
+
+        var connectedAfterTheVerdict = await connector.IsConnectedAsync();
+        var answeredAtTheEnd = Volatile.Read(ref answered);
+
+        Volatile.Write(ref stop, 1);
+        await chatter.CancelAsync();
+        try { await talking; } catch (Exception) { /* torn down with the test */ }
+
+        // THE PREMISE, IN THE WINDOW THE JUDGE IS ABOUT: answers were still arriving while the grace
+        // ran, so this is the busy case and a drop here would be a bridge that was serving.
+        Assert.True(answeredWhenTheCallerGaveUp > 0,
+            "nothing was answered while the emergency waited, so this is the wedged case");
+        Assert.True(answeredAtTheEnd > answeredWhenTheCallerGaveUp,
+            "no request was answered between the caller's deadline and the verdict, so the judge had " +
+            "nothing to keep the connection for and this test proves nothing");
+
+        // The caller's own bound is untouched by any of it.
+        Assert.InRange(atTheCallersDeadline, TimeSpan.FromMilliseconds(1900), TimeSpan.FromSeconds(4));
+
+        Assert.True(connectedAfterTheVerdict,
+            "a bridge that was answering throughout was dropped when the liveness judge ran");
+    }
+
+    /// <summary>
     /// TWO SECONDS IS THE WHOLE CALL, NOT TWO SECONDS PER PHASE.
     ///
     /// Codex C1 (HIGH). The emergency's frame budget was computed at the call site, before the gate
