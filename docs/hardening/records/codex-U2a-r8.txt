@@ -1,0 +1,49 @@
+PRIOR 1 — FIXED — GatewayPipeServer.cs:512 opens one absolute emergency scope and AtasConnector.cs:1017 reuses its deadline across covered prerequisite and cancel RPCs.
+
+PRIOR 2 — NOT FIXED — GatewayPipeServer.cs:161 assumes only three serial RPCs, but a cold placement can issue five, while an explicit drain override can still permit disposal with an unsettled request.
+
+PRIOR 3 — FIXED — AtasConnector.cs:935 closes the identified reply-versus-registration race by double-checking the completed caller and atomically removing the abandoned entry.
+
+PRIOR 5 — DEFERRED-BY-DECISION — AtasConnector.cs:158 still excludes the Place frame used by agent close/close-all from the emergency deadline.
+
+PRIOR 6 — DEFERRED-BY-DECISION — GatewayPipeServer.cs:621 still ignores the outer sweep request id when executing cancel-all, so replay re-sweeps the current book.
+
+PRIOR 8-gateway — DEFERRED-BY-DECISION — TradingGateway.cs:635 still authorizes and resolves cancel/modify operations before reaching their idempotency record.
+
+PRIOR 12 — REFUTED-BY-DECISION — docs/hardening/records/U2a.md:3 identifies this branch copy as stale and points to the corrected live record on main.
+
+PRIOR 14 — REFUTED-BY-DECISION — docs/hardening/records/U2a.md:3 identifies this branch copy as stale and points to the corrected live record on main.
+
+PRIOR F-A — DEFERRED-BY-DECISION — TradingGateway.cs:734 still performs operator Close All without opening a risk-reducing deadline scope.
+
+PRIOR F-F — REFUTED-BY-DECISION — docs/hardening/records/U2a.md:3 states that the restoration wording correction lives in the main-branch record.
+
+PRIOR F-G — FIXED — AtasConnector.cs:191 now begins deadline failures with the unconfirmed order outcome and reports connection state afterward.
+
+FINDING 1 — MED — GatewayPipeServer.cs:748 — the outcome mapper conflates definitive rejection and pre-send failure with an unknown sent leg, so `sent-not-confirmed` does not guarantee an UNKNOWN gateway record.
+
+Exact check: set `RefuseCancel=1`; the outcome becomes `sent-not-confirmed` while its record is definitively `REJECTED`. Alternatively, expire target resolution before `_requests.TryCreate`; the response still says `sent-not-confirmed`, but `attempted=0` and no leg record or UNKNOWN exists.
+
+FINDING 2 — LOW — AtasConnector.cs:946 — a disconnect or disposal during late-answer grace leaves the request permanently in `_abandoned`.
+
+Exact check: let an emergency time out, disconnect before grace expires, then inspect `AwaitingLateAnswer`; the faulted/cancelled `answer` enters the catch at line 948 and returns without removing the id.
+
+FINDING 3 — LOW — FakeConnector.cs:69 — deadline accounting uses the maximum of two latency faults although lines 78–79 execute them serially, allowing the simulator to exceed both its emergency deadline and reported worst-case duration.
+
+Exact check: configure both latency values to 1200 ms with a two-second emergency budget; the precheck accepts a 1200 ms wait, but the call consumes about 2400 ms.
+
+FINDING 4 — LOW — AtasConnector.cs:1158 — `Left` returns a fresh one-millisecond budget after an absolute deadline has expired.
+
+Exact check: evaluate `Left` with a past TickCount64 deadline; line 1161 returns 1 ms, allowing a gate/reply race to finish after the stated absolute deadline.
+
+CHECK (a) — FAIL — AtasConnector.cs:1161 supplies a fresh 1 ms after expiry, and the deferred close path obtains an ordinary Place budget; RiskReducingScope.cs:62 correctly prevents nested scopes from extending an existing deadline, and no retry or reconnect resends the RPC.
+
+CHECK (b) — PASS — TradingGateway.cs:638 awaits each cancel leg’s own target resolution before cancellation; AtasConnector.cs:738 serializes concurrent frames through `_sendGate`, and line 771 retains the shared absolute frame ceiling.
+
+CHECK (c) — FAIL — GatewayPipeServer.cs:656 explicitly accounts for legitimate `nothing-to-do`, but definitive `REJECTED` and failures occurring before send have no truthful category and are forced into `sent-not-confirmed`.
+
+CHECK (d) — FAIL — GatewayPipeServer.cs:161 uses a fixed three-RPC multiplier plus a literal five seconds; cold Place/Modify paths can exceed the multiplier, line 139 permits an undersized custom drain, and lines 1017–1024 still allow disposal to return after merely logging an unfinished request.
+
+CHECK liveness — PASS — AtasConnector.cs:941 derives grace from the remaining ordinary `_timeout`; the shipped ten-second grace is unchanged.
+
+SUMMARY — 0 HIGH / 2 MED / 3 LOW
