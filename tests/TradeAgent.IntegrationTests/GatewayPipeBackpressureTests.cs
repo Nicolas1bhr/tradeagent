@@ -1166,6 +1166,101 @@ public class GatewayPipeBackpressureTests
         return (working, symbols);
     }
 
+    /// <summary>
+    /// DISPOSAL MAY LEAVE A REQUEST UNSETTLED. IT MAY NOT DO IT SILENTLY.
+    ///
+    /// Verifier round-9 F-2, and it refutes round 9's own claim that "the only thing that still
+    /// produces one is a call that does not honour its cancellation token". The connector here
+    /// HONOURS it — `Task.Delay(LatencyMs, ct)` — and that is precisely what hides the harm: the
+    /// handler unwinds the instant it is cancelled, so the sentinel that counted unfinished HANDLER
+    /// TASKS saw nothing wrong, while `TradingGateway.ModifyAsync` catches only
+    /// `ConnectorRejectedException` and `ConnectorTransportException` and lets the cancellation
+    /// escape — leaving the row DISPATCHING, unflagged, and invisible to `ReconcileAsync`, which
+    /// scans `NeedingReconciliation()` alone. Nothing will ever settle it.
+    ///
+    /// THE SPLIT, STATED. Settling that row is `TradingGateway`'s — a file this unit may not open —
+    /// and it is routed to U2c-1 with this measurement. What is fixed here is the half that is the
+    /// pipe server's, and it is the half that makes the other half findable: the sentinel now counts
+    /// what it is actually about, REQUESTS STILL DISPATCHING when `DisposeAsync` returns, and names
+    /// them. `handlers_did_not_finish` at `error` is the only trace an operator gets that an order
+    /// may have been left unsettled, so it must fire on the state rather than on the symptom that
+    /// happened to be visible first.
+    /// </summary>
+    [Fact]
+    public async Task A_request_left_unsettled_when_disposal_returns_is_logged_by_name_at_error()
+    {
+        // The connector under-reports its own worst case, which is how a drain ends up shorter than
+        // the handler now that an explicit `HandlerDrainTimeout` cannot shorten it.
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
+        };
+        server.Start();
+
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+
+        // Something to modify, placed while the simulator is still quick.
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-unsettled",
+            RequestId = "cli-unsettled-order",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                ["limit"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest("cli-unsettled-order")?.State == ExecutionState.WORKING, TimeSpan.FromSeconds(30));
+        var target = (await gw.OrdersAsync()).Single().ConnectorOrderId;
+
+        // CANCELLABLE latency, five seconds of it: the modify will be cancelled by disposal and will
+        // unwind cleanly, which is the whole point.
+        conn.Faults.LatencyMs = 5000;
+        const string rid = "cli-unsettled-modify";
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Modify,
+            Session = "agent-unsettled",
+            RequestId = rid,
+            Args = new()
+            {
+                ["id"] = JsonSerializer.SerializeToElement(target),
+                ["quantity"] = JsonSerializer.SerializeToElement("2")
+            }
+        });
+        await WaitFor(() => gw.GetRequest(rid)?.State == ExecutionState.DISPATCHING, TimeSpan.FromSeconds(30));
+
+        var drain = server.HandlerDrainTimeout;
+        var timer = Stopwatch.StartNew();
+        await server.DisposeAsync();
+        timer.Stop();
+
+        // THE FULL DERIVED DRAIN IS WAITED BEFORE ANYTHING IS CANCELLED. A shutdown that cancelled
+        // early would produce this row for a handler that had time left.
+        Assert.True(timer.Elapsed >= drain,
+            $"disposal returned in {timer.Elapsed.TotalMilliseconds:0} ms against a derived drain of " +
+            $"{drain.TotalMilliseconds:0} ms — it cancelled the handler before its time was up");
+
+        // The row really is unsettled and really is invisible to reconciliation. This is the state
+        // U2c-1 has to fix; it is asserted here so the routing has a measurement attached to it.
+        var record = gw.GetRequest(rid)!;
+        Assert.Equal(ExecutionState.DISPATCHING, record.State);
+        Assert.False(record.NeedsReconciliation);
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        // And this is the half that is fixed: it is not silent.
+        Assert.Equal("error", ReadEngineering(db, "handlers_did_not_finish"));
+        var metadata = ReadEngineeringMetadata(db, "handlers_did_not_finish");
+        Assert.Contains(rid, metadata);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>
@@ -1273,6 +1368,14 @@ public class GatewayPipeBackpressureTests
             await agent.ReadLineAsync(TimeSpan.FromSeconds(10));
         }
     }
+
+    /// <summary>The metadata of the first engineering row for an event, or "" if there is none.</summary>
+    static string ReadEngineeringMetadata(Database db, string @event) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT metadata FROM engineering_log WHERE component='Ipc' AND event=$e ORDER BY id LIMIT 1", ("$e", @event));
+        using var r = c.ExecuteReader();
+        return r.Read() ? r.IsDBNull(0) ? "" : r.GetString(0) : "";
+    });
 
     /// <summary>The severity of the first engineering row for an event, or null if there is none.</summary>
     static string? ReadEngineering(Database db, string @event) => db.Read(_ =>
