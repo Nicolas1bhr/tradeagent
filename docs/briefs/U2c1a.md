@@ -29,15 +29,11 @@ still settles (a definite CANCELLED from the right connector still clears; a cor
    request on the tick grid AND ≠ the pre-modify price when the request differs; quantity only when the SDK contract
    states what `OrderInfo.Quantity` means — write that sentence in `src/TradeAgent.ConnectorSdk/Contracts.cs` — else
    inconclusive.
-7. A cancelled handler must settle (`TradingGateway.cs` ~:696): a handler cancelled during the pipe server's disposal
-   settles UNKNOWN before the store closes, never a DISPATCHING row that waits for a restart; and (~:660) a
-   `ConnectorTransportException` with transport `NothingWritten` settles not-sent (no UNKNOWN, no pause), only
-   `PossiblyWritten` settles UNKNOWN — U2a exposes the transport result for this.
 
 Yours: `src/TradeAgent.Gateway/**` except the pipe server and `AgentContext`, `Core/Db/Stores.cs`, `Errors.cs`, the
 ConnectorSdk sentence, `docs/CONTRACTS.md`, tests. Not yours: the updater, `CoidWitness*`, `DashboardView.cs`, the
-emergency-press rewrite (U2c1b). Every fix: RED quoted, GREEN, one mutant watched red (commit before mutating; `cp`
-restore; `touch`). Test-name diff vs your baseline: nothing removed. Commit per item, one-sentence messages, no
+emergency-press rewrite (U2c1b), the cancelled-handler settle (U2c1c). Every fix: RED quoted, GREEN, one mutant watched
+red (commit before mutating; `cp` restore; `touch`). Test-name diff vs baseline: nothing removed. Commit per item, no
 trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
 ## Report
