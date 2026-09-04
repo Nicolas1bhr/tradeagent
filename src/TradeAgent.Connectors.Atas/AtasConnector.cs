@@ -473,11 +473,15 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     }
 
     /// <summary>
-    /// Keeps an abandoned read's failure from surfacing as an unobserved task exception. It will fault
-    /// as soon as the stream is disposed, which is the point — that is how the read is aborted.
+    /// Keeps an abandoned read's or write's failure from surfacing as an unobserved task exception.
+    /// It will fault as soon as the stream is disposed, which is the point — that is how the read is
+    /// aborted, and how a write to a peer that stopped reading is torn off the pipe.
+    ///
+    /// One helper for both, because there were two identical ones: the read loop's abandoned frame
+    /// read and the chunked write's abandoned chunk want exactly this and nothing else.
     /// </summary>
     static void Observe(Task task) =>
-        task.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+        _ = task.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
 
     /// <summary>Missing for longer than this and we treat the bridge as gone.</summary>
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
@@ -1184,8 +1188,6 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         Drop($"the ATAS bridge stopped reading; no frame landed within {WriteTimeout.TotalSeconds:0}s");
         try { _pipeStream?.Dispose(); } catch (Exception) { /* already gone */ }
     }
-
-    static void Observe(Task t) => _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
 
     void HandleEvent(BridgeFrame f)
     {
