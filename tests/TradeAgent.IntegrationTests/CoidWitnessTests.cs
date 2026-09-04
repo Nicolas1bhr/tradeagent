@@ -2974,65 +2974,92 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
-    /// EVERY PROBE ON THE SIDECAR PATH, AND WHAT EACH FAILURE MEANS — the class, enumerated.
+    /// EVERY FAILURE OF THE ONE READ, AND WHAT EACH OF THEM MEANS — the class, enumerated, and the
+    /// enumeration is now one line long.
     ///
-    /// There are exactly two filesystem probes left on this path: the line read, which answers "what
-    /// is in this file", and the directory enumeration, which answers "which sidecars are there".
-    /// (<c>File.Exists</c> is gone from both; it was the defect.) Each is driven here through its
-    /// seam with each failure the operating system can give it, because an ACL that denies attributes
-    /// or refuses an enumeration cannot be provoked on this machine without also breaking the
-    /// committed read in the same directory, which is a different state from the one under test —
-    /// the same reason <c>_open</c> and <c>_replace</c> exist.
+    /// ROUND 10 REWROTE THIS TEST, AND THE REASON IS THE STRUCTURE IT WAS WRITTEN AGAINST. It used
+    /// to drive a read that ran once per generation NAME, so the classification had to be made per
+    /// exception: <see cref="FileNotFoundException"/> and <see cref="DirectoryNotFoundException"/>
+    /// meant "there is nothing at this name" and everything else meant "this run could not read it".
+    /// There is now exactly one function that reads the sidecar filesystem, it reads only names its
+    /// own enumeration returned, and it has ONE try around the whole operation — so ABSENCE is what
+    /// the listing says and no longer what an exception says, and every exception of every type at
+    /// every step is the same answer. A file that vanishes between the listing and the read is a
+    /// read this run could not perform, which is the direction to fail in: it is a set that moved,
+    /// not a set that was empty.
     ///
-    /// ABSENCE IS TWO EXCEPTIONS AND NO OTHERS. Anything else is a read this run could not perform.
+    /// The seam is still driven with each failure the operating system can give it, because an ACL
+    /// that denies a file's attributes on Windows cannot be provoked on the machine the code is
+    /// written on. ABSENCE is covered by its own case below and by
+    /// <c>WitnessSnapshotTests.A_genuinely_absent_sidecar_is_clean_empty</c>, where it belongs: in
+    /// the enumeration.
     /// </summary>
     [Theory]
-    [InlineData("FileNotFound", false)]
-    [InlineData("DirectoryNotFound", false)]
-    [InlineData("UnauthorizedAccess", true)]
-    [InlineData("IO", true)]
-    [InlineData("Argument", true)]
-    public void A_sidecar_read_that_fails_is_unreadable_unless_it_says_the_file_is_not_there(
-        string failure, bool unreadable)
+    [InlineData("FileNotFound")]
+    [InlineData("DirectoryNotFound")]
+    [InlineData("UnauthorizedAccess")]
+    [InlineData("IO")]
+    [InlineData("Argument")]
+    public void A_sidecar_read_that_fails_is_unreadable_whatever_the_failure_was(string failure)
     {
         var seed = Session();
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
         seed.Dispose();
+        File.WriteAllText(Sidecar, $"{DateTimeOffset.UtcNow:O} WARN something happened" + Environment.NewLine);
 
         var reader = new CoidWitness(File_, readSidecar: _ => throw Failure(failure));
 
-        if (unreadable)
-        {
-            Assert.NotNull(reader.Trouble);
-            Assert.Contains("could not be read", reader.Trouble);
-            Assert.Contains("io:degraded", reader.Token());
-            Assert.True(reader.Noted);
-            Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
-        }
-        else
-        {
-            Assert.Null(reader.Trouble);
-            Assert.False(reader.Noted);
-            Assert.Equal(WitnessStanding.Clean, CoidWitnessReport.Standing(reader));
-        }
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("could not be read", reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.True(reader.Noted);
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
     }
 
     /// <summary>
-    /// THE SECOND PROBE, AND THE F25 BOUNDARY IT LANDS ON.
+    /// AND THE OTHER DIRECTION, WHICH IS THE ONE THAT MATTERS MOST: a directory that listed cleanly
+    /// and held no sidecar is a machine with nothing written down. The read seam here would throw if
+    /// it were ever called, and it is not called, because there is nothing to read.
+    /// </summary>
+    [Fact]
+    public void A_sidecar_that_is_not_there_is_not_a_sidecar_that_could_not_be_read()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+        Assert.False(File.Exists(Sidecar));
+
+        var reader = new CoidWitness(File_, readSidecar: _ => throw Failure("IO"));
+
+        Assert.Null(reader.Trouble);
+        Assert.False(reader.Noted);
+        Assert.Equal(WitnessStanding.Clean, CoidWitnessReport.Standing(reader));
+        Assert.False(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+    }
+
+    /// <summary>
+    /// THE ENUMERATION, AND THE F25 BOUNDARY IT DOES NOT LAND ON.
     ///
-    /// An enumeration that failed is not an empty directory. What it hides is the PER-WRITER set —
-    /// the canonical generations are read by name and answer for themselves — so it flags the zero
-    /// (<see cref="CoidWitness.Noted"/>) without degrading this machine. A second bridge's directory
-    /// permissions must not drop <c>SupportsClientOrderId</c>; they must stop a count of zero being
-    /// read as "this product never submitted that identifier".
+    /// ROUND 10 REWROTE THIS TEST TOO, AND REVERSED ITS EXPECTATION. Round 9 read an enumeration
+    /// failure as flagging the zero WITHOUT degrading the machine, on the F25 argument: what a
+    /// refused listing hides is the per-writer set, and a second bridge's directory permissions must
+    /// not drop <c>SupportsClientOrderId</c>. That argument is right about a refused writer's
+    /// CONTENT and wrong about this run's ability to look: with no listing there is no canonical
+    /// generation either — the names come from the enumeration now, so a refused listing means this
+    /// run does not know whether a durability gap is open, which is exactly the state
+    /// <c>io:degraded</c> exists for. F25 stands where it was drawn: a refused writer's ERROR line
+    /// still does not degrade this machine (see
+    /// <see cref="A_refused_writers_safety_line_flags_the_zero_without_degrading_the_machine"/>);
+    /// what crosses the boundary is UNREADABILITY, which is this run's own problem whoever the file
+    /// belonged to.
     /// </summary>
     [Theory]
-    [InlineData("DirectoryNotFound", false)]
-    [InlineData("UnauthorizedAccess", true)]
-    [InlineData("IO", true)]
-    [InlineData("Argument", true)]
-    public void A_sidecar_enumeration_that_fails_flags_the_zero_without_degrading_the_machine(
-        string failure, bool noted)
+    [InlineData("DirectoryNotFound")]
+    [InlineData("UnauthorizedAccess")]
+    [InlineData("IO")]
+    [InlineData("Argument")]
+    public void A_sidecar_enumeration_that_fails_degrades_rather_than_reading_as_an_empty_directory(
+        string failure)
     {
         var seed = Session();
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
@@ -3040,10 +3067,12 @@ public class CoidWitnessTests : IDisposable
 
         var reader = new CoidWitness(File_, listSidecars: (_, _) => throw Failure(failure));
 
-        Assert.Equal(noted, reader.Noted);
-        Assert.Null(reader.Trouble);                       // not degraded: the F25 boundary
-        Assert.DoesNotContain("io:degraded", reader.Token());
-        Assert.Equal(noted, CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+        Assert.True(reader.Noted);
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("could not be read", reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.Empty(reader.SidecarPaths);
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
     }
 
     static Exception Failure(string kind) => kind switch
@@ -3230,6 +3259,14 @@ public class CoidWitnessTests : IDisposable
     /// With the gap in the current log and the staging name unscanned, the next start read a healthy
     /// witness: `Trouble` null, `io:noted`, and `SupportsClientOrderId` therefore true over a lost
     /// write-ahead record. The last copy was then scheduled for deletion by the next rotation.
+    ///
+    /// ROUND 10 MOVED THE INSTANT THIS OBSERVES, AND THE FILE SET IT ASSERTS WITH IT. The rotation
+    /// no longer moves anything before it writes: the new current log is built under `.new` FIRST,
+    /// and the generations move only after that write has returned. So a restatement that never
+    /// lands is now observed before ANY rename has happened, and the assertion below is stronger
+    /// than it was — not "the only copy is in the staging file" but "nothing has been touched at
+    /// all". The claim it defends is the same one: at the instant the write fails, the gap is in a
+    /// file a reader reads.
     /// </summary>
     [Fact]
     public void A_restatement_that_never_lands_leaves_the_gap_where_a_reader_still_finds_it()
@@ -3258,11 +3295,11 @@ public class CoidWitnessTests : IDisposable
         w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
         w.Dispose();
 
-        // THE STAGING FILE IS THE ONLY COPY THERE IS at that instant — the current log has been
-        // moved into it and the replacement does not exist — so the whole of the claim is that a
-        // reader scans that name. Asserted rather than assumed, because if a later change gives the
-        // rotation a second copy somewhere this test should say so rather than quietly still pass.
-        Assert.Equal(["coid-witness.errors.log.rotating"], filesThen);
+        // THE ORIGINAL IS STILL THE ONLY FILE THERE IS, AND IT IS UNTOUCHED — the write that failed
+        // was the first act of the rotation, so nothing has been renamed and nothing removed.
+        // Asserted rather than assumed: if a later change moves a generation before the carry is on
+        // the disk, this test says so rather than quietly still passing.
+        Assert.Equal(["coid-witness.errors.log"], filesThen);
         Assert.NotNull(whatTheNextStartSees);
     }
 
