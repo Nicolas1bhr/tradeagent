@@ -133,7 +133,7 @@ public sealed class AppHost : IAsyncDisposable
             // refuses to dispatch while the program is being replaced. It is a seam rather than
             // three assignments here because this project is not built by the test suite, and a
             // guard that can only be checked by grepping for it is a guard nobody is checking.
-            UpdateGatewayCoupling.Attach(Gateway, Updates);
+            UpdateTradingInterlock.Attach(Gateway, Updates);
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();

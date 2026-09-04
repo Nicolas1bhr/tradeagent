@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -1063,7 +1064,7 @@ public class UpdateTrustTests
     ///
     /// TradeAgent.App is not built by this suite, so a reviewer deleted one of them and watched all
     /// 354 tests stay green; the source-text assertion that replaced it caught a deletion but not a
-    /// comment. UpdateGatewayCoupling.Attach is the same wiring somewhere a test can call it.
+    /// comment. UpdateTradingInterlock.Attach is the same wiring somewhere a test can call it.
     /// </summary>
     [Fact]
     public async Task Attaching_the_updater_to_the_gateway_wires_both_halves_of_the_contract()
@@ -1079,7 +1080,7 @@ public class UpdateTrustTests
         Assert.Null(updates.UnconfirmedWork);
         Assert.Null(gw.InstallInProgress);
 
-        UpdateGatewayCoupling.Attach(gw, updates);
+        UpdateTradingInterlock.Attach(gw, updates);
 
         Assert.NotNull(updates.UnconfirmedWork);
         Assert.NotNull(gw.InstallInProgress);
@@ -1098,7 +1099,7 @@ public class UpdateTrustTests
 
         var f = Wellformed();
         var updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, f.Sources());
-        UpdateGatewayCoupling.Attach(gw, updates);
+        UpdateTradingInterlock.Attach(gw, updates);
         await updates.CheckAsync();
 
         var placed = await gw.PlaceAsync(new AgentContext("a"), Guid.NewGuid().ToString("n"), TestEnv.Buy());
@@ -1120,7 +1121,7 @@ public class UpdateTrustTests
 
         var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
         var updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, f.Sources());
-        UpdateGatewayCoupling.Attach(gw, updates);
+        UpdateTradingInterlock.Attach(gw, updates);
         await updates.CheckAsync();
 
         Assert.False(await updates.InstallAsync());
@@ -1152,7 +1153,7 @@ public class UpdateTrustTests
             }
         };
         updates = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources);
-        UpdateGatewayCoupling.Attach(gw, updates);
+        UpdateTradingInterlock.Attach(gw, updates);
         await updates.CheckAsync();
 
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));   // control
@@ -1173,7 +1174,7 @@ public class UpdateTrustTests
     public void The_composition_root_still_calls_the_seam()
     {
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "AppHost.cs"));
-        Assert.Contains("UpdateGatewayCoupling.Attach(Gateway, Updates);", text);
+        Assert.Contains("UpdateTradingInterlock.Attach(Gateway, Updates);", text);
     }
 
     /// <summary>
@@ -1765,6 +1766,126 @@ public class UpdateTrustTests
         Assert.NotNull(text);
         Assert.Equal(Hash, ChecksumManifest.Find(text, Asset));
         Assert.True(clock.Elapsed < ChecksumManifest.FetchTimeout, $"took {clock.Elapsed}");
+    }
+
+    // ---- 3. the low batch -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The rest of what the name check refuses, stated as CATEGORIES rather than as a list of
+    /// codepoints somebody happened to think of. Each row asserts the category it claims to be
+    /// testing before it tests it — a fixture that has quietly stopped being a private-use character
+    /// proves nothing, and would go on passing for the wrong reason.
+    ///
+    /// The first row is why an astral character — any codepoint above the BMP, so every emoji — is
+    /// refused: in UTF-16 it is a surrogate pair, and both halves are <c>Surrogate</c>. That is a
+    /// consequence of iterating <see cref="char"/> rather than runes, and it is a consequence worth
+    /// keeping. The installer this product publishes is named in ASCII; a release naming it in a way
+    /// that needs a surrogate pair is not one of ours, and the check has no business trying to decide
+    /// which non-ASCII names are the friendly ones.
+    /// </summary>
+    [Theory]
+    [InlineData("😀", UnicodeCategory.Surrogate, "an astral character: a grinning face, one surrogate pair")]
+    [InlineData("", UnicodeCategory.PrivateUse, "a private-use codepoint: it means whatever a font says it means")]
+    [InlineData("͸", UnicodeCategory.OtherNotAssigned, "a codepoint Unicode has not assigned")]
+    public void An_installer_name_outside_the_alphabet_our_packaging_writes_is_never_offered(
+        string outside, UnicodeCategory category, string what)
+    {
+        _ = what;
+        Assert.All(outside, c => Assert.Equal(category, char.GetUnicodeCategory(c)));
+
+        UpdateVersion.TryParse("0.1.0", out var current);
+        var json = $$"""
+            {"tag_name":"v0.2.0","draft":false,"prerelease":false,"body":"","html_url":"h",
+             "assets":[{"name":"TradeAgent-Setup-{{outside}}x64.exe","browser_download_url":"u","size":9},
+                       {"name":"SHA256SUMS.txt","browser_download_url":"s","size":1}]}
+            """;
+
+        Assert.Null(ReleaseFeed.Parse(json, current, UpdateService.DefaultAssetPattern, out var problem));
+        Assert.Contains("will not treat as a file name", problem);
+    }
+
+    /// <summary>
+    /// A cancelled fetch is the owner's own application shutting down, not a release that cannot be
+    /// verified. It used to be flattened into null by the catch-all and reported to the owner — and
+    /// written into their activity log — as "the checksum file published with it could not be read",
+    /// which is an accusation against a publisher who did nothing.
+    ///
+    /// Only the CALLER'S cancellation propagates. The leash expiring is still null, because a server
+    /// that stopped answering IS a file that could not be read: see
+    /// <see cref="A_manifest_that_stops_arriving_is_cut_at_the_leash_rather_than_waited_out"/>.
+    /// </summary>
+    [Fact]
+    public async Task A_caller_cancelling_the_manifest_fetch_gets_cancellation_not_an_unreadable_file()
+    {
+        var body = Encoding.ASCII.GetBytes($"{Hash}  {Asset}\n");
+        await using var server = new Server(async (res, stop) =>
+        {
+            res.ContentLength64 = body.Length;
+            await res.OutputStream.WriteAsync(body, stop);
+        });
+
+        // Control: the same URL, uncancelled, is a manifest that reads perfectly well.
+        Assert.NotNull(await Within(
+            Downloader.TryGetSmallTextAsync(server.Url, ChecksumManifest.MaxCharacters, ChecksumManifest.FetchTimeout),
+            "the control fetch"));
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            Downloader.TryGetSmallTextAsync(
+                server.Url, ChecksumManifest.MaxCharacters, ChecksumManifest.FetchTimeout, cancelled.Token));
+    }
+
+    /// <summary>And what that is worth one level up: a cancelled install is not a refusal.</summary>
+    [Fact]
+    public async Task An_install_cancelled_while_the_manifest_is_fetched_is_not_recorded_as_a_refusal()
+    {
+        var lines = new List<string>();
+        var f = Wellformed();
+        var sources = f.Sources() with
+        {
+            Text = (_, ct) => Task.FromException<string?>(new OperationCanceledException(ct))
+        };
+        var service = new UpdateService("0.1.0", "owner/repo", UpdateService.DefaultAssetPattern, sources)
+        {
+            UnconfirmedWork = () => 0
+        };
+        await service.CheckAsync();
+        service.Activity = (text, _) => lines.Add(text);
+
+        Assert.False(await service.InstallAsync());
+
+        Assert.False(service.Refused);
+        Assert.DoesNotContain(lines, l => l.Contains("cannot be verified"));
+        Assert.False(f.DownloadStarted);
+        Assert.False(service.InstallInProgress);
+    }
+
+    /// <summary>
+    /// <c>maxBytes + 1</c> is the whole trick of the limited read, and at <see cref="int.MaxValue"/>
+    /// it wraps to <see cref="int.MinValue"/> — which <c>Math.Min</c> then hands to <c>new byte[]</c>.
+    /// A caller asking for as much as an int can count is asking for no practical limit, not for an
+    /// <see cref="OverflowException"/> out of the middle of a download.
+    /// </summary>
+    [Fact]
+    public async Task Asking_the_reader_for_everything_an_int_can_count_does_not_overflow_the_cap()
+    {
+        var body = new MemoryStream(Encoding.ASCII.GetBytes($"{Hash}  {Asset}\n"));
+
+        var text = await Downloader.ReadLimitedAsync(body, int.MaxValue);
+
+        Assert.Equal(Hash, ChecksumManifest.Find(text, Asset));
+    }
+
+    /// <summary>
+    /// The other end of the same arithmetic. A negative limit is a caller defect, and returning null
+    /// for it says "the body was too big" about a body nobody looked at.
+    /// </summary>
+    [Fact]
+    public async Task A_negative_limit_is_a_defect_rather_than_a_body_that_was_too_big()
+    {
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => Downloader.ReadLimitedAsync(Stream.Null, -1));
     }
 
     // ---- helpers ---------------------------------------------------------------------------------

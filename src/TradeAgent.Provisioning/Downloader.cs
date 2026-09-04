@@ -289,6 +289,13 @@ public static class Downloader
     /// checksum manifest comes through here: a declared length is refused unopened, the body is read
     /// through <see cref="ReadLimitedAsync"/> so at most <paramref name="maxBytes"/> + 1 bytes are
     /// ever pulled off the socket, and the whole thing is on a short leash of its own.
+    ///
+    /// Null means "could not be read", and the caller turns that into a sentence blaming the release
+    /// for it. So the ONE thing that does not become null is <paramref name="ct"/> being cancelled:
+    /// that is this application shutting down, not a publisher who shipped an unreadable manifest,
+    /// and reporting it as the latter puts an accusation in the owner's activity log about a release
+    /// that did nothing. The leash expiring stays null — a server that stopped answering really is a
+    /// file that could not be read.
     /// </summary>
     public static async Task<string?> TryGetSmallTextAsync(
         string url, int maxBytes, TimeSpan timeout, CancellationToken ct = default)
@@ -307,6 +314,7 @@ public static class Downloader
             await using var body = await response.Content.ReadAsStreamAsync(leash.Token);
             return await ReadLimitedAsync(body, maxBytes, leash.Token);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception) { return null; }
     }
 
@@ -324,7 +332,14 @@ public static class Downloader
     /// </summary>
     public static async Task<string?> ReadLimitedAsync(Stream body, int maxBytes, CancellationToken ct = default)
     {
-        var cap = maxBytes + 1;
+        // The +1 is arithmetic on a number a caller chose, and at int.MaxValue it wraps to
+        // int.MinValue — which Math.Min then passes to new byte[], throwing OverflowException out of
+        // the middle of a fetch. "As much as an int can count" is a request for no practical limit,
+        // so that is what it gets: there is no byte past int.MaxValue for the +1 to reach for. A
+        // NEGATIVE limit is a defect in the caller, and answering it with null would say "the body
+        // was too big" about a body nobody read.
+        ArgumentOutOfRangeException.ThrowIfNegative(maxBytes);
+        var cap = maxBytes == int.MaxValue ? int.MaxValue : maxBytes + 1;
         var buffer = new byte[Math.Min(64 * 1024, cap)];
         using var into = new MemoryStream();
 

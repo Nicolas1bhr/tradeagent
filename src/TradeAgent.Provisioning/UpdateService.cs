@@ -830,6 +830,14 @@ public static class ReleaseFeed
             // installer on screen while being something else; U+200B and U+00AD are invisible
             // entirely, and two names that look identical to the owner are two different files. None
             // of them is a control character. The category is the check, not the codepoint.
+            //
+            // Surrogate, PrivateUse and OtherNotAssigned are here for the same reason and one more:
+            // iterating chars rather than runes makes every astral codepoint — everything above the
+            // BMP, so every emoji — a pair of Surrogates, and therefore refused outright. That is
+            // deliberate and it is the disclosed limit of this check. The installer this product
+            // publishes is named in ASCII; a release naming it in a way that needs a surrogate pair
+            // is not one of ours, and this is not the place to start deciding which non-ASCII names
+            // are the friendly ones.
             switch (char.GetUnicodeCategory(c))
             {
                 case System.Globalization.UnicodeCategory.Control:

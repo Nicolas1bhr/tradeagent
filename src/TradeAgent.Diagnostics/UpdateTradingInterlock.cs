@@ -4,7 +4,15 @@ using TradeAgent.Provisioning;
 namespace TradeAgent.Diagnostics;
 
 /// <summary>
-/// The two-way link between the updater and the trading gateway, in one place that a test can run.
+/// The interlock between updating and trading: each side stops the other from acting at the one
+/// moment it must not, in one place that a test can run.
+///
+/// <b>Why it is called that.</b> It was <c>UpdateGatewayCoupling</c>, which named the two objects
+/// and not the thing being built out of them — and "coupling" reads as the defect a reviewer would
+/// go looking for rather than as the safety device this is. An interlock is exactly what these three
+/// delegates make: the updater will not replace the program while an order's outcome is unknown, and
+/// the gateway will not start an order while the program is being replaced. Neither half is optional
+/// and neither half is meaningful alone.
 ///
 /// <b>Why this exists as a seam rather than as three lines in AppHost.</b> The updater must not
 /// replace the program while an order's outcome is unknown, and the gateway must not dispatch an
@@ -20,7 +28,7 @@ namespace TradeAgent.Diagnostics;
 /// gateway know about updates, or the provisioner know about trading, would be a worse structure
 /// than a slightly oddly-placed file — and the test project already references this one.
 /// </summary>
-public static class UpdateGatewayCoupling
+public static class UpdateTradingInterlock
 {
     /// <summary>
     /// Hands each side the narrowest view of the other it can work with: a count, a log sink, and a
