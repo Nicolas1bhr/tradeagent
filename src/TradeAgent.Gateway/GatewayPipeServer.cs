@@ -1341,15 +1341,31 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             try { await Task.WhenAll(handlers).WaitAsync(SettleAfterCancelTimeout); }
             catch (Exception) { /* the count below is what matters */ }
 
-            // Counted after the unwind, because a handler that recorded its UNKNOWN in step 5 DID
-            // finish. Counting before it reported a settled request as an abandoned one.
+            // COUNTED AFTER THE UNWIND, and counted on the STATE rather than on the symptom.
+            //
+            // It counted handler TASKS still running, which is not what this line is about. A
+            // connector that HONOURS its cancellation token unwinds the instant disposal cancels it,
+            // so the handler finishes — while `TradingGateway.ModifyAsync` catches only
+            // `ConnectorRejectedException` and `ConnectorTransportException` and lets the
+            // cancellation escape, leaving the row DISPATCHING and unflagged. `ReconcileAsync` scans
+            // `NeedingReconciliation()` alone, so nothing will ever settle it, and the only trace an
+            // operator gets said nothing at all (verifier round-9 F-2, measured: `DISPATCHING rows =
+            // 1`, `handlers_did_not_finish = (not logged)`).
+            //
+            // So both are reported, and the REQUEST is the one that decides whether this fires. It
+            // is named, because "something was abandoned" is not something anybody can act on.
+            // Settling the row belongs to whoever owns the request — routed to U2c-1; refusing to
+            // return silently belongs here.
             var unfinished = handlers.Count(h => !h.IsCompleted);
-            if (unfinished > 0)
+            var unsettled = gateway.Requests.Query("execution_state='DISPATCHING'");
+            if (unfinished > 0 || unsettled.Count > 0)
                 gateway.Log.Engineering("Ipc", "handlers_did_not_finish", "error",
                     metadataJson: Json.Write(new
                     {
                         unfinished,
                         of = handlers.Length,
+                        unsettled = unsettled.Count,
+                        requests = unsettled.Select(r => r.RequestId).ToArray(),
                         drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds,
                         settle_timeout_ms = (int)SettleAfterCancelTimeout.TotalMilliseconds
                     }));
