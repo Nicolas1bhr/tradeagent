@@ -272,7 +272,7 @@ public class AdapterTeardownTests : IDisposable
     /// waiting, not the one it read before it started to wait.
     /// </summary>
     [Fact]
-    public void The_stopped_flag_that_decides_is_the_one_read_under_the_lock()
+    public async Task The_stopped_flag_that_decides_is_the_one_read_under_the_lock()
     {
         var witness = Session();
         Assert.True(Submit(witness, "TA-RESTING"));
@@ -295,13 +295,13 @@ public class AdapterTeardownTests : IDisposable
         Assert.True(teardown.Stopped);
 
         letGo.Set();
-        Assert.True(holder.Wait(5_000));
-        Assert.True(writer.Wait(5_000));
+        await holder.WaitAsync(TimeSpan.FromSeconds(5));
+        await writer.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.False(recorded,
             "the flag was read before the lock, so a write got in for a strategy ATAS had stopped");
 
         finishStop.Set();
-        Assert.True(stopper.Wait(5_000));
+        await stopper.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(Submit(Session(), "TA-REPLACEMENT"));
     }
 
@@ -323,7 +323,7 @@ public class AdapterTeardownTests : IDisposable
     /// IO.
     /// </summary>
     [Fact]
-    public void A_stop_that_lands_mid_write_never_leaves_the_lease_held()
+    public async Task A_stop_that_lands_mid_write_never_leaves_the_lease_held()
     {
         for (var round = 0; round < 40; round++)
         {
@@ -349,7 +349,8 @@ public class AdapterTeardownTests : IDisposable
                 teardown.Stop(steps: () => throw new InvalidOperationException("UntrackSecurities blew up"));
             });
             go.Set();
-            try { Task.WaitAll(writer, stopper); } catch (AggregateException) { /* the steps throw by design */ }
+            try { await Task.WhenAll(writer, stopper); }
+            catch (InvalidOperationException) { /* the steps throw by design */ }
 
             var replacement = new CoidWitness(path);
             Assert.True(replacement.Submitting("TA-2", "SIM", "ES", "Buy", 1m, null),

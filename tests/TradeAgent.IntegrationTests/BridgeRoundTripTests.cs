@@ -577,6 +577,75 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// AND A PEER THAT TALKS WITHOUT SAYING ANYTHING IS THE SAME PEER.
+    ///
+    /// The drop is decided by <c>PeerHasGoneQuiet()</c>, which reads <c>_lastHeartbeat</c> — written
+    /// by an accepted hello and by a heartbeat frame, and by nothing else. But round 8 CONSULTED it
+    /// only when the idle poll won the race against the pending read. Those are two different
+    /// questions, and the gap between them is a reachability hole the width of the whole finding: a
+    /// peer that completes ANY line more often than <c>IdlePoll</c> never lets the poll win, so it
+    /// is never asked whether it has gone quiet, and it holds the only server instance there is
+    /// while the connector's own health says DEGRADED about it.
+    ///
+    /// One meaningless <c>{"op":"ping"}</c> every 200 ms against a 333 ms poll and a 1 s window is
+    /// all it takes, and any process running as this user can do it. The silent peer above is the
+    /// control: the drop must not work only against total silence.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_dribbles_frames_without_beating_is_dropped_like_a_silent_one()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10))
+        {
+            HeartbeatTimeout = TimeSpan.FromSeconds(1)
+        };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        // Authenticates, says a compatible hello, and then never beats again.
+        using var dribbler = await Park(pipe, Versions.BridgeProtocolVersion);
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+
+        var writer = new StreamWriter(dribbler, new System.Text.UTF8Encoding(false), 8192, leaveOpen: true)
+        { AutoFlush = true };
+        using var stop = new CancellationTokenSource();
+        var noise = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    await writer.WriteLineAsync(
+                        Json.Write(new { v = Versions.BridgeProtocolVersion, op = "ping" }));
+                    await Task.Delay(200, stop.Token);
+                }
+            }
+            catch (Exception) { /* the connector dropping us is the point of the test */ }
+        });
+
+        try
+        {
+            // Five heartbeat windows of chatter, no heartbeat. The bridge that is actually alive
+            // then dials in and must get the instance, exactly as it does against a silent peer.
+            await Task.Delay(2_500);
+            await using var live = await Redial(pipe, new BridgeHello
+            {
+                BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+                BridgeVersion = "0.1.2", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+                SupportsClientOrderId = true, SupportsOrderHistory = true
+            }, attempts: 12);
+
+            await Wait(async () => await Task.FromResult(connector.Bridge?.BridgeVersion == "0.1.2"));
+            Assert.Equal("0.1.2", connector.Bridge!.BridgeVersion);
+        }
+        finally
+        {
+            stop.Cancel();
+            await noise;
+        }
+    }
+
+    /// <summary>
     /// THE OTHER DIRECTION OF THE SAME DROP, and the reason it needs its own test: a rule that ends
     /// the read loop is one edit away from ending it for a bridge that is perfectly alive.
     ///
