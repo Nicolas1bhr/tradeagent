@@ -933,13 +933,29 @@ public sealed class CoidWitness : IDisposable
         // unresolved safety line is a durability gap.
         try
         {
+            // SOMETHING WAS WRITTEN DOWN — ASKED OF THE WHOLE SET, AND OUTSIDE THE CANONICAL GUARD.
+            //
+            // Splitting the sidecar per writer put a refused bridge's account of itself beside the
+            // canonical file instead of in it. On the machine that split was built for the OWNER
+            // never fails, so the canonical file does not exist — and this was computed over the set
+            // but gated on the canonical file, so `_noted` stayed false with five refusals sitting
+            // on disk. `Standing` then reads Clean, `ZeroIsProvisional` false, and the probe prints
+            // "none recorded" before reading records:0 as a confident zero, which for this file
+            // means "this product never submitted that identifier". That is the flagged-zero rule
+            // reopened by the fix that split the file.
+            _noted = SidecarSet().Any(f =>
+            {
+                try { return File.ReadAllLines(f).Any(l => !string.IsNullOrWhiteSpace(l)); }
+                catch (Exception) { return false; }
+            });
+
+            // THE DEGRADED STATE STAYS THE CANONICAL FILE'S QUESTION, and that is not an oversight
+            // being preserved. A second bridge turned away cost no order — the refusal is what stops
+            // the order being sent — so its lines must not mark this machine degraded for ever, which
+            // would drop SupportsClientOrderId over somebody else's misconfiguration. It must only
+            // stop a zero being read as a fact about what was submitted.
             if (SidecarGenerations().Any(File.Exists))
             {
-                _noted = SidecarSet().Any(f =>
-                {
-                    try { return File.ReadAllLines(f).Any(l => !string.IsNullOrWhiteSpace(l)); }
-                    catch (Exception) { return false; }
-                });
                 var deciding = LastDecidingLine();
                 _degraded = deciding is not null
                             && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
