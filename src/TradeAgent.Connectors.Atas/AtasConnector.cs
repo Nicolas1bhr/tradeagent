@@ -736,7 +736,22 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         bool mutating = false)
     {
         var waitedFrom = Environment.TickCount64;
-        if (!await _sendGate.WaitAsync(gateWait, ct))
+
+        // A CALLER WHO GAVE UP WHILE QUEUED FOR THE GATE IS THE FOURTH WAY OF NOT GETTING IT, and it
+        // is as provable as the other three: the gate was never ours, the frame is not even built
+        // yet, and no byte of it can exist. It used to fall through to the outer catch in `Rpc`,
+        // which records the fail-closed answer for everything it cannot identify — so a cancelled
+        // leg was reported as possibly at the broker and pulled a reconciliation and a trading pause
+        // behind it (Codex round-10 F1).
+        bool gate;
+        try { gate = await _sendGate.WaitAsync(gateWait, ct); }
+        catch (OperationCanceledException)
+        {
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw;
+        }
+
+        if (!gate)
         {
             // EVERY EXIT FROM THE GATE WROTE NOTHING, and it is provable rather than assumed: the
             // gate was never ours, so not one byte of this frame reached the stream. `Busy` and a
@@ -1129,8 +1144,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         catch (Exception ex)
         {
             _pending.TryRemove(id, out _);
-            // Nothing here can be shown to have written nothing, so it is the fail-closed answer.
-            if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
+            // NOTHING IS RECORDED HERE, and that is the fix rather than an omission. This catch
+            // cannot identify what it caught, so it used to write the fail-closed answer over
+            // whatever the site below had already PROVEN — a cancelled gate wait reports
+            // `NothingWritten` and this line turned it into `PossiblyWritten`. The attempt marked at
+            // the top of this method already supplies exactly the same fail-closed answer for an
+            // exit nothing identified, and it does so without overwriting one that was identified.
             throw new ConnectorTransportException("could not reach the ATAS bridge", ex);
         }
 
