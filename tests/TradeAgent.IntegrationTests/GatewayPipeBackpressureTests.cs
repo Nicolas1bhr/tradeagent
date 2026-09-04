@@ -413,7 +413,10 @@ public class GatewayPipeBackpressureTests
         // 10 + 30 + 10 at the shipped values. If a connector deadline grows, this fails here rather
         // than by abandoning an order at shutdown six months later.
         Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
-        Assert.Equal(TimeSpan.FromSeconds(55), server.HandlerDrainTimeout);
+
+        // Three of those in series plus five for the settle: a handler is not one connector call
+        // (Codex F2), and this is the number an operator can experience at shutdown.
+        Assert.Equal(TimeSpan.FromSeconds(155), server.HandlerDrainTimeout);
         Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
             $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
             $"worst-case order path {connector.WorstCaseOrderPath.TotalSeconds:0}s — a shutdown mid-order abandons it");
@@ -496,6 +499,83 @@ public class GatewayPipeBackpressureTests
         Assert.Single(conn.Broker.Orders);
         Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
     }
+
+    /// <summary>
+    /// A HANDLER IS NOT ONE CONNECTOR CALL, AND THE DRAIN HAS TO COVER THE WHOLE OF IT.
+    ///
+    /// Codex F2, and its own check. Deriving the drain from a single connector operation was the
+    /// remaining half of C3: `cancel-all` reads the working orders, resolves each target and then
+    /// cancels, so with a four-second connector the handler needs twelve seconds against a derived
+    /// drain of nine — and the active cancel is left DISPATCHING, which is the state cc7006e and
+    /// 02aad9a exist to prevent.
+    ///
+    /// The emergency budget is widened for this fixture on purpose. Round 8 bounds a risk-reducing
+    /// OPERATION at two seconds, so at shipped values this sweep could no longer take twelve; what
+    /// is on trial here is the drain's arithmetic, not that bound, and an ordinary multi-call
+    /// handler (a modify: resolve, then modify) reaches it with nothing widened.
+    /// </summary>
+    [Fact]
+    public async Task Disposal_covers_a_handler_that_makes_several_connector_calls_in_series()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking })
+        {
+            EmergencyBudget = TimeSpan.FromSeconds(30)   // not what is on trial; see above
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);   // drain untouched
+        server.Start();
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-composite",
+            RequestId = "cli-composite-buy",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                ["limit"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest("cli-composite-buy")?.State == ExecutionState.WORKING, TimeSpan.FromSeconds(30));
+
+        // Four seconds a call: orders read, target resolution, cancel — twelve in series.
+        conn.Faults.LatencyMs = 4000;
+        Assert.True(server.HandlerDrainTimeout > TimeSpan.FromSeconds(12),
+            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0}s against a handler that needs 12 s — " +
+            "it is still derived from one connector call rather than the chain the handler issues");
+
+        await agent.WriteAsync(new IpcRequest { Op = Ops.CancelAll, Session = "agent-composite", RequestId = "cli-composite-sweep" });
+        await Task.Delay(500);   // its first read is under way
+
+        await server.DisposeAsync();
+
+        Assert.Equal(0, Dispatching(db));
+        Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
+    }
+
+    /// <summary>Requests left mid-flight — the state the drain exists to prevent.</summary>
+    static int Dispatching(Database db) => db.Read(_ =>
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM execution_request WHERE execution_state='DISPATCHING'");
+        return Convert.ToInt32(c.ExecuteScalar());
+    });
 
     /// <summary>
     /// A HANDLER THAT IS CANCELLED STILL HAS SOMETHING TO WRITE DOWN, AND DISPOSAL HAS TO WAIT FOR IT.
