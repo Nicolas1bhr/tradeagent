@@ -1,0 +1,47 @@
+PRIOR 1 — FIXED — AtasConnector.cs:983 — one RPC now carries its absolute emergency deadline through gate/write and uses the remaining budget for the reply at :1023.
+
+PRIOR 2 — FIXED — AtasConnector.cs:915 — connection liveness now waits the remaining ordinary RPC grace before dropping at :926.
+
+PRIOR 3 — FIXED — GatewayPipeServer.cs:161 — the former 55-second constant now reads the connector’s live `WorstCaseOperationPath`; broader composition remains Finding 2.
+
+PRIOR 4 (null ids) — FIXED — GatewayPipeServer.cs:450 — both-null ids return `INVALID_REQUEST` without escaping the handler.
+
+PRIOR 5 (timestamp equality) — FIXED — AtasConnector.cs:960 — same-tick answers now satisfy the liveness comparison via `>=`.
+
+PRIOR 4 (1 KiB residual) — FIXED — docs/CONTRACTS.md:88 — the accepted whole-chunk progress limitation and ≈512 B/s boundary are explicitly documented.
+
+PRIOR 8 (CLI half) — FIXED — CliReplayContract.cs:69 — only buy/sell promise replay; other mutations explicitly warn that reuse acts again.
+
+PRIOR 12 — NOT FIXED — docs/hardening/records/U2a.md:63 — the committed record still says all Windows pipe behavior is unverified.
+
+PRIOR 14 — NOT FIXED — docs/hardening/records/U2a.md:65 — the record still claims one generated `close-all` settles the 64-character boundary.
+
+PRIOR F-E — FIXED — AtasConnector.cs:1065 — late-answer liveness uses the ordinary RPC timeout rather than the two-second caller deadline.
+
+PRIOR F-F — NOT FIXED — docs/hardening/records/U2a.md:53 — the record still ends at round 4, so no correction of the inaccurate round-6 “restored verbatim” claim is committed.
+
+FINDING 1 — HIGH — AtasConnector.cs:974 — The clock is per `Rpc`, so prerequisite reads and every cancel-all leg restart the two-second budget; the agent-facing emergency has no single end-to-end clock.
+
+CHECK — With one working order, delay the initial orders reply, target-resolution orders reply, and cancel reply by 1.9 seconds each; IPC `cancel-all` should finish near two seconds, but currently takes about 5.7 seconds.
+
+FINDING 2 — MED — GatewayPipeServer.cs:161 — The drain covers one connector call plus a literal five seconds, not a composite handler, so multi-RPC sweeps or serialized handlers can outlive it and strand the active request `DISPATCHING`.
+
+CHECK — Use `FakeConnector.LatencyMs=4000`, one working order, start IPC `cancel-all`, then dispose after its first read begins; the derived drain is 9 seconds while orders→resolve→cancel needs 12 seconds, and the active cancel must not remain `DISPATCHING`.
+
+FINDING 3 — LOW — AtasConnector.cs:909 — A reply racing between caller timeout and `_abandoned` registration can remove `_pending` first, after which the judge observes `CompletedTask`; no late-answer counter or event records it and `_abandoned` leaks the id.
+
+CHECK — Pause the timeout continuation immediately before `JudgeTheConnectionWhenTheGraceRunsOut`, deliver the matching reply, then resume; assert exactly one `LateAnswerReceived` event and `LateAnswers == 1`.
+
+RULING (a) — No. Gate, chunked write, and reply share one clock inside a single RPC, but every prerequisite RPC and sweep leg starts again at AtasConnector.cs:974.
+
+RULING (b) — A dead bridge may remain connected for approximately ten seconds, but `_sendGate` is not held during reply waiting: a second emergency retains its own two-second RPC bound, and the earliest grace expiry faults all pending RPCs. An ordinary RPC has no ten-second end-to-end bound—its designed maximum is gate + frame + reply. If the second mutation reached its durable record, connector failure settles it `UNKNOWN`; if authorization or a prerequisite read fails first, no second request record is created.
+
+RULING (c) — Nominally the reply is removed from `_pending`, counted/evented, and placed on its TCS at AtasConnector.cs:581-592; the judge at :915 consumes only completion and ignores the payload. No repository subscriber consumes `LateAnswerReceived`, so business settlement remains deferred to U2c-1. Finding 3 is a path where even the connector-level record is lost.
+
+RULING (d) — No. Connector deadline values are live, but GatewayPipeServer.cs:161 retains a literal five-second margin and derives from one connector operation rather than the complete handler path.
+
+DEFERRED CHECK — HELD — `TradingGateway.cs`, `DashboardView.cs`, `Stores.cs`, and `GatewayTypes.cs` are untouched in `ffa1a3d..HEAD`.
+
+TEST EXECUTION — UNVERIFIED — no `dotnet` command was run because the audit prohibited creating or modifying build artifacts.
+
+SUMMARY — 1 HIGH / 1 MED / 4 LOW
