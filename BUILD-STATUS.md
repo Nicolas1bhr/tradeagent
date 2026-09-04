@@ -2816,3 +2816,44 @@ stall), run by nobody; ATAS's real client-order-id limit and the `op-…` shape 
 
 **Deferred with an owner:** agent `close-all` legs with no fast path, sweep replay repeating effects, the operator Close
 All deadline, a cancelled handler settling, gateway-side attempt marking → U2c-1 (C1–C5); LOW batch → the U6-U9 backlog.
+
+## 2026-09-04 — U2d landed: the updater refuses instead of degrading
+
+Second unit under `docs/HOW-WE-BUILD.md`: three old-process rounds on the branch, then one fresh builder pass on
+`docs/briefs/U2d.md` and the manager's checklist. Merge `37e2d15`, 16 commits, 11 files, +2791/−46; rounds 1–3 in
+`docs/hardening/records/U2d.md`. Before it, every way of losing the checksum (BOM, TAB, renamed asset, truncated hash,
+empty or absent manifest) silently installed an unverified 90 MB executable, the installer asset was chosen by position,
+and the "no install while an order is unconfirmed" stop existed only on the banner button.
+
+- **Fail closed on the trust chain.** A missing, unfetchable or non-matching manifest refuses before any download with a
+  readable reason; `DownloadVerifiedAsync` refuses a null or blank hash; more than one installer-pattern asset is
+  ambiguous and refused; the file is re-hashed immediately before `Launch`; duplicate conflicting manifest entries
+  refuse; 64 KiB / 2000-line manifest cap, enforced at read time (`ReadLimitedAsync` reads at most 64 KiB + 1, declared
+  Content-Length refused unopened, 30 s fetch timeout); invisible, bidi, astral, private-use and unassigned characters
+  in asset names refuse (`IsPlainFileName`); a negative count fails closed.
+- **The hard stop is in `InstallAsync`, not on a button.** Behind a fail-closed `Func<int>? UnconfirmedWork` (null or
+  throw = unknown work = refuse), re-checked before `Launch`; `TradingGateway.InstallInProgress` is consulted first in
+  `TryAuthorizeExecution` (`UPDATE_INSTALL_IN_PROGRESS`, operator not exempt), goes up after the manifest is resolved
+  and stays up after a successful `Launch`; the wiring is a testable seam, now named `UpdateTradingInterlock`, run
+  against a real gateway in tests.
+- **Refusals are what the owner sees.** The banner renders refusals only and expires them; `Dismissed` clears on a
+  changed reason; a throwing `Activity` sink on the refusal path no longer replaces the owner's reason (one wrapped
+  `Record(text, level)` that every sink call goes through); no checks after `Launch`; caller cancellation propagates as
+  cancellation; `ReadLimitedAsync(_, int.MaxValue)` no longer overflows.
+
+**Verified by running (the builder, quoted from its report; then the manager's gate):** item 1 RED on 3 tests
+(`database is locked` out of `InstallAsync`), GREEN 77/77, mutant with the catch removed → 4 red; item 2 five wire tests
+through a per-request `HttpListener` (65537 declared refused with 1 byte sent; chunked 65537 refused; 65536 read whole;
+stall cut at the leash; healthy manifest resolves), each of three reverts RED; item 3 category rows pinned, mutant with
+the three categories dropped → 3 red, `OverflowException` and a swallowed cancellation both RED then GREEN. Builder's
+final on `bd5e390`: Debug and Release 0 warnings, 75 + 197 + 314 = 586, 0 failed. Manager's gate at the rebased tip
+`37e2d15` in Release: build → 0 warnings, 0 errors; suite → 75 + 197 + 314 = 586, 0 failed; test-name diff against `main` → 1 removed (below), 90 added; secret
+scan → clean; CI run 33901364151 → RED on all three, 313/314 each: ubuntu and macos on the two U2a runner-speed deadline tests
+(`docs/briefs/U2a-fix.md`, in flight); windows on `CoidWitnessTests.The_file_is_never_absent_while_it_is_being_rewritten`,
+the load-dependent rewrite race recorded on `main` at 3931c10 that U14 exists to close (U14a in flight). No file in
+this unit's diff touches either class (`git diff --name-only b861ac9..37e2d15`).
+
+**NOT VERIFIED:** `UpdateSources.Install` and every UI surface are executed by no test; nothing on the box. **Removed
+test, deliberate:** `A_release_without_a_checksum_file_still_installs_without_inventing_one` (round 1, `df9b068`) pinned
+the checksumless install this unit now refuses. **Deferred with an owner:** item 10, the provider counting every
+wire-touched record through U2c-1's store query → U2c-1; `UpdateService.cs:255-265` is unchanged until then.
