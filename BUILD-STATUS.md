@@ -3003,3 +3003,44 @@ teardown and timing shapes, not product assertions, NOT investigated here; fixer
 **For the milestone review, stated by the fixer:** `CoidWitness` reads its sidecar with `File.ReadAllLines`, which shares
 READ only, so on Windows a concurrent reader can push the product's own append into its retry budget — no red reachable
 without a Windows machine, unchanged, NOT VERIFIED.
+
+## 2026-09-05 — U2c1a landed: dispatch recovery on `main`, and the reconciliation rule derived correctly
+
+Fifth product unit under `docs/HOW-WE-BUILD.md`: three old-process rounds on the branch (startup sweep, exhaustive state
+mapping, catch-all after the wire, emergency-control records, target-based reconciliation — `docs/hardening/records/U2c1.md`),
+then one brief and two builders (the first killed by a usage limit mid-item 3, the second continued from the branch).
+Merge `19fe6e5`, 33 commits, 14 files, +4374/−100. Before it, a crash after the write-ahead was never swept and trading resumed
+over a possibly-live order; unmapped connector states became ACKNOWLEDGED; Close All sent market closes with no record.
+
+The rule, in `docs/CONTRACTS.md`: *a request leaves the unconfirmed set only on positive, definite, stable evidence about
+its own target; anything else is inconclusive and keeps trading paused.* This unit makes the code obey it:
+
+- **Only the record's own connector is evidence.** A record placed on A while B is connected is inconclusive, reason
+  "placed on A; connected to B"; an empty book on B settles nothing.
+- **Non-definite is never clear.** The live set is asked for `undecided` orders first, captured or not.
+- **`Adopt` never treats the broker's UNKNOWN as resolved** — the flag every gate reads is no longer cleared on the
+  strength of the broker not knowing.
+- **"Held still" is not a verdict.** `_settleWatch`, `HeldStill` and `SignatureOf` are deleted; a working target stays
+  inconclusive until a definite state: target terminal, absence past grace, definite CANCELLED, or the owner's card.
+- **The latch covers the definite settle path.** A persist failure after the wire latches, files `settle_failed` off-thread
+  and throws `STATE_DATABASE_CORRUPT`; `Settle` now runs before the activity line in `CancelAsync`/`ModifyAsync`, where a
+  failing log write used to stop the settle from ever being reached.
+- **Modify is judged against its target.** `CheckModification` refuses an answer whose order id, symbol or account is not
+  the target's; `PriceCarries` accepts exactly floor/ceil of the request on the tick grid and refuses the price the order
+  already had; `OrderInfo.Quantity` is defined in `Contracts.cs` as the total, never the remainder.
+- **Rebase over U2a:** `GatewayTypes.cs` keeps U2a's sealed `AgentContext`; two post-rebase reds (U2b's disposal
+  sentinel) were real interactions, fixed as item 0.
+
+**Verified by running (the builders, quoted; then the manager's gate):** item 1 mutant `if (false && …)` → RED; item 2
+mutant `undecided.Count > 99` → 3 RED; item 3 RED "the flag every gate reads was cleared…" → GREEN, mutant → RED; item 4
+2 RED → GREEN, mutant `IsTerminal → IsLive` → 6 RED; item 5 2 RED (store put in `PRAGMA query_only`) → GREEN, mutant
+`LatchUnconfirmed → ClearLatch` → 2 RED; item 6 6 RED → GREEN, mutant (prior-price clause `return true`) → 2 RED.
+Builder's final at `bba9849`, Release: 0 warnings across 17 projects; Fault 191 / Unit 201 / Integration 506 = 898, 0
+failed; names vs its baseline 19 added, 1 removed (a rename whose old name never existed on `main`). Manager's gate at
+the rebased tip `19fe6e5`, Release: build → 0 warnings, 0 errors; suite → 201 + 191 + 520 = 912, 0 failed; test names vs `main` → 0 removed, 117 added; scan
+clean; CI at the merge was in progress when this was written; recorded with U2c1b.
+
+**NOT VERIFIED:** nothing on the box. **Gaps stated by the builder:** Close All's per-position `Settle` loop can still be
+abandoned mid-sweep by a store failure (pre-existing, U2c1b's area); a persist failure inside the reconciler's `Resolve`
+is caught per request and counted inconclusive — read, not tested. **Deferred with an owner:** the emergency-press
+rewrite with C2/C3 → U2c1b; C1 (intent through the connector), C4 (cancelled handler settles), C5 (attempt marking) → U2c1c.
