@@ -342,33 +342,63 @@ public class SweepRequestIdTests
         var really = (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED);
         Assert.True(claimed <= really, $"claimed cancelled={claimed} while {really} are actually cancelled");
 
-        // ---- AND THE HALF THIS TEST WAS MISSING: ONE ANSWER CARRYING A MIX (verifier round-9 F-5).
-        //
-        // Everything above is satisfied by a sweep that attempted NOTHING — at a second a leg the
-        // orders read plus one target resolution is the whole two-second budget, so every leg comes
-        // back `not-sent` and `attempted = 0` (measured by the verifier: `cancelled = 0, attempted =
-        // 0, not_sent = 5`). The acceptance is "which sent, which confirmed, which not sent", and a
-        // reply in which every leg says the same thing never exercises it.
-        //
-        // The five orders are all still working — nothing above cancelled anything — so the same
-        // sweep runs again with the simulator quick and two one-shot faults armed. Legs are issued
-        // in waves of four, so the first wave carries the refusal, the lost answer and two ordinary
-        // cancellations, and the fifth leg supplies the fourth word: the lost answer settles UNKNOWN
-        // and `NeedsReconciliation` refuses everything after it, so that leg is never sent.
-        //
-        // FIFTY MILLISECONDS, NOT ZERO, AND IT IS LOAD-BEARING. At zero latency the simulator
-        // returns without ever awaiting, so `issue()` runs each leg to completion before the loop
-        // starts the next one and the wave is serial — the first UNKNOWN then refuses the other
-        // three and every word in the answer is the same one. A latency forces the real shape: four
-        // legs authorised and in flight together.
-        conn.Faults.LatencyMs = 50;
-        conn.Faults.RefuseCancel = 1;      // a DEFINITE broker refusal      -> rejected
-        conn.Faults.LoseAfterSend = 1;     // sent, no answer came back      -> sent-not-confirmed
+    }
 
-        var mixed = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f1-five-mixed" })
+    /// <summary>
+    /// ONE ANSWER CARRYING A MIX, AND EACH WORD ASSERTED BY NAME — verifier round-9 F-5.
+    ///
+    /// The acceptance above is satisfied by a sweep that attempted NOTHING: at a second a leg, the
+    /// orders read plus one target resolution is the whole two-second budget, every leg comes back
+    /// <c>not-sent</c>, and <c>not_sent &gt; 0</c> holds (measured by the verifier: <c>cancelled = 0,
+    /// attempted = 0, not_sent = 5</c>). The acceptance is "which sent, which confirmed, which not
+    /// sent", and a reply in which every leg says the same thing never exercises it.
+    ///
+    /// Five orders, two one-shot faults, one sweep. Legs are issued in waves of
+    /// <see cref="GatewayPipeServer.MaxLegsInFlight"/>, so the first wave carries the refusal, the
+    /// lost answer and two ordinary cancellations, and the fifth leg supplies the fourth word: the
+    /// lost answer settles UNKNOWN and <c>NeedsReconciliation</c> refuses everything issued after it.
+    ///
+    /// TWO FIXTURE FACTS THAT ARE LOAD-BEARING, both learned the hard way.
+    ///
+    /// FIFTY MILLISECONDS OF LATENCY, NOT ZERO. At zero the simulator never awaits, so <c>issue()</c>
+    /// runs each leg to completion before the loop starts the next one and the wave is serial — the
+    /// first UNKNOWN then refuses the other three and every word in the answer is the same one. Any
+    /// non-zero latency forces the real shape, because a leg's authorization is synchronous and
+    /// happens before its first await: all four are authorised before any of them can fail.
+    ///
+    /// ITS OWN GATEWAY, NOT A SECOND SWEEP ON A SHARED ONE. This started as a second phase of the
+    /// test above and passed on macOS and FAILED ON WINDOWS, twice, with all five legs
+    /// <c>not-sent</c>: whether that first sweep leaves a flagged request depends on where its
+    /// deadline falls, and one flagged request refuses every leg of the next sweep. That coupling is
+    /// F-1's residual doing exactly what it is routed to U2c-1 for, and it is asserted here as a
+    /// precondition rather than assumed.
+    /// </summary>
+    [Fact]
+    public async Task A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        foreach (var sym in new[] { "ES", "NQ", "ES", "NQ", "ES" })
+            Assert.True((await client.SendAsync(Buy($"mix-{Guid.NewGuid():n}"[..20], sym)).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(5, (await gw.OrdersAsync(false)).Count);
+
+        // The precondition, stated: nothing is flagged, so nothing is refused before it is tried.
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        conn.Faults.LatencyMs = 50;
+        conn.Faults.RefuseCancel = 1;      // a DEFINITE broker refusal   -> rejected
+        conn.Faults.LoseAfterSend = 1;     // sent, no answer came back   -> sent-not-confirmed
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f5-mixed" })
             .WaitAsync(TimeSpan.FromSeconds(30));
-        var mixedData = (JsonElement)mixed.Data!;
-        var words = mixedData.GetProperty("outcomes").EnumerateArray()
+        var data = (JsonElement)reply.Data!;
+        var words = data.GetProperty("outcomes").EnumerateArray()
             .Select(o => o.GetProperty("outcome").GetString()!).ToList();
 
         Assert.Equal(5, words.Count);
@@ -378,16 +408,16 @@ public class SweepRequestIdTests
         Assert.Contains("not-sent", words);
         Assert.Contains("sent-not-confirmed", words);
 
-        // The count agrees with the words rather than being kept beside them: `attempted` is every
-        // leg that got as far as the wire, which is all of them except the one refused before it.
-        Assert.Equal(words.Count(w => w != "not-sent"), mixedData.GetProperty("attempted").GetInt32());
-        Assert.Equal(words.Count(w => w == "not-sent"), mixedData.GetProperty("not_sent").GetInt32());
-        Assert.False(mixedData.GetProperty("nothing_to_do").GetBoolean());
+        // The counts agree with the words rather than being kept beside them: `attempted` is every
+        // leg that got as far as the wire, which is all of them except the ones that never did.
+        Assert.Equal(words.Count(w => w != "not-sent"), data.GetProperty("attempted").GetInt32());
+        Assert.Equal(words.Count(w => w == "not-sent"), data.GetProperty("not_sent").GetInt32());
+        Assert.False(data.GetProperty("nothing_to_do").GetBoolean());
 
         // And the words are backed by the records they claim: nothing needs reconciling except the
         // leg that says it does.
         var needing = gw.Requests.NeedingReconciliation().Select(r => r.RequestId).ToHashSet();
-        foreach (var leg in mixedData.GetProperty("outcomes").EnumerateArray())
+        foreach (var leg in data.GetProperty("outcomes").EnumerateArray())
             Assert.Equal(leg.GetProperty("outcome").GetString() == "sent-not-confirmed",
                 needing.Contains(leg.GetProperty("request_id").GetString()!));
     }
