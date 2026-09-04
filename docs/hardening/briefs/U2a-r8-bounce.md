@@ -31,6 +31,17 @@ As before; append `## Round 8 (build record, <date>)` to `records/U2a.md` (MAIN 
 then `dotnet build TradeAgent.sln` + FULL suite once on the Mac; the box grant for ONE verified run (pipe classes + full
 suite). Report: tip sha, RED → GREEN → mutant per finding, suite counts (Mac + box), "What I did NOT do".
 
-## Verifier round-7 findings (appended by the manager when leg [2] reports)
+## Verifier round-7 findings (leg [2], Opus, on `a974142`) — VERDICT: PASS WITH LOW — 0H/0M/1L · record `records/U2a-verify-r7.md`
 
-_pending_
+- **F-G (LOW).** The caller's 2 s sentence still LEADS with connection state (`AtasConnector.cs:183-188`: "the bridge is
+  busy; 'cancel' is NOT confirmed. The connection is still up — try again — check your positions and orders in ATAS.").
+  The record IS `UNKNOWN` with `NeedsReconciliation = true` at 2040 ms, so no MED; but after the grace change this is
+  what EVERY emergency reads at two seconds, including against a bridge that is already dead and will be dropped eight
+  seconds later. Rule: outcome first — "'cancel' is NOT confirmed — check your positions and orders in ATAS" — then the
+  connection state as detail; pin with a starts-with assertion.
+
+Held, measured independently: C1 one clock (a 64 KiB emergency behind a 512 KiB gate holder on a peer that stops at
+1.5 s → 2005 ms, `FrameIncomplete` wording proves the write was reached); F-E both bounds separate (drop at ≈10.05 s in
+12/12 phases while every caller answered at 2000–2004 ms); during the grace a second emergency still gets its own 2 s,
+an ordinary order pays up to the remaining grace (7414 ms) and nothing is left unsettled; C3/C4/C5/PRIOR 8/records; 451
+green in 321 s; six mutants, six bit.
