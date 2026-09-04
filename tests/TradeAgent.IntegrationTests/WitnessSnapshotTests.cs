@@ -71,6 +71,43 @@ public class WitnessSnapshotTests : IDisposable
         $"{DateTimeOffset.UtcNow.AddMinutes(-minutesAgo):O} ERROR coid-witness rewrite did not land. claim={claim}"
         + Environment.NewLine;
 
+    /// <summary>
+    /// THE HARNESS'S OWN APPEND WHILE SOMETHING ELSE IS READING THE SAME FILE, AND WHY IT IS NOT
+    /// <c>File.AppendAllText</c>.
+    ///
+    /// `File.AppendAllText` opens sharing READ ONLY, and the readers this class runs alongside it
+    /// read the sidecar with `File.ReadAllLines`, which does the same. Neither admits the other. On
+    /// APFS and ext4 nothing arbitrates the pair and both land, so the difference is invisible here;
+    /// on Windows it is a real sharing violation, and
+    /// <see cref="No_reader_reports_a_clean_machine_while_a_writer_is_rotating_under_it"/> threw one
+    /// out of its own writer lambda on `windows-latest` — the SETUP failing, before a single reading
+    /// had been judged.
+    ///
+    /// So the harness writes the way a second writer on Windows has to. Sharing read, write and
+    /// delete, so this handle never refuses the witness its own append or its rotation's rename; and
+    /// waiting out whoever is holding the file rather than throwing, which is exactly what the
+    /// product's append does for the same reason (`SidecarAttempts`). The budget is long because the
+    /// only thing that can exhaust it is a holder that is not a reader — that stays a failure.
+    /// </summary>
+    static void AppendShared(string path, string text)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Append, FileAccess.Write,
+                                                  FileShare.ReadWrite | FileShare.Delete);
+                stream.Write(bytes, 0, bytes.Length);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 400)
+            {
+                Thread.Sleep(5);
+            }
+        }
+    }
+
     /// <summary>A stale foreign temp: one quarantine WARNING, which is the append that tips the log over.</summary>
     void WriteForeignLeftover(int n)
     {
@@ -623,8 +660,8 @@ public class WitnessSnapshotTests : IDisposable
             var w = new CoidWitness(File_);
             for (var i = 0; i < 60 && !stop; i++)
             {
-                File.AppendAllText(Sidecar, Gap(0, "TA-LIVE-GAP"));
-                File.AppendAllText(Sidecar, new string('x', 40 * 1024) + Environment.NewLine);
+                AppendShared(Sidecar, Gap(0, "TA-LIVE-GAP"));
+                AppendShared(Sidecar, new string('x', 40 * 1024) + Environment.NewLine);
                 started.Set();
                 WriteForeignLeftover(i);
                 w.Submitting($"TA-W{i}", "SIM", "ES", "Buy", 1m, null);
