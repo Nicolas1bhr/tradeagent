@@ -13,8 +13,11 @@ exceptions thrown by the TEST's own setup, not assertions about the product.
 - `CoidWitnessTests.A_missing_bridge_directory_is_unreadable_rather_than_absent`: `IOException: Access to the path
   '…' is denied` from `Directory.Move` in the test — moving the bridge directory away to simulate "missing" is refused
   while the witness holds a handle inside it (the lock file or an open sidecar).
-- The same two pass on ubuntu, macos and this Mac. The U14 record already says the cross-process lock was proven on
-  APFS only and Windows sharing violations are injected at the seam.
+- The set varies run to run: run 33907331267 also failed `CoidWitnessTests.The_file_is_never_absent_while_it_is_being_rewritten`
+  ("the temporary file was left behind" — the load-dependent race U14 was opened for). All pass on ubuntu, macos and
+  this Mac; the U14 record says the cross-process lock was proven on APFS only. For the third test the durability
+  count is the property; a leftover temp on Windows may instead be asserted as "reported and renamed out of the glob at
+  the next start" if that is what the code does (round 3) — say which in the report.
 
 **Rules.** The product is not changed unless you find it wrong on Windows — then say so first and fix red-first with a
 mutant. What each test PROVES must survive: no reader reports a clean machine during a rotation; a missing bridge
