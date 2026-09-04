@@ -2823,8 +2823,16 @@ public class CoidWitnessTests : IDisposable
     /// Codex reached this shape through `Identified` for an identifier the file does not carry, which
     /// quarantined and committed nothing. That particular route is closed separately — see
     /// `An_acknowledgement_for_an_identifier_this_witness_does_not_have_takes_no_lease`, which stops
-    /// that call reaching the recovery at all — so the shape is built here directly, which is what
-    /// the reading rule is actually about.
+    /// that call reaching the recovery at all — so the shape is built here directly.
+    ///
+    /// AND NO SESSION OF THIS BUILD CAN PRODUCE IT ANY MORE, which is worth saying rather than
+    /// leaving a later reader to assume this is a live path. `ReportAndQuarantine` is reached only
+    /// after `Lease()`, in both `Submitting` and `Identified`, and both then run `Save` — which
+    /// writes either a RESOLVED marker or an `ERROR ` line into whatever log the rotation left
+    /// current. `A_rotation_by_this_build_always_leaves_a_deciding_line` pins that, both ways. So the
+    /// guard here is DEFENSIVE: the shape is reachable by a foreign writer, an older build, or a
+    /// hand-edited directory, and by nothing this build does. It is kept because the reading rule is
+    /// about the bytes on disk and not about who wrote them.
     /// </summary>
     [Fact]
     public void An_unresolved_gap_is_not_lost_when_the_sidecar_rotates()
@@ -2873,6 +2881,53 @@ public class CoidWitnessTests : IDisposable
         Assert.Null(reader.Trouble);
         Assert.True(reader.GapClosed);
         Assert.Equal(WitnessStanding.Historical, CoidWitnessReport.Standing(reader));
+    }
+
+    /// <summary>
+    /// WHY THE SHAPE ABOVE CANNOT COME FROM THIS BUILD, PINNED RATHER THAN ARGUED.
+    ///
+    /// The session that rotates the sidecar is always a WRITING session — `ReportAndQuarantine` sits
+    /// after `Lease()` on both write paths — and it always runs `Save` afterwards, which writes a
+    /// deciding line either way: RESOLVED when its commit lands, an `ERROR ` when it does not. So a
+    /// rotation caused by this build never leaves the current log holding diagnostics alone.
+    ///
+    /// That is the invariant the F18 guard is defensive ABOUT. If a later change breaks it — a
+    /// quarantine that can happen without a save, a read path that writes again — the guard silently
+    /// becomes load-bearing and nothing would say so. This is what says so.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_rotation_by_this_build_always_leaves_a_deciding_line(bool theSaveLands)
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // An oversized canonical sidecar with an open gap: the next append rotates it.
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        File.AppendAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+
+        // A leftover for the next owner to quarantine — the diagnostic that tips the file over.
+        WriteForeignLeftover(1);
+
+        var w = theSaveLands ? Session() : Session(NeverLands);
+        w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        Assert.True(File.Exists(Sidecar + ".1"), "the sidecar did not rotate — raise the padding");
+        var current = File.ReadAllLines(Sidecar).Where(l => l.Trim().Length > 0).ToArray();
+        Assert.Contains(current, l => l.Contains("ignored "));
+
+        // THE INVARIANT: whatever else it wrote, it wrote something that decides the state.
+        Assert.Contains(current, l => l.Contains("RESOLVED ") || l.Contains(" ERROR "));
+
+        // And the reader agrees with what that line says.
+        var reader = Session();
+        if (theSaveLands) Assert.Null(reader.Trouble);
+        else Assert.NotNull(reader.Trouble);
     }
 
     /// <summary>
