@@ -420,7 +420,7 @@ public class SnapshotSeamsVerifyR10Probes : IDisposable
         w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
         w.Dispose();
 
-        var files = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*").Select(Path.GetFileName).Order().ToArray();
+        var files = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*").Select(f => Path.GetFileName(f)!).Order().ToArray();
         Assert.Equal(["coid-witness.errors.log"], files);            // nothing was renamed
         Assert.True(new FileInfo(Sidecar).Length > before,           // the append landed anyway
             $"the append was lost to the refusal: {before} -> {new FileInfo(Sidecar).Length}");
@@ -446,7 +446,7 @@ public class SnapshotSeamsVerifyR10Probes : IDisposable
             st.Write(bytes, 0, bytes.Length);
             st.Flush(flushToDisk: true);
             duringRotation = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
-                                      .Select(Path.GetFileName).Order().ToArray()!;
+                                      .Select(f => Path.GetFileName(f)!).Order().ToArray();
         });
         w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
         w.Dispose();
@@ -483,7 +483,7 @@ public class SnapshotSeamsVerifyR10Probes : IDisposable
         w.Dispose();
 
         var files = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
-                             .Select(Path.GetFileName).Order().ToArray();
+                             .Select(f => Path.GetFileName(f)!).Order().ToArray();
         Assert.True(new FileInfo(Sidecar).Length > 64 * 1024,
             $"the appends did not reach the cap: {new FileInfo(Sidecar).Length}");
         Assert.Equal(["coid-witness.errors.log"], files);
