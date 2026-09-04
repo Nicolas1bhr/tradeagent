@@ -182,10 +182,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     static string EmergencySentence(string op, string condition, string consequence) =>
         Mutates(op)
-            ? $"the bridge is {condition}; '{op}' is NOT confirmed. {consequence} — " +
-              "check your positions and orders in ATAS."
-            : $"the bridge is {condition}; '{op}' could not be read, so the operation was not started. " +
-              $"Nothing was placed or cancelled. {consequence}.";
+            // OUTCOME FIRST. It used to lead with the connection — "the bridge is busy; 'cancel' is
+            // NOT confirmed…" — and after round 7's grace change that sentence is what EVERY
+            // emergency reads at two seconds, including one against a bridge that is in fact dead
+            // and will be dropped eight seconds later (verifier F-G). The person reading it is
+            // trying to stop; what they need in the first clause is what happened to their order and
+            // where to look, not a claim about a pipe.
+            ? $"'{op}' is NOT confirmed — check your positions and orders in ATAS. " +
+              $"The bridge is {condition}; {consequence}."
+            : $"'{op}' could not be read, so the operation was not started. Nothing was placed or " +
+              $"cancelled. The bridge is {condition}; {consequence}.";
 
     NamedPipeServerStream? _pipeStream;
     Stream? _out;
@@ -587,11 +593,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // of ours, matched it to an outstanding request and answered it. No other thread on the
             // far end can reach this line.
             PeerAnswered();
-            if (_abandoned.TryRemove(f.Id, out _))
-            {
-                Interlocked.Increment(ref _lateAnswers);
-                LateAnswerReceived?.Invoke(f);
-            }
+            if (_abandoned.TryRemove(f.Id, out _)) RecordLateAnswer(f);
             tcs.TrySetResult(f);
         }
         return true;
@@ -896,6 +898,19 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public event Action<BridgeFrame>? LateAnswerReceived;
 
     /// <summary>
+    /// How many answers this connector is still willing to receive on behalf of a caller that has
+    /// gone. It returns to zero: an entry is removed by the answer, by the race check, or by the
+    /// grace expiring, and a number that only grows would be the leak Codex F3 named.
+    /// </summary>
+    public int AwaitingLateAnswer => _abandoned.Count;
+
+    void RecordLateAnswer(BridgeFrame f)
+    {
+        Interlocked.Increment(ref _lateAnswers);
+        LateAnswerReceived?.Invoke(f);
+    }
+
+    /// <summary>
     /// The caller has stopped waiting; the CONNECTION has not been judged yet, and is judged here.
     ///
     /// Waits out what is left of the ordinary RPC deadline. If the request is answered in that time,
@@ -907,11 +922,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// than at the emergency deadline — about ten seconds instead of about two. The caller is not
     /// delayed by it; only the teardown is.
     /// </summary>
-    void JudgeTheConnectionWhenTheGraceRunsOut(string id, string op, long startedAt)
+    void JudgeTheConnectionWhenTheGraceRunsOut(string id, string op, long startedAt,
+        TaskCompletionSource<BridgeFrame> caller)
     {
         _abandoned[id] = op;
+
+        // THE DOUBLE CHECK, and it closes a race Codex found (F3). The answer can land between the
+        // caller's deadline expiring and this registration: `Dispatch` then removed the pending
+        // entry and found nothing in `_abandoned` to count, so a late answer went unrecorded AND the
+        // registration below leaked an id that nothing would ever remove. Both sides now attempt the
+        // same `TryRemove`, so exactly one of them wins and the entry always goes.
+        if (caller.Task.IsCompletedSuccessfully && _abandoned.TryRemove(id, out _))
+        {
+            RecordLateAnswer(caller.Task.Result);
+            return;
+        }
+
         var grace = Remaining(startedAt, _timeout);
-        var answer = _pending.TryGetValue(id, out var tcs) ? tcs.Task : Task.CompletedTask;
+        var answer = _pending.TryGetValue(id, out var tcs) ? tcs.Task : caller.Task;
 
         _ = Task.Run(async () =>
         {
@@ -1100,7 +1128,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // `_timeout`, no new number — and the verdict is deferred to it. The pending request
             // stays registered, so an answer arriving late is delivered rather than dropped on the
             // floor.
-            JudgeTheConnectionWhenTheGraceRunsOut(id, op, startedAt);
+            JudgeTheConnectionWhenTheGraceRunsOut(id, op, startedAt, tcs);
 
             // "Still up" is not a guess here, it is the state: nothing has been dropped, and at two
             // seconds nothing is yet known that would justify dropping it.
