@@ -3180,13 +3180,23 @@ public class CoidWitnessTests : IDisposable
 
         WriteForeignLeftover(1);                // tips the current log over into a second rotation
 
-        var w = Session();
+        string? atTheWindow = null;
+        var w = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            // BEFORE, NOT AFTER, AND THIS IS WHERE THE DIFFERENCE SHOWS. The leftover has already
+            // been removed by the time the rotation reaches this write — so unless the line it held
+            // was restated first, no file on the disk carries it at this instant.
+            atTheWindow = new CoidWitness(File_).Trouble;
+            File.WriteAllText(path, text);
+        });
         Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
         w.Dispose();
 
-        // The rotating session resolved the gap it carried, which is round 7's invariant — so what
-        // is asserted is that the CARRY happened at all: the line reached the scanned set before the
-        // leftover was removed. Without it the sidecar has no memory of TA-GAP anywhere.
+        Assert.NotNull(atTheWindow);
+
+        // And the rotating session went on to resolve the gap it carried, which is round 7's
+        // invariant — so the other half of the claim is that the CARRY happened at all. Without it
+        // the sidecar has no memory of TA-GAP anywhere.
         var everything = string.Join("\n", Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
                                                     .Select(File.ReadAllText));
         Assert.Contains("TA-GAP", everything);
