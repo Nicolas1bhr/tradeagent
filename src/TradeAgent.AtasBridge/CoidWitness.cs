@@ -282,6 +282,25 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     readonly Func<string, Stream> _open;
 
+    /// <summary>
+    /// THE STEP THAT DECIDES WHETHER THE ROTATION ORDER IS LOAD-BEARING — writing the restatement
+    /// into the new log, in <see cref="Rotate"/>.
+    ///
+    /// It is a seam for the same reason the two above are: the failure it has to survive cannot be
+    /// provoked from a test without one. <c>Rotate</c> restates the unresolved line into the new log
+    /// BEFORE it deletes the generation that holds it, and the whole value of that ordering is what
+    /// remains on disk when the restatement does not land — a full disk, a directory a backup tool
+    /// made read-only, a scanner holding the name. <c>Rotate</c> runs inside
+    /// <see cref="AppendToErrorLog"/>'s catch, so such a failure does not stop the process: it simply
+    /// leaves the sidecar in whatever state the ordering produced, which is exactly the state the
+    /// next start reads.
+    ///
+    /// Without this the order is untestable in-process — the two syscalls it separates have no
+    /// observation point between them — and a later edit could reverse it in silence. That was
+    /// recorded as a surviving mutant (MF27b) before this existed. Production passes nothing.
+    /// </summary>
+    readonly Action<string, string> _writeSidecar;
+
     bool _loaded;
     bool _readFailed;
 
@@ -501,13 +520,15 @@ public sealed class CoidWitness : IDisposable
     /// <see cref="_replace"/>.
     /// </summary>
     public CoidWitness(string? path, string? sessionId = null, int cap = DefaultCap,
-                       Action<string, string>? replace = null, Func<string, Stream>? open = null)
+                       Action<string, string>? replace = null, Func<string, Stream>? open = null,
+                       Action<string, string>? writeSidecar = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
         _replace = replace ?? DefaultReplace;
         _open = open ?? DefaultOpen;
+        _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
         if (_path is not null)
             _tempPrefix = $"{_path}.tmp-{Environment.ProcessId}-{(SessionId.Length >= 8 ? SessionId[..8] : SessionId)}-";
     }
@@ -525,6 +546,9 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     static Stream DefaultOpen(string path) =>
         new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+    /// <summary>The real write: create or replace, whole file, one call. See <see cref="_writeSidecar"/>.</summary>
+    static void DefaultWriteSidecar(string path, string text) => File.WriteAllText(path, text);
 
     /// <summary>
     /// Resolving the default path touches <see cref="Paths"/>, which creates directories. Guarded
@@ -1471,10 +1495,13 @@ public sealed class CoidWitness : IDisposable
         }
 
         File.Move(log, staging);
-        File.WriteAllText(log,
+        _writeSidecar(log,
             $"{DateTimeOffset.UtcNow:O} {SafetyPrefix}coid-witness carried an unresolved failure across a " +
             $"sidecar rotation: {OneLine(carry)}" + Environment.NewLine);
 
+        // AND ONLY NOW. Everything above this line is recoverable from one of the two generations a
+        // reader scans; the delete is the first act that destroys anything, so it comes last. Reverse
+        // these two and a restatement that does not land takes the gap with it.
         try { File.Delete(rolled); } catch (Exception) { }
         File.Move(staging, rolled);
     }

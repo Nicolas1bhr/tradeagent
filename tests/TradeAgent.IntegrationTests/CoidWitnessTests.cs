@@ -2989,6 +2989,65 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// AND THE ORDER INSIDE THE ROTATION IS THE FIX, NOT A DETAIL OF IT.
+    ///
+    /// Round 8 recorded a surviving mutant here — the carry computed, but the older generation
+    /// deleted BEFORE the restatement is written — with the note that its window has no observation
+    /// point in this process, being two consecutive syscalls with nothing between them. That was the
+    /// wrong place to look for one. The restatement is a WRITE, and a write is a step this class
+    /// already has a seam for, for exactly this reason: the failure it must survive cannot be
+    /// provoked on the machine the code is written on. Standing inside that write is standing in the
+    /// window, and what is on disk at that instant is what the next process would see if the write
+    /// never landed — a full disk, a directory a backup tool made read-only, a scanner holding the
+    /// name. `Rotate` is inside `AppendToErrorLog`'s catch, so none of those stop anything; they
+    /// leave the sidecar in whatever state the ordering produced.
+    ///
+    /// So the mutant is not equivalent, and this is the difference:
+    ///
+    ///   * restate first — the older generation is still intact at that instant, and the gap is read
+    ///     off it;
+    ///   * delete first — the generation is already gone and the restatement has not arrived, so the
+    ///     machine reads healthy over an open durability gap.
+    ///
+    /// Nothing is made to fail here. The write goes through after the reading is taken, so the ONLY
+    /// thing the assertion can be measuring is which of the two acts happened first.
+    /// </summary>
+    [Fact]
+    public void The_restatement_lands_before_the_generation_holding_the_gap_is_destroyed()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        // The same on-disk state a busy machine reaches on its own: the unresolved failure is one
+        // generation back, and the current log is oversized and holds only diagnostics.
+        File.WriteAllText(Sidecar + ".1",
+            $"{DateTimeOffset.UtcNow.AddMinutes(-5):O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);      // the gap is plainly visible before any rotation
+
+        WriteForeignLeftover(1);                // the diagnostic whose append tips the file over
+
+        string? atTheWindow = null;
+        var w = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            // Standing between the two acts. A reader here sees exactly what a machine that never
+            // got to finish this write would leave behind.
+            atTheWindow = new CoidWitness(File_).Trouble;
+            File.WriteAllText(path, text);
+        });
+        Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        w.Dispose();
+
+        Assert.NotNull(atTheWindow);
+
+        // And the session that rotated went on to resolve it, which is the round-7 invariant and the
+        // reason the reading above had to be taken where it was.
+        Assert.Null(Session().Trouble);
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
