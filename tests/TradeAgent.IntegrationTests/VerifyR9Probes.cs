@@ -726,4 +726,145 @@ public class VerifyR9Probes(ITestOutputHelper o)
 
         Assert.Equal(0, connector.AwaitingLateAnswer);
     }
+
+    // ================================================================ the close-all wave and the drain
+
+    /// <summary>
+    /// R9P12. A `close-all` WAVE IS NOT ONE ORDINARY CALL.
+    ///
+    /// `RiskReducingHandlerPath` is `EmergencyBudget + WorstCaseOperationPath` — "plus exactly one
+    /// ordinary call", because a close ends in a `Place` that is excluded from the emergency
+    /// deadline. But `RunLegs` issues up to `MaxLegsInFlight` (four) legs at once and every one of
+    /// them ends in `TradingGateway.PlaceAsync`, which takes `_dispatchGate` — a `SemaphoreSlim(1,1)`
+    /// held across the connector call. So one close-all handler can owe FOUR ordinary calls in
+    /// series after spending the whole emergency budget on its reads.
+    ///
+    /// The connector here reports its worst case HONESTLY (one second, which is what every call
+    /// costs) and the drain derives itself correctly from that. Written to PASS if the drain covers
+    /// the handler.
+    /// </summary>
+    [Fact]
+    public async Task R9P12_the_drain_covers_a_close_all_wave()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var conn = new FakeConnector(new FakeBroker())
+        {
+            EmergencyBudget = TimeSpan.FromMilliseconds(6500)
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 20;
+            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(200)
+        };
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        foreach (var sym in new[] { "ES", "NQ", "MES", "YM" })
+            Assert.True((await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Buy, RequestId = $"r9p12-{sym}",
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement(sym),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1")
+                }
+            }).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var positions = conn.Broker.Positions.Count(p => p.Quantity != 0);
+        o.WriteLine($"open positions = {positions}");
+        Assert.Equal(4, positions);
+
+        // Every call now costs a second, and the vendor call does not take a token — the shape the
+        // builder's own cold-placement fixture uses, and the one that leaves DISPATCHING behind.
+        conn.Faults.UncancellableLatencyMs = 1000;
+        o.WriteLine($"WorstCaseOperationPath (honestly reported) = {conn.WorstCaseOperationPath.TotalSeconds:0.0}s");
+        o.WriteLine($"derived drain = {server.HandlerDrainTimeout.TotalSeconds:0.00}s " +
+                    $"(max(5 x {conn.WorstCaseOperationPath.TotalSeconds:0.0}, {conn.EmergencyBudget.TotalSeconds:0.0} + " +
+                    $"{conn.WorstCaseOperationPath.TotalSeconds:0.0}) + 0.2)");
+
+        var sweep = client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "r9p12-sweep" });
+        _ = sweep.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+        // Early, so the whole handler is still ahead of the drain — R9P13 measures that handler at
+        // 9.06 s against a derived 7.5 s + whatever the settle margin happens to be.
+        await Task.Delay(200);
+
+        var timer = Stopwatch.StartNew();
+        await server.DisposeAsync();
+        timer.Stop();
+
+        o.WriteLine($"disposal returned after {timer.Elapsed.TotalSeconds:0.00}s");
+        o.WriteLine($"DISPATCHING rows = {Dispatching(db)}");
+        o.WriteLine($"handlers_did_not_finish = {ReadEngineering(db, "handlers_did_not_finish") ?? "(not logged)"}");
+        foreach (var r in gw.Requests.Open())
+            o.WriteLine($"  open: {r.RequestId,-24} {r.State,-14} reconcile={r.NeedsReconciliation}");
+
+        Assert.True(Dispatching(db) == 0,
+            $"{Dispatching(db)} request(s) left DISPATCHING: a close-all wave owes up to four ordinary " +
+            $"Place calls in series (they queue on TradingGateway._dispatchGate), but the drain allows " +
+            $"the emergency budget plus ONE — {server.HandlerDrainTimeout.TotalSeconds:0.00}s against a " +
+            $"handler that needs about {(conn.EmergencyBudget + 4 * conn.WorstCaseOperationPath).TotalSeconds:0.00}s");
+    }
+
+    /// <summary>R9P13. How long does a four-position close-all actually take, with no disposal?</summary>
+    [Fact]
+    public async Task R9P13_how_long_a_close_all_wave_really_takes()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var conn = new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromMilliseconds(6500) };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 20;
+            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        foreach (var sym in new[] { "ES", "NQ", "MES", "YM" })
+            Assert.True((await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Buy, RequestId = $"r9p13-{sym}",
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement(sym),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1")
+                }
+            }).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        conn.Faults.UncancellableLatencyMs = 1000;
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "r9p13-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(60));
+        timer.Stop();
+        o.WriteLine($"close-all took {timer.Elapsed.TotalSeconds:0.00}s " +
+                    $"(budget {conn.EmergencyBudget.TotalSeconds:0.0}s + 4 x {conn.WorstCaseOperationPath.TotalSeconds:0.0}s " +
+                    $"= {(conn.EmergencyBudget + 4 * conn.WorstCaseOperationPath).TotalSeconds:0.0}s would be the bound)");
+        Dump((JsonElement)reply.Data!, gw, "close-all, 4 positions, 1 s per call");
+        o.WriteLine($"a server at these values would drain for {new GatewayPipeServer(gw, IpcToken.Ensure(), NewPipe()).HandlerDrainTimeout.TotalSeconds:0.00}s");
+    }
 }
