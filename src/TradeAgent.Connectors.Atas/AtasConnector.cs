@@ -277,6 +277,35 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <inheritdoc />
     public TimeSpan EmergencyBudget => EmergencyDeadline;
 
+    /// <summary>
+    /// WHICH OF THE TWO REFUSALS WAS OBSERVED MORE RECENTLY, and it exists because BOTH are now
+    /// permanent. Round 7b made a protocol refusal last until a compatible hello repairs it; a
+    /// credential refusal already lasted until a peer proved itself. Neither supersedes the other,
+    /// and the row returned the protocol one first — the OLDER of the two — so the sequence an
+    /// operator walks reads wrong at the moment they need it: refused on protocol, told to reinstall,
+    /// the new DLL fails AUTHENTICATION, and the row still says "reinstall the add-on".
+    ///
+    /// A counter and not a clock: two observations in the same tick must still order, and nothing
+    /// here needs to know how long ago anything was — only which came last. Zero means "not set",
+    /// which is why <see cref="NoteIncompatible"/> and <see cref="NoteUnauthenticated"/> are the only
+    /// way either marker moves. Assigning the field directly is how this class of bug returns.
+    /// </summary>
+    long _observed;
+    long _incompatibleAt;
+    long _unauthenticatedAt;
+
+    void NoteIncompatible(IncompatibleBridge? peer)
+    {
+        _incompatible = peer;
+        _incompatibleAt = peer is null ? 0 : Interlocked.Increment(ref _observed);
+    }
+
+    void NoteUnauthenticated(UnauthenticatedBridge? peer)
+    {
+        _unauthenticated = peer;
+        _unauthenticatedAt = peer is null ? 0 : Interlocked.Increment(ref _observed);
+    }
+
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;
@@ -325,7 +354,25 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     /// <summary>One line explaining a FAILED trading connection, or null when there is nothing to
     /// add. Read by the gateway for the health detail the dashboard shows.</summary>
-    public string? StatusDetail => _incompatible?.ToString() ?? Unauthenticated?.ToString();
+    /// <summary>
+    /// THE ROW DESCRIBES THE PEER THAT IS THERE NOW. Both refusals are permanent, so when both are
+    /// set the newer observation is the one an operator can act on; the older stays RECORDED and
+    /// readable through <see cref="Incompatible"/> and <see cref="Unauthenticated"/>, it simply
+    /// stops outranking a later one. The derived Silent reading has no stamp and needs none: the
+    /// <see cref="Unauthenticated"/> getter only produces it while <c>_incompatible</c> is null, so
+    /// it can never be the loser of this comparison.
+    /// </summary>
+    public string? StatusDetail
+    {
+        get
+        {
+            var incompatible = _incompatible;
+            var unauthenticated = Unauthenticated;
+            if (incompatible is null) return unauthenticated?.ToString();
+            if (unauthenticated is null) return incompatible.ToString();
+            return _unauthenticatedAt > _incompatibleAt ? unauthenticated.ToString() : incompatible.ToString();
+        }
+    }
 
     /// <summary>
     /// How often the read loop looks up from a peer that is saying nothing. A third of the heartbeat
@@ -600,8 +647,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // The far end refused US. It is the bridge's own words, so it is clipped like any other
             // untrusted string on its way to a label — but it is the only thing that turns
             // "connected, then silence" into a sentence somebody can act on.
-            _unauthenticated = new UnauthenticatedBridge(
-                $"the ATAS bridge refused this copy of TradeAgent: {IncompatibleBridge.Clean(f.Error)}");
+            NoteUnauthenticated(new UnauthenticatedBridge(
+                $"the ATAS bridge refused this copy of TradeAgent: {IncompatibleBridge.Clean(f.Error)}"));
             _connected = false;
             _hello = null;
             ConnectionChanged?.Invoke(HealthState.FAILED);
@@ -640,9 +687,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 // trade on anything this bridge claims. Its IDENTITY is kept separately, because
                 // "FAILED" with no version number is not a repairable message — and keeping it in a
                 // different field is what stops it being mistaken for a capability later.
-                _incompatible = new IncompatibleBridge(
+                NoteIncompatible(new IncompatibleBridge(
                     hello.BridgeProtocolVersion, Versions.BridgeProtocolVersion,
-                    IncompatibleBridge.Clean(hello.BridgeVersion), IncompatibleBridge.Clean(hello.AtasVersion));
+                    IncompatibleBridge.Clean(hello.BridgeVersion), IncompatibleBridge.Clean(hello.AtasVersion)));
                 _connected = false;
                 _hello = null;
                 _compatible = false;
@@ -699,7 +746,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // claiming an old version buys an impostor nothing at all.
             if (!_authenticated)
             {
-                _unauthenticated = UnauthenticatedBridge.PresentedNoProof(hello.BridgeVersion, hello.AtasVersion);
+                NoteUnauthenticated(UnauthenticatedBridge.PresentedNoProof(hello.BridgeVersion, hello.AtasVersion));
                 _hello = null;
                 _connected = false;
                 // Told on the wire too, exactly as Answer() tells a peer whose proof was wrong. A
@@ -711,7 +758,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             }
 
             _hello = hello;
-            _incompatible = null;
+            NoteIncompatible(null);
             _compatible = true;
             _connected = true;
             _lastHeartbeat = DateTimeOffset.UtcNow;
@@ -779,9 +826,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             // Our own credential is the broken one. Say that, rather than blaming the bridge for a
             // proof it produced correctly against a secret we cannot read.
-            _unauthenticated = new UnauthenticatedBridge(
+            NoteUnauthenticated(new UnauthenticatedBridge(
                 $"this copy of TradeAgent has no usable bridge secret to answer with " +
-                $"({BridgePipeAuth.CredentialFile})");
+                $"({BridgePipeAuth.CredentialFile})"));
             _authenticated = false;
             return true;
         }
@@ -793,9 +840,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // proof is the bridge this installation published a secret for, so it is dropped rather
             // than tolerated. In practice this is a stale bridge.auth, not an attack, which is why
             // the reason names the file.
-            _unauthenticated = new UnauthenticatedBridge(
+            NoteUnauthenticated(new UnauthenticatedBridge(
                 "the peer on the bridge pipe could not prove it holds this installation's bridge " +
-                $"secret ({BridgePipeAuth.CredentialFile})");
+                $"secret ({BridgePipeAuth.CredentialFile})"));
             _authenticated = false;
             _connected = false;
             _hello = null;
@@ -805,7 +852,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         }
 
         _authenticated = true;
-        _unauthenticated = null;
+        NoteUnauthenticated(null);
         await SendFrame(new
         {
             v = Versions.BridgeProtocolVersion,

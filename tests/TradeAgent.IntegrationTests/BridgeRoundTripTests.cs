@@ -421,6 +421,87 @@ public class BridgeRoundTripTests
         }
     }
 
+    /// <summary>
+    /// A LIVE REFUSAL MUST NOT BE HELD BEHIND A STALE ONE, and round 7b's decision to keep a
+    /// protocol refusal until its own repair is what made this reachable.
+    ///
+    /// Both markers are permanent — `_incompatible` until a compatible hello, `_unauthenticated`
+    /// until a peer proves itself — and the row returned the protocol one first, which is the OLDER
+    /// of the two. So the sequence an operator actually walks through reads wrong at exactly the
+    /// moment they need it: a version-2 bridge is refused, they reinstall the add-on as the row told
+    /// them to, the new DLL reaches the pipe and fails AUTHENTICATION — and the row still says
+    /// "speaks protocol 2, reinstall the add-on". They are told to repeat what they just did, while
+    /// the live sentence, which says another program may have taken the pipe name and that
+    /// TradeAgent will not trade through it, is held behind it.
+    ///
+    /// The rule is that the row describes the peer that is there NOW. The older marker stays
+    /// RECORDED — `Incompatible` still reports it, and nothing about the round-7b permanence is
+    /// undone — it simply stops outranking a newer observation.
+    /// </summary>
+    [Fact]
+    public async Task A_live_refusal_is_not_masked_by_a_stale_one()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5));
+        await connector.ConnectAsync();
+
+        // A version-2 bridge dials in, authenticates perfectly well, and is refused on its protocol.
+        await using (var old = await Redial(pipe, Speaking(2)))
+        {
+            await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        }
+        Assert.Contains("speaks protocol 2", connector.StatusDetail);
+
+        // The operator reinstalls. The new DLL reaches the pipe and says hello without ever
+        // presenting the secret — a stale bridge.auth or the wrong TRADEAGENT_HOME, both documented.
+        await using var reinstalled = await Unproved(pipe, "0.1.2");
+        await Wait(async () => await Task.FromResult(connector.Unauthenticated is not null));
+
+        var row = connector.StatusDetail!;
+        Assert.Contains("did not authenticate", row);
+        Assert.Contains("presenting the shared", row);
+        Assert.DoesNotContain("speaks protocol", row);
+
+        // And the older marker is still recorded — it is outranked, not erased.
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+    }
+
+    /// <summary>
+    /// A peer that opens the pipe and says hello having never answered the challenge. The connector
+    /// refuses the hello outright, so nothing it claims is kept — which is the point: the refusal
+    /// that lands is an AUTHENTICATION one, not a protocol one.
+    /// </summary>
+    static async Task<System.IO.Pipes.NamedPipeClientStream> Unproved(string pipe, string bridgeVersion)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var client = new System.IO.Pipes.NamedPipeClientStream(
+                ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+            try
+            {
+                await client.ConnectAsync(2_000);
+                var w = new StreamWriter(client, new System.Text.UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+                await w.WriteLineAsync(Json.Write(new BridgeFrame
+                {
+                    Op = BridgeOps.Hello,
+                    Data = System.Text.Json.JsonSerializer.SerializeToElement(new BridgeHello
+                    {
+                        BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+                        BridgeVersion = bridgeVersion, AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+                        SupportsClientOrderId = true, SupportsOrderHistory = true
+                    }, Json.Options)
+                }));
+                return client;
+            }
+            catch (Exception) when (attempt < 12)
+            {
+                client.Dispose();
+                await Task.Delay(100);
+            }
+        }
+    }
+
     static async Task<System.IO.Pipes.NamedPipeClientStream> Park(string pipe, int protocolVersion)
     {
         var client = new System.IO.Pipes.NamedPipeClientStream(

@@ -106,6 +106,41 @@ public class AtasHealthTests
     }
 
     /// <summary>
+    /// A REFUSAL DESCRIBES A PEER, AND IT MUST NOT OUTLIVE THE PLATFORM THAT PEER RAN IN.
+    ///
+    /// Both refusals became permanent — a protocol mismatch until a compatible hello, a credential
+    /// failure until a peer proves itself — and this row returned any non-empty refusal ahead of
+    /// everything derived from the machine. So a version-2 bridge refused this morning still reads
+    /// "reinstall the add-on from TradeAgent" this afternoon with ATAS closed, and the operator is
+    /// sent to repair an add-on inside a platform that is not running. Whether ATAS is up is read
+    /// from the process table on every pass; it is the NEWER fact, and the newer fact leads.
+    ///
+    /// Kept, not dropped: the refusal is still on the row, after the live state, because it is the
+    /// repair that will be needed once ATAS is up again.
+    /// </summary>
+    [Fact]
+    public void A_recorded_refusal_does_not_outrank_a_platform_that_is_not_there()
+    {
+        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — reinstall the add-on from TradeAgent";
+
+        // ATAS itself is closed. That is what is true now.
+        var down = AtasHealth.BridgeRow(true, Machine(running: false), HealthState.FAILED, null, refusal);
+        Assert.Equal(HealthState.FAILED, down.State);
+        Assert.Contains("waiting for ATAS to start", down.Detail);
+        Assert.Contains(refusal, down.Detail);
+
+        // The bridge is not in the Strategies folder at all — likewise a live fact about the machine.
+        var gone = AtasHealth.BridgeRow(true, Machine(bridge: false), HealthState.FAILED, null, refusal);
+        Assert.Contains("not installed in ATAS", gone.Detail);
+        Assert.Contains(refusal, gone.Detail);
+
+        // And with ATAS running and the bridge installed, the refusal is still the whole row: there
+        // is no newer machine fact to lead with, and the peer's refusal is the specific news.
+        var live = AtasHealth.BridgeRow(true, Machine(), HealthState.FAILED, null, refusal);
+        Assert.Equal(refusal, live.Detail);
+    }
+
+    /// <summary>
     /// CONNECTED IS NOT THE SAME AS ABLE TO TRADE. The bridge refuses any order whose client order
     /// id it could not write to the witness file — rule 1 rests on that record — and a permanent
     /// local failure at that path refuses EVERY order, forever. A READY row over a bridge in that
