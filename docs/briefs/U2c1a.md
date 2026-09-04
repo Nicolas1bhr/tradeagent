@@ -63,3 +63,10 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    `Expected: Not CANCELLED / Actual: CANCELLED` → GREEN: `IsDefinite` stopped being a filter on the live set and became
    an `undecided` set asked first, captured or not; `A_definitely_cancelled_book_still_settles_the_sweep` green
    throughout. Mutant `undecided.Count > 99` → the same three RED. Fault suite 172 green. VERIFIED.
+3. `Adopt` and the broker's UNKNOWN. RED `The_brokers_own_uncertainty_is_never_adopted_as_an_outcome(state: UNKNOWN)`
+   (`the flag every gate reads was cleared on the strength of the broker not knowing`; the CANCEL_PENDING case was
+   already green — `RECONCILING -> CANCEL_PENDING` is not a legal transition) → GREEN with `if (!IsDefinite(match.State))
+   return false;` as the first line of `Adopt`, and the inconclusive detail split so a non-definite state reads "settles
+   nothing" rather than "does not fit our record"; the other direction (`A_state_the_broker_asserts_is_still_adopted`,
+   WORKING/FILLED/CANCELLED) green throughout. Mutant `if (false && !IsDefinite(...))` → the same one RED. Fault suite
+   177 green. VERIFIED.
