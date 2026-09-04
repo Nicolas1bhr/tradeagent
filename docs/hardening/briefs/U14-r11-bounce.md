@@ -51,6 +51,37 @@ Targeted classes; `dotnet build TradeAgent.sln --no-incremental` (0 warnings) + 
 adapter/teardown changed. Report: tip sha, per item RED → GREEN → mutant, the corrected class-closure sentence per
 directive, suite counts, the box result, "What I did NOT do".
 
-## Verifier round-10 findings (appended by the manager when leg [2] reports)
+## Verifier round-10 findings (fresh Opus, on `01fcd60`) — VERDICT: FAIL — 1H/2M/3L · record `records/U14-verify-r10.md`
 
-_pending_
+- **R10-1 (HIGH) — a FIFTH crash point, inside act 1.** The carry write opens `log.new` with `FileMode.Create`, which
+  EMPTIES an existing `log.new` at the open; a write that fails after the open destroys the only copy of the unresolved
+  marker, and it needs no second crash — one transient IO error suffices (`attempts=2`: the retry recomputes the carry
+  from the now-empty file and completes the rotation over the hole). The shipped `A_restatement_that_never_lands…`
+  cannot see it because its seam throws without opening the file. Rule (directive 3 completed): act 1 writes to a
+  UNIQUE temp name (`FileMode.CreateNew`, never `Create` over an existing file); an existing `.new`/temp is never
+  truncated — it is either completed (resumable rotation, F41) or read as part of the snapshot; the retry recomputes
+  the carry from the SNAPSHOT taken before act 1, never from a file act 1 may have touched. Test: the verifier's
+  harness (seam that opens then fails) + a transient-error retry → marker present in every state; mutant: `CreateNew`
+  → `Create` RED.
+- **R10-2 (MED) = Codex F39 at the consumers.** `Doctor.cs:284-295` (the support package) and `tools/probe/Program.cs:1075-1078`
+  still glob and copy the sidecar set themselves under a swallowing catch (one denied generation silently drops itself
+  and every file after it; `GetFiles` cannot see a directory at a sidecar's name). → directive 1 at every consumer: the
+  support package and the probe take the snapshot's captured lines/bytes; a snapshot `Unreadable` is written INTO the
+  zip as a note, never silently absent.
+- **R10-3 (MED).** Both declared survivors are load-bearing: MR10-4d (the lock on `Running→Stopping`) goes RED against
+  a 300 ms-order test the builder did not write; MR10-3a's redundancy argument is wrong past the first append
+  (`_sidecarBytes` is seeded once; every later append enters `Rotate` with a fresh, possibly unreadable snapshot). Both
+  get the biting test; the record's "stated survivor" lines are corrected.
+- **R10-4 (LOW).** The F25 reversal is now third-party reachable: any process that can write in `Paths.BridgeDir` can
+  drop `SupportsClientOrderId` with one unreadable file — fail-closed and same trust domain; say so in the record and
+  in CONTRACTS.md (a residual, not a fix).
+- **R10-5 (LOW).** Three record claims do not check out: the cited heartbeat cover test is not in the suite; a fourth
+  round-9 probe was unlifted and unlisted; the "this is the whole of it" filesystem enumeration misses three
+  `FileStream` calls (one is R10-1). Correct the record; the enumeration becomes a grep the verifier can re-run.
+- **R10-6 (LOW).** `AppendDurably` is dead since round 10; beside it the one sidecar append is un-flushed while its
+  carried restatement is flushed — delete the dead code and state the flush policy in one sentence (which writes are
+  flushed and why).
+
+Held (the verifier's runs): 0 warnings; 517 twice; the three-removal test-name diff; all six on-box hashes; MR10-1c,
+MR10-2a, MR10-5b RED in the shipped suite (R9-3 closed); 40/40 SIGKILL; 55,927 out-of-process readings against 43 real
+rotations with zero clean readings.

@@ -8,3 +8,9 @@ FINDING 40 — MED — CoidWitness.cs:1300 — candidate contents were read afte
 FINDING 41 — MED — CoidWitness.cs:1652 — rotation could not resume after current→.1 succeeded but .new→current threw, suppressing later appends until restart.
 FINDING 42 — MED — AtasConnector.cs:171 — a newly arrived peer had no stamped current status during AuthGrace, so a previous connection's refusal remained the displayed winner.
 FINDING 43 — LOW — CoidWitness.cs:1915 — _sidecarBytes counted UTF-16 characters against a byte limit.
+R10-1 — HIGH — (verifier, 01fcd60) the carry write opened log.new with FileMode.Create, emptying an existing log.new at the open; one transient IO error after the open destroyed the only copy of the marker and the retry recomputed the carry from the now-empty file.
+R10-2 — MED — (verifier, 01fcd60) Doctor.cs (support package) and tools/probe still globbed and copied the sidecar set themselves under a swallowing catch.
+R10-3 — MED — (verifier, 01fcd60) both declared surviving mutants were load-bearing (the Running→Stopping lock; the rotation-refusal guard past the first append).
+R10-4 — LOW — (verifier) any process that can write in the bridge directory can drop SupportsClientOrderId with one unreadable file (fail-closed residual, to be stated).
+R10-5 — LOW — (verifier) three record claims did not check out (a cited cover test absent; an unlifted probe; the filesystem enumeration missed three FileStream calls).
+R10-6 — LOW — (verifier) AppendDurably dead; the sidecar append un-flushed while its restatement is flushed, unexplained.
