@@ -324,6 +324,21 @@ public sealed class CoidWitness : IDisposable
     readonly Action<string, string> _writeSidecar;
 
     /// <summary>
+    /// THE FOUR RENAMES <see cref="Rotate"/> AND <see cref="Resume"/> MAKE, AS ONE SEAM, AND THE
+    /// REASON IS THE SAME AS <see cref="_replace"/>'S: the rename that has to be survived is the one
+    /// Windows refuses, and it cannot be provoked on the machine this is written on.
+    ///
+    /// What made it necessary rather than merely symmetrical is that ROTATION IS RESUMABLE NOW. The
+    /// state that has to be recovered from — <c>log</c> gone, <c>log.new</c> holding everything — is
+    /// produced by the LAST of the four acts failing, and there is no observation point between the
+    /// acts. Without a seam the resume path is unreachable from a test, and the thing it recovers
+    /// from cannot be built except by a crash.
+    ///
+    /// Production passes nothing and gets <see cref="DefaultMoveSidecar"/>.
+    /// </summary>
+    readonly Action<string, string, bool> _moveSidecar;
+
+    /// <summary>
     /// THE TWO CALLS <see cref="ReadSidecarSet"/> MAKES, AS SEAMS, AND FOR THE SAME REASON
     /// <see cref="_open"/> IS ONE: some of the failures the snapshot has to classify — an ACL that
     /// denies a file's attributes on Windows, a set that keeps changing under the read — cannot be
@@ -381,6 +396,18 @@ public sealed class CoidWitness : IDisposable
     /// Negative until the first snapshot supplies it.
     /// </summary>
     long _sidecarBytes = -1;
+
+    /// <summary>
+    /// WHY THIS RUN WILL NOT APPEND TO ITS SIDECAR, or null. A rotation that stopped after its
+    /// current log was rolled aside leaves <c>log.new</c> holding everything and no current log at
+    /// all; <see cref="Resume"/> finishes it before any append, and when it CANNOT the append is
+    /// refused rather than performed into a file that was about to be overwritten by the completion.
+    ///
+    /// It is reported through <see cref="Trouble"/> and it degrades the machine, because the
+    /// alternative — an engineering log that silently stops recording while orders keep being
+    /// refused — is the exact shape of every finding this class has had.
+    /// </summary>
+    string? _appendRefused;
 
     bool _loaded;
     bool _readFailed;
@@ -610,7 +637,8 @@ public sealed class CoidWitness : IDisposable
                        Action<string, string>? replace = null, Func<string, Stream>? open = null,
                        Action<string, string>? writeSidecar = null,
                        Func<string, string[]>? readSidecar = null,
-                       Func<string, string, string[]>? listSidecars = null)
+                       Func<string, string, string[]>? listSidecars = null,
+                       Action<string, string, bool>? moveSidecar = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
@@ -618,6 +646,7 @@ public sealed class CoidWitness : IDisposable
         _replace = replace ?? DefaultReplace;
         _open = open ?? DefaultOpen;
         _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
+        _moveSidecar = moveSidecar ?? DefaultMoveSidecar;
         _readSidecar = readSidecar ?? File.ReadAllLines;
         // ENTRIES, NOT FILES, and the reason is on Listing: `Directory.GetFiles` does not return a
         // DIRECTORY sitting at a sidecar's name, so that name would never be read and would answer
@@ -653,9 +682,34 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     static void DefaultWriteSidecar(string path, string text) => WriteDurably(path, text, FileMode.Create);
 
+    /// <summary>The real rename. One operation, so a reader sees one name or the other.</summary>
+    static void DefaultMoveSidecar(string source, string destination, bool overwrite) =>
+        File.Move(source, destination, overwrite);
+
     /// <summary>Appends and flushes to the disk. Same reason as <see cref="DefaultWriteSidecar"/>.</summary>
     static void AppendDurably(string path, string text) => WriteDurably(path, text, FileMode.Append);
 
+    /// <summary>
+    /// WHICH SIDECAR WRITES ARE FLUSHED TO THE PLATTER, AND WHICH ARE NOT, IN ONE PLACE.
+    ///
+    /// FLUSHED: the rotation's carry (<see cref="DefaultWriteSidecar"/>, and only that). Its very
+    /// next act renames a generation away, so "written before destroyed" has to be a fact about the
+    /// disk rather than about this process's view of it — a power cut between a cached write and a
+    /// completed rename would leave neither copy.
+    ///
+    /// NOT FLUSHED: the ordinary append in <see cref="AppendToErrorLog"/>, which is
+    /// <c>File.AppendAllText</c>. Nothing is destroyed after it, so the only thing an <c>fsync</c>
+    /// per engineering event would buy is durability against a power cut in the milliseconds after
+    /// it — and it would be paid on a path that runs while an order is being refused. A crash there
+    /// loses the newest line of a log whose whole job is to outlive the process; losing the line
+    /// about the crash that just happened is a bounded loss, and the write-ahead record itself —
+    /// <see cref="Save"/> — is what is actually protected.
+    ///
+    /// This is NOT verified to reach the platter either way: no in-process observation on a
+    /// developer machine distinguishes a flushed write from an unflushed one, and a <c>SIGKILL</c>
+    /// does not, because the page cache survives it. What IS measured is the ORDER — see
+    /// <see cref="Rotate"/>.
+    /// </summary>
     static void WriteDurably(string path, string text, FileMode mode)
     {
         using var stream = new FileStream(path, mode, FileAccess.Write, FileShare.Read);
@@ -958,6 +1012,9 @@ public sealed class CoidWitness : IDisposable
                     if (_committedUnreadable) return UnreadableDetail();
                     if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
+                    // A HALF-FINISHED ROTATION THAT CANNOT BE FINISHED. Reported ahead of the disk's
+                    // own reading because it is the reason the disk's reading has stopped moving.
+                    if (_appendRefused is { } stuck) return stuck;
                     if (_snapshotRefusal is { } why)
                         return $"the account of earlier write failures beside {ErrorLogPath} could not " +
                                $"be read ({why}), so this run cannot tell whether a durability gap is open";
@@ -1658,6 +1715,61 @@ public sealed class CoidWitness : IDisposable
     /// become one that throws. A rotation that stops half way leaves <c>log.new</c> holding the
     /// carried line, which the next reader reads and the next rotation consumes.
     /// </summary>
+    /// <summary>
+    /// THE ROTATION IS RESUMABLE, AND WITHOUT THIS IT WAS NOT.
+    ///
+    /// The four acts end with <c>log.new → log</c>, so the state left by the LAST one failing is
+    /// the current log GONE and <c>log.new</c> holding everything — the carried unresolved line and
+    /// nothing else. Every retry then started from a missing current: the append recreated <c>log</c>
+    /// as a fresh empty file beside an orphaned <c>log.new</c>, and the next rotation moved the
+    /// generations along underneath both. On Windows that is not an exotic state — the last act is a
+    /// rename onto a name a scanner or an indexer may be holding, which is the one failure
+    /// <see cref="_replace"/> exists to describe — and the retry loop above turned it into four.
+    ///
+    /// So the completion is finished before anything else is written, and it is IDEMPOTENT: the
+    /// condition is a property of the disk, not of a flag, so a fresh process that starts on a
+    /// half-rotated set finishes the previous process's rotation on its first append.
+    ///
+    /// AND WHEN IT CANNOT BE FINISHED THE APPEND IS REFUSED, LOUDLY. Appending to a current log that
+    /// does not exist would create one that the completion is going to overwrite, so the line would
+    /// be lost by the very act that repairs the set — silently, on the path whose entire job is to
+    /// leave a record. Refusing and degrading says so instead: see <see cref="_appendRefused"/>.
+    ///
+    /// Returns whether the append may proceed. Caller holds <see cref="_gate"/>.
+    /// </summary>
+    bool Resume(string log)
+    {
+        var snapshot = Snapshot();
+
+        // NO SNAPSHOT, NO CLAIM ABOUT THE SET. An unreadable set is already degraded and already
+        // stops the rotation (below); inventing a completion over files this run has not read is
+        // the R9-1 shape, and refusing every append over a transient denial is worse than a log
+        // that grows.
+        if (snapshot.Refusal is not null) return true;
+
+        var pending = log + PendingSuffix;
+        if (!snapshot.Sidecars.Contains(pending, StringComparer.Ordinal)) return true;
+        if (snapshot.Sidecars.Contains(log, StringComparer.Ordinal)) return true;
+
+        try
+        {
+            _moveSidecar(pending, log, false);
+            _appendRefused = null;
+            Invalidate();
+            return true;
+        }
+        catch (Exception e)
+        {
+            _appendRefused =
+                $"a sidecar rotation beside {log} stopped after the current log was rolled aside: " +
+                $"{pending} holds it and cannot be moved back ({e.GetType().Name}: {e.Message}), so " +
+                $"no further engineering event can be recorded there";
+            _degraded = true;
+            Invalidate();
+            return false;
+        }
+    }
+
     void Rotate(string log)
     {
         var snapshot = Snapshot();
@@ -1666,6 +1778,13 @@ public sealed class CoidWitness : IDisposable
         // attempt is made again after another cap's worth rather than on every single append: a
         // denial is usually transient, and re-reading the whole set per line would turn one refused
         // read into a permanent cost.
+        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
+
+        // A ROTATION STARTS FROM A WHOLE SET. If the previous one stopped at its last act this
+        // finishes it, and the snapshot below is retaken over the completed set; if it cannot be
+        // finished there is nothing to rotate and the caller has already been refused.
+        if (!Resume(log)) return;
+        snapshot = Snapshot();
         if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
 
         var deciding = DecidingIn(snapshot, Generations(log));
@@ -1677,15 +1796,20 @@ public sealed class CoidWitness : IDisposable
 
         _writeSidecar(pending, carry);
 
+        // FROM HERE THE SET CAN BE HALF MOVED, so this run stops believing its own byte count. A
+        // negative count is what sends the next append through Resume with a fresh snapshot — which
+        // is how the four acts become resumable rather than merely ordered.
+        _sidecarBytes = -1;
+
         // THE OLDEST GENERATION LEAVES IN ONE ACT, and it leaves after the carry is on the disk. As
         // an atomic rename rather than a delete followed by a move, so there is no instant at which
         // neither `.1` nor `.2` exists — the reader's set is a superset of the previous one at every
         // step, which is what makes the crash argument a subset argument.
         if (snapshot.Sidecars.Contains(rolled, StringComparer.Ordinal))
-            File.Move(rolled, second, overwrite: true);
+            _moveSidecar(rolled, second, true);
 
-        File.Move(log, rolled);
-        File.Move(pending, log);
+        _moveSidecar(log, rolled, false);
+        _moveSidecar(pending, log, false);
 
         _sidecarBytes = carry.Length;
         Invalidate();
@@ -2645,7 +2769,16 @@ public sealed class CoidWitness : IDisposable
                 // writer per sidecar file, so this writer knows its own file's size: the snapshot
                 // supplies the length it started at and every append since is counted. A wrong count
                 // costs a rotation that is late, which costs a bigger file and nothing else.
-                if (_sidecarBytes < 0) _sidecarBytes = Snapshot().Length(log);
+                // A ROTATION THAT STOPPED AT ITS LAST ACT IS FINISHED BEFORE ANYTHING IS WRITTEN.
+                // The count is negative exactly when this run has not yet looked at the set — the
+                // first append of a session, and every append after a rotation that threw, because
+                // Rotate clears it before its first destructive act. So this is every instant at
+                // which the four acts may be half done, and Resume runs at all of them.
+                if (_sidecarBytes < 0)
+                {
+                    if (!Resume(log)) return;
+                    _sidecarBytes = Snapshot().Length(log);
+                }
                 if (_sidecarBytes + text.Length > MaxErrorLogBytes) Rotate(log);
 
                 // ONE WRITER PER FILE, so this append has nobody to race. See SidecarPath.

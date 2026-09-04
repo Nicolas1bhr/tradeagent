@@ -792,4 +792,114 @@ public class WitnessSnapshotTests : IDisposable
         Assert.Empty(sidecars.Files);
         witness.Dispose();
     }
+
+    // ============================================== U14b item 1, the rotation resumes where it stopped
+
+    /// <summary>The line a rotation carries forward, in the wording <c>Restatement</c> writes.</summary>
+    static string Carried(string claim = "TA-GAP") =>
+        $"{DateTimeOffset.UtcNow:O} ERROR coid-witness carried an unresolved failure across a " +
+        $"sidecar rotation: ERROR coid-witness rewrite did not land. claim={claim}" + Environment.NewLine;
+
+    /// <summary>Crash point 3: the current log rolled aside, everything in <c>.new</c>, no current log.</summary>
+    void StoppedAtTheLastAct()
+    {
+        Seed();
+        if (File.Exists(Sidecar)) File.Delete(Sidecar);
+        File.WriteAllText(Sidecar + ".1", Gap(9));
+        File.WriteAllText(Sidecar + ".new", Carried());
+    }
+
+    /// <summary>
+    /// U14b ITEM 1. A ROTATION IS NOT AN ALL-OR-NOTHING ACT, AND THE RETRY USED TO PRETEND IT WAS.
+    ///
+    /// The four acts end with <c>log.new → log</c>. On Windows that last act is a rename onto a name
+    /// a scanner or the indexer may be holding — the one failure <c>_replace</c> exists to describe —
+    /// and when it is refused the set is left with the current log GONE and <c>log.new</c> holding
+    /// the carried unresolved line. Every subsequent append then started from a missing current: it
+    /// recreated <c>log</c> as a fresh empty file BESIDE the orphan, and the next rotation moved the
+    /// generations along underneath both. The set never came back together, and nothing said so.
+    ///
+    /// So the completion is finished first, by whoever appends next — including a process that was
+    /// not the one that started it, which is what makes this a restart story rather than a retry one.
+    /// </summary>
+    [Fact]
+    public void A_rotation_that_stopped_at_its_last_act_is_completed_before_the_next_append()
+    {
+        StoppedAtTheLastAct();
+
+        // A fresh instance — a RESTART, not a retry — appends one line.
+        WriteForeignLeftover(1);
+        var next = new CoidWitness(File_);
+        Assert.True(next.Submitting("TA-AFTER", "SIM", "ES", "Buy", 1m, null));
+        next.Dispose();
+
+        Assert.False(File.Exists(Sidecar + ".new"), "the half-finished rotation was left half finished");
+        Assert.True(File.Exists(Sidecar), "there is still no current log");
+
+        var current = File.ReadAllText(Sidecar);
+        Assert.Contains("TA-GAP", current);          // the carry came back as the current log
+        Assert.True(File.ReadAllLines(Sidecar).Length >= 2, "the new line did not land after it");
+        Assert.Contains("TA-GAP", Everything());
+    }
+
+    /// <summary>
+    /// THE SAME STATE, PRODUCED BY THE ACT ITSELF RATHER THAN BUILT — the seam refuses the last
+    /// rename exactly as Windows would, and then an ordinary append has to put the set back together.
+    /// Building the state proves the recovery; producing it proves that the recovery is reachable
+    /// from the code path that creates it.
+    /// </summary>
+    [Fact]
+    public void A_last_act_that_is_refused_leaves_a_set_the_next_append_puts_back_together()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, Gap(9) + new string('x', 70 * 1024) + Environment.NewLine);
+
+        WriteForeignLeftover(1);
+        var stopped = new CoidWitness(File_, moveSidecar: (src, dst, overwrite) =>
+        {
+            if (src.EndsWith(".new", StringComparison.Ordinal))
+                throw new IOException("the destination is open in another process");
+            File.Move(src, dst, overwrite);
+        });
+        Assert.True(stopped.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        stopped.Dispose();
+
+        Assert.False(File.Exists(Sidecar), "the last act did not actually fail");
+        Assert.True(File.Exists(Sidecar + ".new"));
+
+        WriteForeignLeftover(2);
+        var next = new CoidWitness(File_);
+        Assert.True(next.Submitting("TA-AFTER", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.False(File.Exists(Sidecar + ".new"), "the half-finished rotation was left half finished");
+        Assert.True(File.Exists(Sidecar), "there is still no current log");
+        Assert.Contains("TA-GAP", Everything());
+        next.Dispose();
+    }
+
+    /// <summary>
+    /// AND WHEN IT CANNOT BE COMPLETED, THE APPEND IS REFUSED AND SAYS WHY — never silently.
+    ///
+    /// Appending to a current log that does not exist creates one that the completion is going to
+    /// overwrite, so the line would be destroyed by the very act that repairs the set. That is the
+    /// worst of the three outcomes: the record is gone AND nothing reports it. A refusal that
+    /// degrades the machine is the direction to fail in.
+    /// </summary>
+    [Fact]
+    public void A_completion_that_cannot_be_done_refuses_the_append_and_degrades_with_the_reason()
+    {
+        StoppedAtTheLastAct();
+
+        WriteForeignLeftover(1);
+        var stuck = new CoidWitness(File_, moveSidecar: (_, _, _) =>
+            throw new IOException("the destination is open in another process"));
+        Assert.True(stuck.Submitting("TA-AFTER", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.False(File.Exists(Sidecar),
+            "it appended into a current log the completion was going to overwrite");
+        Assert.Contains("cannot be moved back", stuck.Trouble!);
+        Assert.Contains("io:degraded", stuck.Token());
+        Assert.False(stuck.GapClosed);
+        stuck.Dispose();
+    }
 }
