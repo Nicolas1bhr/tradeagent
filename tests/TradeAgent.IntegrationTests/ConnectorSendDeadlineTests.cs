@@ -814,11 +814,15 @@ public class ConnectorSendDeadlineTests
         // is merely capable of answering; with it, it demonstrably is.
         using var chatter = new CancellationTokenSource();
         var answered = 0;
+        var stop = 0;
         var talking = Task.Run(async () =>
         {
-            while (!chatter.IsCancellationRequested)
+            // NOT `chatter.Token` on the request itself. Cancelling a request whose write is in
+            // flight drops the connection by design, so passing the teardown's token to the chatter
+            // would let the cleanup destroy the very state this test is about.
+            while (Volatile.Read(ref stop) == 0)
             {
-                try { await connector.GetAccountsAsync(chatter.Token); Interlocked.Increment(ref answered); }
+                try { await connector.GetAccountsAsync(); Interlocked.Increment(ref answered); }
                 catch (Exception) { /* the emergency's own failure must not end the chatter */ }
                 try { await Task.Delay(150, chatter.Token); } catch (Exception) { return; }
             }
@@ -830,6 +834,22 @@ public class ConnectorSendDeadlineTests
         var timer = Stopwatch.StartNew();
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-ANSWERING"));
         timer.Stop();
+
+        // THE VERDICT IS READ HERE, BEFORE THIS TEST TOUCHES ANYTHING — and that is a correction,
+        // not a tidy-up. What is on trial is what the EMERGENCY did to the connection, and the
+        // teardown below can end it by itself: cancelling the chatter while one of its writes is in
+        // flight takes `WriteFrame`'s deliberate "a half-written frame on a shared writer ends the
+        // connection" path. Measured on this connector: cancelling an RPC after the peer had taken
+        // 24576 bytes of it drops the connection every time. Read after the teardown, this assertion
+        // was a race between the emergency's verdict and the test's own cleanup — one the Mac
+        // usually wins and a loaded Windows box does not, which is where it was caught (round 10's
+        // box run: "a bridge that was answering requests throughout was dropped", passing alone two
+        // and a half minutes later on the same binaries).
+        var connectedAtTheVerdict = await connector.IsConnectedAsync();
+
+        // And the chatter is stopped by a FLAG rather than by cancelling a request in flight, so the
+        // teardown cannot drop the connection at all. Only the sleep between requests is cancelled.
+        Volatile.Write(ref stop, 1);
         await chatter.CancelAsync();
         try { await talking; } catch (Exception) { /* torn down with the test */ }
 
@@ -843,7 +863,7 @@ public class ConnectorSendDeadlineTests
         Assert.Contains("busy", ex.Message);
         Assert.Contains("NOT confirmed", ex.Message);
         Assert.DoesNotContain("not responding", ex.Message);
-        Assert.True(await connector.IsConnectedAsync(),
+        Assert.True(connectedAtTheVerdict,
             "a bridge that was answering requests throughout was dropped");
     }
 
