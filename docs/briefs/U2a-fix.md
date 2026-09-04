@@ -36,5 +36,23 @@ test, one-sentence messages, no `Co-Authored-By` trailers, no other worktree, no
 
 ## Report
 
-Append here as you go and commit it, ≤20 lines: tip sha; per test the measured run-to-run variance and what you
-changed; the 3× local counts; full-suite counts; CI per platform; what you did NOT do. Verified or NOT VERIFIED.
+Tip `047ebfb` + this report commit. Product code UNCHANGED at every commit; 314 integration tests before and after.
+The variance is per-platform, not run-to-run, and I measured it: a probe (NamedPipeServerStream, shipped 8 KiB buffer,
+1 KiB writes) gives the WORST gap between two completed writes while a peer drips 1 KiB/800 ms — macOS 1.60 s, Linux
+5.61 s, against the 2 s an emergency watches. Ubuntu's failure reproduced locally in a Linux container; every fix was
+verified there and on this Mac.
+- `A_peer_reading_below_one_chunk_per_window` (ubuntu, deterministic; reproduced RED). The peer takes ONE 7 KiB gulp
+  mid-window instead of dripping — still under one old 8 KiB chunk, so both premises (`>0`, `<8 KiB`) and the verdict
+  stand. Pacing cannot work: at 4 KiB/s, the fastest drip under that ceiling, Linux's worst gap is still 1.77 s.
+  3/3 Linux, 5/5 macOS. Mutant `WriteChunkBytes = 8192` → RED, "Not found: busy".
+- `An_emergency_spends_one_budget…` (macos). Nineteen paced 80 ms reads → one 1.2 s wait the test holds, plus two new
+  premise asserts on when the gate was released. Mutant (write given a fresh clock after the gate) → RED at 3.21 s.
+- `Local_queueing_under_load…` (macos). No safe deadline exists: this Mac drains all 300 calls in 220 ms (≥250 ms ⇒ no
+  contention, 3/3 RED) while Linux at 0.5 core needs >50 ms for one chunk (3/5 RED). The bridge now costs 20 ms a
+  quote (`QuotesAtAPace`), a 6 s machine-independent floor, deadline 2 s. 8/8 at 0.5 core, 8/8 at 2 cores, 5/5 macOS.
+  Mutant (drop on gate expiry) → RED.
+Class 3× Release here: 47/47, 47/47, 47/47 (3 m 56/56/57 s). `dotnet build TradeAgent.sln -c Release --no-incremental`
+→ 0 Warning(s), 0 Error(s). Full suite Release: 75 + 108 + 314 = 497 passed, 0 failed.
+CI 33905797433 (draft PR #1): ubuntu SUCCESS, macos SUCCESS, windows FAILURE — two `WitnessSnapshotTests`/
+`CoidWitnessTests` harness IOExceptions that fail identically on `main` (run 33905102658); my three passed there.
+NOT done: no product change, no `Timing` trait, no workflow change, no other worktree, no box, no merge.
