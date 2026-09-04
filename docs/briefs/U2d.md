@@ -37,3 +37,24 @@ Gate at the end: `dotnet build TradeAgent.sln --no-incremental` → 0 warnings; 
 Append here as you go and commit it with each item, at most 20 lines in total: tip sha; rebase result; baseline
 counts; one line per item (RED → GREEN → mutant); final counts; what you did NOT do. Every line is verified by running
 something, or says NOT VERIFIED. Not allowed: should work, looks correct, probably, I believe, minor, trivial.
+
+Tip **bd5e390** (this report sits on top of it). Rebase onto b5a439d: clean. `main` then moved to **6138fdd** (the u2a-pipe-hardening merge, two
+minutes later) and I rebased again — 15/15 replayed, no conflict. Baseline on b5a439d: 0 warnings, 75/182/146 = **403 passed, 0 failed**. `main` has since moved on again to ce40225, docs-only: zero file overlap with this branch, so the landing rebase is conflict-free and changes no code — verified by `comm -12` on the two name-only diffs.
+
+1. Refusal sink. RED (3 tests): `InvalidOperationException: database is locked` thrown out of `InstallAsync` at UpdateService.cs:522, and the background
+   check's `Refused` back to False. Fixed with one wrapped `Record(text, level)` that every sink call site now goes through — GREEN 77/77. Mutant (its
+   catch removed): 4 red, including the pre-existing post-Launch test. Restored 77/77.
+2. Wire test, per-request `HttpListener`, through `UpdateSources.GitHub`: a declared 65537 refused with 1 body byte sent and the other 65536 never coming;
+   chunked 65537 refused with the server then silent for good; chunked 65536 read whole; a stalled body cut at a 500 ms leash; a healthy manifest resolving
+   to the installer's hash — 5 tests, 0.6 s. Each revert quoted RED against them: unbounded `TryGetStringAsync` → 3 red (two at the test's own 15 s
+   deadline, plus the source assertion); no `CancelAfter` → the stall red; no Content-Length check → the declared-size red. Restored 82/82.
+3. Batch. Astral U+1F600, PrivateUse U+E000, Unassigned U+0378 pinned, each row asserting its category first (a pin: no RED, the mutant is its proof).
+   `ReadLimitedAsync(_, int.MaxValue)` RED `OverflowException` → the +1 is not taken there, and a negative limit throws instead of returning null. Caller
+   cancellation RED `No exception was thrown` → rethrown under `when (ct.IsCancellationRequested)`, leash expiry still null. `Attach` source assertion kept with
+   its limit disclosed. `UpdateGatewayCoupling` → `UpdateTradingInterlock`: file, class, AppHost line, 6 test refs, 0 left in src/ or tests/. Mutant (the three categories dropped from `IsPlainFileName`): 3 rows red. Restored 89/89.
+
+Final on bd5e390, tree clean: Debug and Release `--no-incremental` both 0 warnings, both suites 75/197/314 = **586 passed, 0 failed**. UnitTests 182 → 197
+is exactly the 15 cases these commits add; the integration jump is the u2a merge. NOT done: item 10 — `UpdateService.cs:255-265` verified byte-identical to
+the branch base by diff, it waits for U2c-1; `UpdateSources.Install` and every UI surface are executed by no test, and the box was not mine; `docs/hardening/`
+still says `UpdateGatewayCoupling`, left as frozen history; `UpdateTests.cs` lost `A_release_without_a_checksum_file_still_installs_without_inventing_one`
+in df9b068 — round 1, not mine: it pinned the checksumless install this unit refuses.
