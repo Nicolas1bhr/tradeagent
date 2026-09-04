@@ -7,3 +7,8 @@ FINDING 2 — HIGH — AtasConnector.cs:1018 — DEFERRED-BY-DECISION to U2c-1 (
 FINDING 3 — MED — GatewayPipeServer.cs:816 — the public per-leg vocabulary contained six values (sent-and-confirmed, sent-still-working, nothing-to-do, …) and SweepRequestIdTests.cs:395 approved all six.
 FINDING 4 — MED — GatewayPipeServer.cs:786 — record-only classification: pre-gate Busy/PeerStalled legs became UNKNOWN though never sent; disposal cancellation could leave DISPATCHING/RECONCILING described as sent-not-confirmed.
 PRIOR F5 — REFUTED-BY-DECISION (zero-warning build recorded on main).
+F-1 — MED — (verifier, 088c059) a sweep leg the shipped connector refused BEFORE sending read sent-not-confirmed with UNKNOWN + NeedsReconciliation, pausing all execution; the route ran through TradingGateway.cs:660-665 (every ConnectorTransportException → SettleUnknown).
+F-2 — MED — (verifier, 088c059) DisposeAsync returned with a request DISPATCHING, needs_reconciliation=0 and handlers_did_not_finish NOT logged, with a connector that honours its cancellation token; the settlement of a cancelled handler is DEFERRED-BY-DECISION to U2c-1 (startup sweep + cancellation path); U2a's half is that disposal never returns silently.
+F-3 — LOW — (verifier, 088c059) Classify kept a catch-all `_ => LegOutcome.NotConfirmed` so a new ExecutionState silently became sent-not-confirmed.
+F-4 — LOW — (verifier, 088c059) same as FINDING 1 (the close-all wave undercounted in the drain).
+F-5 — LOW — (verifier, 088c059) the five-order sweep test passed with attempted = 0 and never exercised a mixed answer.

@@ -93,6 +93,15 @@ inconclusive and keeps trading paused.* Implement each as a red-first test that 
   owner-readable sentence. Acceptance: operator Close All against a stalled bridge with a held gate ≈2 s with the
   "not confirmed — check ATAS" sentence; the position read before the close inherits the scope.
 
+- **C4 (U2a verifier rounds 8+9 F-2, MED): a cancelled handler must settle.** `TradingGateway.cs:696-700` lets a
+  handler cancelled during the pipe server's disposal return with its record DISPATCHING, `needs_reconciliation=0`, and
+  nothing ever reconciles that row (measured with a connector that honours its cancellation token). Your startup sweep
+  (round 1) turns such rows into UNKNOWN + paused at the NEXT start; the cancellation path itself must settle UNKNOWN
+  before the store closes, so a row never depends on a restart to be noticed. Also: `:660-665` maps every
+  `ConnectorTransportException` to `SettleUnknown` — a refusal the connector raised BEFORE sending (transport result
+  `NothingWritten`) must settle as not-sent (no UNKNOWN, no pause), and only `PossiblyWritten` as UNKNOWN; U2a exposes
+  the transport result from the connector for this.
+
 ## Proof obligations
 
 - Every item above: RED quoted before the fix, GREEN after, and a mutant that reverts the guard watched to bite (commit
