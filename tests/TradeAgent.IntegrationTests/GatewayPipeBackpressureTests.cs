@@ -1481,9 +1481,17 @@ public class GatewayPipeBackpressureTests
         await WaitFor(() => gw.GetRequest("cli-unsettled-order")?.State == ExecutionState.WORKING, TimeSpan.FromSeconds(30));
         var target = (await gw.OrdersAsync()).Single().ConnectorOrderId;
 
-        // CANCELLABLE latency, five seconds of it: the modify will be cancelled by disposal and will
-        // unwind cleanly, which is the whole point.
-        conn.Faults.LatencyMs = 5000;
+        // UNCANCELLABLE latency, five seconds of it: the modify is still INSIDE the connector when
+        // disposal gives up, so the row it wrote before the call is genuinely unsettled — the call
+        // has not answered and nothing yet knows what became of it.
+        //
+        // It used to be CANCELLABLE latency, and that stopped producing this shape once U2c-1 put a
+        // catch-all after the wire on every dispatch path: the cancelled handler unwound through it,
+        // the row settled UNKNOWN + flagged, and reconciliation could see it. That is the fix this
+        // test's comment routes to U2c-1, and it is asserted in
+        // `A_cancelled_dispatch_is_flagged_rather_than_left_dispatching`. What remains here — and is
+        // what disposal's report is actually about — is the operation that has not come back AT ALL.
+        conn.Faults.UncancellableLatencyMs = 5000;
         const string rid = "cli-unsettled-modify";
         await agent.WriteAsync(new IpcRequest
         {
@@ -1509,8 +1517,9 @@ public class GatewayPipeBackpressureTests
             $"disposal returned in {timer.Elapsed.TotalMilliseconds:0} ms against a derived drain of " +
             $"{drain.TotalMilliseconds:0} ms — it cancelled the handler before its time was up");
 
-        // The row really is unsettled and really is invisible to reconciliation. This is the state
-        // U2c-1 has to fix; it is asserted here so the routing has a measurement attached to it.
+        // The row really is unsettled and really is invisible to reconciliation — because the
+        // connector call has not returned. Nothing can settle a row whose outcome has not arrived,
+        // which is why "disposal returned with this still open" has to be said out loud.
         var record = gw.GetRequest(rid)!;
         Assert.Equal(ExecutionState.DISPATCHING, record.State);
         Assert.False(record.NeedsReconciliation);
@@ -1520,6 +1529,76 @@ public class GatewayPipeBackpressureTests
         Assert.Equal("error", ReadEngineering(db, "handlers_did_not_finish"));
         var metadata = ReadEngineeringMetadata(db, "handlers_did_not_finish");
         Assert.Contains(rid, metadata);
+    }
+
+    /// <summary>
+    /// THE OTHER HALF OF THE TEST ABOVE, AND THE ONE THAT WAS ROUTED AWAY: a dispatch CANCELLED by
+    /// disposal is flagged, not left DISPATCHING.
+    ///
+    /// The test above measured a row that disposal walked away from, and its comment said settling
+    /// it was `TradingGateway`'s and belonged to U2c-1. It does now: every dispatch path has a
+    /// catch-all after the wire, so a cancellation — which is not in the
+    /// `ConnectorRejectedException`/`ConnectorTransportException` taxonomy and used to escape — ends
+    /// as UNKNOWN with `needs_reconciliation` set, which is what `ReconcileAsync` scans and what
+    /// pauses execution. Same fixture as above in every respect but one: the latency is CANCELLABLE,
+    /// so the handler really does unwind while disposal is still holding the database open.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_dispatch_is_flagged_rather_than_left_dispatching()
+    {
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            // Short enough that the derived drain expires well inside the 5 s modify — the point is
+            // to CANCEL it — and long enough for the unwind to write its outcome down.
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
+        };
+        server.Start();
+
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-cancelled",
+            RequestId = "cli-cancelled-order",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                ["limit"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest("cli-cancelled-order")?.State == ExecutionState.WORKING,
+            TimeSpan.FromSeconds(30));
+        var target = (await gw.OrdersAsync()).Single().ConnectorOrderId;
+
+        conn.Faults.LatencyMs = 5000;
+        const string rid = "cli-cancelled-modify";
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Modify,
+            Session = "agent-cancelled",
+            RequestId = rid,
+            Args = new()
+            {
+                ["id"] = JsonSerializer.SerializeToElement(target),
+                ["quantity"] = JsonSerializer.SerializeToElement("2")
+            }
+        });
+        await WaitFor(() => gw.GetRequest(rid)?.State == ExecutionState.DISPATCHING, TimeSpan.FromSeconds(30));
+
+        await server.DisposeAsync();
+
+        var record = gw.GetRequest(rid)!;
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation,
+            "a dispatch cancelled after the write-ahead was left unflagged, so nothing will settle it");
+        Assert.Contains(rid, gw.Requests.NeedingReconciliation().Select(r => r.RequestId));
     }
 
     /// <summary>
@@ -1535,14 +1614,23 @@ public class GatewayPipeBackpressureTests
     /// `handlers_did_not_finish = error`; with the agent gone first, disposal returned in 3 ms with a
     /// DISPATCHING row and NOTHING logged.
     ///
-    /// The row is produced without injecting anything into the pipe server. A connector
-    /// `TimeoutException` — which safety rule 3 requires to PROPAGATE — escapes
-    /// `TradingGateway.ModifyAsync`'s `ConnectorRejectedException`/`ConnectorTransportException` catch
-    /// taxonomy, the handler answers the agent and lives on, and the row stays DISPATCHING and
-    /// unflagged. `ReconcileAsync` scans `NeedingReconciliation()` alone, so nothing will settle it;
-    /// with the old guard nothing recorded that it existed either.
+    /// HOW THE ROW IS PRODUCED CHANGED WITH U2c-1, AND THE PROPERTY UNDER TEST DID NOT. It used to
+    /// be a connector `TimeoutException` — which safety rule 3 requires to PROPAGATE — escaping
+    /// `TradingGateway.ModifyAsync`'s `ConnectorRejectedException`/`ConnectorTransportException`
+    /// catch taxonomy: the handler answered the agent and lived on, and the row stayed DISPATCHING
+    /// and unflagged. U2c-1 put a catch-all after the wire on every dispatch path, so that timeout
+    /// now settles UNKNOWN + flagged — asserted below, because it is the reason the rest of this
+    /// test had to change and a regression in it would put the old silent row back.
     ///
-    /// The control — the same row with the agent still connected — is the test above.
+    /// What is left DISPATCHING at disposal is therefore a row THIS process is not flying: the
+    /// write-ahead of a dispatch whose process is gone, which is exactly the shape
+    /// `TradingGateway.RecoverStrandedDispatches` documents and sweeps at construction — and which
+    /// is invisible to that sweep for the whole life of a session it appears in. Disposal's report
+    /// is the only thing that names it, and the defect is that it named it only while an agent
+    /// happened to still be attached.
+    ///
+    /// The control — a row unsettled with the agent still connected — is
+    /// `A_request_left_unsettled_when_disposal_returns_is_logged_by_name_at_error`.
     /// </summary>
     [Fact]
     public async Task A_row_left_dispatching_is_named_even_when_the_agent_disconnected_first()
@@ -1605,25 +1693,45 @@ public class GatewayPipeBackpressureTests
                     ["quantity"] = JsonSerializer.SerializeToElement("2")
                 }
             });
-            await WaitFor(() => gateway.GetRequest(rid)?.State == ExecutionState.DISPATCHING,
+            await WaitFor(() => gateway.GetRequest(rid)?.State == ExecutionState.UNKNOWN,
                 TimeSpan.FromSeconds(30));
         }
+
+        // The escaping timeout is settled and flagged now, so it is NOT what disposal has to report.
+        var settled = gateway.GetRequest(rid)!;
+        Assert.True(settled.NeedsReconciliation,
+            "a propagating TimeoutException left the row unflagged — the silent DISPATCHING row is back");
+
+        // The row that IS left: a write-ahead with no process flying it. Written straight to the
+        // store because that is honestly where such a row comes from — the previous run's dispatch,
+        // read out of the same database — and because no code path inside this process produces one
+        // any more, which is the point of the assertion above.
+        const string stranded = "cli-stranded-dispatch";
+        gateway.Requests.TryCreate(new ExecutionRequest
+        {
+            RequestId = stranded,
+            ConnectorId = gateway.Connector.Id,
+            AccountId = conn.Broker.AccountId,
+            Instrument = "ES",
+            Intent = RequestIntent.PLACE,
+            ParametersJson = "{}",
+            ClientOrderId = TradingGateway.ClientOrderIdFor(stranded),
+            Mode = TradingMode.PAPER
+        });
+        gateway.Requests.Transition(stranded, ExecutionState.CREATED, ExecutionState.DISPATCHING);
 
         // The premise this test is built on: the connection is gone and its handler has finished, so
         // there is nothing in `_handlers` for a guard to find.
         await WaitFor(() => server.LiveHandlerCount == 0, TimeSpan.FromSeconds(30));
-
-        var record = gateway.GetRequest(rid)!;
-        Assert.Equal(ExecutionState.DISPATCHING, record.State);
-        Assert.False(record.NeedsReconciliation);
+        Assert.Equal(ExecutionState.DISPATCHING, gateway.GetRequest(stranded)!.State);
 
         await server.DisposeAsync();
 
-        // Unsettled, still — that half is TradingGateway's and is routed to U2c-1. NOT silent, which
-        // is this unit's half and is what the agent's departure used to switch off.
-        Assert.Equal(ExecutionState.DISPATCHING, gateway.GetRequest(rid)!.State);
+        // Unsettled, still — nothing in the pipe server settles a request. NOT silent, which is this
+        // unit's half and is what the agent's departure used to switch off.
+        Assert.Equal(ExecutionState.DISPATCHING, gateway.GetRequest(stranded)!.State);
         Assert.Equal("error", ReadEngineering(db, "handlers_did_not_finish"));
-        Assert.Contains(rid, ReadEngineeringMetadata(db, "handlers_did_not_finish"));
+        Assert.Contains(stranded, ReadEngineeringMetadata(db, "handlers_did_not_finish"));
     }
 
     // ---------------------------------------------------------------- helpers

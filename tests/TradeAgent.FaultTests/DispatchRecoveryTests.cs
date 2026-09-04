@@ -67,6 +67,10 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public string DisplayName => inner.DisplayName;
     public ConnectorCapabilities Capabilities => inner.Capabilities;
 
+    /// <summary>The wrapper adds no waits of its own, so both bounds are the inner connector's.</summary>
+    public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
+    public TimeSpan EmergencyBudget => inner.EmergencyBudget;
+
     public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
     public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);

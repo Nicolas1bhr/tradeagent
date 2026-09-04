@@ -37,3 +37,19 @@ trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 war
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; rebase conflicts and how each was resolved;
 baseline counts; one line per item (RED → GREEN → mutant); final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+Rebase: 21 commits replayed onto `main` 40816da. Two conflicts. `docs/CONTRACTS.md` — both sides additive prose, kept
+both (U2c-1's return-state mapping paragraph, then main's transport-ledger paragraph). `GatewayTypes.cs` — U2a's sealed
+`AgentContext` class vs U2c-1's `record AgentContext` + new `OperatorPress`; kept U2a's class and its doc verbatim, put
+`OperatorPress` above it. No U2a guard dropped. Two post-rebase reds, both real interactions with U2b's disposal
+sentinel and both fixed as item 0 (their own comments route the gateway half to U2c-1):
+`A_request_left_unsettled_when_disposal_returns_is_logged_by_name_at_error` — cancellable latency no longer leaves a
+DISPATCHING row now that a catch-all follows the wire, so the fixture is uncancellable latency and every assertion
+stands unchanged; `A_row_left_dispatching_is_named_even_when_the_agent_disconnected_first` — the escaping
+`TimeoutException` now settles UNKNOWN+flagged (asserted), and the row disposal must name is a write-ahead put in the
+store directly; re-mutated `if (unfinished > 0 || unsettled.Count > 0)` back to the old `handlers.Length > 0 && (...)`
+guard → RED (`Expected: "error" / Actual: null`), restored. Added
+`A_cancelled_dispatch_is_flagged_rather_than_left_dispatching` for the U2c-1 half. `RecoveryConnector` gained the two
+interface members `main` added (`WorstCaseOperationPath`, `EmergencyBudget`, delegated to the inner connector).
+Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); suite Unit 201 / Fault 166 / Integration
+506, 0 failed.
