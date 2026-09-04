@@ -40,6 +40,32 @@ of each class exists (enumerate the operations of the class and show each is cov
 Gate and report as before: per item RED → GREEN → mutant; the class-closure argument per item in the record; suite
 counts; "What I did NOT do".
 
-## Verifier round-8 findings (appended by the manager when leg [2] reports)
+## Verifier round-8 findings (fresh Opus, on `10fa21f`) — VERDICT: FAIL — 3H/1M/0L · record `records/U14-verify-r8.md`
 
-_pending_
+**CLASS (§9.10, the verifier's words): each round-8 guard was proved in exactly the state its author built, and each has
+a neighbouring state one step away it does not reach.** This round's class-closure arguments exist to end that.
+
+- **R8-1 (HIGH) = Codex F30, broadened to the ORDINARY state.** The current log is moved to `<log>.rotating`, a name
+  `SidecarGenerations()` does not scan; an unresolved ERROR living in the CURRENT log (the ordinary case — both round-8
+  rotation tests seeded `.1` instead) is invisible in the window and permanently lost if the restatement write does not
+  land. Measured with a real SIGKILL inside the window: restart reads `Trouble = null`, `io:noted`; `SupportsClientOrderId`
+  stays true over a lost write-ahead record. Fix per F30's rule; the test seeds the ERROR in the CURRENT log and kills
+  inside the window (the verifier's harness is on `u14-verify-r8-probes`).
+- **R8-2 (HIGH).** `AdapterTeardown.Record` guards ONE of FOUR witness write sites (`AtasStrategyAdapter.cs:1409`, `:1562`,
+  `:1824`); the other three run on the BridgeServer frame loop, which outlives teardown by construction (`DisposeAsync`
+  waits 5 s then gives up; `StopBridge` catches its own timeout). Measured: after `Stop` released the lease, an unguarded
+  write re-leased and a replacement adapter was refused "another writer owns this witness" — PRIOR 21's own harm,
+  unchanged. Rule: EVERY witness write goes through the guard (one choke point, enumerate the four sites in the record),
+  and the frame loop's writes after teardown are refused, not raced. The adapter compiles only on the box — the manager
+  grants ONE box run at the end of this round for the bridge compile + `tools/atas-gate` (push, hash-verify, run, re-hash).
+- **R8-3 (HIGH).** The F23 drop is consulted only when the idle poll WINS the race (`AtasConnector.cs:276-281`, `:189`): a
+  peer emitting any line faster than `IdlePoll` (`{"op":"ping"}` every 200 ms, no heartbeat) is never asked whether it
+  has gone quiet — health says DEGRADED and the replacement bridge's `ConnectAsync` still fails. Rule: the heartbeat
+  predicate is evaluated on EVERY loop turn regardless of which branch of the race completed; a chatty non-heartbeating
+  peer is dropped at `HeartbeatTimeout` like a silent one. The verifier's 200 ms-ping probe is the acceptance.
+- **R8-4 (MED).** A half-move of the PRIOR 21 guard (check outside the lock, write inside) survives every
+  `AdapterTeardownTests` case; only a 40-round two-thread probe catches it — lift that probe into the suite.
+
+Box (one run, identity-checked): bridge compiled against ATAS, 5 warnings 0 errors, the `AdapterTeardown` call sites bind;
+`tools/atas-gate` PASSED both directions. Held: 454 twice; ten carried probes green (V4, V5 closed); R3 harness 160/0
+dropped; all five refutations confirmed (R4 re-measured).
