@@ -1,0 +1,59 @@
+## Prior rulings
+
+PRIOR 17 — FIXED — Only FileNotFoundException now means absence; DirectoryNotFoundException sets the read-failure state (CoidWitness.cs:1672).
+
+PRIOR 21 — FIXED — Record and terminal release are serialized by the same gate, preventing Identified from reacquiring after Stop wins (AdapterTeardown.cs:44).
+
+PRIOR R2 — FIXED — Witness release now executes from Stop’s finally even when UntrackSecurities throws (AdapterTeardown.cs:75).
+
+PRIOR V3 — FIXED — Diagnostic rotation now restates an unresolved `.1` marker before deleting that generation, covering the originally reported pre-deciding-line death (CoidWitness.cs:1497).
+
+PRIOR 23 — FIXED — The pending read is polled and the pipe disposed after HeartbeatTimeout, recycling the single instance for silent, partial-frame, and stale-open peers (AtasConnector.cs:271).
+
+PRIOR 25 — REFUTED-BY-DECISION — Noted scans the whole writer set while degraded remains scoped to canonical generations, as ratified (CoidWitness.cs:1000).
+
+PRIOR 26 — FIXED — Adapter teardown delegates witness disposal to the finally-protected release path (AtasStrategyAdapter.cs:492).
+
+PRIOR 27 — PARTIAL — Old-generation deletion was reordered, but current-generation staging and the absence of a durability flush still violate the every-interleaving requirement (CoidWitness.cs:1497).
+
+PRIOR 28 — PARTIAL — ReadAllLines failures are now unreadable, but File.Exists and directory-enumeration failures can still collapse to no notes (CoidWitness.cs:1519).
+
+PRIOR 29 — PARTIAL — The report now covers refused writers as well as rejected candidates, but a successfully recovered rewrite is still inaccurately described as “refused” (CoidWitnessReport.cs:73).
+
+PRIOR 24 — REFUTED-BY-DECISION — The incompatible marker remains intentionally instance-scoped and is re-derived after restart (AtasConnector.cs:39).
+
+PRIOR 5 — REFUTED-BY-DECISION — The accepted on-box cross-session evidence remains recorded on main (BUILD-STATUS.md:1182).
+
+PRIOR R4 — REFUTED-BY-DECISION — The retained macOS limitation is documented against Windows sharing-handle behavior (CoidWitness.cs:259).
+
+PRIOR R5 — REFUTED-BY-DECISION — Record wording remains governed by the manager’s accepted evidence statement (BUILD-STATUS.md:1212).
+
+PRIOR V4 — FIXED — Explicit refusal markers are observation-stamped and StatusDetail selects the newer refusal (AtasConnector.cs:157).
+
+PRIOR V5 — FIXED — Deciding-line and unreadability scans remain canonical-only while Noted alone spans per-writer files (CoidWitness.cs:1002).
+
+## Required edge rulings
+
+(a) With production defaults, a healthy application-idle bridge is not wire-idle: it emits a heartbeat every five seconds, and even a failing Describe call sends a plain pulse, against a fifteen-second timeout (BridgeServer.cs:232). No normal-path false drop was found. Behavior across prolonged OS suspension or wall-clock jumps is UNVERIFIED.
+
+(b) No. Rotation is not crash-safe at every interleaving and readers can see an inconsistent state; see Finding 30.
+
+(c) The committed path now distinguishes all inspected failures from FileNotFoundException absence. The sidecar still has accessibility variants that classify as empty; see Finding 31.
+
+(d) Newer explicit refusals and accepted live bridges take precedence correctly. A newly arrived silent peer can still be masked by an older marker; see Finding 32.
+
+FINDING 30 — MED — CoidWitness.cs:1497 — Moving the current generation to unscanned `.rotating` can hide its only unresolved marker before carry-forward exists.
+
+CHECK — Start with an oversized current log whose latest deciding line is ERROR and with `.1` absent or RESOLVED; terminate after File.Move(log, staging) and before `_writeSidecar`. A new reader scans only `log` and `.1` (CoidWitness.cs:1543), reports no open gap, and a later rotation deletes `.rotating` (CoidWitness.cs:1482). Additionally, the replacement uses File.WriteAllText without `Flush(true)` before old-generation deletion (CoidWitness.cs:551).
+
+FINDING 31 — MED — CoidWitness.cs:1519 — Sidecar existence probes suppress accessibility failures, allowing an unreadable sidecar to classify as empty.
+
+CHECK — Keep the committed witness readable but deny sidecar attributes/read access so File.Exists returns false, or deny Directory.GetFiles enumeration. HasNotes returns false or SidecarSet returns empty, leaving `_noted` and `_sidecarUnreadable` false; Trouble can be null and a zero non-provisional (CoidWitness.cs:1000).
+
+FINDING 32 — MED — AtasConnector.cs:134 — An older refusal suppresses the derived state of a newly connected silent peer, leaving a stale status sentence.
+
+CHECK — Refuse protocol 2, let Drop preserve `_incompatible`, then connect a different peer that sends nothing. After AuthGrace, `Unauthenticated.Silent` is suppressed because `_incompatible` is non-null, so StatusDetail continues reporting protocol 2 until the new peer times out. An older explicit `_unauthenticated` marker behaves similarly.
+
+Static verification: `git diff --check 4de7c25..HEAD` passed and the worktree was clean. Dotnet tests were not run because they create artifacts, contrary to the read-only/no-create instruction; runtime confirmation is UNVERIFIED.
+
+SUMMARY — 0 HIGH / 3 MED / 0 LOW
