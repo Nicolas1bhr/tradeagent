@@ -16,8 +16,9 @@ Work in flight is whatever is in `docs/briefs/` — one file per unit, the build
 `main` is `2c6826d`: **U2a, U2d and U14a landed** (the agent pipe, deadlines, replay and fast path; the updater refusing
 instead of degrading; the write-ahead record surviving its rewrite, protocol 3; all in `BUILD-STATUS.md` 2026-09-04; U2a's CI run 33898144843 RED on ubuntu and macos in `ConnectorSendDeadlineTests`, runner speed, windows green — fix unit
 `docs/briefs/U2a-fix.md`; until it lands every landing's CI shows the same two runners red). The queue, in order: U2a-fix (the runner-speed
-deadline tests) and U14b (resumable rotation, the fifth crash point, one teardown, a stamped status) are building; then U2c-1 round 4 (classes
-A/B/C1–C5, `docs/hardening/briefs/U2c1-r4-build.md` — shrink it to a 40-line brief first); then the milestone review of
+deadline tests) and U14b (resumable rotation, the fifth crash point, one teardown, a stamped status) are building; then U2c-1 as three units
+(U2c1a `docs/briefs/U2c1a.md`: rebase + class A + the cancelled handler; U2c1b: the emergency-press rewrite with C2/C3;
+U2c1c: C1/C5 — cut b and c from `docs/hardening/briefs/U2c1-r4-build.md` when their turn comes); then the milestone review of
 the money path on `main`; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
 `docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
