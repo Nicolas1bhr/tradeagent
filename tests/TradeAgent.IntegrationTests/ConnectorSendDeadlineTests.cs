@@ -645,12 +645,20 @@ public class ConnectorSendDeadlineTests
         // The caller's bound is unchanged, which is half the decision.
         Assert.InRange(caller, TimeSpan.FromMilliseconds(1900), TimeSpan.FromSeconds(6));
         Assert.Contains("busy", ex.Message);
-        Assert.Contains("NOT confirmed", ex.Message);
         Assert.DoesNotContain("not responding", ex.Message);
+
+        // OUTCOME FIRST (verifier F-G): the first clause is what happened to the order and where to
+        // look, not a claim about the pipe. After the grace change this sentence is what every
+        // emergency reads at two seconds, including one against a bridge that is already dead.
+        Assert.StartsWith("'cancel-all' is NOT confirmed — check your positions and orders in ATAS.", ex.Message);
 
         // The answer arrives after the caller has gone, and is recorded rather than discarded.
         await Wait(() => Task.FromResult(connector.LateAnswers > 0), 15_000);
         Assert.Equal(1, connector.LateAnswers);
+
+        // And nothing is left registered. An entry is removed by the answer, by the race check or by
+        // the grace expiring; one that only ever grew would be the leak Codex F3 named.
+        await Wait(() => Task.FromResult(connector.AwaitingLateAnswer == 0), 15_000);
 
         // And the connection is still there once the grace it would have been judged by has passed,
         // which is the other half.
