@@ -1336,6 +1336,110 @@ public class GatewayPipeBackpressureTests
         Assert.Contains(rid, metadata);
     }
 
+    /// <summary>
+    /// THE AGENT GOES AWAY FIRST, AND THEN THE APP CLOSES — the ordinary shutdown shape, and the one
+    /// the promise not to return silently did not cover.
+    ///
+    /// Round 10 changed what the sentinel COUNTS (unfinished handler tasks -> unfinished OR unsettled
+    /// requests) and left the GUARD around it: the whole block sits inside `if (handlers.Length > 0)`,
+    /// and `handlers` is `_handlers.Keys` read AFTER step 2 has disposed every live connection —
+    /// per-CONNECTION tasks, each of which removes itself on completion. So the report is conditioned
+    /// on a connection happening to be alive rather than on the state it is about. Measured by the
+    /// round-11 verifier with two probes differing in one thing only: with the agent connected,
+    /// `handlers_did_not_finish = error`; with the agent gone first, disposal returned in 3 ms with a
+    /// DISPATCHING row and NOTHING logged.
+    ///
+    /// The row is produced without injecting anything into the pipe server. A connector
+    /// `TimeoutException` — which safety rule 3 requires to PROPAGATE — escapes
+    /// `TradingGateway.ModifyAsync`'s `ConnectorRejectedException`/`ConnectorTransportException` catch
+    /// taxonomy, the handler answers the agent and lives on, and the row stays DISPATCHING and
+    /// unflagged. `ReconcileAsync` scans `NeedingReconciliation()` alone, so nothing will settle it;
+    /// with the old guard nothing recorded that it existed either.
+    ///
+    /// The control — the same row with the agent still connected — is the test above.
+    /// </summary>
+    [Fact]
+    public async Task A_row_left_dispatching_is_named_even_when_the_agent_disconnected_first()
+    {
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
+        using var _1 = db;
+        var counting = new CountingConnector(conn);
+        var gateway = new TradingGateway(db, counting, new HealthRegistry());
+        gateway.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await gateway.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gateway, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(200)
+        };
+        server.Start();
+
+        const string rid = "cli-gone-modify";
+        await using (var agent = await RawAgent.ConnectAndHello(pipe))
+        {
+            await WarmUp(agent);
+
+            conn.Faults.Fill = FillBehaviour.LeaveWorking;
+            await agent.WriteAsync(new IpcRequest
+            {
+                Op = Ops.Buy,
+                Session = "agent-gone",
+                RequestId = "cli-gone-order",
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                    ["limit"] = JsonSerializer.SerializeToElement("1")
+                }
+            });
+            await WaitFor(() => gateway.GetRequest("cli-gone-order")?.State == ExecutionState.WORKING,
+                TimeSpan.FromSeconds(30));
+            var target = (await gateway.OrdersAsync()).Single().ConnectorOrderId;
+
+            // Outside the gateway's catch taxonomy on purpose: the handler ANSWERS and finishes, and
+            // the row it left behind is the thing disposal has to notice.
+            counting.TimeoutOnModify = true;
+            await agent.WriteAsync(new IpcRequest
+            {
+                Op = Ops.Modify,
+                Session = "agent-gone",
+                RequestId = rid,
+                Args = new()
+                {
+                    ["id"] = JsonSerializer.SerializeToElement(target),
+                    ["quantity"] = JsonSerializer.SerializeToElement("2")
+                }
+            });
+            await WaitFor(() => gateway.GetRequest(rid)?.State == ExecutionState.DISPATCHING,
+                TimeSpan.FromSeconds(30));
+        }
+
+        // The premise this test is built on: the connection is gone and its handler has finished, so
+        // there is nothing in `_handlers` for a guard to find.
+        await WaitFor(() => server.LiveHandlerCount == 0, TimeSpan.FromSeconds(30));
+
+        var record = gateway.GetRequest(rid)!;
+        Assert.Equal(ExecutionState.DISPATCHING, record.State);
+        Assert.False(record.NeedsReconciliation);
+
+        await server.DisposeAsync();
+
+        // Unsettled, still — that half is TradingGateway's and is routed to U2c-1. NOT silent, which
+        // is this unit's half and is what the agent's departure used to switch off.
+        Assert.Equal(ExecutionState.DISPATCHING, gateway.GetRequest(rid)!.State);
+        Assert.Equal("error", ReadEngineering(db, "handlers_did_not_finish"));
+        Assert.Contains(rid, ReadEngineeringMetadata(db, "handlers_did_not_finish"));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>
@@ -1387,8 +1491,19 @@ public class GatewayPipeBackpressureTests
             Note("executions", inner.GetExecutionsAsync(accountId, since, ct));
         public Task<ConnectorSdk.OrderInfo> PlaceOrderAsync(ConnectorSdk.PlaceOrderCommand cmd, CancellationToken ct = default) =>
             Note("place", inner.PlaceOrderAsync(cmd, ct));
+        /// <summary>
+        /// Makes `modify` throw a `TimeoutException`, which is neither of the two exceptions
+        /// `TradingGateway.ModifyAsync` catches — so the row is left DISPATCHING by a handler that
+        /// then answers the agent and finishes. Safety rule 3 requires exactly that propagation, so
+        /// this is the product's own behaviour rather than an injected impossibility.
+        /// </summary>
+        public bool TimeoutOnModify { get; set; }
+
         public Task<ConnectorSdk.OrderInfo> ModifyOrderAsync(ConnectorSdk.ModifyOrderCommand cmd, CancellationToken ct = default) =>
-            Note("modify", inner.ModifyOrderAsync(cmd, ct));
+            TimeoutOnModify
+                ? Note("modify", Task.FromException<ConnectorSdk.OrderInfo>(
+                    new TimeoutException("the modify timed out")))
+                : Note("modify", inner.ModifyOrderAsync(cmd, ct));
         public Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default) =>
             Note("cancel", inner.CancelOrderAsync(connectorOrderId, ct));
         public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string accountId, CancellationToken ct = default) =>
