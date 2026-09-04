@@ -158,7 +158,30 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// on closing is 5 + this + 5 rather than this. Stated because the trade below quotes a number
     /// an operator will experience.
     /// </summary>
-    TimeSpan DerivedDrainTimeout => gateway.Connector.WorstCaseOperationPath + TimeSpan.FromSeconds(5);
+    TimeSpan DerivedDrainTimeout =>
+        SerialRpcsPerOperation * gateway.Connector.WorstCaseOperationPath + TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The longest chain of connector calls ONE handler issues in series: a prerequisite read, a
+    /// target resolution, and the mutation itself.
+    ///
+    /// Deriving the drain from a single connector call was the remaining half of Codex C3, and it is
+    /// Codex F2: a handler is not one RPC. `cancel-all` reads the working orders, resolves each
+    /// target and then cancels — so with a four-second connector the handler needs twelve seconds
+    /// against a drain of nine, and the active cancel is left DISPATCHING, which is the exact state
+    /// cc7006e and 02aad9a exist to prevent.
+    ///
+    /// A RISK-REDUCING operation cannot reach this bound any more, because round 8 gave it one
+    /// deadline of its own (`EmergencyBudget`) covering all of its calls together. What can reach it
+    /// is an ordinary multi-call handler — a modify, which resolves and then modifies.
+    ///
+    /// THE PRICE, STATED: at the shipped ATAS values this makes the drain 3 × 50 + 5 = 155 s, and
+    /// disposal's ceiling 5 + that + 5. It is paid only while a request is genuinely in flight, and
+    /// the alternative is the abandoned DISPATCHING order this whole drain exists to prevent — but
+    /// it is a number an operator can experience and it is a product decision, not an arithmetic
+    /// one.
+    /// </summary>
+    const int SerialRpcsPerOperation = 3;
 
     /// <summary>
     /// How long a handler gets AFTER its token is cancelled, to write down what it knows.
