@@ -75,6 +75,33 @@ public interface IConnectorStatusDetail
     string? StatusDetail { get; }
 }
 
+/// <summary>
+/// A trading backend, in the gateway's own vocabulary.
+///
+/// THE OBLIGATION THAT IS NOT A METHOD, AND IT IS THE ONE THAT CARRIES SAFETY: every implementation
+/// of a MUTATING call — <see cref="PlaceOrderAsync"/>, <see cref="ModifyOrderAsync"/>,
+/// <see cref="CancelOrderAsync"/>, <see cref="CancelAllOrdersAsync"/>,
+/// <see cref="ClosePositionAsync"/> — must call <see cref="TransportLedger.Attempt"/> the moment it
+/// STARTS, before anything can go wrong, and <see cref="TransportLedger.Record"/> at every site that
+/// KNOWS where the frame got to. Both are no-ops outside a leg, so they may be called
+/// unconditionally; reads must NOT record, because a leg is a read to find its target and then the
+/// thing it came to do, and recording the read would report a reply for a mutation that never left.
+///
+/// WHY IT MATTERS MORE THAN IT LOOKS. A sweep leg is reported to the agent with one of five words,
+/// and one of them — <c>not-sent</c> — is an ASSURANCE: nothing of this leg is at the broker, no
+/// reconciliation, no pause. An empty transport record is what produces it. A connector that mutates
+/// and never marks the attempt makes "nothing was recorded" mean "nobody wrote it down" instead of
+/// "no mutation was started", and the gateway then reports an assurance about an order that may be
+/// live. Measured on a connector written to this interface that really cancelled at the broker:
+/// <c>not-sent</c>, <c>attempted: 0</c> (verifier round-11 F-2).
+///
+/// The gateway will not take a connector's silence as an assurance — a leg whose own record proves a
+/// mutating step was dispatched is reported <c>sent-not-confirmed</c> whatever the ledger says, which
+/// is the fail-closed direction — so a connector that ignores this is SAFE and IMPRECISE: every
+/// ambiguous leg asks for a reconciliation it may not need. Marking the attempt is what buys the
+/// precision back; <see cref="TransportOutcome.NothingWritten"/>, which only a connector can prove,
+/// is the one report allowed to overrule the record.
+/// </summary>
 public interface ITradingConnector : IAsyncDisposable
 {
     string Id { get; }
@@ -117,6 +144,9 @@ public interface ITradingConnector : IAsyncDisposable
     Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string accountId, bool includeInactive, DateTimeOffset? since, CancellationToken ct = default);
     Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string accountId, DateTimeOffset? since, CancellationToken ct = default);
 
+    // THE MUTATIONS. Each one owes the transport ledger an <see cref="TransportLedger.Attempt"/> at
+    // its start and a <see cref="TransportLedger.Record"/> wherever it learns where the frame got to.
+    // See the obligation on this interface; a connector that skips it is reported fail-closed.
     Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default);
     Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default);
     Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default);

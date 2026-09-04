@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json.Serialization;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 
@@ -936,11 +937,17 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             or ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING =>
             TheAnswer(LegOutcome.StillWorking, transport),
 
-        // Written but never dispatched, still mid-dispatch, or settled to an unknown: none of these
-        // says where the frame got to, so none of them chooses the word.
-        null or ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL
-            or ExecutionState.DISPATCHING or ExecutionState.UNKNOWN or ExecutionState.RECONCILING =>
-            Unresolved(transport),
+        // NOTHING OF THIS LEG WAS EVER DISPATCHED. `TradingGateway` writes the record before it
+        // touches a connector and moves it to DISPATCHING immediately before the mutating call, so a
+        // record that never got past these is proof that no mutating step of this leg was started.
+        // An empty transport report is the truth about it and not an absence of one.
+        null or ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL => BeforeTheWire(transport),
+
+        // A MUTATING STEP OF THIS LEG WAS DISPATCHED, and these three states are the pipe server's
+        // OWN evidence of it: DISPATCHING is written immediately before the connector call, and
+        // UNKNOWN and RECONCILING are reachable only through it. See <see cref="Dispatched"/>.
+        ExecutionState.DISPATCHING or ExecutionState.UNKNOWN or ExecutionState.RECONCILING =>
+            Dispatched(transport),
 
         _ => throw new InvalidOperationException($"no leg outcome for execution state '{state}'")
     };
@@ -970,8 +977,46 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     };
 
     /// <summary>
-    /// A record that cannot settle the question, so the CONNECTOR's report decides it. Nothing
-    /// attempted or nothing written is <c>not-sent</c>; anything else is the fail-closed word.
+    /// NO MUTATING STEP OF THIS LEG WAS EVER STARTED, so an empty transport report is a FACT about
+    /// it rather than a missing one, and <c>not-sent</c> is the honest word.
+    ///
+    /// The three shapes that arrive here are all real and all measured: a target resolution that
+    /// failed before <c>TryCreate</c> (no record at all), a `close` leg parked as AWAITING_APPROVAL
+    /// waiting on a person, and a `close-all` symbol with nothing left to close. None of them starts
+    /// a mutating connector call — counted at the connector by the round-11 verifier, and two of the
+    /// three leave the broker's own book unmoved. Flagging them would be verifier round-9's defect
+    /// arrived at from the other side: <c>sent-not-confirmed</c> sets `needs_reconciliation`, which
+    /// pauses ALL further execution, including the retry the message itself advises.
+    ///
+    /// A connector that can prove more still overrules the record in the usual direction, and an
+    /// explicit report of a frame that went out still wins — a leg cannot reach a pre-dispatch state
+    /// AND have written a byte, but the arm defers to the report rather than assuming it cannot.
+    /// </summary>
+    static LegOutcome BeforeTheWire(TransportOutcome? transport) => transport switch
+    {
+        null or TransportOutcome.NothingWritten => LegOutcome.NotSent,
+        TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => LegOutcome.NotConfirmed,
+        _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
+    };
+
+    /// <summary>
+    /// A MUTATING STEP WAS DISPATCHED AND NOTHING CAME BACK TO SAY WHERE IT GOT TO — so the word is
+    /// the fail-closed one, on the pipe server's own knowledge rather than on the connector's.
+    ///
+    /// `not-sent` is the one word in the set that is an ASSURANCE, and until round 12 it depended on
+    /// every connector calling <see cref="ConnectorSdk.TransportLedger.Attempt"/>. Both connectors in
+    /// this tree do; `ITradingConnector` — what a third party implements — did not say so. Measured
+    /// by the round-11 verifier with a connector written to the public interface that really cancels
+    /// at the broker and never touches the ledger: <c>not-sent</c>, <c>attempted: 0</c>, for an order
+    /// that had been cancelled (verifier round-11 F-2).
+    ///
+    /// The obligation is now STATED on the interface — but a contract a third party can still get
+    /// wrong is not a guarantee, and this arm is the guarantee. `TradingGateway` writes DISPATCHING
+    /// immediately before the connector's mutating call, and UNKNOWN and RECONCILING are reachable
+    /// only through it, so a record in one of those states is this component's own proof that a
+    /// mutating step of THIS leg was dispatched. That proof has the same standing as a broker's
+    /// answer and is overruled by the same one report: <see cref="TransportOutcome.NothingWritten"/>,
+    /// which is a connector PROVING the frame never left the process.
     ///
     /// <c>DISPATCHING</c> and <c>RECONCILING</c> reach <c>sent-not-confirmed</c> from here, and that
     /// is deliberate: the word is about the WIRE, and a frame that may have landed is exactly what it
@@ -980,12 +1025,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// so the leg carries the connector's own <c>transport</c> beside the word rather than the pipe
     /// server editing a row it does not own.
     /// </summary>
-    static LegOutcome Unresolved(TransportOutcome? transport) => transport switch
-    {
-        null or TransportOutcome.NothingWritten => LegOutcome.NotSent,
-        TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => LegOutcome.NotConfirmed,
-        _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
-    };
+    static LegOutcome Dispatched(TransportOutcome? transport) => TheAnswer(LegOutcome.NotConfirmed, transport);
 
     /// <summary>
     /// THE SEAM THE VOCABULARY IS TESTED THROUGH: one record state and one transport result in, one
@@ -1024,21 +1064,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         /// <summary>Whether this leg got as far as the wire, which is what <c>attempted</c> counts.</summary>
         public bool Attempted => Outcome is not LegOutcome.NotSent;
 
-        public object Describe() => new
-        {
-            request_id = RequestId,
-            order = Target,
-            outcome = Word(Outcome),
-            state = Record?.State.ToString(),
-            // THE EVIDENCE, IN THE SAME OBJECT AS THE CLAIM. A leg refused before the wire is
-            // `not-sent` while `TradingGateway.SettleUnknown` still writes UNKNOWN on its row — that
-            // row is the gateway's and not this unit's to change, so the answer carries the
-            // connector's own report of where the frame got to rather than leaving an owner to
-            // reconcile two fields that disagree.
-            transport = Transport?.ToString(),
-            error = Error ?? Record?.LastError
-        };
+        public object Describe() => new LegAnswer(
+            RequestId, Target, Word(Outcome), Record?.State.ToString(),
+            Transport?.ToString(), Error ?? Record?.LastError);
     }
+
+    /// <summary>
+    /// One leg, as the agent reads it.
+    ///
+    /// WHY THIS IS A NAMED TYPE AND NOT AN ANONYMOUS ONE: <c>transport</c> has to be emitted even
+    /// when it is null, and `Json.Options` ignores nulls by default. The field is THE EVIDENCE FOR
+    /// THE CLAIM BESIDE IT — a leg refused before the wire is `not-sent` while
+    /// `TradingGateway.SettleUnknown` still writes UNKNOWN on its row, and that row is the gateway's
+    /// and not this unit's to change — and it was being dropped from the answer in exactly the case
+    /// where the reader most needs it: an absent field is the shape of a leg whose word rests on
+    /// this component's own knowledge rather than on a connector's report, and a reader could not
+    /// tell that from a leg whose connector reported nothing at all (verifier round-11 F-2).
+    ///
+    /// <c>state</c> keeps the old behaviour deliberately. Its absence is a FACT with its own
+    /// meaning — no record was ever written for this leg — and one the suite reads as such.
+    /// </summary>
+    /// <param name="Transport">
+    /// Where this leg's frame got to, as the CONNECTOR reported it, or null when it reported nothing.
+    /// Null does not mean nothing was sent: see <see cref="Dispatched"/>.
+    /// </param>
+    sealed record LegAnswer(
+        [property: JsonPropertyName("request_id")] string RequestId,
+        [property: JsonPropertyName("order")] string Order,
+        [property: JsonPropertyName("outcome")] string Outcome,
+        [property: JsonPropertyName("state")] string? State,
+        [property: JsonPropertyName("transport"), JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        string? Transport,
+        [property: JsonPropertyName("error")] string? Error);
 
     /// <summary>
     /// Issues every leg of a sweep under the operation's ONE deadline, and reports what became of
