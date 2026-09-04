@@ -147,6 +147,13 @@ public class WitnessSnapshotTests : IDisposable
         RotateNow();
 
         Assert.Contains("TA-GAP", Everything());
+        // AND IT DID NOT ROTATE AT ALL. The renames themselves destroy nothing, so "the marker
+        // survived" is satisfied by a rotation that ran over a set it had not read; the rule is
+        // stronger than that, and this is what says so. The log is still the oversized one and no
+        // generation was created beside it.
+        Assert.False(File.Exists(Sidecar + ".1"), "it rotated over a set it could not read");
+        Assert.False(File.Exists(Sidecar + ".new"), "it left a rotation in flight over a set it could not read");
+        Assert.True(new FileInfo(Sidecar).Length > 64 * 1024, "the oversized log was rotated anyway");
     }
 
     /// <summary>The same root cause at the rolled generation, which the other delete destroyed.</summary>
