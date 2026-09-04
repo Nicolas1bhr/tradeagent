@@ -797,9 +797,80 @@ public class VerifyR11Probes(ITestOutputHelper o)
         Assert.True(again.Ok, again.Error?.Message);
         var mutations = conn.Calls.Count(c => c.Op is "place" or "cancel" or "modify" or "cancel-all");
         var d = (JsonElement)again.Data!;
-        o.WriteLine($"second close-all: {d}");
-        o.WriteLine($"connector mutations during it = {mutations}  (calls: {string.Join(",", conn.Calls.Select(c => c.Op))})");
+        o.WriteLine($"(a) nothing to close: {d}");
+        o.WriteLine($"    connector mutations = {mutations}  (calls: {string.Join(",", conn.Calls.Select(c => c.Op))})");
         Assert.Equal(0, mutations);
+    }
+
+    /// <summary>R11P8b — a leg whose target resolution runs out of time, counted at the connector.</summary>
+    [Fact]
+    public async Task R11P8b_a_leg_whose_resolution_expires_starts_no_mutation()
+    {
+        var (gw, conn, db, server, pipe) = await Ready(NewPipe(), budget: TimeSpan.FromSeconds(1));
+        using var _1 = db;
+        await using var _2 = server;
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        conn.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        foreach (var (rid, sym) in new[] { ("p8b-a", "ES"), ("p8b-b", "NQ") })
+            Assert.True((await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Buy, RequestId = rid,
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement(sym),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                    ["limit"] = JsonSerializer.SerializeToElement("1")
+                }
+            }).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+
+        conn.Inner.Faults.LatencyMs = 700;   // the orders read eats most of the one-second operation
+        conn.Reset();
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "p8b-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var mutations = conn.Calls.Count(c => c.Op is "place" or "cancel" or "modify" or "cancel-all");
+        o.WriteLine($"(b) resolution expires: {sweep}");
+        o.WriteLine($"    connector mutations = {mutations}  (calls: {string.Join(",", conn.Calls.OrderBy(c => c.From).Select(c => c.Op))})");
+        o.WriteLine($"    orders still working = {(await gw.OrdersAsync(false)).Count}");
+        Assert.Equal(0, mutations);
+        Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+    }
+
+    /// <summary>R11P8c — a close leg parked for a person, counted at the connector.</summary>
+    [Fact]
+    public async Task R11P8c_a_leg_parked_for_approval_starts_no_mutation()
+    {
+        var (gw, conn, db, server, pipe) = await Ready(NewPipe());
+        using var _1 = db;
+        await using var _2 = server;
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Buy, RequestId = "p8c-open",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        gw.ActivateLive(true);
+
+        conn.Reset();
+        var ordersBefore = conn.Inner.Broker.Orders.Count;
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "p8c-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var mutations = conn.Calls.Count(c => c.Op is "place" or "cancel" or "modify" or "cancel-all");
+        o.WriteLine($"(c) parked for approval: {sweep}");
+        o.WriteLine($"    connector mutations = {mutations}  (calls: {string.Join(",", conn.Calls.OrderBy(c => c.From).Select(c => c.Op))})");
+        o.WriteLine($"    broker orders {ordersBefore} -> {conn.Inner.Broker.Orders.Count}");
+        Assert.Equal(0, mutations);
+        Assert.Equal(ordersBefore, conn.Inner.Broker.Orders.Count);
     }
 
     /// <summary>
