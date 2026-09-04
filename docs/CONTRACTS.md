@@ -157,6 +157,29 @@ handler. `_dispatchGate` is a mutex, so N placements in flight together queue on
 N chains while disposal waits for all of them under this one bound. **NOT verified: what N can be in
 practice.**
 
+## The per-leg vocabulary of a sweep
+
+`cancel-all` and `close-all` answer with one `outcomes` entry per order. **The set is exactly five
+words**, each 1:1 with what is known about that leg, and the word is derived from the CONNECTOR's
+transport result — what is known about where the frame got to — never from the record state alone.
+
+| word | what happened | record |
+|---|---|---|
+| `confirmed` | the broker said this leg's own intent is done | `CANCELLED` / `FILLED` |
+| `rejected` | a DEFINITE refusal. Nothing is working from this leg and there is nothing to reconcile | `REJECTED` |
+| `sent-still-working` | sent, answered, and the order is still out there | `WORKING` / `ACKNOWLEDGED` / `PARTIALLY_FILLED` / `CANCEL_PENDING` |
+| `sent-not-confirmed` | it reached the wire, or may have, and the outcome is not known | `UNKNOWN` + `needs_reconciliation` |
+| `not-sent` | it never reached the wire — nothing is at the broker from this leg | no record, or `CREATED` / `AWAITING_APPROVAL` |
+
+`nothing-to-do` is **not** a per-leg word. It is a whole-operation result: `nothing_to_do` is true on
+a sweep that found zero targets. A `close-all` leg whose symbol turns out to have nothing to close is
+`not-sent` and is named in `nothing_to_close`.
+
+The distinction the words exist for is `not-sent` versus `sent-not-confirmed`. `sent-not-confirmed`
+sets `needs_reconciliation`, which **pauses all further execution** (`TRADING_PAUSED_UNRECONCILED`) —
+including the retry the message itself advises. Claiming it for a leg the connector PROVED it never
+sent is therefore not a wording problem, and it is why the word comes from the transport result.
+
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
 ```

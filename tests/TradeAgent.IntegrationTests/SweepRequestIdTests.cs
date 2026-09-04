@@ -500,9 +500,88 @@ public class SweepRequestIdTests
 
     // ------------------------------------- the per-leg vocabulary is 1:1 with the record (round 9, F1)
 
-    /// <summary>Every word a leg is allowed to answer with. A leg saying anything else is a defect.</summary>
+    /// <summary>
+    /// EVERY WORD A LEG IS ALLOWED TO ANSWER WITH, AND THERE ARE EXACTLY FIVE.
+    ///
+    /// It had six, and the sixth was a category error: <c>nothing-to-do</c> is a fact about the
+    /// OPERATION — a sweep with no targets — and not about a leg. A leg that exists had something to
+    /// act on; if it never reached the wire the word for that is <c>not-sent</c>, and a `close-all`
+    /// symbol whose position had already gone is still named in <c>nothing_to_close</c>. And
+    /// <c>sent-and-confirmed</c> led with a claim about the wire when the point of the word is the
+    /// broker's answer: it is <c>confirmed</c> (Codex round-9 F3).
+    /// </summary>
     static readonly string[] LegVocabulary =
-        ["sent-and-confirmed", "rejected", "sent-still-working", "sent-not-confirmed", "not-sent", "nothing-to-do"];
+        ["confirmed", "rejected", "sent-still-working", "sent-not-confirmed", "not-sent"];
+
+    /// <summary>
+    /// THE VOCABULARY IS EXACTLY FIVE WORDS, OVER EVERY COMBINATION THAT CAN REACH IT.
+    ///
+    /// A membership test over the replies some fixture happens to produce can only ever cover the
+    /// arms those fixtures reach — which is how the round-9 mapping shipped with an arm no test
+    /// touched, found only by mutating it. So this drives the mapping itself, through the seam it is
+    /// exported for, over the FULL cross product: every <see cref="ExecutionState"/> against every
+    /// <see cref="TransportOutcome"/> and against "no mutating call was attempted".
+    ///
+    /// Both directions, so a mapping that refused everything would not pass: every one of the five
+    /// words must be produced by some combination, and no combination may produce anything else.
+    /// </summary>
+    [Fact]
+    public void The_per_leg_vocabulary_is_exactly_five_words_over_every_reachable_combination()
+    {
+        List<TransportOutcome?> transports = [null, .. Enum.GetValues<TransportOutcome>().Cast<TransportOutcome?>()];
+        List<ExecutionState?> states = [null, .. Enum.GetValues<ExecutionState>().Cast<ExecutionState?>()];
+
+        var produced = new HashSet<string>();
+        foreach (var state in states)
+            foreach (var transport in transports)
+            {
+                var word = GatewayPipeServer.LegWordFor(state, transport);
+                Assert.Contains(word, LegVocabulary);
+                produced.Add(word);
+            }
+
+        Assert.Equal(LegVocabulary.OrderBy(w => w), produced.OrderBy(w => w));
+    }
+
+    /// <summary>
+    /// `nothing-to-do` IS A FACT ABOUT THE OPERATION, AND IT IS REPORTED THERE.
+    ///
+    /// It was a per-leg word, which cannot be right: a leg exists because there was something for it
+    /// to act on. A sweep with NO targets is the thing it truthfully describes, so that is where it
+    /// lives — and a `close-all` symbol whose position had gone by the time its leg ran is
+    /// <c>not-sent</c> (nothing reached a wire) while still being named in <c>nothing_to_close</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_with_no_targets_says_so_as_a_whole_and_not_on_any_leg()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // Nothing has been placed, so there is nothing working and nothing held.
+        foreach (var op in new[] { Ops.CancelAll, Ops.CloseAll })
+        {
+            var reply = await client.SendAsync(new IpcRequest { Op = op, RequestId = $"empty-{op}" })
+                .WaitAsync(TimeSpan.FromSeconds(20));
+            Assert.True(reply.Ok, reply.Error?.Message);
+            var data = (JsonElement)reply.Data!;
+            Assert.True(data.GetProperty("nothing_to_do").GetBoolean(), $"'{op}' had no targets and did not say so");
+            Assert.Empty(data.GetProperty("outcomes").EnumerateArray());
+        }
+
+        // And a sweep that DOES have targets does not claim it. Otherwise the flag would be true
+        // whenever nothing happened for any reason at all.
+        Assert.True((await client.SendAsync(Buy("ntd-1", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var swept = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "ntd-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(20));
+        var sweptData = (JsonElement)swept.Data!;
+        Assert.False(sweptData.GetProperty("nothing_to_do").GetBoolean());
+        Assert.Single(sweptData.GetProperty("outcomes").EnumerateArray());
+    }
 
     /// <summary>Reads the per-leg outcomes out of a sweep reply as (outcome, state) pairs.</summary>
     static List<(string Outcome, string? State, string Id)> Outcomes(JsonElement sweep) =>

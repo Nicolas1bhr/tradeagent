@@ -802,6 +802,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new
         {
             cancelled = landed,
+            // THE ONE PLACE `nothing-to-do` IS A TRUE THING TO SAY, and it is about the OPERATION.
+            // As a per-leg word it was a category error: a leg exists because there was something
+            // for it to act on. A sweep that found no targets did nothing, and saying so is not the
+            // same as saying it failed.
+            nothing_to_do = legs.Count == 0,
             // COUNTED FROM THE OUTCOMES, so it cannot disagree with them. It was the number of legs
             // holding a RECORD, which counts a leg that wrote its record and never dispatched — the
             // one shape Codex found reporting `attempted` for something nothing was attempted on.
@@ -936,7 +941,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     static string Word(LegOutcome outcome) => outcome switch
     {
-        LegOutcome.Confirmed => "sent-and-confirmed",
+        // `confirmed`, not `sent-and-confirmed`: the word's content is the BROKER'S ANSWER, and
+        // leading with a claim about the wire put it in the same shape as the two words that are
+        // about the wire and made the set read as six variations on "sent" (Codex round-9 F3).
+        LegOutcome.Confirmed => "confirmed",
         LegOutcome.Rejected => "rejected",
         LegOutcome.StillWorking => "sent-still-working",
         LegOutcome.NotConfirmed => "sent-not-confirmed",
@@ -1158,6 +1166,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new
         {
             closed = landed,
+            nothing_to_do = legs.Count == 0,
             // Same rule as `cancel-all`, and it CHANGES this number: a symbol with nothing to close
             // was being counted as attempted. It is already reported, by name, in
             // `nothing_to_close` — counting it here as well is the same over-claim bdf9a24 removed
