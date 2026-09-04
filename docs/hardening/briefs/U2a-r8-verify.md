@@ -27,3 +27,19 @@ Worktree `u2a-verify-r8`, detached at the sha; `git checkout -b u2a-verify-r8-pr
 
 Record `records/U2a-verify-r8.md` (MAIN worktree path; no git there), checkpoint per target, `VERDICT:` last. Do not
 fix; do not push; full suite at most twice.
+
+## Scope extension — this verification covers rounds 8 AND 9 on the round-9 tip (named in the dispatch)
+
+Round 9 (`briefs/U2a-r9-bounce.md`; builder's record "## Round 9") added: PRIOR 2 — the drain derived from the handler's
+REAL longest serial chain (a cold placement issues five RPCs, not three), the override may only lengthen; F1 — the
+per-leg outcome vocabulary is exactly four values mapped 1:1 to the record (confirmed / rejected → REJECTED / not-sent /
+sent-not-confirmed → UNKNOWN); F2 `_abandoned` cleared on drop/dispose; F3 the fake sums serial latencies; F4 `Left`
+returns expired, not 1 ms; F5 0 warnings on `dotnet build TradeAgent.sln --no-incremental`. Extra targets:
+
+7. **Outcome vocabulary 1:1:** `RefuseCancel=1` → `rejected` with the record REJECTED; target resolution expiring before
+   `TryCreate` → `not-sent`, no UNKNOWN record, the owner told the order is still working; a leg that reached the wire
+   and timed out → `sent-not-confirmed` with UNKNOWN; a settled leg → `confirmed`. Hunt a fifth state (disposal mid-leg,
+   connector `Busy`, `PeerStalled`, a late definite answer) and where it maps.
+8. **Longest chain:** name it independently from the code; assert the derived drain covers it at customised timeouts;
+   the override cannot shorten; the cold-placement disposal case leaves nothing unsettled.
+9. **Warnings:** `--no-incremental` build shows 0 warnings; the CS8619 fix did not change a meaningful null.
