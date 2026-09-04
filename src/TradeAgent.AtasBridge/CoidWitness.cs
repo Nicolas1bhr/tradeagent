@@ -321,6 +321,16 @@ public sealed class CoidWitness : IDisposable
     bool _gapClosed;
 
     /// <summary>
+    /// A SIDECAR IS THERE AND THIS BUILD COULD NOT READ IT — held exclusively by a scanner, a viewer
+    /// or another process's writer. Every read here was wrapped in a catch that answered "no lines",
+    /// so such a file counted as EMPTY: nothing noted, no deciding line, a Clean standing and a
+    /// non-provisional zero, stated on the strength of a file nobody could open. It is its own
+    /// answer in both directions — something IS written down, and this run cannot tell whether the
+    /// gap it describes is open.
+    /// </summary>
+    bool _sidecarUnreadable;
+
+    /// <summary>
     /// THE LINEAGE OF WHAT IS COMMITTED, as far as this instance knows: the generation the committed
     /// file carries, and the fingerprint of its exact bytes (null when nothing is committed). Every
     /// rewrite this instance writes names them, and every rewrite this instance ADOPTS has to name
@@ -816,6 +826,9 @@ public sealed class CoidWitness : IDisposable
                     if (_committedUnreadable) return UnreadableDetail();
                     if (_notOwned is { } contended) return contended;
                     if (LastWriteFailure is { } now) return now;
+                    if (_sidecarUnreadable)
+                        return $"the account of earlier write failures at {ErrorLogPath} could not be " +
+                               $"read, so this run cannot tell whether a durability gap is open";
                     return _degraded
                         ? $"an earlier run could not write the write-ahead record; the account of it " +
                           $"is in {ErrorLogPath}"
@@ -943,11 +956,14 @@ public sealed class CoidWitness : IDisposable
             // "none recorded" before reading records:0 as a confident zero, which for this file
             // means "this product never submitted that identifier". That is the flagged-zero rule
             // reopened by the fix that split the file.
-            _noted = SidecarSet().Any(f =>
-            {
-                try { return File.ReadAllLines(f).Any(l => !string.IsNullOrWhiteSpace(l)); }
-                catch (Exception) { return false; }
-            });
+            // UNREADABLE COUNTS AS WRITTEN DOWN. See _sidecarUnreadable: a catch that answered
+            // "no lines" made a file nobody could open indistinguishable from one with nothing in it.
+            _noted = SidecarSet().Any(f => HasNotes(f, out _));
+
+            // AND AN UNREADABLE CANONICAL GENERATION IS A GAP THIS RUN CANNOT RULE OUT. Scoped to the
+            // canonical file for the same reason the deciding line is (below): a refused writer's own
+            // file being locked is not this machine's durability problem.
+            _sidecarUnreadable = SidecarGenerations().Any(f => { HasNotes(f, out var bad); return bad; });
 
             // THE DEGRADED STATE STAYS THE CANONICAL FILE'S QUESTION, and that is not an oversight
             // being preserved. A second bridge turned away cost no order — the refusal is what stops
@@ -957,9 +973,11 @@ public sealed class CoidWitness : IDisposable
             if (SidecarGenerations().Any(File.Exists))
             {
                 var deciding = LastDecidingLine();
-                _degraded = deciding is not null
-                            && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
-                _gapClosed = string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
+                _degraded = _sidecarUnreadable
+                            || (deciding is not null
+                                && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal));
+                _gapClosed = !_sidecarUnreadable
+                             && string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
             }
         }
         catch (Exception) { }
@@ -1388,6 +1406,22 @@ public sealed class CoidWitness : IDisposable
     /// makes this nearly unreachable now — recovery only runs while nothing else can be writing —
     /// but the grace costs one comparison and covers a writer that is not this build.
     /// </summary>
+    /// <summary>
+    /// Whether a sidecar file has anything in it — and, separately, whether asking was even possible.
+    /// A file that exists and cannot be opened is NOT a file with nothing in it; see
+    /// <see cref="_sidecarUnreadable"/>.
+    /// </summary>
+    static bool HasNotes(string path, out bool unreadable)
+    {
+        unreadable = false;
+        try
+        {
+            if (!File.Exists(path)) return false;
+            return File.ReadAllLines(path).Any(l => !string.IsNullOrWhiteSpace(l));
+        }
+        catch (Exception) { unreadable = true; return true; }
+    }
+
     /// <summary>The sidecar's last non-blank line with its timestamp stripped, or null.</summary>
     string? LastSidecarLine() => LastLineWhere(_ => true);
 
