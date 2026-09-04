@@ -439,4 +439,116 @@ public class AdapterTeardownTests : IDisposable
             witness.Dispose();
         }
     }
+
+    // ==================================================== U14b item 3, one teardown however many ask
+
+    /// <summary>
+    /// U14b ITEM 3. TWO OVERLAPPING STOPS WERE TWO TEARDOWNS, AND THE FASTER ONE PUBLISHED STOPPED.
+    ///
+    /// <c>Stop</c> was re-entrant by omission. Both callers set STOPPING, both ran their steps, and
+    /// whichever finished first took the lock, released the lease and published STOPPED — while the
+    /// other was still calling into ATAS. From that instant <c>Started()</c> was legal again and the
+    /// next write took the lease back for a strategy that was still being taken down: F35's harm,
+    /// reached without a start racing anything, just by asking to stop twice. ATAS asks twice —
+    /// <c>OnStopping</c> and a dispose on the way down are two callers, and a strategy removed while
+    /// the platform is closing gets both.
+    ///
+    /// One owner, then: the caller that finds RUNNING runs the steps and publishes STOPPED after the
+    /// last of them; every other caller returns having written nothing; and STOPPING is what a start
+    /// finds for the whole of it.
+    /// </summary>
+    [Fact]
+    public async Task Two_overlapping_stops_are_one_teardown_and_the_second_publishes_nothing()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+        var teardown = new AdapterTeardown(witness);
+
+        using var inside = new ManualResetEventSlim();
+        using var letGo = new ManualResetEventSlim();
+
+        var owner = Task.Run(() => teardown.Stop(steps: () => { inside.Set(); letGo.Wait(5_000); }));
+        Assert.True(inside.Wait(5_000));
+
+        var secondRanItsSteps = false;
+        teardown.Stop(steps: () => secondRanItsSteps = true);
+
+        Assert.False(secondRanItsSteps, "a second teardown ran while the first was still going");
+        Assert.Equal(AdapterTeardown.State.Stopping, teardown.Now);
+        Assert.False(teardown.Started(), "a start was legal in the middle of a teardown");
+        Assert.False(teardown.Submitting("TA-LATE", "SIM", "ES", "Buy", 1m, null),
+            "the second stop published STOPPED and let a write in behind the first one");
+
+        letGo.Set();
+        await owner.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // AND ONLY NOW. The one teardown finished, so the lease is gone and a start is legal again.
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+        Assert.True(Submit(Session(), "TA-REPLACEMENT"));
+        Assert.True(teardown.Started());
+    }
+
+    /// <summary>
+    /// AND A STOP THAT ARRIVES AFTER THE TEARDOWN HAS FINISHED IS A NO-OP — the other direction,
+    /// without which "only one owner" is satisfied by a class that stops exactly once for ever and
+    /// refuses to take the next one down. One ATAS process stops and starts a strategy many times.
+    /// </summary>
+    [Fact]
+    public void A_stop_after_the_teardown_has_finished_does_nothing_and_the_next_one_still_works()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+        var teardown = new AdapterTeardown(witness);
+
+        var runs = 0;
+        teardown.Stop(steps: () => runs++);
+        teardown.Stop(steps: () => runs++);
+        Assert.Equal(1, runs);
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+
+        Assert.True(teardown.Started());
+        teardown.Stop(steps: () => runs++);
+        Assert.Equal(2, runs);
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+    }
+
+    /// <summary>
+    /// THE LOCK ON <c>Running → Stopping</c> IS LOAD-BEARING, AND ROUND 10 COULD NOT SAY SO.
+    ///
+    /// MR10-4d — the transition taken outside the lock — survived the whole of round 10's suite, and
+    /// the record says why: with a bare assignment there was no state the two could be told apart
+    /// in, because a <c>Record</c> already inside the lock had passed its check either way. The
+    /// compare-and-set above changes that: the transition now READS the state it is about to
+    /// replace, so it has to happen where every other reader of that state is, and a write that is
+    /// in flight has to finish before a teardown may begin.
+    ///
+    /// Driven by duration rather than by a latch on purpose — 300 ms is longer than any scheduling
+    /// artefact and shorter than the 5 s failure budget, and a witness write on a busy disk is worth
+    /// that much. What is asserted is ORDER, which is the property: the write completed, and only
+    /// then did the first step of the teardown run.
+    /// </summary>
+    [Fact]
+    public async Task A_teardown_does_not_begin_while_a_write_is_inside_the_lock()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+        var teardown = new AdapterTeardown(witness);
+
+        var order = new List<string>();
+        using var writing = new ManualResetEventSlim();
+
+        var writer = Task.Run(() => teardown.Record(() =>
+        {
+            writing.Set();
+            Thread.Sleep(300);
+            lock (order) order.Add("the write finished");
+        }));
+        Assert.True(writing.Wait(5_000));
+
+        teardown.Stop(steps: () => { lock (order) order.Add("the teardown began"); });
+        Assert.True(await writer.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(new[] { "the write finished", "the teardown began" }, order);
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+    }
 }

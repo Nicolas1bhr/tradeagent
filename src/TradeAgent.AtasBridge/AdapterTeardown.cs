@@ -222,6 +222,20 @@ public sealed class AdapterTeardown
     /// against every bridge started afterwards until the process itself dies. The exception is not
     /// swallowed — a teardown that ate its own failures would be worse — it simply no longer decides
     /// whether the release happens.
+    /// ONE TEARDOWN, HOWEVER MANY CALLERS ASK FOR ONE. <c>Stop</c> was re-entrant by omission: two
+    /// overlapping calls both ran their steps, and whichever finished FIRST published
+    /// <see cref="State.Stopped"/> and released the lease while the other was still calling into
+    /// ATAS. From that instant <see cref="Started"/> was legal again and a write could take the
+    /// lease back — F35's harm, reached without a start racing anything, just by asking to stop
+    /// twice. ATAS does exactly that: <c>OnStopping</c> and a dispose on the way down are two
+    /// callers, and a strategy removed while the platform is closing gets both.
+    ///
+    /// So the entry is a COMPARE-AND-SET under the same lock every other transition takes: the
+    /// caller that finds RUNNING owns the teardown, everyone else returns at once and writes
+    /// nothing. STOPPED is published by that one owner, after the last step, and until then
+    /// <see cref="Started"/> answers false to everybody. The compare and the set are one act for the
+    /// same reason the guard and the write are: two callers that both READ running would both
+    /// proceed, which is the bug with an extra step in it.
     public void Stop(Action steps)
     {
         // STOPPING FIRST, AND UNDER THE LOCK. Anything still holding a reference to this instance
@@ -230,7 +244,11 @@ public sealed class AdapterTeardown
         // one act: a Record already inside the lock finishes its write, and one that is waiting for
         // the lock finds STOPPING when it gets there. The steps themselves run OUTSIDE the lock,
         // because they call into ATAS and this lock is one the reads take.
-        lock (_gate) _state = State.Stopping;
+        lock (_gate)
+        {
+            if (_state != State.Running) return;
+            _state = State.Stopping;
+        }
 
         try { steps(); }
         finally
