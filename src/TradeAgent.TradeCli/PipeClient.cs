@@ -93,6 +93,21 @@ public sealed class PipeClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Sends one frame EXACTLY AS WRITTEN and reads one reply.
+    ///
+    /// For tests that need a frame the serializer would not produce — a field explicitly null, a
+    /// field the model omits — which is the only way to exercise what the server does with one.
+    /// </summary>
+    public async Task<IpcResponse> SendRawAsync(string frame, CancellationToken ct = default)
+    {
+        if (_w is null || _r is null) throw new TradeAgentException(ErrorCode.IPC_UNAVAILABLE, "not connected");
+        await _w.WriteLineAsync(frame.AsMemory(), ct);
+        var line = await _r.ReadLineAsync(ct)
+            ?? throw new TradeAgentException(ErrorCode.IPC_UNAVAILABLE, "the trading service closed the connection");
+        return Json.Read<IpcResponse>(line) ?? throw new TradeAgentException(ErrorCode.IPC_UNAVAILABLE, "unreadable reply");
+    }
+
+    /// <summary>
     /// The throwing form, for callers that have nothing to reconcile — the handshake, and the tests
     /// that drive the gateway over the pipe. A mutating call must use <see cref="TrySendAsync"/>.
     /// </summary>

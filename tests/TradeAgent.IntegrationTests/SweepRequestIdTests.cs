@@ -169,6 +169,47 @@ public class SweepRequestIdTests
         Assert.Empty(conn.Broker.Orders);
     }
 
+    /// <summary>
+    /// A FRAME WITH NO ID AT ALL IS A BAD REQUEST, NOT A REASON TO HANG UP.
+    ///
+    /// Codex C4. `id` has a GUID default, so it is never absent — but a client can send it
+    /// explicitly null, and then `request_id ?? id` is null too. The guard added for F1 dereferenced
+    /// it BEFORE the handler's try/catch, so the frame took the connection down with a
+    /// NullReferenceException instead of being answered: every other request on that channel died
+    /// with it, and the agent learned nothing about why.
+    ///
+    /// The error boundary is not the point — moving the check inside it would answer with
+    /// UNKNOWN_ERROR. A frame that names no request is malformed, and the answer to a malformed
+    /// frame is the one the rest of this method already gives.
+    /// </summary>
+    [Fact]
+    public async Task A_frame_with_both_ids_explicitly_null_is_refused_and_the_channel_survives()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // Sent as literal JSON: the serializer omits null properties, so an IpcRequest with Id = null
+        // arrives with its GUID default and never reaches the branch under test. A client that
+        // writes the field explicitly does.
+        var reply = await client.SendRawAsync(
+                $$"""{"v":{{Versions.ProtocolVersion}},"id":null,"op":"{{Ops.Status}}","request_id":null}""")
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(reply.Ok);
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+
+        // The connection is still usable, which is the half that made this worth fixing: one bad
+        // frame must not take an agent's channel down with it.
+        var after = await client.SendAsync(new IpcRequest { Op = Ops.Status }).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(after.Ok, Json.Write(after.Error));
+        Assert.Empty(conn.Broker.Orders);
+    }
+
     // ---------------------------------------------------------- the sweep nonce (F9)
 
     /// <summary>
