@@ -701,6 +701,63 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A GRACE THAT ENDS BECAUSE THE BRIDGE WENT AWAY STILL HAS TO CLEAR UP AFTER ITSELF.
+    ///
+    /// Codex round-8 F2, and its own check. When the caller gives up at two seconds the request is
+    /// parked in <c>_abandoned</c> and the connection's verdict is deferred to the grace. The waiter
+    /// removed the entry on the TIMEOUT path only — and both of the other ways that wait can end
+    /// took the same exit. <c>Drop</c> faults every pending request, so a disconnect during the
+    /// grace, and disposal, each made the waiter return without removing anything: the id stayed in
+    /// the dictionary for the life of the process and <c>AwaitingLateAnswer</c> never came back to
+    /// zero.
+    ///
+    /// It is a leak of a few dozen bytes per abandoned emergency, which is why it is LOW. What makes
+    /// it worth closing is what the number is FOR: it is the only external evidence that the
+    /// deferred verdict cleans up, so a counter that can stick at one for a reason nobody intended
+    /// stops being able to prove anything about the ones that do.
+    /// </summary>
+    [Theory]
+    [InlineData("the bridge disconnects")]
+    [InlineData("the connector is disposed")]
+    public async Task Nothing_is_left_awaiting_a_late_answer_when_the_grace_ends_early(string how)
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped grace
+        await using var _1 = connector;
+        await connector.ConnectAsync();
+
+        // Reads everything, heartbeats, answers nothing: the frame goes OUT and is never answered,
+        // which is the only shape that reaches the grace at all.
+        var peer = await BridgePeer.ReadingAndHeartbeating(pipe, Cred().Secret);
+        await using var _2 = peer;
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-GRACE-END"));
+        Assert.Contains("NOT confirmed", ex.Message);
+
+        // The premise: it really is parked, so what follows is about the exit and not about a
+        // request that was never registered.
+        Assert.Equal(1, connector.AwaitingLateAnswer);
+
+        // Now end the grace early, the two ways it can end early.
+        if (how == "the bridge disconnects")
+        {
+            await peer.DisposeAsync();
+            await Wait(async () => !await connector.IsConnectedAsync(), 15_000);
+        }
+        else
+        {
+            await connector.DisposeAsync();
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(8);
+        while (connector.AwaitingLateAnswer != 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+        Assert.True(connector.AwaitingLateAnswer == 0,
+            $"{connector.AwaitingLateAnswer} request(s) still awaiting a late answer after {how} — " +
+            "the waiter took an exit that removes nothing, so the entry is there for good");
+    }
+
+    /// <summary>
     /// THE OTHER DIRECTION, AND THE ONE A CARELESS DEADLINE BREAKS: a bridge that answers is
     /// answered. Shortening the emergency's reply wait to what is left of two seconds must not make
     /// a working emergency fail — the whole point of the fast path is that stop WORKS.

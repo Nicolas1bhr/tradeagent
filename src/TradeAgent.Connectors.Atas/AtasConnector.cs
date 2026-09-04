@@ -945,7 +945,19 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             try { await answer.WaitAsync(grace, _cts.Token); return; }   // answered in time
             catch (TimeoutException) { }
-            catch (Exception) { return; }                                // disposed, or cancelled
+            catch (Exception)
+            {
+                // DISPOSED, CANCELLED, OR THE CONNECTION WENT AWAY UNDER US — and this exit used to
+                // remove nothing (Codex round-8 F2). `Drop` faults every pending request, so a
+                // disconnect during the grace, and disposal, both land here, and the id stayed in
+                // `_abandoned` for the life of the process. No answer is coming down a connection
+                // that has gone, so there is nothing left to await and nothing to judge: the entry
+                // goes, and the connection is not touched, because it has already been decided by
+                // whoever ended it.
+                _pending.TryRemove(id, out _);
+                _abandoned.TryRemove(id, out _);
+                return;
+            }
 
             _pending.TryRemove(id, out _);
             _abandoned.TryRemove(id, out _);
