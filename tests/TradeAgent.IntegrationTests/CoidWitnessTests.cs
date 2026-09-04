@@ -2730,6 +2730,57 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// THE BOUNDARY BETWEEN "NOTED" AND "DEGRADED", IN THE ONE STATE THAT DISTINGUISHES THEM.
+    ///
+    /// Round 7 claimed this boundary was pinned by a pair of mutants that cancel each other. Half
+    /// right: widening the guard alone IS inert, but widening the deciding-line scan alone changes
+    /// real behaviour — and no test built the state that shows it, so the change would have passed.
+    ///
+    /// The state is this one. The canonical sidecar EXISTS and holds only a diagnostic (the owner
+    /// quarantined a leftover and never failed), while a refused second bridge's own file holds an
+    /// unresolved safety event. What the machine must say about that is BOTH halves of the round-6
+    /// decision at once: the zero IS flagged, because something was refused and a reader must not
+    /// take `records:0` for "this product never submitted that identifier"; and the machine is NOT
+    /// degraded, because the refusal is what STOPPED that order being sent — nothing was lost, and
+    /// dropping `SupportsClientOrderId` over somebody else's misconfiguration would be the row crying
+    /// wolf about a second bridge that cost nothing.
+    /// </summary>
+    [Fact]
+    public void A_refused_writers_safety_line_flags_the_zero_without_degrading_the_machine()
+    {
+        // The owner writes cleanly, and quarantines a leftover — so the canonical sidecar exists and
+        // holds a diagnostic and nothing else.
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-OWNED-1", "SIM", "ES", "Buy", 1m, null));
+        WriteForeignLeftover(1);
+        owner.Dispose();
+
+        var next = Session();
+        Assert.True(next.Submitting("TA-OWNED-2", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains(SidecarLines(), l => l.Contains("ignored "));
+        Assert.DoesNotContain(SidecarLines(), l => l.Contains(" ERROR "));
+
+        // And a second bridge is refused, writing its own unresolved safety event beside it.
+        var refused = Session();
+        Assert.False(refused.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
+        var perWriter = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "-*").Single();
+        Assert.Contains(File.ReadAllLines(perWriter), l => l.Contains("ERROR "));
+
+        next.Dispose();
+        refused.Dispose();
+
+        var reader = Session();
+        // Flagged.
+        Assert.True(reader.Noted);
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+        // And not degraded.
+        Assert.Null(reader.Trouble);
+        Assert.DoesNotContain("io:degraded", reader.Token());
+        Assert.False(reader.GapClosed);
+    }
+
+    /// <summary>
     /// A SAFETY EVENT IS NEVER DROPPED — INCLUDING WHEN SEVERAL WRITERS PRODUCE ONE AT ONCE.
     ///
     /// The quota path honours that contract and the concurrency path did not. The writers producing
