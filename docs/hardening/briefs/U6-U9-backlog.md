@@ -40,3 +40,11 @@ record so the brief writer can quote the measurement.
   only the charset.
 - Mutant B4 (the Windows no-buffer pipe stall) has been run by nobody — run it once on the box.
 - The five keyboard minutes for the Inbox picker COPY-path test (decision 5).
+
+## LOW batch carried out of U2a at integration (test quality, no product change)
+
+- `ConnectorSendDeadlineTests.cs:848` (the round-11 flake rewrite) captures `connectedAtTheVerdict` before the delayed
+  liveness judge runs and disposes before grace expiry, so a regression in `PeerAnsweredSince` is not observed by that
+  test (Codex r11 LOW). The 12-phase liveness probes on `u2a-verify-r9-probes` do observe it — lift one into the suite.
+- `AtasConnector._pending` leaks an entry when a caller cancels an emergency (U2a round-11 builder, flagged not fixed;
+  the rounds 10+11 verifier measures it).
