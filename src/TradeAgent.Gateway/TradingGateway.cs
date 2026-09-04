@@ -1221,312 +1221,201 @@ public sealed class TradingGateway : IAsyncDisposable
 
     // ---------------------------------------------------------------- emergency controls (operator only)
 
-    /// <summary>
-    /// THE IDENTITY OF ONE PRESS. The screen mints one of these per CONFIRMED press and passes it
-    /// down, so every close and every cancel that press produces has a request id derived from it:
-    /// a retry of the SAME press finds its records already there and sends nothing, while a fresh
-    /// press is a fresh decision with fresh ids. Before this, `opclose-{new Guid}` was minted per
-    /// CALL, which made idempotency impossible by construction — a close that reached the broker and
-    /// then failed left no record at all, and the natural second press reversed the position instead
-    /// of flattening it.
-    ///
-    /// Random rather than sequential because an agent may create any request id it likes over the
-    /// pipe: a guessable operator id would let it pre-occupy one and turn the owner's emergency
-    /// press into a silent replay.
-    /// </summary>
-    public static string NewOperatorPressNonce() => Guid.NewGuid().ToString("n")[..16];
-
     /// <summary>The two emergency controls, as request-id prefixes. One press writes rows under one.</summary>
     public const string ClosePress = "op-close";
     public const string CancelPress = "op-cancel";
 
+    /// <summary>
+    /// ONE PRESS'S OWN NAME, MINTED ONCE AND NEVER HANDED BACK.
+    ///
+    /// It used to be minted by the SCREEN and reused: an object called `OperatorPress` held the
+    /// nonce, a second click repeated it, and a restart read the nonce back out of the store so the
+    /// button would go on repeating it. Six separate faults lived in that machinery rather than in
+    /// the emergency — a definitely failed close that could never be pressed past (`TryCreate` found
+    /// the terminal row and sent nothing, forever), a terminal press dropped at restart over a
+    /// position that was not flat, a retry that acted on a stale captured set. None of them is worth
+    /// having: a person who presses an emergency control twice is not asking for a retry, they are
+    /// asking why the first one has not finished, and the honest answer is to show them and refuse.
+    ///
+    /// So the nonce is private, per press, and never reused. Random rather than sequential because
+    /// an agent may create any request id it likes over the pipe: a guessable operator id would let
+    /// it pre-occupy one and turn the owner's emergency press into a silent replay.
+    /// </summary>
+    static string NewPressNonce() => Guid.NewGuid().ToString("n")[..16];
+
     static string PressPrefix(string kind, string nonce) => $"{kind}-{nonce}";
 
+    /// <summary>Whether a request id belongs to an emergency press rather than to an ordinary order.</summary>
+    public static bool IsPressRecord(string requestId) =>
+        requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ||
+        requestId.StartsWith($"{CancelPress}-", StringComparison.Ordinal);
+
+    /// <summary>Which control wrote this row. Only meaningful for a <see cref="IsPressRecord"/> id.</summary>
+    public static string PressKindOf(string requestId) =>
+        requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ? ClosePress : CancelPress;
+
     /// <summary>
-    /// How ONE press stands, judged only by the records that press made.
+    /// The nonce out of <c>{kind}-{nonce}</c> or <c>{kind}-{nonce}-{target}</c>. A nonce is hex, so
+    /// the first segment after the kind is all of it however many dashes a broker's order id has.
+    /// </summary>
+    static string NonceIn(string requestId) =>
+        requestId[(PressKindOf(requestId).Length + 1)..].Split('-')[0];
+
+    /// <summary>The owner-facing name of a control, as it appears in the refusal.</summary>
+    static string PressName(string kind) => kind == ClosePress ? "close-all" : "cancel-all";
+
+    // ---- what one press did -------------------------------------------------------------------
+
+    /// <summary>
+    /// One target of one press: the row it wrote, what the platform answered about it, and what is
+    /// on the account NOW for that target. The card shows these; nothing else reconstructs them.
+    /// </summary>
+    /// <param name="PositionNow">
+    /// The position on this target's instrument at the moment the card was drawn, or null when the
+    /// account could not be read or the target is an order rather than an instrument. IT IS THE
+    /// SECOND HALF OF THE ANSWER: a close whose order is FILLED and a position that is still 2 long
+    /// are not the same news, and the owner is the one who has to notice.
+    /// </param>
+    public sealed record PressTarget(string RequestId, string Target, ExecutionState State,
+        bool Resolved, string Outcome, decimal? PositionNow);
+
+    /// <summary>
+    /// HOW ONE PRESS STANDS, JUDGED ONLY BY THE RECORDS THAT PRESS MADE.
     ///
     /// It used to be judged by <see cref="HasUnconfirmedWork"/> — anything unconfirmed anywhere — so
     /// an unrelated order kept the control locked, and, worse, a press whose own close was still
     /// unconfirmed could be released by someone else's record settling. A press is its own business.
     /// </summary>
+    public sealed record PressOutcome(string Kind, string Nonce, DateTimeOffset SentAt,
+        IReadOnlyList<PressTarget> Targets, int Unresolved, bool Complete, string Summary);
+
+    /// <summary>Every row one press wrote, oldest first. The press-level row sorts first by design.</summary>
+    List<ExecutionRequest> PressRows(string kind, string nonce) =>
+        _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(kind, nonce)}%"));
+
+    /// <summary>
+    /// A press this gateway still cannot account for, or null. THE STORE IS THE ONLY SOURCE: there
+    /// is no press object to consult and nothing to reconstruct at startup, so a restart, a second
+    /// window and a CLI all get the same answer from the same rows.
+    ///
+    /// "Cannot account for" is the flag, plus the in-memory latch for the case where the flag itself
+    /// could not be written. It is deliberately NOT "the position is not flat": a press is a set of
+    /// records and it ends when a person has read them.
+    /// </summary>
+    public string? UnresolvedPressNonce(string kind)
+    {
+        var blocked = _requests.Query("request_id LIKE $p", ("$p", $"{kind}-%"))
+            .Where(r => r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId))
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefault();
+        return blocked is null ? null : NonceIn(blocked.RequestId);
+    }
+
+    /// <summary>The open press of this kind as the card shows it, or null when there is none.</summary>
+    public async Task<PressOutcome?> OpenPressAsync(string kind, CancellationToken ct = default) =>
+        UnresolvedPressNonce(kind) is { } nonce ? await PressOutcomeAsync(kind, nonce, ct) : null;
+
+    /// <summary>
+    /// What one press did, per target, plus what is on the account now.
+    ///
+    /// THE ACCOUNT COMES OFF THE RECORDS, not off the settings. `RequireAccountId` answers with
+    /// whichever account is selected NOW, and the owner can change that between the press and the
+    /// card — at which point completion was being judged against a book the press never touched
+    /// (Codex round-3 F14).
+    /// </summary>
     public async Task<PressOutcome> PressOutcomeAsync(string kind, string nonce, CancellationToken ct = default)
     {
-        var rows = _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(kind, nonce)}%"));
+        var rows = PressRows(kind, nonce);
         if (rows.Count == 0)
-            return new PressOutcome(nonce, 0, 0, true, "Nothing was sent.");
+            return new PressOutcome(kind, nonce, Now, [], 0, true, "Nothing was sent.");
 
-        var unfinished = rows.Count(r => !OrderStateMachine.IsTerminal(r.State)
-                                         || r.NeedsReconciliation
-                                         || _unconfirmed.ContainsKey(r.RequestId));
+        // Read once, for every target, off the account the RECORDS carry.
+        IReadOnlyList<PositionInfo>? positions = null;
+        var accountUnreadable = false;
+        try { positions = await Connector.GetPositionsAsync(rows[0].AccountId, ct); }
+        catch (Exception) { accountUnreadable = true; }
 
-        var open = new List<string>();
-        if (kind == ClosePress)
-        {
-            // A close is not done because its order is done: it is done when the position is flat.
-            try
-            {
-                var targeted = rows.Select(r => r.Instrument).ToHashSet();
-                foreach (var p in await Connector.GetPositionsAsync(await RequireAccountId(ct), ct))
-                    if (p.Quantity != 0 && targeted.Contains(p.Symbol)) open.Add($"{p.Symbol} {p.Quantity}");
-            }
-            catch (Exception)
-            {
-                open.Add("the account could not be read back");
-            }
-        }
+        var targets = rows.Select(r => new PressTarget(
+            r.RequestId,
+            TargetOf(r),
+            r.State,
+            !r.NeedsReconciliation && !_unconfirmed.ContainsKey(r.RequestId),
+            OutcomeSentence(r),
+            r.Instrument == "-" ? null : positions?.FirstOrDefault(p => p.Symbol == r.Instrument)?.Quantity ?? 0m
+        )).ToList();
 
-        var complete = unfinished == 0 && open.Count == 0;
-        var summary = complete
-            ? $"{rows.Count} record(s), all settled."
-            : open.Count > 0
-                ? $"{unfinished} record(s) still unconfirmed; still open: {string.Join(", ", open)}."
-                : $"{unfinished} record(s) from this press are still unconfirmed.";
-        return new PressOutcome(nonce, rows.Count, unfinished, complete, summary);
+        var unresolved = targets.Count(t => !t.Resolved);
+        var stillOpen = targets.Where(t => t.PositionNow is not null and not 0m)
+            .Select(t => $"{t.Target} {t.PositionNow}").Distinct().ToList();
+
+        var complete = unresolved == 0 && stillOpen.Count == 0 && !accountUnreadable;
+        var summary =
+            unresolved > 0
+                ? $"{unresolved} of {targets.Count} record(s) from this press are still waiting for you." +
+                  (stillOpen.Count > 0 ? $" Still open: {string.Join(", ", stillOpen)}." : "")
+            : accountUnreadable ? "Every record is resolved, but the account could not be read back."
+            : stillOpen.Count > 0 ? $"Every record is resolved. Still open: {string.Join(", ", stillOpen)}."
+            : $"{targets.Count} record(s), all resolved and nothing left open.";
+
+        return new PressOutcome(kind, nonce, rows.Min(r => r.CreatedAt), targets, unresolved, complete, summary);
     }
 
-    /// <summary>
-    /// The nonce of a press this store still cannot account for, so a restart does not mint a fresh
-    /// one over an unresolved close. Without it, closing the app was a way to unlock the control.
-    /// </summary>
-    public string? OutstandingPressNonce(string kind)
+    /// <summary>The thing one press row is about: an instrument for a close, an order id for a cancel.</summary>
+    static string TargetOf(ExecutionRequest r) =>
+        r.Instrument != "-" ? r.Instrument
+        : Json.Read<PressParameters>(r.ParametersJson)?.Order ?? "every working order";
+
+    sealed record PressParameters(string? Order, string? Press);
+
+    /// <summary>One sentence per target, in the words the owner reads on the card.</summary>
+    static string OutcomeSentence(ExecutionRequest r) => r.State switch
     {
-        foreach (var r in _requests.Query("request_id LIKE $p", ("$p", $"{kind}-%")).OrderByDescending(r => r.CreatedAt))
-            if (!OrderStateMachine.IsTerminal(r.State) || r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId))
-            {
-                var parts = r.RequestId.Split('-');
-                if (parts.Length >= 3) return parts[2];
-            }
-        return null;
-    }
+        ExecutionState.FILLED => "the platform filled it",
+        ExecutionState.PARTIALLY_FILLED => $"the platform filled {r.FilledQuantity} of it so far",
+        ExecutionState.CANCELLED => "the platform cancelled it",
+        ExecutionState.REJECTED => $"the platform refused it ({r.LastError ?? "no reason given"})",
+        ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED => "the platform took it and it is still working",
+        ExecutionState.CANCEL_PENDING => "the platform says the cancel is pending",
+        ExecutionState.UNKNOWN or ExecutionState.RECONCILING => "not confirmed — check ATAS",
+        ExecutionState.DISPATCHING => "sent, and nothing has come back yet",
+        _ => $"the record says {r.State}"
+    };
+
+    // ---- making a press -----------------------------------------------------------------------
 
     /// <summary>
-    /// Deliberately separate from the kill switch: stopping the AI must not move money.
+    /// Refuses a second press while the last one of this kind is still the owner's to resolve.
     ///
-    /// Outside AUTHORIZATION on purpose — this has to work while trading is paused, including while
-    /// it is paused by the very records this method writes. What it may NOT do any more is touch the
-    /// wire without leaving one.
+    /// PER KIND, not globally: an unresolved cancel-all must never be able to stop somebody
+    /// flattening a position. The two controls are different decisions and are refused separately.
     /// </summary>
-    public async Task<IReadOnlyList<string>> OperatorCancelAllAsync(string? pressNonce = null, CancellationToken ct = default)
+    void RefuseWhileAPressIsOpen(string kind)
     {
-        var nonce = pressNonce ?? NewOperatorPressNonce();
-        var accountId = await RequireAccountId(ct);
-
-        // A RETRY ACTS ONLY ON WHAT THE FIRST PRESS CAPTURED. The sweep is one call for the whole
-        // account, so re-issuing it would cancel orders that arrived after the press — orders the
-        // person never asked about. The records this press already wrote are its captured set, and
-        // if it has any, there is nothing left for this press to do on the wire.
-        if (_opt.IdempotencyEnabled &&
-            _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(CancelPress, nonce)}%")).Count > 0)
-        {
-            _log.Engineering("Gateway", "operator_press_replayed", requestId: PressPrefix(CancelPress, nonce));
-            return [];
-        }
-
-        // What is on the book at the moment of the press, so each order can be written ahead by name.
-        // If the platform cannot say, the press is still carried out — an emergency control that
-        // refuses because a READ failed is not one — and a single umbrella record stands in for the
-        // orders that could not be named. Same when the book looks empty: the sweep is still sent,
-        // because "the list came back empty" is not proof there is nothing to cancel.
-        List<string>? listed = null;
-        try { listed = (await Connector.GetOrdersAsync(accountId, false, null, ct)).Select(o => o.ConnectorOrderId).ToList(); }
-        catch (Exception ex) { _log.Engineering("Gateway", "cancel_all_order_list_failed", "warn", ex: ex); }
-
-        // The press itself gets a record (target null), and each order that could be named gets one
-        // of its own. The press-level record is what makes a RETRY recognisable as a retry even when
-        // the orders it cancelled have already left the book — without it, pressing again after a
-        // successful sweep would find an empty book, write nothing, and touch the wire a second time.
-        var targets = new string?[] { null }.Concat(listed?.Select(id => (string?)id) ?? []);
-        var open = new List<(string RequestId, string? Target)>();
-        foreach (var target in targets)
-        {
-            var rid = target is null ? $"op-cancel-{nonce}" : $"op-cancel-{nonce}-{target}";
-            var (created, stored) = _requests.TryCreate(OperatorRecord(rid, accountId,
-                target is null ? RequestIntent.CANCEL_ALL : RequestIntent.CANCEL, "-",
-                Json.Write(new { order = target, press = nonce })));
-            if (!created && _opt.IdempotencyEnabled) continue;      // the same press, pressed twice
-            // `created` is the guard on the write-ahead, not idempotency: with the harness seam off,
-            // a repeated press deliberately dispatches again over a record that has already settled,
-            // and moving it back to DISPATCHING is not a transition the table allows.
-            if (created) _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
-            open.Add((rid, target));
-        }
-
-        if (open.Count == 0)
-        {
-            _log.Engineering("Gateway", "operator_press_replayed", requestId: $"op-cancel-{nonce}");
-            return [];
-        }
-
-        IReadOnlyList<string> cancelled;
-        try
-        {
-            cancelled = await Connector.CancelAllOrdersAsync(accountId, ct);
-        }
-        catch (Exception ex)
-        {
-            foreach (var (rid, _) in open)
-                RecordIndefinite(rid, ex.Message, "TradeAgent could not confirm whether your cancel-all reached the platform.", ex);
-            throw;   // the person pressed this button and has to be told it failed
-        }
-
-        // EACH RECORD IS SETTLED FROM THE PLATFORM'S ANSWER ABOUT ITS OWN ORDER. The sweep returning
-        // without an exception says the call was made; it does not say what happened to any
-        // particular order, and a record settled CANCELLED on that basis is a claim nobody made.
-        var missed = 0;
-        foreach (var (rid, target) in open)
-        {
-            if (target is null) continue;                       // the press-level record, settled below
-            if (cancelled.Contains(target))
-            {
-                Settle(rid, ExecutionState.CANCELLED, error: "the platform listed this order among the ones it cancelled");
-                continue;
-            }
-            missed++;
-            RecordIndefinite(rid, $"the platform did not list {target} among the orders it cancelled",
-                $"Order {target} was not among the ones the platform reported cancelling.");
-        }
-
-        if (open.FirstOrDefault(o => o.Target is null).RequestId is { } pressRecord)
-        {
-            if (missed == 0)
-                Settle(pressRecord, ExecutionState.CANCELLED,
-                    error: $"the platform reported cancelling {cancelled.Count} order(s)");
-            else
-                RecordIndefinite(pressRecord, $"{missed} captured order(s) were not in the platform's answer",
-                    $"The platform did not account for {missed} of the orders this press asked to cancel.");
-        }
-
-        _log.Activity($"You cancelled all working orders ({cancelled.Count})", "warn");
-        StateChanged?.Invoke();
-        return cancelled;
+        if (UnresolvedPressNonce(kind) is not { } nonce) return;
+        var sent = PressRows(kind, nonce).Min(r => r.CreatedAt).ToLocalTime();
+        throw new GatewayDeniedException(ErrorCode.EMERGENCY_PRESS_UNRESOLVED,
+            $"{PressName(kind)} sent at {sent:HH:mm}; resolve it first");
     }
 
     /// <summary>
-    /// Also deliberately separate: this one does move money, so it is never the same button.
+    /// THE WRITE-AHEAD ROW FOR ONE THING ONE PRESS DOES — AND IT IS WRITTEN FLAGGED. That is the
+    /// whole simplification.
     ///
-    /// One write-ahead execution request per position, keyed by the press — the same machinery the
-    /// agent's own close goes through, which recorded UNKNOWN and paused while this button recorded
-    /// nothing at all.
+    /// Before this, a row was flagged only when something went wrong, so a close the platform
+    /// answered WORKING settled clean and the gate let the AI trade over an open position and an
+    /// emergency nobody had read (Codex round-3 F11). A press is not over because its calls
+    /// returned; it is over when the person who pressed it has seen what they did. Flagging at
+    /// write-ahead time is what makes "from that moment trading is paused" true of every outcome
+    /// including the good ones, and it is the reconciler's cue to leave these rows alone.
+    ///
+    /// The latch goes in FIRST, in memory, for the same reason <see cref="RecordIndefinite"/> does
+    /// it: everything below is a database write and the pause must not depend on one.
     /// </summary>
-    /// <returns>How many of the positions it tried to close are confirmed flat afterwards.</returns>
-    public async Task<int> OperatorCloseAllAsync(string? pressNonce = null, CancellationToken ct = default)
+    ExecutionRequest OpenPressRow(string requestId, string accountId, RequestIntent intent,
+        string instrument, string parametersJson, string paused)
     {
-        var nonce = pressNonce ?? NewOperatorPressNonce();
-        var accountId = await RequireAccountId(ct);
-        var positions = await Connector.GetPositionsAsync(accountId, ct);
-
-        // As for cancel-all: a retry may only touch what the FIRST press captured. A position opened
-        // after the press was never part of it, and closing it would be a decision nobody made.
-        var captured = _requests.Query("request_id LIKE $p", ("$p", $"{PressPrefix(ClosePress, nonce)}-%"));
-        var targets = captured.Count > 0
-            ? captured.Select(r => (Symbol: r.Instrument,
-                Quantity: Json.Read<PlaceIntent>(r.ParametersJson)?.Quantity ?? 0m)).ToList()
-            : positions.Where(p => p.Quantity != 0).Select(p => (Symbol: p.Symbol, Quantity: p.Quantity)).ToList();
-
-        var attempted = new List<string>();
-        var replayed = 0;
-        var n = 0;
-
-        foreach (var p in targets)
-        {
-            var rid = $"op-close-{nonce}-{p.Symbol}";
-            var intent = new PlaceIntent(p.Symbol, p.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
-                OrderType.Market, Math.Abs(p.Quantity), null, null, TimeInForce.Day, "close position (you)");
-            var (created, stored) = _requests.TryCreate(OperatorRecord(rid, accountId,
-                RequestIntent.PLACE, p.Symbol, Json.Write(intent)));
-            if (!created && _opt.IdempotencyEnabled)
-            {
-                replayed++;
-                _log.Engineering("Gateway", "operator_press_replayed", requestId: rid);
-                continue;
-            }
-            attempted.Add(p.Symbol);
-            // See OperatorCancelAllAsync: `created`, not idempotency, guards the write-ahead.
-            var current = created
-                ? _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING)
-                : stored;
-
-            OrderInfo? order;
-            try
-            {
-                order = await Connector.ClosePositionAsync(accountId, p.Symbol, current.ClientOrderId, ct);
-            }
-            catch (Exception ex)
-            {
-                // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
-                // press that hit trouble on the first symbol left every other position open and
-                // unrecorded — an emergency control that stops half way through the emergency. The
-                // failure is recorded, execution is paused by it, and the loop goes on to the rest.
-                SafelyRecordIndefinite(rid, ex.Message,
-                    $"TradeAgent could not confirm whether the close of {p.Symbol} reached the platform.", ex);
-                continue;
-            }
-            n++;
-
-            if (order is null)
-            {
-                // No order came back. The one implementation that returns null means "there was no
-                // position to close", but a connector that submitted the close and could not read it
-                // back looks identical from here, and the SDK does not say which. Unknown it is.
-                SafelyRecordIndefinite(rid, "the platform returned no order for the close",
-                    $"TradeAgent could not confirm whether {p.Symbol} was closed.");
-                continue;
-            }
-
-            var (to, indefinite) = MapDispatchOutcome(order.State);
-            if (indefinite)
-                SafelyRecordIndefinite(rid, $"the platform answered {order.State} for the close",
-                    $"The platform answered {order.State} when closing {p.Symbol}, which is not something TradeAgent can record as done.",
-                    connectorOrderId: order.ConnectorOrderId);
-            else
-                Settle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
-        }
-
-        // WHAT WAS SENT IS NOT WHAT WAS DONE. `n` counts closes the platform accepted; a market close
-        // is not instantaneous, and one that is merely working has flattened nothing. So the account
-        // is read back, and the sentence the owner sees says what is actually left — "You closed all
-        // positions" was printed over two closes still resting on the book.
-        IReadOnlyList<PositionInfo> after;
-        try
-        {
-            after = await Connector.GetPositionsAsync(accountId, ct);
-        }
-        catch (Exception ex)
-        {
-            _log.Activity($"You asked to close {attempted.Count} position(s). {n} close order(s) were accepted, " +
-                          "but TradeAgent could not read the account back to confirm what is left.", "warn");
-            _log.Engineering("Gateway", "close_all_unverified", "warn", ex: ex);
-            StateChanged?.Invoke();
-            return 0;
-        }
-
-        // On a pure replay `attempted` is empty, so the captured symbols are what "still open" means.
-        var watched = attempted.Count > 0 ? attempted : targets.Select(t => t.Symbol).ToList();
-        var open = after.Where(p => p.Quantity != 0 && watched.Contains(p.Symbol)).ToList();
-        // Counted over what this call actually attempted, so a replay (which attempted nothing)
-        // reports zero rather than a negative number of positions closed.
-        var flat = attempted.Count(sym => open.All(p => p.Symbol != sym));
-
-        var stillOpen = string.Join(", ", open.Select(p => $"{p.Symbol} {p.Quantity}"));
-        _log.Activity(
-            // A PRESS THAT SENT NOTHING MUST SAY SO. "You closed all positions (0)" over an open
-            // position is the sentence that made a repeated press look like it had worked.
-            replayed > 0 && attempted.Count == 0
-                ? "You pressed Close all positions again. Nothing further was sent, because the previous press is still unconfirmed" +
-                  (open.Count > 0 ? $". Still open: {stillOpen}." : ".")
-            : attempted.Count == 0 ? "You pressed Close all positions; there was nothing open to close."
-            : open.Count == 0 ? $"You closed all positions ({flat})"
-            : $"You asked to close {attempted.Count} position(s); {flat} confirmed flat. Still open: {stillOpen}" +
-              ". A close order can rest on the book before it fills.",
-            "warn");
-
-        StateChanged?.Invoke();
-        return flat;
-    }
-
-    /// <summary>The write-ahead row for one thing one press does. Always attributed to the operator.</summary>
-    ExecutionRequest OperatorRecord(string requestId, string accountId, RequestIntent intent,
-        string instrument, string parametersJson) => new()
+        LatchUnconfirmed(requestId, paused);
+        var (created, stored) = _requests.TryCreate(new ExecutionRequest
         {
             RequestId = requestId,
             AgentSessionId = AgentContext.Operator.SessionId,
@@ -1539,7 +1428,240 @@ public sealed class TradingGateway : IAsyncDisposable
             CreatedAt = Now,
             State = ExecutionState.CREATED,
             Mode = Settings.Mode
-        };
+        });
+
+        // A fresh nonce cannot collide with a row this store already holds, so finding one is not a
+        // replay — it is a corrupt id space, and sending over it would be sending twice.
+        if (!created)
+            throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                $"{requestId} already exists; nothing was sent");
+
+        _requests.MarkNeedsReconciliation(stored.RequestId, paused);
+        return _requests.Transition(stored.RequestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+    }
+
+    /// <summary>
+    /// <see cref="Settle"/> for a caller that must not stop. It throws when the store refuses the
+    /// write, and inside a loop over positions that abandons every position after this one — the
+    /// exact fault <see cref="SafelyRecordIndefinite"/> exists to prevent, arrived at from the
+    /// definite side. `Settle` has already latched the pause in memory before it throws, so
+    /// continuing costs nothing that matters and finishing the emergency is worth more.
+    /// </summary>
+    void SafelySettle(string requestId, ExecutionState to, string? connectorOrderId = null,
+        decimal? filled = null, string? error = null)
+    {
+        try { Settle(requestId, to, connectorOrderId, filled, error); }
+        catch (Exception) { /* latched in memory by Settle; the background retry carries the reason */ }
+    }
+
+    /// <summary>
+    /// Deliberately separate from the kill switch: stopping the AI must not move money.
+    ///
+    /// Outside AUTHORIZATION on purpose — this has to work while trading is paused, including while
+    /// it is paused by the very records this method writes. What it may NOT do any more is touch the
+    /// wire without leaving one, and what it may not do at all is run twice over an unresolved press.
+    /// </summary>
+    public async Task<PressOutcome> OperatorCancelAllAsync(CancellationToken ct = default)
+    {
+        RefuseWhileAPressIsOpen(CancelPress);
+
+        var accountId = await RequireAccountId(ct);
+        var nonce = NewPressNonce();
+        var pressId = PressPrefix(CancelPress, nonce);
+        var paused = $"you pressed Cancel all working orders at {Now.ToLocalTime():HH:mm}; it is waiting for you on the Dashboard";
+
+        // THE PRESS ITSELF IS A RECORD, WRITTEN BEFORE ANYTHING IS READ OR SENT. If the process dies
+        // between here and the first wire call, the row is on disk, flagged, and the restart refuses
+        // to trade over it — which is the whole point of a write-ahead.
+        OpenPressRow(pressId, accountId, RequestIntent.CANCEL_ALL, "-",
+            Json.Write(new { order = (string?)null, press = nonce }), paused);
+
+        List<string> captured;
+        try
+        {
+            captured = (await Connector.GetOrdersAsync(accountId, false, null, ct))
+                .Select(o => o.ConnectorOrderId).ToList();
+        }
+        catch (Exception ex)
+        {
+            // NOTHING CAN BE SENT, AND THAT IS THE HONEST ANSWER. The wire call is per-order now, so
+            // a book that cannot be read names no orders to cancel. It used to send an account-wide
+            // sweep anyway on the argument that a failed READ must not stop an emergency — but that
+            // sweep is exactly the call this unit removed, because "cancel whatever is there" acts
+            // on orders the person never saw and cannot be reconciled against anything.
+            SafelyRecordIndefinite(pressId, ex.Message,
+                "TradeAgent could not read your working orders, so nothing was cancelled.", ex);
+            _log.Activity("You pressed Cancel all working orders. TradeAgent could not read your orders, " +
+                          "so nothing was sent. Check ATAS.", "warn");
+            StateChanged?.Invoke();
+            return await PressOutcomeAsync(CancelPress, nonce, ct);
+        }
+
+        var cancelled = new List<string>();
+        foreach (var target in captured)
+        {
+            var rid = $"{pressId}-{target}";
+            OpenPressRow(rid, accountId, RequestIntent.CANCEL, "-",
+                Json.Write(new { order = target, press = nonce }), paused);
+            try
+            {
+                await Connector.CancelOrderAsync(target, ct);
+            }
+            catch (ConnectorRejectedException ex)
+            {
+                // A DEFINITE refusal about THIS order, and safety rule 3 says it is the only thing
+                // allowed to be recorded as one.
+                SafelySettle(rid, ExecutionState.REJECTED, error: ex.Message);
+                continue;
+            }
+            catch (Exception ex)
+            {
+                // ONE ORDER FAILING SAYS NOTHING ABOUT THE NEXT ONE — the same lesson close-all
+                // learned. It is recorded, the pause is already latched, and the loop goes on.
+                SafelyRecordIndefinite(rid, ex.Message,
+                    $"TradeAgent could not confirm whether order {target} was cancelled.", ex);
+                continue;
+            }
+            SafelySettle(rid, ExecutionState.CANCELLED, error: "the platform accepted the cancel for this order");
+            cancelled.Add(target);
+        }
+
+        if (cancelled.Count == captured.Count)
+            SafelySettle(pressId, ExecutionState.CANCELLED,
+                error: $"{cancelled.Count} order(s) were cancelled one by one");
+        else
+            SafelyRecordIndefinite(pressId,
+                $"{captured.Count - cancelled.Count} of {captured.Count} captured order(s) were not confirmed cancelled",
+                $"TradeAgent could not confirm {captured.Count - cancelled.Count} of the {captured.Count} " +
+                "orders it tried to cancel.");
+
+        _log.Activity(captured.Count == 0
+            ? "You pressed Cancel all working orders; there was nothing on the book to cancel."
+            : $"You cancelled all working orders ({cancelled.Count} of {captured.Count}). " +
+              "AI trading is paused until you confirm what happened on the Dashboard.", "warn");
+        StateChanged?.Invoke();
+        return await PressOutcomeAsync(CancelPress, nonce, ct);
+    }
+
+    /// <summary>
+    /// Also deliberately separate: this one does move money, so it is never the same button.
+    ///
+    /// One write-ahead execution request per position, keyed by the press — the same machinery the
+    /// agent's own close goes through, which recorded UNKNOWN and paused while this button recorded
+    /// nothing at all.
+    /// </summary>
+    public async Task<PressOutcome> OperatorCloseAllAsync(CancellationToken ct = default)
+    {
+        RefuseWhileAPressIsOpen(ClosePress);
+
+        var accountId = await RequireAccountId(ct);
+        var nonce = NewPressNonce();
+        var paused = $"you pressed Close all positions at {Now.ToLocalTime():HH:mm}; it is waiting for you on the Dashboard";
+
+        var captured = (await Connector.GetPositionsAsync(accountId, ct))
+            .Where(p => p.Quantity != 0)
+            .Select(p => (p.Symbol, p.Quantity))
+            .ToList();
+
+        if (captured.Count == 0)
+        {
+            _log.Activity("You pressed Close all positions; there was nothing open to close.", "warn");
+            StateChanged?.Invoke();
+            return new PressOutcome(ClosePress, nonce, Now, [], 0, true, "There was nothing open to close.");
+        }
+
+        var drifted = new List<string>();
+        foreach (var (symbol, quantity) in captured)
+        {
+            // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
+            // changed sends nothing for that instrument (Codex round-3 F10).
+            //
+            // The press captured a size and a side and turned them into a MARKET order for that
+            // size. Between the capture and this call a fill can land, a hedge can close, another
+            // window can flatten it — and the order this press computed is then wrong in the one
+            // direction that matters: closing 2 of a position that is now 1 opens a short, and
+            // closing a long that has already flipped short doubles it. The old code sent whatever
+            // it had captured and let ATAS's close-position sort it out.
+            //
+            // Refused rather than recomputed. A different position is a different decision, and the
+            // owner makes decisions here — they press again, against what is actually there.
+            decimal? live;
+            try
+            {
+                live = (await Connector.GetPositionsAsync(accountId, ct))
+                    .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
+            }
+            catch (Exception ex)
+            {
+                // A READ THAT FAILED IS NOT A POSITION THAT MATCHES. Nothing is written and nothing
+                // is sent: this leg never reached the wire, and saying so is the honest answer.
+                drifted.Add($"{symbol} (the account could not be read: {ex.Message})");
+                continue;
+            }
+
+            if (live != quantity)
+            {
+                drifted.Add($"{symbol} was {quantity} when you pressed and is {live} now");
+                continue;
+            }
+
+            var rid = $"{PressPrefix(ClosePress, nonce)}-{symbol}";
+            var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
+                OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)");
+            var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused);
+
+            OrderInfo? order;
+            try
+            {
+                order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
+            }
+            catch (Exception ex)
+            {
+                // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
+                // press that hit trouble on the first symbol left every other position open and
+                // unrecorded — an emergency control that stops half way through the emergency.
+                SafelyRecordIndefinite(rid, ex.Message,
+                    $"TradeAgent could not confirm whether the close of {symbol} reached the platform.", ex);
+                continue;
+            }
+
+            if (order is null)
+            {
+                // No order came back. The one implementation that returns null means "there was no
+                // position to close", but a connector that submitted the close and could not read it
+                // back looks identical from here, and the SDK does not say which. Unknown it is.
+                SafelyRecordIndefinite(rid, "the platform returned no order for the close",
+                    $"TradeAgent could not confirm whether {symbol} was closed.");
+                continue;
+            }
+
+            var (to, indefinite) = MapDispatchOutcome(order.State);
+            if (indefinite)
+                SafelyRecordIndefinite(rid, $"the platform answered {order.State} for the close",
+                    $"The platform answered {order.State} when closing {symbol}, which is not something TradeAgent can record as done.",
+                    connectorOrderId: order.ConnectorOrderId);
+            else
+                // SAFELY. `Settle` throws when the store cannot write the outcome down, and this
+                // loop used to let that escape — abandoning every position after this one, in the
+                // one situation where finishing matters most (the previous unit's residual).
+                SafelySettle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
+        }
+
+        var drift = drifted.Count == 0 ? ""
+            : $" Nothing was sent for {drifted.Count} of them, because what is there changed after you " +
+              $"pressed: {string.Join("; ", drifted)}. Press again if you still want them closed.";
+
+        var outcome = await PressOutcomeAsync(ClosePress, nonce, ct);
+        // A press that wrote no rows at all has only the drift to report; "Nothing was sent." twice
+        // over is not a sentence anybody should have to read.
+        outcome = outcome with { Summary = (outcome.Targets.Count == 0 && drift.Length > 0 ? "" : outcome.Summary) + drift };
+        _log.Activity($"You asked to close {captured.Count} position(s). {outcome.Summary}" +
+                      (outcome.Targets.Count > 0
+                          ? " AI trading is paused until you confirm what happened on the Dashboard."
+                          : ""), "warn");
+        StateChanged?.Invoke();
+        return outcome;
+    }
 
     // ---------------------------------------------------------------- reconciliation
 
@@ -1635,6 +1757,22 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 inconclusive++;
                 details.Add($"{req.RequestId}: placed on {req.ConnectorId}; connected to {Connector.Id}");
+                continue;
+            }
+
+            // AN EMERGENCY PRESS IS RESOLVED BY THE PERSON WHO MADE IT, AND BY NOBODY ELSE.
+            //
+            // Its rows are flagged from the write-ahead, not because anything went wrong, but
+            // because the press is not over until the owner has read what it did. Letting the
+            // reconciler at them would undo that twice over: it would clear the flag the moment the
+            // platform's answer looked definite — releasing a press whose position is still open —
+            // and, on the way, it drags a row through UNKNOWN and RECONCILING, so the card would
+            // show "not confirmed" for a close the platform had plainly answered WORKING. The
+            // record keeps the platform's own word; the flag waits for a human.
+            if (IsPressRecord(req.RequestId))
+            {
+                inconclusive++;
+                details.Add($"{req.RequestId}: {PressName(PressKindOf(req.RequestId))} is waiting for you on the Dashboard");
                 continue;
             }
 
@@ -1830,50 +1968,33 @@ public sealed class TradingGateway : IAsyncDisposable
             return r;
         }
 
-        // ---- a cancel-all is judged on the set the press captured
-        if (req.Intent == RequestIntent.CANCEL_ALL || stored?.Order is null)
+        // ---- a record that never named a target
+        //
+        // A cancel-all press used to be judged here, on the set its own per-order rows captured. It
+        // does not reach the reconciler at all any more — a press writes flagged rows and is
+        // resolved by the person who made it — so the captured-set machinery went with it. What is
+        // left in this arm is a record from an older build whose stored parameters name no order,
+        // and for that the whole book is the only evidence there is.
+        if (stored?.Order is null)
         {
-            // The per-order records this press wrote ARE the captured set; an order that arrived
-            // afterwards belongs to nobody's press and must not decide this one.
-            var captured = _requests.Query("request_id LIKE $p", ("$p", $"{req.RequestId}-%"))
-                .Select(r => Json.Read<TargetRef>(r.ParametersJson)?.Order)
-                .Where(id => id is not null)
-                .ToHashSet();
-
-            var relevant = orders
-                .Where(o => captured.Count == 0 || captured.Contains(o.ConnectorOrderId))
-                .ToList();
-
             // A BOOK OF ORDERS THE PLATFORM WILL NOT COMMIT TO IS NOT AN EMPTY BOOK. `IsDefinite`
             // used to be a filter on the live set, so a CANCEL_PENDING or UNKNOWN order dropped OUT
-            // of the count and the press read `live.Count == 0` as "nothing is working" — the rule
-            // backwards: the absence of definite evidence became the presence of it (Codex round-3
-            // F2). Asked first, because it is the answer whenever it applies, captured set or not.
-            var undecided = relevant.Where(o => !IsDefinite(o.State)).ToList();
+            // of the count and `live.Count == 0` read as "nothing is working" — the rule backwards:
+            // the absence of definite evidence became the presence of it (Codex round-3 F2).
+            var undecided = orders.Where(o => !IsDefinite(o.State)).ToList();
             if (undecided.Count > 0)
                 return (false, $"the platform will not say what happened to {undecided.Count} order(s) " +
                                $"({string.Join(", ", undecided.Select(o => $"{o.ConnectorOrderId} is {o.State}"))})");
 
-            var live = relevant
-                .Where(o => !OrderStateMachine.IsTerminal(o.State) && IsDefinite(o.State))
-                .ToList();
+            var live = orders.Where(o => !OrderStateMachine.IsTerminal(o.State) && IsDefinite(o.State)).ToList();
+            if (live.Count > 0)
+                return (false, $"{live.Count} order(s) are working and none can be attributed to this record");
 
-            if (live.Count == 0)
-            {
-                if (captured.Count == 0 && age < grace)
-                    return (false, $"the account still has to settle inside the {grace.TotalSeconds:0}s grace window");
-                Resolve(ExecutionState.CANCELLED,
-                    captured.Count == 0 ? "no working orders are left on the account"
-                                        : "none of the orders this press captured is working any more");
-                return (true, "the orders this press captured are no longer working");
-            }
+            if (age < grace)
+                return (false, $"the account still has to settle inside the {grace.TotalSeconds:0}s grace window");
 
-            // Working captured orders leave the press unconfirmed, and they leave it there: the
-            // platform has not said the sweep failed, and it is the only thing that can. The press
-            // settles when the captured orders reach a definite end, or on the owner's card.
-            return (false, captured.Count == 0
-                ? $"{live.Count} order(s) are working and none can be attributed to this press"
-                : $"{live.Count} captured order(s) are still working, which is not the platform refusing the sweep");
+            Resolve(ExecutionState.CANCELLED, "no working orders are left on the account");
+            return (true, "no working orders are left on the account");
         }
 
         var target = stored.Order;

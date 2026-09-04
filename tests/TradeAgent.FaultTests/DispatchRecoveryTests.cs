@@ -87,8 +87,12 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
     public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
+    /// <summary>Runs before every positions read, so a test can move the book between two of them.</summary>
+    public Action? BeforePositionsRead;
+
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
     {
+        BeforePositionsRead?.Invoke();
         var p = await inner.GetPositionsAsync(a, ct);
         return SortPositionsBySymbol ? p.OrderBy(x => x.Symbol, StringComparer.Ordinal).ToList() : p;
     }
@@ -129,15 +133,22 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
         return RewriteModified?.Invoke(o) ?? o;
     }
 
+    /// <summary>When set, ThrowAfterCancel fires only for this order id.</summary>
+    public string? CancelFailsFor;
+
     public async Task CancelOrderAsync(string id, CancellationToken ct = default)
     {
         if (!CancelDoesNotReachTheBook) await inner.CancelOrderAsync(id, ct);   // the broker DID cancel
         OnCancelled?.Invoke();                                   // ...and this happens before we hear back
-        if (ThrowAfterCancel is { } ex) throw ex;
+        OnCancelledId?.Invoke(id);
+        if (ThrowAfterCancel is { } ex && (CancelFailsFor is null || CancelFailsFor == id)) throw ex;
     }
 
     /// <summary>Runs after the broker cancelled and before this connector answers. See OnPlaced.</summary>
     public Action? OnCancelled;
+
+    /// <summary>The same, told WHICH order — how a test counts per-order cancels rather than sweeps.</summary>
+    public Action<string>? OnCancelledId;
 
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
     {
@@ -869,15 +880,22 @@ public class OperatorEmergencyRecordTests
         await gw.PlaceAsync(AgentContext.Operator, "flat-nq", TestEnv.Buy("NQ", 1m));
         Assert.Equal(2, c.Inner.Broker.Positions.Count);
 
-        var closed = await gw.OperatorCloseAllAsync();
+        var press = await gw.OperatorCloseAllAsync();
 
-        Assert.Equal(2, closed);
+        Assert.Equal(2, press.Targets.Count);
         Assert.Equal(2, c.Closes);
         Assert.Empty(c.Inner.Broker.Positions);
         var records = gw.Requests.Query("request_id LIKE 'op-close-%'");
         Assert.Equal(2, records.Count);
         Assert.All(records, r => Assert.Equal(ExecutionState.FILLED, r.State));
-        Assert.All(records, r => Assert.False(r.NeedsReconciliation));
+
+        // U2c1b: a press pauses on ITS OWN records whatever the platform answered, so a wholly
+        // successful close-all is still the owner's to close out. Both directions: resolving them
+        // through the card is what lets the AI trade again.
+        Assert.All(records, r => Assert.True(r.NeedsReconciliation));
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        foreach (var r in records) gw.ForceResolve(r.RequestId, r.State, "checked in ATAS: both closes filled");
+        await gw.RefreshHealthAsync();
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
@@ -889,9 +907,9 @@ public class OperatorEmergencyRecordTests
         var a = await gw.PlaceAsync(AgentContext.Operator, "w-1", TestEnv.Buy());
         var b = await gw.PlaceAsync(AgentContext.Operator, "w-2", TestEnv.Buy("NQ"));
 
-        var ids = await gw.OperatorCancelAllAsync();
+        var press = await gw.OperatorCancelAllAsync();
 
-        Assert.Equal(2, ids.Count);
+        Assert.Equal(3, press.Targets.Count);        // the press itself, and one per order
         var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
         Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
         Assert.All(records, r => Assert.Equal("operator", r.AgentSessionId));
@@ -901,9 +919,14 @@ public class OperatorEmergencyRecordTests
         Assert.Contains(perOrder, r => r.ParametersJson.Contains(a.ConnectorOrderId!));
         Assert.Contains(perOrder, r => r.ParametersJson.Contains(b.ConnectorOrderId!));
 
-        // ...and the press itself, which is what a retry recognises.
+        // ...and the press itself, which is the row that says a press happened at all.
         Assert.Single(records, r => r.Intent == RequestIntent.CANCEL_ALL);
-        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        // U2c1b: every row is flagged from the write-ahead, and only the owner clears them.
+        Assert.All(records, r => Assert.True(r.NeedsReconciliation));
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+        foreach (var r in records) gw.ForceResolve(r.RequestId, r.State, "checked in ATAS: the book is empty");
+        await gw.RefreshHealthAsync();
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
@@ -913,104 +936,18 @@ public class OperatorEmergencyRecordTests
         var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "wf-1", TestEnv.Buy());
-        c.ThrowAfterCancelAll = new ConnectorTransportException("connection lost during cancel-all");
+        // U2c1b: the wire call is a per-ORDER cancel now, so the wire fails where a per-order
+        // cancel fails. One leg failing must not abandon the press, and it must not be recorded as
+        // a refusal — it is an unknown, and it pauses.
+        c.ThrowAfterCancel = new ConnectorTransportException("connection lost during the cancel");
 
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        await gw.OperatorCancelAllAsync();
 
         var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
         Assert.Equal(2, records.Count);                        // the press, and the one order on the book
         Assert.All(records, r => Assert.Equal(ExecutionState.UNKNOWN, r.State));
         Assert.All(records, r => Assert.True(r.NeedsReconciliation));
         Assert.Equal(HealthState.PAUSED, gw.Health.Get(Components.ExecutionCapability).State);
-    }
-
-    /// <summary>
-    /// The press, not the call, is the unit of intent. Pressing once and retrying that press must
-    /// not sell the position twice — which is what "close #1 failed, so I pressed again" did to a
-    /// 2-contract long: two market sells, a position reversed rather than flattened, and no record
-    /// that either was sent.
-    ///
-    /// ROUND 3: this used to end by minting a fresh nonce by hand and asserting that a second close
-    /// WAS sent — pinning the unsafe release the screen no longer performs. What the control does
-    /// while a press is unresolved is repeat it; a new press exists only after the old one is
-    /// accounted for, and that is what is asserted now.
-    /// </summary>
-    [Fact]
-    public async Task A_retried_press_submits_nothing_and_no_new_press_exists_until_it_is_resolved()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "rp-1", TestEnv.Buy(qty: 2m));
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;      // the close sits working, position still open
-
-        var button = new OperatorPress();
-        var first = button.Begin();
-        Assert.Equal(0, await gw.OperatorCloseAllAsync(first));
-        Assert.Equal(1, c.Closes);
-        button.Finish((await gw.PressOutcomeAsync(TradingGateway.ClosePress, button.Begin())).Complete);
-        Assert.True(button.Outstanding);                      // the position is not flat
-
-        // The same press again — a retry, not a new decision.
-        Assert.Equal(0, await gw.OperatorCloseAllAsync(button.Begin()));
-        Assert.Equal(1, c.Closes);
-        Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
-        Assert.Single(c.Inner.Broker.Orders, o => o.Side == OrderSide.Sell);
-
-        // The control cannot mint a new press while the old one is unaccounted for.
-        Assert.True(button.Outstanding);
-
-        // Completion takes BOTH: the position flat AND this press's own record accounted for. The
-        // close filling at the platform is not enough on its own — nothing has told the ledger — so
-        // the record is settled the way the product settles one, through the card.
-        c.Inner.Broker.FillWorking(c.Inner.Broker.Orders.Single(o => o.Side == OrderSide.Sell).ConnectorOrderId);
-        Assert.False((await gw.PressOutcomeAsync(TradingGateway.ClosePress, first)).Complete);
-
-        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
-        gw.ForceResolve(record.RequestId, ExecutionState.FILLED, "checked in ATAS: the close filled");
-        button.Finish((await gw.PressOutcomeAsync(TradingGateway.ClosePress, first)).Complete);
-
-        Assert.False(button.Outstanding);
-        Assert.NotEqual(first, button.Begin());   // only now is the next press a new decision
-    }
-
-    /// <summary>
-    /// The positive control for the test above: with idempotency switched off the harness DOES see
-    /// the double close, so "one close" is evidence rather than an artefact of the fixture.
-    /// </summary>
-    [Fact]
-    public async Task Control_the_harness_can_detect_a_double_close_when_idempotency_is_off()
-    {
-        var (gw, c, db) = await Recovery.Ready(options: new GatewayOptions { IdempotencyEnabled = false });
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "rp-off", TestEnv.Buy(qty: 2m));
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-        var press = TradingGateway.NewOperatorPressNonce();
-
-        await gw.OperatorCloseAllAsync(press);
-        await gw.OperatorCloseAllAsync(press);
-
-        Assert.Equal(2, c.Closes);
-        Assert.Equal(4m, c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell).Sum(o => o.Quantity));
-    }
-
-    [Fact]
-    public async Task A_retried_cancel_all_press_submits_nothing()
-    {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "rc-1", TestEnv.Buy());
-        var press = TradingGateway.NewOperatorPressNonce();
-
-        Assert.Single(await gw.OperatorCancelAllAsync(press));
-        Assert.Equal(1, c.CancelAlls);
-
-        Assert.Empty(await gw.OperatorCancelAllAsync(press));
-        Assert.Equal(1, c.CancelAlls);                         // the wire was not touched again
-        Assert.Equal(2, gw.Requests.Query("request_id LIKE 'op-cancel-%'").Count);   // the press, and the order
-
-        // A new press still works — the book is empty now, so it sweeps and finds nothing to cancel.
-        Assert.Empty(await gw.OperatorCancelAllAsync(TradingGateway.NewOperatorPressNonce()));
-        Assert.Equal(2, c.CancelAlls);
     }
 
     /// <summary>
@@ -1032,11 +969,11 @@ public class OperatorEmergencyRecordTests
         gw.StopAiTrading("test");
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
 
-        var ids = await gw.OperatorCancelAllAsync();
-        var closed = await gw.OperatorCloseAllAsync();
+        var cancels = await gw.OperatorCancelAllAsync();
+        var closes = await gw.OperatorCloseAllAsync();
 
-        Assert.NotEmpty(ids);
-        Assert.Equal(1, closed);
+        Assert.NotEmpty(cancels.Targets);
+        Assert.Single(closes.Targets);
         Assert.Empty(c.Inner.Broker.Positions);
     }
 }
@@ -1180,53 +1117,6 @@ public class TargetedReconciliationTests
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
-    [Fact]
-    public async Task A_cancel_all_press_is_reconciled_by_what_is_left_on_the_book()
-    {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "ca-1",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
-        c.CancelAllDoesNotReachTheBook = true;
-
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;
-        c.CancelAllDoesNotReachTheBook = false;
-
-        var result = await gw.ReconcileAsync();
-
-        // An order is still working, so the sweep certainly did not empty the book — and that is as
-        // far as the evidence goes. It is not the platform refusing the press, so the press stays
-        // unconfirmed rather than being recorded as definitely failed.
-        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
-        Assert.NotEqual(ExecutionState.REJECTED, umbrella.State);
-        Assert.True(umbrella.NeedsReconciliation);
-        Assert.False(result.Clean, string.Join("; ", result.Details));
-        Assert.Contains(result.Details, d => d.Contains("not the platform refusing the sweep"));
-    }
-
-    [Fact]
-    public async Task A_cancel_all_press_that_emptied_the_book_reconciles_as_cancelled()
-    {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: NoGrace);
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "cb-1",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
-
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;
-
-        var result = await gw.ReconcileAsync();
-
-        Assert.True(result.Clean, string.Join("; ", result.Details));
-        Assert.All(gw.Requests.Query("request_id LIKE 'op-cancel-%'"),
-            r => Assert.Equal(ExecutionState.CANCELLED, r.State));
-        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
-    }
 }
 
 // =================================================================================================
@@ -1485,7 +1375,6 @@ public class CloseAllOutcomeTests
         Assert.Equal(ExecutionState.UNKNOWN, es.State);
         Assert.True(es.NeedsReconciliation);
         Assert.Equal(ExecutionState.FILLED, nq.State);
-        Assert.False(nq.NeedsReconciliation);
         Assert.DoesNotContain(c.Inner.Broker.Positions, p => p.Symbol == "NQ");
 
         // The half that failed still pauses trading and still has a route out.
@@ -1502,18 +1391,20 @@ public class CloseAllOutcomeTests
         await gw.PlaceAsync(AgentContext.Operator, "sub-nq", TestEnv.Buy("NQ", 1m));
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;   // the closes rest on the book, as market closes do
 
-        var closed = await gw.OperatorCloseAllAsync();
+        var press = await gw.OperatorCloseAllAsync();
 
         Assert.Equal(2, c.Closes);                          // both were submitted
-        Assert.Equal(0, closed);                            // and neither position is flat
+        Assert.False(press.Complete);                       // and neither position is flat
         Assert.Equal(2, c.Inner.Broker.Positions.Count);
 
-        // A close that is merely working is not ambiguous — it is simply not done yet, so it neither
-        // pauses trading nor claims to have flattened anything.
+        // U2c1b (Codex F11): a close that is merely working has flattened NOTHING, and until the
+        // owner has been told so there is an open position the software cannot account for. It used
+        // to settle WORKING and unflagged, and the AI was authorised to trade straight over it.
         var records = gw.Requests.Query("request_id LIKE 'op-close-%'");
         Assert.Equal(2, records.Count);
         Assert.All(records, r => Assert.Equal(ExecutionState.WORKING, r.State));
-        Assert.Empty(gw.Requests.NeedingReconciliation());
+        Assert.All(records, r => Assert.True(r.NeedsReconciliation));
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
 
         var said = Recovery.Activity(db).Last(t => t.StartsWith("You "));
         Assert.DoesNotContain("You closed all positions", said);
@@ -1530,101 +1421,17 @@ public class CloseAllOutcomeTests
         await gw.PlaceAsync(AgentContext.Operator, "flat-a", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "flat-b", TestEnv.Buy("NQ", 1m));
 
-        var closed = await gw.OperatorCloseAllAsync();
+        var press = await gw.OperatorCloseAllAsync();
 
-        Assert.Equal(2, closed);
+        Assert.Equal(2, press.Targets.Count);
         Assert.Empty(c.Inner.Broker.Positions);
-        Assert.Contains("You closed all positions (2)", Recovery.Activity(db));
-    }
-}
 
-// =================================================================================================
-// ROUND 2 · item 3 — the screen presses the same press again, not a new one
-// =================================================================================================
-
-/// <summary>
-/// The gateway makes a retried press free, and the Dashboard threw that away by minting a fresh
-/// nonce inside the click handler: the natural "it failed, press it again" was a NEW press, a second
-/// set of closes, and a 2-contract long sold twice. These exercise `OperatorPress` — the object the
-/// two emergency handlers actually hold — against the real gateway.
-/// </summary>
-public class OperatorPressPolicyTests
-{
-    [Fact]
-    public async Task A_press_that_could_not_be_confirmed_is_repeated_rather_than_reissued()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "press-1", TestEnv.Buy(qty: 2m));
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
-
-        var button = new OperatorPress();          // what SafetyPage holds for "Close all positions"
-
-        var first = button.Begin();
-        await gw.OperatorCloseAllAsync(first);
-        button.Finish(!gw.HasUnconfirmedWork());
-
-        Assert.True(button.Outstanding);           // ambiguous, so the press is not over
-        Assert.Equal(1, c.Closes);
-
-        // The position is still open, so the person presses again. The wire must not be touched.
-        c.ThrowAfterClose = null;
-        var second = button.Begin();
-        await gw.OperatorCloseAllAsync(second);
-        button.Finish(!gw.HasUnconfirmedWork());
-
-        Assert.Equal(first, second);
-        Assert.Equal(1, c.Closes);
-        Assert.Single(c.Inner.Broker.Orders, o => o.Side == OrderSide.Sell);
-        Assert.Equal(2m, c.Inner.Broker.Orders.Where(o => o.Side == OrderSide.Sell).Sum(o => o.Quantity));
-        Assert.True(button.Outstanding);
-
-        // THE OTHER DIRECTION. Once the person resolves the unconfirmed record, the control is armed
-        // again and the next press really does send a close.
-        var stranded = Assert.Single(gw.Requests.NeedingReconciliation());
-        gw.ForceResolve(stranded.RequestId, ExecutionState.CANCELLED, "checked in ATAS: nothing was sent");
-        button.Finish(!gw.HasUnconfirmedWork());
-        Assert.False(button.Outstanding);
-
-        var third = button.Begin();
-        Assert.NotEqual(first, third);
-        await gw.OperatorCloseAllAsync(third);
-        Assert.Equal(2, c.Closes);
-    }
-
-    [Fact]
-    public async Task A_press_that_finished_cleanly_does_not_hold_the_control()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "clean-1", TestEnv.Buy(qty: 2m));
-        var button = new OperatorPress();
-
-        var first = button.Begin();
-        Assert.Equal(1, await gw.OperatorCloseAllAsync(first));
-        button.Finish(!gw.HasUnconfirmedWork());
-
-        Assert.False(button.Outstanding);
-        Assert.NotEqual(first, button.Begin());    // the next press is a new decision
-    }
-
-    [Fact]
-    public async Task The_cancel_all_control_holds_its_press_the_same_way()
-    {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "cpress-1", TestEnv.Buy());
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
-
-        var button = new OperatorPress();
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync(button.Begin()));
-        button.Finish(!gw.HasUnconfirmedWork());
-        Assert.True(button.Outstanding);
-
-        c.ThrowAfterCancelAll = null;
-        Assert.Empty(await gw.OperatorCancelAllAsync(button.Begin()));
-        Assert.Equal(1, c.CancelAlls);             // the same press: the sweep was not repeated
+        // "Closed everything" is the ACCOUNT's half of the answer and it is read off the account,
+        // not off the orders: every target reports a flat position and the summary names none as
+        // still open. The owner's half — confirming each record — is what is still outstanding.
+        Assert.DoesNotContain(press.Targets, t => t.PositionNow != 0m);
+        Assert.DoesNotContain("Still open", press.Summary);
+        Assert.Equal(2, press.Unresolved);
     }
 }
 
@@ -1994,69 +1801,6 @@ public class ConservativeTargetEvidenceTests
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
-    /// <summary>
-    /// The press is judged by the same rule as one cancel: captured orders that are merely still
-    /// working are the platform not answering, not the platform refusing the sweep.
-    /// </summary>
-    [Fact]
-    public async Task Captured_orders_that_are_merely_still_working_do_not_condemn_the_press()
-    {
-        var (clock, options) = Clocked();
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "r3-ca-still",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-
-        c.CancelAllDoesNotReachTheBook = true;                  // the sweep never touched the book...
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;                           // ...and the answer was lost too
-        c.CancelAllDoesNotReachTheBook = false;
-
-        for (var i = 0; i < 3; i++)
-        {
-            Assert.False((await gw.ReconcileAsync()).Clean);
-            clock.Advance(TimeSpan.FromSeconds(30));
-        }
-        var late = await gw.ReconcileAsync();
-
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.False(late.Clean, string.Join("; ", late.Details));
-        Assert.NotEqual(ExecutionState.REJECTED, umbrella.State);
-        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
-        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
-        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
-    }
-
-    // R1e — a cancel-all is judged on the orders the press captured
-    [Fact]
-    public async Task An_order_that_arrived_after_the_press_does_not_decide_the_cancel_all()
-    {
-        var (clock, options) = Clocked();
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "r3-ca-1",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;
-
-        // The sweep DID land — the captured order is cancelled — and a NEW order appears afterwards,
-        // placed by hand in the platform, which is the only way one can arrive while trading is
-        // paused by this very press.
-        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
-            OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null), FillBehaviour.LeaveWorking);
-        clock.Advance(TimeSpan.FromMinutes(10));
-
-        var result = await gw.ReconcileAsync();
-
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.Equal(ExecutionState.CANCELLED, umbrella.State);        // judged on what it captured
-        Assert.True(result.Clean, string.Join("; ", result.Details));
-        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single(o => o.Symbol == "NQ").State);
-    }
-
     // R4 — a modify never becomes a definite failure without a definite refusal
     [Fact]
     public async Task A_modification_that_cannot_be_confirmed_is_never_recorded_as_a_definite_failure()
@@ -2085,8 +1829,17 @@ public class ConservativeTargetEvidenceTests
 
 public class CancelAllPerOrderSettlementTests
 {
+    /// <summary>
+    /// U2c1b: THE WIRE CALL IS ONE CANCEL PER CAPTURED ORDER, so each record is settled by the
+    /// platform's answer about ITS OWN order and nothing else.
+    ///
+    /// This used to be built out of an account-wide sweep whose reply listed only some of the orders
+    /// it was asked about; the sweep is gone, and with it the whole class of "settled on somebody
+    /// else's answer". What replaces it is the same guarantee from the other side: one leg refused,
+    /// one leg cancelled, and neither answer reaches the other's row.
+    /// </summary>
     [Fact]
-    public async Task An_order_the_sweep_did_not_account_for_is_not_recorded_as_cancelled()
+    public async Task Each_order_is_settled_by_the_answer_to_its_own_cancel()
     {
         var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         using var dbh = db;
@@ -2095,8 +1848,9 @@ public class CancelAllPerOrderSettlementTests
         var b = await gw.PlaceAsync(AgentContext.Operator, "pa-2",
             new PlaceIntent("NQ", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
 
-        // The platform reports cancelling only one of the two.
-        c.RewriteCancelAllResult = ids => ids.Where(id => id == a.ConnectorOrderId).ToList();
+        // The platform loses the wire on the second order only.
+        c.CancelFailsFor = b.ConnectorOrderId;
+        c.ThrowAfterCancel = new ConnectorTransportException("connection lost during the cancel");
 
         await gw.OperatorCancelAllAsync();
 
@@ -2104,12 +1858,9 @@ public class CancelAllPerOrderSettlementTests
         var missed = Assert.Single(gw.Requests.Query($"request_id LIKE 'op-cancel-%' AND parameters LIKE '%{b.ConnectorOrderId}%'"));
 
         Assert.Equal(ExecutionState.CANCELLED, listed.State);
-        Assert.False(listed.NeedsReconciliation);
+        Assert.Equal(ExecutionState.UNKNOWN, missed.State);       // never CANCELLED on the other leg's answer
 
-        Assert.Equal(ExecutionState.UNKNOWN, missed.State);       // never CANCELLED on someone else's answer
-        Assert.True(missed.NeedsReconciliation);
-
-        // ...and the press-level record does not claim the sweep was complete either.
+        // ...and the press-level record does not claim the press was complete either.
         var press = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
         Assert.Equal(ExecutionState.UNKNOWN, press.State);
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
@@ -2131,160 +1882,13 @@ public class CancelAllPerOrderSettlementTests
         var records = gw.Requests.Query("request_id LIKE 'op-cancel-%'");
         Assert.Equal(3, records.Count);                          // two orders and the press itself
         Assert.All(records, r => Assert.Equal(ExecutionState.CANCELLED, r.State));
-        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        // U2c1b: settled is not resolved. Every row a press writes is flagged from the write-ahead
+        // and only the owner clears it, so a wholly successful sweep still waits for a person.
+        Assert.All(records, r => Assert.True(r.NeedsReconciliation));
+        foreach (var r in records) gw.ForceResolve(r.RequestId, r.State, "checked in ATAS: both are gone");
+        await gw.RefreshHealthAsync();
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
-    }
-}
-
-// =================================================================================================
-// ROUND 3 · R2 — a press owns a target set, judges itself by its own records, and survives a restart
-// =================================================================================================
-
-public class PressOwnsItsSetTests
-{
-    [Fact]
-    public async Task A_retried_close_press_does_not_touch_a_position_that_arrived_after_it()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "set-es", TestEnv.Buy("ES", 2m));
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
-
-        var press = TradingGateway.NewOperatorPressNonce();
-        await gw.OperatorCloseAllAsync(press);
-        c.ThrowAfterClose = null;
-        Assert.Equal(1, c.Closes);
-
-        // A position in another instrument appears — placed by hand at the platform, since TradeAgent
-        // is paused by the press's own unconfirmed record.
-        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
-            OrderType.Market, 3m, null, null, TimeInForce.Day, null), FillBehaviour.FillImmediately);
-        Assert.Contains(c.Inner.Broker.Positions, p => p.Symbol == "NQ");
-
-        await gw.OperatorCloseAllAsync(press);               // the SAME press, retried
-
-        Assert.Equal(1, c.Closes);                           // nothing was sent at all
-        Assert.Empty(gw.Requests.Query("instrument='NQ' AND request_id LIKE 'op-close-%'"));
-        Assert.Contains(c.Inner.Broker.Positions, p => p.Symbol == "NQ");   // untouched by that press
-
-        // ...and it says so rather than reporting a clean sweep.
-        var said = Recovery.Activity(db).Last(t => t.StartsWith("You pressed") || t.StartsWith("You closed"));
-        Assert.Contains("Nothing further was sent", said);
-        Assert.DoesNotContain("You closed all positions", said);
-    }
-
-    [Fact]
-    public async Task A_retried_cancel_all_press_does_not_sweep_orders_that_arrived_after_it()
-    {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "set-w1",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down during the sweep");
-
-        var press = TradingGateway.NewOperatorPressNonce();
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync(press));
-        c.ThrowAfterCancelAll = null;
-        Assert.Equal(1, c.CancelAlls);
-
-        c.Inner.Broker.Accept(new PlaceOrderCommand("BY-HAND", c.Inner.Broker.AccountId, "NQ", OrderSide.Buy,
-            OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null), FillBehaviour.LeaveWorking);
-
-        Assert.Empty(await gw.OperatorCancelAllAsync(press));   // the same press again
-
-        Assert.Equal(1, c.CancelAlls);                          // the wire was never touched again
-        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single(o => o.Symbol == "NQ").State);
-    }
-
-    [Fact]
-    public async Task A_press_is_judged_by_its_own_records_and_not_by_unrelated_work()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "own-pos", TestEnv.Buy("ES", 2m));
-
-        // Something unrelated is unconfirmed — an agent order that never came back. It rests on the
-        // book rather than filling, so it adds no position for the press to find.
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-        c.ThrowAfterPlace = new ConnectorTransportException("connection lost after the order was accepted");
-        await gw.PlaceAsync(new AgentContext("a"), "own-unrelated",
-            new PlaceIntent("NQ", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-        c.ThrowAfterPlace = null;
-        c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
-        Assert.True(gw.HasUnconfirmedWork());
-
-        var press = TradingGateway.NewOperatorPressNonce();
-        Assert.Equal(1, await gw.OperatorCloseAllAsync(press));      // the escape hatch still works
-
-        // The press itself is complete: its own record filled and the position is flat. The
-        // unrelated order does not hold the control, and the control does not lift on it either.
-        var outcome = await gw.PressOutcomeAsync(TradingGateway.ClosePress, press);
-        Assert.True(outcome.Complete);
-        Assert.Equal(1, outcome.Records);
-        Assert.True(gw.HasUnconfirmedWork());                        // still paused, for the other one
-    }
-
-    [Fact]
-    public async Task A_press_whose_own_close_is_unconfirmed_is_not_complete()
-    {
-        var (gw, c, db) = await Recovery.Ready();
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "own-2", TestEnv.Buy("ES", 2m));
-        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-        c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
-
-        var press = TradingGateway.NewOperatorPressNonce();
-        await gw.OperatorCloseAllAsync(press);
-        c.ThrowAfterClose = null;
-
-        var outcome = await gw.PressOutcomeAsync(TradingGateway.ClosePress, press);
-        Assert.False(outcome.Complete);
-        Assert.Equal(1, outcome.Unfinished);
-        Assert.Contains("still open", outcome.Summary);
-
-        // Confirming the record through the card is what completes it, once the position is gone.
-        var record = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
-        gw.ForceResolve(record.RequestId, ExecutionState.CANCELLED, "checked in ATAS: the close never went");
-        Assert.False((await gw.PressOutcomeAsync(TradingGateway.ClosePress, press)).Complete);  // still open
-        c.Inner.Broker.FillWorking(c.Inner.Broker.Orders.Single(o => o.Side == OrderSide.Sell).ConnectorOrderId);
-        Assert.True((await gw.PressOutcomeAsync(TradingGateway.ClosePress, press)).Complete);
-    }
-
-    [Fact]
-    public async Task An_unresolved_press_is_reconstructed_after_a_restart()
-    {
-        var file = Path.Combine(TestEnv.Home, $"press-{Guid.NewGuid():n}.db");
-        var broker = new FakeBroker();
-        string press;
-
-        using (var db = new Database(file))
-        {
-            var c = new RecoveryConnector(new FakeConnector(broker));
-            var gw = new TradingGateway(db, c, new HealthRegistry());
-            gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; s.Risk.MaxOrderQuantity = 10m; });
-            await c.ConnectAsync();
-            await gw.RefreshHealthAsync();
-            await gw.PlaceAsync(AgentContext.Operator, "restart-pos", TestEnv.Buy("ES", 2m));
-            c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
-            c.ThrowAfterClose = new ConnectorTransportException("connection lost after the close was sent");
-            press = TradingGateway.NewOperatorPressNonce();
-            await gw.OperatorCloseAllAsync(press);
-            await gw.DisposeAsync();
-        }
-
-        using (var db = new Database(file))
-        {
-            var gw = new TradingGateway(db, new FakeConnector(broker), new HealthRegistry());
-
-            // Exactly what SafetyPage does when it is built.
-            var button = new OperatorPress();
-            button.Restore(gw.OutstandingPressNonce(TradingGateway.ClosePress));
-
-            Assert.True(button.Outstanding);
-            Assert.Equal(press, button.Begin());     // the same press, not a fresh one
-            await gw.DisposeAsync();
-        }
     }
 }
 
@@ -2389,18 +1993,27 @@ public class NonDefiniteIsNeverClearTests
         return (clock, new GatewayOptions { Clock = clock });
     }
 
-    /// <summary>An operator cancel-all whose answer was lost on the wire, over one resting order.</summary>
-    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, MovableClock Clock)> LostSweep()
+    /// <summary>
+    /// A record that names no order of its own, over one resting order.
+    ///
+    /// U2c1b: this used to be built out of an operator cancel-all whose answer was lost, because
+    /// that press was the main way to reach the "judge it on the whole book" arm. A press is not
+    /// reconciled by the machine any more — it writes flagged rows and waits for the owner — so the
+    /// arm is now reached only by a CANCEL row from an older build whose parameters name nothing,
+    /// which is what this builds directly. The RULE under test is unchanged.
+    /// </summary>
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, MovableClock Clock)> UntargetedCancel()
     {
         var (clock, options) = Clocked();
         var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
         await gw.PlaceAsync(AgentContext.Operator, "r4-nd-place",
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-        c.CancelAllDoesNotReachTheBook = true;
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;
-        c.CancelAllDoesNotReachTheBook = false;
+
+        // A CANCEL row whose stored parameters are not a target reference — exactly the shape an
+        // older build left behind, dispatched and never answered.
+        gw.Requests.TryCreate(Recovery.Row("r4-nd-cancel", RequestIntent.CANCEL, instrument: "-"));
+        gw.Requests.Transition("r4-nd-cancel", ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        gw.Requests.MarkNeedsReconciliation("r4-nd-cancel", "the answer never came back");
         return (gw, c, db, clock);
     }
 
@@ -2409,78 +2022,60 @@ public class NonDefiniteIsNeverClearTests
     ///
     /// The live set was filtered by `IsDefinite` before it was counted, so a CANCEL_PENDING order —
     /// the platform saying "a cancellation is in progress and I do not know yet" — dropped out of it,
-    /// `live.Count == 0`, and the press resolved CANCELLED. That is the rule read backwards: the
+    /// `live.Count == 0`, and the record resolved CANCELLED. That is the rule read backwards: the
     /// absence of DEFINITE evidence became the presence of it (Codex round-3 F2).
     /// </summary>
     [Theory]
     [InlineData(ExecutionState.CANCEL_PENDING)]
     [InlineData(ExecutionState.UNKNOWN)]
-    public async Task A_captured_order_the_platform_will_not_commit_to_keeps_the_sweep_unconfirmed(ExecutionState state)
+    public async Task An_order_the_platform_will_not_commit_to_keeps_an_untargeted_record_unconfirmed(ExecutionState state)
     {
-        var (gw, c, db, clock) = await LostSweep();
+        var (gw, c, db, clock) = await UntargetedCancel();
         using var dbh = db;
         c.RewriteBook = o => o with { State = state };
         clock.Advance(TimeSpan.FromMinutes(10));
 
         var result = await gw.ReconcileAsync();
 
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
+        Assert.NotEqual(ExecutionState.CANCELLED, gw.GetRequest("r4-nd-cancel")!.State);
         Assert.False(result.Clean, string.Join("; ", result.Details));
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
     /// <summary>
-    /// THE SAME WITH NOTHING CAPTURED, which is the branch that reads the WHOLE account. A sweep that
-    /// never got far enough to write per-order records is judged on "is anything working" — and an
-    /// order the platform will not commit to is not an answer to that question either.
-    /// </summary>
-    [Fact]
-    public async Task A_sweep_with_nothing_captured_is_unconfirmed_while_the_book_is_undecided()
-    {
-        var (clock, options) = Clocked();
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
-        using var dbh = db;
-        await gw.PlaceAsync(AgentContext.Operator, "r4-nc-place",
-            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
-
-        // The order list the sweep reads is what fails, so no per-order record is ever written and
-        // the umbrella has nothing captured to judge itself on.
-        c.HideOrdersEntirely = true;
-        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
-        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
-        c.ThrowAfterCancelAll = null;
-        c.HideOrdersEntirely = false;
-
-        Assert.Empty(gw.Requests.Query("request_id LIKE 'op-cancel-%-%' AND intent='CANCEL'"));
-        c.RewriteBook = o => o with { State = ExecutionState.CANCEL_PENDING };
-        clock.Advance(TimeSpan.FromMinutes(10));
-
-        var result = await gw.ReconcileAsync();
-
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
-        Assert.False(result.Clean, string.Join("; ", result.Details));
-    }
-
-    /// <summary>
-    /// THE OTHER DIRECTION: a book that is DEFINITELY clear still settles the press. The rule is
+    /// THE OTHER DIRECTION: a book that is DEFINITELY clear still settles the record. The rule is
     /// about what counts as evidence, not about refusing to finish.
     /// </summary>
     [Fact]
-    public async Task A_definitely_cancelled_book_still_settles_the_sweep()
+    public async Task A_definitely_cancelled_book_still_settles_an_untargeted_record()
     {
-        var (gw, c, db, clock) = await LostSweep();
+        var (gw, c, db, clock) = await UntargetedCancel();
         using var dbh = db;
         foreach (var o in c.Inner.Broker.Orders.ToList()) c.Inner.Broker.Cancel(o.ConnectorOrderId);
         clock.Advance(TimeSpan.FromMinutes(10));
 
         var result = await gw.ReconcileAsync();
 
-        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
-        Assert.Equal(ExecutionState.CANCELLED, umbrella.State);
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("r4-nd-cancel")!.State);
         Assert.True(result.Clean, string.Join("; ", result.Details));
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// A WORKING ORDER NOBODY CAN ATTRIBUTE TO THIS RECORD IS NOT PROOF EITHER. The whole-book arm
+    /// is the weakest evidence in the system and it may only ever conclude from an EMPTY book.
+    /// </summary>
+    [Fact]
+    public async Task A_working_order_keeps_an_untargeted_record_unconfirmed()
+    {
+        var (gw, _, db, clock) = await UntargetedCancel();
+        using var dbh = db;
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.NotEqual(ExecutionState.CANCELLED, gw.GetRequest("r4-nd-cancel")!.State);
+        Assert.False(result.Clean, string.Join("; ", result.Details));
     }
 }
 

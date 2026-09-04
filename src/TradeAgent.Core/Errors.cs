@@ -14,6 +14,7 @@ public enum ErrorCode
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, TRADING_PAUSED_UNRECONCILED,
+    EMERGENCY_PRESS_UNRESOLVED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS
@@ -60,6 +61,7 @@ public static class Errors
         [ErrorCode.MODE_FORBIDS_EXECUTION]         = ("TradeAgent's current mode does not allow this order.", "Check the mode on the Dashboard. An order the AI has already proposed can only be approved in the confirm-each-order mode it was proposed in.", false),
         [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Paper mode refused to send an order to a real-money account.", "Select a simulation account, or switch mode deliberately.", false),
         [ErrorCode.APPROVAL_REQUIRED]              = ("The AI is asking permission to place an order.", "Approve or decline it in TradeAgent.", false),
+        [ErrorCode.EMERGENCY_PRESS_UNRESOLVED]     = ("The last press of this emergency control has not been resolved yet.", "Open the Dashboard, read what it did, and confirm each line. Then you can press it again.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
         [ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE] = ("Fully automatic real-money trading is refused because this platform cannot confirm what happened to an order after a disconnection.", "Use confirm-each-order mode instead, or paper mode.", false),

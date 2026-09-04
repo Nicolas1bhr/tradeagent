@@ -263,6 +263,53 @@ sealed class DashboardPage
         public required TextBlock State { get; init; }
         public required TextBlock BrokerId { get; init; }
         public required TextBlock LastCheck { get; init; }
+        /// <summary>Only on a press row: which press this came from, and what is on the account now.</summary>
+        public TextBlock? Press { get; init; }
+    }
+
+    /// <summary>
+    /// THE OTHER HALF OF WHAT A PRESS DID, and it is not in the record.
+    ///
+    /// An emergency press writes one flagged row per target and pauses trading until the owner has
+    /// read them. A row says what the platform answered about the ORDER — "the platform filled it",
+    /// "it is still working" — and the question the owner actually has is whether the position is
+    /// gone. Those are different facts and a close that filled over a position that is still 2 long
+    /// is exactly the case worth seeing. So the account is read alongside, off the account the
+    /// RECORDS carry, and written into the row in place.
+    ///
+    /// Off the UI thread and fire-and-forget: it is a connector round trip on a five-second tick,
+    /// and a card that blocks the dashboard to draw a line about a position is worse than one that
+    /// fills the line in a moment later. Until it lands the row simply says nothing extra.
+    /// </summary>
+    void RefreshPressFacts(IReadOnlyList<ExecutionRequest> pending)
+    {
+        var kinds = pending.Where(p => TradingGateway.IsPressRecord(p.RequestId))
+            .Select(p => TradingGateway.PressKindOf(p.RequestId)).Distinct().ToList();
+        if (kinds.Count == 0) return;
+
+        _ = Task.Run(async () =>
+        {
+            var lines = new Dictionary<string, string>();
+            foreach (var kind in kinds)
+            {
+                try
+                {
+                    if (await _host.Gateway.OpenPressAsync(kind) is not { } press) continue;
+                    foreach (var t in press.Targets)
+                        lines[t.RequestId] =
+                            $"{(kind == TradingGateway.ClosePress ? "Close all positions" : "Cancel all working orders")}"
+                            + $" — pressed {press.SentAt.ToLocalTime():HH:mm} — {t.Outcome}"
+                            + (t.PositionNow is { } q ? $"; {t.Target} is now {(q == 0m ? "flat" : q.ToString())}" : "");
+                }
+                catch (Exception) { /* the line is decoration; the flag is what pauses trading */ }
+            }
+            if (lines.Count == 0) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                foreach (var row in _unconfirmedRows)
+                    if (row.Press is { } p && lines.TryGetValue(row.RequestId, out var text)) p.Text = text;
+            });
+        });
     }
 
     void RefreshUnconfirmed(IReadOnlyList<ExecutionRequest> pending)
@@ -294,18 +341,23 @@ sealed class DashboardPage
             row.BrokerId.Text = r.ConnectorOrderId ?? "none — the broker never sent one back";
             row.LastCheck.Text = LastCheckSentence(r);
         }
+
+        RefreshPressFacts(pending);
     }
 
     Control BuildUnconfirmedRow(ExecutionRequest r)
     {
         var id = r.RequestId;
+        var isPress = TradingGateway.IsPressRecord(id);
         var state = Fact("TradeAgent thinks", StateSentence(r.State), mono: false);
         var brokerId = Fact("Broker reference", r.ConnectorOrderId ?? "none — the broker never sent one back", mono: true);
         var lastCheck = Fact("Last check", LastCheckSentence(r), mono: false);
+        var press = isPress ? Fact("Emergency press", "reading the account…", mono: false) : default;
 
         _unconfirmedRows.Add(new UnconfirmedRow
         {
-            RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value
+            RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value,
+            Press = isPress ? press.Value : null
         });
 
         // Required. ForceResolve writes the note onto the record and logs it at warn, which is the
@@ -319,7 +371,7 @@ sealed class DashboardPage
         };
 
         var buttons = new List<Button>();
-        if (OrderStateMachine.IsTerminal(r.State))
+        if (SpokenByThePlatform(r.State))
         {
             // A record the event stream already settled, flagged afterwards because the dispatch
             // that wrote it never got an answer. Terminal states have no outgoing edges, so the
@@ -329,8 +381,9 @@ sealed class DashboardPage
             // purpose, and rightly: that is the stream and the platform disagreeing, which is
             // something to investigate rather than to overwrite. So one button, not two.
             var settled = r.State;
-            buttons.Add(Ui.Confirm($"Our record is right — it was {Word(settled)}",
-                $"Confirm: I checked in ATAS and this order was {Word(settled)}",
+            var tense = OrderStateMachine.IsTerminal(settled) ? "was" : "is";
+            buttons.Add(Ui.Confirm($"Our record is right — it {tense} {Word(settled)}",
+                $"Confirm: I checked in ATAS and this order {tense} {Word(settled)}",
                 () => ResolveAsync(id, settled, note)));
         }
         else
@@ -370,12 +423,13 @@ sealed class DashboardPage
                 Text = TryDescribe(r), FontFamily = Theme.Mono, FontSize = Theme.Base,
                 FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap
             },
-            Ui.With(Ui.Col(0,
+            Ui.With(Ui.Col(0, [
+                    .. isPress ? new[] { press.Root } : [],
                     state.Root,
                     Fact("Sent", (r.DispatchedAt ?? r.CreatedAt).ToLocalTime().ToString("d MMM, HH:mm:ss"), mono: true).Root,
                     Fact("Our reference", r.ClientOrderId, mono: true).Root,
                     brokerId.Root,
-                    lastCheck.Root),
+                    lastCheck.Root]),
                 c => c.Margin = new Thickness(0, Theme.S2, 0, 0)),
             note,
             Ui.With(Ui.Col(Theme.S2, [.. buttons]), c => c.Margin = new Thickness(0, Theme.S2, 0, 0)));
@@ -460,6 +514,23 @@ sealed class DashboardPage
         return (root, v);
     }
 
+    /// <summary>
+    /// A STATE ONLY THE PLATFORM'S OWN ANSWER CAN HAVE PRODUCED — so the honest thing to ask about
+    /// it is whether it is still true, not what it "really" was.
+    ///
+    /// This used to be <c>OrderStateMachine.IsTerminal</c>, and that was right while the only
+    /// flagged records were failures. An emergency press flags EVERY row it writes, including the
+    /// ones where nothing went wrong, so the card now regularly holds a close the platform answered
+    /// WORKING — and the two buttons offered for a non-terminal record ("It was filled", "No order
+    /// exists") are both false about it. <c>ForceResolve</c> takes an assertion equal to the stored
+    /// state on any state at all, clearing the flag without rewriting the record, so agreeing with
+    /// the platform is the one answer that is always available and always true.
+    /// </summary>
+    static bool SpokenByThePlatform(ExecutionState s) => s is
+        ExecutionState.FILLED or ExecutionState.CANCELLED or ExecutionState.REJECTED or
+        ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED or
+        ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING;
+
     static string Word(ExecutionState s) => s switch
     {
         ExecutionState.FILLED => "filled",
@@ -500,7 +571,6 @@ sealed class SafetyPage
     readonly TextBlock _liveNote = Ui.Body("");
     readonly Button _liveButton;
     readonly Button _stopButton;
-    readonly OperatorPress _cancelAllPress = new(), _closeAllPress = new();
     readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
@@ -508,51 +578,43 @@ sealed class SafetyPage
     public Control Root { get; }
 
     /// <summary>
-    /// Runs one press of an emergency control, and refuses to pretend it is over when it is not.
+    /// Runs one press of an emergency control. ONE SHOT, AND THE OWNER IS TOLD WHAT IT DID.
     ///
-    /// A press that leaves the gateway with unconfirmed work stays outstanding: the next press
-    /// repeats it (sending nothing) and the person is told, in the same words the Dashboard card
-    /// uses, that the previous one has to be resolved first. Anything that goes wrong while deciding
-    /// counts as "not finished" — the safe direction for a control that moves money.
+    /// There is no press object here any more and no retry. The gateway writes one flagged record
+    /// per target before it touches the wire, sends the calls, and from that moment refuses to let
+    /// the AI trade until the owner has resolved those records on the Dashboard; a second press
+    /// while one is open is REFUSED by the gateway, and its refusal — "close-all sent at HH:MM;
+    /// resolve it first" — is the sentence shown here.
+    ///
+    /// The screen holding the press was the source of six separate faults, and every one of them
+    /// came from the same idea: that a button could keep track of an emergency across a restart, a
+    /// second window and a definite failure. It cannot, and the records already do.
     /// </summary>
-    async Task PressAsync(OperatorPress press, string kind, Func<string, Task> run, string what)
+    async Task PressAsync(Func<Task<TradingGateway.PressOutcome>> run, string what)
     {
-        var repeat = press.Outstanding;
-        var nonce = press.Begin();
-        var summary = "";
-        try { await run(nonce); }
-        finally
+        try
         {
-            // Judged on THIS press's own records — not on whether the gateway has unconfirmed work
-            // from something else, which both locked the control over unrelated orders and released
-            // it while this press's own close was still unconfirmed.
-            try
-            {
-                var outcome = await _host.Gateway.PressOutcomeAsync(kind, nonce);
-                summary = outcome.Summary;
-                press.Finish(outcome.Complete);
-            }
-            catch (Exception)
-            {
-                summary = "TradeAgent could not check what the press did.";
-                press.Finish(false);
-            }
+            var outcome = await run();
+            Ui.ReportError?.Invoke(outcome.Complete
+                ? $"{what}: {outcome.Summary}"
+                : $"{what}: {outcome.Summary} AI trading is paused until you confirm each line on the Dashboard.");
         }
-
-        if (press.Outstanding)
-            Ui.ReportError?.Invoke(repeat
-                ? $"Still unconfirmed, so nothing further was sent — pressing {what} again repeats the same press. {summary} Confirm it on the Dashboard first."
-                : $"TradeAgent could not confirm the result of {what}. {summary} Nothing more will be sent until you confirm it on the Dashboard.");
+        catch (GatewayDeniedException ex)
+        {
+            Ui.ReportError?.Invoke($"{ex.Info.UserMessage} {ex.Message}. {ex.Info.Repair}");
+        }
+        catch (Exception ex)
+        {
+            // The gateway latches the pause in memory before it writes anything, so an exception on
+            // the way out does not mean nothing was sent — it means the Dashboard is the place to
+            // find out what was.
+            Ui.ReportError?.Invoke($"{what} did not finish: {ex.Message}. Check the Dashboard for what it did send.");
+        }
     }
 
     public SafetyPage(AppHost host)
     {
         _host = host;
-
-        // A press the store still cannot account for survives a restart: without this, closing the
-        // app was a way to mint a fresh nonce over an unresolved close and send a second one.
-        _closeAllPress.Restore(_host.Gateway.OutstandingPressNonce(TradingGateway.ClosePress));
-        _cancelAllPress.Restore(_host.Gateway.OutstandingPressNonce(TradingGateway.CancelPress));
 
         foreach (var mode in Enum.GetValues<TradingMode>())
         {
@@ -583,17 +645,16 @@ sealed class SafetyPage
             _stopButton,
             Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions."),
             Ui.Divider(),
-            // THE PRESS, NOT THE CLICK, IS THE UNIT. OperatorPress hands back the SAME nonce while
-            // the last press is unfinished, so "it failed, press it again" repeats that press and
-            // the gateway sends nothing twice. Minting a fresh nonce here — which is what this did
-            // until 2026-09-03 — made the retry a new decision and closed the position twice.
+            // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON. The screen holds nothing about the
+            // press: the gateway writes a flagged row per target before the wire, pauses trading on
+            // them, and refuses the next press until they are resolved on the Dashboard. Holding a
+            // nonce here so the button could "retry" is what this replaces — it made a definite
+            // failure unpressable-past, and it survived a restart into a position that was not flat.
             Ui.With(Ui.Confirm("Cancel all working orders", "Confirm: cancel all working orders",
-                    () => PressAsync(_cancelAllPress, TradingGateway.CancelPress,
-                        p => _host.Gateway.OperatorCancelAllAsync(p), "Cancel all working orders")),
+                    () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), "Cancel all working orders")),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch),
             Ui.With(Ui.Confirm("Close all positions", "Confirm: close all positions with market orders",
-                    () => PressAsync(_closeAllPress, TradingGateway.ClosePress,
-                        p => _host.Gateway.OperatorCloseAllAsync(p), "Close all positions")),
+                    () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), "Close all positions")),
                 b => b.HorizontalAlignment = HorizontalAlignment.Stretch)));
         emergency.Margin = new Thickness(Theme.S5, 0, 0, 0);
 

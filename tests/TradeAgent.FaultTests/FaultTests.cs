@@ -444,9 +444,9 @@ public class ControlTests
         await gw.PlaceAsync(new AgentContext("a"), "flat-1", TestEnv.Buy());
         Assert.NotEmpty(conn.Broker.Positions);
 
-        var closed = await gw.OperatorCloseAllAsync();
+        var press = await gw.OperatorCloseAllAsync();
 
-        Assert.Equal(1, closed);
+        Assert.Single(press.Targets);
         Assert.Empty(conn.Broker.Positions);
     }
 
