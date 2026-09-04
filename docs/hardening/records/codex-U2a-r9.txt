@@ -1,0 +1,35 @@
+PRIOR 2 — PARTIAL — The cold-placement multiplier and override clamp are fixed, but the new risk-reducing formula still undercounts `close-all`, and disposal may return with unfinished handlers (GatewayPipeServer.cs:157,220,1187).
+
+PRIOR F1 — FIXED — Definite refusals now map from `REJECTED`, while failures before record creation map to `not-sent` (GatewayPipeServer.cs:790,917).
+
+PRIOR F2 — FIXED — Disconnect and disposal exits now remove the request from both `_pending` and `_abandoned` (AtasConnector.cs:948).
+
+PRIOR F3 — FIXED — Both the declared worst case and deadline precheck now add the two serial simulator latencies (FakeConnector.cs:31,95).
+
+PRIOR F4 — FIXED — Expired absolute deadlines now return zero rather than a fresh millisecond (RiskReducingScope.cs:75).
+
+PRIOR F5 — NOT FIXED — The target-typed async wrapper removes the apparent CS8619 source mismatch, but no round-9 non-incremental build showing zero warnings is recorded; the gate is UNVERIFIED (GatewayPipeServer.cs:708).
+
+FINDING 1 — HIGH — GatewayPipeServer.cs:220 — The drain models a risk-reducing handler as `E + W`, but one `close-all` wave can serialize four ordinary placement RPCs, making the real path `E + 4W` and allowing disposal to return with unsettled requests.
+
+CHECK — With `E=30s`, `W=4s`, `S=5s`, and four nonzero positions, require `HandlerDrainTimeout >= E + 4W + S = 51s` and zero unfinished/DISPATCHING requests after disposal; the current formula returns `max(5W, E+W)+S = 39s`.
+
+FINDING 2 — HIGH — AtasConnector.cs:1018 — A close operation’s final offsetting `Place` is excluded from the ambient emergency scope and receives fresh gate, frame, and reply budgets, violating the single absolute deadline.
+
+CHECK — Issue IPC `close` with fast prerequisite reads and an ATAS peer that withholds only the placement reply; require completion within `EmergencyDeadline`; the current path waits the ordinary RPC timeout via AtasConnector.cs:1029-1033,1058,1098.
+
+FINDING 3 — MED — GatewayPipeServer.cs:816 — The public per-leg vocabulary contains six values, including `sent-and-confirmed`, `sent-still-working`, and `nothing-to-do`, instead of exactly `confirmed`, `rejected`, `not-sent`, and `sent-not-confirmed`.
+
+CHECK — Deserialize every reachable sweep reply and assert `outcome ∈ {"confirmed","rejected","not-sent","sent-not-confirmed"}`; the production switch emits six values, and SweepRequestIdTests.cs:395 explicitly approves all six.
+
+FINDING 4 — MED — GatewayPipeServer.cs:786 — Record-only classification cannot preserve wire certainty: pre-gate `Busy`/`PeerStalled` legs become UNKNOWN despite never being sent, while disposal cancellation can leave DISPATCHING/unreconciled yet be described as `sent-not-confirmed`.
+
+CHECK — Assert pre-wire `Busy` and gate-expiry `PeerStalled` produce `not-sent`; assert every `sent-not-confirmed` leg has state `UNKNOWN` and `NeedsReconciliation=true`. `DISPATCHING` and `RECONCILING` currently fall through the same mapper. A late definite answer remains attached to the earlier UNKNOWN only through telemetry; settlement remains deferred to U2c-1.
+
+CHECK (b) — FAIL — The longest ordinary call-count path is cold buy/sell at five RPCs, but the longest customizable wall-clock handler is `close-all`: one emergency prefix plus four dispatch-gate-serialized ordinary placements. The derived drain does not cover it for all customized timeouts.
+
+CHECK (c) — FAIL — `close` and `close-all` still hand each final placement a fresh ordinary budget inside an emergency operation.
+
+CHECK (d) — PASS AT SOURCE / GATE UNVERIFIED — The CS8619 change does not alter meaningful nullability: `CancelAsync` never returns null, while the direct nullable `CloseAsync` path and its “nothing to close” result remain unchanged.
+
+SUMMARY — 2 HIGH / 2 MED / 1 LOW
