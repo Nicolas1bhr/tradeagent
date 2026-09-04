@@ -22,7 +22,7 @@ this batch (round 3's verdict was 0H/2M/4L; you close the two MED and the LOW ba
 
 `git rebase main` on the branch. The manager dry-ran it on 2026-09-03 against `main` `7c94cfe` and against the U2a tip:
 clean both times. If it conflicts when you run it (U2c-1 may have landed: `TradingGateway.cs`, `GatewayTypes.cs`,
-`AppHost.cs`, `Errors.cs`), resolve keeping both sides' behaviour. `dotnet build TradeAgent.sln` + FULL suite; counts
+`AppHost.cs`, `Errors.cs`), resolve keeping both sides' behaviour. `dotnet build TradeAgent.sln --no-incremental` + FULL suite; counts
 into the record before round 4.
 
 ## Items
@@ -46,7 +46,7 @@ into the record before round 4.
 RED quoted before each fix, GREEN after, mutants watched to bite (commit before mutating; `cp` restore; `touch`). Both
 directions on item 2: the oversize/stall cases are refused AND a healthy manifest still resolves within the timeout.
 R3 sweep: every caller of `TryGetSmallTextAsync`, `ReadLimitedAsync`, the renamed coupling type, and the `Activity`
-sink. Gates: targeted per item; `dotnet build TradeAgent.sln` + FULL suite at the end, counts pasted.
+sink. Gates: targeted per item; `dotnet build TradeAgent.sln --no-incremental` + FULL suite at the end, counts pasted.
 
 ## Ownership (R2)
 

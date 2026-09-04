@@ -49,7 +49,7 @@ by running its check. The manager already refuted five (bottom) — do not re-op
 
 ## Process
 
-As before; `## Round 8 (build record, <date>)` in `records/U14.md` AS YOU GO; targeted gates, then `dotnet build` + FULL
+As before; `## Round 8 (build record, <date>)` in `records/U14.md` AS YOU GO; targeted gates, then `dotnet build TradeAgent.sln --no-incremental` + FULL
 suite once on the Mac; no box unless the manager grants it. Report: tip sha, per finding RED → GREEN → mutant, the
 refutations written, suite counts, "What I did NOT do".
 

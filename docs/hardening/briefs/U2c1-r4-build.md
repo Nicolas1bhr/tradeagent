@@ -33,7 +33,7 @@ The manager dry-ran this on 2026-09-03 against `main` `7c94cfe`: clean, 21 commi
 out because `main` carries their rewritten form). **If U2a has been integrated by the time you run it, expect a content
 conflict in `src/TradeAgent.Gateway/GatewayTypes.cs`** (U2a sealed `AgentContext`, minted `op-…` ids, added the
 61-char budget; U2c-1 added record/press types). Resolve it keeping BOTH sides' behaviour; never drop a U2a guard to make
-it compile. Then `dotnet build TradeAgent.sln` + FULL suite; write the counts into the record before touching round 4.
+it compile. Then `dotnet build TradeAgent.sln --no-incremental` + FULL suite; write the counts into the record before touching round 4.
 Any red after the rebase is your first defect: diagnose, do not skip.
 
 ## Round 4, class A — the rule stays; derive it correctly
@@ -105,7 +105,7 @@ inconclusive and keeps trading paused.* Implement each as a red-first test that 
   exist in the tree, say so — the verifier will rebuild them from the record.
 - R3 adjacent sweep: every reader of the unconfirmed-work query (Dashboard, Doctor, GatewayHost, `status`,
   authorization, and the updater's provider once U2d lands) enumerated and confirmed.
-- Gates: targeted per item; `dotnet build TradeAgent.sln` + FULL suite at the end, counts pasted.
+- Gates: targeted per item; `dotnet build TradeAgent.sln --no-incremental` + FULL suite at the end, counts pasted.
 
 ## Ownership (R2)
 

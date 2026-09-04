@@ -11,7 +11,7 @@ Steps, in order, one unit at a time, from the main worktree `~/Projects/ai-tradi
 3. Rebase: in the unit's build worktree, `git rebase main` (U14) or `git rebase main` on the probe branch (U2a); expected
    clean because `main` moved by docs only since the branch's base — if it conflicts, STOP: the merged combination is
    unverified and needs a targeted verify round. Record the new tip.
-4. Gate on the rebased tip, in that worktree: `dotnet build TradeAgent.sln` (0 errors) + `dotnet test TradeAgent.sln`
+4. Gate on the rebased tip, in that worktree: `dotnet build TradeAgent.sln --no-incremental` (0 errors) + `dotnet test TradeAgent.sln`
    (full, output to a file; paste per-project counts) — this is the "full once more at Integrate" (§9.5).
 5. `git branch -f <unit-branch> <rebased tip>` if the work happened on a probe branch; then on main:
    `git merge --ff-only <unit-branch>`; `git log --oneline -1`.
