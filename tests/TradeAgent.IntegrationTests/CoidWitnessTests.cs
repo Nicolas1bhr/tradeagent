@@ -2941,6 +2941,121 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// AND THE PROBE IN FRONT OF THE READ IS A READ TOO — F31, the same conflation one step further
+    /// out.
+    ///
+    /// Round 8 classified a failing <c>ReadAllLines</c> as unreadable, and then asked
+    /// <c>File.Exists</c> first. <c>File.Exists</c> NEVER throws: it answers false for a denial as
+    /// readily as for an absence, so an ACL that refuses the attributes — or a directory this account
+    /// may not stat — short-circuited the fixed read and produced "a sidecar with nothing in it"
+    /// again. The rule is that every probe that can fail is a read, and a read that failed is
+    /// UNREADABLE.
+    ///
+    /// The real filesystem can build one of these without a seam: a DIRECTORY at the sidecar's name.
+    /// <c>File.Exists</c> answers false about it — a directory is not a file — while it is manifestly
+    /// not nothing, and opening it fails. Same shape as round 6's F17 variant for the committed file.
+    /// </summary>
+    [Fact]
+    public void A_directory_at_the_sidecars_name_is_unreadable_rather_than_absent()
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        Assert.False(File.Exists(Sidecar));
+        Directory.CreateDirectory(Sidecar);
+        Assert.False(File.Exists(Sidecar));      // the probe that used to decide, deciding wrongly
+
+        var reader = Session();
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("could not be read", reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+    }
+
+    /// <summary>
+    /// EVERY PROBE ON THE SIDECAR PATH, AND WHAT EACH FAILURE MEANS — the class, enumerated.
+    ///
+    /// There are exactly two filesystem probes left on this path: the line read, which answers "what
+    /// is in this file", and the directory enumeration, which answers "which sidecars are there".
+    /// (<c>File.Exists</c> is gone from both; it was the defect.) Each is driven here through its
+    /// seam with each failure the operating system can give it, because an ACL that denies attributes
+    /// or refuses an enumeration cannot be provoked on this machine without also breaking the
+    /// committed read in the same directory, which is a different state from the one under test —
+    /// the same reason <c>_open</c> and <c>_replace</c> exist.
+    ///
+    /// ABSENCE IS TWO EXCEPTIONS AND NO OTHERS. Anything else is a read this run could not perform.
+    /// </summary>
+    [Theory]
+    [InlineData("FileNotFound", false)]
+    [InlineData("DirectoryNotFound", false)]
+    [InlineData("UnauthorizedAccess", true)]
+    [InlineData("IO", true)]
+    [InlineData("Argument", true)]
+    public void A_sidecar_read_that_fails_is_unreadable_unless_it_says_the_file_is_not_there(
+        string failure, bool unreadable)
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        var reader = new CoidWitness(File_, readSidecar: _ => throw Failure(failure));
+
+        if (unreadable)
+        {
+            Assert.NotNull(reader.Trouble);
+            Assert.Contains("could not be read", reader.Trouble);
+            Assert.Contains("io:degraded", reader.Token());
+            Assert.True(reader.Noted);
+            Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+        }
+        else
+        {
+            Assert.Null(reader.Trouble);
+            Assert.False(reader.Noted);
+            Assert.Equal(WitnessStanding.Clean, CoidWitnessReport.Standing(reader));
+        }
+    }
+
+    /// <summary>
+    /// THE SECOND PROBE, AND THE F25 BOUNDARY IT LANDS ON.
+    ///
+    /// An enumeration that failed is not an empty directory. What it hides is the PER-WRITER set —
+    /// the canonical generations are read by name and answer for themselves — so it flags the zero
+    /// (<see cref="CoidWitness.Noted"/>) without degrading this machine. A second bridge's directory
+    /// permissions must not drop <c>SupportsClientOrderId</c>; they must stop a count of zero being
+    /// read as "this product never submitted that identifier".
+    /// </summary>
+    [Theory]
+    [InlineData("DirectoryNotFound", false)]
+    [InlineData("UnauthorizedAccess", true)]
+    [InlineData("IO", true)]
+    [InlineData("Argument", true)]
+    public void A_sidecar_enumeration_that_fails_flags_the_zero_without_degrading_the_machine(
+        string failure, bool noted)
+    {
+        var seed = Session();
+        Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        seed.Dispose();
+
+        var reader = new CoidWitness(File_, listSidecars: (_, _) => throw Failure(failure));
+
+        Assert.Equal(noted, reader.Noted);
+        Assert.Null(reader.Trouble);                       // not degraded: the F25 boundary
+        Assert.DoesNotContain("io:degraded", reader.Token());
+        Assert.Equal(noted, CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+    }
+
+    static Exception Failure(string kind) => kind switch
+    {
+        "FileNotFound" => new FileNotFoundException("no such file"),
+        "DirectoryNotFound" => new DirectoryNotFoundException("no such directory"),
+        "UnauthorizedAccess" => new UnauthorizedAccessException("access to the path is denied"),
+        "IO" => new IOException("the device is not ready"),
+        _ => new ArgumentException("the path has an invalid character")
+    };
+
+    /// <summary>
     /// AN OPEN GAP SURVIVES A CRASH INSIDE THE ROTATION WINDOW.
     ///
     /// Rotation deleted the older generation and THEN moved the current log onto its name, so between
