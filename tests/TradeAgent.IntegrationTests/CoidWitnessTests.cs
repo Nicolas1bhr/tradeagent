@@ -2853,6 +2853,43 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A SIDECAR THAT CANNOT BE READ IS NOT A SIDECAR WITH NOTHING IN IT — the same predicate family
+    /// as the committed file's, and it had the opposite answer.
+    ///
+    /// Every read of the sidecar was wrapped in a catch that returned "no lines": a file held open
+    /// exclusively by a scanner, a viewer, or another process's writer therefore counted as empty.
+    /// Nothing was noted, no deciding line was found, the standing came out Clean, and a count of
+    /// zero records below it was NOT provisional — which for this file means "this product never
+    /// submitted that identifier" stated on the strength of a file this build could not open.
+    ///
+    /// Unreadable is its own answer in both directions: something IS written down (so the zero is
+    /// flagged), and this run cannot tell whether the gap it describes is open (so it is degraded,
+    /// which is the fail-closed direction and the one the committed file already takes).
+    /// </summary>
+    [Fact]
+    public void A_sidecar_that_cannot_be_read_is_not_a_sidecar_with_nothing_in_it()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
+        owner.Dispose();
+
+        File.WriteAllText(Sidecar,
+            $"{DateTimeOffset.UtcNow:O} ERROR coid-witness rewrite did not land. claim=TA-GAP"
+            + Environment.NewLine);
+
+        // Held exclusively, which is what a scanner or an open viewer does to it.
+        using var held = new FileStream(Sidecar, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var reader = Session();
+        Assert.True(reader.Noted);
+        Assert.NotNull(reader.Trouble);
+        Assert.Contains("could not be read", reader.Trouble);
+        Assert.Contains("io:degraded", reader.Token());
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+        Assert.False(reader.GapClosed);
+    }
+
+    /// <summary>
     /// THE SIDECAR IS A SET, AND THE STATE IS READ OFF THE SET.
     ///
     /// `AppendToErrorLog` bounds the file by rotating it one generation back, so the log that decides
