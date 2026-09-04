@@ -862,6 +862,21 @@ public sealed class CoidWitness : IDisposable
         }
     }
 
+    /// <summary>
+    /// EVERY SIDECAR BESIDE THE WITNESS THAT EXISTS — the canonical file, its rotated generation, and
+    /// each refused writer's own. Public because a reader that prints only the canonical one reports
+    /// a rejected candidate for a state that was in fact a second bridge being turned away, and the
+    /// two read very differently to whoever is holding the machine.
+    /// </summary>
+    public IReadOnlyList<string> SidecarPaths
+    {
+        get
+        {
+            try { lock (_gate) { return SidecarSet().Where(File.Exists).ToArray(); } }
+            catch (Exception) { return []; }
+        }
+    }
+
     public bool Noted
     {
         get

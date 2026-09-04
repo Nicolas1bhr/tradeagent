@@ -3228,12 +3228,55 @@ public class CoidWitnessTests : IDisposable
         Assert.DoesNotContain("UNRESOLVED", CoidWitnessReport.Headline(WitnessStanding.Historical, log));
         Assert.DoesNotContain("UNRESOLVED", CoidWitnessReport.Headline(WitnessStanding.Noted, log));
         Assert.Contains("refused", CoidWitnessReport.Headline(WitnessStanding.Noted, log));
+        // AND IT DOES NOT NAME ONE OF THE TWO CAUSES AS IF IT WERE THE ONLY ONE. Noted is reached by
+        // a declined candidate AND by a second writer the lease turned away; the wording that named
+        // only the first sent a reader looking for a recovery that never happened.
+        Assert.DoesNotContain("candidate", CoidWitnessReport.Headline(WitnessStanding.Noted, log));
+        Assert.Contains(CoidWitnessReport.Explanation(WitnessStanding.Noted),
+                        l => l.Contains("second writer"));
         Assert.Equal("none recorded", CoidWitnessReport.Headline(WitnessStanding.Clean, log));
 
         Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Unresolved));
         Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Historical));
         Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Noted));
         Assert.Empty(CoidWitnessReport.Explanation(WitnessStanding.Clean));
+    }
+
+    /// <summary>
+    /// A REFUSED SECOND BRIDGE IS REPORTED AS ONE, AND ITS FILE IS ON THE REPORT.
+    ///
+    /// `Noted` was written when the only way to reach it was a temp beside the witness being
+    /// declined, and it still said so after the sidecar was split per writer — so a machine whose
+    /// real problem was two bridges fighting over the witness was described as a rejected candidate,
+    /// and the probe printed the tail of the canonical file, which on that machine does not exist.
+    /// The one thing an operator would act on was the one thing not on the page.
+    /// </summary>
+    [Fact]
+    public void A_refused_second_bridge_is_named_and_its_own_sidecar_is_listed()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-OWNED", "SIM", "ES", "Buy", 1m, null));
+
+        var refused = Session();
+        Assert.False(refused.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
+
+        owner.Dispose();
+        refused.Dispose();
+
+        var reader = Session();
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
+
+        // The file the probe has to print, and the only one there is.
+        var listed = reader.SidecarPaths;
+        Assert.Single(listed);
+        Assert.Contains(CoidWitness.ErrorLogName + "-", Path.GetFileName(listed[0]));
+        Assert.Contains(File.ReadAllLines(listed[0]), l => l.Contains("another writer owns this witness"));
+
+        // And the wording does not send the reader after a recovery that never happened.
+        var headline = CoidWitnessReport.Headline(WitnessStanding.Noted, listed[0]);
+        Assert.DoesNotContain("candidate", headline);
+        Assert.Contains(CoidWitnessReport.Explanation(WitnessStanding.Noted),
+                        l => l.Contains("second writer"));
     }
 
     /// <summary>
