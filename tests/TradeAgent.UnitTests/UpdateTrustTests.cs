@@ -1456,6 +1456,84 @@ public class UpdateTrustTests
         Assert.Equal(1, f.Launches);
     }
 
+    // ================================ round 4 ====================================================
+
+    // ---- 1. a broken log must not overwrite what the owner was told ------------------------------
+
+    /// <summary>
+    /// The success path already survives a sink that throws: Setup is running, so a failed log line
+    /// cannot be allowed to report it as a failure. The REFUSAL path did not. A throwing
+    /// <see cref="UpdateService.Activity"/> unwound out of <c>Refuse</c> into <c>InstallAsync</c>'s
+    /// catch-all, which called <c>Set(Failed, ex.Message)</c> — so the owner was shown the log's own
+    /// error ("database is locked") in place of the sentence explaining why the update was refused,
+    /// with <see cref="UpdateService.Refused"/> cleared back to false, and the second sink call from
+    /// inside the catch then threw the whole thing out of <c>InstallAsync</c> at the caller.
+    ///
+    /// The reason the owner is given is the product here. A log that cannot be written is a log that
+    /// cannot be written.
+    /// </summary>
+    [Fact]
+    public async Task A_throwing_activity_sink_does_not_replace_the_refusal_the_owner_was_given()
+    {
+        var f = new Fake { ReleaseJson = Release(Asset, "SHA256SUMS.txt"), ChecksumText = "" };
+        var service = Service(f);
+        await service.CheckAsync();
+        service.Activity = (_, _) => throw new InvalidOperationException("database is locked");
+
+        Assert.False(await service.InstallAsync());        // and it does not throw at the caller
+
+        Assert.True(service.Refused);
+        Assert.Equal(UpdateStage.Failed, service.Stage);
+        Assert.Contains("cannot be verified", service.Message);
+        Assert.DoesNotContain("database is locked", service.Message);
+        Assert.False(f.DownloadStarted);
+    }
+
+    /// <summary>
+    /// The same for the one refusal that expires on its own. Losing <c>RefusedPendingWork</c> to a
+    /// broken log does not just change the sentence: <see cref="UpdateService.ExpireStaleRefusal"/>
+    /// keys off it, so the refusal would then outlive the order it was about.
+    /// </summary>
+    [Fact]
+    public async Task A_throwing_sink_does_not_lose_the_unconfirmed_order_refusal_or_its_expiry()
+    {
+        var f = Wellformed();
+        var service = Service(f);
+        var outstanding = 1;
+        service.UnconfirmedWork = () => outstanding;
+        await service.CheckAsync();
+        service.Activity = (_, _) => throw new InvalidOperationException("database is locked");
+
+        Assert.False(await service.InstallAsync());
+
+        Assert.True(service.Refused);
+        Assert.True(service.RefusedPendingWork);
+        Assert.Contains("unconfirmed", service.Message);
+        Assert.False(f.DownloadStarted);
+
+        outstanding = 0;
+        service.ExpireStaleRefusal();
+        Assert.False(service.Refused);
+    }
+
+    /// <summary>
+    /// And on the automatic check, where the refusal is the only thing that distinguishes "there is
+    /// a newer release TradeAgent will not install" from "GitHub did not answer".
+    /// </summary>
+    [Fact]
+    public async Task A_throwing_sink_does_not_replace_the_refusal_raised_by_the_background_check()
+    {
+        var f = new Fake { ReleaseJson = Release("TradeAgent-Setup-arm64.exe", Asset, "SHA256SUMS.txt") };
+        var service = Service(f);
+        service.Activity = (_, _) => throw new InvalidOperationException("database is locked");
+
+        await service.CheckAsync();
+
+        Assert.True(service.Refused);
+        Assert.Contains("each look like the installer", service.Message);
+        Assert.DoesNotContain("database is locked", service.Message);
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     static string TempDir()

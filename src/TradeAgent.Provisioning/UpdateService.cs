@@ -505,13 +505,9 @@ public sealed class UpdateService
             // and "you installed it" beside the exception saying Windows would not start it is a log
             // that argues with itself. The caller closes TradeAgent only once this returns true, so
             // this write completes first.
-            try
-            {
-                Activity?.Invoke(
-                    $"You installed TradeAgent {info.Version} over {CurrentVersion} — TradeAgent is closing so Setup can replace it",
-                    "info");
-            }
-            catch (Exception) { /* the installer is already running; there is nothing to fail back to */ }
+            Record(
+                $"You installed TradeAgent {info.Version} over {CurrentVersion} — TradeAgent is closing so Setup can replace it",
+                "info");
 
             return true;
         }
@@ -519,7 +515,7 @@ public sealed class UpdateService
         {
             var why = ex is TradeAgentException t ? $"{t.Info.UserMessage} {t.Info.Repair}".Trim() : ex.Message;
             Set(UpdateStage.Failed, why);
-            Activity?.Invoke($"TradeAgent {info.Version} was not installed: {why}", "warn");
+            Record($"TradeAgent {info.Version} was not installed: {why}", "warn");
             return false;
         }
         finally
@@ -633,9 +629,30 @@ public sealed class UpdateService
         var changedReason = _lastRefusalReason != reason;
         if (changedReason) Dismissed = false;
 
-        if (!repeatable || changedReason) Activity?.Invoke(reason, "warn");
+        if (!repeatable || changedReason) Record(reason, "warn");
         _lastRefusalReason = reason;
         return false;
+    }
+
+    /// <summary>
+    /// Writes one line to the owner's activity history, and never fails the thing it is describing.
+    ///
+    /// Every call site is reporting an outcome that has ALREADY happened: Setup is running, or the
+    /// update has been refused and <see cref="Message"/> already says why. The success path was
+    /// wrapped from the start; the refusal path was not, and a sink that throws — the database is
+    /// locked, the log file has gone — unwound out of <see cref="Refuse"/> into
+    /// <see cref="InstallAsync"/>'s catch-all, which called <c>Set(Failed, ex.Message)</c>. The owner
+    /// was then shown the LOG'S error where the reason for the refusal should have been, with
+    /// <see cref="Refused"/> cleared back to false so both surfaces rendered it as weather; the
+    /// report from inside that catch threw the whole call at the caller for good measure.
+    ///
+    /// A log that cannot be written is a log that cannot be written. It is not a reason to tell the
+    /// owner something other than what happened.
+    /// </summary>
+    void Record(string text, string level)
+    {
+        try { Activity?.Invoke(text, level); }
+        catch (Exception) { /* the outcome stands whether or not it could be written down */ }
     }
 
     /// <summary>"Later". The offer stays in Settings; only the banner goes away.</summary>
