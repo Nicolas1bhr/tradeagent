@@ -2996,7 +2996,9 @@ ubuntu SUCCESS, macos SUCCESS, windows 518/519 with all three target tests PASSE
 rebased tip `73a1c85`, Release: build → 0 warnings, 0 errors; suite → 75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 0 added; scan clean;
 CI run 33926161681 at `ae0ab3c` (this landing's docs commit): ubuntu SUCCESS, macos SUCCESS, **windows SUCCESS 519/519**
 — the first fully green test matrix on `main` since U2a landed; the `package` job ran for the first time since then
-(its result is recorded with U-win-flakes). The Windows flake class is intermittent: this run did not draw it.
+and SUCCEEDED (Inno Setup present, installer built and uploaded), so `packaging/build.ps1`'s staged-build check
+accepts U14a's Diagnostics → AtasBridge reference in the no-adapter CI build; the box build with the ATAS adapter
+is still owed at v0.1.2. The Windows flake class is intermittent: this run did not draw it.
 
 **NOT VERIFIED:** nothing on the box. **A new Windows-only class, not this unit's:** on each PR run a different unrelated
 test failed on windows-latest — `GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled`
