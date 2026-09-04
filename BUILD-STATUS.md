@@ -3042,7 +3042,10 @@ mutant `undecided.Count > 99` → 3 RED; item 3 RED "the flag every gate reads w
 Builder's final at `bba9849`, Release: 0 warnings across 17 projects; Fault 191 / Unit 201 / Integration 506 = 898, 0
 failed; names vs its baseline 19 added, 1 removed (a rename whose old name never existed on `main`). Manager's gate at
 the rebased tip `19fe6e5`, Release: build → 0 warnings, 0 errors; suite → 201 + 191 + 520 = 912, 0 failed; test names vs `main` → 0 removed, 117 added; scan
-clean; CI at the merge was in progress when this was written; recorded with U2c1b.
+clean; CI run 33927117880 at `b5446b7`: ubuntu SUCCESS, macos SUCCESS, windows FAILURE 519/520 on
+`GatewayPipeBackpressureTests.Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows` — `Assert.Null() Failure: Value is not null` — a
+third distinct test in the Windows-only pipe-disposal class that `docs/briefs/U-win-flakes.md` is on; product or
+harness NOT yet established (this unit's item 0 changed how a cancelled handler settles).
 
 **NOT VERIFIED:** nothing on the box. **Gaps stated by the builder:** Close All's per-position `Settle` loop can still be
 abandoned mid-sweep by a store failure (pre-existing, U2c1b's area); a persist failure inside the reconciler's `Resolve`
