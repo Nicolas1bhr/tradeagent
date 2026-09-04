@@ -1072,10 +1072,22 @@ static class AtasProbe
         // own file beside the witness, and printing only the owner's left the report describing a
         // rejected candidate for a state that was in fact a contested witness — the one thing an
         // operator would actually act on.
-        foreach (var file in witness.SidecarPaths)
+        // AND RENDERED FROM THE SNAPSHOT, NOT REOPENED. This used to take the NAMES and open each
+        // file again under its own catch — a SECOND look, which can disagree with the standing
+        // printed three lines above it, and whose failure printed as a parenthesis inside a list
+        // that otherwise reads as complete. The witness hands over the lines it captured, and the
+        // refusal when there were none to capture; this program renders that and nothing else.
+        var sidecars = witness.Sidecars;
+        if (sidecars.Unreadable is { } why)
         {
-            Cont(file);
-            foreach (var note in ReadTail(file, 10)) Cont("  " + note);
+            Cont($"THE SIDECAR SET COULD NOT BE READ ({why}).");
+            Cont("No list follows, and an empty list is not what that means: this run did not see");
+            Cont("the files, so it cannot say whether a durability gap is recorded in them.");
+        }
+        foreach (var file in sidecars.Files)
+        {
+            Cont(file.Path);
+            foreach (var note in Tail(file.Lines, 10)) Cont("  " + note);
         }
         foreach (var line in CoidWitnessReport.Explanation(standing, notes)) Cont(line);
 
@@ -2657,17 +2669,14 @@ static class AtasProbe
     }
 
     /// <summary>The last few lines of a file, clipped, for printing. Never throws.</summary>
-    static string[] ReadTail(string path, int lines)
-    {
-        try
-        {
-            var all = File.ReadAllLines(path);
-            return all.Skip(Math.Max(0, all.Length - lines))
-                      .Select(l => l.Length > 200 ? l[..200] + "…" : l)
-                      .ToArray();
-        }
-        catch (Exception e) { return [$"(could not be read: {e.GetType().Name})"]; }
-    }
+    /// <summary>
+    /// The last few lines of what the witness ALREADY READ, clipped for the console. No IO and no
+    /// catch: the snapshot is the only thing this verb renders from, and reopening the file to print
+    /// it is the second look that was removed.
+    /// </summary>
+    static IEnumerable<string> Tail(IReadOnlyList<string> lines, int count) =>
+        lines.Skip(Math.Max(0, lines.Count - count))
+             .Select(l => l.Length > 200 ? l[..200] + "…" : l);
 
     static string? Token(string? surface, string key)
     {

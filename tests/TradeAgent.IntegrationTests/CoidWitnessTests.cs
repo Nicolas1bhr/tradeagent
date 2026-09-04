@@ -3918,6 +3918,73 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// U14a ITEM 2. AND AN UNREADABLE SIDECAR SET GOES INTO THE ZIP AS A NOTE.
+    ///
+    /// The collector enumerated the bridge directory itself and copied what it found, under a catch
+    /// that swallowed <c>IOException</c> and <c>UnauthorizedAccessException</c>. A file that could
+    /// not be copied is simply not in the archive, and an archive with no sidecar in it is
+    /// indistinguishable from a machine that never had a durability failure — which is the one
+    /// reading a support package must never invite, because it is the reading an engineer will act
+    /// on. The set is now read once by the witness and rendered from that value; a set that could
+    /// not be read is an entry saying so.
+    /// </summary>
+    [Fact]
+    public void The_support_package_says_so_when_the_witness_failure_log_could_not_be_read()
+    {
+        // A hermetic bridge directory, so denying a file here cannot reach any other test.
+        if (OperatingSystem.IsWindows()) return;
+        var bridge = Path.Combine(_dir, "bridge-denied");
+        Directory.CreateDirectory(bridge);
+        var sidecar = Path.Combine(bridge, CoidWitness.ErrorLogName);
+        File.WriteAllText(sidecar, "2026-09-03T00:00:00.0000000+00:00 ERROR coid-witness rewrite did not land.");
+        File.SetUnixFileMode(sidecar, UnixFileMode.None);
+        try
+        {
+            var zip = Doctor.CreateSupportPackage(TestEnv.NewDb(),
+                Path.Combine(_dir, "support-denied.zip"), bridge);
+
+            using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
+
+            // The failure is IN the package, under a name an engineer cannot miss...
+            var note = Assert.Single(archive.Entries,
+                e => e.FullName.Contains("UNREADABLE", StringComparison.Ordinal));
+            using var reader = new StreamReader(note.Open());
+            var text = reader.ReadToEnd();
+
+            // ...and it says what the absence below it does and does not mean.
+            Assert.Contains("could not be read", text, StringComparison.Ordinal);
+            Assert.Contains("not evidence", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { File.SetUnixFileMode(sidecar, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch (Exception) { }
+        }
+    }
+
+    /// <summary>
+    /// THE CONTROL. The same collector over a readable set puts the LINES in, not a note — so the
+    /// test above cannot be satisfied by a package that has given up on sidecars altogether.
+    /// </summary>
+    [Fact]
+    public void The_support_package_carries_the_lines_the_witness_read()
+    {
+        var bridge = Path.Combine(_dir, "bridge-readable");
+        Directory.CreateDirectory(bridge);
+        File.WriteAllText(Path.Combine(bridge, CoidWitness.ErrorLogName),
+            "2026-09-03T00:00:00.0000000+00:00 ERROR coid-witness rewrite did not land. claim=TA-ZIPPED");
+
+        var zip = Doctor.CreateSupportPackage(TestEnv.NewDb(),
+            Path.Combine(_dir, "support-readable.zip"), bridge);
+
+        using var archive = System.IO.Compression.ZipFile.OpenRead(zip);
+        Assert.DoesNotContain(archive.Entries, e => e.FullName.Contains("UNREADABLE", StringComparison.Ordinal));
+        var entry = Assert.Single(archive.Entries,
+            e => e.FullName.EndsWith(CoidWitness.ErrorLogName, StringComparison.Ordinal));
+        using var reader = new StreamReader(entry.Open());
+        Assert.Contains("TA-ZIPPED", reader.ReadToEnd(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Object identity is a question about THIS process, and after a restart it has a free answer —
     /// nothing here was constructed by us, so "untouched" is true of everything. The cross-session
     /// reading therefore cannot come from <c>Observed</c>, and it does not.

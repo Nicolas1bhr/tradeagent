@@ -3,5 +3,12 @@
     <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
     <ProjectReference Include="../TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
     <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
+    <!-- For CoidWitness, which the support package renders the bridge's write-ahead failure log
+         from. Reusing the bridge's own reader rather than globbing and copying the directory here is
+         the same argument tools/probe makes for the same class: the half that reports a durability
+         gap must not be able to drift away from the half that writes it, and a collector with its
+         own read has its own failure mode — one that is invisible, because a file it could not copy
+         is simply not in the archive. Builds as plain net10.0 unless AtasBridgeBuild is set. -->
+    <ProjectReference Include="../TradeAgent.AtasBridge/TradeAgent.AtasBridge.csproj" />
   </ItemGroup>
 </Project>

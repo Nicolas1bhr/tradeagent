@@ -366,6 +366,13 @@ public sealed class CoidWitness : IDisposable
     string[] _sidecars = [];
 
     /// <summary>
+    /// THE SIDECAR SET AS A RENDERER SEES IT — the same snapshot as the five above, with the lines
+    /// carried rather than the names. Written in <see cref="Derive"/> and nowhere else. See
+    /// <see cref="Sidecars"/> for what handing out names cost.
+    /// </summary>
+    SidecarText _sidecarText = SidecarText.Nothing;
+
+    /// <summary>
     /// This writer's own account of how big its sidecar is: the length the snapshot recorded, plus
     /// everything appended since. There is exactly ONE writer per sidecar file (see
     /// <see cref="SidecarPath"/>), so the rotation trigger needs no filesystem probe — and the probe
@@ -1006,6 +1013,34 @@ public sealed class CoidWitness : IDisposable
             // under a clean headline — the report saying "none recorded" about a set it never saw.
             try { lock (_gate) { Ready(); return _sidecars; } }
             catch (Exception) { return []; }
+        }
+    }
+
+    /// <summary>
+    /// EVERY SIDECAR LINE THIS RUN READ, AS IT READ THEM — or the reason there was no reading.
+    ///
+    /// <see cref="SidecarPaths"/> hands out NAMES, and a name is an invitation to open the file
+    /// again. Both renderers took it: <c>tools/probe</c> reopened each one under its own catch, and
+    /// the support package enumerated the directory itself and copied what it found, swallowing
+    /// <c>IOException</c> and <c>UnauthorizedAccessException</c>. So the report an operator reads
+    /// and the zip an engineer opens were derived from a SECOND look — one that can disagree with
+    /// the standing printed beside it, and one whose failure is INVISIBLE: a file that could not be
+    /// copied is simply not in the archive, and an archive with no sidecar in it is
+    /// indistinguishable from a machine that never had a durability failure.
+    ///
+    /// This is the snapshot itself. A renderer handed this cannot look again, and cannot fail to
+    /// mention that the look failed — the refusal is a field it has to render past.
+    /// </summary>
+    public SidecarText Sidecars
+    {
+        get
+        {
+            if (_path is null) return SidecarText.Nothing;
+            // FAIL-CLOSED, unlike SidecarPaths beside it: an exception on the way out of here must
+            // not arrive at a renderer wearing the shape of an empty set, which is the very reading
+            // this property exists to make impossible.
+            try { lock (_gate) { Ready(); return _sidecarText; } }
+            catch (Exception e) { return new SidecarText([], e.GetType().Name); }
         }
     }
 
@@ -1796,6 +1831,7 @@ public sealed class CoidWitness : IDisposable
         if (snapshot.Refusal is not null)
         {
             _sidecars = [];
+            _sidecarText = new SidecarText([], snapshot.Refusal);
             _diskNoted = true;
             _diskDegraded = true;
             _diskGapClosed = false;
@@ -1804,6 +1840,8 @@ public sealed class CoidWitness : IDisposable
         }
 
         _sidecars = snapshot.Sidecars.ToArray();
+        _sidecarText = new SidecarText(
+            _sidecars.Select(p => new SidecarFile(p, snapshot.Lines(p))).ToArray(), null);
         _diskNoted = _sidecars.Any(snapshot.HasNotes);
 
         if (ErrorLogPath is not { } canonical)
@@ -1907,6 +1945,13 @@ public sealed class CoidWitness : IDisposable
         /// <summary>Whether a name held anything. A name not in the snapshot held nothing.</summary>
         public bool HasNotes(string path) =>
             _lines.TryGetValue(path, out var lines) && lines.Any(l => !string.IsNullOrWhiteSpace(l));
+
+        /// <summary>
+        /// What this file held when it was read. Empty for a name the snapshot does not carry, which
+        /// is a name that was never listed — see <see cref="Refusal"/> for the other zero.
+        /// </summary>
+        public IReadOnlyList<string> Lines(string path) =>
+            _lines.TryGetValue(path, out var lines) ? lines : [];
 
         /// <summary>What the listing said this file weighs. Zero for a name that is not there.</summary>
         public long Length(string path) =>

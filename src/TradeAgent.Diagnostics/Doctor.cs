@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using TradeAgent.AgentRuntime;
+using TradeAgent.AtasBridge;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
@@ -233,7 +234,7 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
     /// <summary>
     /// A zip a nontechnical person can send for help. Logs only, and the secret files are never in it.
     /// </summary>
-    public static string CreateSupportPackage(Database db, string? outputPath = null)
+    public static string CreateSupportPackage(Database db, string? outputPath = null, string? bridgeDir = null)
     {
         var target = outputPath ?? Path.Combine(Paths.Home, $"TradeAgent-support-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
         var staging = Path.Combine(Path.GetTempPath(), $"ta-support-{Guid.NewGuid():n}");
@@ -281,23 +282,51 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             // would not be deployed with it, so it writes a plain file next to the file it is about.
             // A durability gap in the write-ahead record is exactly the thing a support package is
             // for, and it was the one thing this collector could not see.
-            try
-            {
-                // "*.errors.log*", not "*.errors.log": the sidecar ROTATES one generation back past
-                // its size bound, into coid-witness.errors.log.1, and rotation is what happens on
-                // exactly the machine whose support package matters — the one that produced enough
-                // durability failures to fill the file. The older generation holds the FIRST ones,
-                // which is where a fault starts.
-                foreach (var f in Directory.GetFiles(Paths.BridgeDir, "*.errors.log*"))
-                    File.Copy(f, Path.Combine(staging, "bridge-" + Path.GetFileName(f)), true);
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            //
+            // RENDERED FROM THE WITNESS'S OWN READING, AND THE FAILURE TO READ GOES IN TOO.
+            //
+            // This used to enumerate the directory here and copy what it found, under a catch that
+            // swallowed IOException and UnauthorizedAccessException. A file that could not be copied
+            // is simply not in the archive — and an archive with no sidecar in it is
+            // indistinguishable from a machine that never had a durability failure, which is the
+            // reading an engineer will act on. The witness reads the whole set ONCE into a snapshot
+            // and this renders that value: the lines it captured, or an entry saying it could not
+            // look. Nothing here reopens a path after the snapshot, so nothing here can disagree
+            // with the standing the same snapshot produced.
+            //
+            // EVERY GENERATION, still: the witness's own glob is `coid-witness.errors.log*`, and the
+            // sidecar rotates one generation back past its size bound on exactly the machine whose
+            // support package matters — the one that produced enough durability failures to fill the
+            // file. The older generation holds the FIRST of them, which is where a fault starts.
+            var sidecars = SidecarsOf(bridgeDir ?? Paths.BridgeDir);
+            if (sidecars.Unreadable is { } why)
+                File.WriteAllText(Path.Combine(staging, "bridge-sidecar-UNREADABLE.txt"),
+                    $"The bridge's write-ahead failure log beside {bridgeDir ?? Paths.BridgeDir} " +
+                    $"could not be read ({why})." + Environment.NewLine +
+                    "This package therefore carries NONE of it, and that absence is not evidence " +
+                    "that there was nothing to carry." + Environment.NewLine);
+            foreach (var f in sidecars.Files)
+                File.WriteAllLines(Path.Combine(staging, "bridge-" + Path.GetFileName(f.Path)), f.Lines);
 
             if (File.Exists(target)) File.Delete(target);
             ZipFile.CreateFromDirectory(staging, target);
             return target;
         }
         finally { try { Directory.Delete(staging, true); } catch (Exception) { } }
+    }
+
+    /// <summary>
+    /// The sidecar set beside the bridge's witness, read through the WITNESS'S OWN reader — one
+    /// read, one value, and the same one the standing is derived from. Re-implementing the read
+    /// here is what let this collector answer differently from the class that writes the file.
+    /// </summary>
+    static SidecarText SidecarsOf(string bridgeDir)
+    {
+        try
+        {
+            using var witness = new CoidWitness(Path.Combine(bridgeDir, CoidWitness.FileName));
+            return witness.Sidecars;
+        }
+        catch (Exception e) { return new SidecarText([], e.GetType().Name); }
     }
 }

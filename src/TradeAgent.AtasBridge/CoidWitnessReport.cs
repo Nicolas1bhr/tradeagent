@@ -1,5 +1,18 @@
 namespace TradeAgent.AtasBridge;
 
+/// <summary>One sidecar file beside the witness, and the lines a run read out of it.</summary>
+public sealed record SidecarFile(string Path, IReadOnlyList<string> Lines);
+
+/// <summary>
+/// THE SIDECAR SET AS ONE VALUE: every file with the lines that were captured from it, or the
+/// reason there was no reading. See <see cref="CoidWitness.Sidecars"/>.
+/// </summary>
+public sealed record SidecarText(IReadOnlyList<SidecarFile> Files, string? Unreadable)
+{
+    /// <summary>A witness with nowhere to live: no files, and nothing wrong with that.</summary>
+    public static readonly SidecarText Nothing = new([], null);
+}
+
 /// <summary>Where a witness's sidecar stands, as one value. See <see cref="CoidWitnessReport"/>.</summary>
 public enum WitnessStanding
 {

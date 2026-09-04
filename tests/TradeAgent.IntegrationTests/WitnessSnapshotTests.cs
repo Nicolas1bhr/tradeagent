@@ -736,4 +736,60 @@ public class WitnessSnapshotTests : IDisposable
         Assert.Null(next.Trouble);
         next.Dispose();
     }
+    // ========================================================== U14a item 2: the renderers' input
+
+    /// <summary>
+    /// U14a ITEM 2. THE SNAPSHOT HANDS OVER LINES, NOT NAMES.
+    ///
+    /// <see cref="CoidWitness.SidecarPaths"/> hands out names, and a name is an invitation to open
+    /// the file again: <c>tools/probe</c> reopened each one under its own catch, and the support
+    /// package enumerated the directory itself and copied what it found under a catch that
+    /// swallowed <c>IOException</c> and <c>UnauthorizedAccessException</c>. So the report an
+    /// operator reads and the zip an engineer opens came out of a SECOND look — one that can
+    /// disagree with the standing printed beside it, and one whose failure is invisible.
+    ///
+    /// <c>Sidecars</c> is the snapshot: the lines as they were captured, and a refusal when there
+    /// was no capture. This asserts both halves of the value, because a renderer that is handed it
+    /// can render nothing the snapshot did not say.
+    /// </summary>
+    [Fact]
+    public void The_snapshot_hands_over_the_lines_it_captured_and_not_the_names_to_reopen()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, Gap(9));
+        File.WriteAllText(Sidecar + ".1", Gap(20, "TA-OLDER"));
+
+        var witness = Session();
+        var sidecars = witness.Sidecars;
+
+        Assert.Null(sidecars.Unreadable);
+        Assert.Equal(2, sidecars.Files.Count);
+        Assert.Contains(sidecars.Files, f => f.Path == Sidecar && f.Lines.Any(l => l.Contains("TA-GAP")));
+        Assert.Contains(sidecars.Files, f => f.Path == Sidecar + ".1" && f.Lines.Any(l => l.Contains("TA-OLDER")));
+
+        // The names it lists and the lines it hands over are the same set — one reading, not two.
+        Assert.Equal(witness.SidecarPaths.OrderBy(x => x, StringComparer.Ordinal),
+                     sidecars.Files.Select(f => f.Path).OrderBy(x => x, StringComparer.Ordinal));
+        witness.Dispose();
+    }
+
+    /// <summary>
+    /// AND A SET THAT COULD NOT BE READ IS A VALUE, NOT AN EMPTY LIST. This is the state that
+    /// reached a renderer as "there are no sidecar files" — which reads, to whoever is holding the
+    /// machine, as "this bridge has never had a durability failure".
+    /// </summary>
+    [Fact]
+    public void An_unreadable_set_is_handed_over_as_a_refusal_rather_than_as_no_files()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, Gap(9));
+
+        var witness = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+            readSidecar: _ => throw new UnauthorizedAccessException("the sidecar could not be read"));
+        var sidecars = witness.Sidecars;
+
+        Assert.NotNull(sidecars.Unreadable);
+        Assert.Empty(sidecars.Files);
+        witness.Dispose();
+    }
 }
