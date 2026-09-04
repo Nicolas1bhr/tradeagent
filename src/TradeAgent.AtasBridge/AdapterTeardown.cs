@@ -1,8 +1,8 @@
 namespace TradeAgent.AtasBridge;
 
 /// <summary>
-/// WHEN THIS STRATEGY STOPS BEING ANYBODY'S BRIDGE — the flag, the teardown order, the one lock that
-/// makes those two agree with each other, and THE ONLY DOOR TO THE WITNESS.
+/// WHEN THIS STRATEGY STOPS BEING ANYBODY'S BRIDGE — the three states, the teardown order, the one
+/// lock that makes them agree with each other, and THE ONLY DOOR TO THE WITNESS.
 ///
 /// IT IS A SEPARATE CLASS BECAUSE <c>AtasStrategyAdapter.cs</c> IS <c>&lt;Compile Remove&gt;</c>d
 /// EVERYWHERE EXCEPT A WINDOWS BOX WITH ATAS INSTALLED. Two defects were found in that file's
@@ -25,6 +25,18 @@ namespace TradeAgent.AtasBridge;
 /// already taken down, and holds it for the life of the ATAS process — PRIOR 21's own harm, through
 /// a door the fix did not cover.
 ///
+/// ROUND 10: IT IS A THREE-STATE MACHINE, AND THAT IS WHAT ENDS THE CLASS.
+///
+/// Round 9 made this the only door and guarded it with a boolean. A boolean cannot express a
+/// teardown that is HALF DONE, so <c>Started()</c> — a plain assignment, no lock — could clear it
+/// while <c>Stop</c> was still running its steps, and the door was open again for a strategy whose
+/// lease was about to be released (F35). Now there is ONE lock, THREE states and four transitions:
+/// <c>Running → Stopping</c> at the top of <c>Stop</c>, <c>Stopping → Stopped</c> after the lease is
+/// released, <c>Stopped → Running</c> on a start, and nothing else. Every state change and every
+/// witness operation — the two writes, which are refused unless RUNNING, and the six reads, which
+/// are not — happens inside that one lock. The class-closure argument is that sentence: there is no
+/// transition outside the lock to disagree with a guard, and no witness call outside it either.
+///
 /// So the witness is not the adapter's any more. The adapter has no <c>CoidWitness</c> reference at
 /// all (<c>grep -n "_witness" AtasStrategyAdapter.cs</c> finds nothing), every write is a method on
 /// this class, and a fifth write site cannot be added without going through the same lock. Reads
@@ -34,9 +46,31 @@ namespace TradeAgent.AtasBridge;
 /// </summary>
 public sealed class AdapterTeardown
 {
+    /// <summary>
+    /// THREE STATES, NOT A BOOLEAN, AND THE MIDDLE ONE IS THE FINDING (F35).
+    ///
+    /// A boolean says "stopped or not", so a teardown that is HALF DONE has to be one of the two —
+    /// and it was recorded as "stopped", which is right for refusing writes and wrong for
+    /// <see cref="Started"/>: a start arriving while <see cref="Stop"/> was still running cleared
+    /// the flag with a plain assignment, put the adapter back into "running" mid-teardown, and let
+    /// the abandoned frame loop write into a witness that was about to be released. STOPPING is a
+    /// state a start is not legal from, which is a thing a boolean cannot say.
+    /// </summary>
+    public enum State
+    {
+        /// <summary>The strategy is live. The only state in which the witness may be written.</summary>
+        Running,
+
+        /// <summary>The teardown is under way. No write, and no start either.</summary>
+        Stopping,
+
+        /// <summary>The teardown has finished and the lease is released. A start is legal from here.</summary>
+        Stopped
+    }
+
     readonly object _gate = new();
     readonly CoidWitness _witness;
-    volatile bool _stopped;
+    State _state = State.Running;
 
     /// <summary>The live bridge's witness. The adapter's field initialiser and nothing else.</summary>
     public AdapterTeardown() : this(new CoidWitness()) { }
@@ -45,14 +79,39 @@ public sealed class AdapterTeardown
     public AdapterTeardown(CoidWitness witness) => _witness = witness;
 
     /// <summary>
-    /// Whether this adapter has been taken down. Read for diagnostics only — a caller that wants to
-    /// act on it must use <see cref="Record"/>, which is the whole point of this class.
+    /// Which of the three this adapter is in. Read for diagnostics and by tests; a caller that wants
+    /// to ACT on it must go through <see cref="Record"/>, which reads the state and does the thing
+    /// under one lock — that is the whole point of this class, and reading this property and then
+    /// acting is precisely the two-step PRIOR 21 was about.
     /// </summary>
-    public bool Stopped => _stopped;
+    public State Now { get { lock (_gate) return _state; } }
 
-    /// <summary>The strategy is running again. The same instance may be started and stopped many
-    /// times inside one ATAS process, and its witness takes the lease back on the next write.</summary>
-    public void Started() => _stopped = false;
+    /// <summary>
+    /// Whether this adapter has been taken down. Kept as a boolean because that is what the message
+    /// on a refused order asks — "is this strategy going away" — and STOPPING and STOPPED are the
+    /// same answer to it.
+    /// </summary>
+    public bool Stopped { get { lock (_gate) return _state != State.Running; } }
+
+    /// <summary>
+    /// THE STRATEGY IS RUNNING AGAIN, IF IT IS ALLOWED TO BE. The same instance is started and
+    /// stopped many times inside one ATAS process, and its witness takes the lease back on the next
+    /// write — but only from <see cref="State.Stopped"/>. A start that arrives while the teardown is
+    /// still running is refused and answers false, because the alternative is the door reopening
+    /// underneath a teardown that is about to release the lease (F35).
+    ///
+    /// Refused rather than thrown: this is called from ATAS's own callback, and a teardown path that
+    /// throws is worse than one that says no.
+    /// </summary>
+    public bool Started()
+    {
+        lock (_gate)
+        {
+            if (_state == State.Stopping) return false;
+            _state = State.Running;
+            return true;
+        }
+    }
 
     // ---------------------------------------------------------------- the two writes
 
@@ -91,17 +150,36 @@ public sealed class AdapterTeardown
     /// strategy that has stopped, and refusing them would blank the diagnostics an operator reads
     /// exactly while the thing they are diagnosing is being taken down.
     /// </summary>
-    public string? Trouble => _witness.Trouble;
+    public string? Trouble => Read(w => w.Trouble);
 
-    public string? Path => _witness.Path;
+    public string? Path => Read(w => w.Path);
 
-    public string? LastWriteFailure => _witness.LastWriteFailure;
+    public string? LastWriteFailure => Read(w => w.LastWriteFailure);
 
-    public string Token() => _witness.Token();
+    public string Token() => Read(w => w.Token());
 
-    public CoidWitnessRecord? PriorSession(string clientOrderId) => _witness.PriorSession(clientOrderId);
+    public CoidWitnessRecord? PriorSession(string clientOrderId) => Read(w => w.PriorSession(clientOrderId));
 
-    public IReadOnlyList<string> PriorSessionIds(int max) => _witness.PriorSessionIds(max);
+    public IReadOnlyList<string> PriorSessionIds(int max) => Read(w => w.PriorSessionIds(max));
+
+    /// <summary>
+    /// EVERY WITNESS OPERATION GOES THROUGH THE LOCK — this one and <see cref="Record"/> are the
+    /// only two ways to reach <see cref="_witness"/>, and both take <see cref="_gate"/>. A read is
+    /// not REFUSED by the state, and that is a deliberate departure from "refused unless Running",
+    /// stated here rather than left implicit: <c>SupportsClientOrderId</c> is
+    /// <c>proof &amp;&amp; Trouble is null</c> on the adapter, so a <c>Trouble</c> that answered null
+    /// for a stopped strategy would report the capability as PROVEN over a witness nobody had asked,
+    /// which is the one direction this file must never fail in. Refusing them the other way — a
+    /// blank diagnostic — removes the sentences an operator needs exactly while the thing they are
+    /// diagnosing is being taken down.
+    ///
+    /// The lock costs nothing that was not already being paid: every one of these enters
+    /// <see cref="CoidWitness"/>'s own gate, which a write in flight already holds.
+    /// </summary>
+    T Read<T>(Func<CoidWitness, T> read)
+    {
+        lock (_gate) return read(_witness);
+    }
 
     // ---------------------------------------------------------------- the guard itself
 
@@ -112,7 +190,7 @@ public sealed class AdapterTeardown
     /// process, refusing every order the live bridge then tried to record.
     /// </summary>
     /// PRIOR 21: THE CHECK AND THE WRITE ARE ONE ACT, UNDER THE LOCK THE RELEASE TAKES. Reading the
-    /// flag and then writing left a window the width of the whole write: the fan reads it while the
+    /// state and then writing left a window the width of the whole write: the fan reads it while the
     /// strategy is still running, ATAS stops the strategy, <see cref="Stop"/> releases the lease, and
     /// the fan — already past its check — leases the file again for a strategy that no longer exists.
     /// A second read of the flag would not close it; only one of the two orders being CHOSEN does.
@@ -123,7 +201,7 @@ public sealed class AdapterTeardown
     {
         lock (_gate)
         {
-            if (_stopped) return false;
+            if (_state != State.Running) return false;
             write();
             return true;
         }
@@ -146,17 +224,24 @@ public sealed class AdapterTeardown
     /// whether the release happens.
     public void Stop(Action steps)
     {
-        // FIRST, so that anything still holding a reference to this instance stops acting through it
-        // before the teardown below has finished — the fan runs on ATAS's thread and does not wait.
-        // Set outside the lock and BEFORE it, so a Record that is already inside cannot read false
-        // after this point, whichever of the two reaches the lock first.
-        _stopped = true;
+        // STOPPING FIRST, AND UNDER THE LOCK. Anything still holding a reference to this instance
+        // stops acting through it before the steps below run — the fan runs on ATAS's thread and
+        // does not wait — and taking the lock to say so is what makes the transition and the guard
+        // one act: a Record already inside the lock finishes its write, and one that is waiting for
+        // the lock finds STOPPING when it gets there. The steps themselves run OUTSIDE the lock,
+        // because they call into ATAS and this lock is one the reads take.
+        lock (_gate) _state = State.Stopping;
+
         try { steps(); }
         finally
         {
             lock (_gate)
             {
                 try { _witness.Dispose(); } catch (Exception) { /* teardown must finish */ }
+                // AND ONLY NOW IS IT STOPPED — after the lease is released, in the same critical
+                // section, so there is no instant at which a start is legal and the witness is still
+                // this stopped strategy's.
+                _state = State.Stopped;
             }
         }
     }
