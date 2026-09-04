@@ -2641,6 +2641,54 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// A ZERO IS FLAGGED WHEN THE ONLY ACCOUNT OF A REFUSAL IS IN A PER-WRITER SIDECAR — which is the
+    /// ordinary shape of the misconfiguration the per-writer files were introduced for.
+    ///
+    /// Round 6 split the sidecar so a refused writer cannot lose its lines to a race: the OWNER keeps
+    /// the canonical file, everyone else writes beside it. `Noted` was computed over the whole set —
+    /// and the whole block was gated on the CANONICAL file existing. On the machine this was built
+    /// for the owner never failed, so there is no canonical file, so the gate is false, so `Noted`
+    /// stays false: `Standing` returns `Clean`, `ZeroIsProvisional` is false, and `tools/probe`
+    /// prints "none recorded" and then reads `records:0` as a confident zero. That is exactly the
+    /// flagged-zero rule of items 4 and F12, reopened by the fix for R3.
+    ///
+    /// The deciding-line work stays inside the canonical guard, deliberately: a second bridge turned
+    /// away cost no order — the refusal is what stops the order being sent — so it must not mark the
+    /// machine degraded. It must, however, stop the zero being read as a fact about submission.
+    /// </summary>
+    [Fact]
+    public void A_zero_is_flagged_when_only_a_refused_writer_wrote_anything()
+    {
+        // The owner writes cleanly and never fails, so no canonical sidecar is ever created.
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-OWNED", "SIM", "ES", "Buy", 1m, null));
+
+        // A second bridge is refused five times and writes its own account of it.
+        var refused = Session();
+        for (var i = 0; i < 5; i++)
+            Assert.False(refused.Submitting($"TA-REFUSED-{i}", "SIM", "ES", "Buy", 1m, null));
+
+        var perWriter = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "-*");
+        Assert.Single(perWriter);
+        Assert.Equal(5, File.ReadAllLines(perWriter[0]).Count(l => l.Trim().Length > 0));
+        Assert.False(File.Exists(Sidecar), "the owner never failed, so there is no canonical sidecar");
+
+        owner.Dispose();
+        refused.Dispose();
+
+        var reader = Session();
+        Assert.True(reader.Noted);
+        Assert.Contains("io:noted", reader.Token());
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
+        Assert.True(CoidWitnessReport.ZeroIsProvisional(CoidWitnessReport.Standing(reader)));
+
+        // And the bound that keeps this MED rather than HIGH holds: a refused second bridge cost no
+        // order, so it does not mark the machine degraded and does not touch the capability.
+        Assert.Null(reader.Trouble);
+        Assert.False(reader.GapClosed);
+    }
+
+    /// <summary>
     /// A SAFETY EVENT IS NEVER DROPPED — INCLUDING WHEN SEVERAL WRITERS PRODUCE ONE AT ONCE.
     ///
     /// The quota path honours that contract and the concurrency path did not. The writers producing
