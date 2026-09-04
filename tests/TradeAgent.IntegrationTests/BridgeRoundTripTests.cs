@@ -450,6 +450,92 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// A PEER THAT SIMPLY STOPS TALKING MUST NOT HOLD THE TRADING PATH SHUT EITHER — the same class as
+    /// the refused parked peer, reached from the other side.
+    ///
+    /// Round 7 dropped a peer whose PROTOCOL was refused. A peer whose protocol is fine and which then
+    /// goes quiet was never dropped at all: the read loop sits inside `ReadLineAsync` for ever, the
+    /// heartbeat timeout is consulted only for what the row DISPLAYS, and the pipe has one server
+    /// instance which the accept loop recreates only after that loop ends. So a bridge whose ATAS
+    /// froze, or a peer that opened the pipe and stalled before its first newline, keeps every later
+    /// bridge off the machine while the row says the connection is merely stale.
+    ///
+    /// Past the heartbeat timeout the peer is dropped, the instance recycles, and a bridge that dials
+    /// gets in. The markers a refusal left behind survive that drop, per round 7b.
+    /// </summary>
+    [Fact]
+    public async Task A_silent_peer_is_dropped_so_the_pipe_can_be_taken_again()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10))
+        {
+            HeartbeatTimeout = TimeSpan.FromSeconds(1)
+        };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        // A compatible bridge completes the handshake and then says nothing: no heartbeat, no
+        // disconnect. It holds the only server instance there is.
+        var silent = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await silent.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.Equal("0.1.1", connector.Bridge!.BridgeVersion);
+
+        // Well past the heartbeat timeout, the bridge that is actually alive dials in.
+        await Task.Delay(2_500);
+        await using var live = await Redial(pipe, new BridgeHello
+        {
+            BridgeProtocolVersion = Versions.BridgeProtocolVersion,
+            BridgeVersion = "0.1.2", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM",
+            SupportsClientOrderId = true, SupportsOrderHistory = true
+        }, attempts: 12);
+
+        await Wait(async () => await Task.FromResult(connector.Bridge?.BridgeVersion == "0.1.2"));
+        Assert.Equal("0.1.2", connector.Bridge!.BridgeVersion);
+        await Unheard(async () => await silent.DisposeAsync());
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION OF THE SAME DROP, and the reason it needs its own test: a rule that ends
+    /// the read loop is one edit away from ending it for a bridge that is perfectly alive.
+    ///
+    /// The drop is decided by <c>PeerHasGoneQuiet</c>, which is consulted only when the idle poll
+    /// wakes up with NO FRAME IN HAND. So the beat here is deliberately slower than the poll and
+    /// faster than the timeout: 800 ms against a 500 ms poll and a 1.5 s window. Every gap between
+    /// beats therefore wakes the poll empty and forces the decision, several times over — beating
+    /// faster than the poll instead would let a connector that drops every peer it ever polls pass
+    /// this test unbothered, which is exactly what it did until the mutant said so.
+    ///
+    /// A connector that dropped this bridge would leave <c>Bridge</c> null, because the stub does
+    /// not redial, and would be reporting FAILED for a peer that never stopped talking.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_keeps_beating_is_not_dropped_when_the_window_passes()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10))
+        {
+            HeartbeatTimeout = TimeSpan.FromMilliseconds(1_500)
+        };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var alive = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await alive.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+
+        // Nearly three heartbeat windows, beaten through, with an empty poll inside every gap.
+        for (var beat = 0; beat < 5; beat++)
+        {
+            await Task.Delay(800);
+            await alive.Heartbeat(Speaking(Versions.BridgeProtocolVersion));
+        }
+
+        Assert.Equal("0.1.1", connector.Bridge!.BridgeVersion);
+        Assert.Equal(HealthState.READY, await connector.GetHealthAsync());
+    }
+
+    /// <summary>
     /// A REFUSED PEER MUST NOT BE ABLE TO HOLD THE TRADING PATH SHUT, AND PARKING IT DID EXACTLY THAT.
     ///
     /// Round 6 kept a mismatched peer on the pipe rather than dropping it, so that `Drop` could not

@@ -327,6 +327,40 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// add. Read by the gateway for the health detail the dashboard shows.</summary>
     public string? StatusDetail => _incompatible?.ToString() ?? Unauthenticated?.ToString();
 
+    /// <summary>
+    /// How often the read loop looks up from a peer that is saying nothing. A third of the heartbeat
+    /// timeout, so a peer that has gone quiet is dropped within about a third of it past the deadline,
+    /// and floored so a test that sets a very short timeout does not spin.
+    /// </summary>
+    TimeSpan IdlePoll
+    {
+        get
+        {
+            var third = TimeSpan.FromMilliseconds(HeartbeatTimeout.TotalMilliseconds / 3);
+            return third < TimeSpan.FromMilliseconds(100) ? TimeSpan.FromMilliseconds(100) : third;
+        }
+    }
+
+    /// <summary>
+    /// Nothing has been heard from this peer inside the heartbeat timeout. Measured from the LATER of
+    /// its arrival and its last heartbeat, so a peer still completing its handshake is given the same
+    /// window as one that has been talking — and a peer that never says anything at all is dropped
+    /// once that window is spent rather than held for ever.
+    /// </summary>
+    bool PeerHasGoneQuiet()
+    {
+        var arrived = _peerArrived == DateTimeOffset.MaxValue ? DateTimeOffset.MinValue : _peerArrived;
+        var lastHeard = _lastHeartbeat > arrived ? _lastHeartbeat : arrived;
+        return DateTimeOffset.UtcNow - lastHeard > HeartbeatTimeout;
+    }
+
+    /// <summary>
+    /// Keeps an abandoned read's failure from surfacing as an unobserved task exception. It will fault
+    /// as soon as the stream is disposed, which is the point — that is how the read is aborted.
+    /// </summary>
+    static void Observe(Task task) =>
+        task.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+
     /// <summary>Missing for longer than this and we treat the bridge as gone.</summary>
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
@@ -379,9 +413,39 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 var reader = new StreamReader(_pipeStream, new UTF8Encoding(false), false, 8192, leaveOpen: true);
                 _out = _pipeStream;
 
-                string? line;
-                while (!ct.IsCancellationRequested && (line = await reader.ReadLineAsync(ct)) is not null)
+                // A PEER THAT STOPS TALKING IS DROPPED, BECAUSE IT HOLDS THE ONLY INSTANCE THERE IS.
+                //
+                // This used to sit inside ReadLineAsync for ever. The heartbeat timeout was consulted
+                // only for what the row DISPLAYS, and the pipe is created with
+                // maxNumberOfServerInstances = 1 which the loop below recreates only after this one
+                // ends — so a bridge whose ATAS froze, or a peer that opened the pipe and stalled
+                // before its first newline, kept every later bridge off the machine while the row
+                // reported nothing worse than a stale connection. Same class as the refused peer
+                // round 7 dropped, reached from the other side: a peer nobody can hear must not be
+                // able to hold the trading path shut.
+                //
+                // THE PENDING READ IS NEVER RESTARTED AND NEVER CANCELLED. Abandoning a read to start
+                // another would put two reads on one StreamReader and split a frame between them;
+                // cancelling one mid-flight can consume bytes that are then lost. So the same task is
+                // carried across polls, and staleness ends the loop — the finally below disposes the
+                // stream, which is what actually aborts the read.
+                Task<string?>? pending = null;
+                while (!ct.IsCancellationRequested)
+                {
+                    pending ??= reader.ReadLineAsync(ct).AsTask();
+                    var settled = await Task.WhenAny(pending, Task.Delay(IdlePoll, ct));
+                    if (settled != pending)
+                    {
+                        if (!PeerHasGoneQuiet()) continue;
+                        Observe(pending);
+                        break;
+                    }
+
+                    var line = await pending;
+                    pending = null;
+                    if (line is null) break;
                     if (!await Dispatch(line)) break; // a peer we have refused gets no second frame
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception) { /* the bridge died or ATAS closed; fall through and wait for it again */ }
