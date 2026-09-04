@@ -3918,6 +3918,56 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// U14a ITEM 3. A CANDIDATE IS READ INSIDE THE WINDOW THAT WATCHES FOR CHANGE, OR IT IS NOT READ.
+    ///
+    /// PRIOR 27's before/after listing covered the SIDECAR files. It did not cover the temps: those
+    /// were enumerated inside the window and their CONTENTS read afterwards, in <c>ScanCandidates</c>,
+    /// through a different seam. So the bytes an adoption decision rests on were never the bytes the
+    /// change detection watched — and adoption is the one decision in this class that rewrites what
+    /// the machine believes it submitted. A rewrite its owner finished between the listing and the
+    /// read is adopted on content nobody established was stable.
+    ///
+    /// The instrument stands for exactly that owner: the candidate grows at the instant it is
+    /// opened. Read inside the window, the second listing disagrees with the first, the whole
+    /// snapshot is taken again, and a set that will not hold still is REFUSED rather than adopted.
+    /// </summary>
+    [Fact]
+    public void A_candidate_that_changes_while_it_is_read_is_refused_rather_than_adopted()
+    {
+        // A committed claim with no acknowledgement yet, and a temp holding the acknowledgement that
+        // never landed — the one shape adoption exists for.
+        var first = new CoidWitness(File_, "sess0001");
+        Submit(first, "TA-REAL");
+        first.Dispose();
+        Assert.Null(CommittedBrokerId("TA-REAL"));
+
+        var temp = File_ + ".tmp-owner";
+        WriteTempAt(temp, CommittedGeneration() + 1, Fingerprint(CommittedText()),
+                    RecordJson("TA-REAL", "sess0001"));
+
+        // THE CONTROL: held still, this candidate is a legal rewrite of the committed file and IS
+        // adopted. Without it the assertion below is satisfied by any reader that adopts nothing.
+        var control = Session();
+        Assert.Equal("BRK-TA-REAL", control.PriorSession("TA-REAL")!.BrokerOrderId);
+        control.Dispose();
+
+        // The same candidate, with its owner still finishing it.
+        var reader = new CoidWitness(File_, null, CoidWitness.DefaultCap,
+            open: p =>
+            {
+                if (p.EndsWith(".tmp-owner", StringComparison.Ordinal)) File.AppendAllText(p, " ");
+                return new FileStream(p, FileMode.Open, FileAccess.Read,
+                                      FileShare.ReadWrite | FileShare.Delete);
+            });
+
+        Assert.Null(reader.All().Single(r => r.ClientOrderId == "TA-REAL").BrokerOrderId);
+        Assert.Null(reader.PriorSession("TA-REAL"));
+        Assert.NotNull(reader.Trouble);
+        Assert.Equal(WitnessStanding.Unresolved, CoidWitnessReport.Standing(reader));
+        reader.Dispose();
+    }
+
+    /// <summary>
     /// U14a ITEM 2. AND AN UNREADABLE SIDECAR SET GOES INTO THE ZIP AS A NOTE.
     ///
     /// The collector enumerated the bridge directory itself and copied what it found, under a catch

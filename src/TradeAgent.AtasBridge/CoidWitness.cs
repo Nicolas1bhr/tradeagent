@@ -1332,7 +1332,10 @@ public sealed class CoidWitness : IDisposable
     {
         foreach (var candidate in Candidates(snapshot))
         {
-            var text = ReadTolerantly(candidate, out var unreadable);
+            // OUT OF THE SNAPSHOT, NOT OFF THE DISK. The name and the bytes come from the same
+            // reading, inside the window that refuses a set which will not hold still — so the
+            // content this decision rests on is the content the change detection covered.
+            var (text, unreadable) = snapshot.Candidate(candidate);
             if (text is null)
             {
                 if (unreadable) { _candidateUnreadable = true; _rejected.Add((candidate, "it could not be read")); }
@@ -1739,18 +1742,43 @@ public sealed class CoidWitness : IDisposable
             var dir = System.IO.Path.GetDirectoryName(log);
             if (string.IsNullOrEmpty(dir)) return SidecarSnapshot.Nothing;
 
+            var sidecarGlob = ErrorLogName + "*";
+            var candidateGlob = System.IO.Path.GetFileName(_path) + ".tmp*";
+
             for (var attempt = 1; ; attempt++)
             {
-                var before = Listing(dir);
+                var before = Listing(dir, sidecarGlob);
+                var beforeTemps = Listing(dir, candidateGlob);
+
                 var lines = new Dictionary<string, string[]>(StringComparer.Ordinal);
                 foreach (var (path, _, _) in before) lines[path] = _readSidecar(path);
-                var after = Listing(dir);
 
-                if (Same(before, after))
+                // AND THE CANDIDATES' CONTENTS, INSIDE THE SAME WINDOW.
+                //
+                // They used to be ENUMERATED here and READ later, in ScanCandidates. So the change
+                // detection watched the names and the adoption decision rested on bytes it had never
+                // covered — and adoption is the one decision in this class that changes what the
+                // machine believes it submitted. A rewrite its owner finished between the listing
+                // and the read was adopted on content nobody established was stable. Read here, a
+                // temp that moves makes the second listing disagree with the first, and the whole
+                // snapshot is taken again exactly as a moving sidecar does.
+                //
+                // ReadTolerantly does not throw: absence and denial are its return value, so a
+                // candidate that cannot be read stays the per-candidate fact it was — it does not
+                // become a refusal of the whole set. Only CHANGE escalates to Unreadable.
+                var temps = new Dictionary<string, CandidateRead>(StringComparer.Ordinal);
+                foreach (var (path, _, _) in beforeTemps)
                 {
-                    var candidates = _listSidecars(dir, System.IO.Path.GetFileName(_path) + ".tmp*");
-                    return new SidecarSnapshot(before.Select(e => e.Path).ToArray(), candidates, lines);
+                    var text = ReadTolerantly(path, out var failed);
+                    temps[path] = new CandidateRead(text, failed);
                 }
+
+                var after = Listing(dir, sidecarGlob);
+                var afterTemps = Listing(dir, candidateGlob);
+
+                if (Same(before, after) && Same(beforeTemps, afterTemps))
+                    return new SidecarSnapshot(before.Select(e => e.Path).ToArray(),
+                                               beforeTemps.Select(e => e.Path).ToArray(), lines, temps);
                 if (attempt == 2) return SidecarSnapshot.Unreadable("the set is changing under this reader");
             }
         }
@@ -1768,9 +1796,9 @@ public sealed class CoidWitness : IDisposable
     ///
     /// Caller is inside <see cref="ReadSidecarSet"/>'s try, which is the only place this is called.
     /// </summary>
-    List<(string Path, long Length, DateTime Modified)> Listing(string dir)
+    List<(string Path, long Length, DateTime Modified)> Listing(string dir, string glob)
     {
-        var names = _listSidecars(dir, ErrorLogName + "*");
+        var names = _listSidecars(dir, glob);
         var listing = new List<(string, long, DateTime)>(names.Length);
         foreach (var name in names)
         {
@@ -1907,25 +1935,45 @@ public sealed class CoidWitness : IDisposable
     /// take an answer that may be "I could not look", and cannot get "there is nothing there"
     /// instead, because it has no way to ask.
     /// </summary>
+    /// <summary>
+    /// WHAT A CANDIDATE HELD WHEN IT WAS READ, in the same three shapes <see cref="ReadTolerantly"/>
+    /// answers in: text, absent (<c>null</c> with <see cref="Unreadable"/> false), or a read this
+    /// build could not perform. Carried in the snapshot so an adoption decision rests on bytes the
+    /// change detection covered rather than on a second look nobody watched.
+    /// </summary>
+    readonly record struct CandidateRead(string? Text, bool Unreadable);
+
     sealed class SidecarSnapshot
     {
         readonly Dictionary<string, string[]> _lines;
+        readonly Dictionary<string, CandidateRead> _candidates;
 
         SidecarSnapshot(string refusal)
         {
             Refusal = refusal;
             _lines = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            _candidates = new Dictionary<string, CandidateRead>(StringComparer.Ordinal);
             Sidecars = [];
             Candidates = [];
         }
 
         internal SidecarSnapshot(IReadOnlyList<string> sidecars, IReadOnlyList<string> candidates,
-                                 Dictionary<string, string[]> lines)
+                                 Dictionary<string, string[]> lines,
+                                 Dictionary<string, CandidateRead> candidateText)
         {
             Sidecars = sidecars;
             Candidates = candidates;
             _lines = lines;
+            _candidates = candidateText;
         }
+
+        /// <summary>
+        /// What this candidate held when it was read. A name the snapshot does not carry was never
+        /// listed, which is absence — the shape <see cref="ReadTolerantly"/> gives a file that is
+        /// not there.
+        /// </summary>
+        public CandidateRead Candidate(string path) =>
+            _candidates.TryGetValue(path, out var read) ? read : new CandidateRead(null, false);
 
         /// <summary>Why there is no snapshot, or null when this one is complete.</summary>
         public string? Refusal { get; }
@@ -1938,7 +1986,8 @@ public sealed class CoidWitness : IDisposable
 
         /// <summary>A witness with no home: nothing to read, and nothing wrong with that.</summary>
         public static readonly SidecarSnapshot Nothing =
-            new([], [], new Dictionary<string, string[]>(StringComparer.Ordinal));
+            new([], [], new Dictionary<string, string[]>(StringComparer.Ordinal),
+                new Dictionary<string, CandidateRead>(StringComparer.Ordinal));
 
         public static SidecarSnapshot Unreadable(string reason) => new(reason);
 
