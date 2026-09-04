@@ -94,3 +94,17 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    the new one are now one helper. Control `A_definite_outcome_the_store_took_settles_and_latches_nothing` green
    throughout. Mutant `LatchUnconfirmed(...)` → `ClearLatch(requestId)` → both RED again. Unit 201 / Fault 183 /
    Integration 506, 0 failed. VERIFIED.
+6. Modify verdict. RED (6): `An_answer_about_another_order_confirms_nothing` × id/symbol/account,
+   `A_price_one_grid_point_past_the_request_is_not_the_request` and the flipped
+   `A_price_that_did_not_move_by_more_than_a_tick_is_still_unconfirmed`, all `Expected: UNKNOWN / Actual: ACKNOWLEDGED`;
+   `A_reconciler_will_not_confirm_a_change_against_the_price_that_was_already_there` (`r6-recon: order FB-1 carries the
+   change`) → GREEN: `CheckModification` now takes the target's facts, refuses an answer whose order id, symbol or
+   account is not the target's, and `PriceCarries` accepts exactly `{floor, ceil}` of the request on the grid and
+   refuses the price the order already had when the request differed; `ModifyAsync` reads the target before the wire
+   (best effort) and writes symbol/account/wasLimit/wasStop into `ParametersJson` so the reconciler judges on the same
+   facts. `OrderInfo.Quantity` is now DEFINED in ConnectorSdk/Contracts.cs as the order's total, never the remainder
+   (both connectors already did this: fake passes cmd.Quantity, ATAS's QuantityToFill is the total and Unfilled the
+   remainder) — the quantity comparison is unchanged but is now decidable. Controls
+   `Either_rounding_of_the_request_still_reads_as_applied` (both) and `A_reconciler_still_confirms_a_change_the_platform
+   _carried_out` green throughout. Mutant: prior-price clause → `return true` → 2 RED. CONTRACTS.md bullet rewritten.
+   Unit 201 / Fault 191 / Integration 506, 0 failed. VERIFIED.
