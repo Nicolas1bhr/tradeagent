@@ -108,13 +108,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// during an order still abandoned it: measured at the shipped values,
     /// <c>DisposeAsync returned after 5.01s … unfinished:1 … state=DISPATCHING</c>.
     ///
-    /// The worst case for ONE order through <c>AtasConnector.Rpc</c>, at shipped values:
+    /// The worst case for ONE CALL through <c>AtasConnector.Rpc</c>, at shipped values:
     ///
     ///     send gate wait      up to WriteTimeout      10 s
     ///   + the write itself    up to FrameTimeout      30 s
     ///   + waiting for ATAS    up to rpcTimeout        10 s
-    ///   = 50 s, + 5 s for the settle and its write-back
-    ///   = 55 s
+    ///   = 50 s  (`WorstCaseOperationPath`)
+    ///
+    /// A HANDLER IS NOT ONE CALL, so the drain multiplies that by the longest chain a handler issues
+    /// in series — see <see cref="SerialConnectorCallsPerHandler"/>, which is five, and
+    /// <see cref="RiskReducingHandlerPath"/>, which is the other shape — and adds
+    /// <see cref="SettleAfterCancelTimeout"/> for the write-back. At shipped values: 5 × 50 + 5 =
+    /// 255 s, and disposal's ceiling 5 + that + 5 = 265 s.
     ///
     /// THE MIDDLE TERM WAS WRONG UNTIL 2026-09-03 and this number with it. It counted one
     /// WriteTimeout for the whole write, but WriteTimeout is a per-chunk PROGRESS budget reset by
@@ -127,15 +132,29 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// test asserts this default still covers it, so changing a connector deadline breaks a test
     /// rather than silently reintroducing the abandoned order.
     ///
-    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 55 s here — 65 s over
-    /// the whole of disposal — but ONLY while an order is
+    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 255 s here — 265 s over
+    /// the whole of disposal — but ONLY while a request is
     /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
     /// before this wait. Waiting is the right side of that trade, because the alternative is an
     /// order that reached the broker and is recorded DISPATCHING for ever.
+    ///
+    /// WHAT IT DOES NOT COVER, said plainly rather than left to be discovered: this is the bound for
+    /// ONE handler. `TradingGateway._dispatchGate` is a mutex, so N placements in flight together
+    /// queue on each other and cost N times a chain — and `DisposeAsync` waits for all of them under
+    /// this one bound. That was true before this round and this round does not change it; it is
+    /// named here because the number above is otherwise read as covering everything.
     /// </summary>
     public TimeSpan HandlerDrainTimeout
     {
-        get => _drain ?? DerivedDrainTimeout;
+        // AN EXPLICIT VALUE MAY ONLY LENGTHEN THIS, NEVER SHORTEN IT.
+        //
+        // It used to win outright, which put the whole derivation one constructor argument away from
+        // meaningless: `new GatewayPipeServer(gw, tok, pipe) { HandlerDrainTimeout = 7.Seconds() }`
+        // against a hundred-second worst path is the abandoned DISPATCHING order this drain exists to
+        // prevent, reintroduced by the caller who was trying to configure it (Codex round-8 CHECK d).
+        // A caller who names a LONGER value means it and gets it; one who names a shorter value is
+        // asking for an order to be abandoned at shutdown, which is not theirs to ask for.
+        get => _drain is { } d && d > DerivedDrainTimeout ? d : DerivedDrainTimeout;
         init => _drain = value;
     }
 
@@ -151,7 +170,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// reintroduced by a constructor argument.
     ///
     /// So it is read off the connector, and a test changes the deadlines and asserts the drain
-    /// follows. The five seconds are the settle and its write-back, as before.
+    /// follows.
+    ///
+    /// THE TWO SHAPES ARE MAXED, NOT ADDED, because one handler is one shape or the other: it is
+    /// risk-reducing or it is not. And the trailing term is <see cref="SettleAfterCancelTimeout"/>
+    /// itself rather than a second literal five seconds — the two numbers always meant the same
+    /// thing (time for a handler to write down what it knows) and writing it twice is how a derived
+    /// number silently stops being derived, which is the class this unit has now fixed three times.
+    ///
+    /// THE INVARIANT A CALLER CANNOT BREAK: whatever anybody sets, the drain is never shorter than
+    /// the composite chain above. The settle term is a margin on top of it; shortening that margin
+    /// shortens a handler's write-back window, which is what <see cref="SettleAfterCancelTimeout"/>
+    /// already means and already allows. Asserted, rather than left to this paragraph.
     ///
     /// WHAT THIS IS NOT: the whole of disposal. `DisposeAsync` also waits up to 5 s for the accept
     /// loop before this, and up to <see cref="SettleAfterCancelTimeout"/> after it, so the ceiling
@@ -159,29 +189,74 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// an operator will experience.
     /// </summary>
     TimeSpan DerivedDrainTimeout =>
-        SerialRpcsPerOperation * gateway.Connector.WorstCaseOperationPath + TimeSpan.FromSeconds(5);
+        (OrdinaryHandlerPath > RiskReducingHandlerPath ? OrdinaryHandlerPath : RiskReducingHandlerPath)
+        + SettleAfterCancelTimeout;
 
     /// <summary>
-    /// The longest chain of connector calls ONE handler issues in series: a prerequisite read, a
-    /// target resolution, and the mutation itself.
-    ///
-    /// Deriving the drain from a single connector call was the remaining half of Codex C3, and it is
-    /// Codex F2: a handler is not one RPC. `cancel-all` reads the working orders, resolves each
-    /// target and then cancels — so with a four-second connector the handler needs twelve seconds
-    /// against a drain of nine, and the active cancel is left DISPATCHING, which is the exact state
-    /// cc7006e and 02aad9a exist to prevent.
-    ///
-    /// A RISK-REDUCING operation cannot reach this bound any more, because round 8 gave it one
-    /// deadline of its own (`EmergencyBudget`) covering all of its calls together. What can reach it
-    /// is an ordinary multi-call handler — a modify, which resolves and then modifies.
-    ///
-    /// THE PRICE, STATED: at the shipped ATAS values this makes the drain 3 × 50 + 5 = 155 s, and
-    /// disposal's ceiling 5 + that + 5. It is paid only while a request is genuinely in flight, and
-    /// the alternative is the abandoned DISPATCHING order this whole drain exists to prevent — but
-    /// it is a number an operator can experience and it is a product decision, not an arithmetic
-    /// one.
+    /// The worst an ORDINARY handler can cost: every call in its chain paying the full per-call
+    /// bound, because nothing shortens any of them.
     /// </summary>
-    const int SerialRpcsPerOperation = 3;
+    TimeSpan OrdinaryHandlerPath =>
+        SerialConnectorCallsPerHandler * gateway.Connector.WorstCaseOperationPath;
+
+    /// <summary>
+    /// The worst a RISK-REDUCING handler can cost, and it is a different shape rather than a longer
+    /// chain — which is why taking only the ordinary term under-covered it.
+    ///
+    /// Round 8 gave the whole operation ONE deadline: the orders read, every target resolution and
+    /// every leg share <c>EmergencyBudget</c>, and a leg whose turn arrives after it is reported
+    /// NOT SENT instead of being issued. So the entire risk-reducing part of such a handler costs
+    /// the budget ONCE however many calls it decomposes into.
+    ///
+    /// Plus exactly one ordinary call, and that one is not a rounding allowance. `close` and
+    /// `close-all` are implemented as a PLACE of an offsetting order, and `Place` is excluded from
+    /// the emergency deadline on purpose (an op that can open exposure has no claim on it) — so the
+    /// last call of a close is served the full ordinary bound while everything in front of it was
+    /// served the budget.
+    ///
+    /// It matters at values the suite actually uses: a fixture with a 30 s emergency budget over a
+    /// 4 s connector needs 34 s, against 20 s from the ordinary term alone.
+    /// </summary>
+    TimeSpan RiskReducingHandlerPath =>
+        gateway.Connector.EmergencyBudget + gateway.Connector.WorstCaseOperationPath;
+
+    /// <summary>
+    /// The longest chain of connector calls ONE ORDINARY handler issues in series, counted from the
+    /// handlers rather than assumed — and the longest is a COLD <c>buy</c>/<c>sell</c>.
+    ///
+    /// Three was written down as "a prerequisite read, a target resolution, the mutation", which is
+    /// the shape of a <c>modify</c> and is not the longest one. `TradingGateway.PlaceAsync` on a
+    /// process that has not warmed its caches issues FIVE, every one of them awaited before the next
+    /// (Codex round-8 CHECK d):
+    ///
+    ///   1. the account — `AccountAsync`, which is `GetAccountAsync` or `GetAccountsAsync`;
+    ///   2. the open positions — the `MaxOpenPositions` check;
+    ///   3. a quote — required for EVERY order, so a stale price cannot size one;
+    ///   4. the instrument list — read once and cached, so only a cold process pays it;
+    ///   5. the order itself.
+    ///
+    /// "Cold" is not a contrived state: it is every placement made before anything else has warmed
+    /// the caches, which at shutdown is exactly the placement most likely to still be in flight.
+    ///
+    /// WHY NOT SEVEN, which is what a cold `close` issues (a `RequireAccountId` and a positions read,
+    /// and then all five of `PlaceAsync`): `close` is RISK-REDUCING, so six of those seven share one
+    /// <see cref="RiskReducingHandlerPath"/> budget between them and only the trailing `Place` is
+    /// served the ordinary bound. Counting its calls at the ordinary rate would over-cover it by
+    /// minutes. The sweeps are excluded for the same reason and one more: their legs are issued
+    /// concurrently, so their call COUNT is not their serial depth at all.
+    ///
+    /// A test counts the cold placement's calls over the real pipe and asserts this number covers
+    /// what it counted, so a handler that grows a sixth call fails there instead of silently
+    /// shortening this bound (§9.9).
+    ///
+    /// THE PRICE, STATED, AND IT WENT UP: at the shipped ATAS values (`WorstCaseOperationPath` 50 s)
+    /// the drain is 5 × 50 + 5 = 255 s, and disposal's ceiling is 5 + that + 5 = 265 s. Round 8 put
+    /// that figure at 155 s and it was too short by two calls. It is paid ONLY while a request is
+    /// genuinely in flight — an idle handler is freed when its pipe closes, before this wait — and
+    /// the alternative is an order that reached the broker and is recorded DISPATCHING for ever. It
+    /// remains a product decision rather than an arithmetic one, and it is the manager's to take.
+    /// </summary>
+    public const int SerialConnectorCallsPerHandler = 5;
 
     /// <summary>
     /// How long a handler gets AFTER its token is cancelled, to write down what it knows.

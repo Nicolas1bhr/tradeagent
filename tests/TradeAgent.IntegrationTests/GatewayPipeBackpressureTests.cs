@@ -414,9 +414,15 @@ public class GatewayPipeBackpressureTests
         // than by abandoning an order at shutdown six months later.
         Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
 
-        // Three of those in series plus five for the settle: a handler is not one connector call
-        // (Codex F2), and this is the number an operator can experience at shutdown.
-        Assert.Equal(TimeSpan.FromSeconds(155), server.HandlerDrainTimeout);
+        // FIVE of those in series plus the settle: a handler is not one connector call (Codex F2),
+        // and three was the wrong count for the longest one (Codex round-8 CHECK d) — a cold
+        // placement issues five. This is the number an operator can experience at shutdown.
+        Assert.Equal(5, GatewayPipeServer.SerialConnectorCallsPerHandler);
+        Assert.Equal(TimeSpan.FromSeconds(255), server.HandlerDrainTimeout);
+
+        // And the risk-reducing shape is covered too, rather than assumed smaller: at shipped values
+        // it is 2 s of emergency budget plus one ordinary Place, which the 255 above already exceeds.
+        Assert.Equal(TimeSpan.FromSeconds(2), connector.EmergencyBudget);
         Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
             $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
             $"worst-case order path {connector.WorstCaseOrderPath.TotalSeconds:0}s — a shutdown mid-order abandons it");
@@ -442,9 +448,54 @@ public class GatewayPipeBackpressureTests
             $"the drain is {server.HandlerDrainTimeout.TotalSeconds:0}s against a {slow.WorstCaseOrderPath.TotalSeconds:0}s " +
             "worst path — it was written down rather than derived, so a supported deadline change abandons an order again");
 
-        // And an explicit value still wins, because a caller that names one means it.
-        var pinned = new GatewayPipeServer(gw, "tok", "ta-drain-slow-3") { HandlerDrainTimeout = TimeSpan.FromSeconds(7) };
-        Assert.Equal(TimeSpan.FromSeconds(7), pinned.HandlerDrainTimeout);
+        // AND AN EXPLICIT VALUE MAY ONLY LENGTHEN IT. Seven seconds against a hundred-second worst
+        // path is the abandoned DISPATCHING order this drain exists to prevent, asked for by the
+        // caller who was trying to configure it — so it is refused and the derived bound stands
+        // (Codex round-8 CHECK d). It used to win outright, which made the whole derivation one
+        // constructor argument away from meaningless.
+        var undersized = new GatewayPipeServer(gw, "tok", "ta-drain-slow-3") { HandlerDrainTimeout = TimeSpan.FromSeconds(7) };
+        Assert.Equal(server.HandlerDrainTimeout, undersized.HandlerDrainTimeout);
+        Assert.True(undersized.HandlerDrainTimeout > slow.WorstCaseOrderPath,
+            $"a caller shortened the drain to {undersized.HandlerDrainTimeout.TotalSeconds:0}s against a " +
+            $"{slow.WorstCaseOrderPath.TotalSeconds:0}s worst path");
+
+        // The other direction, so this is a clamp and not an override that has simply been ignored:
+        // a caller who asks for LONGER means it and gets it.
+        var generous = new GatewayPipeServer(gw, "tok", "ta-drain-slow-4") { HandlerDrainTimeout = TimeSpan.FromHours(1) };
+        Assert.Equal(TimeSpan.FromHours(1), generous.HandlerDrainTimeout);
+    }
+
+    /// <summary>
+    /// THE INVARIANT, ASSERTED OVER EVERY KNOB A CALLER CAN TURN: the drain is never shorter than the
+    /// composite chain it is derived from.
+    ///
+    /// The settle term is a MARGIN on top of that chain, and shortening it shortens a handler's
+    /// write-back window — which is what `SettleAfterCancelTimeout` already means and already allows.
+    /// What must not be reachable is a drain that gives up while the chain is still legitimately
+    /// running, by any route: an undersized explicit drain, a zero settle, or both together.
+    /// </summary>
+    [Fact]
+    public void No_combination_of_settings_makes_the_drain_shorter_than_the_chain()
+    {
+        using var db = TestEnv.NewDb();
+        var conn = new AtasConnector("ta-drain-invariant", TimeSpan.FromSeconds(60));   // 100 s worst path
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        var chain = GatewayPipeServer.SerialConnectorCallsPerHandler * conn.WorstCaseOperationPath;
+
+        foreach (var server in new[]
+                 {
+                     new GatewayPipeServer(gw, "tok", "ta-inv-1"),
+                     new GatewayPipeServer(gw, "tok", "ta-inv-2") { HandlerDrainTimeout = TimeSpan.Zero },
+                     new GatewayPipeServer(gw, "tok", "ta-inv-3") { SettleAfterCancelTimeout = TimeSpan.Zero },
+                     new GatewayPipeServer(gw, "tok", "ta-inv-4")
+                     {
+                         HandlerDrainTimeout = TimeSpan.FromMilliseconds(1),
+                         SettleAfterCancelTimeout = TimeSpan.Zero
+                     }
+                 })
+            Assert.True(server.HandlerDrainTimeout >= chain,
+                $"the drain came out at {server.HandlerDrainTimeout.TotalSeconds:0}s against a " +
+                $"{chain.TotalSeconds:0}s chain — a caller shortened it below the work it has to cover");
     }
 
     /// <summary>
@@ -570,6 +621,137 @@ public class GatewayPipeBackpressureTests
         Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
     }
 
+    /// <summary>
+    /// COUNT THE CHAIN, DO NOT ASSUME IT — and a cold placement's chain is FIVE, not three.
+    ///
+    /// Round 8 derived the drain from "a prerequisite read, a target resolution, the mutation",
+    /// which is a `modify` and is not the longest handler. Codex round-8 CHECK d: a cold
+    /// `TradingGateway.PlaceAsync` issues five connector calls, each awaited before the next — the
+    /// account, the open positions, a quote, the instrument list (read once and cached, so only a
+    /// cold process pays it) and then the order.
+    ///
+    /// This is the §9.9 assertion for the class: the number in `SerialConnectorCallsPerHandler` is
+    /// re-derived from the handler that actually runs, over the real pipe, so a handler that grows a
+    /// sixth call fails HERE rather than by shortening a shutdown drain six months later. The ops are
+    /// named as well as counted, because a count alone would still hold if one call were swapped for
+    /// a different one.
+    /// </summary>
+    [Fact]
+    public async Task A_cold_placement_issues_no_more_connector_calls_than_the_drain_assumes()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var inner = new FakeConnector(new FakeBroker());
+        var counting = new CountingConnector(inner);
+        var gw = new TradingGateway(db, counting, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = inner.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOrdersPerMinute = 100;
+
+            // AN ALLOWLIST, WHICH IS WHAT A CONFIGURED INSTALLATION HAS — and it is what keeps the
+            // instrument cache cold. `RefreshHealthAsync` reads the instrument list only to pick a
+            // symbol to quote when nothing is allowlisted, so on a configured install nothing warms
+            // that cache and the FIRST placement is the one that pays for it. Cold is the normal
+            // state here, not a contrived one.
+            s.Risk.InstrumentAllowlist.Add("ES");
+        });
+        await counting.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+
+        // NO WARM-UP, deliberately: cold is the state every placement is in before anything else has
+        // warmed the caches, and at shutdown it is the placement most likely to still be in flight.
+        counting.Calls.Clear();
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-chain",
+            RequestId = "cli-chain-1",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await WaitFor(() => gw.GetRequest("cli-chain-1")?.State == ExecutionState.FILLED, TimeSpan.FromSeconds(30));
+
+        var chain = counting.Calls.ToArray();
+        Assert.Equal(
+            new[] { "account", "positions", "quote", "instruments", "place" },
+            chain);
+        Assert.True(GatewayPipeServer.SerialConnectorCallsPerHandler >= chain.Length,
+            $"a cold placement issues {chain.Length} connector calls in series ({string.Join(" -> ", chain)}) " +
+            $"against a drain derived from {GatewayPipeServer.SerialConnectorCallsPerHandler} — the drain gives up " +
+            "while the handler is still legitimately running, and the order is abandoned DISPATCHING");
+    }
+
+    /// <summary>
+    /// DISPOSAL DURING A COLD PLACEMENT — Codex round-8's acceptance for the drain, and the state it
+    /// produces when the count is wrong.
+    ///
+    /// The latency here is UNCANCELLABLE on purpose. A merely slow broker unwinds the moment disposal
+    /// cancels the token and records UNKNOWN, so the harm hides as "an order that needs reconciling";
+    /// a call that does not honour the token is what leaves the row DISPATCHING with nothing coming
+    /// to change it, which is the exact state cc7006e and 02aad9a exist to prevent.
+    ///
+    /// The disposal is early, while the handler is in its FIRST read — otherwise the drain only has
+    /// to cover whatever is left of the chain, and a bound derived from three calls covers that
+    /// easily. The whole point is a handler with most of its chain still ahead of it.
+    /// </summary>
+    [Fact]
+    public async Task Disposal_covers_a_cold_placement_and_not_just_the_call_it_is_inside()
+    {
+        // The allowlist is what keeps the instrument cache cold, and it is what a configured
+        // installation has: health reads the instrument list only when nothing is allowlisted.
+        var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.InstrumentAllowlist.Add("ES"));
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(200)
+        };
+        server.Start();
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+
+        // A second a call, and the call will not let go when asked. Five calls, so the handler needs
+        // five seconds and the drain is the only thing standing between it and an abandoned order.
+        conn.Faults.UncancellableLatencyMs = 1000;
+        Assert.Equal(TimeSpan.FromSeconds(1), conn.WorstCaseOperationPath);
+        var drain = server.HandlerDrainTimeout;
+
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-cold",
+            RequestId = "cli-cold-1",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        await Task.Delay(1200);   // it is on its second call and three more are still to come
+
+        await server.DisposeAsync();
+
+        // Read the instant disposal returns: the handler goes on running afterwards, so a request
+        // that is only settled later was still abandoned by the shutdown.
+        var why = $"the drain came out at {drain.TotalSeconds:0.00}s against a five-call chain that needs " +
+                  $"{5 * conn.WorstCaseOperationPath.TotalSeconds:0.00}s — disposal walked away from an order in flight";
+        Assert.True(Dispatching(db) == 0, $"{Dispatching(db)} request(s) left DISPATCHING: {why}");
+        Assert.True(ReadEngineering(db, "handlers_did_not_finish") is null, $"a handler was abandoned: {why}");
+        Assert.Equal(ExecutionState.FILLED, gw.GetRequest("cli-cold-1")!.State);
+        Assert.Single(conn.Broker.Orders);
+    }
+
     /// <summary>Requests left mid-flight — the state the drain exists to prevent.</summary>
     static int Dispatching(Database db) => db.Read(_ =>
     {
@@ -593,13 +775,19 @@ public class GatewayPipeBackpressureTests
     [Fact]
     public async Task Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        // THE CONNECTOR UNDER-REPORTS ITS OWN WORST CASE, which is how a drain ends up shorter than
+        // the handler now that an explicit `HandlerDrainTimeout` can no longer shorten it. It is also
+        // the realistic shape: a vendor call that blocks for longer than the vendor admits.
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
         using var _1 = db;
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
         {
-            HandlerDrainTimeout = TimeSpan.FromMilliseconds(300)   // far shorter than the order path
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
         };
+        Assert.True(server.HandlerDrainTimeout < TimeSpan.FromSeconds(1),
+            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0.00}s — the handler will finish " +
+            "inside it and never be cancelled, so this test would pass without testing anything");
         server.Start();
 
         const string rid = "cli-settle-on-cancel-1";
@@ -647,13 +835,14 @@ public class GatewayPipeBackpressureTests
     [Fact]
     public async Task A_handler_that_outlasts_the_drain_is_recorded_as_an_error()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        // Deliberately far shorter than the call really takes, which is the situation the log line
+        // exists for — and it is the CONNECTOR that says so, because an explicit drain can no longer
+        // shorten the bound below the chain it derives.
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
         using var _1 = db;
         var pipe = NewPipe();
-        // Deliberately far shorter than the order path, which is the situation the log line exists for.
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
         {
-            HandlerDrainTimeout = TimeSpan.FromMilliseconds(300),
             SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
         };
         server.Start();
@@ -682,6 +871,99 @@ public class GatewayPipeBackpressureTests
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>
+    /// Forwards every call to the simulator and writes down which ones it was asked for, in order.
+    ///
+    /// The ORDER matters as much as the count: this is used on a handler whose calls are strictly
+    /// serial, so the sequence it records IS the chain the shutdown drain has to outlast. It is not
+    /// meaningful on a sweep, whose legs are issued concurrently — that shape is bounded by the
+    /// operation's own deadline instead, and the drain accounts for it separately.
+    /// </summary>
+    sealed class CountingConnector(FakeConnector inner) : ConnectorSdk.ITradingConnector
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Calls { get; } = new();
+
+        T Note<T>(string op, T call) { Calls.Enqueue(op); return call; }
+
+        public string Id => inner.Id;
+        public string DisplayName => inner.DisplayName;
+        public ConnectorSdk.ConnectorCapabilities Capabilities => inner.Capabilities;
+        public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
+        public TimeSpan EmergencyBudget => inner.EmergencyBudget;
+
+        public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
+        public event Action<ConnectorSdk.QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<ConnectorSdk.OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ConnectorSdk.ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<ConnectorSdk.PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<ConnectorSdk.AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+
+        // Not counted: neither reaches the wire in this connector, and neither is part of a handler's
+        // chain — health is polled by the app's own loop.
+        public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
+        public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
+        public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);
+
+        public Task<IReadOnlyList<ConnectorSdk.AccountInfo>> GetAccountsAsync(CancellationToken ct = default) =>
+            Note("accounts", inner.GetAccountsAsync(ct));
+        public Task<ConnectorSdk.AccountInfo?> GetAccountAsync(string accountId, CancellationToken ct = default) =>
+            Note("account", inner.GetAccountAsync(accountId, ct));
+        public Task<IReadOnlyList<ConnectorSdk.InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) =>
+            Note("instruments", inner.GetInstrumentsAsync(ct));
+        public Task<ConnectorSdk.QuoteInfo?> GetQuoteAsync(string symbol, CancellationToken ct = default) =>
+            Note("quote", inner.GetQuoteAsync(symbol, ct));
+        public Task<IReadOnlyList<ConnectorSdk.PositionInfo>> GetPositionsAsync(string accountId, CancellationToken ct = default) =>
+            Note("positions", inner.GetPositionsAsync(accountId, ct));
+        public Task<IReadOnlyList<ConnectorSdk.OrderInfo>> GetOrdersAsync(string accountId, bool includeInactive, DateTimeOffset? since, CancellationToken ct = default) =>
+            Note("orders", inner.GetOrdersAsync(accountId, includeInactive, since, ct));
+        public Task<IReadOnlyList<ConnectorSdk.ExecutionInfo>> GetExecutionsAsync(string accountId, DateTimeOffset? since, CancellationToken ct = default) =>
+            Note("executions", inner.GetExecutionsAsync(accountId, since, ct));
+        public Task<ConnectorSdk.OrderInfo> PlaceOrderAsync(ConnectorSdk.PlaceOrderCommand cmd, CancellationToken ct = default) =>
+            Note("place", inner.PlaceOrderAsync(cmd, ct));
+        public Task<ConnectorSdk.OrderInfo> ModifyOrderAsync(ConnectorSdk.ModifyOrderCommand cmd, CancellationToken ct = default) =>
+            Note("modify", inner.ModifyOrderAsync(cmd, ct));
+        public Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default) =>
+            Note("cancel", inner.CancelOrderAsync(connectorOrderId, ct));
+        public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string accountId, CancellationToken ct = default) =>
+            Note("cancel-all", inner.CancelAllOrdersAsync(accountId, ct));
+        public Task<ConnectorSdk.OrderInfo?> ClosePositionAsync(string accountId, string symbol, string clientOrderId, CancellationToken ct = default) =>
+            Note("close", inner.ClosePositionAsync(accountId, symbol, clientOrderId, ct));
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A gateway over a simulator that CLAIMS a given worst-case path whatever it actually costs,
+    /// and whose emergency budget is small enough not to floor the derived drain on its own.
+    ///
+    /// This is how a test makes the shutdown drain too short now that setting one directly cannot:
+    /// the drain derives itself correctly from what the connector tells it, and what it is told is
+    /// wrong. Same end state as the old undersized `HandlerDrainTimeout`, reached the way an
+    /// operator can actually reach it.
+    /// </summary>
+    static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> ReadyWithDeclaredWorstCase(
+        TimeSpan declared)
+    {
+        var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new FakeBroker())
+        {
+            WorstCaseOperationPath = declared,
+            EmergencyBudget = TimeSpan.FromMilliseconds(50)
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        return (gw, conn, db);
+    }
 
     /// <summary>
     /// Makes the gateway's pre-flight lookups cheap, so a broker latency armed afterwards lands on
