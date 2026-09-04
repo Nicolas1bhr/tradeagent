@@ -36,3 +36,24 @@ no trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; what the simplification deleted; one line per
 item (RED → GREEN → mutant); final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report — U2c1b, builder (Opus), 2026-09-05
+Code tip **4e18a5f** (this report is the commit on top), rebased onto main `939fd89`. Baseline at b5446b7: 0 warnings,
+912 passed. **Deleted:** `OperatorPress` + `OutstandingPressNonce` (reconstruct-at-restart); the `pressNonce`
+parameters, `NewOperatorPressNonce` and both `IdempotencyEnabled` press-replay checks (same-nonce retry); the gateway's
+`Connector.CancelAllOrdersAsync` call and the reconciler's whole CANCEL_ALL captured-set arm; three sweep hooks on the
+test connector. `ITradingConnector.CancelAllOrdersAsync` STAYS: 17 ATAS send-deadline tests measure the bridge through
+it and the connector is U2c1c's — nothing calls it now, and CONTRACTS.md says so.
+Items 1+2+3 are one rewrite of two methods and landed in one commit. 1 RED `op-close-…-ES is WORKING and unflagged`
+(3 failed) → GREEN → mutant (drop `MarkNeedsReconciliation` from the write-ahead) → 3 failed. 2 RED `Assert.Throws()
+Failure: No exception was thrown` → GREEN → mutant (refusal returns early) → 2 failed. 3 GREEN → mutant (ignore the
+drift + restore the sweep call) → 2 failed (`Expected: 0 Actual: 1` closes, `Expected: 0 Actual: 2` sweeps).
+4 RED `Expected: WORKING Actual: CANCELLED` (order B swept by the replay) and `Collection: []` (position B closed) →
+GREEN → mutant (ignore the stored answer) → 2 failed; schema v3 adds `composite_request`. 5 RED `the press took 6.0s
+against a 2s emergency budget`, deadline null on the pre-close read → GREEN → mutant (`Begin()`, no budget) → 3 failed.
+**Gate at 4e18a5f:** Release `--no-incremental` → `0 Warning(s) 0 Error(s)`; Release suite → Unit 201 / Fault 188 /
+Integration 524 = **913 passed, 0 failed**. Test names −20 / +21: all 20 pinned a retired path (3 retry, 3
+`OperatorPress`, 5 press-set-and-restart, 4 press reconciliation, 4 F2-through-a-press, 1 partial-sweep answer), and
+the F2 rule and "a press is judged by its own records" were re-homed onto surviving paths rather than dropped.
+**NOT MINE:** I edited `GatewayPipeServer.CancelAll`/`CloseAll` (~12 lines) though the brief excludes the pipe server —
+item 4 is unreachable without it. **NOT VERIFIED:** the Dashboard card (compiles; no UI run). No box, no real ATAS.
