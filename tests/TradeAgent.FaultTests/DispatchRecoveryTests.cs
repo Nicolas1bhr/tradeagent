@@ -2273,3 +2273,106 @@ public class ConservativeEvidenceRoundFourTests
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
+
+public class NonDefiniteIsNeverClearTests
+{
+    static (MovableClock Clock, GatewayOptions Options) Clocked()
+    {
+        var clock = new MovableClock(DateTimeOffset.UtcNow);
+        return (clock, new GatewayOptions { Clock = clock });
+    }
+
+    /// <summary>An operator cancel-all whose answer was lost on the wire, over one resting order.</summary>
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, MovableClock Clock)> LostSweep()
+    {
+        var (clock, options) = Clocked();
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        await gw.PlaceAsync(AgentContext.Operator, "r4-nd-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.CancelAllDoesNotReachTheBook = true;
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;
+        c.CancelAllDoesNotReachTheBook = false;
+        return (gw, c, db, clock);
+    }
+
+    /// <summary>
+    /// A BOOK OF ORDERS THE PLATFORM WILL NOT COMMIT TO IS NOT AN EMPTY BOOK.
+    ///
+    /// The live set was filtered by `IsDefinite` before it was counted, so a CANCEL_PENDING order —
+    /// the platform saying "a cancellation is in progress and I do not know yet" — dropped out of it,
+    /// `live.Count == 0`, and the press resolved CANCELLED. That is the rule read backwards: the
+    /// absence of DEFINITE evidence became the presence of it (Codex round-3 F2).
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionState.CANCEL_PENDING)]
+    [InlineData(ExecutionState.UNKNOWN)]
+    public async Task A_captured_order_the_platform_will_not_commit_to_keeps_the_sweep_unconfirmed(ExecutionState state)
+    {
+        var (gw, c, db, clock) = await LostSweep();
+        using var dbh = db;
+        c.RewriteBook = o => o with { State = state };
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE SAME WITH NOTHING CAPTURED, which is the branch that reads the WHOLE account. A sweep that
+    /// never got far enough to write per-order records is judged on "is anything working" — and an
+    /// order the platform will not commit to is not an answer to that question either.
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_with_nothing_captured_is_unconfirmed_while_the_book_is_undecided()
+    {
+        var (clock, options) = Clocked();
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "r4-nc-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        // The order list the sweep reads is what fails, so no per-order record is ever written and
+        // the umbrella has nothing captured to judge itself on.
+        c.HideOrdersEntirely = true;
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;
+        c.HideOrdersEntirely = false;
+
+        Assert.Empty(gw.Requests.Query("request_id LIKE 'op-cancel-%-%' AND intent='CANCEL'"));
+        c.RewriteBook = o => o with { State = ExecutionState.CANCEL_PENDING };
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION: a book that is DEFINITELY clear still settles the press. The rule is
+    /// about what counts as evidence, not about refusing to finish.
+    /// </summary>
+    [Fact]
+    public async Task A_definitely_cancelled_book_still_settles_the_sweep()
+    {
+        var (gw, c, db, clock) = await LostSweep();
+        using var dbh = db;
+        foreach (var o in c.Inner.Broker.Orders.ToList()) c.Inner.Broker.Cancel(o.ConnectorOrderId);
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.Equal(ExecutionState.CANCELLED, umbrella.State);
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}

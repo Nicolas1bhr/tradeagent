@@ -58,3 +58,8 @@ Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); su
    `ReconcileAsync`'s loop, reason "placed on fake; connected to atas"; the other direction
    (`A_definite_cancel_on_the_records_own_platform_still_settles`) was green before and after. Mutant `if (false && ...)`
    → RED, same assertion. Fault suite 168 green. VERIFIED.
+2. Non-definite is never clear. RED `A_captured_order_the_platform_will_not_commit_to_keeps_the_sweep_unconfirmed`
+   (CANCEL_PENDING, UNKNOWN) and `A_sweep_with_nothing_captured_is_unconfirmed_while_the_book_is_undecided`, all three
+   `Expected: Not CANCELLED / Actual: CANCELLED` → GREEN: `IsDefinite` stopped being a filter on the live set and became
+   an `undecided` set asked first, captured or not; `A_definitely_cancelled_book_still_settles_the_sweep` green
+   throughout. Mutant `undecided.Count > 99` → the same three RED. Fault suite 172 green. VERIFIED.

@@ -1727,9 +1727,22 @@ public sealed class TradingGateway : IAsyncDisposable
                 .Where(id => id is not null)
                 .ToHashSet();
 
-            var live = orders
-                .Where(o => !OrderStateMachine.IsTerminal(o.State) && IsDefinite(o.State))
+            var relevant = orders
                 .Where(o => captured.Count == 0 || captured.Contains(o.ConnectorOrderId))
+                .ToList();
+
+            // A BOOK OF ORDERS THE PLATFORM WILL NOT COMMIT TO IS NOT AN EMPTY BOOK. `IsDefinite`
+            // used to be a filter on the live set, so a CANCEL_PENDING or UNKNOWN order dropped OUT
+            // of the count and the press read `live.Count == 0` as "nothing is working" — the rule
+            // backwards: the absence of definite evidence became the presence of it (Codex round-3
+            // F2). Asked first, because it is the answer whenever it applies, captured set or not.
+            var undecided = relevant.Where(o => !IsDefinite(o.State)).ToList();
+            if (undecided.Count > 0)
+                return (false, $"the platform will not say what happened to {undecided.Count} order(s) " +
+                               $"({string.Join(", ", undecided.Select(o => $"{o.ConnectorOrderId} is {o.State}"))})");
+
+            var live = relevant
+                .Where(o => !OrderStateMachine.IsTerminal(o.State) && IsDefinite(o.State))
                 .ToList();
 
             if (live.Count == 0)
