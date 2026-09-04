@@ -103,6 +103,21 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     long _peerArrivedAt;
 
+    /// <summary>
+    /// WHEN THIS PEER PROVED ITSELF — the stamp on the third derived reading, and the one that was
+    /// missing (F38). A peer that has authenticated and not yet said hello used to produce NO
+    /// reading at all: the silence required <c>!_authenticated</c>, so the getter went quiet the
+    /// instant the challenge was answered, and with nothing of its own to report the row fell back
+    /// on whatever marker the PREVIOUS connection had left — naming a protocol mismatch belonging to
+    /// a program that had already gone.
+    ///
+    /// It is newer than <see cref="_peerArrivedAt"/> by construction, so within one connection this
+    /// reading supersedes that peer's own silence; and newer than everything from before this peer
+    /// arrived, so across connections it supersedes the last peer's refusals. "No status" is not a
+    /// state: a connection that is there always says something about itself.
+    /// </summary>
+    long _authenticatedAt;
+
     void NoteIncompatible(IncompatibleBridge? peer)
     {
         _incompatible = peer;
@@ -174,12 +189,36 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <summary>One line explaining a FAILED trading connection, or null when there is nothing to
     /// add. Read by the gateway for the health detail the dashboard shows.</summary>
     /// <summary>
-    /// THE ROW DESCRIBES THE PEER THAT IS THERE NOW. Both refusals are permanent, so when both are
-    /// set the newer observation is the one an operator can act on; the older stays RECORDED and
-    /// readable through <see cref="Incompatible"/> and <see cref="Unauthenticated"/>, it simply
-    /// stops outranking a later one. The derived Silent reading has no stamp and needs none: the
-    /// <see cref="Unauthenticated"/> getter only produces it while <c>_incompatible</c> is null, so
-    /// it can never be the loser of this comparison.
+    /// A PEER THAT PROVED ITSELF AND HAS NOT SAID HELLO YET, or null. The third derived reading, and
+    /// the one F38 was about — it is not an <see cref="UnauthenticatedBridge"/>, because this peer
+    /// HAS authenticated and putting it there would make that property say the opposite of what it
+    /// means to the two consumers that read it.
+    ///
+    /// No grace period gates it: authentication is an OBSERVATION, not a clock, and the moment it
+    /// lands there is something true and current to say about this connection. That is what makes it
+    /// beat a marker left by the peer before it without waiting for anything to time out.
+    /// </summary>
+    string? PendingHello =>
+        _authenticated && _hello is null
+            ? "the ATAS bridge is connected and has not said hello yet — it proved itself and has " +
+              "not announced its version. If this line stays, the strategy on the chart is loaded " +
+              "but is not the TradeAgent bridge, or it is a build that stops before its handshake; " +
+              "reinstall the add-on from TradeAgent"
+            : null;
+
+    /// <summary>
+    /// THE ROW DESCRIBES THE PEER THAT IS THERE NOW, AND A PEER THAT IS THERE ALWAYS SAYS SOMETHING.
+    ///
+    /// Three readings can be live and each carries the stamp of the moment it was observed, so the
+    /// newest wins and the older ones stay RECORDED and readable through <see cref="Incompatible"/>
+    /// and <see cref="Unauthenticated"/> — they simply stop outranking a later one. Both refusals are
+    /// permanent, which is why an order is needed at all.
+    ///
+    /// F38 IS THE THIRD READING BEING ADDED. With only two, a peer that had authenticated and not
+    /// yet said hello produced nothing, and "nothing" let the previous connection's marker stand as
+    /// the current row. The rule this states is: a current connection ALWAYS derives a status newer
+    /// than any marker — authenticated-without-hello says so, silence past the grace says so, a
+    /// refusal says so. "No status" is not one of the states.
     /// </summary>
     public string? StatusDetail
     {
@@ -187,9 +226,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             var incompatible = _incompatible;
             var (unauthenticated, unauthenticatedAt) = UnauthenticatedNow();
-            if (incompatible is null) return unauthenticated?.ToString();
-            if (unauthenticated is null) return incompatible.ToString();
-            return unauthenticatedAt > _incompatibleAt ? unauthenticated.ToString() : incompatible.ToString();
+
+            string? winner = null;
+            var at = long.MinValue;
+            if (incompatible is not null) { winner = incompatible.ToString(); at = _incompatibleAt; }
+            if (unauthenticated is not null && unauthenticatedAt > at)
+            { winner = unauthenticated.ToString(); at = unauthenticatedAt; }
+            if (PendingHello is { } waiting && _authenticatedAt > at) winner = waiting;
+            return winner;
         }
     }
 
@@ -444,6 +488,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // The silent-peer reading is the one that does leave with the peer: it is derived from
         // _peerArrived, reset below, so a pipe with nobody on it stops claiming anybody is there.
         _authenticated = false;
+        _authenticatedAt = 0;
         // Both are facts about THIS connection and end with it, exactly as _incompatible does: a
         // fresh peer on a fresh connection is heard out from the beginning, and a repaired bridge
         // that reconnects is accepted on its first hello.
@@ -685,6 +730,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         }
 
         _authenticated = true;
+        _authenticatedAt = Interlocked.Increment(ref _observed);
         NoteUnauthenticated(null);
         await SendFrame(new
         {
