@@ -2960,7 +2960,8 @@ failed / 5 → GREEN 45/45, mutant (unstamped, a marker always wins) → 1/8 red
 current log" against a 65536 cap → GREEN 190/190, mutant `+= text.Length` → 1/42 red.
 Builder's baseline at `a8fa06e`, Release: 0 warnings, 75 + 201 + 505 = 781, 0 failed; final at `3267fbf` 795, 0 failed,
 0 names removed, 14 added. Manager's gate at the rebased tip `64cdb73`, Release: build → 0 warnings, 0 errors; suite →
-75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 14 added; scan clean; CI run 33911240280 was in progress when this was written.
+75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 14 added; scan clean; CI run 33911240280 at `64cdb73` (and 33911280513 at the docs commit): ubuntu SUCCESS, macos SUCCESS, windows FAILURE
+517/519 on exactly the two U14-win harness tests — the only red left on `main`, fixer in flight.
 
 **NOT VERIFIED:** the box — no credentials in this session although the adapter and the teardown both changed, so
 the bridge compile and `tools/atas-gate` at this tip are owed to the v0.1.2 box session; everything above is macOS/APFS — the Windows runner's own witness reds are the harness class
