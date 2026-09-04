@@ -622,8 +622,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         var working = await gateway.OrdersAsync(false, ct);
         var nonce = FreshSweepNonce("cancelall");
+        // AWAITED RATHER THAN HANDED OVER, and that is not a style choice. `RunLegs` takes the WIDER
+        // contract — a leg that may produce no record at all, because `close-all` has that case and
+        // `cancel-all` does not — and `Task<T>` is invariant, so passing `CancelAsync`'s
+        // `Task<ExecutionRequest>` straight into a `Task<ExecutionRequest?>` parameter is a
+        // nullability mismatch the compiler reports (CS8619) and nothing at runtime would catch.
+        // Awaiting converts the VALUE instead of the task, which is the widening C# does allow: a
+        // cancel leg always has a record, and a helper willing to accept none is satisfied by that.
         var legs = await RunLegs(working.Select(o => o.ConnectorOrderId), "cancelall", nonce,
-            (legId, target) => gateway.CancelAsync(ctx, legId, target, ct));
+            async (legId, target) => await gateway.CancelAsync(ctx, legId, target, ct));
 
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
         var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
