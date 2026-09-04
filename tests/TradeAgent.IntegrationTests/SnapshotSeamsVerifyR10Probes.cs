@@ -374,4 +374,85 @@ public class SnapshotSeamsVerifyR10Probes : IDisposable
             Assert.Equal(0, new FileInfo(p).Length);
         Assert.Equal("", File.ReadAllText(p));
     }
+
+    /// <summary>
+    /// THE CONTROL FOR THE TWO ABOVE: with a REAL carry write and no seam at all, the crash-point-3
+    /// state — the only unresolved line in the pending generation — is carried across the next
+    /// rotation. So the loss above is the failed write and nothing else.
+    /// </summary>
+    [Fact]
+    public void CONTROL_a_real_rotation_carries_the_only_copy_out_of_the_pending_generation()
+    {
+        Seed();
+        File.WriteAllText(Sidecar + ".new", GapLine());
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);
+
+        WriteForeignLeftover(1);
+        var w = new CoidWitness(File_);
+        Assert.True(w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        w.Dispose();
+
+        // The rewrite SUCCEEDS here, so the gap is legitimately closed by the RESOLVED marker that
+        // follows — which is why this asserts the LINE survived the rotation and not the standing.
+        Assert.Contains("TA-GAP", Everything());
+        Assert.Contains("coid-witness carried an unresolved failure across a sidecar rotation",
+                        Everything());
+    }
+
+    /// <summary>
+    /// TARGET 3 — A ROTATION THAT CANNOT READ ITS SET REFUSES TO ROTATE AND THE APPEND STILL LANDS.
+    /// Both halves: nothing is renamed, and the safety line is not lost to the refusal.
+    /// </summary>
+    [Fact]
+    public void A_rotation_that_cannot_read_refuses_and_the_append_still_lands()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Seed();
+        File.WriteAllText(Sidecar, GapLine() + new string('x', 70 * 1024) + Environment.NewLine);
+        var before = new FileInfo(Sidecar).Length;
+
+        WriteForeignLeftover(1);
+        var w = new CoidWitness(File_, listSidecars: (dir, glob) =>
+            glob.StartsWith(CoidWitness.ErrorLogName, StringComparison.Ordinal)
+                ? throw new UnauthorizedAccessException("denied")
+                : Directory.GetFileSystemEntries(dir, glob));
+        w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        var files = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*").Select(Path.GetFileName).Order().ToArray();
+        Assert.Equal(["coid-witness.errors.log"], files);            // nothing was renamed
+        Assert.True(new FileInfo(Sidecar).Length > before,           // the append landed anyway
+            $"the append was lost to the refusal: {before} -> {new FileInfo(Sidecar).Length}");
+        Assert.Contains("TA-GAP", File.ReadAllText(Sidecar));
+    }
+
+    /// <summary>
+    /// TARGET 3 — NO STAGING FILE IS EVER CREATED, and the pending name IS inside the reader's glob.
+    /// Driven by a real rotation, asserted on the names that exist afterwards.
+    /// </summary>
+    [Fact]
+    public void A_real_rotation_creates_no_staging_file_and_its_temp_is_inside_the_readers_glob()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, GapLine() + new string('x', 70 * 1024) + Environment.NewLine);
+        WriteForeignLeftover(1);
+
+        string[] duringRotation = [];
+        var w = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            using var st = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            st.Write(bytes, 0, bytes.Length);
+            st.Flush(flushToDisk: true);
+            duringRotation = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "*")
+                                      .Select(Path.GetFileName).Order().ToArray()!;
+        });
+        w.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null);
+        w.Dispose();
+
+        Assert.Contains("coid-witness.errors.log.new", duringRotation);
+        Assert.DoesNotContain("coid-witness.errors.log.rotating", duringRotation);
+        Assert.Empty(Directory.GetFiles(_dir, CoidWitness.ErrorLogName + ".rotating*"));
+    }
 }
