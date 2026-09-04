@@ -389,6 +389,115 @@ public class SweepRequestIdTests
             Assert.NotNull(await fits.GetPositionsAsync(fits.Broker.AccountId).WaitAsync(TimeSpan.FromSeconds(20)));
     }
 
+    // ------------- the word comes from the CONNECTOR's transport result (round 10, F4 / verifier F-1)
+
+    /// <summary>
+    /// A LEG THE CONNECTOR REFUSED BEFORE THE WIRE IS `not-sent`, WHATEVER THE RECORD SAYS.
+    ///
+    /// Verifier round-9 F-1, measured through the real pipe: a sweep leg the SHIPPED connector
+    /// refused before sending came back <c>sent-not-confirmed</c> with UNKNOWN and
+    /// <c>needs_reconciliation</c>. Round 9's rule — "the record decides the word" — is right about
+    /// the record being the only thing allowed to produce a word, and wrong about the record being
+    /// able to. <c>TradingGateway</c> maps EVERY <c>ConnectorTransportException</c> to UNKNOWN, which
+    /// is correct from up there: a refusal before the send gate and a half-written frame are the same
+    /// exception by the time they arrive. They are not the same fact, and only the connector knows.
+    ///
+    /// TWO HARMS, and the second is the reason this is not a wording defect. The owner is sent to
+    /// hunt through ATAS for an order this process proved it never sent; and
+    /// <c>needs_reconciliation</c> refuses ALL further execution with
+    /// <c>TRADING_PAUSED_UNRECONCILED</c> — including the retry the sentence itself advises, and
+    /// including the next <c>cancel-all</c>.
+    ///
+    /// WHAT IS FIXED HERE AND WHAT IS NOT. The WORD is the pipe server's and it is fixed: the leg
+    /// reads <c>not-sent</c> and is not counted as attempted, and the answer now carries the
+    /// transport result itself so the evidence is visible rather than inferred. The RECORD is
+    /// <c>TradingGateway.SettleUnknown</c>'s, which this unit may not edit — so the row stays UNKNOWN
+    /// with the flag set, the reply says so in the same object, and it is routed to U2c-1 with this
+    /// measurement attached.
+    /// </summary>
+    [Fact]
+    public async Task A_leg_refused_before_the_wire_reads_not_sent_even_though_its_record_is_unknown()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("f4-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Single(await gw.OrdersAsync(false));
+
+        // The next MUTATION is refused before anything is sent — the branch the shipped
+        // AtasConnector takes when a leg's turn arrives after the operation is already over.
+        conn.Faults.RefuseBeforeSend = 1;
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f4-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        var data = (JsonElement)reply.Data!;
+        var leg = data.GetProperty("outcomes").EnumerateArray().Single();
+
+        Assert.Equal("not-sent", leg.GetProperty("outcome").GetString());
+        Assert.Equal(0, data.GetProperty("attempted").GetInt32());
+        Assert.Equal(1, data.GetProperty("not_sent").GetInt32());
+
+        // The evidence is IN the answer: the connector's own report of where the frame got to.
+        Assert.Equal("NothingWritten", leg.GetProperty("transport").GetString());
+
+        // And the honest residual, asserted rather than left for somebody to discover: the RECORD is
+        // still UNKNOWN and still flagged, because `TradingGateway.SettleUnknown` writes it and this
+        // unit may not open that file. The leg no longer LIES about it; the row is U2c-1's to fix.
+        Assert.Equal("UNKNOWN", leg.GetProperty("state").GetString());
+        Assert.Single(gw.Requests.NeedingReconciliation());
+    }
+
+    /// <summary>
+    /// THE WORD `sent-not-confirmed` MEANS UNKNOWN AND RECONCILIATION, ON EVERY REACHABLE LEG.
+    ///
+    /// The promise the word makes, asserted over the shapes the suite can actually produce rather
+    /// than argued from the mapping. A leg that says "it reached the wire and we do not know" must
+    /// have a record that will be reconciled, or the word is an instruction to go and look at
+    /// something nothing will ever settle.
+    /// </summary>
+    [Fact]
+    public async Task Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        foreach (var sym in new[] { "ES", "NQ" })
+            Assert.True((await client.SendAsync(Buy($"f4b-{sym}", sym)).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        // One leg is refused before the wire, one is lost after it: the two halves of the tri-state
+        // that are not an answer.
+        conn.Faults.RefuseBeforeSend = 1;
+        // Two seconds a call against a five-second operation: the orders read and each leg's target
+        // resolution fit, and the CANCEL is the call that runs out of budget — which is the shape
+        // that produces an ambiguous mutation rather than a read that never reached the wire.
+        conn.Faults.LatencyMs = 2000;
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f4-sweep-b" })
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        var legs = ((JsonElement)reply.Data!).GetProperty("outcomes").EnumerateArray().ToList();
+
+        var unconfirmed = legs.Where(l => l.GetProperty("outcome").GetString() == "sent-not-confirmed").ToList();
+        Assert.NotEmpty(unconfirmed);
+        foreach (var leg in unconfirmed)
+        {
+            Assert.Equal("UNKNOWN", leg.GetProperty("state").GetString());
+            var record = gw.GetRequest(leg.GetProperty("request_id").GetString()!);
+            Assert.NotNull(record);
+            Assert.True(record!.NeedsReconciliation,
+                $"{leg.GetProperty("request_id").GetString()} reads sent-not-confirmed and nothing will reconcile it");
+        }
+    }
+
     // ------------------------------------- the per-leg vocabulary is 1:1 with the record (round 9, F1)
 
     /// <summary>Every word a leg is allowed to answer with. A leg saying anything else is a defect.</summary>

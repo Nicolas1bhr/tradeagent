@@ -732,11 +732,17 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// waiting for the gate and getting the bytes out.
     /// </param>
     async Task<SendOutcome> WriteFrame(Stream w, object frame, CancellationToken ct,
-        TimeSpan gateWait, bool emergency, TimeSpan frameBudget, long? writeDeadlineAt = null)
+        TimeSpan gateWait, bool emergency, TimeSpan frameBudget, long? writeDeadlineAt = null,
+        bool mutating = false)
     {
         var waitedFrom = Environment.TickCount64;
         if (!await _sendGate.WaitAsync(gateWait, ct))
         {
+            // EVERY EXIT FROM THE GATE WROTE NOTHING, and it is provable rather than assumed: the
+            // gate was never ours, so not one byte of this frame reached the stream. `Busy` and a
+            // gate-expiry `PeerStalled` are different facts about the far end and the SAME fact
+            // about our frame.
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
             if (!emergency) return SendOutcome.Busy;
 
             // AN EMERGENCY THAT GAVE UP ON THE GATE STILL HAS TO SAY WHICH THING WENT WRONG.
@@ -778,7 +784,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 if (left <= TimeSpan.Zero)
                 {
                     // Out of total time with the frame half-written. Nothing can be recalled, so
-                    // the connection ends the way a timeout ends it.
+                    // the connection ends the way a timeout ends it. From HERE on the gate is ours
+                    // and bytes may already be with the kernel, so nothing below may claim to have
+                    // written nothing — even on the very first chunk, where a partial flush is
+                    // exactly what cannot be ruled out.
+                    if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
                     DropStalledPeer();
                     return SendOutcome.FrameIncomplete;
                 }
@@ -794,6 +804,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 catch (TimeoutException)
                 {
                     Observe(write);
+                    if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
                     DropStalledPeer();
                     // Which bound actually expired decides what we are entitled to say.
                     return left < WriteTimeout ? SendOutcome.FrameIncomplete : SendOutcome.PeerStalled;
@@ -801,6 +812,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 catch (OperationCanceledException)
                 {
                     Observe(write);
+                    if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
                     DropStalledPeer();
                     throw;
                 }
@@ -1004,8 +1016,22 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
     {
+        // WHERE THE FRAME GOT TO IS RECORDED WHERE IT IS KNOWN, and only for a MUTATION.
+        //
+        // The gateway maps every ConnectorTransportException to UNKNOWN, correctly — from up there
+        // a refusal before the send gate and a half-written frame are the same exception. Down here
+        // they are not, and the difference is the difference between `not-sent` and
+        // `sent-not-confirmed`, which is the difference between an owner reading "nothing happened"
+        // and an owner hunting through ATAS while all further execution is paused (verifier
+        // round-9 F-1). Reads are not recorded: a leg resolves its target and then does the thing it
+        // came to do, and only the second one can leave an order at a broker.
+        var mutating = Mutates(op);
+
         if (!_connected || _out is null)
+        {
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
             throw new ConnectorTransportException("the ATAS bridge is not connected");
+        }
 
         var id = Guid.NewGuid().ToString("n");
         var tcs = new TaskCompletionSource<BridgeFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1043,6 +1069,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         if (emergency && deadlineAt <= Environment.TickCount64)
         {
             _pending.TryRemove(id, out _);
+            // PROVABLE: the gate was never taken and no byte of this frame exists.
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
             throw new ConnectorTransportException(Mutates(op)
                 ? $"'{op}' is NOT confirmed — check your positions and orders in ATAS. It was not sent: " +
                   "the operation ran out of time before this leg's turn came."
@@ -1056,7 +1084,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
             var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
                 emergency ? Left(deadlineAt) : WriteTimeout, emergency, FrameTimeout,
-                emergency ? deadlineAt : null);
+                emergency ? deadlineAt : null, mutating);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
@@ -1090,7 +1118,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             }
         }
         catch (ConnectorTransportException) { throw; }
-        catch (Exception ex) { _pending.TryRemove(id, out _); throw new ConnectorTransportException("could not reach the ATAS bridge", ex); }
+        catch (Exception ex)
+        {
+            _pending.TryRemove(id, out _);
+            // Nothing here can be shown to have written nothing, so it is the fail-closed answer.
+            if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
+            throw new ConnectorTransportException("could not reach the ATAS bridge", ex);
+        }
 
         // WHAT IS LEFT OF THE CALLER'S BUDGET, not a fresh one. An emergency that spent 1.9 s
         // getting its frame out does not then get a further ten seconds to wait for the answer —
@@ -1102,6 +1136,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         try
         {
             var frame = await tcs.Task.WaitAsync(timeout.Token);
+            // The round trip completed. Whatever the frame says — an acknowledgement, a definite
+            // refusal, or a failure the bridge reports — it is an ANSWER, and the record the gateway
+            // writes from it is what the word should be read off.
+            if (mutating) TransportLedger.Record(TransportOutcome.ReplyReceived);
             if (frame.Ok == false)
                 throw frame.Rejected
                     ? new ConnectorRejectedException(frame.Error ?? "rejected by ATAS")
@@ -1112,6 +1150,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         {
             // Timed out waiting for the answer. The frame WENT OUT, so this is the most indefinite
             // state there is and stays UNKNOWN either way.
+            // The frame WENT OUT and no answer came back: the most indefinite state there is, on
+            // both branches below.
+            if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
+
             if (!emergency)
             {
                 _pending.TryRemove(id, out _);

@@ -74,8 +74,16 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Task.FromResult(!Faults.Disconnected);
 
-    /// <summary>Simulates the wire. Read paths fail loudly when disconnected; they never invent data.</summary>
-    async Task Wire(CancellationToken ct)
+    /// <summary>
+    /// Simulates the wire. Read paths fail loudly when disconnected; they never invent data.
+    ///
+    /// <paramref name="mutating"/> is what makes this connector able to answer the question the
+    /// gateway cannot: WHERE DID THE FRAME GET TO. Every exit below knows it — a deadline that had
+    /// already passed sent nothing at all, a deadline that passed mid-call may have acted — and only
+    /// a call that CHANGES something at the broker is worth recording, because a leg is a read to
+    /// find its target and then the thing it came to do.
+    /// </summary>
+    async Task Wire(CancellationToken ct, bool mutating = false)
     {
         // THE SIMULATOR HONOURS THE OPERATION DEADLINE, because a connector that ignored it could not
         // be used to measure the rule. A real bridge stops waiting and reports UNKNOWN; so does this.
@@ -85,8 +93,15 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         {
             var left = RiskReducingScope.LeftUntil(deadline);
             if (left <= TimeSpan.Zero)
+            {
+                // PROVABLY nothing was sent: the deadline was already gone before anything was
+                // attempted. This is the branch the shipped AtasConnector takes when a leg's turn
+                // arrives after the operation is over, and reporting it as an unknown is what sent
+                // an owner to hunt for an order that never existed (verifier round-9 F-1).
+                if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
                 throw new ConnectorTransportException(
                     "the operation deadline had already passed; nothing was sent to the simulator");
+            }
 
             // The SUM, because the two delays below run in series. Taking the max let a profile with
             // both set pass a precheck for 1200 ms and then spend 2400 — so the instrument the
@@ -96,6 +111,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
             if (wait > left)
             {
                 await Task.Delay(left, ct);
+                // The call was under way when the deadline passed, so it may have acted. Fail-closed.
+                if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
                 throw new ConnectorTransportException(
                     "the operation deadline passed before the simulator answered; it is not known whether it acted");
             }
@@ -103,7 +120,24 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
-        if (Faults.Disconnected) throw new ConnectorTransportException("simulator is disconnected");
+        if (Faults.Disconnected)
+        {
+            // In-process and provable: the simulator was never reached.
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorTransportException("simulator is disconnected");
+        }
+
+        // A REFUSAL THE CONNECTOR CAN PROVE, modelled on the shipped AtasConnector's pre-gate branch:
+        // the operation is over, the frame was never built, and the connection learned nothing. It is
+        // a fault rather than a timing race because the timing race is a knife-edge — the resolution
+        // has to land INSIDE the deadline and the mutation outside it — and the branch it reaches is
+        // one the product really has.
+        if (mutating && Faults.Take(f => f.RefuseBeforeSend, (f, v) => f.RefuseBeforeSend = v))
+        {
+            TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorTransportException(
+                "it was not sent: the operation ran out of time before this leg's turn came");
+        }
     }
 
     public async Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default)
@@ -152,14 +186,29 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     {
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
-        if (Faults.Disconnected) throw new ConnectorTransportException("simulator is disconnected");
+        if (Faults.Disconnected)
+        {
+            TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorTransportException("simulator is disconnected");
+        }
+
+        if (Faults.Take(f => f.RefuseBeforeSend, (f, v) => f.RefuseBeforeSend = v))
+        {
+            TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorTransportException(
+                "it was not sent: the operation ran out of time before this leg's turn came");
+        }
 
         // Transport dies before the broker sees it: nothing landed, but we cannot know that here.
         if (Faults.Take(f => f.DropBeforeBrokerAccept, (f, v) => f.DropBeforeBrokerAccept = v))
+        {
+            TransportLedger.Record(TransportOutcome.PossiblyWritten);
             throw new ConnectorTransportException("connection lost before the order was sent");
+        }
 
         if (Faults.Take(f => f.RejectNext, (f, v) => f.RejectNext = v))
         {
+            TransportLedger.Record(TransportOutcome.ReplyReceived);
             var rejected = Broker.Reject(cmd, "insufficient margin (simulated)");
             OrderChanged?.Invoke(rejected);
             throw new ConnectorRejectedException(rejected.RejectReason!);
@@ -170,8 +219,12 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         // The broker HAS the order. Now lose the acknowledgement. This is the case that produces
         // duplicate fills in naive clients, and the reason UNKNOWN exists as a first-class state.
         if (Faults.Take(f => f.DropAfterBrokerAccept, (f, v) => f.DropAfterBrokerAccept = v))
+        {
+            TransportLedger.Record(TransportOutcome.PossiblyWritten);
             throw new ConnectorTransportException("connection lost after the order was accepted");
+        }
 
+        TransportLedger.Record(TransportOutcome.ReplyReceived);
         OrderChanged?.Invoke(order);
         foreach (var x in Broker.Executions.Where(e => e.ClientOrderId == cmd.ClientOrderId)) ExecutionReceived?.Invoke(x);
         foreach (var p in Broker.Positions) PositionChanged?.Invoke(p);
@@ -181,7 +234,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, mutating: true);
+        TransportLedger.Record(TransportOutcome.ReplyReceived);
         var existing = Broker.Orders.FirstOrDefault(o => o.ConnectorOrderId == cmd.ConnectorOrderId)
             ?? throw new ConnectorRejectedException("order not found");
         var updated = existing with
@@ -196,7 +250,12 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, mutating: true);
+
+        // Past the wire: whatever the broker says next, it answered. A definite refusal is an ANSWER,
+        // which is why it is recorded here rather than only on the success path.
+        TransportLedger.Record(TransportOutcome.ReplyReceived);
+
         // A definite refusal from the broker, which is a real thing brokers do and the only way a
         // sweep can honestly report fewer cancellations than attempts.
         if (Faults.Take(f => f.RefuseCancel, (f, v) => f.RefuseCancel = v))
@@ -206,7 +265,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string accountId, CancellationToken ct = default)
     {
-        await Wire(ct);
+        await Wire(ct, mutating: true);
+        TransportLedger.Record(TransportOutcome.ReplyReceived);
         var ids = Broker.Orders.Where(o => !OrderStateMachine.IsTerminal(o.State)).Select(o => o.ConnectorOrderId).ToList();
         foreach (var id in ids) Broker.Cancel(id);
         return ids;

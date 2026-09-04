@@ -3,31 +3,6 @@ using TradeAgent.Core;
 namespace TradeAgent.TradeCli;
 
 /// <summary>
-/// WHAT IS KNOWN ABOUT WHERE THE FRAME GOT TO. Three states, because two of them were being confused
-/// and the difference between them is the difference between a retry and a second real order.
-/// </summary>
-public enum TransportOutcome
-{
-    /// <summary>
-    /// PROVABLY nothing left this process, so there is nothing at the broker and nothing to
-    /// reconcile. Only claimed when it can be shown — the pipe was never connected, or was already
-    /// disconnected before the write was attempted — never assumed from a failure.
-    /// </summary>
-    NothingWritten,
-
-    /// <summary>
-    /// Some or all of the frame may have reached the service. The order may be at the broker and
-    /// only the acknowledgement lost, so this is UNKNOWN and the caller is told to re-run with the
-    /// SAME id. The fail-closed direction: anything that cannot be proven to be
-    /// <see cref="NothingWritten"/> lands here.
-    /// </summary>
-    PossiblyWritten,
-
-    /// <summary>A reply came back and was read. Whatever it says, the round trip completed.</summary>
-    ReplyReceived
-}
-
-/// <summary>
 /// The outcome of one attempt, and it is a RESULT rather than an exception on purpose.
 ///
 /// The CLI used to set <c>sent = true</c> on the line BEFORE the write began, so the flag that drives

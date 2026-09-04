@@ -865,55 +865,108 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         /// </summary>
         NotSent,
 
-        /// <summary>There was nothing for this leg to act on. Not a failure, and not a closure either.</summary>
-        NothingToDo
     }
 
     /// <summary>
-    /// THE RECORD DECIDES THE WORD. Every arm here is one record state or a group that means one
-    /// thing, and nothing else may construct a <see cref="LegOutcome"/> from a record.
+    /// WHERE THE FRAME GOT TO DECIDES THE WORD, AND THE RECORD SAYS WHAT THE ANSWER WAS.
+    ///
+    /// Round 9 read the word off the record alone, which is the right instinct — a word must be
+    /// producible only by the thing that means it — applied to a source that cannot carry the
+    /// distinction. <c>TradingGateway</c> maps EVERY <c>ConnectorTransportException</c> to UNKNOWN,
+    /// correctly, because from up there a refusal before the send gate and a half-written frame are
+    /// the same exception. So a leg the connector had PROVED it never sent came back
+    /// <c>sent-not-confirmed</c> — an instruction to hunt through ATAS for an order that does not
+    /// exist, carrying a flag that pauses all further execution including the retry the sentence
+    /// advises (verifier round-9 F-1, measured through the real pipe).
+    ///
+    /// The two sources answer different questions and neither can answer the other's:
+    ///
+    ///   1. A record in a state only a BROKER'S ANSWER can produce — CANCELLED, FILLED, REJECTED,
+    ///      WORKING, ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING — is itself proof the round trip
+    ///      completed, and it says what the answer was. That is not the record deciding an ambiguous
+    ///      case; it is the record being the ONLY thing that knows which answer came back. (An
+    ///      idempotent replay of an earlier leg arrives here with no transport of its own, and this
+    ///      is why it does not read as `not-sent`.)
+    ///
+    ///   2. Everything else — CREATED, AWAITING_APPROVAL, DISPATCHING, UNKNOWN, RECONCILING, or no
+    ///      record at all — is a state the record cannot settle, and there the CONNECTOR's
+    ///      <see cref="TransportOutcome"/> decides. No mutating call attempted, or one the connector
+    ///      can show wrote nothing, is <c>not-sent</c>; anything else is <c>sent-not-confirmed</c>,
+    ///      which is the fail-closed direction.
+    ///
+    /// NO CATCH-ALL. Every <see cref="ExecutionState"/> is named, and a new one must fail to compile
+    /// or fail a test rather than quietly becoming the most dangerous word in the set — the same
+    /// reason <c>Describe()</c> lost its own default arm (verifier round-9 F-3).
     /// </summary>
-    static LegOutcome Classify(ExecutionRequest record) => record.State switch
+    static LegOutcome Classify(ExecutionState? state, TransportOutcome? transport) => state switch
     {
         ExecutionState.CANCELLED or ExecutionState.FILLED => LegOutcome.Confirmed,
 
         ExecutionState.REJECTED => LegOutcome.Rejected,
 
-        // Written but never dispatched. `TryCreate` runs before the wire is touched, so a record
-        // still in one of these states is a leg that got no further than this process.
-        ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL => LegOutcome.NotSent,
-
         ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED
             or ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING => LegOutcome.StillWorking,
 
-        // DISPATCHING, UNKNOWN, RECONCILING: it reached the wire, or may have, and is not confirmed.
-        _ => LegOutcome.NotConfirmed
+        // Written but never dispatched, still mid-dispatch, or settled to an unknown: none of these
+        // says where the frame got to, so none of them chooses the word.
+        null or ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL
+            or ExecutionState.DISPATCHING or ExecutionState.UNKNOWN or ExecutionState.RECONCILING =>
+            transport switch
+            {
+                null or TransportOutcome.NothingWritten => LegOutcome.NotSent,
+                TransportOutcome.PossiblyWritten or TransportOutcome.ReplyReceived => LegOutcome.NotConfirmed,
+                _ => throw new InvalidOperationException($"no leg outcome for transport result '{transport}'")
+            },
+
+        _ => throw new InvalidOperationException($"no leg outcome for execution state '{state}'")
     };
 
-    sealed record Leg(string RequestId, string Target, LegOutcome Outcome, ExecutionRequest? Record, string? Error)
+    /// <summary>
+    /// THE SEAM THE VOCABULARY IS TESTED THROUGH: one record state and one transport result in, one
+    /// of the five words out. Public because the alternative is a membership test that can only
+    /// reach the combinations some fixture happens to produce, which is how an unmapped arm survives.
+    /// </summary>
+    public static string LegWordFor(ExecutionState? state, TransportOutcome? transport) =>
+        Word(Classify(state, transport));
+
+    /// <summary>
+    /// NO CATCH-ALL ARM. It used to end <c>_ => "not-sent"</c>, so a new outcome would have been
+    /// reported as "nothing was even attempted" — the most dangerous of the words to be wrong about
+    /// — silently and with no compiler complaint.
+    /// </summary>
+    static string Word(LegOutcome outcome) => outcome switch
+    {
+        LegOutcome.Confirmed => "sent-and-confirmed",
+        LegOutcome.Rejected => "rejected",
+        LegOutcome.StillWorking => "sent-still-working",
+        LegOutcome.NotConfirmed => "sent-not-confirmed",
+        LegOutcome.NotSent => "not-sent",
+        _ => throw new InvalidOperationException($"no word for leg outcome '{outcome}'")
+    };
+
+    /// <param name="NoTargetFound">
+    /// The gateway found nothing for this leg to act on — a `close-all` symbol whose position had
+    /// already gone. It is reported by NAME (`nothing_to_close`) rather than by a word of its own:
+    /// the leg reached no wire, so its word is the one that means that.
+    /// </param>
+    sealed record Leg(string RequestId, string Target, LegOutcome Outcome, ExecutionRequest? Record,
+        TransportOutcome? Transport, string? Error, bool NoTargetFound = false)
     {
         /// <summary>Whether this leg got as far as the wire, which is what <c>attempted</c> counts.</summary>
-        public bool Attempted => Outcome is not (LegOutcome.NotSent or LegOutcome.NothingToDo);
+        public bool Attempted => Outcome is not LegOutcome.NotSent;
 
         public object Describe() => new
         {
             request_id = RequestId,
             order = Target,
-            // NO CATCH-ALL ARM. It used to end `_ => "not-sent"`, so a new outcome would have been
-            // reported as "nothing was even attempted" — the most dangerous of the six to be wrong
-            // about — silently and with no compiler complaint. A new member now throws here in the
-            // first test that reaches it instead.
-            outcome = Outcome switch
-            {
-                LegOutcome.Confirmed => "sent-and-confirmed",
-                LegOutcome.Rejected => "rejected",
-                LegOutcome.StillWorking => "sent-still-working",
-                LegOutcome.NotConfirmed => "sent-not-confirmed",
-                LegOutcome.NotSent => "not-sent",
-                LegOutcome.NothingToDo => "nothing-to-do",
-                _ => throw new InvalidOperationException($"no word for leg outcome '{Outcome}'")
-            },
+            outcome = Word(Outcome),
             state = Record?.State.ToString(),
+            // THE EVIDENCE, IN THE SAME OBJECT AS THE CLAIM. A leg refused before the wire is
+            // `not-sent` while `TradingGateway.SettleUnknown` still writes UNKNOWN on its row — that
+            // row is the gateway's and not this unit's to change, so the answer carries the
+            // connector's own report of where the frame got to rather than leaving an owner to
+            // reconcile two fields that disagree.
+            transport = Transport?.ToString(),
             error = Error ?? Record?.LastError
         };
     }
@@ -941,7 +994,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         var legs = new List<Leg>();
         var i = 0;
-        var pending = new List<(string Id, string Target, Task<ExecutionRequest?> Task)>();
+        var pending = new List<(string Id, string Target, TransportRecord Transport, Task<ExecutionRequest?> Task)>();
 
         foreach (var target in targets)
         {
@@ -951,12 +1004,20 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // flight, and a leg whose turn never comes must be REPORTED rather than dropped.
             if (RiskReducingScope.DeadlineAt is { } d && Environment.TickCount64 >= d)
             {
-                legs.Add(new Leg(legId, target, LegOutcome.NotSent, null,
+                legs.Add(new Leg(legId, target, LegOutcome.NotSent, null, TransportOutcome.NothingWritten,
                     "the operation ran out of time before this leg was issued; it was not sent"));
                 continue;
             }
 
-            pending.Add((legId, target, issue(legId, target)));
+            // ONE TRANSPORT RECORD PER LEG, attached before the leg is started so it flows into the
+            // leg's own execution context and nowhere else. The legs of a wave run concurrently and
+            // each mutates the object THIS loop still holds; the handle is disposed immediately
+            // because it only has to restore the ambient value for the next iteration.
+            var transport = new TransportRecord();
+            Task<ExecutionRequest?> leg;
+            using (TransportLedger.Attach(transport)) leg = issue(legId, target);
+
+            pending.Add((legId, target, transport, leg));
             if (pending.Count < MaxLegsInFlight) continue;
             await Collect(pending, legs);
             pending.Clear();
@@ -979,34 +1040,34 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     public const int MaxLegsInFlight = 4;
 
-    async Task Collect(List<(string Id, string Target, Task<ExecutionRequest?> Task)> pending, List<Leg> legs)
+    async Task Collect(
+        List<(string Id, string Target, TransportRecord Transport, Task<ExecutionRequest?> Task)> pending,
+        List<Leg> legs)
     {
-        foreach (var (id, target, task) in pending)
+        foreach (var (id, target, transport, task) in pending)
         {
             try
             {
                 var record = await task;
-                legs.Add(record is null
-                    ? new Leg(id, target, LegOutcome.NothingToDo, null, null)
-                    : new Leg(id, target, Classify(record), record, null));
+                legs.Add(new Leg(id, target, Classify(record?.State, transport.Outcome), record,
+                    transport.Outcome, null, NoTargetFound: record is null));
             }
             catch (Exception ex)
             {
-                // A LEG THAT THREW IS STILL CLASSIFIED BY ITS RECORD, NOT BY THE FACT THAT IT THREW.
+                // A LEG THAT THREW IS NOT CLASSIFIED BY THE FACT THAT IT THREW, and since round 10 it
+                // is not classified by its record alone either.
                 //
-                // Every leg that reached the wire and came back ambiguous has already been settled
-                // UNKNOWN by the gateway before the exception got here, so the exception is not the
-                // evidence — the record is, and it is the same evidence the reply's `state` field
-                // shows. Assuming NotConfirmed made two different lies: a broker's definite refusal
+                // Assuming NotConfirmed made two different lies: a broker's definite refusal
                 // (REJECTED) read as an unknown, and a leg whose target resolution expired BEFORE
                 // `TryCreate` — no record written, nothing sent, `attempted=0` — read as a leg that
-                // reached the wire (Codex round-8 F1).
-                //
-                // NO RECORD AT ALL is the unambiguous case and it is the important one: the record is
-                // written before the wire is touched, so its absence proves nothing was sent.
+                // reached the wire (Codex round-8 F1). Reading the RECORD instead fixed both and left
+                // a third: `TradingGateway` settles every ambiguous connector failure as UNKNOWN, so a
+                // leg the connector proved it never sent read `sent-not-confirmed` too (verifier
+                // round-9 F-1). The connector's own report of where the frame got to is the evidence
+                // that separates them, and it is what decides the word.
                 var record = gateway.GetRequest(id);
-                legs.Add(new Leg(id, target,
-                    record is null ? LegOutcome.NotSent : Classify(record), record, ex.Message));
+                legs.Add(new Leg(id, target, Classify(record?.State, transport.Outcome), record,
+                    transport.Outcome, ex.Message));
             }
         }
     }
@@ -1090,7 +1151,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
         // Null from the gateway means it found nothing to close for that symbol. Not a failure, and
         // not a closure either — counting it as one is exactly the overstatement bdf9a24 removed.
-        var nothingToDo = legs.Where(l => l.Outcome == LegOutcome.NothingToDo).Select(l => l.Target).ToList();
+        var nothingToDo = legs.Where(l => l.NoTargetFound).Select(l => l.Target).ToList();
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
 
         var landed = results.Count(r => r.State is ExecutionState.FILLED);
