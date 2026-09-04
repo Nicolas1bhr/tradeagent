@@ -36,6 +36,5 @@ test, one-sentence messages, no `Co-Authored-By` trailers, no other worktree, no
 
 ## Report
 
-Append here as you go and commit it, ≤20 lines: tip sha; per test what the run-to-run variance actually was and what
-you changed; the 3× local counts; the full-suite counts; the CI conclusions per platform; what you did NOT do.
-Verified by running, or NOT VERIFIED; no hedging words.
+Append here as you go and commit it, ≤20 lines: tip sha; per test the measured run-to-run variance and what you
+changed; the 3× local counts; full-suite counts; CI per platform; what you did NOT do. Verified or NOT VERIFIED.
