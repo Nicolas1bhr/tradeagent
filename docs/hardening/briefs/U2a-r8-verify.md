@@ -1,6 +1,6 @@
 # U2a — ADVERSARIAL-VERIFY BRIEF · round 8 (targeted) at the sha named in the dispatch
 
-Same verifier (context intact). Sha under test = `a974142` + round 8 (`briefs/U2a-r8-bounce.md`: Codex F1 one absolute
+FRESH verifier (the round 4–7 verifier's session is gone). Read its records first — `records/U2a-verify-r4.md` … `-r7.md` — and rebuild what you need from its probe branches (`u2a-verify-r7-probes` holds the latest harnesses: the 12-phase liveness probe, the C1 one-clock fixture, the seven-spellings exploit, M15/M16, W3). Its findings are your baseline; its verdicts are not yours to trust. Sha under test = `a974142` + round 8 (`briefs/U2a-r8-bounce.md`: Codex F1 one absolute
 deadline per emergency OPERATION with per-leg outcomes reported and nothing skipped silently; F2 the drain derived from
 the handler's worst-case COMPOSITE and disposal never unsettled; F3 the late-answer race; F-G outcome-first wording).
 Worktree `u2a-verify-r8`, detached at the sha; `git checkout -b u2a-verify-r8-probes`; cherry-pick from

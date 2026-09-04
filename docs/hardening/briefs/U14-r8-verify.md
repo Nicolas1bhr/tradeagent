@@ -1,6 +1,6 @@
 # U14 — ADVERSARIAL-VERIFY BRIEF · round 8 (targeted) at the sha named in the dispatch
 
-Same verifier (context intact). Sha under test = `4de7c25` + round 8 (`briefs/U14-r8-bounce.md`: PRIOR 17 directory
+FRESH verifier (the round 4–7 verifier's session is gone). Read its records first — `records/U14-verify-r4.md` … `-r7.md` — and rebuild what you need from its probe branches (`u14-verify-r7-probes` holds the latest harnesses: the three-process lease/durability harness, the R3 per-writer 160-event test, the F17 variants, MD1). Its findings are your baseline; its verdicts are not yours to trust. Sha under test = `4de7c25` + round 8 (`briefs/U14-r8-bounce.md`: PRIOR 17 directory
 absence, PRIOR 21 stopped-guard race, F26/R2 `finally`, F27+V3 rotation carry-forward, F28 unreadable sidecar, F23
 heartbeat-timeout drop, F29 wording, V4 row precedence, V5 the unbuilt state; five refutations to be written in the
 record). Worktree `u14-verify-r8`, detached at the sha; `git checkout -b u14-verify-r8-probes`; cherry-pick from
