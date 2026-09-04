@@ -2927,3 +2927,44 @@ CI run 33908096382 at `7e60973`: ubuntu SUCCESS, macos SUCCESS, windows FAILURE 
 tests — the deadline class is closed on every runner; the witness-harness class is the only red left on `main`.
 
 **NOT VERIFIED:** nothing on the box. **NOT done:** no product change, no `Timing` trait, no workflow change.
+
+## 2026-09-04 — U14b landed: rotation resumes, the fifth crash point is closed, one teardown, a stamped status
+
+Fourth product unit under `docs/HOW-WE-BUILD.md`: one fresh builder on `docs/briefs/U14b.md`, five items, the manager's
+checklist. Merge `64cdb73`, 7 commits, 8 files, +813/−20 (`CoidWitness.cs`, `AdapterTeardown.cs`,
+`AtasConnector.cs`, `docs/CONTRACTS.md`, tests). These are the places where round 10's structure had leaked back into
+the old shape; after this unit the five directives hold at every edge the verifier and Codex had named.
+
+- **Rotation is resumable.** At every append and every rotation start, a `.new` with no current is completed
+  (`.new → current`) before anything else; when it cannot be, the append is refused and the standing is degraded with
+  the reason, never silently. Before: after `current → .1` succeeded, a refused `.new → current` left every retry
+  starting from a missing current and no note ever landed until restart.
+- **The fifth crash point is closed.** Act 1 writes the next current log under a unique name nothing else holds
+  (`FileMode.CreateNew`), never `Create` over an existing `.new`; the carry is recomputed from the snapshot taken before
+  act 1. Before: one transient IO error after the open emptied the only copy of the unresolved marker.
+- **`Stop()` is one teardown.** A compare-and-set under the state lock; overlapping calls join the first; `Stopped` is
+  published exactly once after the last step; `Started()` stays refused throughout.
+- **A peer inside the auth grace has its own status.** "connecting — waiting for the add-on to authenticate" is stamped
+  at accept, newer than any marker; grace expiry replaces it with silent/unauthenticated; the hello with the live row.
+  Before: the previous connection's refusal stayed on the row until the grace expired.
+- **The sidecar is bounded by the bytes it is written in**, not UTF-16 chars; the dead `AppendDurably` is gone and one
+  comment states the flush policy; `docs/CONTRACTS.md` records the residual that any process able to write in
+  `Paths.BridgeDir` can drop `SupportsClientOrderId` with one unreadable file (fail-closed, same trust domain).
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED (completion removed) 3 failed / 35 → GREEN 38/38, mutant
+"a failed completion lets the append through" → 2/38 red; item 2 RED (act 1 back to `.new` + `FileMode.Create`) 2
+failed → GREEN 189/189, mutant `CreateNew` → `Create` → 1/41 red; item 3 RED (bare `Running → Stopping`) 2 failed / 14
+→ GREEN 16/16, mutant = round 10's surviving MR10-4d (the transition outside the lock) → 1/16 red, caught by the
+300 ms-order test `A_teardown_does_not_begin_while_a_write_is_inside_the_lock`; item 4 RED (`Connecting` removed) 3
+failed / 5 → GREEN 45/45, mutant (unstamped, a marker always wins) → 1/8 red; item 5 RED "114180 bytes in the
+current log" against a 65536 cap → GREEN 190/190, mutant `+= text.Length` → 1/42 red.
+Builder's baseline at `a8fa06e`, Release: 0 warnings, 75 + 201 + 505 = 781, 0 failed; final at `3267fbf` 795, 0 failed,
+0 names removed, 14 added. Manager's gate at the rebased tip `64cdb73`, Release: build → 0 warnings, 0 errors; suite →
+75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 14 added; scan clean; CI run 33911240280 was in progress when this was written.
+
+**NOT VERIFIED:** the box — no credentials in this session although the adapter and the teardown both changed, so
+the bridge compile and `tools/atas-gate` at this tip are owed to the v0.1.2 box session; everything above is macOS/APFS — the Windows runner's own witness reds are the harness class
+in `docs/briefs/U14-win.md`, dispatched next. **Known gap, stated by the builder:** `Rotate` also
+returns whether the append may proceed when its own resume fails, and no test reaches that branch — under the
+one-writer rule the byte counter is already negative whenever a rotation may be half done; it is there so the
+invariant is local, not claimed as covered. No out-of-process SIGKILL run this unit.
