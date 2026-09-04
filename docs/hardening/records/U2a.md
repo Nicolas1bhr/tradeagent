@@ -1349,3 +1349,388 @@ and `touch`ed again — never `git checkout --`; `git status --short` empty afte
   `u2a-rebase-probe`.** Nothing pushed, merged, rebased or moved; `u2a-pipe-hardening` untouched; no
   git command run in the main worktree.
 - **Did not run `probe atas`, place, modify or cancel any real order.**
+
+## Round 10 (build record, 2026-09-04)
+
+Bounce on `088c059` from `briefs/U2a-r10-bounce.md`: the Codex delta on round 9
+(`records/codex-U2a-r9.txt`, 2H/2M/1L) plus the fresh verifier's rounds 8+9 record
+(`records/U2a-verify-r9.md`, FAIL 0H/2M/3L). **Fresh builder** — the round-9 builder's session is
+gone; nothing in the round-9 table was re-measured by me except where this section says it was.
+`TradingGateway.cs`, `DashboardView.cs`, `Stores.cs` and `GatewayTypes.cs` were **read but not
+modified** (`git diff --name-only` at the end of this section is the proof).
+
+**PRIOR F5 refuted, and re-run.** Codex's "no round-9 non-incremental build showing zero warnings is
+recorded" read a stale snapshot of the branch: round 9's close on `main` quotes it. Re-run at my own
+tip this round — the figure is in the round close below.
+
+**F2 (Codex HIGH) is DEFERRED-BY-DECISION to U2c-1, class C1**, per the brief. A `close`'s final
+offsetting `Place` is excluded from the emergency scope and takes fresh gate/frame/reply budgets
+(`AtasConnector.cs:1018`, Codex's line). That is round 4's rule (`Place`/`Modify` never take the fast
+path) meeting the U2c-1 item "carry a `Close` intent through `ITradingConnector` so close legs are not
+`Place`s" — once U2c-1 lands, those legs inherit the scope by INTENT rather than by op name. **I did
+not give a `Place` the emergency budget**, and the drain table below prices the trailing placement at
+the ordinary bound precisely because it still takes one.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F1 + PRIOR 2** (H, class) the drain models a risk-reducing handler as `E + W`; a `close-all` wave is `E + L·W` | **RED 3** — arithmetic at Codex's own values: `the drain came out at 39s against a close-all wave that needs E + 4W + S = 51s`; measured: `'close-all' took 4.53s against a drain of 3.80s`; disposal: one position (`P-YM`) still open when `DisposeAsync` returned | 27/27 `GatewayPipeBackpressureTests` | wave term back to `1 × W` → **RED 3**, the same three | `c88ea48` |
+
+### F1 + PRIOR 2 — the handler table, and why enumerating them is the class fix
+
+Three rounds have now found the drain derived from ONE handler's shape and silently short for
+another: round 8 from a single connector call, round 9 from a three-call chain that was really five,
+round 10 from a risk-reducing handler with one trailing placement that really has four. The fix is
+not a fourth arithmetic correction: `GatewayPipeServer.HandlerPaths` enumerates EVERY handler with
+its own serial depth, and the drain is the maximum over that table plus the settle margin. A handler
+is covered because it is IN the table.
+
+Terms, all read off the live connector: **W** = `WorstCaseOperationPath` (one ordinary call), **E** =
+`EmergencyBudget` (the whole risk-reducing part of one operation), **L** = `MaxLegsInFlight` (4),
+**S** = `SettleAfterCancelTimeout`.
+
+| handler | serial depth | why that is the chain |
+|---|---|---|
+| `status` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read |
+| `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
+| `material-list` `material-note` | — | no connector call at all |
+| `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
+| `modify` | **4W** | the account, the orders read that resolves the target, the account again, the modify |
+| `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
+| `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
+| `close` | **E + W** | the prefix inside the budget, then ONE ordinary placement |
+| `close-all` | **E + L·W** | the prefix inside the budget, then one WAVE of placements, serialised on `_dispatchGate` |
+
+```
+drain = max(that table) + S
+```
+
+The same table is now in `docs/CONTRACTS.md` — it is a release fact, not an implementation detail.
+
+**At shipped ATAS values the number does not move:** `max(5×50, 2 + 4×50) + 5 = 255 s`, exactly what
+round 9 recorded, because the ordinary placement still dominates there. The term that was missing
+bites where `E` is large relative to `W`, which is Codex's own fixture and the suite's own disposal
+fixture.
+
+**Why ONE wave and not the whole book, stated because it is the load-bearing step.** `RunLegs` checks
+the operation deadline before issuing each leg, so once `E` is gone every remaining leg is reported
+`not-sent` rather than issued. At the instant the last wave is issued, less than `E` has elapsed; that
+wave then costs at most `L·W` more. A book of two hundred positions therefore costs `E + L·W`, not
+`E + 50·W`.
+
+**The measured half is a `[Theory]` with one row per handler** —
+`Every_handlers_measured_chain_fits_inside_the_drain_derived_for_it` — which drives each handler over
+the real pipe at a fake latency and asserts the derived bound still covers what it actually cost. The
+fixture's emergency budget sits just above one `close-all` leg's read prefix (5 × W) on purpose: with
+a wider budget the legs still run but the wave stops being the longest thing in the table and the row
+proves nothing. `close-all` measured **4.53 s** against a round-9 drain of **3.80 s**.
+
+**The disposal case, and the honest limit of it.** `A_close_all_wave_that_disposal_lands_in_leaves_
+nothing_unsettled` disposes twice: once with the whole prefix and wave still ahead, and once
+MID-WAVE, after a placement of the wave has actually reached the broker. Only the first
+discriminates, and the arithmetic says why it must: mid-wave disposal has at most `L·W` left to cover
+while the round-9 drain already allowed `E + W + S`, and `E` exceeds the prefix by construction — so
+`3W > E + S` is unreachable. The mid-wave landing is asserted because the bounce names it, not
+because it can fail on its own.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F4 + F-1** (M, class) the leg word is read off the record, which cannot carry wire certainty | `Expected: "not-sent" / Actual: "sent-not-confirmed"` on a leg the connector refused before the wire | 35/35 `SweepRequestIdTests`; 43/43 `ConnectorSendDeadlineTests` | `NothingWritten → NotConfirmed` → **RED 1 of 35**; the bridge's gate refusal claims `PossiblyWritten` → **RED 1 of 43** | `d931e0c` |
+| **F3** (M) the per-leg vocabulary is six words | `Item: Tuple ("sent-and-confirmed", "CANCELLED", …)` not in `["confirmed","rejected","sent-still-working","sent-not-confirmed","not-sent"]` | 37/37 `SweepRequestIdTests` | the word back to `sent-and-confirmed` + `nothing_to_do` hard-coded false → **RED 3 of 37** | `756e7e5` |
+| **F-3** (L) `Classify` kept the catch-all `Describe()` had lost | `Assert.Throws() Failure: No exception was thrown` — an unmapped state became `sent-not-confirmed` | 38/38 `SweepRequestIdTests` | the catch-all restored → **RED 1 of 38** | `6181633` |
+| **F-2** (M, my half) disposal returns silently on a request nothing will settle | `Expected: "error" / Actual: null` — `handlers_did_not_finish` not logged with a token-honouring connector | 28/28 `GatewayPipeBackpressureTests` | the sentinel counts handler tasks again → **RED 1** | `04aed45` |
+| **F-5** (L) the five-order acceptance passes with `attempted = 0` | measured: every leg `not-sent` (`["not-sent" ×5]`), so "which sent, which confirmed" is never exercised | 38/38 `SweepRequestIdTests` | `LoseAfterSend` reports `NothingWritten` → **RED 1 of 38** | `12e2c65` |
+
+### F4 + F-1 — the connector reports where the frame got to, and that is what names the leg
+
+Round 9's rule was *"the record decides the word"*. It is right that a word must be producible only by
+the thing that means it, and wrong about the record being able to mean it. **`TradingGateway` maps
+EVERY `ConnectorTransportException` to UNKNOWN** (`TradingGateway.cs:660-665`), correctly — from up
+there a refusal before the send gate and a half-written frame are the same exception. Down in the
+connector they are not, and that difference is the whole of the verifier's F-1.
+
+**The mechanism, and why it is not a signature change.** `TransportOutcome` — the tri-state `trade`
+has used since round 2 — moved to `TradeAgent.Core` so it has ONE definition for both users, and a new
+`TransportLedger` (ConnectorSdk, `AsyncLocal`, the same shape as `RiskReducingScope`) carries one
+`TransportRecord` per sweep leg. `RunLegs` attaches a record before it starts a leg, so the value
+flows DOWN into that leg's execution context and the leg's connector calls mutate the object the loop
+still holds — a wave of four concurrent legs each has its own and none can see another's. **Only
+MUTATIONS are recorded** (`AtasConnector.Mutates(op)`): a leg is a read to resolve its target and then
+the thing it came to do, and recording the read would report "a reply was received" for a leg whose
+cancel never left the process.
+
+The rule, and it is two sources answering two different questions:
+
+1. A record in a state only a BROKER'S ANSWER can produce — CANCELLED, FILLED, REJECTED, WORKING,
+   ACKNOWLEDGED, PARTIALLY_FILLED, CANCEL_PENDING — is itself proof the round trip completed, and it
+   says WHICH answer came back. (An idempotent replay arrives here with no transport of its own, which
+   is why it does not read `not-sent`.)
+2. Everything else — CREATED, AWAITING_APPROVAL, DISPATCHING, UNKNOWN, RECONCILING, or no record —
+   is a state the record cannot settle, and the CONNECTOR's transport result decides: nothing
+   attempted or `NothingWritten` → `not-sent`; `PossiblyWritten` or `ReplyReceived` →
+   `sent-not-confirmed`, which is the fail-closed direction.
+
+**The shipped connector's report is measured, not modelled.** `A_refusal_that_never_took_the_send_gate_
+reports_that_nothing_was_written` drives the real `AtasConnector` over a real pipe through all three
+ways an emergency fails without the gate: the operation already over, `Busy` behind our own backlog,
+and a gate-expiry `PeerStalled` — different facts about the far end, the same fact about the frame.
+`An_answered_frame_reports_a_reply_and_an_unanswered_one_reports_it_may_have_landed` supplies the other
+two states, so `NothingWritten` is a measurement rather than the only answer the connector can give.
+
+**THE RESIDUAL, AND IT IS NOW MEASURED RATHER THAN ARGUED.** The RECORD is still UNKNOWN with
+`NeedsReconciliation` set, because `TradingGateway.SettleUnknown` writes it and this unit may not open
+that file. The word is fixed and the leg now carries the connector's own report in a new `transport`
+field, so the answer states its evidence instead of leaving two fields to disagree in silence. What
+the flag then does was measured this round, by accident, while building the F-5 mix — and it is worse
+than the verifier's account:
+
+```
+op-…-cancelall-0  not-sent  state=UNKNOWN  transport=NothingWritten
+                  error="it was not sent: the operation ran out of time before this leg's turn came"
+op-…-cancelall-1  not-sent  error="1 earlier request(s) are unconfirmed"
+op-…-cancelall-2  not-sent  error="1 earlier request(s) are unconfirmed"
+op-…-cancelall-3  not-sent  error="1 earlier request(s) are unconfirmed"
+op-…-cancelall-4  not-sent  error="1 earlier request(s) are unconfirmed"
+```
+
+**One leg the connector PROVED it never sent paused the remaining four legs of its own sweep.** The
+UNKNOWN row it wrote sets the flag, and `TRADING_PAUSED_UNRECONCILED` refuses everything after it —
+so on the one command a person reaches for when they want everything to stop, a leg that did nothing
+stops the sweep. **ROUTED TO U2c-1 with this measurement:** `CancelAsync`/`ModifyAsync` must not
+settle UNKNOWN for a transport failure the connector reports as `NothingWritten`.
+
+### F3 — five words, and why `nothing-to-do` was a category error
+
+`sent-and-confirmed` led with a claim about the wire when the content of the word is the BROKER'S
+answer, which put it in the same shape as the two words that really are about the wire. It is
+`confirmed`. And `nothing-to-do` was a fact about the OPERATION wearing a leg's clothes: a leg exists
+because there was something for it to act on. It is now `nothing_to_do` on the sweep itself, true when
+there were no targets at all; a `close-all` symbol whose position had gone by the time its leg ran is
+`not-sent` and is still named in `nothing_to_close`.
+
+`The_per_leg_vocabulary_is_exactly_five_words_over_every_reachable_combination` drives the mapping
+over the FULL cross product — every `ExecutionState` (plus "no record") against every
+`TransportOutcome` (plus "nothing attempted") — through a seam exported for it, `LegWordFor`. Both
+directions: no combination may produce a sixth word, and all five must be produced by some
+combination, so a mapping that refused everything would not pass. A membership test over the replies
+some fixture happens to produce could only ever cover the arms those fixtures reach, which is exactly
+how the round-9 mapping shipped with an arm no test touched.
+
+### F-2 — my half, and the half that is not mine
+
+Round 9 recorded that the only thing which still produces an abandoned handler is "a call that does
+not honour its cancellation token". The verifier refuted it with a connector that DOES honour it, and
+I reproduced the refutation before changing anything: `handlers_did_not_finish` — `Expected: "error" /
+Actual: null` — with the row DISPATCHING, `needs_reconciliation=0`, and `ReconcileAsync` scanning
+`NeedingReconciliation()` alone, so nothing would ever settle it.
+
+The sentinel counted the wrong noun. A token-honouring connector unwinds the instant disposal cancels
+it, so the HANDLER finishes; `TradingGateway.ModifyAsync` catches only `ConnectorRejectedException`
+and `ConnectorTransportException` and lets the cancellation escape, so the REQUEST does not. It now
+counts requests still DISPATCHING when `DisposeAsync` returns and **names them** — "something was
+abandoned" is not something anybody can act on. Disposal still waits the full derived drain before
+cancelling anything, and the test asserts that too, because a shutdown that cancelled early would
+produce this row for a handler that had time left.
+
+**Settling that row is DEFERRED-BY-DECISION to U2c-1** with the verifier's measurement and mine:
+`CancelAsync`/`ModifyAsync` must catch `OperationCanceledException`/`TimeoutException` the way
+`DispatchPlaceAsync` already does at `TradingGateway.cs:481`, so a cancelled mutation is recorded
+UNKNOWN and reconciled. `TradingGateway.cs` is not this unit's to edit.
+
+### F-5 — a mixed answer, and the fixture fact that makes it reachable
+
+The acceptance was satisfiable by a sweep that attempted nothing: at a second per leg the orders read
+plus one target resolution is the whole two-second budget, every leg comes back `not-sent`, and
+`not_sent > 0` is satisfied. The test now runs a SECOND sweep over the same five still-working orders
+with the simulator quick and two one-shot faults armed, and asserts `confirmed`, `rejected`,
+`not-sent` and `sent-not-confirmed` by name in one answer, with `attempted` equal to the number of
+legs whose word is not `not-sent` and reconciliation flagged on exactly the leg that says so.
+
+**Fifty milliseconds of latency is load-bearing in that fixture and the comment says so.** At zero
+latency the simulator never awaits, so `issue()` runs each leg to completion before the loop starts
+the next and the wave is serial — the first UNKNOWN then refuses the other three and every word in
+the answer is the same one. Two harness additions were needed and both model real connector
+branches: `FaultProfile.LoseAfterSend` (the frame went out, no answer came back — the reply-timeout
+branch, and the only honest way a CANCELLATION becomes UNKNOWN in the simulator), and
+`FaultProfile.Take` is now locked, because read-then-decrement across four concurrent legs can hand
+one use to two of them and leave a third fault unconsumed.
+
+### The Windows box — the granted run, what it proved and what it FOUND
+
+Manager grant, one run, at the end of the round. Taken at `12e2c65`, before the fixture fix below.
+
+**The tree really was mine, before AND after.** `tools/win-push.sh` (796 K packed, 157 files
+unpacked), then SHA-256 of five changed files plus the `.cs` count under `src` + `tests` — identical
+to my worktree on both sides of the run:
+
+```
+dfb994dd0588f33d88e24bf03b1c0124e610a6a7836f6587115c148b94ba769e  …\src\TradeAgent.Gateway\GatewayPipeServer.cs
+7dd7ac2c7c0b8fdd85d6f2389a4f06e6f70115c7b967cd5cf9a1c8d3605c49f2  …\src\TradeAgent.Connectors.Atas\AtasConnector.cs
+e11bdc1842b3be5d408928fa13056ccd00ad35c909092f57e97a2d400beb3d50  …\src\TradeAgent.Connectors.Fake\FakeConnector.cs
+dcc9e620429668f3eb34831cd14e3a92681dcf1d46b7762d2248e2d8fe313df0  …\src\TradeAgent.ConnectorSdk\TransportLedger.cs
+7bc5e2e053989f300afa467438e3d18f89c7a3fbb241719c92194f780448565a  …\tests\TradeAgent.IntegrationTests\SweepRequestIdTests.cs
+cs files under src+tests: 90                                      (Mac: 90)
+```
+
+One SSH session, `DESKTOP-K8VRIT9`, console session Active, ATAS running, no UI agent (console work
+only, which is all this needed):
+
+```
+=== BUILD (--no-incremental) ===      0 Warning(s)  0 Error(s)   BUILD EXIT=0
+=== PIPE CLASSES ===                  Failed: 1, Passed: 108, Total: 109, 6 m 16 s   PIPE EXIT=1
+=== FULL SUITE ===                    UnitTests   Passed: 108 / 108
+                                      FaultTests  Passed:  75 /  75
+                                      Integration Failed: 2, Passed: 299, Total: 301, 6 m 37 s
+                                      SUITE EXIT=1
+```
+
+**This is the first time round 9's seven commits have been built or run on Windows at all**, and the
+build is clean there. Two failures, and they are different in kind.
+
+**BOX FAILURE 1 — MINE, and the box is right.** `A_five_order_sweep_answers_within_the_budget_and_
+accounts_for_every_order` — `Collection: ["not-sent" ×5] / Not found: "confirmed"`, reproduced in BOTH
+box runs. The mixed-outcome half I added for F-5 ran as a SECOND sweep on the gateway the first half
+had already used, and whether that first sweep leaves a flagged request depends on where its deadline
+falls — one flagged request refuses every leg of the next sweep with `1 earlier request(s) are
+unconfirmed`. On macOS the first sweep's legs died in their target RESOLUTION, which writes no record;
+on Windows one got further. **That is F-1's residual doing exactly what it is routed to U2c-1 for, and
+it found me.** Fixed in `c00fa08` by giving the mixed sweep its own gateway and asserting the
+precondition (`Assert.Empty(gw.Requests.NeedingReconciliation())`) so a future coupling fails saying
+so. **NOT VERIFIED ON THE BOX: the fix.** It is Mac-verified only — the grant was one run and it was
+spent; `c00fa08` and the final gate below have never been on Windows.
+
+**BOX FAILURE 2 — NOT MINE, AND NOT DETERMINISTIC.** `An_emergency_a_busy_bridge_has_not_answered_yet_
+is_unknown_but_not_a_drop` — *"a bridge that was answering requests throughout was dropped"*
+(`ConnectorSendDeadlineTests.cs:846`). It is a round-7-era timing test I did not touch. **It PASSED in
+the pipe-class run and FAILED in the full-suite run, on the same box, the same binaries, 2½ minutes
+apart** — so it is load-dependent on Windows. **NOT verified: whether it is a pre-existing Windows
+flake or something this round made likelier.** I did add `TransportLedger.Record` calls to
+`AtasConnector`'s failure paths; outside an attached record each is one null-check on an `AsyncLocal`,
+which is not a plausible cause but is not ruled out by argument alone. It needs a repeat box run, and
+it is the first Windows figure this test has ever had.
+
+### Round 10 close — gates, counts and the test-name diff (2026-09-04)
+
+Tip **`c00fa08`** (7 commits on `088c059`), branch `u2a-rebase-probe`, tree clean.
+
+**Build gate — `dotnet build TradeAgent.sln --no-incremental`** (and this is PRIOR F5 re-run and
+re-quoted, which Codex read as unrecorded off a stale branch snapshot):
+
+```
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+Time Elapsed 00:00:01.47                                                        (exit 0)
+```
+
+**FULL suite, on the Mac, at the tip — `dotnet test TradeAgent.sln`:**
+
+```
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 972 ms   - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s      - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 302, Skipped: 0, Total: 302, Duration: 6 m 34 s - TradeAgent.IntegrationTests.dll (net10.0)
+EXIT=0
+```
+
+**485 green (75 / 108 / 302), 0 failed, 0 skipped** — 466 at `088c059` plus 19.
+
+**A SIBLING SESSION'S TEST RUN OVERLAPPED MINE ON THIS MAC** (a U14 leg in
+`…-worktrees/u14-build`, seen in `ps` mid-run). Each test assembly redirects `TRADEAGENT_HOME` to its
+own scratch directory and each `TestEnv.NewDb()` is a fresh file, so there is no shared state — but
+there is shared CPU, and the durations above are not comparable with round 9's. The counts are.
+
+**Test-name diff `088c059` → `c00fa08` — REMOVED: 0.** Method names extracted at both shas, reduced
+to `path::method`, sorted unique: **372 → 384**, twelve new methods, nineteen new CASES (one is an
+eight-row `[Theory]`):
+
+```
+tests/…/ConnectorSendDeadlineTests.cs::A_refusal_that_never_took_the_send_gate_reports_that_nothing_was_written
+tests/…/ConnectorSendDeadlineTests.cs::An_answered_frame_reports_a_reply_and_an_unanswered_one_reports_it_may_have_landed
+tests/…/GatewayPipeBackpressureTests.cs::A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled
+tests/…/GatewayPipeBackpressureTests.cs::A_request_left_unsettled_when_disposal_returns_is_logged_by_name_at_error
+tests/…/GatewayPipeBackpressureTests.cs::Every_handlers_measured_chain_fits_inside_the_drain_derived_for_it   [Theory ×8]
+tests/…/GatewayPipeBackpressureTests.cs::The_drain_covers_a_close_all_wave_and_not_just_one_trailing_place
+tests/…/SweepRequestIdTests.cs::A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer
+tests/…/SweepRequestIdTests.cs::A_leg_refused_before_the_wire_reads_not_sent_even_though_its_record_is_unknown
+tests/…/SweepRequestIdTests.cs::A_sweep_with_no_targets_says_so_as_a_whole_and_not_on_any_leg
+tests/…/SweepRequestIdTests.cs::An_execution_state_nothing_maps_throws_rather_than_becoming_a_word
+tests/…/SweepRequestIdTests.cs::Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled
+tests/…/SweepRequestIdTests.cs::The_per_leg_vocabulary_is_exactly_five_words_over_every_reachable_combination
+```
+
+283 + 19 = 302, which is what ran. The diff was taken after every structural edit, not only at the end.
+
+**Scope.** Eleven files changed, and none of them is a forbidden one
+(`git diff --name-only 088c059..HEAD | grep -E 'TradingGateway.cs|DashboardView.cs|Stores.cs|GatewayTypes.cs'`
+→ no match):
+
+```
+docs/CONTRACTS.md                                     +72
+src/TradeAgent.ConnectorSdk/TransportLedger.cs        +98   (new)
+src/TradeAgent.Core/TransportOutcome.cs               +33   (new — moved out of TradeCli)
+src/TradeAgent.Connectors.Atas/AtasConnector.cs       +50 −…
+src/TradeAgent.Connectors.Fake/FakeBroker.cs          +39 −…
+src/TradeAgent.Connectors.Fake/FakeConnector.cs       +83 −…
+src/TradeAgent.Gateway/GatewayPipeServer.cs          +284 −…
+src/TradeAgent.TradeCli/TransportResult.cs            −25   (the enum moved to Core)
+tests/…/ConnectorSendDeadlineTests.cs                +128
+tests/…/GatewayPipeBackpressureTests.cs              +399
+tests/…/SweepRequestIdTests.cs                       +262
+```
+
+Seven commits, one per finding. No `Co-Authored-By` trailers
+(`git log 088c059..HEAD --format=%B | grep -ci co-authored` → `0`). Every mutant was applied to a `cp`
+copy's original, `touch`ed, run, then restored from the `cp` copy and `touch`ed again — never
+`git checkout --`; `git status --short` empty after each.
+
+### Routed onward, with measurements attached
+
+- **F2 (Codex HIGH) — U2c-1 class C1.** A `close`'s final offsetting `Place` takes fresh gate, frame
+  and reply budgets inside an emergency operation. Deferred by the brief's decision; once a `Close`
+  intent travels through `ITradingConnector`, those legs inherit the scope by intent instead of by op
+  name. Not given the emergency budget here.
+- **F-1's RECORD half — U2c-1.** `TradingGateway.SettleUnknown` writes UNKNOWN + `NeedsReconciliation`
+  for a transport failure the connector reports as `NothingWritten`. Measured this round: **one leg
+  the connector proved it never sent paused the remaining four legs of its own sweep**, and it then
+  reproduced on Windows as a test failure. `CancelAsync`/`ModifyAsync` must not settle UNKNOWN for a
+  `NothingWritten` transport result.
+- **F-2's SETTLEMENT half — U2c-1.** `CancelAsync`/`ModifyAsync` catch only `ConnectorRejectedException`
+  and `ConnectorTransportException`; `DispatchPlaceAsync` at `TradingGateway.cs:481` also catches
+  `TimeoutException or OperationCanceledException`. Until they match, a mutation cancelled by disposal
+  stays DISPATCHING and unflagged. It is now LOGGED by name at `error`, which is this unit's half.
+- **The one-warning-per-future-regression policy** (`<TreatWarningsAsErrors>` in
+  `Directory.Build.props`) is still proposed and still not taken — program-wide, outside this brief.
+
+### What I did NOT do (round 10)
+
+- **Did not verify the last two commits on Windows.** The box grant was ONE run and it was spent at
+  `12e2c65`. **NOT VERIFIED ON THE BOX:** `c00fa08` (the fixture fix the box itself found) and the
+  final Mac gate above. The box needs one more run, and it should be watched for the second failure
+  below as well.
+- **Did not settle the Windows failure of `An_emergency_a_busy_bridge_has_not_answered_yet_is_unknown_
+  but_not_a_drop`.** It passed in the targeted run and failed in the full-suite run on the same
+  binaries. **NOT verified: whether it is a pre-existing Windows flake or something this round made
+  likelier.** I did not touch that test or its assertions.
+- **Did not run the Codex leg or any adversarial-verify leg.** This session is the builder, and under
+  R1 nothing here is a verdict.
+- **Did not modify `TradingGateway.cs`, `DashboardView.cs`, `Stores.cs` or `GatewayTypes.cs`.** I read
+  `TradingGateway.cs` and `Core/Db/Stores.cs` — the handler table and the disposal sentinel cannot be
+  written without knowing what they do — and changed neither; the `git diff --name-only` above proves
+  it.
+- **Did not give a `Place` the emergency budget** (F2 is deferred), and did not change
+  `RiskReducingScope`'s exclusion of `place`/`modify`.
+- **Did not clear or write any execution record from the pipe server.** The `not-sent` leg's UNKNOWN
+  row is left exactly as the gateway wrote it; the reply now carries the connector's transport result
+  beside it rather than the pipe server editing the row.
+- **Did not re-measure any earlier round's evidence.** Rounds 4b–9 are carried forward as their
+  builders left them; what I verified about them is that the tree they produced still builds clean and
+  is green with my changes on top.
+- **Did not bound cross-handler queueing.** `_dispatchGate` is a mutex; N concurrent placements cost N
+  chains under one drain. Named in the source and in `docs/CONTRACTS.md`; **NOT verified: what N can
+  be in practice.**
+- **Did not make the simulator's deadline message op-aware** (carried from round 9), and did not close
+  the `close-all` fan-out at realistic book size beyond the one-wave bound derived above.
+- **Did not touch the installed app, ATAS, the real home, or any branch other than
+  `u2a-rebase-probe`.** Nothing pushed to a git remote, merged, rebased or moved; `u2a-pipe-hardening`
+  is still at `088c059`; no git command was run in the main worktree.
+- **Did not run `probe atas`, place, modify or cancel any real order.** The only thing that reached the
+  Windows machine is the source tree and `dotnet build` / `dotnet test`.
