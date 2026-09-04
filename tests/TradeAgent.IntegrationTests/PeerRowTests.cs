@@ -287,4 +287,108 @@ public class PeerRowTests
         Assert.Null(connector.Unauthenticated);
         Assert.Null(connector.Incompatible);
     }
+
+    // ============================================ U14b item 4, the grace is a state and not a silence
+
+    /// <summary>
+    /// U14b ITEM 4. FOR THE LENGTH OF THE GRACE, A NEW PEER HAD NO STATUS OF ITS OWN.
+    ///
+    /// <c>AuthGrace</c> is there so that a peer part way through its handshake is not called
+    /// unauthenticated for the second that takes. For that second the connector said nothing at all
+    /// about it: the silence reading requires the grace to have EXPIRED, the pending-hello reading
+    /// requires authentication to have LANDED, and neither had happened yet. So the row fell back on
+    /// the marker the previous connection left, and the operator who has just replaced the add-on
+    /// watches its replacement dial in and reads a protocol complaint about the program they removed.
+    ///
+    /// F38 established the rule and left this hole in it: a current connection ALWAYS yields a status
+    /// newer than any marker. The arrival is itself an observation, and this is what it says.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_inside_the_auth_grace_is_not_masked_by_the_previous_peers_refusal()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            // Long enough that the whole assertion below happens INSIDE the window, which is the
+            // state under test: the grace has not expired and nothing else has been observed.
+            AuthGrace = TimeSpan.FromSeconds(30),
+            HeartbeatTimeout = TimeSpan.FromSeconds(30)
+        };
+        await connector.ConnectAsync();
+
+        // A peer speaking a protocol this build does not, refused and dropped. Its marker is KEPT —
+        // that is deliberate, and it is what makes the hole visible.
+        var (old, _) = await PeerAsync(pipe, goodProof: true, helloVersion: 2);
+        await Wait(() => connector.Incompatible is not null);
+        Assert.Contains("speaks protocol 2", connector.StatusDetail!);
+        old.Dispose();
+
+        // The replacement takes the pipe and has not said anything yet.
+        using var arriving = await SilentAsync(pipe);
+        await Wait(() => connector.StatusDetail?.Contains("waiting for the add-on to authenticate") == true);
+
+        var row = connector.StatusDetail!;
+        Assert.DoesNotContain("speaks protocol 2", row);
+        Assert.DoesNotContain("neither proved itself nor said", row);   // it is not being called silent yet
+        Assert.NotNull(connector.Incompatible);                          // and the marker is still readable
+    }
+
+    /// <summary>
+    /// AND THE GRACE STILL EXPIRES INTO THE SILENCE READING — the other direction, without which the
+    /// test above is satisfied by a row that says "connecting" for ever about a peer that never
+    /// speaks. The connecting line is what a peer gets for the length of the grace and no longer.
+    /// </summary>
+    [Fact]
+    public async Task The_connecting_line_is_replaced_by_the_silence_reading_when_the_grace_expires()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            AuthGrace = TimeSpan.FromMilliseconds(300),
+            HeartbeatTimeout = TimeSpan.FromSeconds(30)
+        };
+        await connector.ConnectAsync();
+
+        using var quiet = await SilentAsync(pipe);
+        await Wait(() => connector.StatusDetail?.Contains("waiting for the add-on to authenticate") == true);
+        await Wait(() => connector.StatusDetail?.Contains("neither proved itself nor said") == true);
+
+        Assert.DoesNotContain("waiting for the add-on to authenticate", connector.StatusDetail!);
+        Assert.NotNull(connector.Unauthenticated);
+    }
+
+    /// <summary>
+    /// AND AUTHENTICATION REPLACES IT WITHOUT WAITING FOR ANYTHING TO TIME OUT — the peer proves
+    /// itself inside the grace, and the row moves on to what is true now rather than staying on the
+    /// arrival. Same rule as F38's, one reading earlier.
+    /// </summary>
+    [Fact]
+    public async Task A_peer_that_proves_itself_inside_the_grace_replaces_the_connecting_line()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            AuthGrace = TimeSpan.FromSeconds(30),
+            HeartbeatTimeout = TimeSpan.FromSeconds(30)
+        };
+        await connector.ConnectAsync();
+
+        // ONE CONNECTION THROUGHOUT, so what is measured is the reading moving on rather than a
+        // fresh peer arriving: it is inside the grace, and then it proves itself.
+        using var peer = await SilentAsync(pipe);
+        await Wait(() => connector.StatusDetail?.Contains("waiting for the add-on to authenticate") == true);
+
+        var w = new StreamWriter(peer, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+        var cred = BridgePipeAuth.ReadForClient()!;
+        var nonce = BridgePipeAuth.NewNonce();
+        await w.WriteLineAsync(Json.Write(new
+        {
+            v = Versions.BridgeProtocolVersion,
+            op = BridgePipeAuth.Challenge,
+            data = new { nonce, proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce) }
+        }));
+
+        await Wait(() => connector.StatusDetail?.Contains("has not said hello") == true);
+        Assert.DoesNotContain("waiting for the add-on to authenticate", connector.StatusDetail!);
+    }
 }

@@ -406,6 +406,31 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// lands there is something true and current to say about this connection. That is what makes it
     /// beat a marker left by the peer before it without waiting for anything to time out.
     /// </summary>
+    /// <summary>
+    /// A PEER THAT HAS JUST ARRIVED AND IS INSIDE THE GRACE, or null. The FOURTH derived reading, and
+    /// the hole the other three left.
+    ///
+    /// <see cref="AuthGrace"/> exists so that a peer part way through its handshake is not called
+    /// unauthenticated for the second it takes — and for that second the connector said NOTHING about
+    /// it. The silence reading requires the grace to have EXPIRED, <see cref="PendingHello"/> requires
+    /// authentication to have landed, and neither had happened yet. With nothing of its own to report
+    /// the row fell back on the marker the PREVIOUS connection left: the operator watches a peer they
+    /// have just replaced dial in and reads "the bridge speaks protocol 2" about a program that is no
+    /// longer on the pipe. The grace is display-only, and this is the display it was missing.
+    ///
+    /// Stamped <see cref="_peerArrivedAt"/> — the counter taken at accept, so it is newer than every
+    /// marker recorded before this peer arrived and older than everything recorded during it. The
+    /// three ways out are all replacements rather than expiries: the grace runs out and the silence
+    /// reading takes over on the same stamp, the peer proves itself and
+    /// <see cref="_authenticatedAt"/> outranks this, or the peer is refused and its own marker does.
+    /// A hello ends it by ending the whole row.
+    /// </summary>
+    string? Connecting =>
+        _peerArrived != DateTimeOffset.MaxValue && _hello is null && !_authenticated
+        && DateTimeOffset.UtcNow - _peerArrived <= AuthGrace
+            ? "connecting — waiting for the add-on to authenticate"
+            : null;
+
     string? PendingHello =>
         _authenticated && _hello is null
             ? "the ATAS bridge is connected and has not said hello yet — it proved itself and has " +
@@ -440,6 +465,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             if (incompatible is not null) { winner = incompatible.ToString(); at = _incompatibleAt; }
             if (unauthenticated is not null && unauthenticatedAt > at)
             { winner = unauthenticated.ToString(); at = unauthenticatedAt; }
+            // THE ARRIVAL ITSELF IS AN OBSERVATION. It is stamped at accept, so it outranks every
+            // marker older than this connection and yields to anything this peer has since done.
+            if (Connecting is { } dialling && _peerArrivedAt > at)
+            { winner = dialling; at = _peerArrivedAt; }
             if (PendingHello is { } waiting && _authenticatedAt > at) winner = waiting;
             return winner;
         }
