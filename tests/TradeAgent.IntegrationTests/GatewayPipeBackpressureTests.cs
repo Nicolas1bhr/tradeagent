@@ -415,11 +415,14 @@ public class GatewayPipeBackpressureTests
         // than by abandoning an order at shutdown six months later.
         Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
 
-        // FIVE of those in series plus the settle: a handler is not one connector call (Codex F2),
-        // and three was the wrong count for the longest one (Codex round-8 CHECK d) — a cold
-        // placement issues five. This is the number an operator can experience at shutdown.
+        // FIVE of those in series, plus what the HANDLER costs on top of its connector calls, plus
+        // the settle: a handler is not one connector call (Codex F2), three was the wrong count for
+        // the longest one (Codex round-8 CHECK d) — a cold placement issues five — and a row is the
+        // connector chain rather than the handler (verifier round-11 L-2). This is the number an
+        // operator can experience at shutdown.
         Assert.Equal(5, GatewayPipeServer.SerialConnectorCallsPerHandler);
-        Assert.Equal(TimeSpan.FromSeconds(255), server.HandlerDrainTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(1), GatewayPipeServer.HandlerOverhead);
+        Assert.Equal(TimeSpan.FromSeconds(256), server.HandlerDrainTimeout);
 
         // And the risk-reducing shape is covered too, rather than assumed smaller: at shipped values
         // it is 2 s of emergency budget plus one ordinary Place, which the 255 above already exceeds.
@@ -483,6 +486,15 @@ public class GatewayPipeBackpressureTests
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         var chain = GatewayPipeServer.SerialConnectorCallsPerHandler * conn.WorstCaseOperationPath;
 
+        // A ROW BOUNDS THE CONNECTOR CHAIN, NOT THE HANDLER. The handler also reads and parses a
+        // frame, writes its request record, and writes a reply — work no connector deadline
+        // describes, and work this test used to leave uncovered because it compared the drain
+        // against the very quantity the rows already are. The margin was `SettleAfterCancelTimeout`,
+        // added once and `init`-settable to ZERO, at which point the drain equalled the chain
+        // exactly and any handler overhead at all was outside it: measured at W=300 ms, E=900 ms,
+        // `cancel-all` cost 917 ms against a 900 ms row (verifier round-11 L-2).
+        var bound = chain + GatewayPipeServer.HandlerOverhead;
+
         foreach (var server in new[]
                  {
                      new GatewayPipeServer(gw, "tok", "ta-inv-1"),
@@ -494,9 +506,17 @@ public class GatewayPipeBackpressureTests
                          SettleAfterCancelTimeout = TimeSpan.Zero
                      }
                  })
-            Assert.True(server.HandlerDrainTimeout >= chain,
-                $"the drain came out at {server.HandlerDrainTimeout.TotalSeconds:0}s against a " +
-                $"{chain.TotalSeconds:0}s chain — a caller shortened it below the work it has to cover");
+            Assert.True(server.HandlerDrainTimeout >= bound,
+                $"the drain came out at {server.HandlerDrainTimeout.TotalSeconds:0.000}s against a " +
+                $"{chain.TotalSeconds:0.000}s connector chain plus " +
+                $"{GatewayPipeServer.HandlerOverhead.TotalSeconds:0.000}s of handler — a caller " +
+                "shortened it below the work it has to cover");
+
+        // AND THE MARGIN IS NOT THE SETTLE WINDOW. They are different quantities: one is what a
+        // handler costs on top of its connector calls, the other is how long it gets AFTER it is
+        // cancelled to write down what it already knows. Conflating them is what let a caller
+        // configure the first away by changing the second.
+        Assert.True(GatewayPipeServer.HandlerOverhead > TimeSpan.Zero);
     }
 
     /// <summary>
@@ -786,15 +806,22 @@ public class GatewayPipeBackpressureTests
         {
             SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
         };
-        Assert.True(server.HandlerDrainTimeout < TimeSpan.FromSeconds(1),
-            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0.00}s — the handler will finish " +
-            "inside it and never be cancelled, so this test would pass without testing anything");
+        // THE PREMISE, TIED TO THE FAULT RATHER THAN TO A LITERAL. The drain has to expire while the
+        // handler is still inside its connector call, or the handler finishes on its own and this
+        // test passes without ever reaching the cancellation it is about. It was written as "under a
+        // second", which stopped being the right comparison the moment the drain grew a
+        // handler-overhead term (round 12) — the quantity it was always about is the SLOW CALL.
+        const int slowCallMs = 5000;                               // cancellable: it unwinds when asked
+        Assert.True(server.HandlerDrainTimeout < TimeSpan.FromMilliseconds(slowCallMs),
+            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0.00}s against a " +
+            $"{slowCallMs} ms call — the handler will finish inside it and never be cancelled, so this " +
+            "test would pass without testing anything");
         server.Start();
 
         const string rid = "cli-settle-on-cancel-1";
         await using var agent = await RawAgent.ConnectAndHello(pipe);
         await WarmUp(agent);
-        conn.Faults.LatencyMs = 5000;                              // cancellable: it unwinds when asked
+        conn.Faults.LatencyMs = slowCallMs;
         await agent.WriteAsync(new IpcRequest
         {
             Op = Ops.Buy,
@@ -885,7 +912,9 @@ public class GatewayPipeBackpressureTests
     ///
     /// Codex's values, verbatim: `E = 30 s`, `W = 4 s`, `S = 5 s`, four positions. The drain must be
     /// at least `30 + 4×4 + 5 = 51 s`; the round-9 formula returns `max(5W, E+W) + S = 39 s`, and the
-    /// twelve seconds missing are four placements disposal walks away from.
+    /// twelve seconds missing are four placements disposal walks away from. Since round 12 the drain
+    /// also carries <see cref="GatewayPipeServer.HandlerOverhead"/>, so it comes out one second over
+    /// that floor rather than exactly on it — the assertion is a floor, which is what it means.
     ///
     /// It is asserted as ARITHMETIC rather than measured because it is arithmetic: no fixture can
     /// hold a fifty-one-second handler open inside a test suite, and the thing that was wrong was
@@ -919,7 +948,9 @@ public class GatewayPipeBackpressureTests
         // number by accident: `close-all` is one named row and the drain is the maximum over them.
         var closeAll = server.HandlerPaths.Single(p => p.Handler == Ops.CloseAll);
         Assert.Equal(wave, closeAll.Path);
-        Assert.Equal(server.HandlerPaths.Max(p => p.Path) + server.SettleAfterCancelTimeout, server.HandlerDrainTimeout);
+        Assert.Equal(
+            server.HandlerPaths.Max(p => p.Path) + GatewayPipeServer.HandlerOverhead + server.SettleAfterCancelTimeout,
+            server.HandlerDrainTimeout);
     }
 
     /// <summary>
@@ -1086,6 +1117,91 @@ public class GatewayPipeBackpressureTests
             $"'{op}' took {timer.Elapsed.TotalSeconds:0.00}s against a drain of " +
             $"{server.HandlerDrainTimeout.TotalSeconds:0.00}s — disposal during it walks away from an order in " +
             $"flight. The table says this handler costs {row.Path.TotalSeconds:0.00}s ({row.Why}).");
+    }
+
+    /// <summary>
+    /// THE MEASURED HALF OF THE SAME RULE, AT THE SETTINGS THAT MADE IT VISIBLE.
+    ///
+    /// The theory above runs where every row has seconds of slack, so the difference between "the
+    /// row bounds the connector chain" and "the drain bounds the handler" cannot show. Here the
+    /// emergency budget is exactly the chain `cancel-all` issues — an orders read, a target
+    /// resolution and the cancel, three calls of W against E = 3W — and the settle margin, which is
+    /// what used to be doing the covering, is set to ZERO. What is left over is the handler's own
+    /// work: the frame, the parse, the request rows and the reply. The verifier measured it at 917 ms
+    /// against a 900 ms row (round-11 L-2); the drain has to cover the 917.
+    /// </summary>
+    [Fact]
+    public async Task The_drain_covers_a_handler_whose_row_is_exactly_its_connector_chain()
+    {
+        var db = TestEnv.NewDb();
+        using var _1 = db;
+        var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking })
+        {
+            EmergencyBudget = TimeSpan.FromMilliseconds(900)      // E = 3W exactly
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.Zero          // the margin, configured away
+        };
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // One resting order, placed while the simulator is still free.
+        var resting = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            RequestId = "row-tight-order",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                ["limit"] = JsonSerializer.SerializeToElement("1")
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(resting.Ok, resting.Error?.Message);
+
+        conn.Faults.LatencyMs = 300;                          // W
+        var row = server.HandlerPaths.Single(p => p.Handler == Ops.CancelAll);
+        Assert.Equal(TimeSpan.FromMilliseconds(900), row.Path);
+
+        var timer = Stopwatch.StartNew();
+        var sweep = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "row-tight-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(60));
+        timer.Stop();
+        Assert.True(sweep.Ok, sweep.Error?.Message);
+
+        // THE ROW PLUS THE OVERHEAD TERM BOUNDS THE HANDLER, which is what the term is for. The row
+        // ALONE does not: measured here at 909 ms against a 900 ms row, and by the verifier at
+        // 917 ms. The drain is the MAXIMUM over the table, so `close-all`'s longer row happens to
+        // cover `cancel-all` today — which is exactly why this is asserted per row rather than
+        // against the drain: a table whose longest row is the tight one has no such luck.
+        Assert.True(row.Path + GatewayPipeServer.HandlerOverhead >= timer.Elapsed,
+            $"'cancel-all' cost {timer.Elapsed.TotalMilliseconds:0} ms against a row of " +
+            $"{row.Path.TotalMilliseconds:0} ms ({row.Why}) plus " +
+            $"{GatewayPipeServer.HandlerOverhead.TotalMilliseconds:0} ms of handler overhead — the term " +
+            "that covers the frame, the parse, the request rows and the reply is too small.");
+
+        // And the drain, which is that maximum plus the same term, covers it whatever the settle
+        // margin is set to — here it is zero.
+        Assert.Equal(TimeSpan.Zero, server.SettleAfterCancelTimeout);
+        Assert.True(server.HandlerDrainTimeout >= timer.Elapsed,
+            $"'cancel-all' cost {timer.Elapsed.TotalMilliseconds:0} ms against a drain of " +
+            $"{server.HandlerDrainTimeout.TotalMilliseconds:0} ms");
     }
 
     /// <summary>

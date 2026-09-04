@@ -142,6 +142,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | **E** | `ITradingConnector.EmergencyBudget` — the WHOLE risk-reducing part of one operation, however many calls it decomposes into. `2 s` at shipped values. |
 | **L** | `GatewayPipeServer.MaxLegsInFlight` — how many legs of a sweep are in the air at once. `4`. |
 | **S** | `GatewayPipeServer.SettleAfterCancelTimeout` — the write-back margin, added ONCE on top of the maximum. `5 s`. |
+| **H** | `GatewayPipeServer.HandlerOverhead` — what a HANDLER costs beyond its connector calls, added ONCE. `1 s`. |
 
 | handler | serial depth | why that is the chain |
 |---|---|---|
@@ -156,8 +157,20 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `close-all` | **E + L·W** | the prefix inside the budget, then one WAVE of placements — every leg ends in a `Place` and `TradingGateway._dispatchGate` is a mutex, so a wave's placements queue rather than overlap |
 
 ```
-drain = max(that table) + S
+drain = max(that table) + H + S
 ```
+
+**A ROW BOUNDS THE CONNECTOR CHAIN, NOT THE HANDLER**, and the two extra terms are different
+quantities that must not be confused. Every row above is arithmetic over `W` and `E`, which are the
+connector's own deadlines — so the table covers the CALLS. A handler also reads a frame off the pipe
+and parses it, writes its request record, settles it and writes a reply, and no connector deadline
+describes any of that: `H` is that work, and it is a constant because it is a pipe read, a JSON
+parse and two or three local SQLite writes — it does not scale with anything a connector reports.
+`S` is a different promise: how long a handler gets AFTER its token is cancelled to write down what
+it already knows. `S` was the only thing standing in for `H`, and it is settable to zero, at which
+point the drain equalled the longest row exactly and every millisecond of handler was outside it —
+measured at `W = 300 ms`, `E = 900 ms`: `cancel-all` cost 917 ms against its 900 ms row. They are
+separate now, so configuring the write-back window cannot configure away the bound.
 
 **The table is checked against the DISPATCHER, not against a list.** Four handled operations were
 missing from it — `schema`, `connectors`, `material-list` and `material-note` — and `schema` makes a
@@ -166,8 +179,8 @@ came from the same memory. Every operation in the protocol vocabulary is now dri
 pipe, and an op the dispatcher has no arm for answers `unknown operation '…'`; everything else must
 have a row, and every row must name an operation the dispatcher handles.
 
-At shipped ATAS values that is `max(5×50, 2 + 4×50) + 5 = 255 s`, and disposal's ceiling is
-`5 + 255 + 5 = 265 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
+At shipped ATAS values that is `max(5×50, 2 + 4×50) + 1 + 5 = 256 s`, and disposal's ceiling is
+`5 + 256 + 5 = 266 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
 freed when its pipe closes, before this wait. **The reason `close-all` costs one wave and not the
 whole book:** `RunLegs` checks the operation deadline before issuing each leg, so once `E` is gone
 every remaining leg is reported `not-sent` instead of being issued — at the instant the last wave is
