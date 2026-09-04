@@ -108,6 +108,55 @@ asserts, rather than silently invalidating this section.
 `WorstCaseOrderPath` is `WriteTimeout + FrameTimeout + rpcTimeout` and the shutdown drain is derived
 from it, so a connector built with different deadlines moves the drain with it.
 
+## The shutdown drain, and the handler table it is the maximum over
+
+`GatewayPipeServer.DisposeAsync` closes every connection, then WAITS for the handlers already
+running, because a handler cut off mid-dispatch leaves an order that may have reached the broker
+recorded `DISPATCHING` for ever. How long it waits is **derived**, never written down — and it is
+derived from **every** handler rather than from one, because three separate rounds of this unit
+found a drain that was correct for the handler somebody had in mind and short for another.
+
+Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
+
+| term | what it is |
+|---|---|
+| **W** | `ITradingConnector.WorstCaseOperationPath` — ONE ordinary call, every bounded wait in it added up. `50 s` at shipped ATAS values (`10 + 30 + 10`). |
+| **E** | `ITradingConnector.EmergencyBudget` — the WHOLE risk-reducing part of one operation, however many calls it decomposes into. `2 s` at shipped values. |
+| **L** | `GatewayPipeServer.MaxLegsInFlight` — how many legs of a sweep are in the air at once. `4`. |
+| **S** | `GatewayPipeServer.SettleAfterCancelTimeout` — the write-back margin, added ONCE on top of the maximum. `5 s`. |
+
+| handler | serial depth | why that is the chain |
+|---|---|---|
+| `status` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read |
+| `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
+| `material-list` `material-note` | — | no connector call at all |
+| `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
+| `modify` | **4W** | the account, the orders read that resolves the target, the account again, the modify |
+| `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
+| `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
+| `close` | **E + W** | the prefix inside the budget, then ONE ordinary placement — `Place` is excluded from the emergency deadline on purpose |
+| `close-all` | **E + L·W** | the prefix inside the budget, then one WAVE of placements — every leg ends in a `Place` and `TradingGateway._dispatchGate` is a mutex, so a wave's placements queue rather than overlap |
+
+```
+drain = max(that table) + S
+```
+
+At shipped ATAS values that is `max(5×50, 2 + 4×50) + 5 = 255 s`, and disposal's ceiling is
+`5 + 255 + 5 = 265 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
+freed when its pipe closes, before this wait. **The reason `close-all` costs one wave and not the
+whole book:** `RunLegs` checks the operation deadline before issuing each leg, so once `E` is gone
+every remaining leg is reported `not-sent` instead of being issued — at the instant the last wave is
+issued, less than `E` has elapsed, and that wave costs at most `L·W` more.
+
+**An explicit `HandlerDrainTimeout` may only LENGTHEN this.** A caller naming a longer value means it
+and gets it; one naming a shorter value is asking for an order to be abandoned at shutdown, which is
+not theirs to ask for.
+
+**What the bound does NOT cover, stated rather than left to be found:** it is the bound for ONE
+handler. `_dispatchGate` is a mutex, so N placements in flight together queue on each other and cost
+N chains while disposal waits for all of them under this one bound. **NOT verified: what N can be in
+practice.**
+
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
 ```

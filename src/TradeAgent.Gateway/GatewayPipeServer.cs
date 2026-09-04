@@ -188,9 +188,71 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// on closing is 5 + this + 5 rather than this. Stated because the trade below quotes a number
     /// an operator will experience.
     /// </summary>
-    TimeSpan DerivedDrainTimeout =>
-        (OrdinaryHandlerPath > RiskReducingHandlerPath ? OrdinaryHandlerPath : RiskReducingHandlerPath)
-        + SettleAfterCancelTimeout;
+    TimeSpan DerivedDrainTimeout => HandlerPaths.Max(p => p.Path) + SettleAfterCancelTimeout;
+
+    /// <summary>
+    /// EVERY HANDLER, WITH ITS OWN SERIAL DEPTH — and the drain is the maximum over this table.
+    ///
+    /// Three rounds have found the drain derived from ONE handler's shape and silently wrong for
+    /// another: round 8 from a single connector call, round 9 from a three-call chain that was
+    /// really five, round 10 from a risk-reducing handler with one trailing placement that really
+    /// has <see cref="MaxLegsInFlight"/>. Enumerating every handler is the structural end of that
+    /// class: a handler is covered because it is IN the table, not because somebody remembered it.
+    ///
+    /// The terms, and they are read off the live connector rather than written down:
+    ///
+    ///   W = <c>Connector.WorstCaseOperationPath</c>   one ordinary call, every bounded wait in it
+    ///   E = <c>Connector.EmergencyBudget</c>          the WHOLE risk-reducing part of one operation
+    ///   L = <see cref="MaxLegsInFlight"/>             how many legs of a sweep are in flight at once
+    ///
+    /// and <see cref="SettleAfterCancelTimeout"/> is added once, on top of the maximum, as the
+    /// write-back margin — it is not part of any handler's own path.
+    /// </summary>
+    public IReadOnlyList<HandlerPath> HandlerPaths =>
+    [
+        new(Core.Ops.Status, ReadPath, "one account read"),
+        new(Core.Ops.Accounts, ReadPath, "one account read"),
+        new(Core.Ops.Account, ReadPath, "one account read"),
+        new(Core.Ops.Instruments, ReadPath, "one instrument read"),
+        new(Core.Ops.Quote, ReadPath, "one quote read"),
+        new(Core.Ops.Positions, ReadPath, "the account, then the positions"),
+        new(Core.Ops.Position, ReadPath, "the account, then the positions"),
+        new(Core.Ops.Orders, ReadPath, "the account, then the orders"),
+        new(Core.Ops.Order, ReadPath, "the account, then the orders"),
+        new(Core.Ops.Executions, ReadPath, "the account, then the executions"),
+
+        new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
+        new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
+        new(Core.Ops.Modify, ModifyHandlerPath, "the account, the orders to resolve the target, the account again, the modify"),
+
+        new(Core.Ops.Cancel, RiskReducingReadPath, "resolve the target, then cancel — both inside the one budget"),
+        new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
+        new(Core.Ops.Close, RiskReducingHandlerPath, "the prefix inside the budget, then ONE ordinary placement"),
+        new(Core.Ops.CloseAll, CloseAllHandlerPath, "the prefix inside the budget, then ONE WAVE of placements, serialised"),
+    ];
+
+    /// <param name="Handler">The IPC op, so a handler and its row cannot drift apart by name.</param>
+    /// <param name="Path">The longest this handler can take, from the live connector's own values.</param>
+    /// <param name="Why">The chain that number is, in words, for whoever reads a failing assertion.</param>
+    public readonly record struct HandlerPath(string Handler, TimeSpan Path, string Why);
+
+    /// <summary>
+    /// The deepest READ: an account resolution and then the read itself.
+    ///
+    /// <c>TradingGateway.RequireAccountId</c> issues <c>GetAccountsAsync</c> when no account has been
+    /// selected, and `positions`, `orders` and `executions` all go through it — so a read is two
+    /// calls in series on an installation that has not chosen an account, and one on a configured
+    /// one. Two is what a bound is for.
+    /// </summary>
+    TimeSpan ReadPath => 2 * gateway.Connector.WorstCaseOperationPath;
+
+    /// <summary>
+    /// `modify`: the account, the orders read that resolves the target reference, the account again
+    /// for the record, and the modification. Four in series on an installation with no account
+    /// selected, two on a configured one — and never the five a cold placement issues, which is why
+    /// this is its own row rather than sharing the placement's.
+    /// </summary>
+    TimeSpan ModifyHandlerPath => 4 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
     /// The worst an ORDINARY handler can cost: every call in its chain paying the full per-call
@@ -219,6 +281,34 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     TimeSpan RiskReducingHandlerPath =>
         gateway.Connector.EmergencyBudget + gateway.Connector.WorstCaseOperationPath;
+
+    /// <summary>
+    /// `cancel` and `cancel-all`, which end in no ordinary call at all: every RPC they issue is
+    /// risk-reducing, so the whole handler is the one budget however many calls it decomposes into.
+    /// </summary>
+    TimeSpan RiskReducingReadPath => gateway.Connector.EmergencyBudget;
+
+    /// <summary>
+    /// `close-all`, and it is the row three rounds of this unit kept getting wrong.
+    ///
+    /// A `close` ends in a `Place` of an offsetting order, and `Place` is excluded from the emergency
+    /// deadline on purpose. `close-all` has <see cref="MaxLegsInFlight"/> of those in the air at
+    /// once, and `TradingGateway._dispatchGate` is a MUTEX held across the dispatch — so the wave's
+    /// placements do not overlap, they queue, and one wave costs L ordinary calls end to end rather
+    /// than one.
+    ///
+    /// Only ONE wave, and the reason is the deadline rather than the arithmetic: <c>RunLegs</c>
+    /// checks the operation deadline before issuing each leg, so once the budget is gone every
+    /// remaining leg is reported NOT SENT instead of being issued. Whatever the size of the book, at
+    /// the instant the last wave is issued less than E has elapsed, and that wave costs at most
+    /// L × W more.
+    ///
+    /// Codex round-9 F1 measured what the missing term costs: at `E = 30 s`, `W = 4 s`, `S = 5 s` and
+    /// four positions the handler needs 51 s and the round-9 formula returned 39 s — twelve seconds
+    /// of placements that disposal walks away from.
+    /// </summary>
+    TimeSpan CloseAllHandlerPath =>
+        gateway.Connector.EmergencyBudget + MaxLegsInFlight * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
     /// The longest chain of connector calls ONE ORDINARY handler issues in series, counted from the
@@ -887,7 +977,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// also what makes a leg's turn able to arrive after the deadline, and therefore what makes
     /// NOT SENT a real outcome rather than a branch nothing reaches.
     /// </summary>
-    const int MaxLegsInFlight = 4;
+    public const int MaxLegsInFlight = 4;
 
     async Task Collect(List<(string Id, string Target, Task<ExecutionRequest?> Task)> pending, List<Leg> legs)
     {

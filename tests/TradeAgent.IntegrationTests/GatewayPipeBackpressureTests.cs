@@ -870,6 +870,302 @@ public class GatewayPipeBackpressureTests
         Assert.Equal("error", severity);
     }
 
+    // ------------------- the drain is the MAX OVER EVERY HANDLER'S OWN SERIAL DEPTH (round 10, F1)
+
+    /// <summary>
+    /// CODEX ROUND-9 F1 AND ITS OWN ARITHMETIC: a `close-all` wave serialises FOUR ordinary
+    /// placements, not one.
+    ///
+    /// The risk-reducing term was `E + W` — the whole emergency prefix under one budget, plus the
+    /// single trailing `Place` a `close` ends with. `close-all` issues its legs in waves of
+    /// <see cref="GatewayPipeServer.MaxLegsInFlight"/> and EVERY leg ends in a `Place`, and
+    /// `TradingGateway._dispatchGate` is a mutex held across the dispatch — so one wave's placements
+    /// run strictly one after another and the real path is `E + MaxLegsInFlight × W`.
+    ///
+    /// Codex's values, verbatim: `E = 30 s`, `W = 4 s`, `S = 5 s`, four positions. The drain must be
+    /// at least `30 + 4×4 + 5 = 51 s`; the round-9 formula returns `max(5W, E+W) + S = 39 s`, and the
+    /// twelve seconds missing are four placements disposal walks away from.
+    ///
+    /// It is asserted as ARITHMETIC rather than measured because it is arithmetic: no fixture can
+    /// hold a fifty-one-second handler open inside a test suite, and the thing that was wrong was
+    /// the formula rather than any measurement of it. The measured half is the theory below.
+    /// </summary>
+    [Fact]
+    public void The_drain_covers_a_close_all_wave_and_not_just_one_trailing_place()
+    {
+        using var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new FakeBroker())
+        {
+            WorstCaseOperationPath = TimeSpan.FromSeconds(4),     // W
+            EmergencyBudget = TimeSpan.FromSeconds(30)            // E
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        var server = new GatewayPipeServer(gw, "tok", "ta-wave-arith")
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromSeconds(5)    // S
+        };
+
+        var wave = conn.EmergencyBudget + GatewayPipeServer.MaxLegsInFlight * conn.WorstCaseOperationPath;
+        var required = wave + server.SettleAfterCancelTimeout;
+
+        Assert.True(server.HandlerDrainTimeout >= required,
+            $"the drain came out at {server.HandlerDrainTimeout.TotalSeconds:0}s against a close-all wave that " +
+            $"needs E + {GatewayPipeServer.MaxLegsInFlight}W + S = {required.TotalSeconds:0}s — one wave's " +
+            $"{GatewayPipeServer.MaxLegsInFlight} placements serialise on the dispatch gate, and disposal " +
+            "returns with them unsettled");
+
+        // The table is the derivation, so it has to CONTAIN that path rather than reach the same
+        // number by accident: `close-all` is one named row and the drain is the maximum over them.
+        var closeAll = server.HandlerPaths.Single(p => p.Handler == Ops.CloseAll);
+        Assert.Equal(wave, closeAll.Path);
+        Assert.Equal(server.HandlerPaths.Max(p => p.Path) + server.SettleAfterCancelTimeout, server.HandlerDrainTimeout);
+    }
+
+    /// <summary>
+    /// EVERY HANDLER, MEASURED — the class fix, third time of asking (§9.10).
+    ///
+    /// Three rounds have now found the drain derived from ONE handler's shape and silently wrong for
+    /// another: round 8 from a single connector call, round 9 from a three-call chain that was really
+    /// five, round 10 from a risk-reducing handler with one trailing placement that really has four.
+    /// The structural answer is that no handler is special: <see cref="GatewayPipeServer.HandlerPaths"/>
+    /// enumerates every one of them with its own serial depth, the drain is the maximum over that
+    /// table, and this theory drives each handler over the real pipe at a fake latency and asserts
+    /// the derived bound still covers what it actually cost.
+    ///
+    /// A handler that grows a call — or a new handler that is added and not put in the table — fails
+    /// HERE, rather than by shortening a shutdown drain that abandons an order six months later.
+    ///
+    /// The latency is armed AFTER the fixture is built, so the setup is free and only the handler
+    /// under test pays. The emergency budget is deliberately just above the read prefix a `close-all`
+    /// leg needs (5 × W): with a wider budget the legs still run, but the wave stops being the
+    /// longest thing in the table and the row proves nothing.
+    /// </summary>
+    [Theory]
+    [InlineData(Ops.Buy)]
+    [InlineData(Ops.Modify)]
+    [InlineData(Ops.Cancel)]
+    [InlineData(Ops.CancelAll)]
+    [InlineData(Ops.Close)]
+    [InlineData(Ops.CloseAll)]
+    [InlineData(Ops.Orders)]
+    [InlineData(Ops.Positions)]
+    public async Task Every_handlers_measured_chain_fits_inside_the_drain_derived_for_it(string op)
+    {
+        var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-table-" + op.Replace("-", ""));
+        using var _1 = db;
+        await using var _2 = server;
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var (working, symbols) = await StockTheBook(client, gw, conn);
+
+        conn.Faults.LatencyMs = 500;   // W
+        var request = op switch
+        {
+            Ops.Buy => new IpcRequest
+            {
+                Op = Ops.Buy, RequestId = "tbl-buy",
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                    ["limit"] = JsonSerializer.SerializeToElement("1")
+                }
+            },
+            Ops.Modify => new IpcRequest
+            {
+                Op = Ops.Modify, RequestId = "tbl-modify",
+                Args = new()
+                {
+                    ["id"] = JsonSerializer.SerializeToElement(working),
+                    ["quantity"] = JsonSerializer.SerializeToElement("2")
+                }
+            },
+            Ops.Cancel => new IpcRequest
+            {
+                Op = Ops.Cancel, RequestId = "tbl-cancel",
+                Args = new() { ["id"] = JsonSerializer.SerializeToElement(working) }
+            },
+            Ops.CancelAll => new IpcRequest { Op = Ops.CancelAll, RequestId = "tbl-cancelall" },
+            Ops.Close => new IpcRequest
+            {
+                Op = Ops.Close, RequestId = "tbl-close",
+                Args = new() { ["symbol"] = JsonSerializer.SerializeToElement(symbols[0]) }
+            },
+            Ops.CloseAll => new IpcRequest { Op = Ops.CloseAll, RequestId = "tbl-closeall" },
+            _ => new IpcRequest { Op = op }
+        };
+
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(request).WaitAsync(TimeSpan.FromSeconds(60));
+        timer.Stop();
+        Assert.True(reply.Ok, $"'{op}' failed: {reply.Error?.Message}");
+
+        // The fixture has to REACH the wire, or a bound would be compared against a handler that
+        // refused early and the row would pass for the wrong reason.
+        if (op is Ops.CloseAll)
+            Assert.Equal(4, ((JsonElement)reply.Data!).GetProperty("attempted").GetInt32());
+
+        var row = server.HandlerPaths.Single(p => p.Handler == op);
+        Assert.True(server.HandlerDrainTimeout >= timer.Elapsed,
+            $"'{op}' took {timer.Elapsed.TotalSeconds:0.00}s against a drain of " +
+            $"{server.HandlerDrainTimeout.TotalSeconds:0.00}s — disposal during it walks away from an order in " +
+            $"flight. The table says this handler costs {row.Path.TotalSeconds:0.00}s ({row.Why}).");
+    }
+
+    /// <summary>
+    /// AND THE STATE THE ARITHMETIC IS ABOUT: a four-position `close-all` that disposal lands in
+    /// leaves nothing unsettled.
+    ///
+    /// Two landings, because they are not equally hard and only one of them discriminates. The
+    /// WORST place for disposal to land is the START — the whole emergency prefix and the whole wave
+    /// are still ahead of it, which is what the drain has to cover. Landing MID-WAVE is strictly
+    /// cheaper (some placements are already done) and it is the case the bounce names, so it is
+    /// asserted too rather than argued from the first.
+    ///
+    /// The latency is UNCANCELLABLE on purpose, for the reason the cold-placement disposal test
+    /// gives: a call that unwinds at the cancel records UNKNOWN and hides the harm as "an order that
+    /// needs reconciling", while a call that ignores the token leaves the row DISPATCHING with
+    /// nothing coming to change it — and the count is read the INSTANT disposal returns, because a
+    /// request settled after that was still abandoned by the shutdown.
+    /// </summary>
+    [Fact]
+    public async Task A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled()
+    {
+        var (gw, conn, db, server, pipe) = await ReadyForHandlerTable("ta-wave-dispose-a");
+        using var _1 = db;
+        await using (var client = new PipeClient())
+        {
+            await client.ConnectAsync(10_000, pipe);
+            await StockTheBook(client, gw, conn);
+
+            conn.Faults.UncancellableLatencyMs = 500;
+            var sweep = Swallow(client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-a" }));
+            await Task.Delay(200);   // the whole prefix and the whole wave are still ahead
+
+            await server.DisposeAsync();
+            Assert.Equal(0, Dispatching(db));
+            Assert.Null(ReadEngineering(db, "handlers_did_not_finish"));
+
+            // Every position was really closed BEFORE disposal returned, so "nothing unsettled" is
+            // not "nothing happened". The agent's own reply is gone either way — disposal closes the
+            // connection before it waits — which is exactly why the evidence has to be the record and
+            // the broker's book rather than the answer.
+            Assert.DoesNotContain(conn.Broker.Positions, p => p.Quantity != 0);
+            await sweep;
+        }
+
+        // MID-WAVE: a second sweep over a freshly stocked book, disposed once a placement of the
+        // wave has actually reached the broker.
+        var (gw2, conn2, db2, server2, pipe2) = await ReadyForHandlerTable("ta-wave-dispose-b");
+        using var _3 = db2;
+        await using var client2 = new PipeClient();
+        await client2.ConnectAsync(10_000, pipe2);
+        await StockTheBook(client2, gw2, conn2);
+
+        var before = conn2.Broker.Orders.Count;
+        conn2.Faults.UncancellableLatencyMs = 500;
+        var sweep2 = Swallow(client2.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "wave-b" }));
+        await WaitFor(() => conn2.Broker.Orders.Count > before, TimeSpan.FromSeconds(30));
+
+        await server2.DisposeAsync();
+        Assert.Equal(0, Dispatching(db2));
+        Assert.Null(ReadEngineering(db2, "handlers_did_not_finish"));
+        Assert.DoesNotContain(conn2.Broker.Positions, p => p.Quantity != 0);
+        await sweep2;
+        await server2.DisposeAsync();
+    }
+
+    /// <summary>
+    /// Observes a reply that disposal is about to make undeliverable. Closing the connections is
+    /// step 2 of <c>DisposeAsync</c> and it happens BEFORE the drain, so a request in flight loses
+    /// its answer by design; the fault is expected and must not surface later as an unobserved task
+    /// exception.
+    /// </summary>
+    static async Task Swallow(Task<IpcResponse> reply)
+    {
+        try { await reply.WaitAsync(TimeSpan.FromSeconds(60)); }
+        catch (Exception) { /* the service closed the connection under it, which is the point */ }
+    }
+
+    /// <summary>
+    /// A gateway whose emergency budget sits just above the read prefix of one `close-all` leg, so
+    /// the wave of trailing placements is the longest path in the table rather than a rounding
+    /// difference. The settle margin is short for the same reason: it must not do the covering.
+    /// </summary>
+    static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db, GatewayPipeServer Server, string Pipe)>
+        ReadyForHandlerTable(string pipe)
+    {
+        var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromMilliseconds(3200) };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(100)
+        };
+        server.Start();
+        return (gw, conn, db, server, pipe);
+    }
+
+    /// <summary>
+    /// Four filled positions and one resting order, placed while the simulator is still free — so the
+    /// latency armed afterwards is paid by the handler under test and not by its setup.
+    /// </summary>
+    static async Task<(string Working, string[] Symbols)> StockTheBook(PipeClient client, TradingGateway gw, FakeConnector conn)
+    {
+        string[] symbols = ["ES", "NQ", "MES", "YM"];
+        foreach (var symbol in symbols)
+        {
+            var filled = await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Buy,
+                RequestId = $"stock-{symbol}-{Guid.NewGuid():n}"[..24],
+                Args = new()
+                {
+                    ["symbol"] = JsonSerializer.SerializeToElement(symbol),
+                    ["quantity"] = JsonSerializer.SerializeToElement("1")
+                }
+            }).WaitAsync(TimeSpan.FromSeconds(20));
+            Assert.True(filled.Ok, $"could not open a position in {symbol}: {filled.Error?.Message}");
+        }
+
+        // The book needs BOTH shapes and the simulator serves one at a time: four market orders that
+        // fill (so there are positions to close) and then one that rests (so there is an order to
+        // modify and to cancel).
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        var resting = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            RequestId = "stock-working",
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1"),
+                ["limit"] = JsonSerializer.SerializeToElement("1")
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(resting.Ok, $"could not leave a resting order: {resting.Error?.Message}");
+
+        // Back to filling, or the offsetting orders a `close` places would rest too and the position
+        // they are meant to flatten would still be open — a fixture that measures nothing.
+        conn.Faults.Fill = FillBehaviour.FillImmediately;
+
+        Assert.Equal(4, (await gw.PositionsAsync()).Count(p => p.Quantity != 0));
+        var working = (await gw.OrdersAsync()).Single().ConnectorOrderId;
+        return (working, symbols);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>
