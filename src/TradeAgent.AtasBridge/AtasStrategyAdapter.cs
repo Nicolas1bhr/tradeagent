@@ -208,10 +208,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///
     /// Its own lock, not <see cref="_gate"/>: it performs file IO, and holding the adapter's gate
     /// across a disk write would put every read of every side table here behind a spinning disk.
-    /// </summary>
-    readonly CoidWitness _witness = new();
-
-    /// <summary>
+    ///
+    /// THIS ADAPTER NO LONGER HOLDS THE WITNESS ITSELF — this field does. It had FOUR write sites in
+    /// this file and a guard on one of them, so the guard was a convention that three callers did
+    /// not follow. It is a door now, and the rest of this comment says why.
+    ///
     /// THIS STRATEGY HAS BEEN TAKEN DOWN, AND ITS HANDLERS ARE STILL SUBSCRIBED.
     ///
     /// `StopBridge` releases the witness lease, but the order-event fan is a lambda closed over the
@@ -232,6 +233,15 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// <see cref="AdapterTeardown"/>, where <c>AdapterTeardownTests</c> drives both interleavings
     /// against a real <see cref="CoidWitness"/> on any machine. Same move, same reason, as
     /// <see cref="AdapterTouchedOrders"/> and <see cref="AtasCall"/>.
+    ///
+    /// AND IT OWNS THE WITNESS, WHICH IS WHAT MAKES THE GUARD A DOOR RATHER THAN A CONVENTION. The
+    /// three writes that did not go through it — <c>Place</c>'s write-ahead record, <c>Place</c>'s
+    /// identification and <c>ClosePosition</c>'s write-ahead record — all run on the BridgeServer
+    /// frame loop, and that loop OUTLIVES this teardown by construction: the dispose below waits
+    /// five seconds and gives up. So a <c>Place</c> in flight reached the witness after the release
+    /// and leased it again for a strategy ATAS had already stopped. There is no <c>CoidWitness</c>
+    /// field in this file any more; every write is a method on this object, and a fifth write site
+    /// cannot be added without taking the same lock the release takes.
     /// </summary>
     readonly AdapterTeardown _teardown = new();
 
@@ -509,13 +519,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // AdapterTeardown.Stop releases in a finally, so the exception still reaches Guard and no
         // longer decides whether the release happens.
         UntrackSecurities();
-    },
-    // AND THE WITNESS STOPS BEING OURS. The lease is held for the life of the owner, and a strategy
-    // ATAS has taken down is not the owner of anything — leaving it held would refuse the witness to
-    // a bridge started afterwards in the same ATAS process, for no reason. The instance stays usable:
-    // if this strategy is started again, its next write takes the lease back. Process death releases
-    // it too, which is what makes a crash harmless.
-    releaseWitness: _witness.Dispose);
+    });
+    // AND THE WITNESS STOPS BEING OURS, in AdapterTeardown.Stop's own finally. The lease is held for
+    // the life of the owner, and a strategy ATAS has taken down is not the owner of anything —
+    // leaving it held would refuse the witness to a bridge started afterwards in the same ATAS
+    // process, for no reason. The instance stays usable: if this strategy is started again, its next
+    // write takes the lease back. Process death releases it too, which is what makes a crash
+    // harmless.
 
     // ---------------------------------------------------------------- the bound surfaces
 
@@ -623,7 +633,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // witness path — a directory where the temp belongs, a permission — now refuses EVERY
             // order, forever, and without this the owner sees orders failing with nothing on any
             // screen saying why. This rides the hello into the ATAS bridge health row.
-            WitnessFailure = _witness.Trouble,
+            WitnessFailure = _teardown.Trouble,
             // Portfolio.IsRealAccount is the only simulation signal in the dump. When there is no
             // portfolio yet we report NOT simulated, because guessing "simulated" on an unknown
             // account is the guess that costs money.
@@ -642,7 +652,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // gate it feeds decides whether the product may trade unattended. Reporting the
             // capability false is the direction to fail in; the per-order refusal in Place is the
             // precise test and it is unaffected, so LIVE_CONFIRM dispatch still works.
-            SupportsClientOrderId = proof.ProvesRoundTrip() && _witness.Trouble is null,
+            SupportsClientOrderId = proof.ProvesRoundTrip() && _teardown.Trouble is null,
             // Why it is false, when it is. Diagnostic only — see BridgeHello.ClientOrderIdAttempts.
             ClientOrderIdAttempts = attempts,
             ClientOrderIdChecks = checks,
@@ -678,7 +688,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     {
         lock (_gate) { if (_clientOrderIdProof.IsSettled()) return; }
         if (Trading is null) return;
-        foreach (var id in _witness.PriorSessionIds(WitnessSweep))
+        foreach (var id in _teardown.PriorSessionIds(WitnessSweep))
         {
             ProveClientOrderId(id);
             lock (_gate) { if (_clientOrderIdProof.IsSettled()) return; }
@@ -734,7 +744,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // CoidWitness.Token contains no space by contract, which this line depends on: the
                 // report is space-joined and tools/probe splits it on spaces, so a space here would
                 // silently turn one field into two.
-                $"witness={_witness.Token()}",
+                $"witness={_teardown.Token()}",
                 // How the last order behaved in time. `gap` is this platform's acknowledgement
                 // latency measured through the path actually in use, and it is what decides whether
                 // the OpenOrderAsync question is answerable here at all. Space-free by construction.
@@ -1405,14 +1415,20 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // the four pre-flight refusals above. Still Guarded, because an EXCEPTION out of the witness
         // must not become the outcome of an order: the false return is the refusal, never a throw
         // from a diagnostic.
+        // AND IT GOES THROUGH THE TEARDOWN GUARD, which is the only door to the witness. This runs
+        // on the BridgeServer frame loop, and that loop outlives the teardown by construction, so
+        // without the guard a Place in flight leased the witness back for a strategy ATAS had
+        // already stopped. A refusal because the strategy is going down is the same news to this
+        // caller as a refusal because the disk would not take it: nothing was submitted.
         var recorded = false;
-        Guard(() => recorded = _witness.Submitting(cmd.ClientOrderId, portfolio.AccountID, cmd.Symbol,
-                                                   cmd.Side.ToString(), cmd.Quantity, cmd.LimitPrice));
+        Guard(() => recorded = _teardown.Submitting(cmd.ClientOrderId, portfolio.AccountID, cmd.Symbol,
+                                                    cmd.Side.ToString(), cmd.Quantity, cmd.LimitPrice));
         if (!recorded)
             throw new AtasRejectedException(
                 $"the write-ahead record for {cmd.ClientOrderId} could not be written to " +
-                $"{_witness.Path ?? "<no witness file>"}; nothing was submitted. " +
-                (_witness.LastWriteFailure ?? ""));
+                $"{_teardown.Path ?? "<no witness file>"}; nothing was submitted. " +
+                (_teardown.LastWriteFailure
+                 ?? (_teardown.Stopped ? "this strategy is being taken down." : "")));
 
         lock (_gate)
         {
@@ -1559,7 +1575,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // WaitFor above has already settled or timed out, so Order.Id is either assigned or is not
         // coming promptly; Identified ignores an empty id, and OnOrderPayload records it later if
         // ATAS assigns one after this returns.
-        Guard(() => _witness.Identified(cmd.ClientOrderId, order.Id));
+        Guard(() => _teardown.Identified(cmd.ClientOrderId, order.Id));
 
         // GUARDED, and the guard is the whole point. This is a diagnostic, and it enumerates ATAS's
         // own order collection — which ATAS may be mutating on its own thread at precisely this
@@ -1821,13 +1837,14 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // than flatten it. The record says what is true of the SUBMISSION: a close of this size on
         // this instrument, with ATAS choosing the direction.
         var recorded = false;
-        Guard(() => recorded = _witness.Submitting(clientOrderId, accountId, symbol, "Close",
-                                                   Math.Abs(position.Volume), null));
+        Guard(() => recorded = _teardown.Submitting(clientOrderId, accountId, symbol, "Close",
+                                                    Math.Abs(position.Volume), null));
         if (!recorded)
             throw new AtasRejectedException(
                 $"the write-ahead record for {clientOrderId} could not be written to " +
-                $"{_witness.Path ?? "<no witness file>"}; nothing was submitted. " +
-                (_witness.LastWriteFailure ?? ""));
+                $"{_teardown.Path ?? "<no witness file>"}; nothing was submitted. " +
+                (_teardown.LastWriteFailure
+                 ?? (_teardown.Stopped ? "this strategy is being taken down." : "")));
 
         // Reference identity, not OrderKey. An order ATAS has not identified yet has no key to be
         // diffed by — they all used to collapse onto one string — and "is this the same object I
@@ -2052,7 +2069,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // holding a lock that teardown waits on across that scan would put an unbounded wait
                 // on ATAS's own thread — the shape AtasCall exists to keep out of this file. It runs
                 // only when the write was allowed, and it takes no lease.
-                if (_teardown.Record(() => _witness.Identified(o.Comment, o.Id)))
+                if (_teardown.Identified(o.Comment, o.Id))
                     ProveClientOrderId(o.Comment);
             }
             OrderChanged?.Invoke(ToOrder(o, null));
@@ -3183,7 +3200,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         CoidWitnessRecord? prior = null;
         if (mine is null)
         {
-            prior = _witness.PriorSession(clientOrderId);
+            prior = _teardown.PriorSession(clientOrderId);
             if (prior is null) return;
         }
 
