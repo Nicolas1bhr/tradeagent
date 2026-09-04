@@ -2923,6 +2923,7 @@ base 497, 0 failed. CI run 33905797433 on its draft PR (merged with today's `mai
 windows 503/505 with only the two U14-win harness tests red, which fail identically on `main`. Manager's gate at the
 rebased tip `38e886e`, Release: 0 warnings; 75 + 201 + 505 = 781, 0 failed; test names vs `main` 0 removed, 0 added;
 scan clean; the landed tip `7e60973` differs from `38e886e` by the report commit only (`git diff --stat` over code empty).
-CI run 33908096382 at `7e60973` was in progress when this was written.
+CI run 33908096382 at `7e60973`: ubuntu SUCCESS, macos SUCCESS, windows FAILURE on exactly the two U14-win harness
+tests — the deadline class is closed on every runner; the witness-harness class is the only red left on `main`.
 
 **NOT VERIFIED:** nothing on the box. **NOT done:** no product change, no `Timing` trait, no workflow change.
