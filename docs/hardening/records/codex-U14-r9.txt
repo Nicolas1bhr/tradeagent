@@ -1,0 +1,45 @@
+PRIOR 27 — NOT FIXED — the staging/flush changes fix static snapshots, but the sequential generation scan can miss an unresolved marker moved into already-scanned current during rotation at src/TradeAgent.AtasBridge/CoidWitness.cs:1731.
+
+PRIOR 28 — NOT FIXED — `DirectoryNotFoundException` from sidecar reads and enumeration is still classified as clean absence rather than UNREADABLE at src/TradeAgent.AtasBridge/CoidWitness.cs:1650.
+
+PRIOR 29 — FIXED — recovered rewrites now receive `RecoveredRewrite` and recovery-specific wording at src/TradeAgent.AtasBridge/CoidWitnessReport.cs:110.
+
+PRIOR 30 — FIXED — `.rotating` is scanned and carry-forward writes use `Flush(true)` before deletion at src/TradeAgent.AtasBridge/CoidWitness.cs:587 and src/TradeAgent.AtasBridge/CoidWitness.cs:1684.
+
+PRIOR 31 — NOT FIXED — reader guards were removed, but sidecar rotation still uses failure-suppressing `File.Exists` and an attribute probe without mapping denial to UNREADABLE at src/TradeAgent.AtasBridge/CoidWitness.cs:2274.
+
+PRIOR 32 — FIXED — a silent current connection now carries its arrival stamp and outranks an older refusal at src/TradeAgent.Connectors.Atas/AtasConnector.cs:163.
+
+PRIOR R8-1 — FIXED — restart readers now scan the `.rotating` generation containing the current log after an interrupted move at src/TradeAgent.AtasBridge/CoidWitness.cs:1684.
+
+PRIOR R8-2 — FIXED — all four adapter write sites now route through the two guarded `AdapterTeardown` write methods at src/TradeAgent.AtasBridge/AdapterTeardown.cs:68.
+
+PRIOR R8-3 — FIXED — heartbeat staleness is checked after every completed frame or idle poll at src/TradeAgent.Connectors.Atas/AtasConnector.cs:328.
+
+PRIOR R8-4 — FIXED — the stopped check and witness write now both execute inside `_gate` at src/TradeAgent.AtasBridge/AdapterTeardown.cs:124.
+
+FINDING 33 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:1744 — a failure during the deciding-line read is swallowed even when earlier probes succeeded, permitting a canonical unresolved sidecar to become non-degraded.
+
+Exact check: make `readSidecar` return the canonical `ERROR` during both `HasNotes` passes, then throw `UnauthorizedAccessException` when `LastDecidingLine` rereads it; require non-null `Trouble` and `io:degraded`—the current result is null trouble and `io:noted`.
+
+FINDING 34 — HIGH — src/TradeAgent.AtasBridge/CoidWitness.cs:1600 — an unreadable `.rotating` file makes `carry` null and is then deleted despite potentially holding the only unresolved marker.
+
+Exact check: place the only `ERROR` in `.rotating`, make `readSidecar` deny that name while ordinary deletion remains permitted, use an oversized diagnostic current log, and inspect at the subsequent replace seam; require the marker in staging or a flushed carry—the implementation deletes it before either exists.
+
+FINDING 35 — HIGH — src/TradeAgent.AtasBridge/AdapterTeardown.cs:55 — `Started()` can clear `_stopped` while `Stop()` is still executing, reopening the same door to an abandoned frame loop before teardown releases the witness.
+
+Exact check: block inside `Stop(steps)`, call `Started()`, then invoke `Submitting` through the same teardown before releasing `steps`; it must be refused, but currently succeeds and can reacquire the lease.
+
+FINDING 36 — MED — src/TradeAgent.AtasBridge/CoidWitness.cs:949 — `SidecarPaths` discards the enumeration’s unreadable flag, so a failed report-time probe becomes an empty file list.
+
+Exact check: have `listSidecars` return empty during `EnsureLoaded` and throw `UnauthorizedAccessException` on the later `SidecarPaths` call; the later failure must surface as UNREADABLE, but the property returns `[]` and leaves the standing clean.
+
+FINDING 37 — MED — src/TradeAgent.AtasBridge/CoidWitnessReport.cs:112 — the claimed three-cause closure for `Noted` omits unreadable per-writer-set enumeration, causing the report to assert refusal, decline, or recovery when none was observed.
+
+Exact check: make `listSidecars` throw `UnauthorizedAccessException` with readable/absent canonical generations; `Standing` becomes `Noted` and `Notes` remains `None`, so the headline falsely says something was “refused, declined or recovered” instead of reporting unreadability.
+
+FINDING 38 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:156 — a current peer that has authenticated but not yet sent `Hello` suppresses `Silent` without supplying a newer status, so the row continues describing the previous connection.
+
+Exact check: record an incompatible peer, connect a new peer, complete a valid challenge, and withhold `Hello`; while that peer is present, `StatusDetail` must stop naming the old protocol mismatch, but it continues doing so until hello or heartbeat timeout.
+
+SUMMARY — 4 HIGH / 5 MED / 0 LOW
