@@ -1350,15 +1350,31 @@ public class GatewayPipeBackpressureTests
     }
 
     /// <summary>
-    /// A gateway whose emergency budget sits just above the read prefix of one `close-all` leg, so
+    /// A gateway whose emergency budget clears the read prefix of a `close-all` by a wide margin, so
     /// the wave of trailing placements is the longest path in the table rather than a rounding
     /// difference. The settle margin is short for the same reason: it must not do the covering.
+    ///
+    /// THE MARGIN IS THE POINT AND IT USED TO BE 172 MILLISECONDS. The budget was 3200 ms, and it was
+    /// picked to sit "just above" the prefix — measured on this Mac, the prefix is five connector
+    /// calls of the 500 ms these tests inject and the first leg reaches the broker at 3028 ms. Six
+    /// per cent of slowness and the budget expires first, so every leg is reported NOT SENT and a
+    /// test asserting the book was closed fails; and because the drain is DERIVED from this budget
+    /// (E + 4W + 1 s + 0.1 s = 6300 ms against a 4557 ms wave), a stall of two seconds arriving after
+    /// the wave was issued overruns the drain instead, leaving a row DISPATCHING. Both were measured
+    /// here by injecting the slowness — `dispatching=1`, `handlers_did_not_finish` with
+    /// `unsettled:1` — and the second is what windows-latest hit in run 33924375698.
+    ///
+    /// Twelve seconds is roughly five times the prefix, and it costs NOTHING when the tests pass: a
+    /// budget is a deadline and a drain is a timeout, so neither is ever waited out by a healthy run.
+    /// The same injection that produced the failure at 3200 ms passes at 12 s with the runner 2.4x
+    /// slower than this Mac. `close-all` remains the longest row (E + 4W beats every other shape for
+    /// any E above W), which is the property the number is chosen for.
     /// </summary>
     static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db, GatewayPipeServer Server, string Pipe)>
         ReadyForHandlerTable(string pipe)
     {
         var db = TestEnv.NewDb();
-        var conn = new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromMilliseconds(3200) };
+        var conn = new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(12) };
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
