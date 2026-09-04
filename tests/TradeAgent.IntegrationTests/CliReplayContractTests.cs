@@ -157,6 +157,52 @@ public class CliReplayContractTests
         try { await serving; } catch (Exception) { /* torn down with the test */ }
     }
 
+    /// <summary>
+    /// THE CLI MUST NOT PROMISE A CONTRACT THE GATEWAY HAS NOT IMPLEMENTED.
+    ///
+    /// Codex PRIOR 8, CLI half. Every mutating command printed "retrying with the same --request-id
+    /// is safe; it will not place a second order." That is true of `buy` and `sell` and of nothing
+    /// else today: `TradingGateway` consults the idempotency store before dispatch only on the place
+    /// path, `CancelAsync` and `ModifyAsync` authorize and resolve their target before looking, and
+    /// `CloseAsync` re-reads positions and places an offsetting order. An agent that believed the
+    /// old sentence would re-run a close and flatten a position twice.
+    ///
+    /// The blanket contract is U2c-1's to implement. Until it does, this is what the CLI says.
+    /// </summary>
+    [Theory]
+    [InlineData(Ops.Buy, true)]
+    [InlineData(Ops.Sell, true)]
+    [InlineData(Ops.Cancel, false)]
+    [InlineData(Ops.CancelAll, false)]
+    [InlineData(Ops.Modify, false)]
+    [InlineData(Ops.Close, false)]
+    [InlineData(Ops.CloseAll, false)]
+    public void The_success_note_promises_a_replay_only_where_the_gateway_performs_one(string op, bool replayable)
+    {
+        var note = CliReplayContract.SuccessNote(op);
+        Assert.NotNull(note);
+        Assert.Contains("--request-id", note);
+
+        if (replayable)
+        {
+            Assert.Contains("will not place a second order", note);
+            Assert.DoesNotContain("NOT a replay", note);
+        }
+        else
+        {
+            Assert.Contains("NOT a replay", note);
+            Assert.DoesNotContain("will not place a second order", note);
+            Assert.Contains("check", note);
+        }
+    }
+
+    /// <summary>A read has nothing to replay and is told nothing.</summary>
+    [Theory]
+    [InlineData(Ops.Status)]
+    [InlineData(Ops.Orders)]
+    [InlineData(Ops.Positions)]
+    public void A_read_gets_no_note(string op) => Assert.Null(CliReplayContract.SuccessNote(op));
+
     // ------------------------------------------------------------ the real binary
 
     /// <summary>
