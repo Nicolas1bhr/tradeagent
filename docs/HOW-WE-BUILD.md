@@ -80,7 +80,9 @@ allocation. The combination verify. The integration scribe. A box run per round.
 5. Secret scan of the whole diff against `main`, as a gate, not a neighbouring command.
 6. `git merge --ff-only`, push, CI green on all three platforms at the merge sha. Red CI in the product: `git reset
    --hard` to the pre-merge sha, `--force-with-lease`, then a fixer on the branch. Red CI only on a hosted runner, in a
-   test the Windows target passes: a fresh fixer on top of `main`, and the sha is recorded red until it lands.
+   test the Windows target passes, or a failure thrown by a test's own setup (a harness writer hitting a sharing
+   violation): a fresh fixer on top of `main`, and the sha is recorded red until it lands. If a running builder owns
+   the failing files, the fixer starts the moment that unit lands.
 7. `BUILD-STATUS.md` section; brief deleted; worktree removed; memory updated.
 
 ## Sizes, so that this stays true

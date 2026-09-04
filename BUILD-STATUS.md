@@ -2888,7 +2888,9 @@ unreadable sidecar) → GREEN, mutant collapsing `Unread` to `None` → 1/33 red
 → GREEN, mutant dropping the refusal → 2/5 red; item 3 RED (`"BRK-TA-REAL"` adopted from a temp that moved) → GREEN,
 mutant dropping the listing comparison → 1/183 red. Builder's final at `db0d2c1`, Release: 0 warnings, 75 + 112 + 505
 = 692, 0 failed; test names vs `01fcd60` ∪ `main`: 0 removed, 7 added. Manager's gate at the rebased tip `2c6826d`, Release:
-build → 0 warnings, 0 errors; suite → 75 + 201 + 505 = 781, 0 failed; test-name diff against `main` → 1 removed (a rename, `…_is_not_written_over` present), 196 added; scan → clean; CI run 33904745608 was in progress when this was written; its result is recorded with U14b.
+build → 0 warnings, 0 errors; suite → 75 + 201 + 505 = 781, 0 failed; test-name diff against `main` → 1 removed (a rename, `…_is_not_written_over` present), 196 added; scan → clean; CI run 33904745608 → ubuntu and macos red on the two U2a runner-speed tests (fixer in flight); windows red 503/505
+on two witness tests whose SETUP throws on Windows (`AppendAllText` sharing violation in the harness writer;
+`Directory.Move` refused with a handle inside) — not product assertions; fixer `docs/briefs/U14-win.md` after U14b.
 
 **NOT VERIFIED:** anything on Windows at this tip — the cross-process lock was proven on APFS only, the box's last
 hash-verified run of this branch is round 10's; `tools/probe`'s new rendering (built at 0 warnings, never run, no test
