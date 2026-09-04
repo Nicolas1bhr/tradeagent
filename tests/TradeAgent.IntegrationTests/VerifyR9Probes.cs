@@ -152,7 +152,7 @@ public class VerifyR9Probes(ITestOutputHelper o)
 
         var words = data.GetProperty("outcomes").EnumerateArray()
             .Select(l => l.GetProperty("outcome").GetString()).ToList();
-        Assert.Equal(5, words.Count);
+        Assert.True(words.Count == 5, $"{words.Count} legs");
         Assert.All(words, w => Assert.Equal("sent-and-confirmed", w));
         Assert.Equal(5, data.GetProperty("cancelled").GetInt32());
         Assert.Equal(0, gw.Requests.NeedingReconciliation().Count);
