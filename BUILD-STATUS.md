@@ -2899,3 +2899,30 @@ references that program); the solution with `-p:AtasBridgeBuild=true`. **For the
 the app's output (`InstallBridge` still copies from `<base>/bridge`, read at `AtasInstallation.cs:191`, not run).
 **Deferred with an owner:** resumable rotation, the fifth crash point, one serialised `Stop()`, the stamped connecting
 status, the sidecar byte count → U14b (`docs/briefs/U14b.md`); bridge DLL redeploy at protocol 3 → the v0.1.2 box session.
+
+## 2026-09-04 — U2a-fix landed: the three deadline tests measure the runner instead of assuming it
+
+A fix unit under `docs/HOW-WE-BUILD.md`: one fresh fixer on `docs/briefs/U2a-fix.md`, product code untouched, one test
+file changed (+203/−50). Merge `7e60973`. The variance was per platform, not per run, and the fixer measured it: with
+the shipped 8 KiB pipe buffer and 1 KiB writes, the worst gap between two completed writes while a peer drips
+1 KiB/800 ms is 1.60 s on macOS and 5.61 s on Linux, against the 2 s an emergency watches; ubuntu's failure reproduced
+in a Linux container and every rewrite was verified there and on this Mac.
+
+- `A_peer_reading_below_one_chunk_per_window_is_busy_and_not_dropped`: the peer takes one 7 KiB gulp mid-window
+  instead of dripping — under one 8 KiB chunk, so both premises and the verdict stand; pacing cannot work (at 4 KiB/s
+  Linux's worst gap is still 1.77 s). Mutant `WriteChunkBytes = 8192` → RED ("Not found: busy").
+- `An_emergency_spends_one_budget_across_the_gate_and_the_write`: nineteen paced 80 ms reads became one 1.2 s wait the
+  test holds, plus two premise asserts on when the gate was released. Mutant (a fresh clock after the gate) → RED at 3.21 s.
+- `Local_queueing_under_load_does_not_disconnect_a_healthy_bridge`: no safe deadline existed (this Mac drains 300 calls
+  in 220 ms; Linux at half a core needs >50 ms per chunk); the fake bridge now costs 20 ms a quote, a 6 s
+  machine-independent floor against a 2 s deadline. Mutant (drop on gate expiry) → RED.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** the class 3× in Release on this Mac 47/47 each;
+3/3 Linux and 5/5 macOS on the first test, 8/8 at 0.5 core and 2 cores on the third; full suite Release at the fixer's
+base 497, 0 failed. CI run 33905797433 on its draft PR (merged with today's `main`): ubuntu SUCCESS, macos SUCCESS,
+windows 503/505 with only the two U14-win harness tests red, which fail identically on `main`. Manager's gate at the
+rebased tip `38e886e`, Release: 0 warnings; 75 + 201 + 505 = 781, 0 failed; test names vs `main` 0 removed, 0 added;
+scan clean; the landed tip `7e60973` differs from `38e886e` by the report commit only (`git diff --stat` over code empty).
+CI run 33908096382 at `7e60973` was in progress when this was written.
+
+**NOT VERIFIED:** nothing on the box. **NOT done:** no product change, no `Timing` trait, no workflow change.

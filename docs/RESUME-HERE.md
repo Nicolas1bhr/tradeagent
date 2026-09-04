@@ -13,10 +13,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `2c6826d`: **U2a, U2d and U14a landed** (the agent pipe, deadlines, replay and fast path; the updater refusing
-instead of degrading; the write-ahead record surviving its rewrite, protocol 3; all in `BUILD-STATUS.md` 2026-09-04; U2a's CI run 33898144843 RED on ubuntu and macos in `ConnectorSendDeadlineTests`, runner speed, windows green — fix unit
-`docs/briefs/U2a-fix.md`; until it lands every landing's CI shows the same two runners red). The queue, in order: U2a-fix (the runner-speed
-deadline tests) and U14b (resumable rotation, the fifth crash point, one teardown, a stamped status) are building; then U2c-1 as three units
+`main` is `7e60973`: **U2a, U2d, U14a and the U2a-fix test rewrite landed** (the agent pipe, deadlines, replay and fast path; the updater refusing
+instead of degrading; the write-ahead record surviving its rewrite, protocol 3; all in `BUILD-STATUS.md` 2026-09-04; the ubuntu/macos deadline-test reds are fixed at `7e60973`; windows CI is red on two witness tests whose SETUP throws
+on Windows — fix unit `docs/briefs/U14-win.md`, dispatched after U14b lands because it owns the same files). The queue, in order: U14b (resumable rotation, the
+fifth crash point, one teardown, a stamped status) is building; then U14-win and U2c1a in parallel; then U2c-1 as three units
 (U2c1a `docs/briefs/U2c1a.md`: rebase + class A; U2c1b: the emergency-press rewrite with C2/C3; U2c1c: C1/C4/C5, the
 dispatch-layer class — cut b and c from `docs/hardening/briefs/U2c1-r4-build.md` when their turn comes); then the milestone review of
 the money path on `main`; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
