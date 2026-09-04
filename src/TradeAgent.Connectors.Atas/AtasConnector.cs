@@ -86,6 +86,23 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     long _incompatibleAt;
     long _unauthenticatedAt;
 
+    /// <summary>
+    /// THE STAMP A DERIVED STATE CARRIES, AND WHY IT IS THE MOMENT THE CONNECTION BEGAN.
+    ///
+    /// The two refusals above are OBSERVED and stamped where they are written. The silent reading is
+    /// DERIVED — nothing is written when a peer says nothing — so round 8 gave it no stamp and made
+    /// the getter blind while an explicit marker was live, on the reasoning that two readings must
+    /// never both be live and disagree. That is right about one connection and wrong across two: a
+    /// refusal is kept by <see cref="Drop"/>, a DIFFERENT peer takes the pipe and says nothing, and
+    /// the row goes on naming a bridge that has left.
+    ///
+    /// So a state derived for the CURRENT connection is stamped with the moment that connection
+    /// began. It is newer than everything recorded before this peer arrived and older than everything
+    /// recorded during it — which is exactly the ordering wanted at both ends: a new peer's silence
+    /// outranks the last peer's refusal, and this peer's own refusal outranks its earlier silence.
+    /// </summary>
+    long _peerArrivedAt;
+
     void NoteIncompatible(IncompatibleBridge? peer)
     {
         _incompatible = peer;
@@ -126,15 +143,25 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     ///     <see cref="AuthGrace"/>. That is the only reading below that is derived from a clock, and
     ///     it is the only one that refuses nothing: there is nothing yet to refuse.
     /// </summary>
-    public UnauthenticatedBridge? Unauthenticated =>
-        // An explicit refusal always wins; the derived reading below exists only for a peer that has
-        // given us nothing to name it by. It is deliberately blind to a peer already explained by
-        // _incompatible or already refused into _unauthenticated, so the two readings can never both
-        // be live and disagree about what is wrong.
-        _unauthenticated ?? (_incompatible is null && _hello is null && !_authenticated
-                             && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
+    public UnauthenticatedBridge? Unauthenticated => UnauthenticatedNow().Peer;
+
+    /// <summary>
+    /// The unauthenticated reading and the stamp that decides whether it outranks a protocol
+    /// refusal. An explicit refusal is an observation and a silence is derived from a clock, so the
+    /// two are ordered the same way any two observations are — by which was made later — rather than
+    /// by one being blind to the other.
+    /// </summary>
+    (UnauthenticatedBridge? Peer, long At) UnauthenticatedNow()
+    {
+        var silent = _hello is null && !_authenticated
+                     && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
             ? UnauthenticatedBridge.Silent
-            : null);
+            : null;
+        var refused = _unauthenticated;
+        if (silent is null) return (refused, _unauthenticatedAt);
+        if (refused is null) return (silent, _peerArrivedAt);
+        return _unauthenticatedAt > _peerArrivedAt ? (refused, _unauthenticatedAt) : (silent, _peerArrivedAt);
+    }
 
     /// <summary>
     /// The full path of the program on the other end of the bridge pipe, as Windows reports it —
@@ -159,10 +186,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         get
         {
             var incompatible = _incompatible;
-            var unauthenticated = Unauthenticated;
+            var (unauthenticated, unauthenticatedAt) = UnauthenticatedNow();
             if (incompatible is null) return unauthenticated?.ToString();
             if (unauthenticated is null) return incompatible.ToString();
-            return _unauthenticatedAt > _incompatibleAt ? unauthenticated.ToString() : incompatible.ToString();
+            return unauthenticatedAt > _incompatibleAt ? unauthenticated.ToString() : incompatible.ToString();
         }
     }
 
@@ -247,6 +274,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 await _pipeStream.WaitForConnectionAsync(ct);
                 accepted = true;
                 _peerArrived = DateTimeOffset.UtcNow;
+                // The stamp every state derived for THIS connection carries. See _peerArrivedAt.
+                _peerArrivedAt = Interlocked.Increment(ref _observed);
                 _peerImage = BridgePipeAuth.ClientImagePath(_pipeStream);
 
                 var reader = new StreamReader(_pipeStream, new UTF8Encoding(false), false, 8192, leaveOpen: true);
@@ -421,6 +450,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         _refused = false;
         _compatible = false;
         _peerArrived = DateTimeOffset.MaxValue;
+        _peerArrivedAt = 0;
         _peerImage = null;
         _writer = null;
         foreach (var kv in _pending)

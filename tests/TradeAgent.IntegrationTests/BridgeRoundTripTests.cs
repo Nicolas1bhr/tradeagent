@@ -468,6 +468,63 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// F32. A STATE DERIVED FOR THE PEER THAT IS THERE NOW IS A NEWER OBSERVATION THAN ANY MARKER
+    /// FROM A PREVIOUS CONNECTION.
+    ///
+    /// Round 8 stamped the two EXPLICIT refusals and ordered them against each other. The reading
+    /// that is DERIVED — a peer that took the pipe and has said nothing at all past `AuthGrace` —
+    /// carried no stamp, and the getter that produces it was deliberately blind while `_incompatible`
+    /// was set, so that the two readings could never disagree. That was right about a single
+    /// connection and wrong across two: a protocol refusal is kept by `Drop`, a DIFFERENT peer then
+    /// takes the pipe and says nothing, and the row goes on naming the version of a bridge that left,
+    /// until the new peer's own heartbeat window runs out. The operator is sent to reinstall an
+    /// add-on while something else is sitting on the pipe.
+    ///
+    /// The stamp for a derived state is the moment the CONNECTION began: it is by construction newer
+    /// than anything recorded before this peer arrived, and older than anything recorded during it —
+    /// so a peer that arrives and is then refused on its own protocol still reports the refusal.
+    /// </summary>
+    [Fact]
+    public async Task A_newly_arrived_silent_peer_is_not_masked_by_the_previous_peers_refusal()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(5))
+        {
+            AuthGrace = TimeSpan.FromMilliseconds(300)
+        };
+        await connector.ConnectAsync();
+
+        // A version-2 bridge authenticates, is refused on its protocol, and leaves.
+        await using (var old = await Redial(pipe, Speaking(2)))
+        {
+            await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        }
+        Assert.Contains("speaks protocol 2", connector.StatusDetail);
+
+        // A different program takes the pipe and says nothing whatever.
+        using var quiet = new System.IO.Pipes.NamedPipeClientStream(
+            ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+        await quiet.ConnectAsync(10_000);
+
+        await Wait(async () => await Task.FromResult(connector.Unauthenticated is not null));
+        var row = connector.StatusDetail!;
+        Assert.Contains("neither proved itself nor said", row);
+        Assert.DoesNotContain("speaks protocol", row);
+
+        // The older marker is recorded, not erased — the same rule round 8 established.
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+
+        // And a bridge that is actually right clears both.
+        quiet.Dispose();
+        await using var good = await Redial(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.Null(connector.Incompatible);
+        Assert.Null(connector.Unauthenticated);
+        Assert.Null(connector.StatusDetail);
+    }
+
+    /// <summary>
     /// A peer that opens the pipe and says hello having never answered the challenge. The connector
     /// refuses the hello outright, so nothing it claims is kept — which is the point: the refusal
     /// that lands is an AUTHENTICATION one, not a protocol one.
