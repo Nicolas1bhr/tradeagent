@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Connectors.Fake;
@@ -208,6 +209,132 @@ public class SweepRequestIdTests
         var after = await client.SendAsync(new IpcRequest { Op = Ops.Status }).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(after.Ok, Json.Write(after.Error));
         Assert.Empty(conn.Broker.Orders);
+    }
+
+    // -------------------------------------------- ONE deadline for the operation (round 8, F1)
+
+    /// <summary>A gateway over a simulator whose emergency budget and latency the test chooses.</summary>
+    static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> ReadyWithBudget(
+        TimeSpan budget, int latencyMs = 0)
+    {
+        var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking })
+        {
+            EmergencyBudget = budget
+        };
+        var gw = new TradingGateway(db, conn, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 20;
+            s.Risk.MaxOrdersPerMinute = 200;
+        });
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+        conn.Faults.LatencyMs = latencyMs;
+        return (gw, conn, db);
+    }
+
+    /// <summary>
+    /// THE CLOCK BELONGS TO THE OPERATION, NOT TO EACH RPC INSIDE IT.
+    ///
+    /// Codex round-7 F1, and its own check. A cancel-all is a read, then a resolution per order,
+    /// then a leg per order — and every one of them used to start its own two seconds, so the bound
+    /// was paid once per RPC and the promise scaled with the size of the book. Measured by Codex:
+    /// three replies delayed 1.9 s each made this take about 5.7 s against a promise of 2.
+    ///
+    /// The scope now carries ONE absolute deadline and every RPC inside it gets what is left.
+    /// </summary>
+    [Fact]
+    public async Task A_sweep_pays_the_emergency_budget_once_not_once_per_rpc()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("f1-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Single(await gw.OrdersAsync(false));
+
+        // Every simulator call now costs 1.9 s: the orders read, the target resolution, the cancel.
+        conn.Faults.LatencyMs = 1900;
+
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f1-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(4),
+            $"the sweep took {timer.Elapsed.TotalSeconds:0.00}s against a two-second budget — each RPC is still starting its own clock");
+        Assert.True(timer.Elapsed > TimeSpan.FromSeconds(1),
+            $"the sweep returned in {timer.Elapsed.TotalSeconds:0.00}s — the latency never applied, so this measures nothing");
+
+        // And whatever it did, it says so per leg rather than leaving the owner to guess.
+        var data = (JsonElement)reply.Data!;
+        Assert.Equal(1, data.GetProperty("outcomes").GetArrayLength());
+    }
+
+    /// <summary>
+    /// FIVE ORDERS, ONE BUDGET, AND NOTHING SKIPPED IN SILENCE.
+    ///
+    /// The second half of F1's acceptance. The loop this replaces awaited each leg before starting
+    /// the next AND had no try/catch, so one failing leg abandoned every leg after it — silently,
+    /// because the whole sweep surfaced as a single transport error that named none of the orders
+    /// left working. Every order now appears in the answer with what became of it.
+    /// </summary>
+    [Fact]
+    public async Task A_five_order_sweep_answers_within_the_budget_and_accounts_for_every_order()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        foreach (var sym in new[] { "ES", "NQ", "ES", "NQ", "ES" })
+            Assert.True((await client.SendAsync(Buy($"f1-{Guid.NewGuid():n}", sym)).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Equal(5, (await gw.OrdersAsync(false)).Count);
+
+        conn.Faults.LatencyMs = 1000;   // a second per leg, against a two-second operation
+
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f1-five" })
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        timer.Stop();
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5),
+            $"five legs took {timer.Elapsed.TotalSeconds:0.00}s — the budget is still being paid per leg");
+
+        var data = (JsonElement)reply.Data!;
+        var outcomes = data.GetProperty("outcomes").EnumerateArray().ToList();
+        Assert.Equal(5, outcomes.Count);
+        foreach (var o in outcomes)
+            Assert.Contains(o.GetProperty("outcome").GetString(),
+                new[] { "sent-and-confirmed", "sent-not-confirmed", "not-sent", "nothing-to-do" });
+
+        // A LEG THAT IS NEVER SENT SAYS SO, and that is the distinction an owner needs: "nothing was
+        // even attempted on this order" is different news from "we tried and do not know". Legs are
+        // issued in bounded waves, so the fifth one's turn arrives after the budget is gone.
+        Assert.True(data.GetProperty("not_sent").GetInt32() > 0,
+            "no leg was reported as not sent, so either the budget was not spent or a leg was dropped in silence");
+        var unsent = outcomes.Where(o => o.GetProperty("outcome").GetString() == "not-sent").ToList();
+        Assert.All(unsent, o => Assert.Contains("not sent", o.GetProperty("error").GetString()!));
+
+        // Every order is accounted for exactly once, whatever became of it.
+        Assert.Equal(5, outcomes.Select(o => o.GetProperty("request_id").GetString()).Distinct().Count());
+
+        // The claim and the book still have to agree — bdf9a24's rule, unchanged by any of this.
+        var claimed = data.GetProperty("cancelled").GetInt32();
+        var really = (await gw.OrdersAsync(true)).Count(o => o.State == ExecutionState.CANCELLED);
+        Assert.True(claimed <= really, $"claimed cancelled={claimed} while {really} are actually cancelled");
     }
 
     // ---------------------------------------------------------- the sweep nonce (F9)

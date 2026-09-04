@@ -93,6 +93,17 @@ public interface ITradingConnector : IAsyncDisposable
     /// </summary>
     TimeSpan WorstCaseOperationPath { get; }
 
+    /// <summary>
+    /// How long a RISK-REDUCING OPERATION gets in total — the whole of a cancel, a cancel-all or a
+    /// close, including every read it has to do first and every leg it decomposes into.
+    ///
+    /// It is on the interface because the component that DECOMPOSES the operation is the one that
+    /// has to start the clock, and it holds an <see cref="ITradingConnector"/> and nothing more
+    /// specific. Without it every RPC started its own budget and a sweep paid the bound once per
+    /// leg (Codex round-7 F1).
+    /// </summary>
+    TimeSpan EmergencyBudget { get; }
+
     Task ConnectAsync(CancellationToken ct = default);
     Task<HealthState> GetHealthAsync(CancellationToken ct = default);
     Task<bool> IsConnectedAsync(CancellationToken ct = default);

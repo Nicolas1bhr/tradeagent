@@ -21,6 +21,9 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// </summary>
     public TimeSpan WorstCaseOperationPath =>
         TimeSpan.FromMilliseconds(Math.Max(Faults.LatencyMs, Faults.UncancellableLatencyMs));
+
+    /// <summary>The same two seconds the real connector gives an emergency, so tests measure the rule.</summary>
+    public TimeSpan EmergencyBudget { get; init; } = TimeSpan.FromSeconds(2);
     public string DisplayName => "Simulator (built in)";
 
     public ConnectorCapabilities Capabilities => new(
@@ -52,6 +55,26 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// <summary>Simulates the wire. Read paths fail loudly when disconnected; they never invent data.</summary>
     async Task Wire(CancellationToken ct)
     {
+        // THE SIMULATOR HONOURS THE OPERATION DEADLINE, because a connector that ignored it could not
+        // be used to measure the rule. A real bridge stops waiting and reports UNKNOWN; so does this.
+        // Deliberately NOT applied to PlaceOrderAsync, which has its own latency and is never
+        // risk-reducing — an order that opens exposure has no claim on this clock.
+        if (RiskReducingScope.DeadlineAt is { } deadline)
+        {
+            var left = TimeSpan.FromMilliseconds(deadline - Environment.TickCount64);
+            if (left <= TimeSpan.Zero)
+                throw new ConnectorTransportException(
+                    "the operation deadline had already passed; nothing was sent to the simulator");
+
+            var wait = TimeSpan.FromMilliseconds(Math.Max(Faults.LatencyMs, Faults.UncancellableLatencyMs));
+            if (wait > left)
+            {
+                await Task.Delay(left, ct);
+                throw new ConnectorTransportException(
+                    "the operation deadline passed before the simulator answered; it is not known whether it acted");
+            }
+        }
+
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected) throw new ConnectorTransportException("simulator is disconnected");

@@ -486,7 +486,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // not own, so it travels on the execution context instead of through a signature. It only
         // ever WIDENS urgency, and Place/Modify are excluded at the far end, so the worst a stray
         // scope can do is make a read give up in two seconds and report UNKNOWN.
-        using var riskReducing = IsRiskReducing(req.Op) ? RiskReducingScope.Begin() : null;
+        using var riskReducing = IsRiskReducing(req.Op)
+            ? RiskReducingScope.Begin(gateway.Connector.EmergencyBudget)
+            : null;
 
         try
         {
@@ -596,12 +598,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     async Task<object> CancelAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var working = await gateway.OrdersAsync(false, ct);
-        var results = new List<ExecutionRequest>();
         var nonce = FreshSweepNonce("cancelall");
-        var i = 0;
-        foreach (var o in working)
-            results.Add(await gateway.CancelAsync(ctx, DerivedId(nonce, "cancelall", i++), o.ConnectorOrderId, ct));
+        var legs = await RunLegs(working.Select(o => o.ConnectorOrderId), "cancelall", nonce,
+            (legId, target) => gateway.CancelAsync(ctx, legId, target, ct));
 
+        var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
         var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
         return new
         {
@@ -611,8 +612,130 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // has to be able to see which without diffing two lists.
             not_cancelled = results.Where(r => r.State is not ExecutionState.CANCELLED)
                 .Select(r => new { request_id = r.RequestId, order = r.ConnectorOrderId, state = r.State.ToString() }),
+            not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
+            outcomes = legs.Select(l => l.Describe()),
             requests = results
         };
+    }
+
+    /// <summary>What happened to one leg of a sweep, from the point of view of somebody stopping.</summary>
+    enum LegOutcome
+    {
+        /// <summary>It reached the broker and the broker said it is done.</summary>
+        Confirmed,
+
+        /// <summary>It was sent and the outcome is not known. The gateway has recorded UNKNOWN for it.</summary>
+        NotConfirmed,
+
+        /// <summary>The operation ran out of time before this leg was issued. It was never sent.</summary>
+        NotSent,
+
+        /// <summary>There was nothing for this leg to act on. Not a failure, and not a closure either.</summary>
+        NothingToDo
+    }
+
+    sealed record Leg(string RequestId, string Target, LegOutcome Outcome, ExecutionRequest? Record, string? Error)
+    {
+        public object Describe() => new
+        {
+            request_id = RequestId,
+            order = Target,
+            outcome = Outcome switch
+            {
+                LegOutcome.Confirmed => "sent-and-confirmed",
+                LegOutcome.NotConfirmed => "sent-not-confirmed",
+                LegOutcome.NothingToDo => "nothing-to-do",
+                _ => "not-sent"
+            },
+            state = Record?.State.ToString(),
+            error = Error ?? Record?.LastError
+        };
+    }
+
+    /// <summary>
+    /// Issues every leg of a sweep under the operation's ONE deadline, and reports what became of
+    /// each of them.
+    ///
+    /// Three things were wrong with the loop this replaces, and they were the same fault seen from
+    /// three sides. It awaited each leg before starting the next, so the legs were serial when the
+    /// only thing that has to be serial is the connector's own send gate. It had no try/catch, so a
+    /// single failing leg abandoned every leg after it — SILENTLY, since the exception surfaced as
+    /// one transport error for the whole sweep and named none of the orders left working. And every
+    /// leg started its own two-second budget, so the promise scaled with the size of the book.
+    ///
+    /// Now: the legs are issued concurrently, each inheriting the ambient deadline, so the sweep
+    /// costs one budget rather than one per order; a leg that fails is recorded rather than allowed
+    /// to end the sweep; and a leg whose turn comes after the deadline is reported as NOT SENT
+    /// rather than dropped. That last distinction is the one an owner needs: "this order may still
+    /// be working and nothing was even attempted on it" is different news from "we tried and do not
+    /// know".
+    /// </summary>
+    async Task<IReadOnlyList<Leg>> RunLegs(
+        IEnumerable<string> targets, string intent, string nonce, Func<string, string, Task<ExecutionRequest?>> issue)
+    {
+        var legs = new List<Leg>();
+        var i = 0;
+        var pending = new List<(string Id, string Target, Task<ExecutionRequest?> Task)>();
+
+        foreach (var target in targets)
+        {
+            var legId = DerivedId(nonce, intent, i++);
+
+            // Checked before every leg, not once: the deadline can pass while earlier legs are in
+            // flight, and a leg whose turn never comes must be REPORTED rather than dropped.
+            if (RiskReducingScope.DeadlineAt is { } d && Environment.TickCount64 >= d)
+            {
+                legs.Add(new Leg(legId, target, LegOutcome.NotSent, null,
+                    "the operation ran out of time before this leg was issued; it was not sent"));
+                continue;
+            }
+
+            pending.Add((legId, target, issue(legId, target)));
+            if (pending.Count < MaxLegsInFlight) continue;
+            await Collect(pending, legs);
+            pending.Clear();
+        }
+
+        await Collect(pending, legs);
+        return legs;
+    }
+
+    /// <summary>
+    /// How many legs of a sweep are in flight at once.
+    ///
+    /// Concurrent, because awaiting each leg before starting the next made the sweep serial when the
+    /// only thing that has to be serial is the connector's own send gate. BOUNDED, because that gate
+    /// means unbounded fan-out buys nothing: past a handful the legs queue on it anyway, and a book
+    /// of several hundred orders would put several hundred gateway dispatches in flight to achieve
+    /// it. Four is a judgement, and it is the number that makes "issued in waves" true — which is
+    /// also what makes a leg's turn able to arrive after the deadline, and therefore what makes
+    /// NOT SENT a real outcome rather than a branch nothing reaches.
+    /// </summary>
+    const int MaxLegsInFlight = 4;
+
+    static async Task Collect(List<(string Id, string Target, Task<ExecutionRequest?> Task)> pending, List<Leg> legs)
+    {
+        foreach (var (id, target, task) in pending)
+        {
+            try
+            {
+                var record = await task;
+                legs.Add(record is null
+                    ? new Leg(id, target, LegOutcome.NothingToDo, null, null)
+                    : new Leg(id, target,
+                        record.State is ExecutionState.CANCELLED or ExecutionState.FILLED
+                            ? LegOutcome.Confirmed
+                            : LegOutcome.NotConfirmed,
+                        record, null));
+            }
+            catch (Exception ex)
+            {
+                // A leg that threw did not end the sweep, and it is not silently gone: it is
+                // reported as sent-not-confirmed with its reason, which is what the owner has to act
+                // on. The gateway has already recorded UNKNOWN for the ones that reached it.
+                legs.Add(new Leg(id, target, LegOutcome.NotConfirmed, null, ex.Message));
+            }
+        }
     }
 
     /// <summary>
@@ -688,17 +811,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var positions = await gateway.PositionsAsync(ct);
-        var results = new List<ExecutionRequest>();
-        var nothingToDo = new List<string>();
         var nonce = FreshSweepNonce("closeall");
-        var i = 0;
-        foreach (var p in positions.Where(p => p.Quantity != 0))
-        {
-            // Null means the gateway found nothing to close for that symbol. Not a failure, and
-            // not a closure either — counting it as one is exactly the overstatement being removed.
-            var r = await gateway.CloseAsync(ctx, DerivedId(nonce, "closeall", i++), p.Symbol, ct);
-            if (r is null) nothingToDo.Add(p.Symbol); else results.Add(r);
-        }
+        var legs = await RunLegs(positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), "closeall", nonce,
+            (legId, symbol) => gateway.CloseAsync(ctx, legId, symbol, ct));
+
+        // Null from the gateway means it found nothing to close for that symbol. Not a failure, and
+        // not a closure either — counting it as one is exactly the overstatement bdf9a24 removed.
+        var nothingToDo = legs.Where(l => l.Outcome == LegOutcome.NothingToDo).Select(l => l.Target).ToList();
+        var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
 
         var landed = results.Count(r => r.State is ExecutionState.FILLED);
         return new
@@ -708,6 +828,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             nothing_to_close = nothingToDo,
             not_closed = results.Where(r => r.State is not ExecutionState.FILLED)
                 .Select(r => new { request_id = r.RequestId, instrument = r.Instrument, state = r.State.ToString() }),
+            not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
+            outcomes = legs.Select(l => l.Describe()),
             requests = results
         };
     }
