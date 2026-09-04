@@ -319,12 +319,17 @@ could not write down"; `trade status`'s `unreconciled_requests` counts the first
 surface that reports or acts on unconfirmed work — the gate, the health row, the doctor, the
 unconfirmed card, the background reconciler — asks the same question rather than the raw flag.
 
-**The pause does not depend on the database.** Recording an unconfirmed outcome is a write, and a
-write can fail (locked file, full disk, read-only store). Execution is therefore paused in memory
-BEFORE the write is attempted; a failure to persist is reported to the caller as
-`STATE_DATABASE_CORRUPT`, written to the engineering log at error as `record_indefinite_failed`, and
-does not lift the pause. A reconcile pass that finds nothing pending while that pause is held reports
-itself unfinished instead of clearing it.
+**The pause does not depend on the database.** Recording an outcome is a write, and a write can fail
+(locked file, full disk, read-only store). For an INDEFINITE outcome execution is paused in memory
+BEFORE the write is attempted; for a DEFINITE one — the broker answered, and the answer is what
+cannot be stored — the pause is taken the moment the write fails. **The test is whether the wire has
+been touched, not what came back:** an answer nobody could write down is an unconfirmed outcome, and
+a record still `DISPATCHING` looks like an ordinary order in flight until the stranded bound expires.
+Either way the failure is reported to the caller as `STATE_DATABASE_CORRUPT`, written to the
+engineering log at error (`record_indefinite_failed`, `settle_failed`) off the failing thread, and
+does not lift the pause. For the same reason the settle comes before the activity line on every
+dispatch path: both are writes, and the outcome is the one that must land. A reconcile pass that
+finds nothing pending while that pause is held reports itself unfinished instead of clearing it.
 
 **A request leaves the unconfirmed set only on positive, definite, stable evidence about its own
 target. Anything else is inconclusive and keeps trading paused.** Every branch of reconciliation is

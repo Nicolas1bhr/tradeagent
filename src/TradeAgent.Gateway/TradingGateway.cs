@@ -613,6 +613,56 @@ public sealed class TradingGateway : IAsyncDisposable
                 metadataJson: Json.Write(new { intended = to.ToString(), actual = actual.State.ToString() }));
             return actual;
         }
+        catch (Exception persist)
+        {
+            // A DEFINITE ANSWER THAT COULD NOT BE WRITTEN DOWN IS STILL AN UNCONFIRMED OUTCOME, and
+            // round 2 latched only the indefinite path. `RecordIndefinite` pauses BEFORE it writes,
+            // precisely because a write can fail; every caller of THIS method has also already
+            // touched the wire, and here the write is the one thing that failed. Without the latch
+            // the exception left the method with nothing paused and the row still DISPATCHING —
+            // which for the whole DispatchStrandedAfter bound is an ordinary order in flight, so the
+            // next order went out over an outcome that exists nowhere on disk. The wire having been
+            // touched is the whole test for whether a latch is owed; what the broker answered is not
+            // part of it.
+            LatchUnconfirmed(requestId, $"an order outcome could not be written down ({persist.Message})");
+            StateChanged?.Invoke();
+            FileAfterTheStoreRefused("settle_failed", requestId, persist,
+                new { intended = to.ToString(), error });
+
+            // Thrown, unlike the race above: there is no record to hand back — the write that would
+            // have made it is what failed — and a caller given a stale row would read it as the
+            // outcome. The pause stands whether or not anyone catches this.
+            throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
+                $"the outcome of {requestId} could not be written down ({persist.Message}); trading is paused");
+        }
+    }
+
+    /// <summary>
+    /// Files one engineering line off this thread, retrying while whatever held the store lets go.
+    /// Only for use immediately after the store refused a write: it will refuse this line too, for
+    /// as long as its own timeout, and an order path must not wait out a second one to file a log.
+    /// A handful of attempts, not a queue and not a guarantee — the in-memory latch is the
+    /// guarantee; this exists so an engineer can find out afterwards WHY trading paused with
+    /// nothing in the ledger to point at.
+    /// </summary>
+    void FileAfterTheStoreRefused(string evt, string requestId, Exception cause, object metadata)
+    {
+        _ = Task.Run(async () =>
+        {
+            for (var attempt = 0; attempt < 6; attempt++)
+            {
+                // Wait before the FIRST attempt too: the store refused a write a moment ago, and
+                // retrying into the same locked file only burns another timeout.
+                await Task.Delay(250);
+                try
+                {
+                    _log.Engineering("Gateway", evt, "error", requestId: requestId, ex: cause,
+                        metadataJson: Json.Write(metadata));
+                    return;
+                }
+                catch (Exception) { /* try again below */ }
+            }
+        });
     }
 
     /// <summary>
@@ -664,28 +714,9 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception persist)
         {
             // The record could not be made. The pause above stands, and the caller is told rather
-            // than handed a record that does not exist. The log attempt runs off this thread because
-            // the store that just refused a write will refuse this one too, for as long as its own
-            // timeout — and an order path must not wait out a second one to file a log line.
-            _ = Task.Run(async () =>
-            {
-                // A handful of attempts while whatever held the store lets go. Not a queue and not a
-                // guarantee — the in-memory pause is the guarantee; this is so an engineer can find
-                // out afterwards WHY trading paused with nothing in the ledger to point at.
-                for (var attempt = 0; attempt < 6; attempt++)
-                {
-                    // Wait before the FIRST attempt too: the store refused a write a moment ago, and
-                    // retrying into the same locked file only burns another timeout.
-                    await Task.Delay(250);
-                    try
-                    {
-                        _log.Engineering("Gateway", "record_indefinite_failed", "error", requestId: requestId,
-                            ex: persist, metadataJson: Json.Write(new { reason = technical, original = ex?.GetType().FullName }));
-                        return;
-                    }
-                    catch (Exception) { /* try again below */ }
-                }
-            });
+            // than handed a record that does not exist. Same off-thread filing as the definite path.
+            FileAfterTheStoreRefused("record_indefinite_failed", requestId, persist,
+                new { reason = technical, original = ex?.GetType().FullName });
 
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"the outcome of {requestId} could not be written down ({persist.Message}); trading is paused");
@@ -961,8 +992,15 @@ public sealed class TradingGateway : IAsyncDisposable
                 "TradeAgent could not confirm whether an order was cancelled.", ex);
         }
 
+        // SETTLE BEFORE THE ACTIVITY LINE, as the place path does. Both are writes to the same
+        // store, and this one had them the other way round: the log line went first, so a store that
+        // refused writes threw here — after the platform had cancelled the order — and the method
+        // left without ever reaching the settle. The outcome was then nowhere, and nothing was
+        // latched, because nothing had failed inside Settle. The record is the part that matters;
+        // the sentence about it is not.
+        var cancelled = Settle(current.RequestId, ExecutionState.CANCELLED);
         _log.Activity($"Cancelled order {target}");
-        return Settle(current.RequestId, ExecutionState.CANCELLED);
+        return cancelled;
     }
 
     public async Task<ExecutionRequest> ModifyAsync(AgentContext ctx, string requestId, string orderRef,
@@ -1012,8 +1050,10 @@ public sealed class TradingGateway : IAsyncDisposable
                 "The platform did not show the change TradeAgent asked for on that order.",
                 connectorOrderId: o.ConnectorOrderId);
 
+        // Settle first, log second — see the note on the same two lines in CancelAsync.
+        var applied = Settle(current.RequestId, ExecutionState.ACKNOWLEDGED, connectorOrderId: o.ConnectorOrderId);
         _log.Activity($"Modified order {target}");
-        return Settle(current.RequestId, ExecutionState.ACKNOWLEDGED, connectorOrderId: o.ConnectorOrderId);
+        return applied;
     }
 
     enum ModifyVerdict

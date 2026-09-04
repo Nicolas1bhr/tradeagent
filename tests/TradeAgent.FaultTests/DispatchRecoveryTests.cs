@@ -130,8 +130,12 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public async Task CancelOrderAsync(string id, CancellationToken ct = default)
     {
         if (!CancelDoesNotReachTheBook) await inner.CancelOrderAsync(id, ct);   // the broker DID cancel
+        OnCancelled?.Invoke();                                   // ...and this happens before we hear back
         if (ThrowAfterCancel is { } ex) throw ex;
     }
+
+    /// <summary>Runs after the broker cancelled and before this connector answers. See OnPlaced.</summary>
+    public Action? OnCancelled;
 
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
     {
@@ -2536,6 +2540,93 @@ public class AdoptOnlyDefiniteTests
         Assert.False(record.NeedsReconciliation);
         Assert.True(result.Clean, string.Join("; ", result.Details));
         Assert.Equal(1, result.Resolved);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
+
+// =================================================================================================
+// ROUND 3 · R5 — the latch belongs on the DEFINITE settle path too
+// =================================================================================================
+
+public class DefiniteOutcomeThatCannotBeWrittenTests
+{
+    /// <summary>
+    /// A locked or read-only store in miniature: reads keep working, every write is refused. This is
+    /// what a full disk, a file another process has open, or a store opened read-only looks like from
+    /// inside a dispatch.
+    /// </summary>
+    static void StopTakingWrites(Database db) => db.Exec("PRAGMA query_only = ON");
+    static void TakeWritesAgain(Database db) => db.Exec("PRAGMA query_only = OFF");
+
+    /// <summary>
+    /// A DEFINITE ANSWER THAT COULD NOT BE WRITTEN DOWN IS STILL AN UNCONFIRMED OUTCOME.
+    ///
+    /// Round 2 put the in-memory pause on the indefinite path only: `RecordIndefinite` latches BEFORE
+    /// it writes, precisely because the write can fail. The definite path had no such thing — the
+    /// broker accepts the order, answers WORKING, and the one write that would record it throws. The
+    /// exception left the method, nothing latched, and the row stayed DISPATCHING: for the whole
+    /// 30-second stranded-dispatch bound it is "an order in flight", which pauses nothing, so the
+    /// agent could place the next order over an order whose outcome is nowhere on disk. The wire has
+    /// been touched; that is the whole test for whether a latch is owed.
+    /// </summary>
+    [Fact]
+    public async Task A_place_the_broker_took_pauses_trading_when_its_outcome_cannot_be_written()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        c.OnPlaced = () => StopTakingWrites(db);          // between the broker accepting and answering
+
+        var boom = await Assert.ThrowsAnyAsync<Exception>(
+            () => gw.PlaceAsync(new AgentContext("a"), "p-noroom", TestEnv.Buy()));
+
+        TakeWritesAgain(db);                              // whatever held the store lets go
+        Assert.Equal(ExecutionState.DISPATCHING, gw.GetRequest("p-noroom")!.State);   // nothing was recorded
+
+        Assert.True(gw.HasUnconfirmedWork());
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out var code));
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, code);
+
+        // The row is 0 seconds old, so the stranded-dispatch bound has not fired: the ONLY thing
+        // listing it — and the only thing holding the gate shut — is the in-memory latch.
+        Assert.Contains(gw.Unreconciled(), r => r.RequestId == "p-noroom");
+        Assert.Equal(ErrorCode.STATE_DATABASE_CORRUPT, Assert.IsType<TradeAgentException>(boom).Code);
+    }
+
+    /// <summary>The same on a cancel: an order the platform really cancelled, and a ledger that could not say so.</summary>
+    [Fact]
+    public async Task A_cancel_the_platform_carried_out_pauses_trading_when_it_cannot_be_written()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "c-place", TestEnv.Buy());
+        c.OnCancelled = () => StopTakingWrites(db);
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => gw.CancelAsync(new AgentContext("a"), "c-noroom", placed.ConnectorOrderId!));
+
+        TakeWritesAgain(db);
+        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders.Single().State);  // it really happened
+        Assert.Equal(ExecutionState.DISPATCHING, gw.GetRequest("c-noroom")!.State);    // and is not recorded
+
+        Assert.True(gw.HasUnconfirmedWork());
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION: a definite outcome the store DID take settles exactly as before, latches
+    /// nothing and leaves the gate open. The latch is about the write failing, not about the answer.
+    /// </summary>
+    [Fact]
+    public async Task A_definite_outcome_the_store_took_settles_and_latches_nothing()
+    {
+        var (gw, _, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "p-room", TestEnv.Buy());
+
+        Assert.Equal(ExecutionState.WORKING, placed.State);
+        Assert.False(placed.NeedsReconciliation);
+        Assert.False(gw.HasUnconfirmedWork());
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
