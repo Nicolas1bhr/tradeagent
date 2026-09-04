@@ -313,6 +313,39 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A DEADLINE THAT HAS PASSED HAS NOTHING LEFT — NOT ONE MILLISECOND.
+    ///
+    /// Codex round-8 F4. The connector's <c>Left</c> handed a caller past its absolute deadline a
+    /// fresh millisecond, borrowing the "never zero" rule from <c>Remaining</c>, which is a
+    /// RELATIVE budget and keeps it for a reason of its own. On an absolute deadline the
+    /// millisecond is a race the gate or the reply can win after the instant the operation promised
+    /// to be over — and a millisecond is in any case too short to measure anything, which is the
+    /// same argument that already makes a leg reached after the deadline fail BEFORE the send gate
+    /// instead of queueing for its millisecond and judging the bridge on what moved in it.
+    ///
+    /// Pinned as arithmetic because that is what it is: the annotation is erased, the wait is
+    /// milliseconds, and no end-to-end timing can tell one millisecond from zero. The behaviour
+    /// that depends on it is asserted by the rest of this class, which still passes.
+    /// </summary>
+    [Fact]
+    public void An_absolute_deadline_that_has_passed_leaves_nothing_not_a_millisecond()
+    {
+        var now = Environment.TickCount64;
+
+        Assert.Equal(TimeSpan.Zero, RiskReducingScope.LeftUntil(now - 5_000));
+        Assert.Equal(TimeSpan.Zero, RiskReducingScope.LeftUntil(now - 1));
+        Assert.Equal(TimeSpan.Zero, RiskReducingScope.LeftUntil(now));
+
+        // The other direction, so a mutant that returns zero for everything is not a passing one.
+        var ahead = RiskReducingScope.LeftUntil(now + 5_000);
+        Assert.InRange(ahead, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(5));
+
+        // And it is the scope's own deadline this is about: a budget of nothing is already spent.
+        using (RiskReducingScope.Begin(TimeSpan.Zero))
+            Assert.Equal(TimeSpan.Zero, RiskReducingScope.LeftUntil(RiskReducingScope.DeadlineAt!.Value));
+    }
+
+    /// <summary>
     /// AN EMERGENCY DOES NOT WAIT TEN SECONDS. At shipped defaults, nothing shortened.
     ///
     /// Measured before this change: a cancel-all queued behind one stalled write took 9.76 s, and for

@@ -61,7 +61,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         // risk-reducing — an order that opens exposure has no claim on this clock.
         if (RiskReducingScope.DeadlineAt is { } deadline)
         {
-            var left = TimeSpan.FromMilliseconds(deadline - Environment.TickCount64);
+            var left = RiskReducingScope.LeftUntil(deadline);
             if (left <= TimeSpan.Zero)
                 throw new ConnectorTransportException(
                     "the operation deadline had already passed; nothing was sent to the simulator");
