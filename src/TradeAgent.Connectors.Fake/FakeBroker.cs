@@ -176,6 +176,15 @@ public sealed class FaultProfile
     /// gateway gives it is what verifier round-9 F-1 is about.
     /// </summary>
     public int RefuseBeforeSend { get; set; }
+
+    /// <summary>
+    /// The NEXT mutating call goes out and no answer comes back — the reply-timeout branch of a real
+    /// connector, and the only honest way a cancellation becomes UNKNOWN. Without it the simulator
+    /// could only produce an ambiguous cancel by running the operation deadline out mid-call, which
+    /// is a knife-edge to arrange and gives a sweep no way to carry a MIX of outcomes in one answer
+    /// (verifier round-9 F-5).
+    /// </summary>
+    public int LoseAfterSend { get; set; }
     public FillBehaviour Fill { get; set; } = FillBehaviour.FillImmediately;
 
     /// <summary>Backdates quotes so staleness checks can be exercised.</summary>
@@ -198,11 +207,21 @@ public sealed class FaultProfile
     /// </summary>
     public int UncancellableLatencyMs { get; set; }
 
+    /// <summary>
+    /// Consumes one use of a one-shot fault. LOCKED, because a sweep issues its legs concurrently:
+    /// read-then-decrement across four legs in flight can hand the same single use to two of them
+    /// and leave a third fault unconsumed, which shows up as a test that mostly passes.
+    /// </summary>
     public bool Take(Func<FaultProfile, int> get, Action<FaultProfile, int> set)
     {
-        var n = get(this);
-        if (n <= 0) return false;
-        set(this, n - 1);
-        return true;
+        lock (_takeGate)
+        {
+            var n = get(this);
+            if (n <= 0) return false;
+            set(this, n - 1);
+            return true;
+        }
     }
+
+    readonly Lock _takeGate = new();
 }

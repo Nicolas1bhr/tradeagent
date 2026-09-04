@@ -138,6 +138,15 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
             throw new ConnectorTransportException(
                 "it was not sent: the operation ran out of time before this leg's turn came");
         }
+
+        // And the other side of the wire: the frame went out and nothing came back. Fail-closed —
+        // it may have acted, which is what UNKNOWN and reconciliation exist for.
+        if (mutating && Faults.Take(f => f.LoseAfterSend, (f, v) => f.LoseAfterSend = v))
+        {
+            TransportLedger.Record(TransportOutcome.PossiblyWritten);
+            throw new ConnectorTransportException(
+                "the request was sent and no answer came back; it is not known whether it acted");
+        }
     }
 
     public async Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default)
