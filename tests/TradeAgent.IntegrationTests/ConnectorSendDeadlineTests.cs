@@ -1268,6 +1268,134 @@ public class ConnectorSendDeadlineTests
     /// emergency path asks before it decides to drop a connection or keep it. Anything else that
     /// differed between the two fixtures would be a second explanation for a different verdict.
     /// </summary>
+    // ------------------ what the CONNECTOR knows about where a frame got to (round 10, F4 / F-1)
+
+    /// <summary>
+    /// THE SHIPPED CONNECTOR REPORTS `NothingWritten` FOR EVERY REFUSAL THAT NEVER TOOK THE SEND GATE.
+    ///
+    /// The three ways an emergency can fail without a byte of its frame existing, all on the real
+    /// `AtasConnector` over a real pipe. They are DIFFERENT facts about the far end — the operation
+    /// was already over, our own backlog was in the way, the peer had stopped reading — and the SAME
+    /// fact about the frame: the gate was never ours, so nothing was written.
+    ///
+    /// It matters because the gateway cannot tell them apart. `TradingGateway` maps every
+    /// `ConnectorTransportException` to UNKNOWN, so a sweep leg that took one of these branches came
+    /// back `sent-not-confirmed` — an order to go and reconcile something that does not exist, with
+    /// a flag that pauses trading (verifier round-9 F-1). The distinction only exists down here.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_that_never_took_the_send_gate_reports_that_nothing_was_written()
+    {
+        // 1. THE OPERATION WAS ALREADY OVER when this leg's turn came — the branch round 8 added so
+        //    that a leg reached after the deadline would not judge the bridge on one millisecond.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.ReadingAndHeartbeating(pipe, Cred().Secret);
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            var record = new TransportRecord();
+            using (TransportLedger.Attach(record))
+            using (RiskReducingScope.Begin(TimeSpan.Zero))
+            {
+                var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelOrderAsync("FB-1"));
+                Assert.Contains("not sent", ex.Message);
+            }
+            Assert.Equal(TransportOutcome.NothingWritten, record.Outcome);
+        }
+
+        // 2. BUSY — our own backlog held the gate until the emergency's deadline passed. The peer is
+        //    reading throughout, which is what makes this the busy case and not the stalled one.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret);
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-gate-busy", "ATAS-READING", "ES",
+                OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+            Observe([stuck]);
+            await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
+            var acceptedBefore = peer.BytesRead;
+
+            var record = new TransportRecord();
+            using (TransportLedger.Attach(record))
+            {
+                var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-READING"));
+                Assert.Contains("busy", ex.Message);
+            }
+
+            // The fixture's own premise: without contention this measured nothing about the gate.
+            Assert.True(peer.BytesRead - acceptedBefore > 0,
+                "the peer accepted no bytes while the emergency waited — that is the stalled case, not the busy one");
+            Assert.Equal(TransportOutcome.NothingWritten, record.Outcome);
+        }
+
+        // 3. THE PEER HAD STOPPED READING and the gate expired on it — a different accusation, the
+        //    same fact about our frame.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.HeartbeatingButNotReading(pipe, Cred().Secret, TimeSpan.Zero);
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-gate-stalled", "ATAS-WEDGED", "ES",
+                OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+            Observe([stuck]);
+            await Task.Delay(300);   // the write is in flight and the peer is taking nothing
+
+            var record = new TransportRecord();
+            using (TransportLedger.Attach(record))
+                await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelAllOrdersAsync("ATAS-WEDGED"));
+
+            Assert.Equal(TransportOutcome.NothingWritten, record.Outcome);
+        }
+    }
+
+    /// <summary>
+    /// AND THE OTHER TWO STATES, so "nothing was written" is a measurement rather than the only
+    /// answer this connector knows how to give.
+    ///
+    /// A frame that was answered reports `ReplyReceived` — whatever the answer was — and a frame the
+    /// peer never answered reports `PossiblyWritten`, because it went out and nothing can recall it.
+    /// </summary>
+    [Fact]
+    public async Task An_answered_frame_reports_a_reply_and_an_unanswered_one_reports_it_may_have_landed()
+    {
+        // Answered.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, "nothing-is-muted");
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            var record = new TransportRecord();
+            using (TransportLedger.Attach(record))
+                await connector.CancelOrderAsync("FB-1").WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(TransportOutcome.ReplyReceived, record.Outcome);
+        }
+
+        // Sent, and never answered.
+        {
+            var pipe = NewPipe();
+            await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+            await connector.ConnectAsync();
+            await using var peer = await BridgePeer.AnsweringAllBut(pipe, Cred().Secret, BridgeOps.Cancel);
+            await Wait(async () => await connector.IsConnectedAsync());
+
+            var record = new TransportRecord();
+            using (TransportLedger.Attach(record))
+                await Assert.ThrowsAnyAsync<Exception>(() => connector.CancelOrderAsync("FB-1"));
+
+            Assert.Equal(TransportOutcome.PossiblyWritten, record.Outcome);
+        }
+    }
+
     sealed class BridgePeer : IAsyncDisposable
     {
         /// <summary>

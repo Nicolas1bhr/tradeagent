@@ -164,6 +164,18 @@ public sealed class FaultProfile
     /// person reaches for when they want everything to stop is the whole of the meaning.
     /// </summary>
     public int RefuseCancel { get; set; }
+
+    /// <summary>
+    /// The NEXT mutating call is refused BEFORE anything is sent, and the connector can prove it.
+    ///
+    /// Models the shipped <c>AtasConnector</c> branch a leg reaches when the operation's deadline is
+    /// already gone by the time its turn comes: the frame is never built, the send gate is never
+    /// taken, and the connection learns nothing. It is a one-shot fault rather than a timing race
+    /// because the race is a knife-edge — the leg's target resolution has to land INSIDE the deadline
+    /// and its mutation outside it — while the branch is one the product really has, and the word the
+    /// gateway gives it is what verifier round-9 F-1 is about.
+    /// </summary>
+    public int RefuseBeforeSend { get; set; }
     public FillBehaviour Fill { get; set; } = FillBehaviour.FillImmediately;
 
     /// <summary>Backdates quotes so staleness checks can be exercised.</summary>
