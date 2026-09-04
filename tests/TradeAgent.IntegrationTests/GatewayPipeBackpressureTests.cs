@@ -403,15 +403,45 @@ public class GatewayPipeBackpressureTests
     {
         var connector = new AtasConnector("ta-drain-arith");
         using var db = TestEnv.NewDb();
-        var gw = new TradingGateway(db, new FakeConnector(new FakeBroker()), new HealthRegistry());
+
+        // THE GATEWAY HOLDS THE CONNECTOR THE DRAIN IS ABOUT. It used to hold a FakeConnector while
+        // this assertion compared against a separately-constructed AtasConnector, so the two numbers
+        // could agree while nothing connected them — which is the disconnection Codex C3 names.
+        var gw = new TradingGateway(db, connector, new HealthRegistry());
         var server = new GatewayPipeServer(gw, "tok", "ta-drain-arith-2");
 
-        // 10 + 10 + 10 at the shipped values. If a connector deadline grows, this fails here rather
+        // 10 + 30 + 10 at the shipped values. If a connector deadline grows, this fails here rather
         // than by abandoning an order at shutdown six months later.
         Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
+        Assert.Equal(TimeSpan.FromSeconds(55), server.HandlerDrainTimeout);
         Assert.True(server.HandlerDrainTimeout > connector.WorstCaseOrderPath,
             $"the drain bound {server.HandlerDrainTimeout.TotalSeconds:0}s does not outlast the connector's " +
             $"worst-case order path {connector.WorstCaseOrderPath.TotalSeconds:0}s — a shutdown mid-order abandons it");
+    }
+
+    /// <summary>
+    /// AND IT FOLLOWS THE DEADLINES RATHER THAN QUOTING THEM. Codex C3: 55 s was a literal, correct
+    /// for the shipped values and silently wrong for any others — and constructing a connector with
+    /// different deadlines is a supported thing to do. Codex's own arithmetic is the fixture: an RPC
+    /// timeout of 60 s makes the worst path 100 s, against which a 55 s drain abandons a DISPATCHING
+    /// order, which is the state cc7006e and 02aad9a exist to prevent.
+    /// </summary>
+    [Fact]
+    public void The_shutdown_drain_follows_the_connectors_deadlines_when_they_change()
+    {
+        using var db = TestEnv.NewDb();
+        var slow = new AtasConnector("ta-drain-slow", TimeSpan.FromSeconds(60));   // 10 + 30 + 60
+        var gw = new TradingGateway(db, slow, new HealthRegistry());
+        var server = new GatewayPipeServer(gw, "tok", "ta-drain-slow-2");
+
+        Assert.Equal(TimeSpan.FromSeconds(100), slow.WorstCaseOrderPath);
+        Assert.True(server.HandlerDrainTimeout > slow.WorstCaseOrderPath,
+            $"the drain is {server.HandlerDrainTimeout.TotalSeconds:0}s against a {slow.WorstCaseOrderPath.TotalSeconds:0}s " +
+            "worst path — it was written down rather than derived, so a supported deadline change abandons an order again");
+
+        // And an explicit value still wins, because a caller that names one means it.
+        var pinned = new GatewayPipeServer(gw, "tok", "ta-drain-slow-3") { HandlerDrainTimeout = TimeSpan.FromSeconds(7) };
+        Assert.Equal(TimeSpan.FromSeconds(7), pinned.HandlerDrainTimeout);
     }
 
     /// <summary>
@@ -426,7 +456,6 @@ public class GatewayPipeBackpressureTests
         using var _1 = db;
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);   // HandlerDrainTimeout: untouched
-        Assert.Equal(TimeSpan.FromSeconds(55), server.HandlerDrainTimeout);
         server.Start();
 
         const string rid = "cli-slowsettle-1";
@@ -437,6 +466,11 @@ public class GatewayPipeBackpressureTests
         // pre-flight checks instead of where this test needs it: inside the dispatch.
         await WarmUp(agent);
         conn.Faults.LatencyMs = 6000;
+
+        // The drain is derived from the connector, so arming the latency is what makes it long
+        // enough — which is the property, rather than the literal that used to be asserted here.
+        Assert.True(server.HandlerDrainTimeout > TimeSpan.FromSeconds(6),
+            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0}s against a 6 s broker");
         await agent.WriteAsync(new IpcRequest
         {
             Op = Ops.Buy,

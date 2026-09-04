@@ -241,6 +241,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     public TimeSpan WorstCaseOrderPath => WriteTimeout + FrameTimeout + _timeout;
 
+    /// <inheritdoc />
+    public TimeSpan WorstCaseOperationPath => WorstCaseOrderPath;
+
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;
