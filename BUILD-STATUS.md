@@ -2994,7 +2994,9 @@ files changed (+152/−19 with the brief). Merge `73a1c85`. Three harness fixes,
 3× green; both witness classes 191/191; suite 795, 0 failed. CI run 33924375698 on draft PR #2 (merged with `main`):
 ubuntu SUCCESS, macos SUCCESS, windows 518/519 with all three target tests PASSED in the trx. Manager's gate at the
 rebased tip `73a1c85`, Release: build → 0 warnings, 0 errors; suite → 75 + 201 + 519 = 795, 0 failed; test names vs `main` → 0 removed, 0 added; scan clean;
-CI at the merge sha was in progress when this was written; its windows result is recorded with U-win-flakes.
+CI run 33926161681 at `ae0ab3c` (this landing's docs commit): ubuntu SUCCESS, macos SUCCESS, **windows SUCCESS 519/519**
+— the first fully green test matrix on `main` since U2a landed; the `package` job ran for the first time since then
+(its result is recorded with U-win-flakes). The Windows flake class is intermittent: this run did not draw it.
 
 **NOT VERIFIED:** nothing on the box. **A new Windows-only class, not this unit's:** on each PR run a different unrelated
 test failed on windows-latest — `GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled`
