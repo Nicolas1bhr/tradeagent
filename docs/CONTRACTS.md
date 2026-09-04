@@ -77,6 +77,37 @@ Compiled into both halves so the shapes cannot drift. TradeAgent hosts; the brid
 `bridge_protocol_version` mismatch is refused outright rather than half-trusted. `rejected: true` on a
 failure frame is what marks a refusal definite.
 
+## Bridge deadlines, and what a slow bridge is told
+
+Four bounds, and they answer different questions. Changing any of them changes a number a test
+asserts, rather than silently invalidating this section.
+
+- **`AtasConnector.WriteTimeout` (10 s) — a PROGRESS budget, not a total.** It is spent per 1 KiB
+  chunk and reset by every chunk the peer accepts, so a slow-but-moving bridge is never dropped for
+  being slow.
+- **The progress threshold is the chunk size, and this is the residual it leaves.** Progress is
+  recognised only when a WHOLE 1 KiB chunk has been accepted, so a peer moving slower than one chunk
+  per emergency window — below roughly **512 bytes/second** — is indistinguishable from one that has
+  stopped, and is reported as stalled. The boundary cannot be removed, only moved: at the previous
+  8 KiB chunk it sat at 4 KiB/s, where an ordinary struggling reader could fall on the wrong side of
+  it (measured: a peer taking 2 KiB during the window was called "not responding"). It is documented
+  rather than fixed because a peer that slow is, for a two-second emergency, not usefully different
+  from a dead one.
+- **`AtasConnector.FrameTimeout` (30 s) — the whole-frame ceiling**, so one frame is bounded in total
+  and not merely per chunk. Against the 1 MiB frame cap it is a floor of about 34 KiB/s.
+- **`AtasConnector.EmergencyDeadline` (2 s) — the CALLER's total** for `cancel`, `cancel-all` and
+  `close`, covering the send gate, the write and the reply together. On expiry the caller is told the
+  operation is NOT confirmed and to check ATAS, and the record is UNKNOWN. `place` and `modify` never
+  get it.
+- **Whether the CONNECTION is dropped is a different question on a different clock.** The bridge is
+  dropped only when it has answered nothing within the ordinary RPC deadline (10 s) — not when one
+  emergency went unanswered for two. A bridge handles frames one at a time, so silence while it works
+  on our own frame is what a busy bridge looks like as well as a dead one. An answer that arrives
+  after its caller gave up is delivered rather than discarded.
+
+`WorstCaseOrderPath` is `WriteTimeout + FrameTimeout + rpcTimeout` and the shutdown drain is derived
+from it, so a connector built with different deadlines moves the drain with it.
+
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
 ```
