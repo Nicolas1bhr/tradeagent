@@ -126,8 +126,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// A HANDLER IS NOT ONE CALL, so the drain multiplies that by the longest chain a handler issues
     /// in series — see <see cref="SerialConnectorCallsPerHandler"/>, which is five, and
     /// <see cref="RiskReducingHandlerPath"/>, which is the other shape — and adds
-    /// <see cref="SettleAfterCancelTimeout"/> for the write-back. At shipped values: 5 × 50 + 5 =
-    /// 255 s, and disposal's ceiling 5 + that + 5 = 265 s.
+    /// <see cref="HandlerOverhead"/> for the handler's own work and
+    /// <see cref="SettleAfterCancelTimeout"/> for the write-back. At shipped values:
+    /// 5 × 50 + 1 + 5 = 256 s, and disposal's ceiling 5 + that + 5 = 266 s.
     ///
     /// THE MIDDLE TERM WAS WRONG UNTIL 2026-09-03 and this number with it. It counted one
     /// WriteTimeout for the whole write, but WriteTimeout is a per-chunk PROGRESS budget reset by
@@ -140,7 +141,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// test asserts this default still covers it, so changing a connector deadline breaks a test
     /// rather than silently reintroducing the abandoned order.
     ///
-    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 255 s here — 265 s over
+    /// THE TRADE IS DELIBERATE: at the shipped values the app may take up to 256 s here — 266 s over
     /// the whole of disposal — but ONLY while a request is
     /// actually in flight — an idle handler is freed the moment its pipe is closed, which happens
     /// before this wait. Waiting is the right side of that trade, because the alternative is an
@@ -186,17 +187,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// thing (time for a handler to write down what it knows) and writing it twice is how a derived
     /// number silently stops being derived, which is the class this unit has now fixed three times.
     ///
+    /// THREE TERMS, AND THE MIDDLE ONE IS WHAT MAKES THIS BOUND THE HANDLER. A row is arithmetic
+    /// over the connector's deadlines, so the table bounds the CALLS; <see cref="HandlerOverhead"/>
+    /// is what the handler costs on top of them — the frame, the parse, the request rows, the reply.
+    /// It used to be absent, and the only thing standing in for it was
+    /// <see cref="SettleAfterCancelTimeout"/>, which is a different quantity and is `init`-settable
+    /// to zero: at zero the drain equalled the longest row exactly and any handler overhead at all
+    /// was outside it (verifier round-11 L-2, measured — `cancel-all` at 917 ms against a 900 ms
+    /// row). The two are now separate, so configuring the write-back window cannot configure away
+    /// the bound.
+    ///
     /// THE INVARIANT A CALLER CANNOT BREAK: whatever anybody sets, the drain is never shorter than
-    /// the composite chain above. The settle term is a margin on top of it; shortening that margin
-    /// shortens a handler's write-back window, which is what <see cref="SettleAfterCancelTimeout"/>
-    /// already means and already allows. Asserted, rather than left to this paragraph.
+    /// the composite chain above PLUS that overhead. Asserted, rather than left to this paragraph.
     ///
     /// WHAT THIS IS NOT: the whole of disposal. `DisposeAsync` also waits up to 5 s for the accept
     /// loop before this, and up to <see cref="SettleAfterCancelTimeout"/> after it, so the ceiling
     /// on closing is 5 + this + 5 rather than this. Stated because the trade below quotes a number
     /// an operator will experience.
     /// </summary>
-    TimeSpan DerivedDrainTimeout => HandlerPaths.Max(p => p.Path) + SettleAfterCancelTimeout;
+    TimeSpan DerivedDrainTimeout => HandlerPaths.Max(p => p.Path) + HandlerOverhead + SettleAfterCancelTimeout;
 
     /// <summary>
     /// EVERY HANDLER, WITH ITS OWN SERIAL DEPTH — and the drain is the maximum over this table.
@@ -213,8 +222,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     ///   E = <c>Connector.EmergencyBudget</c>          the WHOLE risk-reducing part of one operation
     ///   L = <see cref="MaxLegsInFlight"/>             how many legs of a sweep are in flight at once
     ///
-    /// and <see cref="SettleAfterCancelTimeout"/> is added once, on top of the maximum, as the
-    /// write-back margin — it is not part of any handler's own path.
+    /// and two terms are added once, on top of the maximum: <see cref="HandlerOverhead"/>, what a
+    /// handler costs beyond its connector calls, and <see cref="SettleAfterCancelTimeout"/>, the
+    /// write-back margin. Neither is part of any handler's own connector path, and a ROW IS THE
+    /// CONNECTOR CHAIN AND NOT THE HANDLER.
     /// </summary>
     public IReadOnlyList<HandlerPath> HandlerPaths =>
     [
@@ -358,13 +369,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// shortening this bound (§9.9).
     ///
     /// THE PRICE, STATED, AND IT WENT UP: at the shipped ATAS values (`WorstCaseOperationPath` 50 s)
-    /// the drain is 5 × 50 + 5 = 255 s, and disposal's ceiling is 5 + that + 5 = 265 s. Round 8 put
-    /// that figure at 155 s and it was too short by two calls. It is paid ONLY while a request is
+    /// the drain is 5 × 50 + 1 + 5 = 256 s, and disposal's ceiling is 5 + that + 5 = 266 s. Round 8
+    /// put that figure at 155 s and it was too short by two calls; the extra second is
+    /// <see cref="HandlerOverhead"/>, added in round 12. It is paid ONLY while a request is
     /// genuinely in flight — an idle handler is freed when its pipe closes, before this wait — and
     /// the alternative is an order that reached the broker and is recorded DISPATCHING for ever. It
     /// remains a product decision rather than an arithmetic one, and it is the manager's to take.
     /// </summary>
     public const int SerialConnectorCallsPerHandler = 5;
+
+    /// <summary>
+    /// WHAT A HANDLER COSTS ON TOP OF ITS CONNECTOR CALLS, and the term that makes the drain bound
+    /// the HANDLER rather than the handler's connector chain.
+    ///
+    /// Every row in <see cref="HandlerPaths"/> is arithmetic over the connector's own deadlines, so
+    /// the table bounds the CALLS. A handler is more than its calls: it reads a frame off the pipe
+    /// and parses it, writes its request record, settles it, and writes a reply — none of which any
+    /// connector deadline describes. The only margin covering that was
+    /// <see cref="SettleAfterCancelTimeout"/>, which is a DIFFERENT quantity (how long a handler gets
+    /// AFTER cancellation to write down what it already knows), is added once, and is `init`-settable
+    /// to zero — at which point the drain equalled the longest row exactly and every millisecond of
+    /// handler was outside it. Measured at W = 300 ms and E = 900 ms: `cancel-all` cost 917 ms
+    /// against a 900 ms row (verifier round-11 L-2).
+    ///
+    /// A CONSTANT AND NOT A DERIVATION, and that is deliberate rather than the usual defect: this
+    /// work is a pipe read, a JSON parse and two or three SQLite writes on a local file. It does not
+    /// scale with anything a connector reports, so deriving it from a connector deadline would be
+    /// the fiction. One second is a judgement — three orders of magnitude over the 17 ms measured on
+    /// an idle Mac, room for a loaded box, and a rounding error against a drain of 256 s. It is
+    /// asserted against every handler this suite drives, so a handler that grows real overhead fails
+    /// there rather than by shortening a shutdown.
+    /// </summary>
+    public static readonly TimeSpan HandlerOverhead = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// How long a handler gets AFTER its token is cancelled, to write down what it knows.
