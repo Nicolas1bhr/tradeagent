@@ -306,6 +306,16 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     readonly Action<string, string> _writeSidecar;
 
+    /// <summary>
+    /// THE TWO PROBES ON THE SIDECAR PATH, AS SEAMS, AND FOR THE SAME REASON <see cref="_open"/> IS
+    /// ONE: the failures they have to classify correctly — an ACL that denies the attributes, a
+    /// directory whose enumeration is refused — cannot be provoked on the machine the code is
+    /// written on without also breaking every other read in the same directory, which is a different
+    /// state from the one under test. Null in every production use.
+    /// </summary>
+    readonly Func<string, string[]> _readSidecar;
+    readonly Func<string, string, string[]> _listSidecars;
+
     bool _loaded;
     bool _readFailed;
 
@@ -526,7 +536,9 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     public CoidWitness(string? path, string? sessionId = null, int cap = DefaultCap,
                        Action<string, string>? replace = null, Func<string, Stream>? open = null,
-                       Action<string, string>? writeSidecar = null)
+                       Action<string, string>? writeSidecar = null,
+                       Func<string, string[]>? readSidecar = null,
+                       Func<string, string, string[]>? listSidecars = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
@@ -534,6 +546,8 @@ public sealed class CoidWitness : IDisposable
         _replace = replace ?? DefaultReplace;
         _open = open ?? DefaultOpen;
         _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
+        _readSidecar = readSidecar ?? File.ReadAllLines;
+        _listSidecars = listSidecars ?? Directory.GetFiles;
         if (_path is not null)
             _tempPrefix = $"{_path}.tmp-{Environment.ProcessId}-{(SessionId.Length >= 8 ? SessionId[..8] : SessionId)}-";
     }
@@ -921,7 +935,10 @@ public sealed class CoidWitness : IDisposable
     {
         get
         {
-            try { lock (_gate) { return SidecarSet().Where(File.Exists).ToArray(); } }
+            // The enumeration returns files that are there, so there is nothing left to ask — and
+            // asking `File.Exists` again would put a probe that cannot report a denial back on this
+            // path, which is the whole of F31.
+            try { lock (_gate) { return SidecarSet().ToArray(); } }
             catch (Exception) { return []; }
         }
     }
@@ -1022,27 +1039,39 @@ public sealed class CoidWitness : IDisposable
             // reopened by the fix that split the file.
             // UNREADABLE COUNTS AS WRITTEN DOWN. See _sidecarUnreadable: a catch that answered
             // "no lines" made a file nobody could open indistinguishable from one with nothing in it.
-            _noted = SidecarSet().Any(f => HasNotes(f, out _));
-
+            // AND AN ENUMERATION THIS RUN COULD NOT PERFORM COUNTS AS WRITTEN DOWN. The question is
+            // "is there anything written down at all", and a directory that would not list its
+            // contents has not answered it — answering "no" on its behalf is the flagged-zero rule
+            // reopened one probe further out.
             // AND AN UNREADABLE CANONICAL GENERATION IS A GAP THIS RUN CANNOT RULE OUT. Scoped to the
             // canonical file for the same reason the deciding line is (below): a refused writer's own
             // file being locked is not this machine's durability problem.
             _sidecarUnreadable = SidecarGenerations().Any(f => { HasNotes(f, out var bad); return bad; });
+
+            // It counts as written down as well, and by NAME rather than by whether the enumeration
+            // happened to include it. Round 8 got that for free — the file it could not open was one
+            // the glob had already listed — which left `Noted` false, and the token reading `io:ok`,
+            // for a canonical generation whose very existence this run could not establish.
+            var set = SidecarSet(out var setUnreadable);
+            _noted = _sidecarUnreadable || setUnreadable || set.Any(f => HasNotes(f, out _));
 
             // THE DEGRADED STATE STAYS THE CANONICAL FILE'S QUESTION, and that is not an oversight
             // being preserved. A second bridge turned away cost no order — the refusal is what stops
             // the order being sent — so its lines must not mark this machine degraded for ever, which
             // would drop SupportsClientOrderId over somebody else's misconfiguration. It must only
             // stop a zero being read as a fact about what was submitted.
-            if (SidecarGenerations().Any(File.Exists))
-            {
-                var deciding = LastDecidingLine();
-                _degraded = _sidecarUnreadable
-                            || (deciding is not null
-                                && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal));
-                _gapClosed = !_sidecarUnreadable
-                             && string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
-            }
+            // NO `File.Exists` IN FRONT OF THIS EITHER, AND THAT WAS THE THIRD PROBE. It guarded
+            // nothing — `LastDecidingLine()` answers null when there is no sidecar, which produces
+            // exactly the same two values — while doing the one thing this class must not do: asking
+            // a question that answers "no" for a denial as readily as for an absence. A canonical
+            // generation this run could not read therefore set `_sidecarUnreadable`, said "could not
+            // be read" through `Trouble`, and left the token reading `io:ok` beside it.
+            var deciding = LastDecidingLine();
+            _degraded = _sidecarUnreadable
+                        || (deciding is not null
+                            && !string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal));
+            _gapClosed = !_sidecarUnreadable
+                         && string.Equals(deciding, ResolvedMarker, StringComparison.Ordinal);
         }
         catch (Exception) { }
 
@@ -1557,14 +1586,21 @@ public sealed class CoidWitness : IDisposable
     /// A file that exists and cannot be opened is NOT a file with nothing in it; see
     /// <see cref="_sidecarUnreadable"/>.
     /// </summary>
-    static bool HasNotes(string path, out bool unreadable)
+    bool HasNotes(string path, out bool unreadable)
     {
         unreadable = false;
         try
         {
-            if (!File.Exists(path)) return false;
-            return File.ReadAllLines(path).Any(l => !string.IsNullOrWhiteSpace(l));
+            return _readSidecar(path).Any(l => !string.IsNullOrWhiteSpace(l));
         }
+        // ABSENCE IS THE TWO EXCEPTIONS THAT MEAN "THERE IS NOTHING AT THIS NAME", and nothing else.
+        // The committed read has said this since PRIOR 17; the sidecar said it only about the READ,
+        // and asked File.Exists first — which never throws and answers FALSE for a denial as readily
+        // as for an absence. A directory whose attributes this account may not stat therefore
+        // reported a sidecar with nothing in it, which is the exact conflation F28 closed one step
+        // further along the same path.
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
         catch (Exception) { unreadable = true; return true; }
     }
 
@@ -1607,16 +1643,29 @@ public sealed class CoidWitness : IDisposable
     /// to answer "is there anything written down at all" — <see cref="Noted"/> — never to decide
     /// whether a gap is open, which is the canonical file's question alone.
     /// </summary>
-    IEnumerable<string> SidecarSet()
+    IEnumerable<string> SidecarSet() => SidecarSet(out _);
+
+    /// <summary>
+    /// AND AN ENUMERATION THAT FAILED IS NOT AN EMPTY DIRECTORY. Same rule as the read one line up:
+    /// this is a probe, a probe that fails is a read that failed, and the answer is "I could not
+    /// look", never "there is nothing there". It feeds <see cref="Noted"/> and not the degraded
+    /// state, because what it hides is the per-writer set — the canonical generations are read by
+    /// NAME and answer for themselves. That is the F25 boundary, kept: a zero this run cannot stand
+    /// behind is flagged, and somebody else's directory permissions do not drop
+    /// <c>SupportsClientOrderId</c>.
+    /// </summary>
+    IEnumerable<string> SidecarSet(out bool unreadable)
     {
+        unreadable = false;
         if (ErrorLogPath is not { } log) return [];
         try
         {
             var dir = System.IO.Path.GetDirectoryName(log);
             if (string.IsNullOrEmpty(dir)) return [];
-            return Directory.GetFiles(dir, ErrorLogName + "*");
+            return _listSidecars(dir, ErrorLogName + "*");
         }
-        catch (Exception) { return []; }
+        catch (DirectoryNotFoundException) { return []; }
+        catch (Exception) { unreadable = true; return []; }
     }
 
     /// <summary>
@@ -1636,8 +1685,7 @@ public sealed class CoidWitness : IDisposable
         {
             try
             {
-                if (!File.Exists(log)) continue;
-                var lines = File.ReadAllLines(log);
+                var lines = _readSidecar(log);
                 for (var i = lines.Length - 1; i >= 0; i--)
                 {
                     if (string.IsNullOrWhiteSpace(lines[i])) continue;
