@@ -547,6 +547,21 @@ public class ConnectorSendDeadlineTests
     /// slow enough is indistinguishable from a dead one inside two seconds, and round 4 took that
     /// trade deliberately. What is not acceptable is a boundary an ordinary slow reader sits on the
     /// wrong side of.
+    ///
+    /// THE PEER TAKES ONE GULP INSTEAD OF DRIPPING, and that is this test's whole runner story. The
+    /// drip of 1 KiB every 800 ms is the rate the finding was written against, but a rate is not
+    /// what the connector sees: it sees a 1 KiB write COMPLETE, and a blocked write on a Unix-domain
+    /// socket is released by the kernel's own watermark rather than by the byte the peer just took.
+    /// Probed on 2026-09-04 against the shipped 8 KiB pipe buffer, worst gap between two completed
+    /// 1 KiB writes at that drip: macOS 1.60 s, Linux 5.61 s — against the 2 s window an emergency
+    /// watches. That is why ubuntu-latest failed this on every run of 33898144843 while
+    /// windows-latest passed, and no pace repairs it: at 4 KiB/s — the fastest drip still under one
+    /// 8 KiB chunk per window — Linux's worst gap is 1.77 s, inside the window by 12%.
+    ///
+    /// Seven kilobytes in ONE gulp crosses every such watermark at once, and it is still LESS THAN
+    /// ONE OLD 8 KiB CHUNK, so the boundary being walked is the same one: under the old chunk size
+    /// no write completes and this peer is called dead; under 1 KiB seven of them do, and it is
+    /// called busy.
     /// </summary>
     [Fact]
     public async Task A_peer_reading_below_one_chunk_per_window_is_busy_and_not_dropped()
@@ -555,21 +570,29 @@ public class ConnectorSendDeadlineTests
         await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped
         await connector.ConnectAsync();
 
-        // 1 KiB every 800 ms: 1.25 KiB/s, measured above as the first rate on the WRONG side of the
-        // 8 KiB boundary — ~2 KiB accepted while the emergency waits, and no chunk completed.
-        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret, 1024, TimeSpan.FromMilliseconds(800));
+        await using var peer = await BridgePeer.ReadingOnCommand(pipe, Cred().Secret, 8 * 1024);
         await Wait(async () => await connector.IsConnectedAsync());
 
         var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-subchunk-1", "ATAS-READING", "ES",
             OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
         Observe([stuck]);
-        await Wait(() => Task.FromResult(peer.BytesRead >= 4 * 1024));
+
+        // The priming gulp is proof the order is really on the wire. The pause after it is so the
+        // writer has refilled the buffer and blocked again BEFORE the emergency starts its clock —
+        // without it the refill's own progress lands inside the window and this would be measuring
+        // the priming read rather than anything that happened while the emergency waited.
+        await Wait(() => Task.FromResult(peer.BytesRead >= 8 * 1024));
+        await Task.Delay(250);
         var acceptedBefore = peer.BytesRead;
 
         var timer = Stopwatch.StartNew();
-        Exception? ex = null;
-        try { await connector.CancelAllOrdersAsync("ATAS-READING"); }
-        catch (Exception e) { ex = e; }
+        var emergency = Record.ExceptionAsync(() => connector.CancelAllOrdersAsync("ATAS-READING"));
+
+        // Mid-window, one gulp: under one old chunk, over every watermark.
+        await Task.Delay(900);
+        peer.Accept(7 * 1024);
+
+        var ex = await emergency;
         timer.Stop();
         var acceptedDuring = peer.BytesRead - acceptedBefore;
 
@@ -1788,6 +1811,76 @@ public class ConnectorSendDeadlineTests
         }
 
         /// <summary>
+        /// A PEER THAT TAKES A MEASURED GULP WHEN IT IS TOLD TO, AND NOTHING AT ALL IN BETWEEN.
+        ///
+        /// It replaces the two paced fixtures the gate tests used to share, and the reason is a
+        /// measurement, not taste. A drip fixture — "one read, then sleep <c>pace</c>" — bounds the
+        /// drain from below only if every read returns the same number of bytes; when the writer is
+        /// slower than the reader each read returns less, the loop needs more iterations, and each
+        /// iteration costs a whole <c>pace</c>. So a SLOWER machine drains SLOWER THAN THE FIXTURE
+        /// SAYS, which is the direction that breaks a test built on the gate being released before a
+        /// two-second deadline. Measured against CI run 33898144843: macos-latest, twice.
+        ///
+        /// Worse, on Linux the drip does not translate into write progress at all. A blocked write
+        /// on a Unix-domain socket is woken by the kernel's own watermark, not by the byte the peer
+        /// just took. Probed on 2026-09-04 against the shipped 8 KiB pipe buffer, worst gap between
+        /// two completed 1 KiB writes while the peer drips 1 KiB every 800 ms: macOS 1.60 s,
+        /// Linux 5.61 s — against the 2 s window an emergency watches. That is ubuntu-latest's
+        /// deterministic failure, and no pace fixes it: at 4 KiB/s, the fastest drip that still
+        /// takes less than one 8 KiB chunk per window, Linux's worst gap is still 1.77 s.
+        ///
+        /// One gulp of several kilobytes crosses every one of those watermarks at once, so the
+        /// progress it produces is a fact about the connector rather than about the kernel's mood.
+        /// <paramref name="primeBytes"/> is taken immediately — proof the frame under test is really
+        /// on the wire — and then nothing moves until <see cref="Accept"/> says how much more.
+        /// </summary>
+        public static async Task<BridgePeer> ReadingOnCommand(string pipe, string secret, int primeBytes)
+        {
+            var peer = await ConnectAndSayHello(pipe, secret, "ATAS-READING", null, PaceBytes);
+            peer.Track(Task.Run(() => peer.PumpOnCommand(primeBytes)));
+            return peer;
+        }
+
+        readonly SemaphoreSlim _go = new(0);
+        long _allowance;
+
+        /// <summary>
+        /// Take exactly this many more bytes, as fast as the pipe will hand them over, then stop
+        /// again. Returns at once; <see cref="BytesRead"/> is how the caller sees it land.
+        /// </summary>
+        public void Accept(long bytes)
+        {
+            Interlocked.Add(ref _allowance, bytes);
+            _go.Release();
+        }
+
+        async Task PumpOnCommand(int primeBytes)
+        {
+            var buf = new byte[64 * 1024];
+            try
+            {
+                await TakeExactly(buf, primeBytes);
+                while (!_stop.IsCancellationRequested)
+                {
+                    await _go.WaitAsync(_stop.Token);
+                    await TakeExactly(buf, Interlocked.Exchange(ref _allowance, 0));
+                }
+            }
+            catch (Exception) { /* the test ending is how this always ends */ }
+        }
+
+        async Task TakeExactly(byte[] buf, long want)
+        {
+            while (want > 0 && !_stop.IsCancellationRequested)
+            {
+                var n = await _p.ReadAsync(buf.AsMemory(0, (int)Math.Min(buf.Length, want)), _stop.Token);
+                if (n == 0) return;
+                Interlocked.Add(ref _read, n);
+                want -= n;
+            }
+        }
+
+        /// <summary>
         /// A BRIDGE THAT IS PLAINLY SERVING, with one operation outstanding: it reads every frame and
         /// answers all of them except <paramref name="mute"/>.
         ///
@@ -2015,6 +2108,7 @@ public class ConnectorSendDeadlineTests
                 catch (Exception) { /* cancelled or faulted: either way it is no longer writing */ }
             }
             await _p.DisposeAsync();
+            _go.Dispose();
         }
     }
 }
