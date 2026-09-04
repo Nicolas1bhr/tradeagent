@@ -121,7 +121,9 @@ public sealed class StubBridge : IAsyncDisposable
 
         await Authenticate(ct);
         if (SendHello) await Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Hello, data = _hello });
-        _loop = Task.Run(() => Loop(_cts.Token));
+        // The loop ends when the far end goes away, which for a refused peer is immediately. Its
+        // exception is the disconnection, not a fault worth surfacing.
+        _loop = Task.Run(async () => { try { await Loop(_cts.Token); } catch (Exception) { } });
     }
 
     /// <summary>
@@ -219,12 +221,23 @@ public sealed class StubBridge : IAsyncDisposable
         return order;
     }
 
+    /// <summary>
+    /// TEARDOWN SURVIVES A CONNECTION THE FAR END ALREADY CLOSED, which since round 7 is the ordinary
+    /// end of a refused peer: the connector drops a bridge whose protocol it cannot speak, so this
+    /// stub's writer flushes into a pipe that is already broken. A harness that throws while tidying
+    /// up fails the test for the very behaviour the test is asserting.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync();
-        if (_w is not null) await _w.DisposeAsync();
-        _r?.Dispose();
-        if (_client is not null) await _client.DisposeAsync();
+        await Quietly(async () => { if (_w is not null) await _w.DisposeAsync(); });
+        try { _r?.Dispose(); } catch (IOException) { } catch (ObjectDisposedException) { }
+        await Quietly(async () => { if (_client is not null) await _client.DisposeAsync(); });
         _cts.Dispose();
+    }
+
+    static async Task Quietly(Func<Task> step)
+    {
+        try { await step(); } catch (IOException) { } catch (ObjectDisposedException) { }
     }
 }

@@ -385,6 +385,153 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// Authenticates the way the real bridge does, then holds the connection open and says nothing
+    /// more. A peer that is refused and PARKS is the shape the round-6 ruling produced.
+    /// </summary>
+    /// <summary>
+    /// Sends something a REFUSED peer has no right to be heard on, and does not care whether the
+    /// send itself lands. Since round 7 the refusal also drops the connection, so the frame may die
+    /// in the socket rather than in the connector — and either way the assertion afterwards is the
+    /// same: nothing it claimed got through. Swallowing the write error is what keeps this test about
+    /// the connector's belief rather than about the timing of a disconnect.
+    /// </summary>
+    static async Task Unheard(Func<Task> send)
+    {
+        try { await send(); } catch (IOException) { } catch (ObjectDisposedException) { }
+    }
+
+    static async Task<System.IO.Pipes.NamedPipeClientStream> Park(string pipe, int protocolVersion)
+    {
+        var client = new System.IO.Pipes.NamedPipeClientStream(
+            ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+        await client.ConnectAsync(10_000);
+        var w = new StreamWriter(client, new System.Text.UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+        var r = new StreamReader(client, new System.Text.UTF8Encoding(false), false, 8192, leaveOpen: true);
+
+        var cred = BridgePipeAuth.ReadForClient()!;
+        var nonce = BridgePipeAuth.NewNonce();
+        await w.WriteLineAsync(Json.Write(new
+        {
+            v = Versions.BridgeProtocolVersion,
+            op = BridgePipeAuth.Challenge,
+            data = new { nonce, proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce) }
+        }));
+        string? line;
+        while ((line = await r.ReadLineAsync()) is not null)
+            if (Json.Read<BridgeFrame>(line)?.Op == BridgePipeAuth.Response) break;
+
+        await w.WriteLineAsync(Json.Write(new BridgeFrame
+        {
+            Op = BridgeOps.Hello,
+            Data = System.Text.Json.JsonSerializer.SerializeToElement(Speaking(protocolVersion), Json.Options)
+        }));
+        return client;
+    }
+
+    /// <summary>
+    /// A REFUSED PEER MUST NOT BE ABLE TO HOLD THE TRADING PATH SHUT, AND PARKING IT DID EXACTLY THAT.
+    ///
+    /// Round 6 kept a mismatched peer on the pipe rather than dropping it, so that `Drop` could not
+    /// erase the version number and the repair from the row. The pipe is created with
+    /// `maxNumberOfServerInstances = 1`, and the accept loop creates the next instance only after the
+    /// inner read loop ENDS — so a refused peer that holds the connection open and never speaks again
+    /// occupies the only slot there is. The operator reads "reinstall the add-on from TradeAgent",
+    /// does it, and the fixed bridge's `ConnectAsync` times out against a pipe held by the peer it
+    /// was sent to replace.
+    ///
+    /// Any process running as this user can hold the trading path shut that way. The rule is both
+    /// halves at once: the peer is DROPPED, and the reason it was dropped for survives the drop.
+    /// </summary>
+    [Fact]
+    public async Task A_parked_refused_peer_does_not_keep_a_fixed_bridge_off_the_pipe()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        // A version-2 peer arrives, is refused, and then simply stops talking without disconnecting.
+        using var parked = await Park(pipe, 2);
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+
+        // The operator does what the row says, and a current bridge dials in.
+        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await repaired.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+
+        Assert.Equal(Versions.BridgeProtocolVersion, connector.Bridge!.BridgeProtocolVersion);
+        Assert.Null(connector.Incompatible);          // a good bridge is what ends the mismatch
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// AND THE REASON SURVIVES THE DROP WE OURSELVES CAUSED — which is what made dropping unsafe
+    /// before.
+    ///
+    /// `Drop` cleared the mismatch on the argument that a wrong version is a fact about the peer and
+    /// leaves with the peer. That is true when the peer hangs up on its own; it is false when OUR
+    /// refusal is what closed the connection, because then the reason is erased microseconds after
+    /// being written and the dashboard reads FAILED with nothing on it while the bridge redials. The
+    /// file already makes exactly this argument for an unproved peer's refusal two paragraphs down;
+    /// a mismatch we refused is the same case.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_peer_leaves_the_version_and_the_repair_on_the_row()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        var failures = 0;
+        connector.ConnectionChanged += s => { if (s == HealthState.FAILED) Interlocked.Increment(ref failures); };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var old = new StubBridge(pipe, Speaking(2));
+        await old.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+
+        // Dropped by us — and the row still names the version and the repair afterwards.
+        await Wait(async () => await Task.FromResult(Volatile.Read(ref failures) > 0));
+        Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+        Assert.Equal(Versions.BridgeProtocolVersion, connector.Incompatible.ExpectedProtocolVersion);
+        Assert.Contains("reinstall the add-on", connector.StatusDetail);
+        Assert.Contains("protocol 2", connector.StatusDetail);
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// AND A REFUSED BRIDGE THAT REDIALS IS REFUSED AGAIN. The refusal is a fact about the CONNECTION,
+    /// so a new connection is heard out from the beginning — and says the same wrong thing, and is
+    /// turned away again. What must not happen is a redial being taken for a repair.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_bridge_that_reconnects_is_refused_again()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10));
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            var old = new StubBridge(pipe, Speaking(2));
+            await old.ConnectAsync();
+            await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
+            Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
+            Assert.Null(connector.Bridge);
+            // Already off the pipe — its own teardown is tidying a connection the connector closed.
+            await Unheard(async () => await old.DisposeAsync());
+        }
+
+        // And the pipe is still free for a bridge that is right.
+        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await repaired.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.Null(connector.Incompatible);
+    }
+
+    /// <summary>
     /// A PEER THIS CONNECTOR HAS REFUSED IS NOT ALLOWED TO SPEAK, WHATEVER FRAME IT SPEAKS IN.
     ///
     /// Round 5 guarded the EVENT branch and left the heartbeat one, and a heartbeat carries a whole
@@ -412,7 +559,7 @@ public class BridgeRoundTripTests
         await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
 
         // The frame that used to buy everything back.
-        await bridge.Heartbeat(Speaking(Versions.BridgeProtocolVersion));
+        await Unheard(() => bridge.Heartbeat(Speaking(Versions.BridgeProtocolVersion)));
         await Task.Delay(300);
 
         Assert.NotNull(connector.Incompatible);
@@ -444,7 +591,7 @@ public class BridgeRoundTripTests
         await bridge.ConnectAsync();
         await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
 
-        await bridge.SaySomethingElse(Speaking(Versions.BridgeProtocolVersion));
+        await Unheard(() => bridge.SaySomethingElse(Speaking(Versions.BridgeProtocolVersion)));
         await Task.Delay(300);
 
         Assert.NotNull(connector.Incompatible);
@@ -598,9 +745,9 @@ public class BridgeRoundTripTests
         // One branch gates all six event kinds, so two of them settle it — and these two are the
         // ones that need no record shape to be built by hand.
         var before = Volatile.Read(ref seen);
-        await bridge.RaiseEvent(BridgeEvents.Quote,
-                                new QuoteInfo("ES", 4200.25m, 4200.50m, null, null, null, DateTimeOffset.UtcNow));
-        await bridge.RaiseEvent(BridgeEvents.Connection, new { connected = true });
+        await Unheard(() => bridge.RaiseEvent(BridgeEvents.Quote,
+                                new QuoteInfo("ES", 4200.25m, 4200.50m, null, null, null, DateTimeOffset.UtcNow)));
+        await Unheard(() => bridge.RaiseEvent(BridgeEvents.Connection, new { connected = true }));
         await Task.Delay(300);
 
         Assert.Equal(before, Volatile.Read(ref seen));
@@ -666,12 +813,18 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
-    /// When the incompatible bridge goes away, the row that explained it must be told.
+    /// When the incompatible bridge goes away, the row that explained it must be told — AND ROUND 7
+    /// REVERSED WHAT "TOLD" MEANS HERE.
     ///
-    /// An incompatible bridge never sets _connected, so the disconnect path's "was it up?" guard is
-    /// false and fires nothing. The reason string is cleared regardless — which would leave the
-    /// dashboard displaying a version mismatch for a bridge no longer on the pipe. On a status
-    /// display, the model and the screen disagreeing IS the bug.
+    /// An incompatible bridge never sets `_connected`, so the disconnect path's "was it up?" guard is
+    /// false and fires nothing; the row has to be re-announced explicitly, and that half is unchanged.
+    /// What changed is the reason string. It used to be cleared unconditionally, on the argument that
+    /// a wrong version is a fact about the peer and leaves with it. That is true when the peer hangs
+    /// up on its own — and false when OUR refusal is what closed the connection, which is now every
+    /// mismatch, because parking the peer instead held the single pipe instance shut against the very
+    /// bridge the row tells the operator to install.
+    ///
+    /// So the announcement still fires, and the reason survives until a compatible hello ends it.
     /// </summary>
     [Fact]
     public async Task When_an_incompatible_bridge_disconnects_the_status_row_is_told()
@@ -695,16 +848,23 @@ public class BridgeRoundTripTests
                 Json.Options)
         }));
         await Wait(async () => await Task.FromResult(connector.Incompatible is not null));
-        var afterHello = Volatile.Read(ref failures);
 
-        // The bridge goes away.
-        await w.DisposeAsync();
-        await client.DisposeAsync();
+        // The peer goes away — it was already dropped by the refusal, so this is only its own tidying.
+        await Unheard(async () => { await w.DisposeAsync(); await client.DisposeAsync(); });
 
-        // The reason is dropped AND the row is re-announced, so nothing is left displaying a
-        // mismatch for a bridge that is gone.
-        await Wait(async () => await Task.FromResult(connector.Incompatible is null));
-        await Wait(async () => await Task.FromResult(Volatile.Read(ref failures) > afterHello));
+        // The row is re-announced, and it still names the version and the repair: this disconnection
+        // was ours, and a reason erased by the act of enforcing it is a dashboard reading FAILED with
+        // nothing on it.
+        await Wait(async () => await Task.FromResult(Volatile.Read(ref failures) > 0));
+        Assert.NotNull(connector.Incompatible);
+        Assert.Equal(Versions.BridgeProtocolVersion + 1, connector.Incompatible!.ReportedProtocolVersion);
+        Assert.Contains("9.9.9", connector.StatusDetail);
+
+        // And a bridge that is right is what ends it.
+        await using var repaired = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await repaired.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.Null(connector.Incompatible);
         Assert.Null(connector.StatusDetail);
     }
 

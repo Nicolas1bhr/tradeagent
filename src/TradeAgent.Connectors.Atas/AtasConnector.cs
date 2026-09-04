@@ -453,11 +453,29 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // no longer on the pipe. Clearing the reason without re-announcing the row leaves the model
         // and the screen disagreeing, which on a status display is the whole of the bug.
         var wasExplained = _incompatible is not null || Unauthenticated is not null;
+
+        // WHOSE DOING WAS THIS? Read before the per-connection flags are reset below, because it
+        // decides whether the reason on the row survives.
+        var ourOwnRefusal = _refused;
+
         _connected = false;
         _hello = null;
-        // The bridge is gone; "wrong version" stops being the live explanation the moment there is
-        // nothing on the pipe to be the wrong version.
-        _incompatible = null;
+
+        // "Wrong version" stops being the live explanation the moment there is nothing on the pipe
+        // to be the wrong version — UNLESS OUR OWN REFUSAL IS WHAT TOOK IT OFF THE PIPE.
+        //
+        // That is the same distinction the paragraph below draws for a credential refusal, and for
+        // the same reason: the refusal is what CAUSES the disconnection, so clearing it here erases
+        // the reason microseconds after writing it and leaves the dashboard reading FAILED with
+        // nothing on it while the bridge redials every two seconds. A mismatch we refused is not a
+        // fact that left with the peer; it is "the last thing that held this pipe speaks a protocol
+        // this build cannot", which is still true afterwards and is the whole of the repair
+        // instruction. A compatible hello ends it — the event that actually resolves it, exactly as
+        // proving itself is for an unproved peer.
+        //
+        // A peer that hangs up on its own still clears it, which is what keeps the row from
+        // describing a bridge that simply went away.
+        if (!ourOwnRefusal) _incompatible = null;
 
         // A REFUSAL IS NOT CLEARED HERE, AND THAT IS THE DIFFERENCE BETWEEN THE TWO.
         //
@@ -574,16 +592,22 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
                 _refused = true;
                 ConnectionChanged?.Invoke(HealthState.FAILED);
 
-                // THE PEER IS KEPT ON THE PIPE ANYWAY, AND THAT IS DELIBERATE. Returning false here
-                // breaks the read loop, which runs Drop, which clears _incompatible — by design,
-                // because "wrong version" is a fact about the peer and leaves with it
-                // (When_an_incompatible_bridge_disconnects_the_status_row_is_told pins that). So a
-                // refusal that also disconnects erases the version number microseconds after
-                // writing it and leaves the dashboard reading FAILED with nothing on it, while the
-                // bridge redials every two seconds — the exact failure the unproved-hello comment
-                // below was written about. Keeping the peer costs nothing now that it is refused
-                // whole: it is heard by nobody, and the row names the version and the repair.
-                return true;
+                // AND IT IS DROPPED, NOT PARKED, WHICH ROUND 7 REVERSED.
+                //
+                // Round 6 kept the peer here so that Drop could not erase the version number and the
+                // repair from the row. The pipe is created with maxNumberOfServerInstances = 1 (see
+                // CreateServer) and AcceptLoop creates the next instance only after the inner read
+                // loop ENDS — so a refused peer that holds the connection open and never speaks
+                // again occupies the only slot there is. Measured: the operator reads "reinstall the
+                // add-on", does it, and the fixed bridge's ConnectAsync TIMES OUT against a pipe held
+                // by the peer it was sent to replace. Any process running as this user can hold the
+                // trading path shut that way, and the row is telling the operator to do the one
+                // thing that cannot work.
+                //
+                // Dropping is safe because Drop now keeps the identity across a disconnection WE
+                // caused — see the argument there, which this file already made for an unproved
+                // peer's refusal and which a mismatch we refused shares exactly.
+                return false;
             }
 
             // AN UNPROVED HELLO IS REFUSED, AND THIS IS THE HALF THAT USED TO BE LEFT OPEN.
