@@ -192,7 +192,11 @@ public class WitnessSnapshotTests : IDisposable
     /// R9-4. THE CARRY COMES FROM THE FILE SET BEING ROTATED. A writer the lease refused writes its
     /// own sidecar beside the canonical one; when ITS file passes the cap, the rotation must decide
     /// from its own generations. Deciding from the canonical machine's line restated somebody else's
-    /// gap into this file and deleted this file's own history to make room for it.
+    /// gap into this file — and, before round 10, deleted this file's own history to make room.
+    ///
+    /// Both writers are given an explicit session id so that the two refused instances share one
+    /// sidecar name: that is what lets the second one start from a snapshot of the oversized file
+    /// the first one left, which is the ordinary case across two runs of a refused bridge.
     /// </summary>
     [Fact]
     public void A_refused_writers_rotation_carries_its_own_unresolved_line_not_the_canonical_one()
@@ -203,20 +207,49 @@ public class WitnessSnapshotTests : IDisposable
         // The canonical machine has an open gap of its own, and it is not this writer's.
         File.AppendAllText(Sidecar, Gap(9, "TA-CANONICAL-GAP"));
 
-        var refused = new CoidWitness(File_);
+        const string session = "beadfeed0000";
+        var refused = new CoidWitness(File_, session);
         Assert.False(refused.Submitting("TA-REFUSED", "SIM", "ES", "Buy", 1m, null));
+        refused.Dispose();
         var mine = Directory.GetFiles(_dir, CoidWitness.ErrorLogName + "-*").Single();
 
-        // This writer's own file holds its own unresolved line, and is oversized.
+        // This writer's own file holds its own unresolved line, and is over the cap.
         File.AppendAllText(mine, Gap(7, "TA-MY-OWN-GAP"));
         File.AppendAllText(mine, new string('x', 70 * 1024) + Environment.NewLine);
-        Assert.False(refused.Submitting("TA-REFUSED-2", "SIM", "ES", "Buy", 1m, null));
+
+        // The next run of the same refused bridge: same sidecar name, and its first refusal rotates.
+        var again = new CoidWitness(File_, session);
+        Assert.False(again.Submitting("TA-REFUSED-2", "SIM", "ES", "Buy", 1m, null));
+        again.Dispose();
 
         var carried = Everything();
-        Assert.Contains("TA-MY-OWN-GAP", carried);
-        Assert.DoesNotContain("carried an unresolved failure across a sidecar rotation: ERROR coid-witness rewrite did not land. claim=TA-CANONICAL-GAP", carried);
+        Assert.Contains("rotation: ERROR coid-witness rewrite did not land. claim=TA-MY-OWN-GAP", carried);
+        Assert.DoesNotContain("rotation: ERROR coid-witness rewrite did not land. claim=TA-CANONICAL-GAP", carried);
         owner.Dispose();
-        refused.Dispose();
+    }
+
+    /// <summary>
+    /// AND A ROTATION THAT CANNOT READ ITS SET DOES NOT RUN AT ALL — measured where refusing makes a
+    /// difference. The renames themselves destroy nothing (a generation moves to the next name), so
+    /// the one act that removes anything is the oldest generation being replaced. Put the ONLY
+    /// unresolved marker there, deny it, and a rotation that proceeds over a set it could not read
+    /// destroys the last copy of the gap while the file names still look intact.
+    /// </summary>
+    [Fact]
+    public void A_rotation_over_an_unreadable_set_does_not_destroy_the_oldest_generation()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        Seed();
+        var oldest = Sidecar + ".2";
+        File.WriteAllText(oldest, Gap(30));
+        File.WriteAllText(Sidecar + ".1", $"{DateTimeOffset.UtcNow.AddMinutes(-20):O} WARN rolled" + Environment.NewLine);
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Deny(oldest);
+        Assert.NotNull(Session().Trouble);
+
+        RotateNow();
+
+        Assert.Contains("TA-GAP", Everything());
     }
 
     /// <summary>
@@ -392,6 +425,10 @@ public class WitnessSnapshotTests : IDisposable
     public void An_enumeration_that_fails_is_reported_rather_than_listed_as_nothing()
     {
         Seed();
+        // There ARE files here. The point is that this run could not establish that, so the list it
+        // prints must be empty and the sentence beside it must say why — the two cannot disagree,
+        // which they can only fail to do if they come from different reads.
+        File.WriteAllText(Sidecar, Gap(9));
         var witness = new CoidWitness(File_, null, CoidWitness.DefaultCap,
             listSidecars: (_, _) => throw new UnauthorizedAccessException("readdir denied"));
 

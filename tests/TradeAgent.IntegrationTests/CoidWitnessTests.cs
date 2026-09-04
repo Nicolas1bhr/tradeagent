@@ -3064,6 +3064,7 @@ public class CoidWitnessTests : IDisposable
         var seed = Session();
         Assert.True(seed.Submitting("TA-SEED", "SIM", "ES", "Buy", 1m, null));
         seed.Dispose();
+        File.WriteAllText(Sidecar, $"{DateTimeOffset.UtcNow:O} WARN something happened" + Environment.NewLine);
 
         var reader = new CoidWitness(File_, listSidecars: (_, _) => throw Failure(failure));
 
