@@ -581,6 +581,11 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // of ours, matched it to an outstanding request and answered it. No other thread on the
             // far end can reach this line.
             PeerAnswered();
+            if (_abandoned.TryRemove(f.Id, out _))
+            {
+                Interlocked.Increment(ref _lateAnswers);
+                LateAnswerReceived?.Invoke(f);
+            }
             tcs.TrySetResult(f);
         }
         return true;
@@ -847,6 +852,60 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <summary>The bridge answered a request. Called only where a pending RPC is completed.</summary>
     void PeerAnswered() => Volatile.Write(ref _lastAnswerAt, Environment.TickCount64);
 
+    /// <summary>Requests whose caller has stopped waiting but whose answer is still welcome.</summary>
+    readonly ConcurrentDictionary<string, string> _abandoned = new();
+    int _lateAnswers;
+
+    /// <summary>
+    /// Answers that arrived after their caller had given up on them.
+    ///
+    /// They are delivered to the pending request rather than discarded, which is what makes the
+    /// deferred verdict honest: the connection is kept because the bridge answered, so the answer
+    /// has to exist somewhere. WHETHER THE GATEWAY SETTLES A REQUEST ON ONE IS NOT DECIDED HERE —
+    /// that is U2c-1's, and it is why this is exposed rather than consumed.
+    /// </summary>
+    public int LateAnswers => Volatile.Read(ref _lateAnswers);
+
+    /// <summary>Raised when an answer arrives after its caller has given up. See <see cref="LateAnswers"/>.</summary>
+    public event Action<BridgeFrame>? LateAnswerReceived;
+
+    /// <summary>
+    /// The caller has stopped waiting; the CONNECTION has not been judged yet, and is judged here.
+    ///
+    /// Waits out what is left of the ordinary RPC deadline. If the request is answered in that time,
+    /// or anything else is, the bridge is serving and is left alone. If nothing at all comes back,
+    /// it has answered nothing within the bound this system already calls "did not answer" — and
+    /// that is when the handle is closed so the redial can start.
+    ///
+    /// THE COST, STATED: a bridge that wedges while heartbeating is now detected at the grace rather
+    /// than at the emergency deadline — about ten seconds instead of about two. The caller is not
+    /// delayed by it; only the teardown is.
+    /// </summary>
+    void JudgeTheConnectionWhenTheGraceRunsOut(string id, string op, long startedAt)
+    {
+        _abandoned[id] = op;
+        var grace = Remaining(startedAt, _timeout);
+        var answer = _pending.TryGetValue(id, out var tcs) ? tcs.Task : Task.CompletedTask;
+
+        _ = Task.Run(async () =>
+        {
+            try { await answer.WaitAsync(grace, _cts.Token); return; }   // answered in time
+            catch (TimeoutException) { }
+            catch (Exception) { return; }                                // disposed, or cancelled
+
+            _pending.TryRemove(id, out _);
+            _abandoned.TryRemove(id, out _);
+
+            // Something else came back while we waited: the read loop is running and this one
+            // operation was simply lost or slow. A connection that is serving is not torn down.
+            if (PeerAnsweredSince(startedAt)) return;
+
+            Drop($"the ATAS bridge answered nothing within {_timeout.TotalSeconds:0}s; " +
+                 $"'{op}' is not confirmed and the bridge is not responding");
+            try { _pipeStream?.Dispose(); } catch (Exception) { /* already gone */ }
+        });
+    }
+
     /// <summary>
     /// Has the bridge ANSWERED anything since <paramref name="since"/> (a <c>TickCount64</c> stamp)?
     ///
@@ -868,7 +927,14 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// right remedy for a connection that is consuming requests and returning nothing — it is also
     /// the only thing that makes the retry this failure advises worth making.
     /// </summary>
-    bool PeerAnsweredSince(long since) => Volatile.Read(ref _lastAnswerAt) > since;
+    ///
+    /// The comparison is <c>&gt;=</c>, not <c>&gt;</c>. <see cref="Environment.TickCount64"/> has
+    /// millisecond resolution, so an answer that lands in the same tick as the caller's start stamp
+    /// is a real answer that a strict comparison throws away — and throwing it away here means
+    /// classifying a live bridge as dead and tearing the connection down (Codex C5). The direction
+    /// of that error is what settles it: counting a same-tick answer as an answer can only keep a
+    /// connection one tick longer than necessary; missing one disconnects a healthy platform.
+    bool PeerAnsweredSince(long since) => Volatile.Read(ref _lastAnswerAt) >= since;
 
     async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
     {
@@ -947,30 +1013,42 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            _pending.TryRemove(id, out _);
-
             // Timed out waiting for the answer. The frame WENT OUT, so this is the most indefinite
-            // state there is and stays UNKNOWN either way — but an emergency gets the sentence
-            // written for the owner rather than the one written for a log, and the connection's
-            // fate is decided by the PEER, not by the fact that this caller ran out of patience.
+            // state there is and stays UNKNOWN either way.
             if (!emergency)
+            {
+                _pending.TryRemove(id, out _);
                 throw new ConnectorTransportException($"ATAS did not answer '{op}' within {replyWait.TotalSeconds:0}s");
+            }
 
-            if (PeerAnsweredSince(startedAt))
-                // It answered something while we waited, so the read loop is running and this
-                // operation is merely late — busy, or behind a backlog. Dropping it would cost the
-                // reconnect and buy nothing, and the retry we advise needs somewhere to go.
-                throw new ConnectorTransportException(
-                    EmergencySentence(op, "busy", "The connection is still up — try again"));
+            // TWO BOUNDS, TWO MEANINGS, AND THIS IS WHERE THEY PART.
+            //
+            // EmergencyDeadline bounds what the CALLER waits, and nothing else. The owner has had
+            // their answer in two seconds — not confirmed, check ATAS, UNKNOWN — which is the whole
+            // point of f518251 and is unchanged.
+            //
+            // Whether the CONNECTION is dead is a different question on a different clock, and
+            // judging it here was wrong. `BridgeServer` handles frames strictly sequentially
+            // (`BridgeServer.cs:130`), so while the bridge is working on OUR emergency it cannot
+            // read, match or answer anything else — the exact signal a liveness test needs is the
+            // one it is unable to emit precisely BECAUSE it is busy with us. Measured by the round-6
+            // verifier: a bridge that had our frame in hand and answered it at 2500 ms or 3500 ms
+            // was disconnected at ~2000 ms and told the owner it was not responding. And this repo
+            // names the legitimate cause in its own words — `BridgeProtocol.cs` records that the
+            // obsolete synchronous ATAS call sites "cannot be given a deadline, so a block inside
+            // one wedges the bridge's frame loop". A >2 s synchronous call is a state this unit
+            // already expects; it must not cost a teardown.
+            //
+            // So the grace is the deadline this system ALREADY uses for "ATAS did not answer" —
+            // `_timeout`, no new number — and the verdict is deferred to it. The pending request
+            // stays registered, so an answer arriving late is delivered rather than dropped on the
+            // floor.
+            JudgeTheConnectionWhenTheGraceRunsOut(id, op, startedAt);
 
-            // It answered nothing for the whole window. Whatever else it may be doing — beating,
-            // even reading — it is not serving requests. Drop it: that closes the handle, kills any
-            // wedged write and starts the redial, so the retry this sentence asks for has a
-            // connection to run on.
-            DropStalledPeer();
+            // "Still up" is not a guess here, it is the state: nothing has been dropped, and at two
+            // seconds nothing is yet known that would justify dropping it.
             throw new ConnectorTransportException(
-                EmergencySentence(op, "not responding",
-                    "The connection has been dropped and will be retried"));
+                EmergencySentence(op, "busy", "The connection is still up — try again"));
         }
     }
 
