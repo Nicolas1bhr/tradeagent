@@ -244,6 +244,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <inheritdoc />
     public TimeSpan WorstCaseOperationPath => WorstCaseOrderPath;
 
+    /// <inheritdoc />
+    public TimeSpan EmergencyBudget => EmergencyDeadline;
+
     public string Id => "atas";
     public string DisplayName => "ATAS";
     public BridgeHello? Bridge => _hello;
@@ -974,13 +977,28 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         var startedAt = Environment.TickCount64;
         var emergency = IsRiskReducing(op) || (RiskReducingScope.IsActive && !OpensExposure(op));
 
+        // ONE DEADLINE FOR THE OPERATION, not one per RPC.
+        //
+        // A cancel-all is a read, then a resolution per order, then a leg per order, and each of
+        // them used to start its own two seconds — so the bound was paid once per RPC and the
+        // promise scaled with the size of the sweep. Measured by Codex: three replies delayed 1.9 s
+        // each made an IPC cancel-all take about 5.7 s. When a scope carries a deadline, every RPC
+        // inside it gets what is LEFT of that deadline; only a call with no operation around it
+        // starts a fresh one. `place` and `modify` are excluded from the scope entirely, so this
+        // cannot shorten them either.
+        var deadlineAt = emergency
+            ? (!OpensExposure(op) && RiskReducingScope.DeadlineAt is { } shared
+                ? shared
+                : startedAt + (long)EmergencyDeadline.TotalMilliseconds)
+            : 0L;
+
         try
         {
             // One payload field ("data") in both directions; a request-only "args" field silently
             // dropped every argument when the bridge read the frame back as a BridgeFrame.
             var outcome = await WriteFrame(_out, new { v = Versions.BridgeProtocolVersion, id, op, data = args }, ct,
-                emergency ? Remaining(startedAt, EmergencyDeadline) : WriteTimeout, emergency, FrameTimeout,
-                emergency ? startedAt + (long)EmergencyDeadline.TotalMilliseconds : null);
+                emergency ? Left(deadlineAt) : WriteTimeout, emergency, FrameTimeout,
+                emergency ? deadlineAt : null);
             if (outcome is not SendOutcome.Sent)
             {
                 _pending.TryRemove(id, out _);
@@ -1019,9 +1037,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // WHAT IS LEFT OF THE CALLER'S BUDGET, not a fresh one. An emergency that spent 1.9 s
         // getting its frame out does not then get a further ten seconds to wait for the answer —
         // that arithmetic is what produced a 10005 ms "emergency" against an idle stalled bridge.
-        var replyWait = emergency
-            ? Remaining(startedAt, EmergencyDeadline)
-            : _timeout;
+        var replyWait = emergency ? Left(deadlineAt) : _timeout;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(replyWait);
@@ -1083,6 +1099,19 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         var spent = TimeSpan.FromMilliseconds(Environment.TickCount64 - startedAt);
         var left = budget - spent;
+        return left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1);
+    }
+
+    /// <summary>
+    /// What is left until an ABSOLUTE deadline, never negative and never zero.
+    ///
+    /// A leg whose turn comes after the operation's deadline gets one millisecond, which is enough
+    /// to fail on the send gate and be reported as never sent — the point being that it FAILS
+    /// rather than being skipped, so the caller can say which orders may still be working.
+    /// </summary>
+    static TimeSpan Left(long deadlineAt)
+    {
+        var left = TimeSpan.FromMilliseconds(deadlineAt - Environment.TickCount64);
         return left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1);
     }
 
