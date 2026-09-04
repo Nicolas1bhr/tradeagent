@@ -3606,6 +3606,113 @@ public class CoidWitnessTests : IDisposable
         Assert.DoesNotContain("candidate", headline);
         Assert.Contains(CoidWitnessReport.Explanation(WitnessStanding.Noted),
                         l => l.Contains("second writer"));
+
+        // PRIOR 29: and where the cause IS attributable, it is named rather than left to the files.
+        Assert.Equal(WitnessNotes.RefusedWriter, reader.Notes);
+        Assert.Contains("a second writer was refused",
+                        CoidWitnessReport.Headline(WitnessStanding.Noted, listed[0], reader.Notes));
+    }
+
+    /// <summary>
+    /// PRIOR 29. A RECOVERY THAT WORKED IS NOT A REFUSAL, AND IT WAS BEING REPORTED AS ONE.
+    ///
+    /// `Noted` has three causes, not two: a second writer the lease turned away, a file beside the
+    /// witness that was declined — and a rewrite that never reached the disk, read back and its
+    /// acknowledgements taken into the record. The third is the recovery WORKING. Reporting it with
+    /// "something beside the witness was refused" tells an operator that something went wrong at the
+    /// exact moment the mechanism they are looking at did its job, and sends them hunting a refusal
+    /// that never happened.
+    ///
+    /// The state is built the way a machine reaches it: a session commits a claim, dies between
+    /// writing its rewrite and renaming it, and the next reader finds a temp that descends from the
+    /// committed file and carries the broker id the committed record is missing.
+    /// </summary>
+    [Fact]
+    public void A_recovered_rewrite_is_reported_as_recovered_rather_than_refused()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        var session = owner.SessionId;
+        var committed = CommittedText();
+        owner.Dispose();
+
+        // The rewrite that never landed: same session, same claim, and the acknowledgement the
+        // committed file has not got.
+        WriteTemp(generation: CommittedGeneration() + 1, predecessor: Fingerprint(committed),
+                  records: $$"""{"client_order_id":"TA-LIVE","session_id":"{{session}}","written_at":"2026-01-01T00:00:00+00:00","quantity":1,"broker_order_id":"BRK-STRANDED","identified_at":"2026-01-01T00:00:01+00:00"}""");
+        Age(Temps().Single());
+
+        var reader = Session();
+        Assert.Equal("BRK-STRANDED", reader.PriorSession("TA-LIVE")!.BrokerOrderId);
+        Assert.Equal(WitnessNotes.RecoveredRewrite, reader.Notes);
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
+
+        var headline = CoidWitnessReport.Headline(WitnessStanding.Noted, Sidecar, reader.Notes);
+        Assert.Contains("recovered", headline);
+        Assert.DoesNotContain("refused", headline);
+        Assert.DoesNotContain("declined", headline);
+        Assert.Contains(CoidWitnessReport.Explanation(WitnessStanding.Noted, reader.Notes),
+                        l => l.Contains("recovery working"));
+    }
+
+    /// <summary>
+    /// AND THE THIRD CAUSE READS AS ITSELF TOO: a file beside the witness that is not a rewrite of
+    /// it. Nothing was refused and nothing was recovered — it was declined and moved aside.
+    /// </summary>
+    [Fact]
+    public void A_declined_candidate_is_reported_as_declined_rather_than_refused()
+    {
+        var owner = Session();
+        Assert.True(owner.Submitting("TA-LIVE", "SIM", "ES", "Buy", 1m, null));
+        owner.Dispose();
+
+        WriteTempAt(File_ + ".tmp-foreign", generation: 12, predecessor: "some-other-witness-file",
+                    records: RecordJson("TA-IMPORTED", "a-dead-session"));
+        Age(File_ + ".tmp-foreign");
+
+        var reader = Session();
+        Assert.Equal(WitnessNotes.RejectedCandidate, reader.Notes);
+        Assert.Equal(WitnessStanding.Noted, CoidWitnessReport.Standing(reader));
+
+        var headline = CoidWitnessReport.Headline(WitnessStanding.Noted, Sidecar, reader.Notes);
+        Assert.Contains("declined", headline);
+        Assert.DoesNotContain("refused", headline);
+        Assert.DoesNotContain("recovered", headline);
+    }
+
+    /// <summary>
+    /// THE THREE SENTENCES ARE THREE SENTENCES, and the one that names nothing names all three
+    /// rather than picking one. A machine can be in more than one of the causes at once, and a report
+    /// that guesses in that case is the defect this replaces, one layer up.
+    /// </summary>
+    [Fact]
+    public void The_three_noted_causes_read_differently_from_each_other()
+    {
+        var log = "/x/coid-witness.errors.log";
+        string H(WitnessNotes n) => CoidWitnessReport.Headline(WitnessStanding.Noted, log, n);
+
+        var refused = H(WitnessNotes.RefusedWriter);
+        var declined = H(WitnessNotes.RejectedCandidate);
+        var recovered = H(WitnessNotes.RecoveredRewrite);
+        var unattributed = H(WitnessNotes.None);
+        var both = H(WitnessNotes.RefusedWriter | WitnessNotes.RecoveredRewrite);
+
+        Assert.Equal(4, new HashSet<string>([refused, declined, recovered, unattributed]).Count);
+        Assert.Contains("refused", refused);
+        Assert.Contains("declined", declined);
+        Assert.Contains("recovered", recovered);
+        Assert.DoesNotContain("recovered", refused);
+        Assert.DoesNotContain("refused", recovered);
+
+        // More than one cause: name none of them, and say so.
+        Assert.Equal(unattributed, both);
+        Assert.Contains("refused, declined or recovered", both);
+
+        // Each has its own explanation, and none of them is empty.
+        foreach (var n in new[] { WitnessNotes.RefusedWriter, WitnessNotes.RejectedCandidate,
+                                  WitnessNotes.RecoveredRewrite, WitnessNotes.None })
+            Assert.NotEmpty(CoidWitnessReport.Explanation(WitnessStanding.Noted, n));
+        Assert.Empty(CoidWitnessReport.Explanation(WitnessStanding.Clean, WitnessNotes.RefusedWriter));
     }
 
     /// <summary>

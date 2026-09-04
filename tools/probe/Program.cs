@@ -1064,8 +1064,9 @@ static class AtasProbe
         // least-verified thing in the unit. This is now a renderer.
         var sidecar = witness.ErrorLogPath;
         var standing = CoidWitnessReport.Standing(witness);
+        var notes = witness.Notes;
 
-        Line("WITNESS FAILURES", CoidWitnessReport.Headline(standing, sidecar ?? "<none>"));
+        Line("WITNESS FAILURES", CoidWitnessReport.Headline(standing, sidecar ?? "<none>", notes));
 
         // EVERY SIDECAR, NOT JUST THE CANONICAL ONE. A second bridge the lease turned away writes its
         // own file beside the witness, and printing only the owner's left the report describing a
@@ -1076,7 +1077,7 @@ static class AtasProbe
             Cont(file);
             foreach (var note in ReadTail(file, 10)) Cont("  " + note);
         }
-        foreach (var line in CoidWitnessReport.Explanation(standing)) Cont(line);
+        foreach (var line in CoidWitnessReport.Explanation(standing, notes)) Cont(line);
 
         var records = witness.All();
         Line("RECORDS ON FILE", records.Count.ToString());

@@ -351,6 +351,14 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     bool _noted;
 
+    /// <summary>
+    /// WHICH OF THE THREE THINGS PUT THIS MACHINE IN <see cref="WitnessStanding.Noted"/>, as far as
+    /// this run can attribute it. Accumulated as each is discovered rather than decided once, because
+    /// a machine can be in more than one at a time; when it is, the report names none of them and
+    /// lists the files instead. See <see cref="WitnessNotes"/>.
+    /// </summary>
+    WitnessNotes _notes;
+
     /// <summary>The last deciding line is the RESOLVED marker. See <see cref="GapClosed"/>.</summary>
     bool _gapClosed;
 
@@ -953,6 +961,21 @@ public sealed class CoidWitness : IDisposable
         }
     }
 
+    /// <summary>
+    /// Why <see cref="Noted"/> is true, where this run can say. <see cref="EnsureRecovered"/> is run
+    /// as well as <see cref="EnsureLoaded"/> because the recovery is the cause a READER discovers:
+    /// a stranded rewrite is adopted in memory on any read path, and that adoption is the fact.
+    /// </summary>
+    public WitnessNotes Notes
+    {
+        get
+        {
+            if (_path is null) return WitnessNotes.None;
+            try { lock (_gate) { EnsureLoaded(); EnsureRecovered(); return _notes; } }
+            catch (Exception) { return WitnessNotes.None; }
+        }
+    }
+
     /// <summary>Every record on file, newest last. For the probe and for tests; not a proof path.</summary>
     public IReadOnlyList<CoidWitnessRecord> All()
     {
@@ -1052,8 +1075,18 @@ public sealed class CoidWitness : IDisposable
             // happened to include it. Round 8 got that for free — the file it could not open was one
             // the glob had already listed — which left `Noted` false, and the token reading `io:ok`,
             // for a canonical generation whose very existence this run could not establish.
-            var set = SidecarSet(out var setUnreadable);
+            var set = SidecarSet(out var setUnreadable).ToArray();
             _noted = _sidecarUnreadable || setUnreadable || set.Any(f => HasNotes(f, out _));
+
+            // A REFUSED WRITER IS THE ONE CAUSE THAT IS VISIBLE IN THE NAMES. Its sidecar is
+            // `<canonical>-<pid>-<session>`; the canonical file and its two generations are the only
+            // other names in this glob, so anything else in the set is somebody the lease turned
+            // away. The other two causes are discovered by the candidate scan and the recovery.
+            if (ErrorLogPath is { } canonical
+                && set.Any(f => !string.Equals(f, canonical, StringComparison.Ordinal)
+                                && !string.Equals(f, canonical + RolledSuffix, StringComparison.Ordinal)
+                                && !string.Equals(f, canonical + StagingSuffix, StringComparison.Ordinal)))
+                _notes |= WitnessNotes.RefusedWriter;
 
             // THE DEGRADED STATE STAYS THE CANONICAL FILE'S QUESTION, and that is not an oversight
             // being preserved. A second bridge turned away cost no order — the refusal is what stops
@@ -1274,7 +1307,11 @@ public sealed class CoidWitness : IDisposable
         // accident — for this file it means "this product never submitted that identifier".
         //
         // A clean single recovery is not flagged: nothing was refused.
-        if (_rejected.Count > 0 || _viable.Count > 1) _noted = true;
+        if (_rejected.Count > 0 || _viable.Count > 1)
+        {
+            _noted = true;
+            _notes |= WitnessNotes.RejectedCandidate;
+        }
     }
 
     /// <summary>
@@ -1327,7 +1364,17 @@ public sealed class CoidWitness : IDisposable
         // Only a candidate that actually gave something is worth committing over and deleting — and
         // one that gave nothing is SPENT rather than pending, which ReportAndQuarantine acts on.
         _recovered = recovered;
-        if (recovered > 0) _adopted = _viable[0].Path;
+        if (recovered > 0)
+        {
+            _adopted = _viable[0].Path;
+            _notes |= WitnessNotes.RecoveredRewrite;
+            // AND A READER SAYS SO TOO. A WRITER reaches Noted for this state through the sidecar
+            // line ReportAndQuarantine writes; a reader writes nothing, so it reported a machine
+            // whose record had just been repaired as Clean — two readings of one machine
+            // disagreeing, which is the shape this unit keeps finding. The count below now rests on
+            // a file that had to be repaired to produce it, and that is what Noted is for.
+            _noted = true;
+        }
     }
 
     /// <summary>

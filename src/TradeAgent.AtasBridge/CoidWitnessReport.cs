@@ -17,6 +17,34 @@ public enum WitnessStanding
 }
 
 /// <summary>
+/// WHY THIS MACHINE IS <see cref="WitnessStanding.Noted"/> — THREE CAUSES, AND THEY ARE NOT THE SAME
+/// NEWS.
+///
+/// `Noted` means "something was refused or written down", and it was worded as if there were one way
+/// to reach it. There are three, and one of them is a SUCCESS: a rewrite that never reached the
+/// witness was read back and its acknowledgements recovered, which is the recovery working, and it
+/// was being reported as something having been "refused". A reader acts differently on each.
+///
+/// Flags rather than an enum because a machine can be in more than one of them at once; when it is,
+/// the report names none of them rather than picking one, and the sidecar files it lists say which.
+/// </summary>
+[Flags]
+public enum WitnessNotes
+{
+    /// <summary>Nothing this run could attribute. The files listed under the headline say what.</summary>
+    None = 0,
+
+    /// <summary>A second writer was refused the witness and wrote its own account beside it.</summary>
+    RefusedWriter = 1,
+
+    /// <summary>A file beside the witness was not a rewrite of it and was not adopted.</summary>
+    RejectedCandidate = 2,
+
+    /// <summary>A rewrite that never reached the witness was read back and its claims recovered.</summary>
+    RecoveredRewrite = 4
+}
+
+/// <summary>
 /// WHAT A PERSON IS TOLD ABOUT THE WITNESS, AS A PURE FUNCTION — and the reason it is not written
 /// inline in <c>tools/probe</c>, which is where it used to live.
 ///
@@ -61,21 +89,34 @@ public static class CoidWitnessReport
         Standing(witness.GapClosed, witness.Trouble is not null, witness.Noted);
 
     /// <summary>The one line beside "WITNESS FAILURES".</summary>
-    public static string Headline(WitnessStanding standing, string sidecarPath) => standing switch
+    public static string Headline(WitnessStanding standing, string sidecarPath,
+                                  WitnessNotes notes = WitnessNotes.None) => standing switch
     {
         WitnessStanding.Unresolved => $"{sidecarPath} — UNRESOLVED. THIS FILE SHOULD NOT EXIST.",
         WitnessStanding.Historical => $"{sidecarPath} — historical.",
-        // NOT "a candidate", BECAUSE Noted NOW HAS TWO CAUSES. It was written when the only way to
-        // reach this state was a temp beside the witness being declined; since the sidecar was split
-        // per writer, a second bridge that the lease turned away reaches it too. Naming the wrong one
-        // sends the reader looking for a recovery that never happened. The files are listed below, so
-        // which it was is a line away rather than a guess.
-        WitnessStanding.Noted => "no durability gap — but something beside the witness was refused.",
+        // THREE CAUSES, THREE SENTENCES, AND ONE OF THEM IS A SUCCESS. It was written when the only
+        // way to reach this state was a temp beside the witness being declined; the split per writer
+        // added a second bridge that the lease turned away, and the recovery adds a third — a rewrite
+        // that never landed, read back and adopted. Describing that one as "refused" tells an
+        // operator that something went wrong at the moment the mechanism worked. Where more than one
+        // cause is live, or none can be attributed, none is named and the files listed below say
+        // which.
+        WitnessStanding.Noted => notes switch
+        {
+            WitnessNotes.RefusedWriter =>
+                "no durability gap — but a second writer was refused this witness.",
+            WitnessNotes.RejectedCandidate =>
+                "no durability gap — but a file beside the witness was declined.",
+            WitnessNotes.RecoveredRewrite =>
+                "no durability gap — but a rewrite that never landed was recovered.",
+            _ => "no durability gap — but something beside the witness was refused, declined or recovered."
+        },
         _ => "none recorded"
     };
 
     /// <summary>What the line above means, in the words the operator gets.</summary>
-    public static string[] Explanation(WitnessStanding standing) => standing switch
+    public static string[] Explanation(WitnessStanding standing,
+                                       WitnessNotes notes = WitnessNotes.None) => standing switch
     {
         WitnessStanding.Unresolved =>
         [
@@ -88,14 +129,38 @@ public static class CoidWitnessReport
             "gap is closed and nothing below is provisional on account of this file. It is",
             "kept as history; delete it once it has been read."
         ],
-        WitnessStanding.Noted =>
-        [
-            "Either a file beside the witness was not a rewrite of it and was not adopted, or a",
-            "second writer was refused the witness and wrote its own account of that — the files",
-            "listed above say which. Nothing was lost either way: a refused writer's order was not",
-            "sent, and a declined candidate displaced nothing. But it does mean a count of zero",
-            "below is not the same as 'nothing was ever recorded here'."
-        ],
+        WitnessStanding.Noted => notes switch
+        {
+            WitnessNotes.RefusedWriter =>
+            [
+                "A second writer asked for this witness, was refused it, and wrote its own account",
+                "of what it could not record — the files listed above include it. Nothing was lost:",
+                "the refusal is what stopped that order being sent. But it does mean a count of zero",
+                "below is not the same as 'nothing was ever recorded here'."
+            ],
+            WitnessNotes.RejectedCandidate =>
+            [
+                "A file beside the witness was not a rewrite of it — wrong lineage, no records, or",
+                "unreadable — so it was not adopted, and it was moved aside rather than deleted.",
+                "Nothing was lost: it displaced nothing. But it does mean a count of zero below is",
+                "not the same as 'nothing was ever recorded here'."
+            ],
+            WitnessNotes.RecoveredRewrite =>
+            [
+                "A rewrite of the witness that never reached the disk was found beside it, checked",
+                "against the committed file, and its acknowledgements taken back into the record.",
+                "That is the recovery working, and nothing was refused. It is noted because the",
+                "count below now rests on a file that had to be repaired to produce it."
+            ],
+            _ =>
+            [
+                "Something beside the witness was refused, declined or recovered — a second writer",
+                "turned away, a file that was not a rewrite of this one, or a rewrite that never",
+                "landed and was read back. The files listed above say which. Nothing was lost in any",
+                "of the three, but a count of zero below is not the same as 'nothing was ever",
+                "recorded here'."
+            ]
+        },
         _ => []
     };
 
