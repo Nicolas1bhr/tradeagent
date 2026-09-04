@@ -1658,24 +1658,19 @@ public sealed class TradingGateway : IAsyncDisposable
     ///   - a modify is applied only if the target carries the values that were asked for;
     ///   - a cancel-all is judged by what is left on the account's book.
     /// </summary>
-    /// <summary>
-    /// What the target looked like the last time this request was judged, and since when. A cancel
-    /// that "did not land" is only proved by a target that stayed put: an acknowledgement can arrive
-    /// at the platform after our own RPC gave up, so ONE sighting of a working order proves nothing.
-    /// </summary>
-    readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Signature, DateTimeOffset Since)> _settleWatch = new();
-
-    static string SignatureOf(OrderInfo o) =>
-        $"{o.State}|{o.Quantity}|{o.FilledQuantity}|{o.LimitPrice}|{o.StopPrice}";
-
-    /// <summary>True once the target has shown the SAME face for a whole grace window.</summary>
-    bool HeldStill(string requestId, string signature)
-    {
-        var now = Now;
-        var entry = _settleWatch.AddOrUpdate(requestId, _ => (signature, now),
-            (_, prev) => prev.Signature == signature ? prev : (signature, now));
-        return entry.Signature == signature && now - entry.Since >= _opt.AbsenceGrace;
-    }
+    // THERE IS NO "HELD STILL" WATCH HERE ANY MORE, AND ITS ABSENCE IS THE POINT.
+    //
+    // Round 2 kept a signature of the target and the time it was first seen, and read "the same
+    // face for a whole grace window" as proof that the cancellation had been refused. That is the
+    // rule inverted. An order that has not moved is an order the platform has said NOTHING about;
+    // stillness is the absence of an answer, and no amount of waiting turns an absent answer into a
+    // definite one. The failure it produced is the one this whole method exists to prevent: a live
+    // cancellation recorded as definitely REJECTED, the flag off, trading resumed, while the target
+    // sat working at the platform with our acknowledgement still in flight to it.
+    //
+    // What settles a cancel is what the platform actually asserts about the target — terminal, or
+    // absent past the grace on a backend that can prove its history — a definite refusal of the
+    // cancel itself, or the owner's card. Nothing else, however long it is watched.
 
     /// <summary>A state the platform is asserting, as opposed to one that says it does not know.</summary>
     static bool IsDefinite(ExecutionState s) =>
@@ -1694,9 +1689,9 @@ public sealed class TradingGateway : IAsyncDisposable
     ///   - absence only counts after AbsenceGrace has passed since this operation was dispatched,
     ///     exactly as it does for a place;
     ///   - a target that is UNKNOWN, DISPATCHING, RECONCILING or CANCEL_PENDING decides nothing;
-    ///   - "the cancel did not land" needs a target that is terminal, or one that has held still
-    ///     across a whole grace window — one sighting of a working order is not proof, because the
-    ///     platform's acknowledgement can arrive after our RPC gave up;
+    ///   - "the cancel did not land" needs a TERMINAL target, a definite refusal, or the owner's
+    ///     card. A target that is merely working — for one sighting or for an hour of them — is the
+    ///     platform saying nothing, because its acknowledgement can arrive after our RPC gave up;
     ///   - a modify is confirmed only by the target carrying what was asked for; it is never recorded
     ///     as a definite failure without a definite refusal;
     ///   - a cancel-all is judged on the orders the press captured, not on whatever is live now.
@@ -1713,7 +1708,6 @@ public sealed class TradingGateway : IAsyncDisposable
             var r = _requests.Transition(req.RequestId, ExecutionState.RECONCILING, to,
                 needsReconciliation: false, markReconciled: true, error: why);
             ClearLatch(req.RequestId);
-            _settleWatch.TryRemove(req.RequestId, out _);
             _log.Engineering("Reconciler", "target_reconciled", requestId: req.RequestId,
                 metadataJson: Json.Write(new { intent = req.Intent.ToString(), state = to.ToString(), why }));
             return r;
@@ -1757,16 +1751,12 @@ public sealed class TradingGateway : IAsyncDisposable
                 return (true, "the orders this press captured are no longer working");
             }
 
-            if (captured.Count == 0)
-                return (false, $"{live.Count} order(s) are working and none can be attributed to this press");
-
-            var fingerprint = string.Join(";", live.OrderBy(o => o.ConnectorOrderId).Select(SignatureOf));
-            if (!HeldStill(req.RequestId, fingerprint))
-                return (false, $"{live.Count} of the captured order(s) are still working; waiting to see them hold still");
-
-            Resolve(ExecutionState.REJECTED,
-                $"{live.Count} captured order(s) are still working, so the cancel-all did not take effect");
-            return (true, $"{live.Count} captured order(s) still working; the cancel-all did not take effect");
+            // Working captured orders leave the press unconfirmed, and they leave it there: the
+            // platform has not said the sweep failed, and it is the only thing that can. The press
+            // settles when the captured orders reach a definite end, or on the owner's card.
+            return (false, captured.Count == 0
+                ? $"{live.Count} order(s) are working and none can be attributed to this press"
+                : $"{live.Count} captured order(s) are still working, which is not the platform refusing the sweep");
         }
 
         var target = stored.Order;
@@ -1796,11 +1786,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 return (true, $"order {target} is {match.State}; the cancellation did not take effect");
             }
 
-            if (!HeldStill(req.RequestId, SignatureOf(match)))
-                return (false, $"order {target} is still working; waiting to see it hold still before calling the cancellation failed");
-
-            Resolve(ExecutionState.REJECTED, $"order {target} is still working; the cancellation did not take effect");
-            return (true, $"order {target} is still working; the cancellation did not take effect");
+            // Working, and that is all it is. Not an answer about the cancel, now or after any
+            // number of grace windows — see the note where the settle watch used to be.
+            return (false, $"order {target} is {match.State}, which is not the platform refusing the cancellation");
         }
 
         // ---- a modify

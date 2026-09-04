@@ -1069,21 +1069,18 @@ public class TargetedReconciliationTests
 
         var result = await gw.ReconcileAsync();
 
-        // The target is the evidence, and it says the cancel did not land.
+        // The target is working, which is the one thing this must never read as "the cancel landed".
+        // It is not read as "the cancel was refused" either: the platform has asserted nothing about
+        // the cancel, so the record stays unconfirmed and trading stays paused. Only a terminal
+        // target, a definite refusal or the owner's card ends it.
         Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
         var record = gw.GetRequest("t-cancel")!;
         Assert.NotEqual(ExecutionState.CANCELLED, record.State);
-        Assert.Equal(ExecutionState.REJECTED, record.State);
-        Assert.False(record.NeedsReconciliation);
-        Assert.Contains("still working", record.LastError);
-        Assert.True(result.Clean, string.Join("; ", result.Details));
-
-        // Nothing is unconfirmed any more — the answer was definite — so the agent may trade, and it
-        // may try the cancellation again under a new request id.
-        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
-        var retry = await gw.CancelAsync(new AgentContext("a"), "t-cancel-2", placed.ConnectorOrderId!);
-        Assert.Equal(ExecutionState.CANCELLED, retry.State);
-        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders.Single().State);
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+        Assert.Contains(result.Details, d => d.Contains("not the platform refusing the cancellation"));
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
     [Fact]
@@ -1193,13 +1190,16 @@ public class TargetedReconciliationTests
 
         var result = await gw.ReconcileAsync();
 
-        // An order is still working, so the sweep demonstrably did not happen.
+        // An order is still working, so the sweep certainly did not empty the book — and that is as
+        // far as the evidence goes. It is not the platform refusing the press, so the press stays
+        // unconfirmed rather than being recorded as definitely failed.
         Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
         var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
         Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
-        Assert.Equal(ExecutionState.REJECTED, umbrella.State);
-        Assert.Contains("still working", umbrella.LastError);
-        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.NotEqual(ExecutionState.REJECTED, umbrella.State);
+        Assert.True(umbrella.NeedsReconciliation);
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+        Assert.Contains(result.Details, d => d.Contains("not the platform refusing the sweep"));
     }
 
     [Fact]
@@ -1892,9 +1892,20 @@ public class ConservativeTargetEvidenceTests
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
-    // R1d — "still working" is only proof of failure once it has held still
+    /// <summary>
+    /// R1d — HOLDING STILL IS NOT A VERDICT, and it used to be one.
+    ///
+    /// Round 2 read "the same face for a whole grace window" as proof that the cancellation had been
+    /// refused, and wrote REJECTED on it. But an order that has not moved is an order the platform
+    /// has said nothing about: it is the ABSENCE of an answer, and the rule is that only positive,
+    /// definite evidence about the target takes a request out of the unconfirmed set. Waiting longer
+    /// does not turn silence into a refusal — it only makes a still book look like one. The
+    /// consequence was a live cancellation recorded as definitely failed, the flag off and trading
+    /// resumed, while the target sat working at the platform and the acknowledgement was still in
+    /// flight. What settles it is a terminal target, a definite refusal, or the owner's card.
+    /// </summary>
     [Fact]
-    public async Task A_working_target_must_hold_still_before_the_cancel_is_called_failed()
+    public async Task A_working_target_never_condemns_the_cancel_however_still_it_holds()
     {
         var (gw, c, db, placed, clock) = await Resting();
         using var dbh = db;
@@ -1906,19 +1917,103 @@ public class ConservativeTargetEvidenceTests
         Assert.Equal(ExecutionState.RECONCILING, gw.GetRequest("r3-settle")!.State);
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
 
-        // It moved: the clock is reset, and it is still not evidence.
+        // It moved: not evidence.
         c.RewriteBook = o => o with { FilledQuantity = 0.5m, State = ExecutionState.PARTIALLY_FILLED };
         clock.Advance(TimeSpan.FromSeconds(30));
         Assert.False((await gw.ReconcileAsync()).Clean);
         Assert.NotEqual(ExecutionState.REJECTED, gw.GetRequest("r3-settle")!.State);
 
-        // Unchanged across the whole window: now it is.
+        // Unchanged across a whole window, and across ten more minutes of them: STILL not evidence.
         clock.Advance(TimeSpan.FromSeconds(30));
-        var settled = await gw.ReconcileAsync();
+        Assert.False((await gw.ReconcileAsync()).Clean);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        var late = await gw.ReconcileAsync();
 
-        Assert.True(settled.Clean, string.Join("; ", settled.Details));
-        Assert.Equal(ExecutionState.REJECTED, gw.GetRequest("r3-settle")!.State);
-        Assert.Contains("did not take effect", gw.GetRequest("r3-settle")!.LastError);
+        var record = gw.GetRequest("r3-settle")!;
+        Assert.False(late.Clean, string.Join("; ", late.Details));
+        Assert.NotEqual(ExecutionState.REJECTED, record.State);
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION, one: a target the platform takes to a terminal state IS an answer, and
+    /// it settles the cancel exactly as before — the order filled, so the cancellation definitely
+    /// did not take effect.
+    /// </summary>
+    [Fact]
+    public async Task A_target_the_platform_takes_to_a_terminal_state_still_settles_the_cancel()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, "r3-terminal", placed.ConnectorOrderId!);
+        c.RewriteBook = o => o with { State = ExecutionState.FILLED, FilledQuantity = o.Quantity };
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest("r3-terminal")!;
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.REJECTED, record.State);
+        Assert.Contains("did not take effect", record.LastError);
+        Assert.False(record.NeedsReconciliation);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION, two: the owner's card is the way out of a cancel no machine can judge,
+    /// so refusing the stillness verdict does not strand the record forever.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_card_still_settles_a_cancel_the_platform_will_not_judge()
+    {
+        var (gw, c, db, placed, clock) = await Resting();
+        using var dbh = db;
+        await LoseACancel(gw, c, "r3-card", placed.ConnectorOrderId!);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.False((await gw.ReconcileAsync()).Clean);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        gw.ForceResolve("r3-card", ExecutionState.REJECTED, "checked in ATAS: the order is still working");
+        await gw.RefreshHealthAsync();   // the card's own screen does this; ForceResolve does not resume trading by itself
+
+        Assert.Empty(gw.Unreconciled());
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// The press is judged by the same rule as one cancel: captured orders that are merely still
+    /// working are the platform not answering, not the platform refusing the sweep.
+    /// </summary>
+    [Fact]
+    public async Task Captured_orders_that_are_merely_still_working_do_not_condemn_the_press()
+    {
+        var (clock, options) = Clocked();
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options);
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "r3-ca-still",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        c.CancelAllDoesNotReachTheBook = true;                  // the sweep never touched the book...
+        c.ThrowAfterCancelAll = new ConnectorTransportException("wire down after the sweep");
+        await Assert.ThrowsAsync<ConnectorTransportException>(() => gw.OperatorCancelAllAsync());
+        c.ThrowAfterCancelAll = null;                           // ...and the answer was lost too
+        c.CancelAllDoesNotReachTheBook = false;
+
+        for (var i = 0; i < 3; i++)
+        {
+            Assert.False((await gw.ReconcileAsync()).Clean);
+            clock.Advance(TimeSpan.FromSeconds(30));
+        }
+        var late = await gw.ReconcileAsync();
+
+        var umbrella = Assert.Single(gw.Requests.Query("intent='CANCEL_ALL'"));
+        Assert.False(late.Clean, string.Join("; ", late.Details));
+        Assert.NotEqual(ExecutionState.REJECTED, umbrella.State);
+        Assert.NotEqual(ExecutionState.CANCELLED, umbrella.State);
+        Assert.Equal(ExecutionState.WORKING, c.Inner.Broker.Orders.Single().State);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 
     // R1e — a cancel-all is judged on the orders the press captured

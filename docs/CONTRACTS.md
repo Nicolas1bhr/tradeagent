@@ -337,10 +337,13 @@ derived from that one rule:
   the operation's own dispatch, on a connector that can prove its own history. Then a cancel whose
   target does not exist is `CANCELLED`.
 - **A target that is `UNKNOWN`, `DISPATCHING`, `RECONCILING` or `CANCEL_PENDING` decides nothing.**
-- **"The cancel did not take effect" needs a terminal target, or one that has held still** — the same
-  state, quantity, fills and prices — across a whole grace window. One sighting of a working order is
-  not proof: the platform's acknowledgement can arrive after TradeAgent's own RPC gave up. Only then
-  is the request `REJECTED`, and the agent may ask again under a new request id.
+- **"The cancel did not take effect" needs a TERMINAL target, a definite refusal, or the owner's
+  card.** A target that is merely working is not proof, and it does not become proof by holding
+  still: an order that has not moved is an order the platform has said nothing about, and the
+  platform's acknowledgement can arrive after TradeAgent's own RPC gave up. Only a definite end
+  makes the request `REJECTED`, after which the agent may ask again under a new request id;
+  otherwise it stays unconfirmed and trading stays paused. The same rule judges a cancel-all: its
+  captured orders still working leave the press unconfirmed rather than condemning it.
 - **A modify is `ACKNOWLEDGED` only if the target carries what was asked for**, and is never recorded
   as a definite failure without a definite refusal. Prices are judged on the instrument's tick grid:
   an on-grid price within one tick of the request is the request, whichever way the platform rounded.
