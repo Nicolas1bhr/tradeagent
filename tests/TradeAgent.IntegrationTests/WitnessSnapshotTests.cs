@@ -902,4 +902,104 @@ public class WitnessSnapshotTests : IDisposable
         Assert.False(stuck.GapClosed);
         stuck.Dispose();
     }
+
+    // ================================================ U14b item 2, the fifth crash point inside act 1
+
+    /// <summary>
+    /// U14b ITEM 2. THE CARRY WRITE USED TO EMPTY THE FILE HOLDING THE ONLY COPY OF THE MARKER.
+    ///
+    /// Act 1 opened <c>log.new</c> with <c>FileMode.Create</c>. <c>log.new</c> is exactly the file a
+    /// rotation that stopped at crash point 1 leaves the unresolved line in, so the FIRST thing the
+    /// next rotation did was truncate it — and a transient IO error between that open and the write
+    /// destroyed the only copy. Worse than losing it: the retry then recomputed the carry from the
+    /// emptied file, found nothing unresolved, and rotated a set that reads as healthy. A durability
+    /// gap disappears by way of a write that failed.
+    ///
+    /// The seam here is production's own failure mode — open the destination, truncate it, then die
+    /// — and the assertion is taken INSIDE that failure as well as after the retry, because "the
+    /// marker is present in every state" is the claim and the failed state is one of them.
+    /// </summary>
+    [Fact]
+    public void A_carry_write_that_fails_after_it_opens_does_not_empty_the_only_copy_of_the_marker()
+    {
+        Seed();
+        // Crash point 1's leftover: `.new` holds the only unresolved line there is, and the current
+        // log is over the cap, so the next append rotates.
+        File.WriteAllText(Sidecar + ".new", Carried());
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+        Assert.NotNull(Session().Trouble);
+
+        var attempts = 0;
+        var insideTheFailure = "";
+        var witness = new CoidWitness(File_, writeSidecar: (path, text) =>
+        {
+            if (++attempts == 1)
+            {
+                using (new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)) { }
+                insideTheFailure = Everything();
+                throw new IOException("the device is full");
+            }
+            File.WriteAllText(path, text);
+        });
+
+        WriteForeignLeftover(1);
+        Assert.True(witness.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        witness.Dispose();
+
+        Assert.Equal(2, attempts);                                   // the transient error was retried
+        Assert.Contains("TA-GAP", insideTheFailure);                 // and the marker survived it
+        Assert.Contains("TA-GAP", Everything());                     // the retry did not restate an emptied file
+        // Nothing is asserted about Trouble afterwards: this witness went on to commit cleanly, and a
+        // clean commit legitimately writes the RESOLVED marker that closes the gap. What must not
+        // happen is the gap disappearing because the file holding it was emptied, which is what the
+        // two lines above measure.
+    }
+
+    /// <summary>
+    /// THE SAME RULE WITHOUT A SEAM ANYWHERE NEAR IT: production's own writer refuses a name that is
+    /// occupied rather than truncating it. The name act 1 will choose is squatted here by a file
+    /// holding a marker; <c>FileMode.CreateNew</c> refuses it, the rotation is retried under the next
+    /// name, and the marker is still on the disk afterwards. With <c>FileMode.Create</c> the squatter
+    /// is emptied, filled with an empty carry and renamed away, taking the marker with it.
+    /// </summary>
+    [Fact]
+    public void The_carry_write_refuses_a_name_that_is_already_occupied_rather_than_emptying_it()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, new string('x', 70 * 1024) + Environment.NewLine);
+
+        var witness = new CoidWitness(File_);
+        var occupied = $"{Sidecar}.new-{Environment.ProcessId}-{witness.SessionId[..8]}-1";
+        File.WriteAllText(occupied, Gap(9));
+
+        WriteForeignLeftover(1);
+        Assert.True(witness.Submitting("TA-NEXT", "SIM", "ES", "Buy", 1m, null));
+        witness.Dispose();
+
+        Assert.Contains("TA-GAP", Everything());
+    }
+
+    /// <summary>
+    /// AND THE TEMP IS THIS WRITER'S OWN FILE, NOT A STRANGER'S. Anything in the set that is not one
+    /// of the five generations is a writer the lease turned away — that is how <c>RefusedWriter</c>
+    /// is decided — so a rotation temp left behind by an attempt that died must not make this
+    /// machine report a second bridge that was never there.
+    /// </summary>
+    [Fact]
+    public void A_rotation_temp_left_behind_is_not_reported_as_a_refused_writer()
+    {
+        Seed();
+        File.WriteAllText(Sidecar, Gap(9));
+        var witness = new CoidWitness(File_);
+        File.WriteAllText($"{Sidecar}.new-{Environment.ProcessId}-{witness.SessionId[..8]}-7", Carried());
+
+        Assert.False(witness.Notes.HasFlag(WitnessNotes.RefusedWriter));
+        witness.Dispose();
+
+        // The control: a genuine refused writer's file, which IS reported.
+        File.WriteAllText($"{Sidecar}-9999-deadbeef", Gap(9));
+        var reader = Session();
+        Assert.True(reader.Notes.HasFlag(WitnessNotes.RefusedWriter));
+        reader.Dispose();
+    }
 }

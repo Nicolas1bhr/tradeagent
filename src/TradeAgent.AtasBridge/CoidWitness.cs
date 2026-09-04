@@ -398,6 +398,17 @@ public sealed class CoidWitness : IDisposable
     long _sidecarBytes = -1;
 
     /// <summary>
+    /// HOW MANY ROTATIONS THIS INSTANCE HAS ATTEMPTED, and therefore the last part of the name act 1
+    /// writes. It is what makes that name unique per ATTEMPT rather than per file: an attempt that
+    /// died after opening its temp leaves that name occupied, and a retry reusing it would have to
+    /// truncate — which is the whole of the finding. See <see cref="Rotate"/>.
+    /// </summary>
+    int _rotations;
+
+    /// <summary>The session id, clipped, for the names this instance owns.</summary>
+    readonly string _session8;
+
+    /// <summary>
     /// WHY THIS RUN WILL NOT APPEND TO ITS SIDECAR, or null. A rotation that stopped after its
     /// current log was rolled aside leaves <c>log.new</c> holding everything and no current log at
     /// all; <see cref="Resume"/> finishes it before any append, and when it CANNOT the append is
@@ -643,6 +654,7 @@ public sealed class CoidWitness : IDisposable
         _path = path;
         _cap = cap < 1 ? 1 : cap;
         SessionId = string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("n") : sessionId;
+        _session8 = SessionId.Length >= 8 ? SessionId[..8] : SessionId;
         _replace = replace ?? DefaultReplace;
         _open = open ?? DefaultOpen;
         _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
@@ -680,7 +692,18 @@ public sealed class CoidWitness : IDisposable
     /// copy. <c>Flush(flushToDisk: true)</c> is what makes "written before destroyed" a fact about
     /// the disk rather than about this process's view of it.
     /// </summary>
-    static void DefaultWriteSidecar(string path, string text) => WriteDurably(path, text, FileMode.Create);
+    /// <summary>
+    /// CREATE-NEW, NOT CREATE, AND THAT IS THE FIFTH CRASH POINT RATHER THAN A PREFERENCE.
+    ///
+    /// Its only caller is <see cref="Rotate"/>'s act 1, which now writes a name unique to the
+    /// attempt. <c>FileMode.Create</c> would TRUNCATE whatever it found there, so a name left
+    /// occupied by an earlier attempt — or by an earlier build's <c>log.new</c>, which is what this
+    /// used to be handed — is emptied before a single byte is written, and one transient IO error
+    /// after that open destroys the only copy of an unresolved marker. Refusing to open an occupied
+    /// name turns that into a failed rotation, which the retry above simply performs again under the
+    /// next name.
+    /// </summary>
+    static void DefaultWriteSidecar(string path, string text) => WriteDurably(path, text, FileMode.CreateNew);
 
     /// <summary>The real rename. One operation, so a reader sees one name or the other.</summary>
     static void DefaultMoveSidecar(string source, string destination, bool overwrite) =>
@@ -1794,7 +1817,29 @@ public sealed class CoidWitness : IDisposable
         var rolled = log + RolledSuffix;
         var second = log + SecondSuffix;
 
-        _writeSidecar(pending, carry);
+        // ACT 1 — THE CARRY, INTO A NAME NOTHING ELSE HAS, AND THEN ONTO `.new` IN ONE OPERATION.
+        //
+        // THE FIFTH CRASH POINT. This used to open `log.new` itself with `FileMode.Create`, so the
+        // first thing act 1 did was EMPTY it — and `log.new` is exactly the file a rotation that
+        // stopped at crash point 1 left the only copy of the unresolved marker in. One transient IO
+        // error between the open and the write and that copy was gone; the retry then recomputed the
+        // carry from the emptied file, found nothing unresolved, and rotated a clean-looking set. A
+        // durability gap became invisible by way of a failed write.
+        //
+        // So nothing that is already there is ever truncated. An existing `log.new` is either
+        // COMPLETED (Resume, above) or READ as part of the snapshot the carry is computed from, and
+        // the replacement is built under a name unique to this attempt — unique to the ATTEMPT, so a
+        // retry does not reuse a name its predecessor may have left occupied — and moved onto
+        // `log.new` in one operation. Every failure before that move leaves the set exactly as the
+        // snapshot found it, which is why the retry's own snapshot agrees with this one.
+        //
+        // The temp is inside the reader's glob, so an attempt that dies between the write and the
+        // move leaves a file a reader reads rather than one nobody sees. It is not one of the five
+        // GENERATIONS: its content is a restatement of a line that is still in the set, so nothing
+        // is lost by not deciding from it, and a stale one cannot resurrect a gap that was closed.
+        var temp = $"{pending}-{Environment.ProcessId}-{_session8}-{++_rotations}";
+        _writeSidecar(temp, carry);
+        _moveSidecar(temp, pending, true);
 
         // FROM HERE THE SET CAN BE HALF MOVED, so this run stops believing its own byte count. A
         // negative count is what sends the next append through Resume with a fresh snapshot — which
@@ -2008,7 +2053,8 @@ public sealed class CoidWitness : IDisposable
         // set that is not one of the canonical generations is somebody the lease turned away. The
         // other two causes are discovered by the candidate scan and by the recovery.
         var family = new HashSet<string>(Generations(canonical), StringComparer.Ordinal);
-        if (_sidecars.Any(f => !family.Contains(f))) _diskNotes |= WitnessNotes.RefusedWriter;
+        if (_sidecars.Any(f => !family.Contains(f) && !IsRotationTemp(canonical, f)))
+            _diskNotes |= WitnessNotes.RefusedWriter;
 
         // THE DEGRADED STATE IS THE CANONICAL FILE'S QUESTION, and that is not an oversight being
         // preserved. A second bridge turned away cost no order — the refusal is what stops the order
@@ -2044,6 +2090,14 @@ public sealed class CoidWitness : IDisposable
     /// generation, so ordering them after the current log is what makes a rotation that is followed
     /// by a clean commit read as resolved: the newest word is always the current log's.
     /// </summary>
+    /// <summary>
+    /// The name act 1 builds the next current log under. In the canonical file's own family — it is
+    /// this writer's, not a refused writer's — but NOT one of the five generations: see
+    /// <see cref="Rotate"/> for why nothing decides from it.
+    /// </summary>
+    static bool IsRotationTemp(string log, string file) =>
+        file.StartsWith(log + PendingSuffix + "-", StringComparison.Ordinal);
+
     static IEnumerable<string> Generations(string log)
     {
         yield return log;
