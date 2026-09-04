@@ -1454,6 +1454,60 @@ public class ConnectorSendDeadlineTests
         Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, record.Outcome));
     }
 
+    /// <summary>
+    /// A CALLER WHO GIVES UP WHILE STILL QUEUED FOR THE SEND GATE SENT NOTHING, AND SAYING OTHERWISE
+    /// COSTS A RECONCILIATION FOR A FRAME THAT NEVER EXISTED (Codex round-10 F1).
+    ///
+    /// Every OTHER way out of the gate wait already reports `NothingWritten` and can prove it — the
+    /// operation was already over, our own backlog was in the way, the peer had stopped reading. The
+    /// gate is a semaphore, so the frame is not built and not one byte of it can exist until the
+    /// wait returns TRUE. Cancellation is simply a fourth way of not getting it.
+    ///
+    /// It was the one exit that took the outer catch instead, which records the fail-closed answer
+    /// for everything it cannot identify — right as a default and wrong here, because this exit CAN
+    /// be identified. The cost is not cosmetic: `PossiblyWritten` makes the leg
+    /// <c>sent-not-confirmed</c>, which sets `needs_reconciliation` and pauses all further execution
+    /// on an order the connector never touched.
+    ///
+    /// The gate is held by an oversized placement against a peer that reads nothing, so the cancel
+    /// is unambiguously still queued — and the peer's byte count is the premise, asserted.
+    /// </summary>
+    [Fact]
+    public async Task A_cancellation_that_never_got_the_send_gate_reports_that_nothing_was_written()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.HeartbeatingButNotReading(pipe, Cred().Secret, TimeSpan.Zero);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-gate-cancelled", "ATAS-WEDGED", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+        Observe([stuck]);
+        await Task.Delay(300);   // the placement owns the gate and the peer is taking nothing
+        var acceptedBefore = peer.BytesRead;
+
+        using var caller = new CancellationTokenSource();
+        var record = new TransportRecord();
+        Task cancel;
+
+        // THIRTY SECONDS, so the gate wait cannot expire on its own: the only thing that can end
+        // this call is the caller's token, which is what the test is about.
+        using (TransportLedger.Attach(record))
+        using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
+            cancel = connector.CancelOrderAsync("FB-1", caller.Token);
+
+        await Task.Delay(200);
+        await caller.CancelAsync();
+        await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // The premise: the peer took nothing while the cancel was queued, so the gate was still
+        // held by the placement and this frame was never begun.
+        Assert.Equal(acceptedBefore, peer.BytesRead);
+        Assert.Equal(TransportOutcome.NothingWritten, record.Outcome);
+        Assert.Equal("not-sent", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, record.Outcome));
+    }
+
     sealed class BridgePeer : IAsyncDisposable
     {
         /// <summary>
