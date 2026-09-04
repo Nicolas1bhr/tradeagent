@@ -712,7 +712,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new
         {
             cancelled = landed,
-            attempted = results.Count,
+            // COUNTED FROM THE OUTCOMES, so it cannot disagree with them. It was the number of legs
+            // holding a RECORD, which counts a leg that wrote its record and never dispatched — the
+            // one shape Codex found reporting `attempted` for something nothing was attempted on.
+            attempted = legs.Count(l => l.Attempted),
             // Named rather than inferred: anything not cancelled is still out there, and the agent
             // has to be able to see which without diffing two lists.
             not_cancelled = results.Where(r => r.State is not ExecutionState.CANCELLED)
@@ -723,34 +726,102 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         };
     }
 
-    /// <summary>What happened to one leg of a sweep, from the point of view of somebody stopping.</summary>
+    /// <summary>
+    /// What happened to one leg of a sweep, from the point of view of somebody stopping — AND ONE
+    /// WORD PER RECORD STATE, so the sentence and the record cannot say different things.
+    ///
+    /// There were three words for six situations, and two of them were lies. `RefuseCancel` makes a
+    /// broker refuse a cancellation definitively; the gateway records REJECTED, which is as final as
+    /// an answer gets, and the reply said <c>sent-not-confirmed</c> — sending the owner to reconcile
+    /// something that needs no reconciling. And a target resolution that expired before
+    /// <c>_requests.TryCreate</c> ran also said <c>sent-not-confirmed</c>, with <c>attempted=0</c>
+    /// and NO RECORD AT ALL: a claim that a leg reached the wire when nothing had (Codex round-8 F1).
+    ///
+    /// The rule that replaces them: <see cref="Classify"/> reads the outcome OFF the record, so a
+    /// word can only be produced by the state that means it. <c>sent-not-confirmed</c> now really
+    /// does imply UNKNOWN and reconciliation, which is the guarantee Codex asked for and the whole
+    /// reason the word exists.
+    /// </summary>
     enum LegOutcome
     {
-        /// <summary>It reached the broker and the broker said it is done.</summary>
+        /// <summary>The broker said this leg's own intent is done: CANCELLED, or FILLED.</summary>
         Confirmed,
+
+        /// <summary>
+        /// The broker DEFINITIVELY refused it — REJECTED. Nothing is working from this leg and there
+        /// is nothing to reconcile. It is the only outcome allowed to be definite about a failure
+        /// (safety rule 3 on <c>IAtasAdapter</c>), and it was being reported as an unknown.
+        /// </summary>
+        Rejected,
+
+        /// <summary>
+        /// It reached the broker, the broker answered, and the order this leg is about is STILL OUT
+        /// THERE — WORKING, ACKNOWLEDGED, PARTIALLY_FILLED or CANCEL_PENDING. A `close-all` leg that
+        /// rests rather than filling is the ordinary way to get here.
+        ///
+        /// It is a fifth word where the bounce named four, and it is needed by the bounce's own rule:
+        /// without it a WORKING leg falls into <see cref="NotConfirmed"/>, which promises an UNKNOWN
+        /// record and reconciliation for an order that is neither.
+        /// </summary>
+        StillWorking,
 
         /// <summary>It was sent and the outcome is not known. The gateway has recorded UNKNOWN for it.</summary>
         NotConfirmed,
 
-        /// <summary>The operation ran out of time before this leg was issued. It was never sent.</summary>
+        /// <summary>
+        /// It never reached the wire: no record was written, or one was written and nothing was ever
+        /// dispatched from it. Nothing needs reconciling, and the owner has been told which orders
+        /// may still be working.
+        /// </summary>
         NotSent,
 
         /// <summary>There was nothing for this leg to act on. Not a failure, and not a closure either.</summary>
         NothingToDo
     }
 
+    /// <summary>
+    /// THE RECORD DECIDES THE WORD. Every arm here is one record state or a group that means one
+    /// thing, and nothing else may construct a <see cref="LegOutcome"/> from a record.
+    /// </summary>
+    static LegOutcome Classify(ExecutionRequest record) => record.State switch
+    {
+        ExecutionState.CANCELLED or ExecutionState.FILLED => LegOutcome.Confirmed,
+
+        ExecutionState.REJECTED => LegOutcome.Rejected,
+
+        // Written but never dispatched. `TryCreate` runs before the wire is touched, so a record
+        // still in one of these states is a leg that got no further than this process.
+        ExecutionState.CREATED or ExecutionState.AWAITING_APPROVAL => LegOutcome.NotSent,
+
+        ExecutionState.WORKING or ExecutionState.ACKNOWLEDGED
+            or ExecutionState.PARTIALLY_FILLED or ExecutionState.CANCEL_PENDING => LegOutcome.StillWorking,
+
+        // DISPATCHING, UNKNOWN, RECONCILING: it reached the wire, or may have, and is not confirmed.
+        _ => LegOutcome.NotConfirmed
+    };
+
     sealed record Leg(string RequestId, string Target, LegOutcome Outcome, ExecutionRequest? Record, string? Error)
     {
+        /// <summary>Whether this leg got as far as the wire, which is what <c>attempted</c> counts.</summary>
+        public bool Attempted => Outcome is not (LegOutcome.NotSent or LegOutcome.NothingToDo);
+
         public object Describe() => new
         {
             request_id = RequestId,
             order = Target,
+            // NO CATCH-ALL ARM. It used to end `_ => "not-sent"`, so a new outcome would have been
+            // reported as "nothing was even attempted" — the most dangerous of the six to be wrong
+            // about — silently and with no compiler complaint. A new member now throws here in the
+            // first test that reaches it instead.
             outcome = Outcome switch
             {
                 LegOutcome.Confirmed => "sent-and-confirmed",
+                LegOutcome.Rejected => "rejected",
+                LegOutcome.StillWorking => "sent-still-working",
                 LegOutcome.NotConfirmed => "sent-not-confirmed",
+                LegOutcome.NotSent => "not-sent",
                 LegOutcome.NothingToDo => "nothing-to-do",
-                _ => "not-sent"
+                _ => throw new InvalidOperationException($"no word for leg outcome '{Outcome}'")
             },
             state = Record?.State.ToString(),
             error = Error ?? Record?.LastError
@@ -818,7 +889,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     const int MaxLegsInFlight = 4;
 
-    static async Task Collect(List<(string Id, string Target, Task<ExecutionRequest?> Task)> pending, List<Leg> legs)
+    async Task Collect(List<(string Id, string Target, Task<ExecutionRequest?> Task)> pending, List<Leg> legs)
     {
         foreach (var (id, target, task) in pending)
         {
@@ -827,18 +898,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 var record = await task;
                 legs.Add(record is null
                     ? new Leg(id, target, LegOutcome.NothingToDo, null, null)
-                    : new Leg(id, target,
-                        record.State is ExecutionState.CANCELLED or ExecutionState.FILLED
-                            ? LegOutcome.Confirmed
-                            : LegOutcome.NotConfirmed,
-                        record, null));
+                    : new Leg(id, target, Classify(record), record, null));
             }
             catch (Exception ex)
             {
-                // A leg that threw did not end the sweep, and it is not silently gone: it is
-                // reported as sent-not-confirmed with its reason, which is what the owner has to act
-                // on. The gateway has already recorded UNKNOWN for the ones that reached it.
-                legs.Add(new Leg(id, target, LegOutcome.NotConfirmed, null, ex.Message));
+                // A LEG THAT THREW IS STILL CLASSIFIED BY ITS RECORD, NOT BY THE FACT THAT IT THREW.
+                //
+                // Every leg that reached the wire and came back ambiguous has already been settled
+                // UNKNOWN by the gateway before the exception got here, so the exception is not the
+                // evidence — the record is, and it is the same evidence the reply's `state` field
+                // shows. Assuming NotConfirmed made two different lies: a broker's definite refusal
+                // (REJECTED) read as an unknown, and a leg whose target resolution expired BEFORE
+                // `TryCreate` — no record written, nothing sent, `attempted=0` — read as a leg that
+                // reached the wire (Codex round-8 F1).
+                //
+                // NO RECORD AT ALL is the unambiguous case and it is the important one: the record is
+                // written before the wire is touched, so its absence proves nothing was sent.
+                var record = gateway.GetRequest(id);
+                legs.Add(new Leg(id, target,
+                    record is null ? LegOutcome.NotSent : Classify(record), record, ex.Message));
             }
         }
     }
@@ -929,7 +1007,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new
         {
             closed = landed,
-            attempted = results.Count + nothingToDo.Count,
+            // Same rule as `cancel-all`, and it CHANGES this number: a symbol with nothing to close
+            // was being counted as attempted. It is already reported, by name, in
+            // `nothing_to_close` — counting it here as well is the same over-claim bdf9a24 removed
+            // from `cancelled`, one field over.
+            attempted = legs.Count(l => l.Attempted),
             nothing_to_close = nothingToDo,
             not_closed = results.Where(r => r.State is not ExecutionState.FILLED)
                 .Select(r => new { request_id = r.RequestId, instrument = r.Instrument, state = r.State.ToString() }),
