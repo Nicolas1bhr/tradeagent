@@ -230,14 +230,38 @@ public sealed class StubBridge : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _cts.CancelAsync();
+
+        // AND THE LOOP MAY STILL BE HOLDING THE WRITER. Cancelling the token ends the loop's READ; it
+        // says nothing about a reply the loop is already writing, and `StreamWriter` refuses to be
+        // disposed with a write in flight — `InvalidOperationException: The stream is currently in
+        // use by a previous operation on the stream`, from `DisposeAsyncCore`, which is neither of
+        // the two exceptions a broken pipe raises and so went straight through `Quietly` and failed
+        // the test (windows-latest, run 33923259460, `Capabilities_and_accounts_come_from_the_bridge_
+        // handshake`). So the writer is taken away only once the loop has let go of it.
+        //
+        // Bounded, and the bound is not decoration: a write into a pipe whose reader has gone sits in
+        // the kernel until the handle is closed, and closing it is two lines below. A teardown that
+        // can hang is a worse harness than one that throws. If the bound runs out the writer is
+        // disposed anyway and `Quietly` covers what that raises.
+        if (_loop is not null) await Quietly(() => _loop.WaitAsync(TimeSpan.FromSeconds(5)));
         await Quietly(async () => { if (_w is not null) await _w.DisposeAsync(); });
         try { _r?.Dispose(); } catch (IOException) { } catch (ObjectDisposedException) { }
         await Quietly(async () => { if (_client is not null) await _client.DisposeAsync(); });
         _cts.Dispose();
     }
 
+    /// <summary>
+    /// The exceptions TEARDOWN is allowed to raise, and nothing else — this is not a catch-all.
+    /// <see cref="IOException"/> and <see cref="ObjectDisposedException"/> are the far end already
+    /// gone; <see cref="InvalidOperationException"/> is a write still in flight at the moment the
+    /// writer is disposed; <see cref="TimeoutException"/> is the bounded wait above running out.
+    /// </summary>
     static async Task Quietly(Func<Task> step)
     {
-        try { await step(); } catch (IOException) { } catch (ObjectDisposedException) { }
+        try { await step(); }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+        catch (TimeoutException) { }
     }
 }
