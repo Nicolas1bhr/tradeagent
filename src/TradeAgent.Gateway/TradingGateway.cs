@@ -1541,6 +1541,21 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public async Task<PressOutcome> OperatorCancelAllAsync(CancellationToken ct = default)
     {
+        // THE WHOLE PRESS IS THE EMERGENCY, NOT JUST ITS LAST FRAME (Codex C3).
+        //
+        // `RiskReducingScope` was opened by the PIPE SERVER, so only an agent's sweep got the
+        // emergency bound. The button and the CLI come through here and inherited nothing: the
+        // connector classifies urgency by the bridge op it is about to send, which is right for the
+        // final frame and blind to everything that has to happen first — the orders this press
+        // captures, the position it re-reads before each close. Those are ordinary `orders` and
+        // `positions` RPCs, so at shipped deadlines the person holding the button waited out the
+        // whole of a stalled bridge before the two-second frame it was hurrying to send got a turn.
+        //
+        // Opened here, where the intent is known, all three callers get it — and it is ONE absolute
+        // deadline for the operation rather than a fresh budget per RPC, so the promise does not
+        // scale with the size of the book.
+        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+
         RefuseWhileAPressIsOpen(CancelPress);
 
         var accountId = await RequireAccountId(ct);
@@ -1640,6 +1655,21 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public async Task<PressOutcome> OperatorCloseAllAsync(CancellationToken ct = default)
     {
+        // THE WHOLE PRESS IS THE EMERGENCY, NOT JUST ITS LAST FRAME (Codex C3).
+        //
+        // `RiskReducingScope` was opened by the PIPE SERVER, so only an agent's sweep got the
+        // emergency bound. The button and the CLI come through here and inherited nothing: the
+        // connector classifies urgency by the bridge op it is about to send, which is right for the
+        // final frame and blind to everything that has to happen first — the orders this press
+        // captures, the position it re-reads before each close. Those are ordinary `orders` and
+        // `positions` RPCs, so at shipped deadlines the person holding the button waited out the
+        // whole of a stalled bridge before the two-second frame it was hurrying to send got a turn.
+        //
+        // Opened here, where the intent is known, all three callers get it — and it is ONE absolute
+        // deadline for the operation rather than a fresh budget per RPC, so the promise does not
+        // scale with the size of the book.
+        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+
         RefuseWhileAPressIsOpen(ClosePress);
 
         var accountId = await RequireAccountId(ct);
@@ -1677,21 +1707,21 @@ public sealed class TradingGateway : IAsyncDisposable
             //
             // Refused rather than recomputed. A different position is a different decision, and the
             // owner makes decisions here — they press again, against what is actually there.
-            decimal? live;
+            decimal? live = null;
+            Exception? unreadable = null;
             try
             {
                 live = (await Connector.GetPositionsAsync(accountId, ct))
                     .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
             }
-            catch (Exception ex)
-            {
-                // A READ THAT FAILED IS NOT A POSITION THAT MATCHES. Nothing is written and nothing
-                // is sent: this leg never reached the wire, and saying so is the honest answer.
-                drifted.Add($"{symbol} (the account could not be read: {ex.Message})");
-                continue;
-            }
+            catch (Exception ex) { unreadable = ex; }
 
-            if (live != quantity)
+            // A DEFINITE DIFFERENT ANSWER AND NO ANSWER AT ALL ARE NOT THE SAME NEWS, and they get
+            // different treatment. A position the platform says is 1 when the press captured 2 is a
+            // changed decision: no record, nothing sent, and the owner is told to press again. A
+            // read that never came back tells us nothing about anything — including whether this
+            // press ought to be over — so it gets a record, and the record pauses trading.
+            if (unreadable is null && live != quantity)
             {
                 drifted.Add($"{symbol} was {quantity} when you pressed and is {live} now");
                 continue;
@@ -1701,6 +1731,14 @@ public sealed class TradingGateway : IAsyncDisposable
             var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
                 OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)");
             var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused);
+
+            if (unreadable is { } readFailed)
+            {
+                SafelyRecordIndefinite(rid, readFailed.Message,
+                    $"TradeAgent could not check your {symbol} position before closing it, so nothing was sent for it.",
+                    readFailed);
+                continue;
+            }
 
             OrderInfo? order;
             try

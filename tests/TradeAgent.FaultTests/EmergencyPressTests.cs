@@ -285,3 +285,111 @@ public class PressReachesTheWireOnItsOwnTermsTests
         Assert.Contains(c.Inner.Broker.Positions, p => p.Symbol == "ES" && p.Quantity == 1m);
     }
 }
+
+// =================================================================================================
+// Item 5 — the operator's own press gets the emergency fast path (Codex C3)
+// =================================================================================================
+
+/// <summary>
+/// `RiskReducingScope` was opened by the PIPE SERVER, so only an agent's `cancel-all` got the
+/// emergency bound. The button and the CLI went through `TradingGateway` directly and inherited
+/// nothing: every read the press has to do first — the positions it captures, the position it checks
+/// before each close — started its own ordinary deadline, and the person holding the button waited
+/// out the whole of a stalled bridge.
+///
+/// The scope belongs where the intent is known, which is inside the emergency methods themselves.
+/// Then all three callers get it, and so does every read they do on the way.
+/// </summary>
+public class OperatorPressIsAnEmergencyTests
+{
+    /// <summary>Comfortably longer than the 2 s emergency budget, so an unbounded press is obvious.</summary>
+    const int StalledMs = 1200;
+
+    [Fact]
+    public async Task Close_all_gives_up_on_a_stalled_platform_inside_the_emergency_budget()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-1", TestEnv.Buy("ES", 2m));
+
+        // The bridge stalls only now, so the setup above is not the thing being measured.
+        c.Inner.Faults.LatencyMs = StalledMs;
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var press = await gw.OperatorCloseAllAsync();
+        started.Stop();
+
+        // Four round trips at 1.2 s each is what this costs without the scope; 2 s is the budget.
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(4),
+            $"the press took {started.Elapsed.TotalSeconds:0.0}s against a {c.EmergencyBudget.TotalSeconds:0}s emergency budget");
+
+        // ...and the owner is told, in the words the card uses, rather than being told it worked.
+        var row = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
+        Assert.Equal(ExecutionState.UNKNOWN, row.State);
+        Assert.True(row.NeedsReconciliation);
+        Assert.Contains(press.Targets, t => t.Outcome == "not confirmed — check ATAS");
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE READ BEFORE THE CLOSE IS PART OF THE EMERGENCY, not a prelude to it. This is the half the
+    /// connector cannot classify for itself: `positions` is an ordinary RPC whatever it is nested in,
+    /// and the scope is the only thing that says otherwise.
+    /// </summary>
+    [Fact]
+    public async Task The_position_read_before_the_close_inherits_the_scope()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-2", TestEnv.Buy("ES", 2m));
+
+        var deadlines = new List<long?>();
+        c.BeforePositionsRead = () => deadlines.Add(RiskReducingScope.DeadlineAt);
+
+        await gw.OperatorCloseAllAsync();
+
+        Assert.NotEmpty(deadlines);
+        Assert.All(deadlines, d => Assert.NotNull(d));
+        // One deadline for the whole press, not a fresh budget per read: that is what stops the
+        // promise scaling with the number of positions.
+        Assert.Single(deadlines.Distinct());
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION. A healthy platform is not slowed down or refused by any of this: the
+    /// scope only ever WIDENS urgency, and the ordinary press still closes the position.
+    /// </summary>
+    [Fact]
+    public async Task A_healthy_press_is_untouched_by_the_scope()
+    {
+        var (gw, c, db) = await Recovery.Ready();
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-3", TestEnv.Buy("ES", 2m));
+
+        var press = await gw.OperatorCloseAllAsync();
+
+        Assert.Single(press.Targets);
+        Assert.Equal(ExecutionState.FILLED, press.Targets[0].State);
+        Assert.Empty(c.Inner.Broker.Positions);
+    }
+
+    [Fact]
+    public async Task Cancel_all_gives_up_on_a_stalled_platform_inside_the_emergency_budget()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-4", TestEnv.Buy());
+        c.Inner.Faults.LatencyMs = StalledMs;
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await gw.OperatorCancelAllAsync();
+        started.Stop();
+
+        // Three round trips at 1.2 s is what cancel-all costs without the scope — the book, the one
+        // cancel, and the position read the outcome does. The bound is under that and over the 2 s
+        // budget, so it is the scope this measures rather than the fixture.
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(3),
+            $"the press took {started.Elapsed.TotalSeconds:0.0}s against a {c.EmergencyBudget.TotalSeconds:0}s emergency budget");
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}
