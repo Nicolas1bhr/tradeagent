@@ -66,6 +66,12 @@ Why it carries safety: one of the five per-leg words, `not-sent`, is an ASSURANC
 transport record is what produces it. A connector that mutates and never marks the attempt turns
 "nothing was recorded" from *no mutation was started* into *nobody wrote it down* — measured on a
 connector written to this interface that really cancelled at the broker: `not-sent`, `attempted: 0`.
+**`CancelAllOrdersAsync` is no longer sent by anything in TradeAgent.** The gateway's emergency
+cancel-all is per-order cancels of the set it captured (see below), and the agent's `cancel-all` was
+already per-order legs. The method stays on `ITradingConnector` because the ATAS connector's own
+send-deadline behaviour is measured through it and that is not this unit's to move; nothing calls it
+on the money path, and nothing should start.
+
 **A connector that ignores this is safe and imprecise, never dangerous**: the gateway does not take
 silence for an assurance — a leg whose own record proves a mutating step was dispatched is
 `sent-not-confirmed` whatever the ledger says. Marking the attempt is what buys the precision back,
@@ -347,8 +353,7 @@ derived from that one rule:
   still: an order that has not moved is an order the platform has said nothing about, and the
   platform's acknowledgement can arrive after TradeAgent's own RPC gave up. Only a definite end
   makes the request `REJECTED`, after which the agent may ask again under a new request id;
-  otherwise it stays unconfirmed and trading stays paused. The same rule judges a cancel-all: its
-  captured orders still working leave the press unconfirmed rather than condemning it.
+  otherwise it stays unconfirmed and trading stays paused.
 - **A modify is `ACKNOWLEDGED` only if the ORDER THAT WAS NAMED carries what was asked for**, and is
   never recorded as a definite failure without a definite refusal. The answer has to be about that
   order: the returned order id must be the target's, and its symbol and account must be the target's
@@ -361,25 +366,45 @@ derived from that one rule:
   the reconciler can tell the two apart. `OrderInfo.Quantity` **is** defined, in
   `TradeAgent.ConnectorSdk.Contracts`, as the order's TOTAL and never the remainder, so a quantity
   that does not match is a change that is not there — still inconclusive rather than a refusal.
-- **A cancel-all is judged on the orders its press captured**, never on whatever is live now; an
-  order that arrived after the press belongs to no press.
+**An emergency press IS its records: one shot, then a pause, then a person.** "Cancel all working
+orders" and "Close all positions" bypass authorization on purpose — they must work while trading is
+paused and while the kill switch is down — and each thing a press does gets a write-ahead
+`execution_request` **written already flagged** before the wire is touched, attributed to the
+operator, keyed by the press. From that moment trading is paused, *whatever the platform answered*: a
+close the platform accepted and left WORKING has flattened nothing, and a cancel-all that succeeded
+outright is still something the owner has not read. **Only the owner's card clears a press record.**
+The reconciler is not allowed near them — it would release a press whose position is still open, and
+drag a row the platform answered plainly through `UNKNOWN` on the way.
 
-**The operator's emergency controls write records too.** "Cancel all working orders" and "Close all
-positions" bypass authorization on purpose — they must work while trading is paused and while the
-kill switch is down — but each individual close and cancel now gets a write-ahead `execution_request`
-before the wire is touched, attributed to the operator, keyed by the press. **A press captures its
-target set the first time it is pressed** — the order ids a cancel-all saw, the symbol and size of
-each position a close-all saw — and every retry acts only on that set, so an order or a position that
-arrived afterwards is never swept up by it. A retry finds its records already written and sends
-nothing; a press that sent nothing says so rather than reporting that it closed everything. **A press
-is complete only when its OWN records are settled and the position it targeted is flat** — never
-because unrelated work elsewhere happens to be confirmed — and the screen adopts an unresolved press
-from the store when it starts, so a restart cannot mint a fresh press over an unconfirmed close.
-Close-all continues through every position after one of them fails, and counts a position closed only
-when the account reads back flat.
+- **A second press of the same control is refused while the last one is unresolved**, with the time
+  it was sent: *"close-all sent at 14:32; resolve it first"*. Per control, not globally — an
+  unresolved cancel-all must never be able to stop somebody flattening a position.
+- **There is no retry and no press object.** A press's nonce is minted once, inside the gateway, and
+  never handed back; nothing in the UI holds it and nothing is reconstructed at startup. A restart
+  reads the same flagged rows and refuses to trade over them, which is what "the durable records ARE
+  the press" means. The previous design — a nonce held by the screen, reused by the next click —
+  is what made a definitely failed close impossible to press past.
+- **Cancel-all is per-order cancels of the set it captured.** No account-wide sweep is sent:
+  "cancel whatever is there" acts on orders the person never saw and can be reconciled against
+  nothing. Each record is settled from the platform's answer **about its own order**, and one leg
+  failing neither stops the press nor decides another leg.
+- **Close-all re-reads the position immediately before each wire call and sends nothing for an
+  instrument that changed.** The press captured a size and turned it into a market order for that
+  size; if a fill landed in between, that order opens exposure rather than closing it. A changed
+  position is a different decision, so it is refused and named, and the owner presses again.
+- **Completion and outcome read the ACCOUNT stored on the records**, never whichever account is
+  selected now — the owner can change that between the press and the card.
 
-Each order a cancel-all touched is settled from the platform's answer **about that order**: the sweep
-returning without an exception says the call was made, not what became of any particular order.
+**Every mutating operation is idempotent by request id, including the multi-target ones.** A `buy`,
+`cancel`, `modify` or `close` keys one `execution_request` on the caller's id and a repeat dispatches
+nothing. `cancel-all` and `close-all` decompose into legs, so they key a `composite_request` instead:
+the outer request id, the plan it captured, and the nonce its legs are named after, **all written
+before any effect**; the answer is written after. A repeat of a known id returns that stored answer
+and touches nothing — and a repeat of one whose first run died mid-flight re-runs against the STORED
+plan and nonce, so the legs that already have records dispatch nothing and only the unfinished ones
+go. Before this, a sweep minted its nonce per CALL: an agent that lost the reply and re-sent the same
+request id got a second sweep over whatever was on the book by then, including orders it had placed
+since.
 
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with

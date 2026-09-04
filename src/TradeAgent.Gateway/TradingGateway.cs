@@ -20,6 +20,7 @@ public sealed class TradingGateway : IAsyncDisposable
 {
     readonly Database _db;
     readonly ExecutionRequestStore _requests;
+    readonly CompositeRequestStore _composites;
     readonly LogStore _log;
     readonly MaterialStore _materials;
     readonly HealthRegistry _health;
@@ -32,6 +33,7 @@ public sealed class TradingGateway : IAsyncDisposable
     public TradeAgentSettings Settings { get; private set; }
     public HealthRegistry Health => _health;
     public ExecutionRequestStore Requests => _requests;
+    public CompositeRequestStore Composites => _composites;
     public LogStore Log => _log;
     public MaterialStore Materials => _materials;
 
@@ -110,6 +112,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // by the store and the other read here is measured on a single clock. See ExecutionRequestStore.
         _opt = options ?? new GatewayOptions();
         _requests = new ExecutionRequestStore(db, _opt.Clock);
+        _composites = new CompositeRequestStore(db, _opt.Clock);
         _log = new LogStore(db);
         _materials = new MaterialStore(db);
         _health = health ?? new HealthRegistry();
@@ -1219,6 +1222,74 @@ public sealed class TradingGateway : IAsyncDisposable
             ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"no order matches '{reference}'");
     }
 
+    // ---------------------------------------------------------------- composite (multi-target) requests
+
+    /// <summary>
+    /// What a composite operation should do NOW: run its plan, or hand back the answer this request
+    /// id already produced.
+    /// </summary>
+    /// <param name="Nonce">
+    /// What this composite's per-target ids are derived from. It comes out of the STORE on a replay,
+    /// which is what makes the legs of the second run land on the first run's records.
+    /// </param>
+    /// <param name="Targets">
+    /// The plan as it was captured the FIRST time. A replay does not re-capture: an order placed
+    /// after the original call was never part of this request and must not be swept by it.
+    /// </param>
+    /// <param name="StoredResultJson">
+    /// The answer the first run gave, or null when it never finished giving one. Non-null means the
+    /// caller may return this and do nothing else.
+    /// </param>
+    public sealed record CompositePlan(string RequestId, string Nonce,
+        IReadOnlyList<string> Targets, string? StoredResultJson, bool Replay);
+
+    /// <summary>
+    /// PERSISTS THE COMPOSITE BEFORE ANY EFFECT, AND RECOGNISES A REPLAY (Codex C2).
+    ///
+    /// Idempotency by request id used to stop at <c>Place</c> — and at <c>Cancel</c>, <c>Modify</c>
+    /// and <c>Close</c>, which each write one <c>execution_request</c> keyed by the caller's id. A
+    /// SWEEP wrote none: it minted a fresh nonce per CALL, so the same request id sent twice was two
+    /// sweeps, over two different books. An agent whose reply was lost — the exact situation a
+    /// request id exists for — cancelled orders it had never been shown.
+    ///
+    /// Three cases come out of one insert:
+    ///
+    ///   1. New id — the plan and a fresh nonce are written down, then the caller runs it.
+    ///   2. Known id WITH a result — the caller returns that result and touches nothing.
+    ///   3. Known id with NO result — the first run died mid-flight. The caller re-runs it against
+    ///      the STORED nonce and the STORED plan, so every leg that already has a record dispatches
+    ///      nothing and only the legs that never ran do. That is a resumption, not a second sweep.
+    ///
+    /// The nonce is minted through <paramref name="freshNonce"/> rather than here because "fresh"
+    /// means "not already in this installation's leg history", and the id shape those legs use
+    /// belongs to the caller.
+    /// </summary>
+    public CompositePlan BeginComposite(AgentContext ctx, string requestId, string op,
+        IReadOnlyList<string> targets, Func<string> freshNonce)
+    {
+        var (created, stored) = _composites.TryBegin(new CompositeRequest
+        {
+            RequestId = requestId,
+            AgentSessionId = ctx.SessionId,
+            Op = op,
+            Nonce = freshNonce(),
+            PlanJson = Json.Write(targets),
+            CreatedAt = Now
+        });
+
+        if (created) return new CompositePlan(requestId, stored.Nonce, targets, null, false);
+
+        _log.Engineering("Gateway", "composite_replayed", requestId: requestId,
+            metadataJson: Json.Write(new { op, finished = stored.ResultJson is not null }));
+
+        return new CompositePlan(requestId, stored.Nonce,
+            Json.Read<List<string>>(stored.PlanJson) ?? [], stored.ResultJson, true);
+    }
+
+    /// <summary>Writes the answer this request id will give from now on. Only the first one sticks.</summary>
+    public void CompleteComposite(string requestId, string resultJson) =>
+        _composites.Complete(requestId, resultJson);
+
     // ---------------------------------------------------------------- emergency controls (operator only)
 
     /// <summary>The two emergency controls, as request-id prefixes. One press writes rows under one.</summary>
@@ -1245,7 +1316,14 @@ public sealed class TradingGateway : IAsyncDisposable
 
     static string PressPrefix(string kind, string nonce) => $"{kind}-{nonce}";
 
-    /// <summary>Whether a request id belongs to an emergency press rather than to an ordinary order.</summary>
+    /// <summary>
+    /// Whether a request id belongs to an emergency press rather than to an ordinary order.
+    ///
+    /// It is a prefix test and it is safe to be one. An agent cannot mint an id starting with
+    /// <c>op-</c> at all (the pipe refuses it), and the ids the gateway mints for an agent's sweep
+    /// are <c>op-{nonce}-{intent}-{i}</c> with a HEX nonce — so no sweep leg can ever begin
+    /// <c>op-close-</c> or <c>op-cancel-</c>, because neither "close" nor "cancel" is hex.
+    /// </summary>
     public static bool IsPressRecord(string requestId) =>
         requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ||
         requestId.StartsWith($"{CancelPress}-", StringComparison.Ordinal);
@@ -1497,6 +1575,13 @@ public sealed class TradingGateway : IAsyncDisposable
             return await PressOutcomeAsync(CancelPress, nonce, ct);
         }
 
+        // THE PRESS IS A COMPOSITE TOO, and its plan is written down before a single cancel goes out.
+        // The agent's sweep needs this row to recognise a replay; the press cannot be replayed at all
+        // (a second press is refused, and the one after that is a fresh nonce), so what the row buys
+        // here is the record: what the press captured, and what it answered, as one durable object
+        // beside the per-target rows.
+        BeginComposite(AgentContext.Operator, pressId, Ops.CancelAll, captured, () => nonce);
+
         var cancelled = new List<string>();
         foreach (var target in captured)
         {
@@ -1535,12 +1620,15 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"TradeAgent could not confirm {captured.Count - cancelled.Count} of the {captured.Count} " +
                 "orders it tried to cancel.");
 
+        var cancelOutcome = await PressOutcomeAsync(CancelPress, nonce, ct);
+        CompleteComposite(pressId, Json.Write(cancelOutcome));
+
         _log.Activity(captured.Count == 0
             ? "You pressed Cancel all working orders; there was nothing on the book to cancel."
             : $"You cancelled all working orders ({cancelled.Count} of {captured.Count}). " +
               "AI trading is paused until you confirm what happened on the Dashboard.", "warn");
         StateChanged?.Invoke();
-        return await PressOutcomeAsync(CancelPress, nonce, ct);
+        return cancelOutcome;
     }
 
     /// <summary>
@@ -1569,6 +1657,10 @@ public sealed class TradingGateway : IAsyncDisposable
             StateChanged?.Invoke();
             return new PressOutcome(ClosePress, nonce, Now, [], 0, true, "There was nothing open to close.");
         }
+
+        // See OperatorCancelAllAsync: the plan is written down before any close goes out.
+        BeginComposite(AgentContext.Operator, PressPrefix(ClosePress, nonce), Ops.CloseAll,
+            captured.Select(p => p.Symbol).ToList(), () => nonce);
 
         var drifted = new List<string>();
         foreach (var (symbol, quantity) in captured)
@@ -1655,6 +1747,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // A press that wrote no rows at all has only the drift to report; "Nothing was sent." twice
         // over is not a sentence anybody should have to read.
         outcome = outcome with { Summary = (outcome.Targets.Count == 0 && drift.Length > 0 ? "" : outcome.Summary) + drift };
+        CompleteComposite(PressPrefix(ClosePress, nonce), Json.Write(outcome));
         _log.Activity($"You asked to close {captured.Count} position(s). {outcome.Summary}" +
                       (outcome.Targets.Count > 0
                           ? " AI trading is paused until you confirm what happened on the Dashboard."

@@ -45,16 +45,12 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public string? ThrowAfterCloseSymbol;
     /// <summary>Makes the order positions are visited in deterministic (ES before NQ).</summary>
     public bool SortPositionsBySymbol;
-    public Exception? ThrowAfterCancelAll;
     public bool ModifyIgnoresTheRequest;
     /// <summary>Rounds the prices on the returned order to a tick grid, the way a real platform does.</summary>
     public decimal? ModifyRoundsPricesTo;
     /// <summary>Rewrites the order a modify ANSWERS with, without touching the book.</summary>
     public Func<OrderInfo, OrderInfo>? RewriteModified;
     public bool CancelDoesNotReachTheBook;
-    public bool CancelAllDoesNotReachTheBook;
-    /// <summary>Rewrites the ids the sweep reports back, so a partial answer can be scripted.</summary>
-    public Func<IReadOnlyList<string>, IReadOnlyList<string>>? RewriteCancelAllResult;
     /// <summary>The platform lists no orders at all — the target is genuinely absent.</summary>
     public bool HideOrdersEntirely;
     /// <summary>Rewrites what the BOOK reports, which is what the reconciler reads.</summary>
@@ -150,13 +146,15 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     /// <summary>The same, told WHICH order — how a test counts per-order cancels rather than sweeps.</summary>
     public Action<string>? OnCancelledId;
 
+    /// <summary>
+    /// U2c1b: THE GATEWAY NO LONGER SENDS THIS. Cancel-all is per-order cancels of the set the press
+    /// captured, so the account-wide sweep — and the three hooks that used to script its partial
+    /// answers — are gone from these tests. The counter stays, as the assertion that it is not sent.
+    /// </summary>
     public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
     {
         CancelAlls++;
-        var ids = CancelAllDoesNotReachTheBook ? [] : await inner.CancelAllOrdersAsync(a, ct);
-        if (RewriteCancelAllResult is { } rewrite) ids = rewrite(ids);
-        if (ThrowAfterCancelAll is { } ex) throw ex;
-        return ids;
+        return await inner.CancelAllOrdersAsync(a, ct);
     }
 
     public async Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)

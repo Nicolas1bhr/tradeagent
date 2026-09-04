@@ -1544,3 +1544,183 @@ public class SweepRequestIdTests
             sweep.GetProperty("not_cancelled").GetArrayLength());
     }
 }
+
+// =================================================================================================
+// U2c-1b item 4 — A REPLAYED SWEEP SENDS NOTHING (Codex C2)
+// =================================================================================================
+
+/// <summary>
+/// Idempotency by request id used to stop at the operations that write ONE record. `buy`, `cancel`,
+/// `modify` and `close` each key an `execution_request` on the caller's id, so a repeated call finds
+/// its record and dispatches nothing. A SWEEP wrote no such row: `cancel-all` and `close-all` minted
+/// a nonce per CALL and derived their legs from it, so the same request id sent twice was two
+/// sweeps, over two different books.
+///
+/// That is the exact situation a request id exists for — the reply was lost and the caller does not
+/// know whether the work happened — and the answer was the worst one available: cancel whatever is
+/// on the book NOW, including orders the caller placed after the first attempt.
+/// </summary>
+public class ReplayedSweepSendsNothingTests
+{
+    static string NewPipe() => "ta-replay-" + Guid.NewGuid().ToString("n")[..12];
+
+    static IpcRequest Buy(string requestId, string symbol) => new()
+    {
+        Op = Ops.Buy,
+        RequestId = requestId,
+        Args = new()
+        {
+            ["symbol"] = JsonSerializer.SerializeToElement(symbol),
+            ["quantity"] = JsonSerializer.SerializeToElement("1"),
+            ["limit"] = JsonSerializer.SerializeToElement("1")     // rests as WORKING
+        }
+    };
+
+    /// <summary>
+    /// THE ACCEPTANCE, VERBATIM: sweep order A as `sweep-1`, lose the reply, create order B, repeat
+    /// `sweep-1`. B must still be working, and the answer must be the one the first call gave.
+    /// </summary>
+    [Fact]
+    public async Task A_replayed_cancel_all_cancels_nothing_and_returns_the_original_answer()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        var a = await client.SendAsync(Buy("order-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(a.Ok, Json.Write(a.Error));
+
+        var first = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(first.Ok, Json.Write(first.Error));
+        Assert.Equal(1, ((JsonElement)first.Data!).GetProperty("cancelled").GetInt32());
+
+        // The reply is lost. The agent, not knowing, opens another order and then repeats the sweep
+        // it never heard back from — with the SAME request id, which is what a request id is for.
+        var b = await client.SendAsync(Buy("order-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(b.Ok, Json.Write(b.Error));
+        var bId = ((JsonElement)b.Data!).GetProperty("connector_order_id").GetString()!;
+        Assert.Equal(ExecutionState.WORKING, conn.Broker.Orders.Single(o => o.ConnectorOrderId == bId).State);
+
+        var replay = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(replay.Ok, Json.Write(replay.Error));
+        // B IS UNTOUCHED. This is the whole test.
+        Assert.Equal(ExecutionState.WORKING, conn.Broker.Orders.Single(o => o.ConnectorOrderId == bId).State);
+        // ...and the answer is the one the first call gave, not a fresh count of a fresh sweep.
+        Assert.Equal(Json.Write(first.Data), Json.Write(replay.Data));
+    }
+
+    /// <summary>The same for `close-all`, where a second sweep does not cancel an order but reverses a position.</summary>
+    [Fact]
+    public async Task A_replayed_close_all_closes_nothing_and_returns_the_original_answer()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        await gw.PlaceAsync(AgentContext.Operator, "pos-a", TestEnv.Buy("ES", 2m));
+        Assert.Single(conn.Broker.Positions);
+
+        var first = await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "flat-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(first.Ok, Json.Write(first.Error));
+        Assert.Empty(conn.Broker.Positions);
+
+        // A new position appears, and the agent repeats the close-all whose reply it lost.
+        await gw.PlaceAsync(AgentContext.Operator, "pos-b", TestEnv.Buy("NQ", 3m));
+
+        var replay = await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "flat-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(replay.Ok, Json.Write(replay.Error));
+        Assert.Contains(conn.Broker.Positions, p => p.Symbol == "NQ" && p.Quantity == 3m);
+        Assert.Equal(Json.Write(first.Data), Json.Write(replay.Data));
+    }
+
+    /// <summary>
+    /// IDEMPOTENCY BY REQUEST ID IS FOR EVERY MUTATING OP, NOT ONLY `Place`.
+    ///
+    /// `Ops.Mutating` is the list the pipe server itself uses, so a new mutating verb appears here
+    /// automatically and has to prove the same thing — the way the gap was introduced in the first
+    /// place was by adding two ops that decomposed into legs and inheriting nothing.
+    /// </summary>
+    [Fact]
+    public async Task Every_mutating_op_dispatches_once_for_one_request_id()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // Every mutating verb, each sent twice under one request id, each with a resting order of
+        // its own to act on. What must never change between the two calls is the broker's book.
+        var i = 0;
+        foreach (var op in Core.Ops.Mutating)
+        {
+            var tag = $"idem-{i++}";
+            var seed = await client.SendAsync(Buy($"{tag}-seed", "ES")).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(seed.Ok, Json.Write(seed.Error));
+            var target = ((JsonElement)seed.Data!).GetProperty("connector_order_id").GetString()!;
+
+            var req = new IpcRequest { Op = op, RequestId = tag, Args = new() };
+            if (op is Core.Ops.Buy or Core.Ops.Sell)
+            {
+                req.Args["symbol"] = JsonSerializer.SerializeToElement("ES");
+                req.Args["quantity"] = JsonSerializer.SerializeToElement("1");
+                req.Args["limit"] = JsonSerializer.SerializeToElement("1");
+            }
+            if (op is Core.Ops.Cancel or Core.Ops.Modify) req.Args["id"] = JsonSerializer.SerializeToElement(target);
+            if (op is Core.Ops.Modify) req.Args["limit"] = JsonSerializer.SerializeToElement("2");
+            if (op is Core.Ops.Close) req.Args["symbol"] = JsonSerializer.SerializeToElement("ES");
+
+            var one = await client.SendAsync(req).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(one.Ok, $"{op}: {Json.Write(one.Error)}");
+            var book = conn.Broker.Orders.Select(o => $"{o.ConnectorOrderId}:{o.State}:{o.LimitPrice}").ToList();
+
+            var two = await client.SendAsync(req).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(two.Ok, $"{op} replay: {Json.Write(two.Error)}");
+            Assert.Equal(book, conn.Broker.Orders.Select(o => $"{o.ConnectorOrderId}:{o.State}:{o.LimitPrice}").ToList());
+        }
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION, and it is the one that stops this being a way to break the emergency: a
+    /// DIFFERENT request id is a different decision and really does sweep.
+    /// </summary>
+    [Fact]
+    public async Task A_different_request_id_really_does_sweep()
+    {
+        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("order-c", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-a" })
+            .WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        Assert.True((await client.SendAsync(Buy("order-d", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var second = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "sweep-b" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(second.Ok, Json.Write(second.Error));
+        Assert.Equal(1, ((JsonElement)second.Data!).GetProperty("cancelled").GetInt32());
+        Assert.DoesNotContain(conn.Broker.Orders, o => o.State == ExecutionState.WORKING);
+    }
+}

@@ -180,6 +180,43 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','2') ON CONFLICT(key) DO UPDATE SET value='2';");
         }
 
+        if (have < 3)
+        {
+            // THE COMPOSITE LEDGER — one row per MULTI-TARGET intent, so a replay sends nothing.
+            //
+            // `execution_request` makes a single mutation idempotent: the caller's request id is the
+            // primary key, so a repeated `buy` finds its record and dispatches nothing. A sweep had
+            // no such row. `cancel-all` and `close-all` decomposed the request into per-order legs
+            // named after a nonce minted FRESH on every call, so an agent that lost the reply and
+            // sent the same request id again got a brand-new sweep over whatever was on the book by
+            // then — including orders placed after the first one (Codex C2).
+            //
+            // This is the missing row. `plan` is what the outer id captured and `nonce` is what its
+            // legs are named after, both written BEFORE any effect, so a second call with the same
+            // request id reuses the SAME leg ids and the per-leg records refuse to dispatch twice.
+            // `result` is the answer the first call produced, written after the effects; a replay
+            // that finds one hands it back verbatim rather than doing the work again.
+            //
+            // Deliberately not merged into `execution_request`: that table is one row per thing sent
+            // to a broker, and a composite is not one of those. A sweep with three legs has three
+            // broker-facing rows and one row here, and conflating them was how "attempted" and
+            // "cancelled" came to mean the same number.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS composite_request(
+              request_id        TEXT PRIMARY KEY,
+              agent_session_id  TEXT,
+              op                TEXT NOT NULL,
+              nonce             TEXT NOT NULL,
+              plan              TEXT NOT NULL,
+              created_at        TEXT NOT NULL,
+              result            TEXT,
+              completed_at      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_cr_nonce ON composite_request(nonce);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','3') ON CONFLICT(key) DO UPDATE SET value='3';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

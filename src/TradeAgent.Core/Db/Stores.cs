@@ -231,6 +231,92 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
 }
 
 /// <summary>Two log layers: a plain-language history for the user, and structured events for support.</summary>
+/// <summary>
+/// THE ROW THAT MAKES A MULTI-TARGET OPERATION IDEMPOTENT.
+///
+/// <see cref="ExecutionRequestStore"/> gives one mutation that guarantee already: the caller's
+/// request id is the primary key, so a repeated `buy` finds its record and dispatches nothing. A
+/// sweep had no equivalent. `cancel-all` and `close-all` decomposed the caller's id into per-order
+/// legs named after a nonce minted FRESH on every call, so an agent that lost the reply and re-sent
+/// the same request id got a whole new sweep, over whatever happened to be on the book by then
+/// (Codex C2).
+///
+/// Two fields carry it. <c>nonce</c> is what the legs are named after and it is written BEFORE any
+/// effect, so a second call with the same request id derives the SAME leg ids and every leg's own
+/// record refuses to dispatch twice. <c>result</c> is what the first run answered, written after
+/// the effects; a replay that finds one hands it straight back.
+/// </summary>
+public sealed class CompositeRequestStore(Database db, TimeProvider? clock = null)
+{
+    DateTimeOffset Now => (clock ?? TimeProvider.System).GetUtcNow();
+
+    const string Cols = "request_id, agent_session_id, op, nonce, plan, created_at, result, completed_at";
+
+    /// <summary>
+    /// Claims this request id for a composite, or hands back the one that already holds it.
+    ///
+    /// <c>Created == false</c> is the whole point: it means this id has been seen, and the caller
+    /// must use the STORED nonce and plan rather than the ones it just built. The insert is the
+    /// atomic step — two callers racing on one id cannot both be told they created it.
+    /// </summary>
+    public (bool Created, CompositeRequest Request) TryBegin(CompositeRequest r)
+    {
+        var rows = db.Write(_ =>
+        {
+            using var c = db.Cmd($"""
+                INSERT INTO composite_request({Cols})
+                VALUES($rid,$sess,$op,$nonce,$plan,$created,NULL,NULL)
+                ON CONFLICT(request_id) DO NOTHING
+                """,
+                ("$rid", r.RequestId), ("$sess", r.AgentSessionId), ("$op", r.Op), ("$nonce", r.Nonce),
+                ("$plan", r.PlanJson), ("$created", Sql.T(r.CreatedAt)));
+            return c.ExecuteNonQuery();
+        });
+
+        var stored = Get(r.RequestId)
+            ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "composite vanished after insert");
+        return (rows == 1, stored);
+    }
+
+    public CompositeRequest? Get(string requestId) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {Cols} FROM composite_request WHERE request_id=$r", ("$r", requestId));
+        using var rd = c.ExecuteReader();
+        return rd.Read() ? Map(rd) : null;
+    });
+
+    /// <summary>
+    /// Writes the answer, ONCE. A second run of the same composite may not overwrite what the first
+    /// one told the caller — the reply the caller lost is still the reply this id has, and rewriting
+    /// it would make a replay return something the original run never said.
+    /// </summary>
+    public CompositeRequest Complete(string requestId, string resultJson)
+    {
+        db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                UPDATE composite_request SET result=$res, completed_at=$now
+                WHERE request_id=$rid AND result IS NULL
+                """, ("$rid", requestId), ("$res", resultJson), ("$now", Sql.T(Now)));
+            return c.ExecuteNonQuery();
+        });
+        return Get(requestId)
+            ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "composite vanished before it was completed");
+    }
+
+    static CompositeRequest Map(Microsoft.Data.Sqlite.SqliteDataReader r) => new()
+    {
+        RequestId = r.GetString(0),
+        AgentSessionId = Sql.S(r.GetValue(1)),
+        Op = r.GetString(2),
+        Nonce = r.GetString(3),
+        PlanJson = r.GetString(4),
+        CreatedAt = Sql.Time(r.GetValue(5)),
+        ResultJson = Sql.S(r.GetValue(6)),
+        CompletedAt = Sql.TimeN(r.GetValue(7))
+    };
+}
+
 public sealed class LogStore(Database db)
 {
     public void Activity(string text, string level = "info") => db.Write(_ =>

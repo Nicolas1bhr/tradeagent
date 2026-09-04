@@ -55,6 +55,32 @@ public sealed class TradeAgentSettings
     [JsonIgnore] public bool ModeIsLive => Mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
 }
 
+/// <summary>
+/// A durable record of one MULTI-TARGET intent — a `cancel-all`, a `close-all`, an operator press.
+/// Written before any effect, completed with the answer afterwards, never deleted.
+/// </summary>
+public sealed class CompositeRequest
+{
+    /// <summary>The id the CALLER used. This is what a replay is recognised by.</summary>
+    public required string RequestId { get; init; }
+    public string? AgentSessionId { get; init; }
+
+    /// <summary>The operation, as the protocol names it: `cancel-all`, `close-all`.</summary>
+    public required string Op { get; init; }
+
+    /// <summary>What this composite's per-target ids are derived from. Stable across replays.</summary>
+    public required string Nonce { get; init; }
+
+    /// <summary>The targets captured when the composite was created, as a JSON array.</summary>
+    public required string PlanJson { get; init; }
+
+    public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>The answer the first run produced, or null while it has not produced one.</summary>
+    public string? ResultJson { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+}
+
 /// <summary>A durable record of one mutating intent. Written before dispatch, never deleted.</summary>
 public sealed class ExecutionRequest
 {

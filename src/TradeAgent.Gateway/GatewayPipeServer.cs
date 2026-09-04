@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
@@ -840,7 +841,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     async Task<object> CancelAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var working = await gateway.OrdersAsync(false, ct);
-        var nonce = FreshSweepNonce("cancelall");
+
+        // THE COMPOSITE IS WRITTEN BEFORE ANY EFFECT, AND A REPLAY SENDS NOTHING (Codex C2).
+        //
+        // The nonce used to be minted here, fresh, per CALL — so an agent whose reply was lost and
+        // who re-sent the same request id got a whole new sweep over whatever was on the book by
+        // then, including orders it had placed since. `BeginComposite` claims the id, stores the
+        // plan and the nonce, and hands back the stored ones on a second call; the legs are then
+        // named the same and every leg's own record refuses to dispatch twice.
+        var composite = gateway.BeginComposite(ctx, rid, Core.Ops.CancelAll,
+            working.Select(o => o.ConnectorOrderId).ToList(), () => FreshSweepNonce("cancelall"));
+        if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
+        var nonce = composite.Nonce;
         // AWAITED RATHER THAN HANDED OVER, and that is not a style choice. `RunLegs` takes the WIDER
         // contract — a leg that may produce no record at all, because `close-all` has that case and
         // `cancel-all` does not — and `Task<T>` is invariant, so passing `CancelAsync`'s
@@ -848,12 +860,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // nullability mismatch the compiler reports (CS8619) and nothing at runtime would catch.
         // Awaiting converts the VALUE instead of the task, which is the widening C# does allow: a
         // cancel leg always has a record, and a helper willing to accept none is satisfied by that.
-        var legs = await RunLegs(working.Select(o => o.ConnectorOrderId), "cancelall", nonce,
+        // The plan comes off the COMPOSITE, not off the book that was just read: a replay must act on
+        // what the original call captured and on nothing that arrived after it.
+        var legs = await RunLegs(composite.Targets, "cancelall", nonce,
             async (legId, target) => await gateway.CancelAsync(ctx, legId, target, ct));
 
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
         var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
-        return new
+        return Answer(rid, new
         {
             cancelled = landed,
             // THE ONE PLACE `nothing-to-do` IS A TRUE THING TO SAY, and it is about the OPERATION.
@@ -872,7 +886,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
             outcomes = legs.Select(l => l.Describe()),
             requests = results
-        };
+        });
+    }
+
+    /// <summary>
+    /// Records what this composite request id answered, and answers it.
+    ///
+    /// Written AFTER the effects and only once: the reply the caller lost is still the reply this id
+    /// has, and a later run may not rewrite it. Round-tripped through JSON so that the value stored
+    /// and the value returned are the same bytes — a replay that handed back a differently shaped
+    /// object would be a second answer wearing the first one's request id.
+    /// </summary>
+    JsonElement Answer(string rid, object data)
+    {
+        var json = Json.Write(data);
+        gateway.CompleteComposite(rid, json);
+        return Json.Read<JsonElement>(json);
     }
 
     /// <summary>
@@ -1307,8 +1336,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
     {
         var positions = await gateway.PositionsAsync(ct);
-        var nonce = FreshSweepNonce("closeall");
-        var legs = await RunLegs(positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), "closeall", nonce,
+
+        // See CancelAll: the composite is persisted before any effect, and a replayed id returns the
+        // answer it already gave rather than closing whatever is open now.
+        var composite = gateway.BeginComposite(ctx, rid, Core.Ops.CloseAll,
+            positions.Where(p => p.Quantity != 0).Select(p => p.Symbol).ToList(), () => FreshSweepNonce("closeall"));
+        if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
+
+        var legs = await RunLegs(composite.Targets, "closeall", composite.Nonce,
             (legId, symbol) => gateway.CloseAsync(ctx, legId, symbol, ct));
 
         // Null from the gateway means it found nothing to close for that symbol. Not a failure, and
@@ -1317,7 +1352,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
 
         var landed = results.Count(r => r.State is ExecutionState.FILLED);
-        return new
+        return Answer(rid, new
         {
             closed = landed,
             nothing_to_do = legs.Count == 0,
@@ -1332,7 +1367,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
             outcomes = legs.Select(l => l.Describe()),
             requests = results
-        };
+        });
     }
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>

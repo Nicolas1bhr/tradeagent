@@ -39,7 +39,7 @@ public static class Versions
     /// the agent produces, is recorded with a hash and a timestamp. Purely additive — two new
     /// tables, nothing existing altered — so an older database opens and is migrated in place.
     /// </summary>
-    public const int DatabaseSchemaVersion = 2;
+    public const int DatabaseSchemaVersion = 3;
 
     public static string App =>
         Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)
