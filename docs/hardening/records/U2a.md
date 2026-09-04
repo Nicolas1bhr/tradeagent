@@ -842,3 +842,141 @@ flight, and the alternative is the abandoned DISPATCHING order — but it is a p
 arithmetic one, and it is the second time this round a correctness fix has bought time with
 wall-clock. A risk-reducing operation can no longer reach it (F1 bounds the whole operation at 2 s);
 what reaches it is an ordinary multi-call handler such as `modify`.
+
+### Round 8 close — gates, box run, and the test-name diff (2026-09-04)
+
+Closed by a second builder: the round-8 builder was killed by a rate limit after the code was on
+disk but before the final runs. Nothing was redesigned; the code verified below is `5624cd1`
+exactly as that builder left it (branch `u2a-rebase-probe`, 5 commits on `a974142`, tree clean).
+
+**Mac — `dotnet build TradeAgent.sln` then the FULL suite once** (`export PATH="$HOME/.dotnet:$PATH"
+DOTNET_ROOT="$HOME/.dotnet"`):
+
+```
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 747 ms - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s    - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 272, Skipped: 0, Total: 272, Duration: 5 m 39 s - TradeAgent.IntegrationTests.dll (net10.0)
+EXIT=0
+```
+
+**455 green (75 / 108 / 272), 0 failed, 0 skipped — the previous builder's claim is CONFIRMED**, at
+those exact per-project counts.
+
+**Correction to the round-8 build claim: the build emits 1 warning, not 0, and the warning is new
+this round.** The first `dotnet build TradeAgent.sln` on the Mac reported `0 Warning(s)`, but that
+run was incremental — every project was already up to date, so nothing recompiled and no warning was
+re-emitted. Forced (`--no-incremental`) it reports what the box's from-scratch build reports:
+
+```
+src/TradeAgent.Gateway/GatewayPipeServer.cs(626,32): warning CS8619: Nullability of reference types
+in value of type 'Task<ExecutionRequest>' doesn't match target type 'Task<ExecutionRequest?>'.
+    1 Warning(s)
+    0 Error(s)
+```
+
+Both machines report the identical single warning, so it is not platform-specific. It is new in
+round 8: `RunLegs` does not exist at `a974142` (`git grep RunLegs a974142 -- src/` → no match) and is
+introduced by the F1 rework. The mechanism, from the declared types: `RunLegs` takes
+`Func<string, string, Task<ExecutionRequest?>>` so that one helper serves both sweeps;
+`TradingGateway.CloseAsync` returns `Task<ExecutionRequest?>` and matches, while
+`TradingGateway.CancelAsync` returns `Task<ExecutionRequest>`, and `Task<T>` is invariant, so the
+`cancelall` call site at line 626 warns. **NOT verified: whether this warrants a code change** — it
+is 0 errors and the suite is green on both machines, and closing it would be a new edit whose
+RED/GREEN/mutant evidence this round does not have. Left for the manager to route; nothing was
+changed to hide it.
+
+**Test-name diff `a974142` → `5624cd1` — no test was silently deleted.** Test-method names extracted
+at both shas (`git grep -n -E 'public (async Task|void) ' <sha> -- 'tests/*.cs'`, reduced to
+`path::method`, sorted unique):
+
+| | a974142 | 5624cd1 |
+|---|---|---|
+| test methods | 358 | 362 |
+| `[Fact]` | 320 | 324 |
+| `[Theory]` | 27 | 27 |
+| `[InlineData]`/`[MemberData]` rows | 122 | 122 |
+
+**REMOVED: 0.** ADDED: 4, all `[Fact]` —
+
+```
+tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs::Two_emergency_calls_inside_one_operation_share_its_deadline
+tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs::Disposal_covers_a_handler_that_makes_several_connector_calls_in_series
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_five_order_sweep_answers_within_the_budget_and_accounts_for_every_order
+tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs::A_sweep_pays_the_emergency_budget_once_not_once_per_rpc
+```
+
+The arithmetic closes: 451 green at `a974142` + 4 new facts = **455**, which is what ran. Four test
+files changed in the diff; the fourth, `ApprovalReauthorizationTests.cs`, is `+1` line and that line
+is `public TimeSpan EmergencyBudget => inner.EmergencyBudget;` — a new interface member on a test
+double, not a test.
+
+**The box run** (`DESKTOP-K8VRIT9`, one granted run). `tools/win-state.sh` first: tailscale up,
+session `Active (id 1, console)`, desktop live. `tools/win-push.sh` from the clean worktree:
+`packed 760K` / `unpacked: 155 files` — 156 files locally excluding `.git`/`bin`/`obj`/`artifacts`,
+minus the worktree's `.git` pointer file (a file, not a directory, so `tar --exclude='.git'` drops
+it) = 155. Then build, the two pipe classes, and the full suite in ONE ssh session
+(`tools/win-ps.sh`), with the identity check taken before and re-taken after.
+
+**Identity check — the box tree is the Mac tree.** SHA-256 of seven files, all seven changed by this
+round, plus the count of source `.cs` under `src`+`tests`. Box BEFORE, box AFTER and Mac worktree are
+byte-identical on all seven:
+
+```
+835dc4d3e5f67c2581c9462fc804476326fa18d525bc9e7e0cfa83d0e45dbd73  src/TradeAgent.ConnectorSdk/RiskReducingScope.cs
+61b7d86b065f1b29910da8e479b2860cdce17d1732484b0cc8e45c9527dc48a9  src/TradeAgent.ConnectorSdk/Contracts.cs
+4e90ccf9b2d8459931431cd83ec72574dcfa35d0f4e2054f1e5460cf6b8e30f0  src/TradeAgent.Connectors.Atas/AtasConnector.cs
+56c920bceb7b446cdbfff0afb2f277ff3736f3f7450823ec9a1600a24085dcfd  src/TradeAgent.Gateway/GatewayPipeServer.cs
+d1be528e43c10ed44c193916423b024e65095e1a0d23a7d7d1b825d0f5a7b4dd  tests/TradeAgent.IntegrationTests/ConnectorSendDeadlineTests.cs
+f24cc09c0e61a737e9f8cf416d58212d79a6801565616c65e6a5e648f832a79e  tests/TradeAgent.IntegrationTests/GatewayPipeBackpressureTests.cs
+6dad1a36e7b7d6e55a063cb426a8bdd13115fa6041c19e449d27b89ecc22eeb6  tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs
+```
+
+`.cs` under `src`+`tests`: box **88** BEFORE → **136** AFTER. Both are correct and both match the Mac:
+88 is the source count (`git ls-tree -r --name-only 5624cd1 -- src tests | grep -c '\.cs$'` → 88, and
+the Mac excluding `bin`/`obj` → 88); 136 is that plus the `obj/*.cs` the build generates, which is
+what the built Mac tree also shows. The seven hashes are unchanged AFTER the three runs, so nothing
+the run did altered the tree it measured.
+
+**Box counts:**
+
+```
+== BUILD ==            Build succeeded.  1 Warning(s)  0 Error(s)   Time Elapsed 00:00:12.06   (exit 0)
+
+== PIPE CLASSES (ConnectorSendDeadlineTests + GatewayPipeBackpressureTests) ==
+Passed!  - Failed: 0, Passed:  52, Skipped: 0, Total:  52, Duration: 5 m 14 s - TradeAgent.IntegrationTests.dll (net10.0)   (exit 0)
+
+== FULL SUITE ==
+Passed!  - Failed: 0, Passed:  75, Skipped: 0, Total:  75, Duration: 3 s     - TradeAgent.FaultTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 108, Skipped: 0, Total: 108, Duration: 3 s     - TradeAgent.UnitTests.dll (net10.0)
+Passed!  - Failed: 0, Passed: 272, Skipped: 0, Total: 272, Duration: 5 m 41 s - TradeAgent.IntegrationTests.dll (net10.0)
+full exit: 0     full duration: 352 s
+```
+
+**Windows: 455 green (75 / 108 / 272), 0 failed, 0 skipped — the same 455 as the Mac, on the target
+platform.** The 52 in the pipe run is the two classes together and reconciles with the build record's
+own figures: `ConnectorSendDeadlineTests` 38 + `GatewayPipeBackpressureTests` 14 = 52.
+
+The suites cannot reach the real installation: `tests/Shared/TestEnv.cs` redirects `TRADEAGENT_HOME`
+to a fresh temp directory and `TRADEAGENT_PIPE` to `ta-test-<guid>` from a `[ModuleInitializer]`,
+before anything touches `Paths` (read, not assumed — `TestEnv.Init()`).
+
+### What I did NOT do
+
+- **Did not redesign, refactor or fix anything.** No source file was edited. The CS8619 warning above
+  is reported, not closed. The only file this session writes is this record.
+- **Did not commit, push, merge, rebase or move any branch.** `u2a-rebase-probe` is still at
+  `5624cd1`; `u2a-pipe-hardening` was not touched. No git command was run in the main worktree.
+- **Did not re-run the round-8 RED/GREEN/mutant evidence.** The build-record table above is the
+  previous builder's, carried forward unverified by me. NOT verified by this session: every RED,
+  GREEN and mutant figure in it, and the F2 arithmetic (3 × 50 + 5 = 155 s). What I verified is that
+  the tree producing those claims builds and is 455 green on both machines.
+- **Did not touch the installed app, ATAS, or the real home on the box.** ATAS was running throughout
+  (`win-state.sh`: `ATAS running: True`) and was not started, stopped or driven. `win-push.sh`
+  rewrites `C:\ta\repo` only; it verified first that no process was running out of that tree
+  ("nothing running from C:\ta\repo") so its delete step could not half-remove a running install.
+  No UI agent was installed or started, and no screenshot was taken.
+- **Did not run `probe atas`, place, modify or cancel any order**, on the box or anywhere.
+- **Did not run the Codex leg or any adversarial-verify leg.** This session is the builder.
+- Two ssh calls beyond the single granted run, both read-only and neither producing a figure quoted
+  above: `win-state.sh` before pushing, and one `Select-String` over `C:\ta\r8-build.log` — the log
+  the granted run itself wrote — to recover the text of the one warning.

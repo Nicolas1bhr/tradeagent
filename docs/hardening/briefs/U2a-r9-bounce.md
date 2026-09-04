@@ -34,3 +34,13 @@ diff test-method names after every structural edit, checkpoint `## Round 9 (buil
 
 Targeted classes, then `dotnet build TradeAgent.sln` + FULL suite once on the Mac (≈5–6 min; output to a file). Report:
 tip sha, per finding RED → GREEN → mutant, the longest chain named, suite counts, "What I did NOT do".
+
+## Addendum from the round-8 finisher (fresh leg, `5624cd1`): 455 green Mac AND box (identity proven) — plus one new item
+
+- **F5 (LOW, but a gate).** The round-8 record's "0 warnings" came from an INCREMENTAL build (nothing recompiled). A
+  `--no-incremental` build on the Mac, and the box's from-scratch build, both report `GatewayPipeServer.cs(626,32):
+  warning CS8619` — `Task<ExecutionRequest>` into `Task<ExecutionRequest?>`: `RunLegs` (new in round 8) declares the
+  nullable form to serve both sweeps, `CloseAsync` matches it, `CancelAsync` returns the non-nullable form, and
+  `Task<T>` is invariant. Make the signatures consistent (no `!`, no suppression), 0 warnings on a `--no-incremental`
+  build, suite green. **Rule from now on for every gate in this program: `dotnet build TradeAgent.sln --no-incremental`
+  is the build gate; an incremental "0 warnings" is not a claim.**
