@@ -256,23 +256,25 @@ public class AdapterTeardownTests : IDisposable
     }
 
     /// <summary>
-    /// R8-4, THE DETERMINISTIC HALF. THE FLAG THAT DECIDES IS THE ONE READ UNDER THE LOCK.
+    /// R8-4. THE STATE THAT DECIDES IS THE ONE READ UNDER THE LOCK.
     ///
     /// PRIOR 21's rule is "the check and the write are ONE act, under the lock the release takes",
     /// and nothing distinguished that from "the write is under the lock" — a mutant that moved only
-    /// the CHECK out survived every case here AND the forty-round race below, on this machine. A
-    /// guard on a T1 surface whose only witness is a race that may or may not land is not pinned.
+    /// the CHECK out survived every other case here AND the forty-round race below, on this machine.
+    /// A guard on a T1 surface whose only witness is a race that may or may not land is not pinned.
     ///
-    /// So the interleaving is staged rather than raced, and only the LOCK is staged: a first caller
-    /// holds the guard's lock, a write-ahead record arrives and waits for it, and ATAS stops the
-    /// strategy while both are in that position — `Stop` raises the flag as its very first statement
-    /// and only then runs its steps, so the flag goes up while the lock is still held and the write
-    /// is still waiting. When the lock is let go the waiting write is the only contender, so it gets
-    /// it with no race at all. What it must find there is the flag that went up WHILE it was
-    /// waiting, not the one it read before it started to wait.
+    /// ROUND 10 RESTAGED IT, AND THE REASON IS DIRECTIVE 4. Round 9 raised a bare flag OUTSIDE the
+    /// lock as `Stop`'s first statement, so a stopper on another thread could raise it while a third
+    /// thread held the lock. The state machine changes state UNDER the lock — that is the whole
+    /// point of it — so a stopper on another thread now waits for the lock and the interleaving
+    /// would never occur. It is driven from INSIDE the lock instead: the holder calls `Stop` itself,
+    /// which takes the same lock reentrantly on the same thread. The interleaving is identical and
+    /// it is the one that matters — the writer parked on the lock BEFORE the transition and released
+    /// AFTER it — and what it must find there is the state that changed while it was waiting, not
+    /// the one it read before it started to wait.
     /// </summary>
     [Fact]
-    public async Task The_stopped_flag_that_decides_is_the_one_read_under_the_lock()
+    public async Task The_state_that_decides_is_the_one_read_under_the_lock()
     {
         var witness = Session();
         Assert.True(Submit(witness, "TA-RESTING"));
@@ -280,29 +282,107 @@ public class AdapterTeardownTests : IDisposable
 
         using var holding = new ManualResetEventSlim();
         using var letGo = new ManualResetEventSlim();
-        using var stopping = new ManualResetEventSlim();
-        using var finishStop = new ManualResetEventSlim();
 
-        var holder = Task.Run(() => teardown.Record(() => { holding.Set(); letGo.Wait(5_000); }));
+        var holder = Task.Run(() => teardown.Record(() =>
+        {
+            holding.Set();
+            letGo.Wait(5_000);
+            // The whole teardown, from inside the lock the writer below is parked on.
+            teardown.Stop(steps: () => { });
+        }));
         Assert.True(holding.Wait(5_000));
 
         bool? recorded = null;
         var writer = Task.Run(() => recorded = teardown.Submitting("TA-LATE", "SIM", "ES", "Buy", 1m, null));
         Thread.Sleep(200);                      // long enough for the write to be parked on the lock
 
-        var stopper = Task.Run(() => teardown.Stop(steps: () => { stopping.Set(); finishStop.Wait(5_000); }));
-        Assert.True(stopping.Wait(5_000));
-        Assert.True(teardown.Stopped);
-
         letGo.Set();
         await holder.WaitAsync(TimeSpan.FromSeconds(5));
         await writer.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.False(recorded,
-            "the flag was read before the lock, so a write got in for a strategy ATAS had stopped");
 
-        finishStop.Set();
-        await stopper.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(recorded,
+            "the state was read before the lock, so a write got in for a strategy ATAS had stopped");
+        Assert.True(teardown.Stopped);
         Assert.True(Submit(Session(), "TA-REPLACEMENT"));
+    }
+
+    /// <summary>
+    /// F35. A RESTART CANNOT REOPEN THE DOOR WHILE THE TEARDOWN IS STILL RUNNING.
+    ///
+    /// `Started()` cleared the flag with a plain assignment, so a start arriving during `Stop` —
+    /// ATAS restarting the strategy, or any other thread holding this object — put the adapter back
+    /// into "running" while the teardown was half done, and the abandoned frame loop's next write
+    /// went into a witness that was about to be released. Three states rather than a boolean is what
+    /// makes that unsayable: STOPPING is not STOPPED, and a start is only legal from STOPPED.
+    /// </summary>
+    [Fact]
+    public void A_start_that_arrives_during_the_teardown_does_not_reopen_the_door()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+
+        var teardown = new AdapterTeardown(witness);
+        bool? startedDuringStop = null;
+        var wroteDuringStop = true;
+        teardown.Stop(steps: () =>
+        {
+            startedDuringStop = teardown.Started();
+            wroteDuringStop = teardown.Submitting("TA-LATE", "SIM", "ES", "Buy", 1m, null);
+        });
+
+        Assert.False(startedDuringStop, "a strategy that is being taken down was started again");
+        Assert.False(wroteDuringStop,
+            "a restart during the teardown let a write into the witness of a strategy ATAS was stopping");
+        Assert.True(Submit(Session(), "TA-REPLACEMENT"));
+    }
+
+    /// <summary>
+    /// AND THE RESTART THAT IS LEGAL STILL WORKS — the other direction, without which the test above
+    /// is satisfied by a `Started()` that never starts anything. One ATAS process stops and starts a
+    /// strategy many times, and its witness takes the lease back on the next write.
+    /// </summary>
+    [Fact]
+    public void A_start_after_the_teardown_has_finished_records_again()
+    {
+        var teardown = new AdapterTeardown(Session());
+        Assert.True(teardown.Submitting("TA-FIRST", "SIM", "ES", "Buy", 1m, null));
+
+        teardown.Stop(() => { });
+        Assert.True(teardown.Stopped);
+        Assert.False(teardown.Submitting("TA-BETWEEN", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.True(teardown.Started());
+        Assert.True(teardown.Submitting("TA-AGAIN", "SIM", "ES", "Buy", 1m, null));
+    }
+
+    /// <summary>
+    /// THE THREE STATES, ASKED FROM EACH OF THEM. A machine driven only through one transition is a
+    /// machine with untested states; this walks it and asserts what each one answers — including
+    /// that STOPPING and STOPPED give different answers to <c>Started()</c>, which is the whole of
+    /// F35.
+    /// </summary>
+    [Fact]
+    public void The_three_states_answer_differently()
+    {
+        var teardown = new AdapterTeardown(Session());
+
+        Assert.Equal(AdapterTeardown.State.Running, teardown.Now);
+        Assert.True(teardown.Started());                       // Running -> Running, idempotent
+        Assert.Equal(AdapterTeardown.State.Running, teardown.Now);
+
+        AdapterTeardown.State inside = default;
+        bool? startedInside = null;
+        teardown.Stop(steps: () =>
+        {
+            inside = teardown.Now;
+            startedInside = teardown.Started();
+        });
+        Assert.Equal(AdapterTeardown.State.Stopping, inside);
+        Assert.False(startedInside);
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+
+        Assert.True(teardown.Started());
+        Assert.Equal(AdapterTeardown.State.Running, teardown.Now);
     }
 
     /// <summary>
