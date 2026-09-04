@@ -53,3 +53,8 @@ guard → RED (`Expected: "error" / Actual: null`), restored. Added
 interface members `main` added (`WorstCaseOperationPath`, `EmergencyBudget`, delegated to the inner connector).
 Item 0 baseline VERIFIED: Release `--no-incremental` 0 Warning(s) 0 Error(s); suite Unit 201 / Fault 166 / Integration
 506, 0 failed.
+1. Wrong-connector evidence. RED `A_record_from_another_platform_is_inconclusive_however_empty_this_book_is`
+   (`Expected: Not CANCELLED / Actual: CANCELLED`) → GREEN with a `req.ConnectorId != Connector.Id` guard first in
+   `ReconcileAsync`'s loop, reason "placed on fake; connected to atas"; the other direction
+   (`A_definite_cancel_on_the_records_own_platform_still_settles`) was green before and after. Mutant `if (false && ...)`
+   → RED, same assertion. Fault suite 168 green. VERIFIED.

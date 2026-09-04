@@ -1508,6 +1508,25 @@ public sealed class TradingGateway : IAsyncDisposable
         foreach (var req in pending)
         {
             ct.ThrowIfCancellationRequested();
+
+            // EVIDENCE ABOUT ITS OWN TARGET MEANS ON ITS OWN PLATFORM, and this is the first thing
+            // asked because nothing below it can be read without it. `SwitchConnectorAsync` builds a
+            // fresh gateway over the SAME database, so every record the previous platform left
+            // behind is handed to a reconciler talking to a different broker — and an account id is
+            // unique only within a platform, so `GetOrdersAsync(req.AccountId, ...)` answers
+            // confidently about somebody else's book. The absence rule then read "no such order" as
+            // "the cancel landed" and wrote CANCELLED over a target still working at the platform it
+            // was actually sent to (Codex round-3 F1).
+            //
+            // It stays flagged and keeps trading paused: this is not evidence of anything, and the
+            // record is settled by switching back, or by the owner's card.
+            if (!string.Equals(req.ConnectorId, Connector.Id, StringComparison.Ordinal))
+            {
+                inconclusive++;
+                details.Add($"{req.RequestId}: placed on {req.ConnectorId}; connected to {Connector.Id}");
+                continue;
+            }
+
             var state = req.State;
             if (state != ExecutionState.UNKNOWN && state != ExecutionState.RECONCILING)
             {

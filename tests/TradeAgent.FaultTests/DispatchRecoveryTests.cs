@@ -63,7 +63,14 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public int Closes;
     public int CancelAlls;
 
-    public string Id => inner.Id;
+    /// <summary>
+    /// The platform this connector claims to be. A connector switch builds a new gateway over the
+    /// SAME store, so a record written on one platform is read back while another is connected —
+    /// which is the only way to test that the reconciler notices.
+    /// </summary>
+    public string? IdIs;
+
+    public string Id => IdIs ?? inner.Id;
     public string DisplayName => inner.DisplayName;
     public ConnectorCapabilities Capabilities => inner.Capabilities;
 
@@ -2171,5 +2178,98 @@ public class PressOwnsItsSetTests
             Assert.Equal(press, button.Begin());     // the same press, not a fresh one
             await gw.DisposeAsync();
         }
+    }
+}
+
+// =================================================================================================
+// ROUND 4 · the rule derived correctly — evidence must be positive, DEFINITE and ABOUT THIS RECORD'S
+// OWN TARGET, on THIS RECORD'S OWN PLATFORM
+// =================================================================================================
+
+public class ConservativeEvidenceRoundFourTests
+{
+    static (MovableClock Clock, GatewayOptions Options) Clocked()
+    {
+        var clock = new MovableClock(DateTimeOffset.UtcNow);
+        return (clock, new GatewayOptions { Clock = clock });   // DEFAULT AbsenceGrace, deliberately
+    }
+
+    /// <summary>An order resting at the broker, and a cancel of it whose answer was lost on the wire.</summary>
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, string Target, MovableClock Clock)>
+        LostCancel(string requestId, Database? db = null, MovableClock? clock = null)
+    {
+        GatewayOptions options;
+        if (clock is null) (clock, options) = Clocked();
+        else options = new GatewayOptions { Clock = clock };
+
+        var (gw, c, database) = await Recovery.Ready(
+            new FaultProfile { Fill = FillBehaviour.LeaveWorking }, options: options, db: db);
+        var placed = await gw.PlaceAsync(new AgentContext("a"), $"{requestId}-place",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+
+        c.CancelDoesNotReachTheBook = true;
+        c.ThrowAfterCancel = new ConnectorTransportException("wire down after the cancel was sent");
+        await gw.CancelAsync(new AgentContext("a"), requestId, placed.ConnectorOrderId!);
+        c.ThrowAfterCancel = null;
+        c.CancelDoesNotReachTheBook = false;
+        return (gw, c, database, placed.ConnectorOrderId!, clock);
+    }
+
+    // ---- F1: the evidence has to come from the platform the record names
+
+    /// <summary>
+    /// AN EMPTY BOOK ON B SETTLES NOTHING ABOUT A REQUEST DISPATCHED ON A.
+    ///
+    /// `SwitchConnectorAsync` builds a fresh gateway over the SAME database, so every record the
+    /// previous platform left behind is read back by a reconciler talking to a different broker.
+    /// `req.ConnectorId` was never compared with `Connector.Id`, so the absence rule ran on a book
+    /// that could not have contained the order in the first place, waited out the grace, and wrote
+    /// CANCELLED over a cancel whose target is still working at the platform it was sent to.
+    /// </summary>
+    [Fact]
+    public async Task A_record_from_another_platform_is_inconclusive_however_empty_this_book_is()
+    {
+        var (first, c1, db, target, clock) = await LostCancel("r4-wrong-connector");
+        using var dbh = db;
+        Assert.Equal("fake", first.GetRequest("r4-wrong-connector")!.ConnectorId);
+
+        // The operator switches platform. New gateway, same store, a broker that has never heard of
+        // this order — and all the time in the world for an absence to look like an answer.
+        var (second, c2, _) = await Recovery.Ready(options: new GatewayOptions { Clock = clock }, db: db);
+        c2.IdIs = "atas";
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await second.ReconcileAsync();
+
+        var record = second.GetRequest("r4-wrong-connector")!;
+        Assert.NotEqual(ExecutionState.CANCELLED, record.State);
+        Assert.True(record.NeedsReconciliation);
+        Assert.False(result.Clean);
+        Assert.Contains(result.Details, d => d.Contains("placed on fake") && d.Contains("connected to atas"));
+        Assert.False(second.TryAuthorizeExecution(new AgentContext("a"), out _));
+
+        // And the order really is still working on the platform it was sent to.
+        Assert.Equal(ExecutionState.WORKING, c1.Inner.Broker.Orders.Single().State);
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION: the right platform still settles. A definite CANCELLED read from the
+    /// connector whose id the record carries clears it, exactly as before — the connector check is a
+    /// filter on WHOSE evidence counts, not a new reason to stay paused.
+    /// </summary>
+    [Fact]
+    public async Task A_definite_cancel_on_the_records_own_platform_still_settles()
+    {
+        var (gw, c, db, target, clock) = await LostCancel("r4-right-connector");
+        using var dbh = db;
+
+        c.Inner.Broker.Cancel(target);
+        clock.Advance(TimeSpan.FromMinutes(10));
+
+        var result = await gw.ReconcileAsync();
+
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(ExecutionState.CANCELLED, gw.GetRequest("r4-right-connector")!.State);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
