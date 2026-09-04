@@ -53,6 +53,21 @@ As before; `## Round 8 (build record, <date>)` in `records/U14.md` AS YOU GO; ta
 suite once on the Mac; no box unless the manager grants it. Report: tip sha, per finding RED → GREEN → mutant, the
 refutations written, suite counts, "What I did NOT do".
 
-## Verifier round-7 findings (appended by the manager when leg [2] reports)
+## Verifier round-7 findings (leg [2], Opus, on `4de7c25`) — VERDICT: FAIL — 0H/2M/0L · record `records/U14-verify-r7.md`
 
-_pending_
+- **V4 (MED, class: a refusal is kept until its own repair and nothing asks whether it still describes the peer that is
+  there now).** `_incompatible` is now permanent (7b), `_unauthenticated` already was, and `StatusDetail`
+  (`AtasConnector.cs:120`, `:371`/`:430`) prefers the OLDER: after a v2 refusal, a reinstalled bridge that fails
+  AUTHENTICATION is still reported as "speaks protocol 2 — reinstall the add-on", hiding the live message that another
+  program may have taken the pipe; the row can outlive ATAS itself. Rule: the row describes the peer that is there NOW —
+  the most recent refusal (or the current live state) takes precedence; older markers stay recorded but do not outrank a
+  newer observation. The verifier's MS1 (one line) shows the fix shape; write the test that reproduces the v2-then-auth
+  sequence and asserts the auth sentence.
+- **V5 (MED).** MV2c goes RED 1/123 against a single probe — the state (canonical sidecar present but diagnostic-only,
+  plus a refused writer's own unresolved safety line) was never built by the builder's tests, so "each blocks the other"
+  was half right: a real change hides there (a refused second bridge would drop the machine's `SupportsClientOrderId`).
+  Build that state in a test; decide with the F25 refutation in mind (noted vs degraded) what the correct outcome IS and
+  pin it; MV2b is genuinely inert (stands).
+
+Closed by the verifier: V1 (MD1 RED 12), V2, V3 (MV3 breaks both rows); the `Redial` fixture models a real flake and
+hides nothing; the only other clearer of a refused row is constructing a new `AtasConnector` (explicit operator action).
