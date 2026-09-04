@@ -139,7 +139,13 @@ public class CoidWitnessTests : IDisposable
     CoidWitness Session(Action<string, string> replace) =>
         new(File_, null, CoidWitness.DefaultCap, replace);
 
-    static void Submit(CoidWitness w, string id) =>
+    /// <summary>
+    /// Returns what <c>Submitting</c> returned, because that answer is the promise: TRUE means this
+    /// claim is on the disk, FALSE means the order will be refused and the claim is correctly not
+    /// there. A caller that throws the answer away can only assert something weaker or something
+    /// untrue — see <see cref="The_file_is_never_absent_while_it_is_being_rewritten"/>.
+    /// </summary>
+    static bool Submit(CoidWitness w, string id) =>
         w.Submitting(id, "SIM123", "ES", "Buy", 1m, 4200.25m);
 
     /// <summary>
@@ -434,19 +440,30 @@ public class CoidWitnessTests : IDisposable
     /// under load. Absence of the file and absence of the temp are both symptoms; the question is
     /// whether a claim was LOST, and nothing here asked it. It does now: every identifier the writer
     /// submitted is read back out of the file by a session that did not write it.
+    ///
+    /// AND THE PROMISE IS NOT A COUNT. `Submitting` returning FALSE is this mechanism working: the
+    /// rename was refused past its retry budget, the claim was rolled back out of the records, and
+    /// `Place` refuses the order — so nothing carrying that identifier is ever sent and the file is
+    /// RIGHT not to hold it. A flat 301 asserted that no rename is ever refused, which is a fact
+    /// about the machine and not about this code, and `test (windows-latest)` fell over it on run
+    /// 33907331267 with 300 while the temps were swept and `missing` was 0. What is asserted here is
+    /// the promise itself, which is strictly stronger where it counts: every claim the writer was
+    /// told was durable is in the committed file, and the file holds nothing else.
     /// </summary>
     [Fact]
     public async Task The_file_is_never_absent_while_it_is_being_rewritten()
     {
         var w = Session();
-        Submit(w, "TA-SEED");
+        Assert.True(Submit(w, "TA-SEED"));
         Assert.True(File.Exists(File_));
 
         var stop = false;
         var missing = 0;
+        var accepted = new List<string>();
         var writer = Task.Run(() =>
         {
-            for (var i = 0; i < 300; i++) Submit(w, $"TA-CHURN-{i}");
+            for (var i = 0; i < 300; i++)
+                if (Submit(w, $"TA-CHURN-{i}")) accepted.Add($"TA-CHURN-{i}");
             Volatile.Write(ref stop, true);
         });
 
@@ -457,21 +474,29 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(0, missing);
 
         // DURABILITY, asserted before the tidiness below it, because this is the property the file
-        // exists for and the other one is housekeeping. 301 = the seed plus 300 churn claims, all
-        // inside DefaultCap, so nothing was trimmed and nothing may be missing.
+        // exists for and the other one is housekeeping. The seed plus every accepted claim, all
+        // inside DefaultCap, so nothing was trimmed and nothing accepted may be missing — and the
+        // count is exact in both directions, so a claim the writer was REFUSED may not be there
+        // either.
         //
         // READ OUT OF THE COMMITTED FILE, NOT THROUGH A SESSION. A session recovers an uncommitted
         // temp — that is the whole of this unit — so asking one whether the claims are there can be
         // answered by a rewrite that never landed. That is precisely the state this assertion is
         // supposed to detect, and it would pass anyway.
-        Assert.Equal(301, CommittedIds().Length);
-        Assert.Equal("TA-CHURN-299", CommittedIds()[^1]);
-        Assert.Contains("TA-SEED", CommittedIds());
+        var committed = CommittedIds();
+        Assert.NotEmpty(accepted);
+        Assert.Equal(accepted.Count + 1, committed.Length);
+        foreach (var id in accepted) Assert.Contains(id, committed);
+        Assert.Equal(accepted[^1], committed[^1]);
+        Assert.Contains("TA-SEED", committed);
 
         // A leftover temp no longer means a lost record — the assertions above just proved none was
         // lost, and a reader prefers a newer temp. It means a rename was still refused after the
-        // full retry budget, which on Windows is a fact about the machine worth surfacing.
-        Assert.Empty(Temps());
+        // full retry budget, and a refusal strands exactly one temp, so the count that is a fact
+        // about this code rather than about the machine is "no more than one per refusal". On a
+        // machine that accepted all 300 that is `Assert.Empty`, which is what it was.
+        Assert.True(Temps().Length <= 300 - accepted.Count,
+                    $"{Temps().Length} temps left behind for {300 - accepted.Count} refused renames");
     }
 
     // ------------------------------------------------------- the rename that does not land
