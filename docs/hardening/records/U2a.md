@@ -1,5 +1,13 @@
 # U2a — gateway pipe hardening, operator-context hole, connector deadlines, cancel-all ids, replayable request id, emergency fast path
 
+> **THIS COPY IS A SNAPSHOT, NOT THE RECORD.** It is the 2026-09-03 text carried on the branch and it
+> stops at round 4. The live record — rounds 4b through 8, the verify records, and the corrections a
+> round-7 review reported as missing (the Windows NOT-VERIFIED rewrite, the withdrawn "one `close-all`
+> settles the 64-character limit" claim, and the round-6 "restored verbatim" correction) — lives on
+> `main` at `docs/hardening/records/U2a.md`, where the manager commits it. A reviewer reading only
+> this file will find text every later round has already superseded.
+
+
 Branch `u2a-pipe-hardening` @ **5c716aa** (base 283d942, 21 commits; full messages in `commits-u2a-pipe-hardening.md`).
 Tier 1. Reconstructed 2026-09-03 from the session transcript; the round build records, verify records (1465 lines) and
 mutation tables were lost with the scratchpad. Suite at tip: **360 green** (298 at base), App builds.
