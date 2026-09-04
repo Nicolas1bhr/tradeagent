@@ -51,6 +51,22 @@ public static class TransportLedger
     /// </summary>
     public static void Record(TransportOutcome outcome) => Current.Value?.Observe(outcome);
 
+    /// <summary>
+    /// Called by a connector the moment it BEGINS a mutating call, before anything can go wrong.
+    ///
+    /// This is what makes "nothing was recorded" mean something. Every site that KNOWS where the
+    /// frame got to says so, but a call can also leave by a route nobody enumerated — a caller's own
+    /// cancellation during the reply wait was one, and it left the record empty for a frame the peer
+    /// had already read whole (Codex round-10 F2). An empty record means "no mutating call was ever
+    /// attempted", which the mapper reads as <c>not-sent</c>: an ASSURANCE, produced by an absence
+    /// of information, about an order that may be at the broker.
+    ///
+    /// With the attempt marked, an unreported exit is <see cref="TransportOutcome.PossiblyWritten"/>
+    /// — the fail-closed answer — and it is fail-closed for exits that have not been thought of yet,
+    /// which is the difference between fixing this and fixing this class.
+    /// </summary>
+    public static void Attempt() => Current.Value?.Attempt();
+
     sealed class Handle(TransportRecord? previous) : IDisposable
     {
         int _done;
@@ -64,12 +80,34 @@ public static class TransportLedger
 /// <summary>
 /// One piece of work's transport knowledge. Null <see cref="Outcome"/> means no mutating call was
 /// ever attempted, which is itself the strongest form of "nothing was sent".
+///
+/// AND THAT SENTENCE IS ONLY TRUE BECAUSE OF <see cref="Attempt"/>. It used to be a claim about a
+/// field nobody had written, which is a different thing: a mutating call that left by an unenumerated
+/// route also wrote nothing, and the two were indistinguishable. Null is now PRODUCIBLE ONLY by a
+/// piece of work that never started a mutation.
 /// </summary>
 public sealed class TransportRecord
 {
     int _outcome = -1;
+    int _attempted;
 
-    public TransportOutcome? Outcome => Volatile.Read(ref _outcome) is var v && v < 0 ? null : (TransportOutcome)v;
+    /// <summary>
+    /// Where this work's mutation got to, or null if it never started one.
+    ///
+    /// AN ATTEMPT WITH NO REPORT IS <see cref="TransportOutcome.PossiblyWritten"/>, which is not a
+    /// guess — it is that outcome's own definition: "anything that cannot be proven to be
+    /// NothingWritten lands here". Every site that can prove otherwise has already called
+    /// <see cref="TransportLedger.Record"/>, and an explicit report always wins over this fallback,
+    /// in BOTH directions: a proven <see cref="TransportOutcome.NothingWritten"/> stays
+    /// <c>NothingWritten</c>, and a reply that was read stays <see cref="TransportOutcome.ReplyReceived"/>.
+    /// </summary>
+    public TransportOutcome? Outcome =>
+        Volatile.Read(ref _outcome) is var v && v >= 0 ? (TransportOutcome)v
+            : Volatile.Read(ref _attempted) == 1 ? TransportOutcome.PossiblyWritten
+                : null;
+
+    /// <summary>A mutating call has STARTED on this work. See <see cref="TransportLedger.Attempt"/>.</summary>
+    internal void Attempt() => Volatile.Write(ref _attempted, 1);
 
     /// <summary>
     /// THE MOST UNCERTAIN REPORT WINS, and that is the fail-closed direction rather than the latest

@@ -623,6 +623,55 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// `not-sent` IS AN ASSURANCE, SO IT MAY NEVER COME FROM AN ABSENCE OF INFORMATION.
+    ///
+    /// The empty transport record used to carry two different facts: a leg that never started a
+    /// mutation (a target resolution that failed, a leg parked for approval, a `close-all` symbol
+    /// with nothing to close) and a mutation that started and left by a route no site wrote down.
+    /// The first is honestly <c>not-sent</c>; the second may be an order sitting at the broker, and
+    /// reading it as <c>not-sent</c> tells the owner nothing was sent and raises no reconciliation
+    /// flag (Codex round-10 F2).
+    ///
+    /// The two are now different records, and this is the rule in one place. BOTH DIRECTIONS: a
+    /// record nobody attempted must still read <c>not-sent</c>, or the fix would have bought safety
+    /// by flagging every leg that never reached a wire — which is the defect round 9 spent a round
+    /// removing, arrived at from the other side.
+    /// </summary>
+    [Fact]
+    public void An_attempted_mutation_that_reported_nothing_is_not_confirmed_and_an_unattempted_one_is_not_sent()
+    {
+        // Nothing was ever attempted: the strongest form of "nothing was sent", and unchanged.
+        var untouched = new TransportRecord();
+        Assert.Null(untouched.Outcome);
+        Assert.Equal("not-sent", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, untouched.Outcome));
+
+        // A mutation started and no site reported where it got to: fail-closed.
+        var attempted = new TransportRecord();
+        using (TransportLedger.Attach(attempted)) TransportLedger.Attempt();
+        Assert.Equal(TransportOutcome.PossiblyWritten, attempted.Outcome);
+        Assert.Equal("sent-not-confirmed", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, attempted.Outcome));
+
+        // And a site that KNOWS still overrides the fallback, in both directions — otherwise the
+        // fallback would have swallowed the one report that can honestly say `not-sent`.
+        var proven = new TransportRecord();
+        using (TransportLedger.Attach(proven))
+        {
+            TransportLedger.Attempt();
+            TransportLedger.Record(TransportOutcome.NothingWritten);
+        }
+        Assert.Equal(TransportOutcome.NothingWritten, proven.Outcome);
+        Assert.Equal("not-sent", GatewayPipeServer.LegWordFor(ExecutionState.UNKNOWN, proven.Outcome));
+
+        var answered = new TransportRecord();
+        using (TransportLedger.Attach(answered))
+        {
+            TransportLedger.Attempt();
+            TransportLedger.Record(TransportOutcome.ReplyReceived);
+        }
+        Assert.Equal(TransportOutcome.ReplyReceived, answered.Outcome);
+    }
+
+    /// <summary>
     /// A STATE NOTHING MAPS MUST FAIL LOUDLY, NOT BECOME THE MOST DANGEROUS WORD IN THE SET.
     ///
     /// Verifier round-9 F-3. `Describe()` had its catch-all removed for exactly this reason and the
