@@ -2376,3 +2376,71 @@ public class NonDefiniteIsNeverClearTests
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
     }
 }
+
+public class AdoptOnlyDefiniteTests
+{
+    /// <summary>A place whose answer was lost after the broker took it: UNKNOWN, flagged, paused.</summary>
+    static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> LostPlace(string id)
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        c.ThrowAfterPlace = new ConnectorTransportException("wire down after the order was sent");
+        var r = await gw.PlaceAsync(new AgentContext("a"), id, TestEnv.Buy());
+        c.ThrowAfterPlace = null;
+        Assert.Equal(ExecutionState.UNKNOWN, r.State);
+        Assert.True(r.NeedsReconciliation);
+        return (gw, c, db);
+    }
+
+    /// <summary>
+    /// THE BROKER SAYING "I DO NOT KNOW" IS NOT AN ANSWER, AND `Adopt` WROTE IT DOWN AS ONE.
+    ///
+    /// `RECONCILING -> UNKNOWN` is a legal transition, so `Adopt` took the broker's UNKNOWN, wrote it
+    /// with `needsReconciliation: false` and `markReconciled`, and returned true — counted `resolved`,
+    /// flag cleared. The row is then invisible to `NeedingReconciliation()`, which is what every gate
+    /// reads, and the in-memory latch that was still holding trading closed does not survive a
+    /// restart. So the next start traded over an order whose fate nobody ever established
+    /// (Codex round-3 F3).
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionState.UNKNOWN)]
+    [InlineData(ExecutionState.CANCEL_PENDING)]
+    public async Task The_brokers_own_uncertainty_is_never_adopted_as_an_outcome(ExecutionState state)
+    {
+        var (gw, c, db) = await LostPlace($"r4-adopt-{state}");
+        using var dbh = db;
+        c.RewriteBook = o => o with { State = state };
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest($"r4-adopt-{state}")!;
+        Assert.True(record.NeedsReconciliation,
+            "the flag every gate reads was cleared on the strength of the broker not knowing");
+        Assert.False(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(0, result.Resolved);
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE OTHER DIRECTION: a state the broker IS asserting is adopted exactly as before, the flag
+    /// comes off and trading resumes. The guard is about uncertainty, not about refusing an answer.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionState.WORKING)]
+    [InlineData(ExecutionState.FILLED)]
+    [InlineData(ExecutionState.CANCELLED)]
+    public async Task A_state_the_broker_asserts_is_still_adopted(ExecutionState state)
+    {
+        var (gw, c, db) = await LostPlace($"r4-adopt-ok-{state}");
+        using var dbh = db;
+        c.RewriteBook = o => o with { State = state };
+
+        var result = await gw.ReconcileAsync();
+
+        var record = gw.GetRequest($"r4-adopt-ok-{state}")!;
+        Assert.Equal(state, record.State);
+        Assert.False(record.NeedsReconciliation);
+        Assert.True(result.Clean, string.Join("; ", result.Details));
+        Assert.Equal(1, result.Resolved);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+}

@@ -1578,7 +1578,9 @@ public sealed class TradingGateway : IAsyncDisposable
                     else
                     {
                         inconclusive++;
-                        details.Add($"{req.RequestId}: broker reports {match.State}, which does not fit our record");
+                        details.Add(IsDefinite(match.State)
+                            ? $"{req.RequestId}: broker reports {match.State}, which does not fit our record"
+                            : $"{req.RequestId}: broker reports {match.State}, which settles nothing");
                     }
                     continue;
                 }
@@ -1824,6 +1826,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     bool Adopt(string requestId, OrderInfo match)
     {
+        // "I DO NOT KNOW" IS NOT A TRUTH TO WRITE DOWN. `RECONCILING -> UNKNOWN` is a legal
+        // transition, so the broker's own UNKNOWN went through the write below with
+        // `needsReconciliation: false` and `markReconciled`, and this returned true — the pass
+        // counted it `resolved` and took the flag off. `NeedingReconciliation()` is what every gate
+        // reads, so the row became invisible, and the in-memory latch still holding trading closed
+        // does not survive a restart: the next start traded over an order whose fate was never
+        // established (Codex round-3 F3). Nothing below this line may run for a state the platform
+        // is not asserting.
+        if (!IsDefinite(match.State)) return false;
+
         if (OrderStateMachine.CanTransition(ExecutionState.RECONCILING, match.State))
         {
             try
