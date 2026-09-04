@@ -1,0 +1,51 @@
+PRIOR 2 — NOT FIXED — the close-all drain formula is corrected, but disposal still explicitly logs and returns with `DISPATCHING` requests unsettled, contrary to the manager invariant (src/TradeAgent.Gateway/GatewayPipeServer.cs:1360).
+
+PRIOR 5 — DEFERRED-BY-DECISION — exhaustive connector-return-state settlement remains assigned to U2c-1; unexpected place states still default to ACKNOWLEDGED (src/TradeAgent.Gateway/TradingGateway.cs:460).
+
+PRIOR 6 — DEFERRED-BY-DECISION — cancellation/timeout exceptions outside the narrow cancel/modify catch taxonomy remain assigned to U2c-1 (src/TradeAgent.Gateway/TradingGateway.cs:660).
+
+PRIOR 8-gateway — DEFERRED-BY-DECISION — gateway-wide replay remains assigned to U2c-1; cancel-all accepts `rid` but does not persist or replay the sweep operation (src/TradeAgent.Gateway/GatewayPipeServer.cs:786).
+
+PRIOR F-A — DEFERRED-BY-DECISION — operator close-all still calls the ordinary connector close path without opening a risk-reducing scope (src/TradeAgent.Gateway/TradingGateway.cs:734).
+
+PRIOR R9-F1 — FIXED — close-all now contributes `E + MaxLegsInFlight·W`, giving 51 seconds for the cited fixture before the settle margin comparison (src/TradeAgent.Gateway/GatewayPipeServer.cs:310).
+
+PRIOR R9-F2 — DEFERRED-BY-DECISION — the final offsetting Place remains excluded from the emergency budget until U2c-1 carries Close intent through the connector (src/TradeAgent.Connectors.Atas/AtasConnector.cs:1044).
+
+PRIOR R9-F3 — FIXED — the only emitted leg words are confirmed, rejected, sent-still-working, sent-not-confirmed, and not-sent; nothing-to-do moved to the operation field (src/TradeAgent.Gateway/GatewayPipeServer.cs:947).
+
+PRIOR R9-F4 — PARTIAL — unresolved states now consult transport, but definite-state arms still bypass transport and DISPATCHING/RECONCILING remain eligible for sent-not-confirmed (src/TradeAgent.Gateway/GatewayPipeServer.cs:906).
+
+PRIOR F5 — REFUTED-BY-DECISION — the workspace record identifies itself as stale, while the manager’s main record quotes the required zero-warning non-incremental build (docs/hardening/records/U2a.md:1).
+
+PRIOR V-F1 — NOT FIXED — NothingWritten now produces not-sent, but the same reachable leg remains UNKNOWN and reconciliation-flagged, still pausing subsequent execution (tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs:527).
+
+PRIOR V-F2 — FIXED — U2a’s assigned half now detects the remaining DISPATCHING row and logs its request ID at error severity; settlement remains deferred (src/TradeAgent.Gateway/GatewayPipeServer.cs:1360).
+
+PRIOR V-F3 — FIXED — an unmapped execution state now throws instead of silently becoming sent-not-confirmed (src/TradeAgent.Gateway/GatewayPipeServer.cs:926).
+
+PRIOR V-F4 — FIXED — the close-all wave is represented by `E + 4W` in the live drain calculation (src/TradeAgent.Gateway/GatewayPipeServer.cs:310).
+
+PRIOR V-F5 — FIXED — the five-order test now requires confirmed, rejected, not-sent, and sent-not-confirmed in one response and reconciles attempted counts with those words (tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs:406).
+
+CHECK (a) — FAIL — `HandlerPaths` omits the handled `schema`, `connectors`, `material-list`, and `material-note` operations; CONTRACTS documents the material pair but also omits schema/connectors (src/TradeAgent.Gateway/GatewayPipeServer.cs:211).
+
+CHECK (b) — PARTIAL — no sixth leg word is reachable, but the one-to-one record contract fails because a reachable not-sent leg remains UNKNOWN plus NeedsReconciliation; the classifier also permits sent-not-confirmed for DISPATCHING/RECONCILING (src/TradeAgent.Gateway/GatewayPipeServer.cs:917).
+
+CHECK (c) — FAIL — mid-write cancellation correctly records PossiblyWritten, and late replies are separately observed, but cancellation before gate acquisition is misrecorded and cancellation after a completed write can leave the mapper with null transport (src/TradeAgent.Connectors.Atas/AtasConnector.cs:812).
+
+CHECK (d) — PASS — documentation matches the live constants and formulas: W=10+30+10=50 seconds, E=2 seconds, L=4, S=5 seconds, and the shipped maximum is 255 seconds (docs/CONTRACTS.md:123).
+
+FINDING 1 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:739 — cancellation while waiting for the send gate bypasses the NothingWritten arm and the outer catch records PossiblyWritten, unnecessarily forcing sent-not-confirmed/reconciliation.
+
+CHECK — Hold the send gate with an oversized call, attach a TransportRecord, start CancelOrderAsync, then cancel its token before gate acquisition; expected `NothingWritten`, while the source path reaches the catch at line 1121 and records `PossiblyWritten`.
+
+FINDING 2 — MED — src/TradeAgent.Connectors.Atas/AtasConnector.cs:827 — a completed mutation write records no transport state until a reply, so caller cancellation during the reply wait leaves null and the mapper can classify a fully sent leg as not-sent.
+
+CHECK — Let a peer read the complete cancel frame but withhold its reply, then cancel the caller token; expected `PossiblyWritten`, while `SendOutcome.Sent` records nothing and the filtered catch at line 1149 does not run.
+
+FINDING 3 — LOW — src/TradeAgent.Gateway/GatewayPipeServer.cs:211 — the supposedly exhaustive drain table omits four handled operations, so future growth of those paths will not participate in the maximum or its coverage test.
+
+CHECK — Compare the Handle switch at lines 683–705 against `HandlerPaths`; missing rows are `schema`, `connectors`, `material-list`, and `material-note`, with `schema` currently making a connector-backed StatusAsync call.
+
+SUMMARY — 1 HIGH / 3 MED / 1 LOW
