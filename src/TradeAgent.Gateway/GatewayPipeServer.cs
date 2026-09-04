@@ -211,6 +211,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     public IReadOnlyList<HandlerPath> HandlerPaths =>
     [
         new(Core.Ops.Status, ReadPath, "one account read"),
+        new(Core.Ops.Schema, ReadPath, "the same status the 'status' handler builds, described"),
         new(Core.Ops.Accounts, ReadPath, "one account read"),
         new(Core.Ops.Account, ReadPath, "one account read"),
         new(Core.Ops.Instruments, ReadPath, "one instrument read"),
@@ -220,6 +221,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.Orders, ReadPath, "the account, then the orders"),
         new(Core.Ops.Order, ReadPath, "the account, then the orders"),
         new(Core.Ops.Executions, ReadPath, "the account, then the executions"),
+
+        // NO CONNECTOR CALL AT ALL, and they are in the table anyway. A row with a zero path
+        // contributes nothing to the maximum, which is the correct arithmetic — but a handler that
+        // is ABSENT is one nobody will notice growing a call, and that is exactly how `schema` came
+        // to make a connector-backed `StatusAsync` call from outside the derivation (Codex round-10
+        // F3). Being in the table is what makes a handler covered.
+        new(Core.Ops.Connectors, TimeSpan.Zero, "the connector's own id and capabilities, in process"),
+        new(Core.Ops.MaterialList, TimeSpan.Zero, "the workspace ledger, in process"),
+        new(Core.Ops.MaterialNote, TimeSpan.Zero, "the workspace ledger, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),

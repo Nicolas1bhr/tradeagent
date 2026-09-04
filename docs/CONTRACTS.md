@@ -127,9 +127,9 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 
 | handler | serial depth | why that is the chain |
 |---|---|---|
-| `status` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read |
+| `status` `schema` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read — `schema` builds the same status `status` does |
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
-| `material-list` `material-note` | — | no connector call at all |
+| `connectors` `material-list` `material-note` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
 | `modify` | **4W** | the account, the orders read that resolves the target, the account again, the modify |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
@@ -140,6 +140,13 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 ```
 drain = max(that table) + S
 ```
+
+**The table is checked against the DISPATCHER, not against a list.** Four handled operations were
+missing from it — `schema`, `connectors`, `material-list` and `material-note` — and `schema` makes a
+connector-backed call, so a hand-written check could not have found them: the omission and the check
+came from the same memory. Every operation in the protocol vocabulary is now driven over the real
+pipe, and an op the dispatcher has no arm for answers `unknown operation '…'`; everything else must
+have a row, and every row must name an operation the dispatcher handles.
 
 At shipped ATAS values that is `max(5×50, 2 + 4×50) + 5 = 255 s`, and disposal's ceiling is
 `5 + 255 + 5 = 265 s` — paid ONLY while a request is genuinely in flight, since an idle handler is
