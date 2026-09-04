@@ -65,7 +65,12 @@ public static class CoidWitnessReport
     {
         WitnessStanding.Unresolved => $"{sidecarPath} — UNRESOLVED. THIS FILE SHOULD NOT EXIST.",
         WitnessStanding.Historical => $"{sidecarPath} — historical.",
-        WitnessStanding.Noted => "none recorded — but a candidate beside the witness was refused.",
+        // NOT "a candidate", BECAUSE Noted NOW HAS TWO CAUSES. It was written when the only way to
+        // reach this state was a temp beside the witness being declined; since the sidecar was split
+        // per writer, a second bridge that the lease turned away reaches it too. Naming the wrong one
+        // sends the reader looking for a recovery that never happened. The files are listed below, so
+        // which it was is a line away rather than a guess.
+        WitnessStanding.Noted => "no durability gap — but something beside the witness was refused.",
         _ => "none recorded"
     };
 
@@ -85,9 +90,11 @@ public static class CoidWitnessReport
         ],
         WitnessStanding.Noted =>
         [
-            "A file beside the witness was not a rewrite of it and was not adopted. Nothing",
-            "was lost by that, but it means a count of zero below is not the same as 'nothing",
-            "was ever recorded here'."
+            "Either a file beside the witness was not a rewrite of it and was not adopted, or a",
+            "second writer was refused the witness and wrote its own account of that — the files",
+            "listed above say which. Nothing was lost either way: a refused writer's order was not",
+            "sent, and a declined candidate displaced nothing. But it does mean a count of zero",
+            "below is not the same as 'nothing was ever recorded here'."
         ],
         _ => []
     };

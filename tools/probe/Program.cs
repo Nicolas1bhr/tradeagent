@@ -1066,7 +1066,16 @@ static class AtasProbe
         var standing = CoidWitnessReport.Standing(witness);
 
         Line("WITNESS FAILURES", CoidWitnessReport.Headline(standing, sidecar ?? "<none>"));
-        if (sidecar is not null && File.Exists(sidecar)) foreach (var note in ReadTail(sidecar, 10)) Cont(note);
+
+        // EVERY SIDECAR, NOT JUST THE CANONICAL ONE. A second bridge the lease turned away writes its
+        // own file beside the witness, and printing only the owner's left the report describing a
+        // rejected candidate for a state that was in fact a contested witness — the one thing an
+        // operator would actually act on.
+        foreach (var file in witness.SidecarPaths)
+        {
+            Cont(file);
+            foreach (var note in ReadTail(file, 10)) Cont("  " + note);
+        }
         foreach (var line in CoidWitnessReport.Explanation(standing)) Cont(line);
 
         var records = witness.All();
