@@ -76,8 +76,8 @@ try
     }
 
     Console.WriteLine(reply.Data is null ? "(nothing)" : Json.Write(reply.Data, true));
-    if (Ops.IsMutating(op))
-        Console.WriteLine("\nnote: retrying with the same --request-id is safe; it will not place a second order.");
+    if (CliReplayContract.SuccessNote(op) is { } note)
+        Console.WriteLine($"\n{note}");
     return 0;
 }
 catch (TradeAgentException ex)

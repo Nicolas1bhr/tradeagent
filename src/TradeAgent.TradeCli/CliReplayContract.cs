@@ -51,6 +51,31 @@ public static class CliReplayContract
             ? $"reply lost — re-run with --request-id {requestId} or check `trade orders` first"
             : null;
 
+    /// <summary>
+    /// What to tell the caller after a mutating command SUCCEEDED — or null when there is nothing
+    /// worth saying.
+    ///
+    /// It used to be one sentence for every mutating op: "retrying with the same --request-id is
+    /// safe; it will not place a second order." That is true of `buy` and `sell` and of nothing
+    /// else today. `TradingGateway` consults the idempotency store before dispatch only on the place
+    /// path; `CancelAsync` and `ModifyAsync` authorize and resolve their target BEFORE looking, and
+    /// `CloseAsync` re-reads positions and places an offsetting order — so re-running one of those
+    /// acts again on the book as it is then. The blanket contract is U2c-1's to implement, and until
+    /// it does, the CLI must not promise it (Codex PRIOR 8, CLI half).
+    ///
+    /// The wording is deliberately about what to DO rather than about the internals: an agent that
+    /// reads this needs to know whether re-running is a retry or a second act.
+    /// </summary>
+    public static string? SuccessNote(string op) => op switch
+    {
+        Ops.Buy or Ops.Sell =>
+            "note: re-running with the same --request-id returns this same result; it will not place a second order.",
+        _ when Ops.IsMutating(op) =>
+            "note: keep this --request-id. Re-running it is NOT a replay for this command yet — it acts again on " +
+            "the book as it is then, so check `trade orders` or `trade positions` first.",
+        _ => null
+    };
+
     /// <summary>The --json object for a reply that came back, whatever it said.</summary>
     public static object AnsweredJson(string? requestId, IpcResponse reply) =>
         new { ok = reply.Ok, request_id = requestId, data = reply.Data, error = reply.Error };
