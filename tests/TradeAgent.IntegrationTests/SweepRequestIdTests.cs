@@ -551,6 +551,57 @@ public class SweepRequestIdTests
             "a resting order was flagged for reconciliation — nothing about it is unknown");
     }
 
+    /// <summary>
+    /// A LEG PARKED FOR A HUMAN WAS NOT SENT EITHER, AND THE RECORD IT LEAVES IS NOT AN UNKNOWN.
+    ///
+    /// The other half of the not-sent arm, and the one the exception's own type cannot tell you: here
+    /// a record IS written — AWAITING_APPROVAL — and then `PlaceAsync` refuses, because in
+    /// LIVE_CONFIRM the AI's order waits for a person. Nothing reached the broker. Classifying by
+    /// "the leg threw" would call that sent-not-confirmed and ask the owner to reconcile an order
+    /// that is sitting on their own screen waiting for them to press Approve.
+    ///
+    /// Written because the arm was otherwise uncovered: mutating `CREATED or AWAITING_APPROVAL` to
+    /// NotConfirmed survived the whole class.
+    /// </summary>
+    [Fact]
+    public async Task A_close_leg_parked_for_approval_reads_not_sent_and_is_not_counted_as_attempted()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        // Open a position while orders still go straight through.
+        Assert.True((await client.SendAsync(Buy("park-open", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        Assert.Contains(conn.Broker.Positions, p => p.Symbol == "ES" && p.Quantity != 0);
+        var ordersBefore = conn.Broker.Orders.Count;
+
+        // And now every AI order waits for a person.
+        gw.Update(s => s.Mode = TradingMode.LIVE_CONFIRM);
+        gw.ActivateLive(true);
+
+        var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CloseAll, RequestId = "park-sweep" })
+            .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+        var legs = Outcomes(sweep);
+
+        var parked = Assert.Single(legs, l => l.Outcome == "not-sent");
+        Assert.Equal(nameof(ExecutionState.AWAITING_APPROVAL), parked.State);
+        Assert.DoesNotContain(legs, l => l.Outcome == "sent-not-confirmed");
+
+        Assert.Equal(0, sweep.GetProperty("attempted").GetInt32());
+        Assert.Equal(0, sweep.GetProperty("closed").GetInt32());
+
+        // NOTHING REACHED THE BROKER, which is what the word claims and what makes it checkable.
+        Assert.Equal(ordersBefore, conn.Broker.Orders.Count);
+        var record = gw.GetRequest(parked.Id)!;
+        Assert.Equal(ExecutionState.AWAITING_APPROVAL, record.State);
+        Assert.False(record.NeedsReconciliation,
+            "an order waiting on the owner's own Approve button was flagged for reconciliation");
+    }
+
     // ---------------------------------------------------------- the sweep nonce (F9)
 
     /// <summary>
