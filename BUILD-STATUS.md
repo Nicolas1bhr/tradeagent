@@ -2857,3 +2857,43 @@ this unit's diff touches either class (`git diff --name-only b861ac9..37e2d15`).
 test, deliberate:** `A_release_without_a_checksum_file_still_installs_without_inventing_one` (round 1, `df9b068`) pinned
 the checksumless install this unit now refuses. **Deferred with an owner:** item 10, the provider counting every
 wire-touched record through U2c-1's store query → U2c-1; `UpdateService.cs:255-265` is unchanged until then.
+
+## 2026-09-04 — U14a landed: the rule-1 write-ahead record survives its own rewrite, and `Unreadable` is a value
+
+Third unit under `docs/HOW-WE-BUILD.md`: ten old-process rounds on the branch, one fresh builder pass on
+`docs/briefs/U14a.md` (the rebase over U2a plus three items), the manager's checklist. Merge `2c6826d`, 90 commits,
+26 files, +9816/−263; rounds 1–10 in `docs/hardening/records/U14.md`. Before it, a claim whose temp-file rename failed
+under a concurrent reader lived in a file no reader opened, and the order went to ATAS anyway — the durable answer to
+"did this product submit this identifier" was NO for an order handed over microseconds later.
+
+- **Write-ahead, or nothing is sent.** `Submitting` returns `bool`; `Place` throws `AtasRejectedException` ("nothing was
+  submitted") on false, above `lock (_gate)`. One owner per witness: the lock is mandatory, a CAS miss is a refusal, the
+  multi-writer rebase is gone. **Bridge protocol is 3**; a v2 bridge is refused by the app with the reinstall sentence.
+- **Recovery is lineage, not time.** Envelope `generation` + `predecessor` fingerprint (FNV-1a 64); no adoption without a
+  committed anchor; a zero-record temp is never adopted; a candidate may never shrink the set; two rivals → neither.
+- **The five directives of round 10.** One function reads the sidecar filesystem and a concurrent change (listing before
+  and after, names, lengths, mtimes) makes the read `Unreadable`, never a mixed-time view; rotation is atomic renames
+  over a snapshot; the adapter teardown is a locked three-state machine; a current connection always says something
+  about itself (`BridgeRow` shows the newest of three stamps).
+- **U14a: `Unreadable` reaches every consumer.** `DecidingLine` is line / none / unread and `Settled` writes nothing over
+  an unreadable set, so no RESOLVED marker closes a gap it never saw; the snapshot carries path → lines captured at read
+  time, the support package renders from it and writes `bridge-sidecar-UNREADABLE.txt` into the zip instead of silently
+  omitting files, the probe no longer reopens paths; candidates are read inside the before/after window, and one that
+  changes under the reader is refused rather than adopted.
+- **Rebase over U2a.** Two conflicts in `AtasConnector.cs`, neither a contradiction: both units' fields kept verbatim, and
+  a duplicate `Observe` helper (identical bodies, U2a's chunked write and U14's abandoned frame read) merged into one.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED (`RESOLVED coid-witness` found over an
+unreadable sidecar) → GREEN, mutant collapsing `Unread` to `None` → 1/33 red; item 2 RED (the zip held only three files)
+→ GREEN, mutant dropping the refusal → 2/5 red; item 3 RED (`"BRK-TA-REAL"` adopted from a temp that moved) → GREEN,
+mutant dropping the listing comparison → 1/183 red. Builder's final at `db0d2c1`, Release: 0 warnings, 75 + 112 + 505
+= 692, 0 failed; test names vs `01fcd60` ∪ `main`: 0 removed, 7 added. Manager's gate at the rebased tip `2c6826d`, Release:
+build → 0 warnings, 0 errors; suite → 75 + 201 + 505 = 781, 0 failed; test-name diff against `main` → 1 removed (a rename, `…_is_not_written_over` present), 196 added; scan → clean; CI run 33904745608 was in progress when this was written; its result is recorded with U14b.
+
+**NOT VERIFIED:** anything on Windows at this tip — the cross-process lock was proven on APFS only, the box's last
+hash-verified run of this branch is round 10's; `tools/probe`'s new rendering (built at 0 warnings, never run, no test
+references that program); the solution with `-p:AtasBridgeBuild=true`. **For the milestone review:** U14a made
+`TradeAgent.Diagnostics` reference `TradeAgent.AtasBridge` for the sidecar snapshot type, so the bridge DLL now sits in
+the app's output (`InstallBridge` still copies from `<base>/bridge`, read at `AtasInstallation.cs:191`, not run).
+**Deferred with an owner:** resumable rotation, the fifth crash point, one serialised `Stop()`, the stamped connecting
+status, the sidecar byte count → U14b (`docs/briefs/U14b.md`); bridge DLL redeploy at protocol 3 → the v0.1.2 box session.
