@@ -793,3 +793,52 @@ Passed!  - Failed: 0, Passed: 268, Skipped: 0, Total: 268, Duration: 5 m 17 s - 
 - ATAS's real client-order-id limit and the `op-…` shape still need the deliberate 64/65-character
   probe at v0.1.2; the old "one `close-all` settles both" claim is withdrawn above.
 - I did not run the App, `tools/probe`, or any ATAS interaction, and I used the box grant once.
+
+## Round 8 (build record, 2026-09-04)
+
+Bounce on `a974142` from the Codex delta on round 7 (`records/codex-U2a-r7.txt`: 8 of 11 priors FIXED,
+1H/1M/1L new) and the round-7 Opus verifier (`records/U2a-verify-r7.md`, **PASS WITH LOW**, F-G).
+F-A stays with U2c-1; `TradingGateway.cs` and `DashboardView.cs` were not opened.
+
+| finding | RED | GREEN | mutant | commit |
+|---|---|---|---|---|
+| **F1** (H) the clock was per `Rpc`, not per operation | Codex: three 1.9 s replies → a sweep took **5.7 s** against a 2 s promise | 28/28 sweep class; 38/38 connector class | shared deadline reverted → **RED, 4.01 s**; legs skipped in silence → **RED** | `cd0165d`, `d5c3cd4` |
+| **F2** (M) the drain covered one call, not the handler | a 12 s handler drained for 9 s → the cancel left `DISPATCHING` | 14/14 backpressure class | drain back to one call → **RED 2** | `0d25426` |
+| **F3** (L) a late answer lost to a race, `_abandoned` leaks | — (closed with the F1/F-G rework as directed) | `AwaitingLateAnswer` returns to 0 | — | `02f457c` |
+| **F-G** (L) the sentence led with connection state | the caller's 2 s sentence began "the bridge is busy; …" | starts-with assertion | connection state first again → **RED 2** | `02f457c` |
+| PRIOR 12/14/F-F | **refuted** — the corrections are on `main`; the branch carries the 2026-09-03 snapshot | — | — | `5624cd1` |
+
+### F1 — and the hole the acceptance would have left
+
+`RiskReducingScope` now carries ONE absolute deadline; every RPC inside gets `deadline − now`, nesting
+can only bring it forward, and `EmergencyBudget` joins `WorstCaseOperationPath` on `ITradingConnector`
+because the component that DECOMPOSES an operation is the one that must start its clock.
+
+The leg loop had three faults that were one fault seen from three sides: it awaited each leg before
+starting the next; it had no `try`/`catch`, so **one failing leg abandoned every leg after it in
+silence** — the sweep surfaced as a single transport error naming none of the orders left working;
+and each leg restarted the budget. Legs are now issued in **bounded waves** (four), each inheriting
+the deadline, failures are recorded rather than fatal, and a leg whose turn arrives after the deadline
+is reported **not-sent**. The wave bound is what makes not-sent a real outcome rather than a branch
+nothing reaches: unbounded fan-out issues every leg in the same microsecond, so the deadline can never
+fall between two of them.
+
+**The acceptance as briefed would have passed over a broken connector.** It runs through the gateway
+onto `FakeConnector`, which honours the ambient deadline itself — so reverting `AtasConnector`'s half
+of the fix left every one of those tests green (measured). `Two_emergency_calls_inside_one_operation_
+share_its_deadline` reaches the connector: **2.0 s** shared, **4.01 s** with the mutant. Writing it
+found a defect the sweep tests could not see — a leg reached after the deadline queued for its one
+remaining millisecond, saw no write progress in that millisecond, and **dropped a bridge that was
+reading throughout**. Judging liveness over a millisecond is not a measurement; such a leg now fails
+before the gate, connection untouched, because a leg whose turn never came is not evidence about the
+peer.
+
+### F2 — the number an operator will feel
+
+The drain is now the longest serial chain one handler issues (a prerequisite read, a target
+resolution, the mutation) × the per-call bound + the settle. **At shipped values that is 3 × 50 + 5 =
+155 s, and disposal's ceiling is 5 + 155 + 5.** It is paid only while a request is genuinely in
+flight, and the alternative is the abandoned DISPATCHING order — but it is a product decision, not an
+arithmetic one, and it is the second time this round a correctness fix has bought time with
+wall-clock. A risk-reducing operation can no longer reach it (F1 bounds the whole operation at 2 s);
+what reaches it is an ordinary multi-call handler such as `modify`.
