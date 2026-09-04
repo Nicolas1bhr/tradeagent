@@ -936,6 +936,20 @@ public class SweepRequestIdTests
         foreach (var leg in legs)
             Assert.Null(gw.GetRequest(leg.Id));
         Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
+
+        // AND THE SENTENCE AGREES WITH THE WORD (verifier round-11 L-4). The simulator threw one
+        // message for reads and mutations alike — "it is not known whether it acted" — so a leg the
+        // gateway correctly calls `not-sent` carried, in the SAME object, a sentence saying the
+        // outcome is unknown. The word is what the machine reads and the sentence is what the owner
+        // reads, and they were saying different things about the same leg. The shipped
+        // `AtasConnector` has distinguished the two since round 7 (`EmergencySentence`); this is the
+        // connector the product ships for paper trading.
+        foreach (var error in sweep.GetProperty("outcomes").EnumerateArray()
+                     .Select(o => o.GetProperty("error").GetString() ?? ""))
+        {
+            Assert.DoesNotContain("it is not known whether it acted", error);
+            Assert.Contains("Nothing was placed or cancelled", error);
+        }
     }
 
     /// <summary>
