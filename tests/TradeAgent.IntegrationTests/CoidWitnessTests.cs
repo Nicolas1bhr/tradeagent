@@ -1090,26 +1090,76 @@ public class CoidWitnessTests : IDisposable
     [Fact]
     public void A_missing_bridge_directory_is_unreadable_rather_than_absent()
     {
-        var w = Session();
+        // THE FOLDER THAT GOES MISSING IS A LINK TO THE FOLDER THE FILES ARE IN, and that is forced
+        // rather than cute. Windows refuses to rename or delete a directory that has an open handle
+        // anywhere inside it, and the witness's lease IS such a handle — so `Directory.Move(_dir)`
+        // threw `Access to the path … is denied` out of this test's own setup on `windows-latest`,
+        // before a single thing was judged, on the one platform this product ships to. A link can be
+        // removed while handles on its target stay open, so the path stops resolving with the lease
+        // still held: the shape a dropped share or an unmounted volume produces, on every platform.
+        var target = _dir + "-target";
+        Directory.CreateDirectory(target);
+        var bridge = Path.Combine(_dir, "bridge");
+        LinkDirectory(bridge, target);
+
+        var w = new CoidWitness(Path.Combine(bridge, "coid-witness.json"));
         Assert.True(w.Submitting("TA-A", "SIM", "ES", "Buy", 1m, null));
         w.Identified("TA-A", "BRK-A");
 
         // The folder goes out from under a LIVE witness that already holds its lease, so the refusal
-        // has to come from the read rather than from the lock.
-        var moved = _dir + "-moved";
-        Directory.Move(_dir, moved);
+        // has to come from the read rather than from the lock. Removing the link is not removing what
+        // it points at: the lease handle survives it, which is what keeps `Lease()` satisfied and
+        // leaves the read as the only thing that can refuse.
+        UnlinkDirectory(bridge);
         try
         {
             Assert.False(w.Submitting("TA-B", "SIM", "ES", "Buy", 1m, null));
             Assert.Contains("could not be read", w.Trouble);
             Assert.DoesNotContain("changed underneath", w.Trouble);
-            Assert.False(Directory.Exists(_dir), "nothing was recreated under the witness path");
+            Assert.False(Directory.Exists(bridge), "nothing was recreated under the witness path");
         }
         finally
         {
-            try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); } catch (IOException) { }
-            Directory.Move(moved, _dir);
+            // The lease, which is the handle that keeps the target undeletable on Windows.
+            w.Dispose();
+            try { Directory.Delete(target, recursive: true); } catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// A directory at <paramref name="link"/> that is really <paramref name="target"/>, removable
+    /// without touching what is open inside it. A JUNCTION on Windows rather than a symbolic link:
+    /// creating a symbolic link there needs <c>SeCreateSymbolicLinkPrivilege</c>, which a test
+    /// process has no business assuming it holds, and a junction needs nothing but write access.
+    /// Both stop resolving the same way when they are removed, which is all this is for.
+    /// </summary>
+    static void LinkDirectory(string link, string target)
+    {
+        if (!OperatingSystem.IsWindows()) { Directory.CreateSymbolicLink(link, target); return; }
+
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }) ?? throw new IOException("the test could not start cmd.exe to make a junction");
+        var said = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
+        mklink.WaitForExit();
+        if (mklink.ExitCode != 0 || !Directory.Exists(link))
+            throw new IOException($"the test could not make a junction at {link}: {said.Trim()}");
+    }
+
+    /// <summary>
+    /// Removes the link and not its target. <c>Directory.Delete</c> on a reparse point removes the
+    /// reparse point; on Unix the same job is <c>unlink</c>, which is <c>File.Delete</c>, because
+    /// what is being removed is a symbolic link rather than a directory.
+    /// </summary>
+    static void UnlinkDirectory(string link)
+    {
+        if (OperatingSystem.IsWindows()) Directory.Delete(link);
+        else File.Delete(link);
     }
 
     /// <summary>
