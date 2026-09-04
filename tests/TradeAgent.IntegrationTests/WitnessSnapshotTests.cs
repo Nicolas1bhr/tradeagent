@@ -903,6 +903,40 @@ public class WitnessSnapshotTests : IDisposable
         stuck.Dispose();
     }
 
+    /// <summary>
+    /// AND THE REFUSAL ENDS WHEN THE SET COMES BACK TOGETHER, because it is a sentence in the present
+    /// tense. What does NOT end is the degraded reading: events were lost while it stood, and that is
+    /// a fact about the session rather than about the disk.
+    /// </summary>
+    [Fact]
+    public void A_completion_that_succeeds_on_the_next_append_stops_reporting_the_refusal()
+    {
+        StoppedAtTheLastAct();
+
+        // TWO, NOT ONE: a clean commit appends the RESOLVED marker as well as the quarantine
+        // warning, so one `Submitting` asks to append twice and both attempts must be refused for
+        // the refusal to still be standing when it is read.
+        var attempts = 0;
+        var witness = new CoidWitness(File_, moveSidecar: (src, dst, overwrite) =>
+        {
+            if (++attempts <= 2) throw new IOException("the destination is open in another process");
+            File.Move(src, dst, overwrite);
+        });
+
+        WriteForeignLeftover(1);
+        Assert.True(witness.Submitting("TA-ONE", "SIM", "ES", "Buy", 1m, null));
+        Assert.Contains("cannot be moved back", witness.Trouble!);
+
+        WriteForeignLeftover(2);
+        Assert.True(witness.Submitting("TA-TWO", "SIM", "ES", "Buy", 1m, null));
+
+        Assert.DoesNotContain("cannot be moved back", witness.Trouble ?? "");
+        Assert.False(File.Exists(Sidecar + ".new"));
+        Assert.True(File.Exists(Sidecar));
+        Assert.Contains("TA-GAP", Everything());
+        witness.Dispose();
+    }
+
     // ================================================ U14b item 2, the fifth crash point inside act 1
 
     /// <summary>

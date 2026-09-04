@@ -1777,9 +1777,13 @@ public sealed class CoidWitness : IDisposable
         // that grows.
         if (snapshot.Refusal is not null) return true;
 
+        // THE REFUSAL IS CLEARED BY THE SET BEING WHOLE, whoever made it whole. It is a sentence in
+        // the present tense — "no further event can be recorded there" — so leaving it standing over
+        // a set that has since come back together would be a false one. What does NOT clear is
+        // _degraded: events WERE lost, and that is a fact about this session that stays.
         var pending = log + PendingSuffix;
-        if (!snapshot.Sidecars.Contains(pending, StringComparer.Ordinal)) return true;
-        if (snapshot.Sidecars.Contains(log, StringComparer.Ordinal)) return true;
+        if (!snapshot.Sidecars.Contains(pending, StringComparer.Ordinal)) { _appendRefused = null; return true; }
+        if (snapshot.Sidecars.Contains(log, StringComparer.Ordinal)) { _appendRefused = null; return true; }
 
         try
         {
@@ -1800,7 +1804,12 @@ public sealed class CoidWitness : IDisposable
         }
     }
 
-    void Rotate(string log)
+    /// <summary>
+    /// Returns whether the append that asked for this rotation may proceed. False only when the set
+    /// is half rotated and cannot be put back together — see <see cref="Resume"/>: appending into a
+    /// current log that does not exist writes the line into a file the completion will overwrite.
+    /// </summary>
+    bool Rotate(string log)
     {
         var snapshot = Snapshot();
 
@@ -1808,14 +1817,14 @@ public sealed class CoidWitness : IDisposable
         // attempt is made again after another cap's worth rather than on every single append: a
         // denial is usually transient, and re-reading the whole set per line would turn one refused
         // read into a permanent cost.
-        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
+        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return true; }
 
         // A ROTATION STARTS FROM A WHOLE SET. If the previous one stopped at its last act this
         // finishes it, and the snapshot below is retaken over the completed set; if it cannot be
         // finished there is nothing to rotate and the caller has already been refused.
-        if (!Resume(log)) return;
+        if (!Resume(log)) return false;
         snapshot = Snapshot();
-        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return; }
+        if (snapshot.Refusal is not null) { _sidecarBytes = 0; return true; }
 
         var deciding = DecidingIn(snapshot, Generations(log));
         var carry = deciding.IsUnresolved ? Restatement(deciding.Line!) : "";
@@ -1865,6 +1874,7 @@ public sealed class CoidWitness : IDisposable
 
         _sidecarBytes = ByteCount(carry);
         Invalidate();
+        return true;
     }
 
     /// <summary>The one wording for a carried-forward failure, so both places that write it agree.</summary>
@@ -2847,7 +2857,11 @@ public sealed class CoidWitness : IDisposable
                     if (!Resume(log)) return;
                     _sidecarBytes = Snapshot().Length(log);
                 }
-                if (_sidecarBytes + ByteCount(text) > MaxErrorLogBytes) Rotate(log);
+                // AND THE ROTATION'S OWN RESUME CAN REFUSE TOO. It is the same refusal for the same
+                // reason — appending into a current log that is not there writes the line into a file
+                // the completion is going to overwrite — and it is checked here rather than trusted
+                // to be unreachable.
+                if (_sidecarBytes + ByteCount(text) > MaxErrorLogBytes && !Rotate(log)) return;
 
                 // ONE WRITER PER FILE, so this append has nobody to race. See SidecarPath.
                 File.AppendAllText(log, text);
