@@ -2815,6 +2815,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // It does NOT lift the pause. A dispatch that has outlived the bound is still unconfirmed
             // work and trading stays refused over it; what it is not is a record anybody else may
             // settle.
+            //
             // THE TWO NUMBERS THE OWNER NEEDS, and neither of them is "in progress". A person
             // reading a paused machine is deciding whether to wait or to go and look in the
             // platform, and that decision is how long THIS dispatch has been on the wire against
