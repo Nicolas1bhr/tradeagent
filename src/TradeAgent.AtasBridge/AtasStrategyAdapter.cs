@@ -675,7 +675,15 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // actually knows THIS account, because a cache that does not would answer GetOrders with
             // a short list — and a short list makes "this order does not exist" look provable when
             // it is not. False means the gateway withholds autonomous live trading.
-            SupportsOrderHistory = cache.Cache is not null,
+            //
+            // AND A CACHE THAT WILL NOT SAY WHAT IT KEEPS CANNOT PROVE COVERAGE (review 2026-09-05b
+            // UNVERIFIED 1 / Codex F8). This used to be cache PRESENCE alone, while the watermark in
+            // GetOrders was skipped entirely when ClearCachePeriod was zero — so a platform that
+            // states no retention period answered every `since` as covered, with
+            // ReconciliationProvable true behind it. That is rule 2 exactly inverted: a partial
+            // history makes "this order does not exist" look provable when it is not. A cache is now
+            // worth a true only when the platform says how far back it reaches.
+            SupportsOrderHistory = cache.Cache is not null && cache.Retention > TimeSpan.Zero,
             // What was actually bound, and what was found there. Free text, diagnostic only, and the
             // one field that can say "I looked at the wrong object" — which is exactly the failure
             // that cost the first live run and which no capability boolean can express.
@@ -937,22 +945,41 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     ///
     /// Two things it will never do. It will never let the 'since' filter drop an order that is still
     /// working, because a working order hidden from reconciliation is the failure that loses money.
-    /// And when asked for a window older than ATAS is configured to keep, it refuses outright rather
-    /// than answering with a list that looks complete: a partial history makes "this order does not
+    /// And when asked for a window it cannot show the cache covers, it refuses outright rather than
+    /// answering with a list that looks complete: a partial history makes "this order does not
     /// exist" look provable when it is not.
+    ///
+    /// THERE ARE TWO WAYS IT CANNOT SHOW COVERAGE, and both refuse. The window is older than the
+    /// retention the platform states; or the platform states no retention at all, in which case
+    /// nothing here knows what the cache reaches back to and a plausible-looking answer would be
+    /// exactly the lie rule 2 forbids.
     /// </summary>
     public IReadOnlyList<OrderInfo> GetOrders(string accountId, bool includeInactive, DateTimeOffset? since)
     {
         RequireTrading();
         var fills = FillsByOrder();
-        var cache = includeInactive && !string.IsNullOrWhiteSpace(accountId) ? ProbeCache(accountId).Cache : null;
+        var probe = includeInactive && !string.IsNullOrWhiteSpace(accountId)
+            ? ProbeCache(accountId) : default;
+        var cache = probe.Cache;
 
-        if (cache is not null && since is not null && cache.ClearCachePeriod > TimeSpan.Zero
-            && since.Value < DateTimeOffset.UtcNow - cache.ClearCachePeriod)
-            // Ordinary exception: the gateway must see "I cannot answer that", never a short list.
-            throw new InvalidOperationException(
-                $"ATAS keeps order history for {cache.ClearCachePeriod}; {since.Value:O} is further back " +
-                "than that, so this history would be incomplete and must not be treated as proof");
+        // THE WATERMARK IS NOT CONDITIONAL ON THE PLATFORM BEING HELPFUL (review 2026-09-05b
+        // UNVERIFIED 1 / Codex F8). It used to run only `if (ClearCachePeriod > TimeSpan.Zero)`, so
+        // the one platform state in which coverage is LEAST provable — it will not say what it keeps
+        // — was the state in which every window was answered as covered. Both branches below refuse,
+        // because rule 2 is about what can be shown, not about what is convenient.
+        if (cache is not null && since is not null)
+        {
+            if (probe.Retention <= TimeSpan.Zero)
+                throw new InvalidOperationException(
+                    $"ATAS does not say how long it keeps order history on this platform, so a history " +
+                    $"back to {since.Value:O} cannot be shown to be complete and must not be treated as " +
+                    "proof; reconcile against the platform itself");
+            if (since.Value < DateTimeOffset.UtcNow - probe.Retention)
+                // Ordinary exception: the gateway must see "I cannot answer that", never a short list.
+                throw new InvalidOperationException(
+                    $"ATAS keeps order history for {probe.Retention}; {since.Value:O} is further back " +
+                    "than that, so this history would be incomplete and must not be treated as proof");
+        }
 
         var byKey = new Dictionary<string, OrderInfo>(StringComparer.Ordinal);
         // An order nothing identifies has no key to be deduplicated by — see OrderKey — and
@@ -983,7 +1010,12 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     /// <summary>What a cache probe found, and — just as important — how it failed when it did not.
     /// The note goes straight onto the wire in BridgeHello.TradingSurface.</summary>
-    readonly record struct CacheProbe(IAtasCache? Cache, string Note);
+    /// <param name="Retention">
+    /// How far back the platform SAYS it keeps orders (<c>ICache.ClearCachePeriod</c>), or
+    /// <see cref="TimeSpan.Zero"/> when it states nothing — which is not the same fact as "keeps
+    /// nothing" and must never be read as "keeps everything". See <see cref="GetOrders"/>.
+    /// </param>
+    readonly record struct CacheProbe(IAtasCache? Cache, string Note, TimeSpan Retention);
 
     /// <summary>
     /// The whole basis for rule 2's answer, and it is a runtime question, not a guess.
@@ -1022,9 +1054,25 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         IAtasCache? found = null;
         var via = "";
 
-        CacheProbe Result() => found is null
-            ? new CacheProbe(null, Joined("none", log))
-            : new CacheProbe(found, $"ok({via})");
+        // Read ONCE, here, so the capability and the watermark cannot disagree about the same
+        // platform in the same instant. Guarded: this is a diagnostic path, and a property read that
+        // throws must report "unstated" rather than take the handshake down.
+        TimeSpan Retention(IAtasCache cache)
+        {
+            try { return cache.ClearCachePeriod; }
+            catch (Exception) { return TimeSpan.Zero; }
+        }
+
+        CacheProbe Result()
+        {
+            if (found is null) return new CacheProbe(null, Joined("none", log), TimeSpan.Zero);
+            var keeps = Retention(found);
+            // The note says what it keeps, because "ok(svc:ICache)" was true of a cache that
+            // answered every window as covered and of one that could prove coverage, and those are
+            // opposite facts to anyone reading a bridge that has refused a history query.
+            return new CacheProbe(found, $"ok({via},keeps={(keeps > TimeSpan.Zero ? keeps.ToString() : "unstated")})",
+                                  keeps);
+        }
 
         // Returns true once a CONFIRMED cache is in hand, so the walk can stop. It returns false —
         // and the walk continues — for a route that produced an object which failed confirmation:
@@ -1154,7 +1202,7 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // The walk itself fell over, which is distinct from none(): none() means the walk ran to
             // the end and found nothing. Should be unreachable — every route above is individually
             // guarded — so if this is ever read, the bug is in this method, not in ATAS.
-            return new CacheProbe(null, $"err({Clip(ex.GetType().Name, 40)})");
+            return new CacheProbe(null, $"err({Clip(ex.GetType().Name, 40)})", TimeSpan.Zero);
         }
     }
 
