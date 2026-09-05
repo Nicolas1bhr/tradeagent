@@ -3659,3 +3659,44 @@ run before it, at the docs-only commit `3876efa`, failed on: Integration.BridgeR
 **NOT VERIFIED:** which runner-side stall produced the 1.4 s at `88617a0` — a late timer or a slow fsync; it did not
 recur, and that message carried only the total; the new one names the step and measures the press's own clock. No
 box, no ATAS, no UI; `TradingGateway.cs` untouched.
+
+## 2026-09-05 — U-sweep-words-win landed: the mixed-sweep fixture gives its wave the room the slowest runner needs, and asserts the multiset
+
+A test-only fix under `docs/HOW-WE-BUILD.md` (one fresh fixer on `docs/briefs/U-sweep-words-win.md`). windows-latest
+twice (runs 33966990967 and 33970406089) failed `SweepRequestIdTests.A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`
+with `Not found: "confirmed"` in `[sent-not-confirmed, rejected, not-sent, not-sent, not-sent]`; green on the re-run both
+times and on ubuntu and macos every time; outside the `Timing` category, so the windows retry never reached it. Merge
+`d92a61b` (three commits, rebased onto `4aa5903`), 1 test file +79/−16; no product file touched.
+
+- **The brief's mechanism was wrong, and the fixer said so first:** the failing test ran in 1 s against a 5 s budget, so
+  no deadline passed and U-press-budget's clip never fired. What happens: the lost answer settles UNKNOWN and flags the
+  store while later legs of the SAME wave are still short of `ReauthorizeAtDispatchOrThrow` (which runs AFTER the awaited
+  target resolution, on purpose); they are refused `1 earlier request(s) are unconfirmed` with their record at CREATED —
+  `not-sent` by the `docs/CONTRACTS.md` table. Nothing misreports, so item 2 did not apply.
+- **The room was file IO, and 50 ms of it was 29 ms short:** a leg's synchronous prefix is two store reads; the wave's
+  whole issue spread measured under 2 ms here, and the worst windows-latest file-IO factor `RunnerSpeedProbeTests` has
+  recorded is 39.52x — 79 ms. The latency is now `WaveIssueRoom` = 750 ms inside a `SweepBudget` of 20 s, both named and
+  both ASSERTED before the words (exactly one leg refused for an unconfirmed earlier request; none refused at the
+  deadline), so the next runner to push past a bound says which one. The multiset is asserted exactly — `[confirmed,
+  confirmed, not-sent, rejected, sent-not-confirmed]` — because an `Assert.Contains` per word had passed both windows
+  runs with three legs saying `not-sent`.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** RED at `LatencyMs = 1`: a `confirmed` lost in 61 of
+150 runs, one exactly the CI multiset; clean over 100 legs at 2 ms and above → GREEN; mutant (`Dispatched(t) =>
+TheAnswer(LegOutcome.Confirmed, t)`, a late fill reading `confirmed`) → RED `Actual: ["confirmed", "confirmed",
+"confirmed", "not-sent", "rejected"]`, reverted. Fixer's gate at `90c40f4`, Release: 0 warnings; the class 3× = 44/44;
+219 + 239 + 582 = 1040, 0 failed; the windows job green on draft PR #7 five times running (33973434576, 33974221120,
+33974342472 ×2, 33975999193 at `6ac626b`, all four jobs SUCCESS). Manager's gate at `d92a61b`, Release: build → 0 warnings,
+0 errors; suite → 219 + 239 + 582 = 1040, 0 failed; names vs `main` → 0 removed, 0 added; scan → one hit, the identifier
+`IpcToken` on a context line; `git rev-list --count u-sweep-words-win..main` → 0; CI run 33981829058 at `d92a61b`: pending.
+
+**Three hosted-runner reds recorded here once each, none briefed — a brief each when one recurs:** macos on 33973434576,
+`SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc`, an NRE at `(JsonElement)reply.Data!` (its
+fixture leaves 100 ms between the scope and a 1900 ms read); ubuntu on 33974342472 attempt 2, U-press-budget's own
+`PressReachesTheWireOnItsOwnTermsTests.A_wait_the_simulator_predicted_would_fit_is_still_stopped_by_the_deadline`, over by
+24 ms; windows on `main` at the docs-only `ab72909` (run 33973192760, unrecorded until now),
+`ControlTests.Cancel_all_removes_orders_but_leaves_positions_alone` [52 s]: `Assert.DoesNotContain() Failure: Filter
+matched`, a WORKING order still in the fake book after a 2 s press on a runner where the test took 52 s; not seen again in
+five runs since. NOT VERIFIED that any of the three is a fixture asserting a schedule rather than the product.
+
+**NOT done:** no product file, no box, no ATAS, no UI. The remote branch `u-sweep-words-win` is left for the owner to delete.

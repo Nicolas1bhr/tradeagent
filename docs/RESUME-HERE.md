@@ -10,44 +10,47 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session closed 2026-09-05 (afternoon). Restart in this order, and you are working within ten minutes:**
+**Session resumed 2026-09-05 (evening), landed the queue's last unit and dispatched the second milestone review. Restart in this order, and you are working within ten minutes:**
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
-   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 22 landings since the pivot, every claim with its run).
-2. **`main` is `6620d3d`, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8 (deployment and
-   monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix units (`U-stranded`,
-   `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`, `U-settings-closed`,
-   `U-press-budget`), `U-bridge-reinstall`, and six test-only fixes. The bridge protocol is 3: the box's bridge DLL must
-   be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now press
-   `Reinstall the bridge` on Checks).
-3. **`docs/briefs/` is the queue and holds ONE file, `U-sweep-words-win.md`, whose unit is BUILT and ready to land:**
-   branch `u-sweep-words-win` (worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-sweep-words-win`), code tip
-   `90c40f4` + a report commit, rebased onto `cda7088`; test-only (the five-order sweep fixture gave a wave 50 ms of room
-   where the runner's file-IO factor needed 79; it now has 750 ms inside a 20 s budget and asserts the multiset exactly);
-   draft PR #7's windows job green four times running, the whole matrix green twice. Run `docs/HOW-WE-BUILD.md`'s landing
-   checklist on it (Release gate, scan, ff-merge with the exit checked, its section into `BUILD-STATUS.md`, brief deleted,
-   worktree removed, PR #7 closed). Its report also names two NEW intermittent hosted-runner reds, not yet briefed: macos
-   `A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` (a null `reply.Data`; the fixture leaves 100 ms between the
-   scope and a 1900 ms read) and ubuntu `A_wait_the_simulator_predicted_would_fit_is_still_stopped_by_the_deadline`
-   (over by 24 ms, once) — the same class, one brief each when they recur, per step 6 of the doctrine's checklist.
+   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
+2. **`main` is `d92a61b` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
+   U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
+   units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
+   `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
+   at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner). The bridge protocol is 3: the box's bridge
+   DLL must be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now
+   press `Reinstall the bridge` on Checks).
+3. **`docs/briefs/` holds ONE file, `REVIEW.md`: the second milestone review, in flight at `d92a61b`** — a fresh Opus
+   reviewer (worktree `~/Projects/ai-trading-software-for-mihael-worktrees/review`, probes on branch `review-probes`,
+   findings to `docs/REVIEW-2026-09-05b.md` in the main worktree) and Codex read-only in parallel (`codex exec -s read-only`
+   in worktree `…-worktrees/codex-review`, its last message written to `docs/REVIEW-2026-09-05b-codex.md`). When both
+   report: paste Codex's block into the review's `## Codex` section and delete its file, commit the review, triage — every
+   HIGH is a fix unit before v0.1.2 is cut, MED and LOW together one batch unit — and delete the brief. A killed leg is
+   re-briefed from `docs/briefs/REVIEW.md`; read `review-probes` first, the probes may already be there. Three hosted-runner
+   reds are recorded once each in the U-sweep-words-win section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
-   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `6620d3d` was still in progress at close.
-   A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset; runner or harness red → a fixer on top.
+   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b` is 33981829058; its verdict is in
+   the U-sweep-words-win section or the commit after it. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red →
+   reset; runner or harness red → a fixer on top.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
    containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
    the in-process gateway are not security boundaries.
-6. **Then, in order:** the v0.1.2 cut on the box (needs Nicolas's box credentials: redeploy the bridge at protocol 3,
-   `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real bridge
-   spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`); the NEXT milestone review
-   starts from `docs/REVIEW-2026-09-05.md`'s UNVERIFIED list and "What I did NOT do" (the witness, teardown, adapter and
-   health code; the approval chain; the material ledger; `ForceResolve`; `BridgePipeAuth`).
+6. **Then, in order:** the v0.1.2 cut on the box (needs Nicolas's box credentials in the environment — `TA_WIN_HOST`,
+   `TA_WIN_USER`, `TA_WIN_PASSWORD`, `TA_WIN_NAME`, none set in the 2026-09-05 evening session: redeploy the bridge at
+   protocol 3, `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real
+   bridge spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`), with the second review's
+   HIGH fix units landed first; the non-box LOW batch in that backlog (`AtasConnector._pending` leaks an entry when a
+   caller cancels an emergency; a liveness probe lifted into `ConnectorSendDeadlineTests`) is a one-builder unit whenever
+   a leg is free.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
    before the Mac UI loop; the box has no credentials in these sessions; four usage-limit kills were survived by
-   re-briefing from disk, the branch keeps everything.
+   re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
+   check a command's exit with `$?` on the bare command.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 
