@@ -231,16 +231,25 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     /// Flags a request for reconciliation WITHOUT changing its state. Used when a dispatch failed
     /// indefinitely but the event stream had already recorded an outcome: we do not overwrite what
     /// the stream saw, but we still refuse to trust it until the reconciler has confirmed it.
+    ///
+    /// <paramref name="connectorOrderId"/> is filled in and never overwritten, for the case where
+    /// the platform's answer reaches a row somebody else already moved: the broker's own reference
+    /// is the thing the person has to search for, and a card that says "the broker never sent one
+    /// back" beside a sentence quoting the platform's answer is a card contradicting itself.
     /// </summary>
-    public ExecutionRequest MarkNeedsReconciliation(string requestId, string? error = null)
+    public ExecutionRequest MarkNeedsReconciliation(string requestId, string? error = null,
+        string? connectorOrderId = null)
     {
         db.Write(_ =>
         {
             using var c = db.Cmd("""
                 UPDATE execution_request
-                SET needs_reconciliation=1, last_error=COALESCE($err, last_error), updated_at=$now
+                SET needs_reconciliation=1,
+                    last_error=COALESCE($err, last_error),
+                    connector_order_id=COALESCE(connector_order_id, $coid),
+                    updated_at=$now
                 WHERE request_id=$rid
-                """, ("$rid", requestId), ("$err", error), ("$now", Sql.T(Now)));
+                """, ("$rid", requestId), ("$err", error), ("$coid", connectorOrderId), ("$now", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
         return Get(requestId) ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished");

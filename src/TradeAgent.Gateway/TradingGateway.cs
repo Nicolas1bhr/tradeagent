@@ -1010,10 +1010,21 @@ public sealed class TradingGateway : IAsyncDisposable
             // very request, carried by the handler that asked the question. Filing it and returning
             // a row that says the opposite is how a FILLED order came to be recorded CANCELLED.
             //
-            // UNKNOWN and RECONCILING are the only two states this may overrule, and both are states
-            // whose whole meaning is "we do not know". A TERMINAL row is left exactly as it is: the
-            // state table refuses to leave one, and something with an answer of its own already did.
-            if (actual.State is ExecutionState.UNKNOWN or ExecutionState.RECONCILING && IsDefinite(to)
+            // UNKNOWN and RECONCILING are the only two states this may OVERRULE, and both are states
+            // whose whole meaning is "we do not know". A TERMINAL row is still left exactly as it
+            // is: the state table refuses to leave one.
+            //
+            // THE THIRD CASE IS A TERMINAL ROW A PERSON PUT THERE, and it is not a race with
+            // anything that had evidence. The owner's card asserts what they saw in ATAS; this
+            // carries what the broker said about the very request, by way of the call that asked.
+            // With the dispatch lease on the override (see ForceResolve) one process can no longer
+            // reach this, but two can — the app and `tradeagent-gateway.exe` are two gateways over
+            // one store and the lease is deliberately in memory — and so can a restart. P3's end
+            // state was reached exactly there: the record said CANCELLED "resolved by user: no such
+            // order exists", unflagged, trading resumed, and the broker's FILLED was filed
+            // `already_settled`. The row does not move, because nothing here has grounds to overrule
+            // a person; what it does is stop being SILENT.
+            if (IsDefinite(to) && LateDefiniteApplies(actual, to)
                 && LateDefiniteSettle(requestId, actual.State, to, connectorOrderId, filled, error) is { } won)
                 return won;
 
@@ -1046,6 +1057,39 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE PREFIX A PERSON'S ANSWER LEAVES ON A RECORD, and the only durable mark that separates a
+    /// terminal row the PLATFORM produced from one a HUMAN asserted. <see cref="ForceResolve"/>
+    /// writes it; <see cref="OwnerResolved"/> reads it. Kept as one constant because the two are
+    /// three thousand lines apart and a private agreement written twice is a private agreement that
+    /// drifts.
+    /// </summary>
+    public const string ResolvedByOwnerPrefix = "resolved by user: ";
+
+    /// <summary>Did a PERSON move this row to where it is, rather than the platform?</summary>
+    static bool OwnerResolved(ExecutionRequest r) =>
+        r.LastError is { } e && e.StartsWith(ResolvedByOwnerPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// WHICH ROWS A LATE DEFINITE ANSWER MAY BE LANDED ON, and the two arms are different acts.
+    ///
+    /// UNKNOWN and RECONCILING are OVERRULED — nobody had written an answer down, and this is the
+    /// answer. A terminal row a person asserted is not overruled and cannot be: the state table
+    /// refuses to leave a terminal state, and overwriting a human's account of what they saw would
+    /// destroy the only record of it. It is RE-FLAGGED, with the platform's answer written beside
+    /// the claim, so the disagreement is something a person reads rather than something that happens
+    /// silently (REVIEW 2026-09-05b finding 1).
+    ///
+    /// Only when the two genuinely differ. An answer that agrees with the state the owner asserted
+    /// is agreement, and `already_settled` is the right word for it. And only for a row the OWNER
+    /// moved: a terminal state the event stream wrote against a different answer from the dispatch
+    /// is the stream and the platform disagreeing, which `ForceResolve` already refuses to
+    /// adjudicate and which this does not start adjudicating either.
+    /// </summary>
+    static bool LateDefiniteApplies(ExecutionRequest actual, ExecutionState to) =>
+        actual.State is ExecutionState.UNKNOWN or ExecutionState.RECONCILING
+        || (OrderStateMachine.IsTerminal(actual.State) && actual.State != to && OwnerResolved(actual));
+
+    /// <summary>
     /// Lands a dispatch's definite answer on a row that had already been moved to UNKNOWN or
     /// RECONCILING by somebody else — the reconciler in this process before the lease existed, or
     /// one in another process over the same store, which is what the app and `GatewayHost` are.
@@ -1056,12 +1100,18 @@ public sealed class TradingGateway : IAsyncDisposable
     /// call that asked. Null means the row moved again underneath us, and the caller then files
     /// `already_settled` as before — the row is being written by something with its own evidence and
     /// the state table is the arbiter, not this method.
+    ///
+    /// The terminal arm is the other half, and it lands nothing: see
+    /// <see cref="RecordThePlatformsAnswerBesideTheOwnersClaim"/>.
     /// </summary>
     ExecutionRequest? LateDefiniteSettle(string requestId, ExecutionState from, ExecutionState to,
         string? connectorOrderId, decimal? filled, string? error)
     {
         try
         {
+            if (OrderStateMachine.IsTerminal(from))
+                return RecordThePlatformsAnswerBesideTheOwnersClaim(requestId, from, to, connectorOrderId, filled);
+
             if (from == ExecutionState.UNKNOWN)
                 _requests.Transition(requestId, ExecutionState.UNKNOWN, ExecutionState.RECONCILING);
 
@@ -1078,6 +1128,44 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// THE OWNER SAID ONE THING AND THE PLATFORM THEN SAID ANOTHER, AND BOTH GO ON THE RECORD.
+    ///
+    /// The row keeps the state the person put there. Not out of deference: a terminal state has no
+    /// outgoing edge, `ForceResolve` refuses to re-resolve one for the same reason, and rewriting it
+    /// would erase the one account of what the person saw. What changes is that the record stops
+    /// agreeing with itself — it is flagged again, trading is paused in memory before the write is
+    /// attempted (the store can refuse, and the pause must not depend on it), the platform's own
+    /// answer and reference are written beside the claim where the card reads them, and the
+    /// engineering log carries both at error.
+    ///
+    /// The sentence keeps the <see cref="ResolvedByOwnerPrefix"/> in front of it on purpose: a
+    /// SECOND late answer must still be able to tell that a person owns this row.
+    /// </summary>
+    ExecutionRequest RecordThePlatformsAnswerBesideTheOwnersClaim(string requestId,
+        ExecutionState claimed, ExecutionState answered, string? connectorOrderId, decimal? filled)
+    {
+        var claim = _requests.Get(requestId)?.LastError ?? $"{ResolvedByOwnerPrefix}(the note is gone)";
+        var sentence = $"{claim} — but {Connector.DisplayName} then answered {answered}"
+            + (connectorOrderId is { Length: > 0 } coid ? $" for order {coid}" : "")
+            + (filled is { } q && q > 0 ? $", {q} filled" : "")
+            + $". That is not {claimed}, and this record is flagged again until you have looked.";
+
+        LatchUnconfirmed(requestId,
+            $"you resolved {requestId} as {claimed} and the platform then answered {answered}");
+
+        var flagged = _requests.MarkNeedsReconciliation(requestId, sentence, connectorOrderId);
+        _log.Activity($"You confirmed order {requestId} as {claimed}, and {Connector.DisplayName} then " +
+                      $"answered {answered}. Trading is paused until you have checked it.", "warn");
+        _log.Engineering("Gateway", "late_definite_over_an_override", "error", requestId: requestId,
+            metadataJson: Json.Write(new
+            {
+                claimed = claimed.ToString(), answered = answered.ToString(), connectorOrderId, filled
+            }));
+        StateChanged?.Invoke();
+        return flagged;
     }
 
     /// <summary>
@@ -3141,7 +3229,7 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!OrderStateMachine.CanTransition(from, finalState))
             _requests.Transition(requestId, from, ExecutionState.RECONCILING);
         var result = _requests.Transition(requestId, _requests.Get(requestId)!.State, finalState,
-            needsReconciliation: false, markReconciled: true, error: $"resolved by user: {note}");
+            needsReconciliation: false, markReconciled: true, error: $"{ResolvedByOwnerPrefix}{note}");
         ClearLatch(requestId);   // as above: the override answers this one
         _log.Activity($"You confirmed order {requestId} as {finalState}: {note}", "warn");
 

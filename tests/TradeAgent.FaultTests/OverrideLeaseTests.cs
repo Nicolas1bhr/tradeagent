@@ -88,6 +88,77 @@ public class OverrideLeaseTests(ITestOutputHelper Out)
         await gw.DisposeAsync();
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Item 2 — a broker's definite answer still lands on a row a human moved.
+    //
+    // With item 1 in, one process can no longer override its own live dispatch. TWO can: the app and
+    // `tradeagent-gateway.exe` are two gateways over one database, and the lease is in memory on
+    // purpose — a claim that outlived the process holding it could never be released. So the
+    // dispatcher's lease is in A, the card the owner presses is in B, and B is right to offer the
+    // buttons: it has no way of knowing anyone is still flying that row. The same shape reaches the
+    // same place after a crash and a restart. What must not happen is what P3 showed: the broker's
+    // own answer arriving and being filed `already_settled` behind the owner's back.
+    // ---------------------------------------------------------------------------------------------
+    [Fact]
+    public async Task A_late_definite_answer_reflags_a_row_the_owner_resolved_and_records_it()
+    {
+        var db = TestEnv.NewDb();
+        using var dbh = db;
+
+        // B first, over an empty store, so its constructor's startup sweep has nothing to find: this
+        // is the second process that was ALREADY RUNNING when the dispatch went out, not one started
+        // afterwards. B never dispatches, so it never holds a lease.
+        var (theCard, _, _, cardClock) = await Stranded.Ready(db: db);
+        var (theDispatcher, c, _, clock) = await Stranded.Ready(db: db);
+
+        var release = new TaskCompletionSource();
+        c.HangPlaceBeforeTheBroker = release;
+        var inFlight = theDispatcher.PlaceAsync(new AgentContext("a"), "late-1", TestEnv.Buy());
+        await c.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(120));
+        cardClock.Advance(TimeSpan.FromSeconds(120));   // two processes, one wall clock
+
+        Out.WriteLine($"the dispatcher's lease  : {theDispatcher.StillOnTheWire("late-1") ?? "(nothing)"}");
+        Out.WriteLine($"the card's lease        : {theCard.StillOnTheWire("late-1") ?? "(nothing)"}   (another process; it cannot know)");
+        Out.WriteLine($"the card shows          : {string.Join(", ", theCard.Unreconciled().Select(r => $"{r.RequestId}/{r.State}"))}");
+
+        var resolved = theCard.ForceResolve("late-1", ExecutionState.CANCELLED, "I checked in ATAS and no such order exists");
+        await theCard.RefreshHealthAsync();
+        Out.WriteLine($"after the override      : {resolved.State}, needs_reconciliation={resolved.NeedsReconciliation}");
+        Out.WriteLine($"trading in the card     : {(theCard.TryAuthorizeExecution(new AgentContext("a"), out var why1, out _) ? "resumed" : $"paused — {why1}")}");
+
+        // And now the broker answers the dispatcher.
+        release.SetResult();
+        var placed = await inFlight;
+        var final = theCard.GetRequest("late-1")!;
+        var events = Recovery.Engineering(db, "late-1").Select(e => e.Event).ToList();
+        Out.WriteLine($"dispatch answered       : {placed.State}, needs_reconciliation={placed.NeedsReconciliation}");
+        Out.WriteLine($"orders at the broker    : {c.Inner.Broker.Orders.Count} " +
+                      string.Join(" ", c.Inner.Broker.Orders.Select(o => $"{o.ConnectorOrderId} {o.State} {o.Quantity} {o.Symbol}")));
+        Out.WriteLine($"record now              : {final.State}, needs_reconciliation={final.NeedsReconciliation}");
+        Out.WriteLine($"broker reference        : {final.ConnectorOrderId ?? "none — the broker never sent one back"}");
+        Out.WriteLine($"what the card will read : {final.LastError}");
+        Out.WriteLine($"trading in the dispatcher: {(theDispatcher.TryAuthorizeExecution(new AgentContext("a"), out var why2, out _) ? "resumed" : $"paused — {why2}")}");
+        Out.WriteLine($"engineering             : {string.Join(", ", events)}");
+
+        // The owner's word stands as the record's state — the state table refuses to leave a
+        // terminal row, and something with an answer of its own put it there. What may not stand is
+        // the SILENCE: the platform's answer is written beside the claim, the row is flagged again,
+        // and trading is paused until a person has read both.
+        Assert.Equal(ExecutionState.CANCELLED, final.State);
+        Assert.True(final.NeedsReconciliation);
+        Assert.Contains("resolved by user: I checked in ATAS and no such order exists", final.LastError);
+        Assert.Contains("FILLED", final.LastError);
+        Assert.Equal("FB-1", final.ConnectorOrderId);
+        Assert.Contains("late_definite_over_an_override", events);
+        Assert.DoesNotContain("already_settled", events);
+        Assert.False(theDispatcher.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+        Assert.False(theCard.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+
+        await theDispatcher.DisposeAsync();
+        await theCard.DisposeAsync();
+    }
+
     static string Describe(ReconcileResult r) =>
         $"resolved={r.Resolved} inconclusive={r.Inconclusive} {string.Join("; ", r.Details)}";
 }
