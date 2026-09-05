@@ -20,11 +20,16 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `U-press-budget`), `U-bridge-reinstall`, and six test-only fixes. The bridge protocol is 3: the box's bridge DLL must
    be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now press
    `Reinstall the bridge` on Checks).
-3. **`docs/briefs/` is the queue and holds ONE file, `U-sweep-words-win.md`** — a Windows-only test-expectation flake
-   (`SweepRequestIdTests.A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`, twice). A fixer was working on
-   branch `u-sweep-words-win` in worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-sweep-words-win` when the
-   session closed, with no commit yet. Read the branch first (`git log main..u-sweep-words-win`, the brief's `## Report`
-   in that worktree): if a report is committed, run the landing checklist; if not, dispatch a fresh fixer on the brief.
+3. **`docs/briefs/` is the queue and holds ONE file, `U-sweep-words-win.md`, whose unit is BUILT and ready to land:**
+   branch `u-sweep-words-win` (worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-sweep-words-win`), code tip
+   `90c40f4` + a report commit, rebased onto `cda7088`; test-only (the five-order sweep fixture gave a wave 50 ms of room
+   where the runner's file-IO factor needed 79; it now has 750 ms inside a 20 s budget and asserts the multiset exactly);
+   draft PR #7's windows job green four times running, the whole matrix green twice. Run `docs/HOW-WE-BUILD.md`'s landing
+   checklist on it (Release gate, scan, ff-merge with the exit checked, its section into `BUILD-STATUS.md`, brief deleted,
+   worktree removed, PR #7 closed). Its report also names two NEW intermittent hosted-runner reds, not yet briefed: macos
+   `A_sweep_pays_the_emergency_budget_once_not_once_per_rpc` (a null `reply.Data`; the fixture leaves 100 ms between the
+   scope and a 1900 ms read) and ubuntu `A_wait_the_simulator_predicted_would_fit_is_still_stopped_by_the_deadline`
+   (over by 24 ms, once) — the same class, one brief each when they recur, per step 6 of the doctrine's checklist.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `6620d3d` was still in progress at close.
