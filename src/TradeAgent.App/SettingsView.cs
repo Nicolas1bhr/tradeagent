@@ -181,8 +181,15 @@ sealed class SettingsPage
             Ui.Muted("Whether real money is allowed at all is a separate switch, on the Safety page.")));
         explain.Margin = new Thickness(Theme.S5, 0, 0, 0);
 
+        // Always here, whatever the bridge row currently says. The Checks page shows this same card
+        // only when the row calls for it, and that is the right rule for a page about what is wrong —
+        // but an owner who has just been told by ATAS, or by a support message, to put the bridge
+        // back needs somewhere it is always found. Settings is where the other two standing choices
+        // about the trading platform already live.
+        var bridge = Ui.Section("ATAS bridge", BridgeRepair.Body(_host));
+
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, updates)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, bridge, updates)));
         grid.Children.Add(Pages.Column(1, explain));
 
         Root = Pages.Scroll(Ui.Col(0,

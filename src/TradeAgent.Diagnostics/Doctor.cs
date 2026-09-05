@@ -135,7 +135,11 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             : CheckResult.Warn("ATAS running", "no", "Press Open ATAS.", ErrorCode.ATAS_NOT_RUNNING, true));
         r.Add(atas.BridgeInstalled
             ? CheckResult.Ok("ATAS bridge files", atas.StrategyDir!)
-            : CheckResult.Warn("ATAS bridge files", "not installed", "Press Install bridge.", ErrorCode.ATAS_BRIDGE_MISSING, true));
+            // The repair sentence comes from the catalogue rather than being spelled again here.
+            // Two copies of "press X" is how one of them went on naming a control that had been
+            // gone since setup finished.
+            : CheckResult.Warn("ATAS bridge files", "not installed",
+                Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING).Repair, ErrorCode.ATAS_BRIDGE_MISSING, true));
 
         // ---- live trading chain
         if (gateway is not null)

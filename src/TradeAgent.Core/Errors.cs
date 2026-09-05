@@ -6,7 +6,7 @@ public enum ErrorCode
     AI_RUNTIME_NOT_FOUND, AI_INSTALL_FAILED, AI_VERSION_UNSUPPORTED,
     AI_AUTH_REQUIRED, AI_AUTH_FAILED, AI_AUTH_TIMEOUT,
     ATAS_NOT_FOUND, ATAS_NOT_RUNNING, ATAS_VERSION_UNSUPPORTED,
-    ATAS_BRIDGE_MISSING, ATAS_BRIDGE_LOAD_FAILED, ATAS_BRIDGE_DISCONNECTED,
+    ATAS_BRIDGE_MISSING, ATAS_BRIDGE_IN_USE, ATAS_BRIDGE_LOAD_FAILED, ATAS_BRIDGE_DISCONNECTED,
     TRADING_CONNECTION_MISSING, ACCOUNT_NOT_FOUND, MARKET_DATA_UNAVAILABLE,
     TRADING_PERMISSION_UNAVAILABLE,
     ORDER_REJECTED, ORDER_STATE_UNKNOWN, RECONCILIATION_FAILED,
@@ -18,6 +18,22 @@ public enum ErrorCode
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS
+}
+
+/// <summary>
+/// The labels of controls the app's own sentences have to name.
+///
+/// A repair sentence that says "press X" is a promise that a control called X is on a screen the
+/// owner can reach. This file used to make that promise as "Press Install bridge." — and the only
+/// Install bridge button there has ever been lives inside the setup wizard, which renders solely
+/// while onboarding is unfinished. Once setup completed, three separate sentences sent the owner to
+/// a control that had ceased to exist. Spelling the label once is what stops the sentence and the
+/// button drifting apart again.
+/// </summary>
+public static class Labels
+{
+    /// <summary>On the Checks page when the bridge needs it, and on Settings always.</summary>
+    public const string ReinstallBridge = "Reinstall the bridge";
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
@@ -37,7 +53,12 @@ public static class Errors
         [ErrorCode.ATAS_NOT_FOUND]                 = ("ATAS is not installed on this computer.", "Install ATAS, then press Retry.", false),
         [ErrorCode.ATAS_NOT_RUNNING]               = ("ATAS is not running.", "Press Open ATAS.", true),
         [ErrorCode.ATAS_VERSION_UNSUPPORTED]       = ("Your ATAS version changed and the TradeAgent bridge needs updating.", "Press Repair.", true),
-        [ErrorCode.ATAS_BRIDGE_MISSING]            = ("The TradeAgent bridge is not installed into ATAS yet.", "Press Install bridge.", true),
+        [ErrorCode.ATAS_BRIDGE_MISSING]            = ("The TradeAgent bridge is not installed into ATAS yet.", $"Press {Labels.ReinstallBridge} on the Checks page.", true),
+        // The one failure of the copy that is not the owner's mistake and not a broken machine: ATAS
+        // has the assembly loaded, so Windows refuses to replace the file. The repair is one action
+        // and the sentence says only that action — an owner who never sees a terminal cannot be sent
+        // to a folder, a process list or a command.
+        [ErrorCode.ATAS_BRIDGE_IN_USE]             = ("ATAS is using the bridge file, so TradeAgent could not replace it.", $"Close ATAS, then press {Labels.ReinstallBridge} again.", true),
         [ErrorCode.ATAS_BRIDGE_LOAD_FAILED]        = ("ATAS could not load the TradeAgent bridge.", "Press Repair, then restart ATAS.", true),
         [ErrorCode.ATAS_BRIDGE_DISCONNECTED]       = ("TradeAgent lost its connection to ATAS.", "Make sure ATAS is open and the TradeAgent Bridge strategy is started.", false),
         [ErrorCode.TRADING_CONNECTION_MISSING]     = ("ATAS has no trading connection logged in.", "Log in to your broker inside ATAS.", false),

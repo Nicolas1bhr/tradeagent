@@ -35,3 +35,11 @@ full suite in Release → 0 failed. No box: the real ATAS copy-while-open case s
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant or the
 screenshot; final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+Branch `u-bridge-reinstall` off `main` `421b5d8`. No push, no other worktree, no Windows box.
+
+1. **The button — DONE.** RED: `tests/.../BridgeReinstallTests.cs` would not compile — `ErrorCode.ATAS_BRIDGE_IN_USE`,
+   `Labels.ReinstallBridge`, `AtasHealthReporter.Forget`, `AtasHealth.RepairOffered` did not exist (13 CS errors).
+   GREEN: 6/6. Mutant `Forget() { }` → RED `Assert.DoesNotContain() Failure: Sub-string found`. Seen on the Mac loop:
+   `.../scratchpad/ui-checks.png` — the card and `Reinstall the bridge` on Checks, shown because the bridge row is
+   FAILED and not installed. Settings shot: `.../scratchpad/ui-settings.png`.

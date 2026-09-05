@@ -12,6 +12,13 @@ using TradeAgent.Security;
 namespace TradeAgent.App;
 
 /// <summary>
+/// What a press of <see cref="Labels.ReinstallBridge"/> has to say afterwards: whether the bridge
+/// landed, and the one sentence to put on the screen either way. A reason, never a stack trace, and
+/// never a folder.
+/// </summary>
+public sealed record BridgeReinstall(bool Ok, string Sentence);
+
+/// <summary>
 /// Composition root. Owns every long-lived object exactly once, so the window is only a view over
 /// state rather than a place where state accidentally lives.
 /// </summary>
@@ -269,6 +276,46 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     void ReportAtasHealth() =>
         _atasHealth.Report(Health, Connector, Health.Get(Components.TradingConnection).State);
+
+    /// <summary>
+    /// Whether the bridge row is one a reinstall would repair — refused, or not there at all. The
+    /// Checks page puts its button on the screen for exactly these.
+    /// </summary>
+    public bool BridgeRepairOffered => _atasHealth.RepairOffered;
+
+    /// <summary>
+    /// Puts this build's bridge into ATAS again, and makes the row say so on the next breath.
+    ///
+    /// The same call the setup wizard makes, from a screen the owner can still reach afterwards.
+    /// Until this existed, the wizard was the only caller and the wizard is only entered while setup
+    /// is unfinished — so a protocol bump, which refuses every bridge deployed before it, left the
+    /// owner reading "reinstall it" with nothing anywhere to press.
+    ///
+    /// The copy is filesystem work and runs off the UI thread; the row is re-derived immediately
+    /// afterwards rather than at the cache's leisure, because a repair that worked must not read as
+    /// one that did not. Nothing here restarts ATAS, and nothing here says anything the owner cannot
+    /// act on inside this window.
+    /// </summary>
+    public async Task<BridgeReinstall> ReinstallBridgeAsync()
+    {
+        try
+        {
+            await Task.Run(() => AtasInstallation.InstallBridge(Path.Combine(AppContext.BaseDirectory, "bridge")));
+            _atasHealth.Forget();
+            ReportAtasHealth();
+            Gateway.Log.Activity("The ATAS bridge was reinstalled");
+            Changed?.Invoke();
+            return new BridgeReinstall(true,
+                "The bridge is in place. Open ATAS, open a chart, and start the TradeAgent Bridge strategy on it. " +
+                "TradeAgent notices by itself — you do not have to tell it.");
+        }
+        catch (Exception ex)
+        {
+            var info = ex is TradeAgentException t ? t.Info : Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING, ex.Message);
+            Gateway.Log.Engineering("Atas", "bridge_reinstall_failed", "warn", ex: ex);
+            return new BridgeReinstall(false, $"{info.UserMessage} {info.Repair}".Trim());
+        }
+    }
 
     /// <summary>
     /// Records what is in the workspace. Public so the inbox page can ask for a pass the moment the

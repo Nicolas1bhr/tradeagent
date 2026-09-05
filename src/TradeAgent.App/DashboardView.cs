@@ -40,6 +40,52 @@ static class Pages
     }
 }
 
+/// <summary>
+/// The one repair the owner can perform on a bridge that is refused or missing, as a card.
+///
+/// Built here rather than on either page because BOTH pages carry it — Checks when the bridge row
+/// calls for it, Settings always — and two hand-written copies of a control the app's sentences name
+/// by label is how the label and the sentence come apart. This is the control those sentences mean.
+///
+/// Two presses, because replacing the file stops trading through ATAS until the strategy is started
+/// again, and the armed label says exactly that rather than the word "Confirm". Nothing on it names
+/// a folder, a command or a window outside this one.
+/// </summary>
+static class BridgeRepair
+{
+    /// <summary>
+    /// The words and the button, with no framing of their own: Checks puts them in a card under its
+    /// own heading, Settings puts them in one of its sections.
+    /// </summary>
+    public static Control Body(AppHost host)
+    {
+        var note = Ui.Body("");
+        note.IsVisible = false;
+
+        var button = Ui.Confirm(Labels.ReinstallBridge,
+            "Confirm: replace the bridge — trading through ATAS stops until it is started again",
+            async () =>
+            {
+                note.IsVisible = true;
+                note.Foreground = Theme.TextMuted;
+                note.Text = "Putting the bridge back…";
+
+                var result = await host.ReinstallBridgeAsync();
+                note.Text = result.Sentence;
+                note.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+            });
+        button.HorizontalAlignment = HorizontalAlignment.Left;
+
+        return Ui.Col(Theme.S3,
+            Ui.Body("The bridge is the small piece TradeAgent puts inside ATAS so the two can talk to each other. " +
+                    "If it is missing, or ATAS is running an older one than this version of TradeAgent expects, " +
+                    "putting it back is the repair."),
+            Ui.Muted("Close ATAS first if it is open. The bridge cannot be replaced while ATAS is using it."),
+            button,
+            note);
+    }
+}
+
 // =================================================================================================
 
 /// <summary>The live picture, plus anything the AI is currently waiting on the user to answer.</summary>
@@ -845,7 +891,17 @@ sealed class ActivityPage
 
 // =================================================================================================
 
-/// <summary>The self-check and the support package — the two things to do before asking for help.</summary>
+/// <summary>
+/// The self-check and the support package — the two things to do before asking for help — and the
+/// one repair this page is allowed to perform.
+///
+/// The repair is here because this is where the bad news already is. The bridge row's own words
+/// ("not installed in ATAS — press Reinstall the bridge on the Checks page") and the protocol
+/// refusal both send the owner to this page, and until now the page printed those words and offered
+/// nothing to press: the only Install bridge button in the product lives in the setup wizard, which
+/// renders solely while onboarding is unfinished. So the sentence was true on the day it was written
+/// and false for the entire life of the installation afterwards.
+/// </summary>
 sealed class ChecksPage
 {
     readonly AppHost _host;
@@ -853,6 +909,7 @@ sealed class ChecksPage
     readonly TextBlock _placeholder =
         Ui.Muted("Nothing checked yet. Press Check everything and TradeAgent will test each part in turn.");
     readonly Button _showPackage;
+    readonly Control _repair;
     string? _packagePath;
 
     public Control Root { get; }
@@ -872,6 +929,13 @@ sealed class ChecksPage
             Ui.Primary("Check everything", RunDoctorAsync),
             Ui.Secondary("Create support package", CreatePackage),
             _showPackage);
+
+        _repair = Ui.Card(Ui.Col(Theme.S3, Ui.H3("The ATAS bridge"), BridgeRepair.Body(_host)));
+
+        // Hidden until the bridge row asks for it. It is built here and only ever shown or hidden
+        // afterwards: rebuilding it on the five-second tick would wipe a half-pressed confirmation
+        // out from under the hand about to complete it.
+        _repair.IsVisible = false;
 
         var well = new Border
         {
@@ -894,7 +958,8 @@ sealed class ChecksPage
         var body = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
         body.Children.Add(Ui.With(Ui.Col(Theme.S3,
                 Ui.Muted("These checks never change anything. The support package contains logs only — no passwords, no keys."),
-                buttons),
+                buttons,
+                _repair),
             c => c.Margin = new Thickness(0, 0, 0, Theme.S4)));
         body.Children.Add(well);
 
@@ -904,8 +969,12 @@ sealed class ChecksPage
         Root = root;
     }
 
-    /// <summary>Nothing here polls; this page only redraws when the user presses something.</summary>
-    public void Update() { }
+    /// <summary>
+    /// Nothing here polls, and nothing here is rebuilt. The one thing that changes on its own is
+    /// whether the bridge needs putting back, and that is a visibility flag on a control that was
+    /// built once.
+    /// </summary>
+    public void Update() => _repair.IsVisible = _host.BridgeRepairOffered;
 
     async Task RunDoctorAsync()
     {

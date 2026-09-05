@@ -66,7 +66,7 @@ public static class AtasHealth
         if (recorded is not null)
         {
             if (!d.BridgeInstalled)
-                return (HealthState.FAILED, "not installed in ATAS — press Install bridge on the Checks page · " +
+                return (HealthState.FAILED, $"not installed in ATAS — press {Labels.ReinstallBridge} on the Checks page · " +
                                             "last refusal recorded on the pipe: " + recorded);
             if (!d.Running)
                 return (HealthState.FAILED, "installed — waiting for ATAS to start · " +
@@ -98,10 +98,30 @@ public static class AtasHealth
 
         // Nothing is on the pipe. Which of the three reasons it is, is the whole value of this row.
         if (!d.BridgeInstalled)
-            return (HealthState.FAILED, "not installed in ATAS — press Install bridge on the Checks page");
+            return (HealthState.FAILED, $"not installed in ATAS — press {Labels.ReinstallBridge} on the Checks page");
         if (!d.Running)
             return (HealthState.FAILED, "installed — waiting for ATAS to start");
         return (HealthState.FAILED, "installed, but the strategy is not started on a chart in ATAS");
+    }
+
+    /// <summary>
+    /// Whether <see cref="Labels.ReinstallBridge"/> belongs on the screen for this row. Same inputs
+    /// as <see cref="BridgeRow"/>, deliberately, so the button and the sentence cannot disagree.
+    ///
+    /// Reinstalling puts this build's bridge file into the Strategies folder. That repairs exactly
+    /// two situations: a bridge that spoke and was REFUSED — a protocol this build does not speak,
+    /// or a peer that could not prove itself — and a bridge that is not there at all. It repairs
+    /// nothing about a platform that is merely closed, a strategy the owner has not started on a
+    /// chart, or a bridge that is connected and answering, and offering it on those invites somebody
+    /// to replace a working file in the hope that it helps. A witness failure is likewise not this
+    /// button's business: the file is fine and the folder it cannot write to is not.
+    /// </summary>
+    public static bool RepairOffered(bool atasSelected, AtasDetection d, HealthState connection, string? refusal)
+    {
+        if (!atasSelected) return false;
+        if (!string.IsNullOrWhiteSpace(refusal)) return true;
+        if (connection != HealthState.FAILED) return false;
+        return !d.BridgeInstalled;
     }
 }
 
@@ -154,6 +174,24 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
     AtasDetection? _cached;
     DateTimeOffset _cachedAt = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// Whether the last pass wrote a row a reinstall would repair. Read by the Checks page to decide
+    /// whether the button is on the screen, so the control appears for exactly the rows whose words
+    /// send the owner to it.
+    /// </summary>
+    public bool RepairOffered { get; private set; }
+
+    /// <summary>
+    /// Drops the cached detection so the next pass asks the filesystem again.
+    ///
+    /// The cache exists because a detection is filesystem work on a five-second tick and nothing in
+    /// it changes while the app runs — except after a reinstall, which changes the one fact the row
+    /// is derived from. Without this the owner presses the button, the bridge lands, and the row
+    /// goes on saying "not installed in ATAS" for up to a minute: a repair that worked, reported as
+    /// a repair that did not.
+    /// </summary>
+    public void Forget() => _cached = null;
+
     public void Report(HealthRegistry health, ITradingConnector connector, HealthState connection)
     {
         var atas = connector as AtasConnector;
@@ -168,6 +206,8 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
 
         var (bs, bd) = AtasHealth.BridgeRow(selected, d, connection, atas?.Bridge, atas?.StatusDetail);
         health.Set(Components.AtasBridge, bs, bd);
+
+        RepairOffered = AtasHealth.RepairOffered(selected, d, connection, atas?.StatusDetail);
     }
 
     static readonly AtasDetection Nothing =

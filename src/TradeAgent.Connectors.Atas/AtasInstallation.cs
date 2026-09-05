@@ -177,6 +177,13 @@ public static class AtasInstallation
     /// Copies the bridge assembly into the folder ATAS loads from. The user still has to add and
     /// start the strategy once inside ATAS; TradeAgent detects that by heartbeat rather than asking
     /// them to confirm they did it.
+    ///
+    /// It is called twice in this product's life: once by the setup wizard, and once every time the
+    /// owner presses <see cref="Labels.ReinstallBridge"/> afterwards — a protocol bump refuses every
+    /// bridge deployed before it, and redeploying is this call. The second caller is why the copy's
+    /// own failure is now mapped: a raw <c>IOException</c> reaching a label reads as a crash, and
+    /// the one failure that actually happens on a working machine — ATAS holding the assembly it has
+    /// loaded — has a repair the owner can perform without leaving the app.
     /// </summary>
     public static string InstallBridge(string bridgeSourceDir, AtasLayout? layout = null)
     {
@@ -189,7 +196,21 @@ public static class AtasInstallation
         var copied = 0;
         foreach (var file in Directory.GetFiles(bridgeSourceDir, "TradeAgent.*"))
         {
-            File.Copy(file, Path.Combine(d.StrategyDir, Path.GetFileName(file)), overwrite: true);
+            var destination = Path.Combine(d.StrategyDir, Path.GetFileName(file));
+            try
+            {
+                File.Copy(file, destination, overwrite: true);
+            }
+            // A sharing violation is an IOException and a denied replace is an UnauthorizedAccessException;
+            // ATAS produces the first on Windows and the second is the same refusal from the other
+            // side of the permission check. Both mean the same thing to the owner and get the same
+            // sentence. The path goes to the exception's technical text, which reaches the log and
+            // never a label.
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new TradeAgentException(ErrorCode.ATAS_BRIDGE_IN_USE,
+                    $"could not replace {destination}", ex);
+            }
             copied++;
         }
         if (copied == 0) throw new TradeAgentException(ErrorCode.ATAS_BRIDGE_MISSING, "no bridge files were found to install");
