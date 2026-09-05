@@ -320,11 +320,148 @@ public class BridgeRoundTripTests
         // Well past several heartbeat timeouts, every one of which failed to read Describe().
         await Task.Delay(1500);
 
+        // THE PULSE IS WHAT THIS TEST IS ABOUT, and it is still arriving.
         Assert.True(await connector.IsConnectedAsync());
         Assert.Equal(HealthState.READY, await connector.GetHealthAsync());
-        // The handshake's answer is retained rather than lost or invented.
+
+        // What the pulse does NOT carry is a capability proof, and it never did — see
+        // Capabilities_do_not_outlive_the_bridges_ability_to_attest_them, which is where the two
+        // assertions that used to be here went. They read "the handshake's answer is retained
+        // rather than lost or invented", which was the whole of Codex F7: liveness and attestation
+        // were being refreshed by one frame, so the answer outlived the ability to give it.
+        Assert.False(connector.Capabilities.ReconciliationProvable);
+    }
+
+    /// <summary>
+    /// A CAPABILITY PROOF DOES NOT OUTLIVE THE BRIDGE'S ABILITY TO ATTEST IT (Codex F7).
+    ///
+    /// The heartbeat carries the bridge's current <c>Describe()</c>, and a read that throws degrades
+    /// to a bare pulse. That was called failing closed, and it is not: the pulse refreshes LIVENESS
+    /// while the previous frame's account and capability answers stay latched, so a bridge that can
+    /// no longer say what it can do goes on being believed about what it could do. The gateway
+    /// consults <c>ReconciliationProvable</c> — <c>SupportsClientOrderId &amp;&amp;
+    /// SupportsOrderHistory</c> — to decide whether unattended live trading is permitted, so the
+    /// permission survives the evidence.
+    ///
+    /// The bridge is deliberately left alive throughout: pulses keep arriving, the connection is
+    /// never dropped, and nothing here is decided by a clock. What changes is that an answer this
+    /// end can no longer get is no longer reported as one it has.
+    /// </summary>
+    [Fact]
+    public async Task Capabilities_do_not_outlive_the_bridges_ability_to_attest_them()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromSeconds(30) };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new BridgeServer(new ThrowsAfterHandshake(new LoopbackAtasAdapter()), pipe)
+            { HeartbeatInterval = TimeSpan.FromMilliseconds(100) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        // The handshake's Describe() answered, so at this instant the proof is real and current.
+        Assert.True(connector.Capabilities.ReconciliationProvable,
+            "the handshake did not establish the capabilities this test is about losing");
         Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
+
+        using var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, connector, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.LIVE_AUTONOMOUS;
+            s.SelectedAccountId = "ATAS-LOOPBACK";
+        });
+        gw.ActivateLive(true);
+
+        // Every heartbeat from here on is a bare pulse: Describe() throws on the far side.
+        await Wait(async () => await Task.FromResult(!connector.Capabilities.ReconciliationProvable));
+
+        var caps = connector.Capabilities;
+        var authorized = gw.TryAuthorizeExecution(new AgentContext("agent-1"), out var reason, out var code);
+        var (state, detail) = AtasHealth.BridgeRow(
+            atasSelected: true,
+            new AtasDetection(true, @"C:\ATAS", @"C:\Strategies", "8.0", Running: true, BridgeInstalled: true, LayoutVerified: true),
+            await connector.GetHealthAsync(), connector.Bridge, connector.StatusDetail);
+
+        Console.WriteLine($"pulsing, cannot describe : connected={await connector.IsConnectedAsync()} " +
+                          $"coid={caps.SupportsClientOrderId} history={caps.SupportsOrderHistory} " +
+                          $"provable={caps.ReconciliationProvable}");
+        Console.WriteLine($"autonomous dispatch      : authorized={authorized} code={code} — {reason}");
+        Console.WriteLine($"bridge health row        : {state} — {detail}");
+
+        // The connection is untouched: this is not a disconnect dressed up as one.
+        Assert.True(await connector.IsConnectedAsync(), "the bridge was dropped rather than disbelieved");
+
+        // The proof is gone, and with it the permission it unlocked.
+        Assert.False(caps.SupportsClientOrderId);
+        Assert.False(caps.SupportsOrderHistory);
+        Assert.False(authorized, "autonomous live dispatch was authorized on a proof the bridge can no longer give");
+        Assert.Equal(ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE, code);
+
+        // And the row says which of the several ways this can go wrong it actually is.
+        Assert.Contains("stopped saying what it can do", detail);
+        Assert.DoesNotContain("has not said hello yet", detail);
+    }
+
+    /// <summary>
+    /// The other direction, and the half a fix by blanket clearing would break: a bridge whose
+    /// Describe() starts working again is believed again, on the same connection, with no reconnect.
+    /// </summary>
+    [Fact]
+    public async Task A_bridge_that_can_describe_itself_again_is_believed_again()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromSeconds(30) };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        var adapter = new ThrowsWhileTold(new LoopbackAtasAdapter());
+        await using var bridge = new BridgeServer(adapter, pipe) { HeartbeatInterval = TimeSpan.FromMilliseconds(100) };
+        bridge.Start();
+        await Wait(async () => await connector.IsConnectedAsync());
         Assert.True(connector.Capabilities.ReconciliationProvable);
+
+        adapter.Throwing = true;
+        await Wait(async () => await Task.FromResult(!connector.Capabilities.ReconciliationProvable));
+        Console.WriteLine($"while it cannot describe : provable={connector.Capabilities.ReconciliationProvable} " +
+                          $"row={connector.StatusDetail}");
+
+        adapter.Throwing = false;
+        await Wait(async () => await Task.FromResult(connector.Capabilities.ReconciliationProvable));
+        Console.WriteLine($"once it can again        : provable={connector.Capabilities.ReconciliationProvable} " +
+                          $"account={connector.Bridge?.AccountId} row={connector.StatusDetail ?? "<nothing to say>"}");
+
+        Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
+        Assert.Null(connector.StatusDetail);
+        Assert.True(await connector.IsConnectedAsync());
+    }
+
+    /// <summary>Answers Describe() until it is told to stop, and again when it is told to resume.</summary>
+    sealed class ThrowsWhileTold(LoopbackAtasAdapter inner) : IAtasAdapter
+    {
+        public volatile bool Throwing;
+
+        public BridgeHello Describe() => Throwing ? throw new InvalidOperationException("ATAS is not ready") : inner.Describe();
+
+        public IReadOnlyList<AccountInfo> GetAccounts() => inner.GetAccounts();
+        public IReadOnlyList<InstrumentInfo> GetInstruments() => inner.GetInstruments();
+        public QuoteInfo? GetQuote(string symbol) => inner.GetQuote(symbol);
+        public IReadOnlyList<PositionInfo> GetPositions(string a) => inner.GetPositions(a);
+        public IReadOnlyList<OrderInfo> GetOrders(string a, bool i, DateTimeOffset? s) => inner.GetOrders(a, i, s);
+        public IReadOnlyList<ExecutionInfo> GetExecutions(string a, DateTimeOffset? s) => inner.GetExecutions(a, s);
+        public OrderInfo Place(PlaceOrderCommand cmd) => inner.Place(cmd);
+        public OrderInfo Modify(ModifyOrderCommand cmd) => inner.Modify(cmd);
+        public void Cancel(string id) => inner.Cancel(id);
+        public IReadOnlyList<string> CancelAll(string a) => inner.CancelAll(a);
+        public OrderInfo? ClosePosition(string a, string sym, string cid) => inner.ClosePosition(a, sym, cid);
+
+        public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
+        public event Action<OrderInfo>? OrderChanged { add => inner.OrderChanged += value; remove => inner.OrderChanged -= value; }
+        public event Action<ExecutionInfo>? ExecutionReceived { add => inner.ExecutionReceived += value; remove => inner.ExecutionReceived -= value; }
+        public event Action<PositionInfo>? PositionChanged { add => inner.PositionChanged += value; remove => inner.PositionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => inner.AccountChanged += value; remove => inner.AccountChanged -= value; }
+        public event Action<bool>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
     }
 
     /// <summary>

@@ -439,12 +439,31 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             ? "connecting — waiting for the add-on to authenticate"
             : null;
 
+    /// <summary>
+    /// A PEER WITH NO CURRENT DESCRIPTION OF ITSELF, in the two ways that happens — and they are not
+    /// the same news, which is why one reading became two (Codex F7).
+    ///
+    /// Before the heartbeat cleared a proof it could no longer see refreshed, <c>_hello</c> could
+    /// only be null here because a hello had never arrived, so one sentence covered it. Now a bridge
+    /// that said hello and has since stopped describing itself reaches the same state, and the
+    /// sentence written for the other case would tell the owner their chart is running the wrong
+    /// strategy — about a bridge that introduced itself correctly and is still answering.
+    /// <c>_compatible</c> is what separates them: it is set only by a hello this build accepted on
+    /// THIS connection, and <see cref="Drop"/> clears it with everything else.
+    /// </summary>
     string? PendingHello =>
         _authenticated && _hello is null
-            ? "the ATAS bridge is connected and has not said hello yet — it proved itself and has " +
-              "not announced its version. If this line stays, the strategy on the chart is loaded " +
-              "but is not the TradeAgent bridge, or it is a build that stops before its handshake; " +
-              $"press {Labels.ReinstallBridge} on the Checks page"
+            ? _compatible
+                ? "the ATAS bridge is connected and has stopped saying what it can do — it is still " +
+                  "answering, and its recent heartbeats carried no readable description of the platform " +
+                  "behind it. TradeAgent will not hold a capability proof it cannot see refreshed, so " +
+                  "automatic trading stays refused until the bridge describes itself again. This is " +
+                  "usually ATAS itself no longer answering the add-on: restart ATAS, and if the line " +
+                  $"stays, press {Labels.ReinstallBridge} on the Checks page"
+                : "the ATAS bridge is connected and has not said hello yet — it proved itself and has " +
+                  "not announced its version. If this line stays, the strategy on the chart is loaded " +
+                  "but is not the TradeAgent bridge, or it is a build that stops before its handshake; " +
+                  $"press {Labels.ReinstallBridge} on the Checks page"
             : null;
 
     /// <summary>
@@ -912,22 +931,36 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             // it. _refused is already handled above, for every frame at once.
             if (!_authenticated || !_compatible) return true;
 
+            // LIVENESS IS ONE FACT AND ATTESTATION IS ANOTHER, AND THIS FRAME CARRIES BOTH.
+            // The peer is plainly there, so the pulse is recorded whatever the payload turns out to
+            // be: nothing below drops a connection or expires a clock.
             _lastHeartbeat = DateTimeOffset.UtcNow;
 
-            // A heartbeat now carries the bridge's current answer, because capabilities are not
-            // settled at the handshake: SupportsClientOrderId cannot be true until an order has
-            // proved it, and the account is unknown until ATAS has a portfolio. Adopt the newer
-            // answer — but only a whole, version-compatible one. A half-read frame must leave the
-            // latched handshake alone rather than silently widen or narrow what the gateway
-            // believes this platform is able to prove.
-            if (!f.Data.HasValue) return true;
-            try
-            {
-                var refreshed = f.Data.Value.Deserialize<BridgeHello>(Json.Options);
-                if (refreshed is not null && Versions.BridgeCompatible(refreshed.BridgeProtocolVersion))
-                    _hello = refreshed;
-            }
-            catch (JsonException) { /* keep whatever the handshake established */ }
+            // A heartbeat carries the bridge's current answer, because capabilities are not settled
+            // at the handshake: SupportsClientOrderId cannot be true until an order has proved it,
+            // and the account is unknown until ATAS has a portfolio.
+            //
+            // AND A HEARTBEAT THAT CANNOT SAY WHAT THE BRIDGE CAN DO CLEARS WHAT IT LAST SAID
+            // (Codex F7). This kept the latched handshake — "a half-read frame must leave it alone"
+            // — and that was called failing closed. It is the opposite. BridgeServer sends a BARE
+            // PULSE whenever Describe() throws, which is what a bridge does when ATAS's own
+            // Portfolio and Connector properties have stopped answering; retaining the previous
+            // answer meant the pulse refreshed liveness while the capability proof it no longer
+            // carried stayed true. Capabilities is derived from _hello, ReconciliationProvable is
+            // SupportsClientOrderId && SupportsOrderHistory, and TradingGateway consults exactly
+            // that to permit LIVE_AUTONOMOUS — so autonomous eligibility outlived the bridge's
+            // ability to attest it, on a connection that never went down and never went stale.
+            // Measured over a real pipe before this changed: with every Describe() after the
+            // handshake throwing and pulses arriving every 100 ms, ReconciliationProvable was still
+            // true ten seconds later.
+            //
+            // NOT A REFUSAL AND NOT A DISCONNECT. The peer is not accused of anything: _refused,
+            // _authenticated and _compatible are untouched, the read loop runs on, and the very next
+            // heartbeat carrying a whole compatible answer restores the proof on the same
+            // connection. What is withdrawn is only this end's claim to hold a proof it can no
+            // longer see refreshed. The row says which state that is — see PendingHello.
+            var refreshed = Attested(f);
+            _hello = refreshed;      // null clears Capabilities; a whole answer replaces the old one
             return true;
         }
 
@@ -996,6 +1029,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             data = new { proof = BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.ServerRole, nonce!) }
         });
         return true;
+    }
+
+    /// <summary>
+    /// The whole, version-compatible description a heartbeat carries, or null when this end cannot
+    /// read one out of it — absent payload, unreadable payload, or a payload announcing a protocol
+    /// this build does not speak. Null is a fact about what can be attested NOW, not an accusation
+    /// against the peer, and <see cref="Dispatch"/> is where that distinction is spent.
+    /// </summary>
+    static BridgeHello? Attested(BridgeFrame f)
+    {
+        if (!f.Data.HasValue) return null;
+        try
+        {
+            var refreshed = f.Data.Value.Deserialize<BridgeHello>(Json.Options);
+            return refreshed is not null && Versions.BridgeCompatible(refreshed.BridgeProtocolVersion)
+                ? refreshed : null;
+        }
+        catch (JsonException) { return null; }
     }
 
     static string? Field(BridgeFrame f, string name) =>

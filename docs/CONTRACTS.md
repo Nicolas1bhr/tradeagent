@@ -146,6 +146,15 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   *reported* — the reply carried `compatible: false` and the connection authenticated anyway — so a
   peer built against another protocol traded over this channel on the strength of a field nothing was
   obliged to read (Codex F8; measured: `a hello naming protocol 2 was accepted`).
+- **`v` is REQUIRED on every frame, and an omitted one is refused rather than assumed.** `IpcRequest.V`
+  is `[JsonRequired]`, so a frame that never says which protocol it speaks is answered
+  `INCOMPATIBLE_PROTOCOL` — at the hello, and equally on an already-authenticated session — and one
+  `protocol_rejected` line records it with `said: "absent"`. The initializer on that property remains
+  the OUTGOING default, which is why no client changed. Until 2026-09-06 the default answered the
+  question on the peer's behalf: a versionless `hello` deserialized onto `ProtocolVersion`, so
+  `req.V != ProtocolVersion` compared the current version against itself and the one check that must
+  never be optional was (Codex F13; measured: a hello carrying no `v` was answered
+  `{"ok":true,...,"compatible":true}`, and a versionless `buy` on a live session FILLED).
 - **Every enumerated field accepts exactly its named values, and an unrecognised one is refused.** The
   closed vocabularies the frame carries are `tif` (`buy`/`sell`: `Day`, `GoodTillCancel`,
   `ImmediateOrCancel`, `FillOrKill` — case-insensitive, **default `Day` when absent**), `all`
@@ -155,7 +164,20 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   accepted values, with zero connector calls; only an ABSENT field takes a default. `tif` used to be
   `Enum.TryParse` with a `Day` fallback, which failed open twice over: a misspelling became a resting
   Day order, and `tif: "999"` PARSED — TryParse takes the underlying integer — and reached the
-  connector as `(TimeInForce)999` (Codex F8; both measured over the pipe).
+  connector as `(TimeInForce)999` (Codex F8; both measured over the pipe). **Present-and-EMPTY is
+  present**: `tif: ""`, `tif: null` and `all: ""` are refused, where they used to fall through the
+  refusal onto the default because the reader asked whether the value was empty rather than whether
+  the key was there (Codex F6; measured: `tif='' -> ok=True · connector saw: Day`).
+- **A price that is present and unreadable is refused, never read as an absent one.** `quantity`,
+  `limit` and `stop` (on `buy`/`sell`/`modify`) accept a JSON number, or a string of digits with an
+  optional leading sign and at most one `.` — **no thousands separators, no exponent, no surrounding
+  whitespace, parsed invariant**. Anything else is `INVALID_REQUEST` naming the field, with zero
+  connector calls. It matters because the ORDER TYPE is derived from which prices are present, so a
+  dropped price is a different order: `decimal.TryParse(...) ? d : null` made `limit: "bad"` a MARKET
+  order, and the framework's default `NumberStyles.Number` in the ambient culture made `limit: "1,5"`
+  a limit of **15** (Codex F6; both measured over the pipe: `limit='bad' -> ok=True · connector saw:
+  Market limit=none` and `limit='1,5' -> ... Limit limit=15`). On `modify` the same collapse read an
+  unreadable price as "leave that price where it is".
 - **`side` and `type` are not fields of this protocol and a frame naming one is refused.** The side is
   the op and the type is read off which prices are present (neither = Market, `limit` = Limit, `stop`
   = Stop, both = StopLimit). They were accepted and discarded, so `{"op":"buy","side":"sell"}` bought
@@ -205,6 +227,21 @@ U14 raised it from 2 because the write-ahead promise changed — a version-2 bri
 whether or not the `coid-witness.json` rewrite reached the disk, and omits `witness_failure` from its
 hello, so its silence cannot be read as "no trouble"; the mismatch routes it to `IncompatibleBridge`,
 which names the version and the repair.
+
+**A capability proof does not outlive the bridge's ability to attest it.** Every heartbeat carries the
+current `Describe()`, and `BridgeServer` degrades to a BARE PULSE whenever that read throws — which is
+what happens when ATAS's own `Portfolio` and `Connector` properties stop answering. A heartbeat whose
+payload is absent, unreadable or at an incompatible bridge version therefore clears `_hello`:
+`ConnectorCapabilities` reports nothing supported, `ReconciliationProvable` goes false and the gateway
+refuses `LIVE_AUTONOMOUS` with `AUTONOMY_REQUIRES_PROVABLE_STATE`. **It is not a refusal and not a
+disconnect** — the peer is not accused, liveness is still refreshed by the pulse, nothing is decided by
+a clock, and the next heartbeat carrying a whole compatible answer restores the proof on the same
+connection. The bridge row says which state it is, in its own sentence: *"connected and has stopped
+saying what it can do"*, distinct from *"has not said hello yet"*, because a bridge that introduced
+itself correctly must not be reported as the wrong strategy on the chart. Until 2026-09-06 the pulse
+refreshed liveness while the latched answer stayed true, so autonomous eligibility survived the
+evidence for it (Codex F7; measured over a real pipe: every `Describe()` after the handshake throwing,
+pulses every 100 ms, `ReconciliationProvable` still true ten seconds later).
 
 ## What ATAS's own objects mean — the readings, not the guesses
 
