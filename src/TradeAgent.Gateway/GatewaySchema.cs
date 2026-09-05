@@ -41,7 +41,7 @@ public static class GatewaySchema
         new(Core.Ops.Position,    "trade position <symbol>",   false, "One position by symbol.",
             [new("symbol", "string", true, "Instrument symbol")]),
         new(Core.Ops.Orders,      "trade orders",              false, "Working orders. Pass --all to include finished ones.",
-            [new("all", "bool", false, "Include inactive/finished orders")]),
+            [new("all", "bool", false, "Include inactive/finished orders. true or false only; anything else is refused rather than read as false. Omit it for working orders.")]),
         new(Core.Ops.Order,       "trade order <id>",          false, "One order, by request id or by broker order id.",
             [new("id", "string", true, "Request id or connector order id")]),
         new(Core.Ops.Executions,  "trade executions",          false, "Fills on the account.", []),
@@ -64,7 +64,7 @@ public static class GatewaySchema
             new("quantity", "number", true, "Contracts or shares"),
             new("limit", "number", false, "Limit price"),
             new("stop", "number", false, "Stop price"),
-            new("tif", "string", false, "Day | GoodTillCancel | ImmediateOrCancel | FillOrKill"),
+            new("tif", "string", false, "Day | GoodTillCancel | ImmediateOrCancel | FillOrKill. Exactly one of these names, in any case. A value that is none of them is refused, never defaulted — a misspelling would otherwise become a resting Day order. Omit it for Day."),
             new("request_id", "string", false, "Idempotency key. Reuse it to retry safely; a new one places a new order."),
             new("comment", "string", false, "Free text stored with the request")
         ]),

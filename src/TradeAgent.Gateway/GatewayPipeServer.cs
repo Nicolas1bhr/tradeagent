@@ -827,7 +827,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Quote       => await gateway.QuoteAsync(Require(req, "symbol"), ct),
                 Core.Ops.Positions   => await gateway.PositionsAsync(ct),
                 Core.Ops.Position    => (await gateway.PositionsAsync(ct)).FirstOrDefault(p => p.Symbol == Require(req, "symbol")),
-                Core.Ops.Orders      => await gateway.OrdersAsync(req.Str("all") is "true", ct),
+                Core.Ops.Orders      => await gateway.OrdersAsync(NamedFlag(req, "all", whenAbsent: false), ct),
                 Core.Ops.Order       => await FindOrder(Require(req, "id"), ct),
                 Core.Ops.Executions  => await gateway.ExecutionsAsync(ct),
                 Core.Ops.MaterialList => MaterialList(req),
@@ -1546,8 +1546,74 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     static string Require(IpcRequest r, string key) =>
         r.Str(key) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"'{key}' is required");
 
+    /// <summary>
+    /// AN ENUMERATED FIELD ACCEPTS EXACTLY ITS NAMES, OR NOTHING. Absent keeps the caller's default;
+    /// present-and-unrecognised is a refusal, never a substitution.
+    ///
+    /// It replaces <c>Enum.TryParse(…, out var t) ? t : Default</c>, which failed open in two
+    /// separate ways at once (Codex F8). A MISSPELLING fell through to the default, so
+    /// <c>tif: "ImmediateOrCancle"</c> — one transposition — became a resting Day order instead of
+    /// one that cancels if it cannot fill immediately. And a NUMBER succeeded: TryParse accepts the
+    /// underlying integer whether or not the enum defines it, so <c>tif: "999"</c> was carried to
+    /// the connector as <c>(TimeInForce)999</c>, a value no backend can map and none is obliged to
+    /// refuse. Both measured over the real pipe: `999` reached the connector as `999 (999)`.
+    ///
+    /// Names only, therefore, matched case-insensitively against <c>Enum.GetNames</c> — never
+    /// <c>TryParse</c>, and never trimmed, because "a value with a stray character in it" and "a
+    /// value the caller meant" are not distinguishable from here.
+    /// </summary>
+    static T? NamedValue<T>(IpcRequest r, string key) where T : struct, Enum
+    {
+        var raw = r.Str(key);
+        if (string.IsNullOrEmpty(raw)) return null;
+        foreach (var name in Enum.GetNames<T>())
+            if (string.Equals(name, raw, StringComparison.OrdinalIgnoreCase)) return Enum.Parse<T>(name);
+
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            $"'{key}' must be one of: {string.Join(", ", Enum.GetNames<T>())} — '{raw}' is none of them. " +
+            "TradeAgent does not fall back to a default here: a value it cannot name would become an order " +
+            "you did not ask for.");
+    }
+
+    /// <summary>
+    /// The same rule for the one boolean the frame carries. <c>Str(key) is "true"</c> read every
+    /// other spelling as false, so <c>all: "yes"</c> silently meant "working orders only" — the
+    /// opposite of the question — and nothing said so.
+    /// </summary>
+    static bool NamedFlag(IpcRequest r, string key, bool whenAbsent)
+    {
+        var raw = r.Str(key);
+        if (string.IsNullOrEmpty(raw)) return whenAbsent;
+        if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            $"'{key}' must be true or false — '{raw}' is neither, and reading it as either would answer " +
+            "a different question from the one you asked.");
+    }
+
+    /// <summary>
+    /// A field this protocol does not carry, refused rather than ignored.
+    ///
+    /// <c>side</c> and <c>type</c> LOOK like fields of an order — every trading API has them — and
+    /// this one derives both: the side is the op (<c>buy</c> / <c>sell</c>) and the type is read off
+    /// which prices are present. A frame naming either was accepted and discarded, so
+    /// <c>{"op":"buy","side":"sell"}</c> bought and <c>{"op":"buy","type":"Limit"}</c> with no limit
+    /// price sent a MARKET order. That is the same failure as an unrecognised enum value, arriving
+    /// by the other door, and it deserves the same answer.
+    /// </summary>
+    static void RefuseDerivedField(IpcRequest r, string key, string where)
+    {
+        if (r.Args is null || !r.Args.ContainsKey(key)) return;
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            $"'{key}' is not a field of this protocol, so naming it would be ignored rather than obeyed. " +
+            $"It comes from {where}. Send the frame without it.");
+    }
+
     static PlaceIntent ParsePlace(IpcRequest r)
     {
+        RefuseDerivedField(r, "side", "the operation itself: 'buy' or 'sell'");
+        RefuseDerivedField(r, "type", "which prices you send: neither = Market, 'limit' = Limit, 'stop' = Stop, both = StopLimit");
+
         var symbol = Require(r, "symbol");
         var qty = r.Dec("quantity") ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "'quantity' is required");
         var limit = r.Dec("limit");
@@ -1556,7 +1622,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             : limit is not null ? OrderType.Limit
             : stop is not null ? OrderType.Stop
             : OrderType.Market;
-        var tif = Enum.TryParse<TimeInForce>(r.Str("tif"), true, out var t) ? t : TimeInForce.Day;
+        var tif = NamedValue<TimeInForce>(r, "tif") ?? TimeInForce.Day;
         var side = r.Op == Core.Ops.Sell ? OrderSide.Sell : OrderSide.Buy;
         return new PlaceIntent(symbol, side, type, qty, limit, stop, tif, r.Str("comment"));
     }

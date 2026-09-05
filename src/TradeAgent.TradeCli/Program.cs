@@ -217,8 +217,14 @@ static void Usage()
       trade orders [--all] | order <id>
       trade executions
 
-      trade buy  <symbol> <qty> [--limit P] [--stop P] [--tif Day] [--request-id ID]
-      trade sell <symbol> <qty> [--limit P] [--stop P] [--tif Day] [--request-id ID]
+      trade buy  <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
+      trade sell <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
+
+      --tif is one of Day, GoodTillCancel, ImmediateOrCancel, FillOrKill. Spell it exactly (case
+      does not matter). Anything else is refused rather than treated as Day, because a misspelled
+      ImmediateOrCancel that quietly became Day would leave a resting order you did not ask for.
+      Leave it out for Day. The order type is not a flag: no price is a market order, --limit is a
+      limit order, --stop is a stop, both is a stop-limit.
       trade modify <id> [--quantity Q] [--limit P] [--stop P]
       trade cancel <id> | trade cancel-all
       trade close <symbol> | trade close-all

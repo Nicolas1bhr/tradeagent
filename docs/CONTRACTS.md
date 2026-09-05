@@ -131,6 +131,29 @@ Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap.
 ```
 
 - The first frame **must** be `hello` carrying the token. Anything else closes the connection.
+- **`v` is settled before the token is read.** A `hello` whose `v` is not `Versions.ProtocolVersion`
+  is refused with `INCOMPATIBLE_PROTOCOL`, no session comes of it, and one `protocol_rejected`
+  engineering line records it; the connection stays open so the peer may say hello again at the right
+  version. Before the credential deliberately: a token is a value read out of a frame whose shape both
+  ends have agreed, and answering a version mismatch with `IPC_UNAUTHENTICATED` sends whoever owns the
+  peer hunting a permission problem that does not exist. Until 2026-09-05 the mismatch was only
+  *reported* — the reply carried `compatible: false` and the connection authenticated anyway — so a
+  peer built against another protocol traded over this channel on the strength of a field nothing was
+  obliged to read (Codex F8; measured: `a hello naming protocol 2 was accepted`).
+- **Every enumerated field accepts exactly its named values, and an unrecognised one is refused.** The
+  closed vocabularies the frame carries are `tif` (`buy`/`sell`: `Day`, `GoodTillCancel`,
+  `ImmediateOrCancel`, `FillOrKill` — case-insensitive, **default `Day` when absent**), `all`
+  (`orders`: `true`/`false`, **default `false`**), `origin` (`material-list`: `inbox`, `agent`, `all`,
+  **default `all`**) and `kind` (`material-note`: `ran`, `used`, `derived`, `note`, **default
+  `note`**). A field that is present and unrecognised is `INVALID_REQUEST` naming the field and the
+  accepted values, with zero connector calls; only an ABSENT field takes a default. `tif` used to be
+  `Enum.TryParse` with a `Day` fallback, which failed open twice over: a misspelling became a resting
+  Day order, and `tif: "999"` PARSED — TryParse takes the underlying integer — and reached the
+  connector as `(TimeInForce)999` (Codex F8; both measured over the pipe).
+- **`side` and `type` are not fields of this protocol and a frame naming one is refused.** The side is
+  the op and the type is read off which prices are present (neither = Market, `limit` = Limit, `stop`
+  = Stop, both = StopLimit). They were accepted and discarded, so `{"op":"buy","side":"sell"}` bought
+  — the same failure as an unrecognised enum value, by the other door.
 - Reads and order operations only. Operator authority is not on this channel.
 - `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
