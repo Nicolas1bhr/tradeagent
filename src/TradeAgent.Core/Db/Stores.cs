@@ -85,17 +85,18 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     });
 
     /// <summary>
-    /// How long a record may sit in DISPATCHING before it counts as unconfirmed work rather than as
-    /// an order in flight. The connector gives every RPC a 10 s deadline
-    /// (<c>AtasConnector</c>'s <c>rpcTimeout</c>), so a record still DISPATCHING well past that
-    /// cannot be waiting for an answer — the call either returned or threw, and either way something
-    /// should have written the outcome. The margin above the deadline is deliberate slack for a slow
-    /// write or a descheduled continuation, not a guess at how long a broker takes.
-    /// </summary>
-    public static readonly TimeSpan DefaultDispatchStrandedAfter = TimeSpan.FromSeconds(30);
-
-    /// <summary>
     /// Work the gateway must not trade over.
+    ///
+    /// THERE IS DELIBERATELY NO DEFAULT BOUND IN THIS CLASS. How long a record may sit in
+    /// DISPATCHING before it stops being an order in flight is the CONNECTOR's number — its own
+    /// worst case for one call — and this store has no connector. A constant lived here until
+    /// 2026-09-05 and said 30 s, justified as "the connector's own 10 s RPC deadline plus 20 s of
+    /// slack"; one ordinary order path through <c>AtasConnector</c> is 50 s (a 10 s send gate, a
+    /// 30 s whole frame and a 10 s reply, which is what <c>WorstCaseOrderPath</c> adds up), so a
+    /// placement legitimately in flight for 30..50 s was declared stranded and written off as
+    /// "never reached the broker" while it was still on the wire (REVIEW 2026-09-05 finding 1).
+    /// <c>TradingGateway.DispatchStrandedAfter</c> derives it from the live connector instead.
+    ///
     ///
     /// THE FLAG ALONE IS NOT ENOUGH, and that is the whole reason this takes an argument. Every path
     /// that sets <c>needs_reconciliation</c> runs inside a catch block, so a process that dies

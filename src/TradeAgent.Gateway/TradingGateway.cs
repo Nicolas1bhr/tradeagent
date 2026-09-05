@@ -85,6 +85,98 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>Lifts the latch for ONE request. Nothing here may lift another request's.</summary>
     void ClearLatch(string requestId) => _unconfirmed.TryRemove(requestId, out _);
 
+    // ---------------------------------------------------------------- who owns a dispatching row
+
+    /// <summary>
+    /// WHAT THIS PROCESS KNOWS ABOUT ITS OWN DISPATCHES, and it is the difference between a record
+    /// that is mid-flight and one that is abandoned.
+    ///
+    /// A DISPATCHING row on disk cannot say which it is: it is written before the connector call and
+    /// overwritten by the answer, so it looks identical whether a handler is inside the call right
+    /// now or died in it last week. The reconciler used to guess from age alone, and at the shipped
+    /// deadlines the guess was wrong for the whole 30..50 s window that finding 1 measured. This is
+    /// the fact the guess was missing, and it is in memory on purpose: a lease that outlived the
+    /// process holding it would be a lease nothing could ever release.
+    ///
+    /// Two questions are answered from it, and they are different:
+    ///   - <c>Live</c>  — a handler is inside the connector call for this request right now, so the
+    ///                    reconciler must not move the row (see <see cref="ReconcileAsync"/>).
+    ///   - existence    — this process saw the dispatch END, so it knows the wire is no longer live
+    ///                    for this record and absence may be counted from the dispatch itself. With
+    ///                    no entry at all — a crash, a restart, another process — nothing here can
+    ///                    say when the wire went quiet, and the bound is the only honest answer.
+    /// </summary>
+    sealed class DispatchSpan
+    {
+        public required DateTimeOffset Started;
+        public volatile bool Live = true;
+    }
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, DispatchSpan> _dispatches = new();
+
+    /// <summary>
+    /// Claims a request for the duration of one connector call. Taken immediately before the call
+    /// and released however the call ends, including a settle that threw.
+    /// </summary>
+    IDisposable HoldDispatch(string requestId)
+    {
+        _dispatches[requestId] = new DispatchSpan { Started = Now };
+        return new DispatchHold(this, requestId);
+    }
+
+    sealed class DispatchHold(TradingGateway gateway, string requestId) : IDisposable
+    {
+        public void Dispose() => gateway.EndDispatch(requestId);
+    }
+
+    /// <summary>
+    /// The dispatcher is done. The entry stays — its existence is what says this process watched the
+    /// wire go quiet — but only while the record can still be asked about. Once the row is settled
+    /// there is nothing left to reconcile and nothing left to remember, so the entry goes: this map
+    /// is bounded by the open and unconfirmed records, not by every order the session ever placed.
+    /// </summary>
+    void EndDispatch(string requestId)
+    {
+        if (!_dispatches.TryGetValue(requestId, out var span)) return;
+        span.Live = false;
+        try
+        {
+            var row = _requests.Get(requestId);
+            if (row is null || row.State is not (ExecutionState.DISPATCHING or ExecutionState.UNKNOWN
+                                                 or ExecutionState.RECONCILING))
+                _dispatches.TryRemove(requestId, out _);
+        }
+        catch (Exception)
+        {
+            // A store that will not answer keeps the entry. It costs a few bytes and it is the safe
+            // direction: forgetting a dispatch makes the reconciler MORE conservative, not less.
+        }
+    }
+
+    /// <summary>
+    /// WHEN ABSENCE MAY START COUNTING FOR THIS RECORD — the later of the dispatch and the moment
+    /// the dispatch could last have been in flight.
+    ///
+    /// "The broker has never heard of this order" is only evidence once the order can no longer be
+    /// on its way there, and <see cref="GatewayOptions.AbsenceGrace"/> is the window after that in
+    /// which a slow book is still allowed to catch up. Measured from the dispatch alone, the window
+    /// had always already expired on any record the reconciler could see: a stranded record becomes
+    /// visible at <see cref="DispatchStrandedAfter"/>, which is longer than the grace, so absence
+    /// was conclusive on its first pass — that is the second half of finding 1.
+    ///
+    /// When this process watched the dispatch end, the wire went quiet then and the dispatch instant
+    /// is the honest reference, which is what every settled-then-reconciled record uses. When it did
+    /// not — a crash, a restart, another process over the same store, or a handler still inside the
+    /// call — the bound is all there is.
+    /// </summary>
+    DateTimeOffset AbsenceCountsFrom(ExecutionRequest req)
+    {
+        var dispatched = req.DispatchedAt ?? req.CreatedAt;
+        return _dispatches.TryGetValue(req.RequestId, out var span) && !span.Live
+            ? dispatched
+            : dispatched + DispatchStrandedAfter;
+    }
+
     /// <summary>
     /// Lifts every latch whose request the STORE can now account for: a record that is settled and
     /// no longer flagged is positive, definite evidence about that request, which is exactly what a
@@ -304,9 +396,42 @@ public sealed class TradingGateway : IAsyncDisposable
     public ExecutionRequest? GetRequest(string requestId) => _requests.Get(requestId);
 
     /// <summary>
+    /// How long a record may stay in DISPATCHING before this gateway counts it as unconfirmed work
+    /// and refuses to trade over it, WITHOUT waiting for a restart to notice.
+    ///
+    /// DERIVED FROM THE LIVE CONNECTOR, never written down — the same rule, and for the same reason,
+    /// as <c>GatewayPipeServer.HandlerDrainTimeout</c>. It was the constant 30 s, justified as "the
+    /// connector's own 10 s RPC deadline plus 20 s of slack", while one ordinary order path through
+    /// <c>AtasConnector</c> is 50 s: the send gate (10 s), the whole frame (30 s) and the reply
+    /// (10 s), which is exactly what <c>WorstCaseOrderPath</c> adds up and what the pipe server's
+    /// drain has been derived from since the 2026-09-03 correction. The stranded bound never got
+    /// that correction, so a placement legitimately in flight for 30..50 s was "stranded", was
+    /// already past <see cref="GatewayOptions.AbsenceGrace"/> the moment the reconciler could see
+    /// it, and was settled CANCELLED / "never reached the broker" / unflagged with trading resumed —
+    /// and then filled (REVIEW 2026-09-05 finding 1, executed as probe P6b).
+    ///
+    ///     bound = Connector.WorstCaseOperationPath + GatewayOptions.DispatchSettleSlack
+    ///
+    /// At shipped ATAS values that is 50 + 20 = 70 s. A connector constructed with different
+    /// deadlines moves it, which is the whole point: <see cref="Connector"/> is set once per gateway
+    /// and a connector switch builds a new gateway over the same store, so the bound is re-derived
+    /// there rather than surviving the switch as somebody else's number.
+    ///
+    /// The second term is not a second deadline. The connector's own worst case bounds the CALL; a
+    /// dispatch also has to be scheduled again and write the outcome down after the call returns,
+    /// and no connector deadline describes any of that.
+    /// </summary>
+    public TimeSpan DispatchStrandedAfter =>
+        _opt.DispatchStrandedAfter is { } explicitly && explicitly > DerivedDispatchStrandedAfter
+            ? explicitly
+            : DerivedDispatchStrandedAfter;
+
+    TimeSpan DerivedDispatchStrandedAfter => Connector.WorstCaseOperationPath + _opt.DispatchSettleSlack;
+
+    /// <summary>
     /// Unconfirmed work as this gateway counts it: the flagged records, PLUS any record still in
     /// DISPATCHING longer than a dispatch can legitimately take
-    /// (<see cref="GatewayOptions.DispatchStrandedAfter"/>). Everything inside this class that asks
+    /// (<see cref="DispatchStrandedAfter"/>). Everything inside this class that asks
     /// "is there unconfirmed work" asks this, so the refusal, the status field, the health row and
     /// the reconciler cannot drift into three different answers.
     ///
@@ -318,7 +443,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public List<ExecutionRequest> Unreconciled()
     {
-        var rows = _requests.NeedingReconciliation(Now - _opt.DispatchStrandedAfter);
+        var rows = _requests.NeedingReconciliation(Now - DispatchStrandedAfter);
         if (_unconfirmed.IsEmpty) return rows;
 
         // A latched id whose row the store never took is still unconfirmed work, and every surface
@@ -837,6 +962,11 @@ public sealed class TradingGateway : IAsyncDisposable
         // catch below read a proven NothingWritten for a single `buy` or `close`.
         using var dispatch = TransportLedger.MarkDispatch();
 
+        // AND THE DISPATCHER CLAIMS THE ROW WHILE IT IS INSIDE THE CALL. See HoldDispatch: a
+        // DISPATCHING row on disk cannot say whether anyone is still flying it, and the reconciler
+        // must not settle one that is.
+        using var held = HoldDispatch(current.RequestId);
+
         // ONLY THE WIRE CALL IS INSIDE THE TRY, and that is deliberate. The catch below is a
         // catch-all, so anything left in here would be read as "we do not know what the broker did"
         // — including a log write against a locked database or a UI subscriber throwing out of
@@ -1044,8 +1174,9 @@ public sealed class TradingGateway : IAsyncDisposable
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
 
         // The dispatcher's own attempt mark — see DispatchPlaceAsync for why it is not the
-        // connector's to be trusted with.
+        // connector's to be trusted with — and the claim on the row for as long as it is on the wire.
         using var dispatch = TransportLedger.MarkDispatch();
+        using var held = HoldDispatch(current.RequestId);
         try
         {
             await Connector.CancelOrderAsync(target, ct);
@@ -1114,6 +1245,7 @@ public sealed class TradingGateway : IAsyncDisposable
         var command = new ModifyOrderCommand(target, quantity, limitPrice, stopPrice);
         OrderInfo o;
         using var dispatch = TransportLedger.MarkDispatch();
+        using var held = HoldDispatch(current.RequestId);
         try
         {
             o = await Connector.ModifyOrderAsync(command, ct);
@@ -2055,8 +2187,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 }
 
                 // Both ends of this subtraction come from GatewayOptions.Clock: `DispatchedAt` is
-                // written by ExecutionRequestStore, which this gateway hands its own clock to.
-                var age = Now - (req.DispatchedAt ?? req.CreatedAt);
+                // written by ExecutionRequestStore, which this gateway hands its own clock to. The
+                // near end is the LATER of the dispatch and the bound — see AbsenceCountsFrom.
+                var age = Now - AbsenceCountsFrom(req);
                 if (age >= _opt.AbsenceGrace)
                 {
                     // Absent from a backend that can prove its own history, long enough after dispatch.
@@ -2165,7 +2298,7 @@ public sealed class TradingGateway : IAsyncDisposable
         var stored = Json.Read<TargetRef>(req.ParametersJson);
         var orders = await Connector.GetOrdersAsync(req.AccountId, true, null, ct);
         var grace = _opt.AbsenceGrace;
-        var age = Now - (req.DispatchedAt ?? req.CreatedAt);
+        var age = Now - AbsenceCountsFrom(req);      // the later of the dispatch and the bound
 
         ExecutionRequest Resolve(ExecutionState to, string why)
         {

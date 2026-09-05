@@ -33,22 +33,42 @@ public sealed class GatewayOptions
     public TimeProvider Clock { get; set; } = TimeProvider.System;
 
     /// <summary>
-    /// How long after dispatch we wait before "the broker has never heard of this order" is allowed
-    /// to mean it never landed. Protects against reading a slow backend as an absent one.
+    /// How long after a dispatch could last have been in flight we wait before "the broker has never
+    /// heard of this order" is allowed to mean it never landed. Protects against reading a slow
+    /// backend as an absent one.
+    ///
+    /// It is measured from the LATER of the dispatch and the stranded bound — see
+    /// <c>TradingGateway.AbsenceCountsFrom</c>. Measured from the dispatch alone it was a no-op on
+    /// exactly the records it exists to protect: a stranded record is only visible to the reconciler
+    /// once it is older than the bound, and the bound is longer than this window, so the grace had
+    /// always already expired by the time anything could ask (REVIEW 2026-09-05 finding 1).
     /// </summary>
     public TimeSpan AbsenceGrace { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
-    /// How long a record may stay in DISPATCHING before the gateway counts it as unconfirmed work
-    /// and refuses to trade over it, WITHOUT waiting for a restart to notice.
+    /// What a DISPATCH costs BEYOND its connector call: the settle write, and a continuation that
+    /// has to be scheduled before it can make that write. Added ONCE on top of the connector's own
+    /// worst case to give <c>TradingGateway.DispatchStrandedAfter</c> — the same shape as
+    /// <c>GatewayPipeServer.HandlerOverhead</c>, and for the same reason: the connector's deadlines
+    /// bound the CALL and describe nothing that happens after it returns.
     ///
-    /// 30 s = the connector's own 10 s RPC deadline (<c>AtasConnector</c>'s <c>rpcTimeout</c>; the
-    /// adapter's internal budget inside it is 8 s) plus 20 s of slack, which is also four passes of
-    /// <see cref="HealthInterval"/>. Under the deadline, "still DISPATCHING" is an ordinary order in
-    /// flight and must not pause anything; three times past it, the call has either returned or
-    /// thrown and something failed to write the outcome down.
+    /// Twenty seconds is deliberate slack rather than a measurement, and it is also four passes of
+    /// <see cref="HealthInterval"/> — long enough that the loop which notices has had several turns.
+    /// It is settable because it is the term that does NOT describe the wire; the term that does
+    /// (the connector's worst case) is read off the connector and no caller can shorten it.
     /// </summary>
-    public TimeSpan DispatchStrandedAfter { get; set; } = ExecutionRequestStore.DefaultDispatchStrandedAfter;
+    public TimeSpan DispatchSettleSlack { get; set; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// An EXPLICIT stranded bound, and null — the default — means "derive it".
+    ///
+    /// The derived value is the live connector's <c>WorstCaseOperationPath</c> plus
+    /// <see cref="DispatchSettleSlack"/>; see <c>TradingGateway.DispatchStrandedAfter</c>. A value
+    /// set here may only LENGTHEN that, exactly as <c>GatewayPipeServer.HandlerDrainTimeout</c>
+    /// works: a caller naming a longer bound means it, and one naming a shorter bound is asking for
+    /// an order still on the wire to be written off, which is not theirs to ask for.
+    /// </summary>
+    public TimeSpan? DispatchStrandedAfter { get; set; }
 
     public TimeSpan HealthInterval { get; set; } = TimeSpan.FromSeconds(5);
 }

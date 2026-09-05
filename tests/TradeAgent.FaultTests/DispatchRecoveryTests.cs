@@ -435,10 +435,17 @@ public class StartupSweepTests
 
         using (var db = new Database(file))
         {
-            var (gw, _, _) = await Recovery.Ready(db: db, options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
+            // A MOVABLE CLOCK, BECAUSE THIS PROCESS NEVER DISPATCHED THE ROW. Nothing here can say
+            // when that dispatch stopped being in flight, so absence counts from the stranded bound
+            // rather than from `dispatched_at` (U-stranded). Zero grace after that instant, not
+            // zero grace from a dispatch some other build made.
+            var clock = new Stranded.Movable(DateTimeOffset.UtcNow);
+            var (gw, _, _) = await Recovery.Ready(db: db,
+                options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero, Clock = clock });
             Assert.Equal(ExecutionState.UNKNOWN, gw.GetRequest("legacy-cancel")!.State);
             Assert.Single(gw.Requests.NeedingReconciliation());
 
+            clock.Advance(gw.DispatchStrandedAfter);
             var result = await gw.ReconcileAsync();
 
             Assert.True(result.Clean, string.Join("; ", result.Details));
@@ -534,7 +541,9 @@ public class AgedDispatchTests
         Assert.Empty(store.NeedingReconciliation());                                        // the flag alone
         Assert.Empty(store.NeedingReconciliation(DateTimeOffset.UtcNow - TimeSpan.FromHours(1)));
         Assert.Single(store.NeedingReconciliation(DateTimeOffset.UtcNow));
-        Assert.Equal(ExecutionRequestStore.DefaultDispatchStrandedAfter, new GatewayOptions().DispatchStrandedAfter);
+        // ...and the cutoff the gateway hands in is DERIVED rather than written down: the store has
+        // no connector, so it has no opinion about how long a dispatch may take (U-stranded).
+        Assert.Null(new GatewayOptions().DispatchStrandedAfter);
 
         // A settled record is not dragged in by the cutoff, whatever its age.
         store.Transition("cutoff-1", ExecutionState.DISPATCHING, ExecutionState.FILLED);
