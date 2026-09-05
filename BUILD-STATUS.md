@@ -3580,3 +3580,44 @@ added; **CI run 33967839971 on draft PR #5 (merged with `main`): ubuntu, windows
 0 removed, 2 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
 
 **NOT done:** no product file, no box, no ATAS, no UI.
+
+## 2026-09-05 — U-settings-closed landed: an unreadable settings row disarms nothing and allows nothing
+
+The review's finding 5 (executed as P1) and the first item of the old U2c-2, by two builders on
+`docs/briefs/U-settings-closed.md` (the first killed by a usage limit inside item 1; the second judged its four
+uncommitted files on their merits, kept them, and found a gap the brief had not named). Merge `bcffac0`, 7
+commits, 29 files, +946/−28. Before it, `LoadSettings` caught every deserialization failure and returned fresh-install defaults: the
+owner's `ai_trading_stopped: true` and `instrument_allowlist: ["MES"]` read as stopped = false, allowlist = [] which
+`InstrumentAllowed` read as everything, and caps at their defaults, silently.
+
+- **An unreadable row is the most restrictive row.** `Unreadable()` = OBSERVE, stopped, live off, no account, caps 0,
+  allowlist []; the raw row is kept as `settings_unreadable`; health reads PAUSED from the constructor; `PlaceAsync` is
+  denied, zero orders sent. A value that PARSES to an undefined mode is U-gates' `ModeIsRecognised` check, asserted as
+  the boundary by its own test; this unit owns the row that does not parse.
+- **The gap found on the way:** an EMPTY row (a write truncated to zero bytes) counted as a fresh install and handed out
+  fresh-install permissions; only a genuinely ABSENT row is a fresh install now.
+- **An empty allowlist allows nothing.** `InstrumentAllowed` no longer begins `Count == 0 ||`; a populated allowlist
+  still allows exactly its members.
+- **The owner recovers in the app.** The Safety page carries the caution card ("your settings could not be read;
+  trading is stopped until you review them") and saving rewrites the row; `docs/USER-GUIDE.md` has the section. No
+  path, no terminal, anywhere in the sentences.
+
+**Verified by running (the builders, quoted; then the manager's gate):** item 2 RED (P1 lifted onto `main` PASSES,
+which is the defect) → GREEN, mutant → 2 red; item 1 RED 6 of 8 over `main`'s `LoadSettings` (`CouldNotBeRead False`,
+`AiTradingStopped False` on a row reading true, `Mode PAPER` invented from `LIVE_LOCKED`, caps 1/2/6) → GREEN, second
+RED 3 (the empty row) → GREEN, mutant (`catch` → defaults) → 6 of 12 red; item 3 GREEN on the first run (the mechanism
+is item 1's), mutant (`MarkSaved()` deleted) → 1 of 14 red; proven in the RUNNING app over its pipe: `trade status` →
+"Execution capability PAUSED your settings could not be read; … on the Safety page", mode OBSERVE, stopped, allowlist
+[], caps 0. Builders' gate at `bab42fc`, Release: 0 warnings; 219 + 236 + 570 = 1025, 0 failed; names vs the branch
+base 16 added, 1 removed (a rename, `…everything_is_allowed` → `…nothing_is_allowed`). Manager's gate at `bcffac0`,
+Release: build → 0 warnings, 0 errors; suite → 219 + 238 + 582 = 1039, 0 failed; names vs `main` → 1 removed (the rename), 20 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**A combination fix rode along (`U-settings-replay-fix`, test fixtures only):** at the rebased tip two of
+U-pipe-replay's offline-replay tests failed with `RISK_LIMIT_EXCEEDED — ES is not on the allowed instrument list`:
+their fixtures relied on the old default where an empty allowlist allowed everything, the very default this unit
+removed; 580/582 otherwise green. A fresh fixer set their allowlists the way the rest of the suite does.
+**NOT VERIFIED:** the card's pixels — this Mac's screen was locked and `screencapture` refuses a window rect, so the UI
+evidence is the running app's own reported state, not a picture; one fault test failed once, unidentified, then four
+suites in a row were green. **Open, not this unit's (U-gates' string):** an order refused while the row is unreadable
+says "TradeAgent's current mode does not allow this order" — a mode this build invented a moment earlier; fails closed,
+the health row and activity log tell the truth, the sentence should name the unreadable settings.
