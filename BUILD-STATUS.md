@@ -3283,7 +3283,7 @@ killed by a usage limit after measuring; the second continued from its branch), 
 → 81/81; `Category!=Timing` → 833; `--list-tests` splits 914 as 833 + 81 exactly. **windows-latest on `0ee01ef`, run
 33943343018, attempts 1–3: all green, 920, 0 failed, 0 skipped, no retry used** (CI on a PR builds the merge with
 `main`, hence 920). Manager's gate at `4988682`, Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 531 = 927, 0 failed; names vs `main` →
-0 removed, 1 added (the probe); scan clean; CI at the merge, the first run of the two-step workflow, was in progress when this was written; recorded with the next landing.
+0 removed, 1 added (the probe); scan clean; CI run 33946448047 at `572d72c`, the first run of the two-step workflow: both steps SUCCESS on ubuntu, macos and windows (927), no retry drawn, `package` SUCCESS.
 
 **NOT done:** no product code; nothing shipped was shortened (one un-shortened); no premise dropped; no `Skip`; the
 scale option is not wired into CI (`TestTime` stays as the knob for a deliberately slowed local run); no box.
