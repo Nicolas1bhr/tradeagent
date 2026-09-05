@@ -666,8 +666,14 @@ public class GatewayPipeBackpressureTests
     /// Round 8 derived the drain from "a prerequisite read, a target resolution, the mutation",
     /// which is a `modify` and is not the longest handler. Codex round-8 CHECK d: a cold
     /// `TradingGateway.PlaceAsync` issues five connector calls, each awaited before the next — the
-    /// account, the open positions, a quote, the instrument list (read once and cached, so only a
-    /// cold process pays it) and then the order.
+    /// account, a quote, the instrument list (read once and cached, so only a cold process pays it),
+    /// the open positions, and then the order.
+    ///
+    /// THE POSITION READ MOVED, AND THE COUNT DID NOT. It was second, in the risk check; since the
+    /// open-position cap took it inside the dispatch gate (REVIEW 2026-09-05b, Codex F1) it is
+    /// fourth, immediately before the wire. Five awaited calls either way, so the drain this test
+    /// bounds is untouched — which is exactly the distinction the named sequence exists to make
+    /// visible rather than silently absorb.
     ///
     /// This is the §9.9 assertion for the class: the number in `SerialConnectorCallsPerHandler` is
     /// re-derived from the handler that actually runs, over the real pipe, so a handler that grows a
@@ -725,7 +731,7 @@ public class GatewayPipeBackpressureTests
 
         var chain = counting.Calls.ToArray();
         Assert.Equal(
-            new[] { "account", "positions", "quote", "instruments", "place" },
+            new[] { "account", "quote", "instruments", "positions", "place" },
             chain);
         Assert.True(GatewayPipeServer.SerialConnectorCallsPerHandler >= chain.Length,
             $"a cold placement issues {chain.Length} connector calls in series ({string.Join(" -> ", chain)}) " +

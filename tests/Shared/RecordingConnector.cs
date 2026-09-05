@@ -30,6 +30,12 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public int Closes;
     public int Positions;
 
+    /// <summary>
+    /// Quote reads, counted separately for the same reason <see cref="Positions"/> is: a test that
+    /// barriers callers at the quote has to be able to say how many are standing there.
+    /// </summary>
+    public int Quotes;
+
     /// <summary>Reads that reached the connector. Counted so that "zero connector calls" can be ASSERTED.</summary>
     public int Reads;
 
@@ -82,7 +88,14 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     /// </summary>
     public Func<HeldCall, Task>? Seam;
 
-    public enum HeldCall { Place, Positions, Modify, Close }
+    /// <summary>
+    /// <see cref="Quote"/> is here for one reason, and it is a structural one. Two placements can
+    /// only be barriered against each other at a call BOTH of them make OUTSIDE the dispatch gate —
+    /// hold them anywhere inside it and the second never arrives, because the first is holding the
+    /// gate. The position read moved inside the gate when the open-position cap did (Codex F1), and
+    /// the quote read did not, so the quote is now the only such call on the placement path.
+    /// </summary>
+    public enum HeldCall { Place, Positions, Modify, Close, Quote }
 
     async Task Gate(HeldCall kind)
     {
@@ -106,7 +119,14 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Read(Inner.GetAccountsAsync(ct));
     public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Read(Inner.GetAccountAsync(a, ct));
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => Read(Inner.GetInstrumentsAsync(ct));
-    public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => Read(Inner.GetQuoteAsync(s, ct));
+    /// <summary>Gated, and still counted as the read it is. See <see cref="HeldCall.Quote"/>.</summary>
+    public async Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref Reads);
+        Interlocked.Increment(ref Quotes);
+        await Gate(HeldCall.Quote);
+        return await Inner.GetQuoteAsync(s, ct);
+    }
 
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
     {

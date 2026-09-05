@@ -175,8 +175,14 @@ public class DispatchGateTests(ITestOutputHelper log)
 
     /// <summary>
     /// THE MINUTE'S BUDGET ADMITS EXACTLY WHAT IT SAYS, however many callers arrive at once. They
-    /// are all held inside the position read — so every one of them has passed the limit's early
-    /// check on the same free count — and then released as a wave.
+    /// are all held inside the QUOTE read — so every one of them has passed the limit's early check
+    /// on the same free count — and then released as a wave.
+    ///
+    /// It was the position read until the open-position cap took that read inside the dispatch gate
+    /// (REVIEW 2026-09-05b, Codex F1). Only one caller can be inside the gate, so a barrier there
+    /// can never assemble a wave; the quote is the last read on the placement path that every caller
+    /// still makes OUTSIDE the gate, and it is on the far side of the early rate check, which is the
+    /// only property this barrier needs.
     ///
     /// The second row is the other direction and is why this is a theory: "exactly one" alone would
     /// also be satisfied by a gate that had simply stopped letting anything through.
@@ -190,6 +196,8 @@ public class DispatchGateTests(ITestOutputHelper log)
         using var _1 = db;
 
         var release = new TaskCompletionSource();
+        conn.Holds = RecordingConnector.HeldCall.Quote;
+        var quoted = Volatile.Read(ref conn.Quotes);
         conn.Hold = release.Task;
 
         var placing = Enumerable.Range(0, racers)
@@ -197,9 +205,9 @@ public class DispatchGateTests(ITestOutputHelper log)
             .ToList();
 
         var waited = System.Diagnostics.Stopwatch.StartNew();
-        while (Volatile.Read(ref conn.Positions) < racers && waited.Elapsed < TimeSpan.FromSeconds(10))
+        while (Volatile.Read(ref conn.Quotes) - quoted < racers && waited.Elapsed < TimeSpan.FromSeconds(10))
             await Task.Delay(10);
-        Assert.Equal(racers, Volatile.Read(ref conn.Positions));
+        Assert.Equal(racers, Volatile.Read(ref conn.Quotes) - quoted);
 
         release.SetResult();
         var outcomes = await Task.WhenAll(placing.Select(SwallowAsync));

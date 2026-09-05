@@ -758,18 +758,15 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"account {account.Id} is not a simulation account and the mode is PAPER");
 
         // The rate limit's EARLY refusal, so a request over the limit is turned away before it costs
-        // a position read and a quote. It is advisory: what actually bounds the minute is the
-        // reservation taken at the wire (see ReserveDispatchOrThrow), because everything below this
-        // line is an awaited read and a check whose count is read here and spent there admits every
-        // caller that passed while the others were reading.
+        // a quote. It is advisory: what actually bounds the minute is the reservation taken at the
+        // wire (see ReserveDispatchOrThrow), because everything below this line is an awaited read
+        // and a check whose count is read here and spent there admits every caller that passed while
+        // the others were reading.
+        //
+        // THE OPEN-POSITION CAP IS NOT HERE ANY MORE, and that is the same lesson one step further:
+        // see OpenPositionCapOrThrow, which owns both the position read and the decision, inside the
+        // dispatch gate.
         RateLimitOrThrow(r.MaxOrdersPerMinute);
-
-        var positions = await Connector.GetPositionsAsync(account.Id, ct);
-        var open = positions.Count(p => p.Quantity != 0);
-        var wouldOpenNew = !positions.Any(p => p.Symbol == intent.Symbol && p.Quantity != 0);
-        if (wouldOpenNew && open >= r.MaxOpenPositions)
-            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
-                $"already holding {open} positions and the limit is {r.MaxOpenPositions}");
 
         // A price we trust is required for EVERY order, whether or not a value cap is set: an agent
         // sizing a market order from a stale quote is the failure this prevents.
@@ -789,6 +786,65 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                     $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
         }
+    }
+
+    /// <summary>
+    /// HOW MANY INSTRUMENTS MAY BE OPEN, DECIDED INSIDE THE DISPATCH GATE AND COUNTING THE WORK THAT
+    /// IS ALREADY ON ITS WAY TO BEING ONE.
+    ///
+    /// It used to live in <see cref="RiskCheckOrThrow"/>, before the gate, and it counted the
+    /// positions the platform had already FILLED and nothing else. Both halves were wrong in the
+    /// same direction:
+    ///
+    ///   - BEFORE THE GATE. Two placements arriving together each read the account, each saw it
+    ///     empty, each passed a cap of one, and each then queued for the gate and sent. The cap
+    ///     admitted as many orders as there were callers — the same shape as the minute's budget
+    ///     before <see cref="ReserveDispatchOrThrow"/> (REVIEW 2026-09-05b, Codex F1).
+    ///   - FILLED POSITIONS ONLY. An opening order that is WORKING, or DISPATCHING, or UNKNOWN, is a
+    ///     position the account has not shown yet. A cap of one with one resting opening order read
+    ///     as a free account for exactly as long as the order sat on the book.
+    ///
+    /// So the position read moved in here WITH the decision — not a second read: the one that was in
+    /// the risk check. Inside the gate it is also a fresher reading than the risk check's ever was,
+    /// because the dispatch that preceded this one has finished by the time the gate is handed over.
+    ///
+    /// WHAT COUNTS AS ONE OPEN INSTRUMENT: a non-zero position, or an OPENING request the store
+    /// still calls open (<see cref="ExecutionRequestStore.Open"/> — DISPATCHING, ACKNOWLEDGED,
+    /// WORKING, PARTIALLY_FILLED, CANCEL_PENDING, UNKNOWN, RECONCILING). A CLOSING request is
+    /// excluded: it reduces exposure, it is aimed at an instrument that is already counted, and
+    /// counting it would turn the cap into a trap an account at its limit could not be flattened out
+    /// of. A request whose parameters cannot be read is counted, because an unreadable intent is not
+    /// evidence that it was a close.
+    ///
+    /// It is not run for a MODIFICATION. This cap is a count of INSTRUMENTS, and a change to an
+    /// order that already exists cannot raise it: the instrument that order is in is already one of
+    /// the ones counted here.
+    /// </summary>
+    async Task OpenPositionCapOrThrow(PlaceIntent intent, string accountId, string requestId, CancellationToken ct)
+    {
+        var limit = Settings.Risk.MaxOpenPositions;
+        var positions = await Connector.GetPositionsAsync(accountId, ct);
+        var open = new HashSet<string>(
+            positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), StringComparer.Ordinal);
+
+        foreach (var work in _requests.Open())
+        {
+            if (work.Intent != RequestIntent.PLACE) continue;
+            if (string.Equals(work.RequestId, requestId, StringComparison.Ordinal)) continue;
+            if (Closing(work)) continue;
+            open.Add(work.Instrument);
+        }
+
+        if (!open.Contains(intent.Symbol) && open.Count >= limit)
+            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
+                $"already holding or opening {open.Count} positions and the limit is {limit}");
+    }
+
+    /// <summary>Whether a stored placement was sized from a position rather than taking one on.</summary>
+    static bool Closing(ExecutionRequest r)
+    {
+        try { return Json.Read<PlaceIntent>(r.ParametersJson)?.Intent == OrderIntent.Close; }
+        catch (Exception) { return false; }
     }
 
     void RateLimitOrThrow(int limit)
@@ -908,6 +964,12 @@ public sealed class TradingGateway : IAsyncDisposable
         await _dispatchGate.WaitAsync(ct);
         try
         {
+            // INSIDE THE GATE, AND BEFORE THE RECORD EXISTS. See OpenPositionCapOrThrow: the cap is
+            // the one risk limit whose answer depends on what the OTHER callers are doing, so it is
+            // the one that cannot be decided out there with the reads. Before TryCreate, so that a
+            // refusal leaves no row behind — exactly as it did when it lived in the risk check.
+            await OpenPositionCapOrThrow(intent, account.Id, requestId, ct);
+
             var (created, stored) = _requests.TryCreate(record);
 
             if (!created && _opt.IdempotencyEnabled)
@@ -1602,6 +1664,13 @@ public sealed class TradingGateway : IAsyncDisposable
                 await RiskCheckOrThrow(intent
                     ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice),
                     account, ct);
+
+                // The cap, on the same terms as a placement's — this whole method already runs
+                // inside the dispatch gate, so it is asked here rather than in the risk check. Only
+                // for a placement: see OpenPositionCapOrThrow on why a modification cannot raise a
+                // count of instruments.
+                if (intent is not null)
+                    await OpenPositionCapOrThrow(intent, account.Id, requestId, ct);
             }
             catch (GatewayDeniedException ex)
             {
