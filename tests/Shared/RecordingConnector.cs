@@ -30,8 +30,29 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public int Closes;
     public int Positions;
 
+    /// <summary>Reads that reached the connector. Counted so that "zero connector calls" can be ASSERTED.</summary>
+    public int Reads;
+
     /// <summary>Mutating calls of every kind that reached the connector.</summary>
     public int Mutations => Places + Modifies + Cancels + Closes;
+
+    /// <summary>
+    /// Everything that reached the connector, reads included.
+    ///
+    /// A refusal that claims to make no connector call cannot be settled by <see cref="Mutations"/>
+    /// or by the broker's book: a frame refused three reads into the risk check places no order
+    /// either, and looks identical. This is the number that tells the two apart.
+    /// </summary>
+    public int Calls => Reads + Mutations;
+
+    /// <summary>
+    /// Every placement, whole, in the order it arrived.
+    ///
+    /// <see cref="OrderInfo"/> does not carry the time-in-force, so the broker's book cannot say
+    /// what a placement actually asked for — the command is the only place the value that left this
+    /// process can be read back.
+    /// </summary>
+    public readonly List<PlaceOrderCommand> Placed = [];
 
     /// <summary>What the held call waits for. Null means nothing is held.</summary>
     public Task? Hold;
@@ -57,12 +78,15 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;
     public TimeSpan EmergencyBudget => Inner.EmergencyBudget;
     public Task ConnectAsync(CancellationToken ct = default) => Inner.ConnectAsync(ct);
-    public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => Inner.GetHealthAsync(ct);
-    public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Inner.IsConnectedAsync(ct);
-    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Inner.GetAccountsAsync(ct);
-    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Inner.GetAccountAsync(a, ct);
-    public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => Inner.GetInstrumentsAsync(ct);
-    public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => Inner.GetQuoteAsync(s, ct);
+    /// <summary>Counts one read and hands the inner call straight back. <c>ConnectAsync</c> is not a read.</summary>
+    T Read<T>(T call) { Interlocked.Increment(ref Reads); return call; }
+
+    public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => Read(Inner.GetHealthAsync(ct));
+    public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Read(Inner.IsConnectedAsync(ct));
+    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Read(Inner.GetAccountsAsync(ct));
+    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Read(Inner.GetAccountAsync(a, ct));
+    public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => Read(Inner.GetInstrumentsAsync(ct));
+    public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => Read(Inner.GetQuoteAsync(s, ct));
 
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
     {
@@ -72,14 +96,15 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     }
 
     public Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default) =>
-        Inner.GetOrdersAsync(a, inactive, since, ct);
+        Read(Inner.GetOrdersAsync(a, inactive, since, ct));
 
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
-        Inner.GetExecutionsAsync(a, since, ct);
+        Read(Inner.GetExecutionsAsync(a, since, ct));
 
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Places);
+        lock (Placed) Placed.Add(cmd);
         await Gate(HeldCall.Place);
         return await Inner.PlaceOrderAsync(cmd, ct);
     }

@@ -182,11 +182,11 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.False(reply.Ok, $"tif '{tif}' was accepted and became something the agent did not ask for");
         Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
         Assert.Contains("tif", reply.Error.Message);
-        foreach (var name in Enum.GetNames<ConnectorSdk.TimeInForce>())
+        foreach (var name in Enum.GetNames<TradeAgent.ConnectorSdk.TimeInForce>())
             Assert.Contains(name, reply.Error.Message);
 
         Assert.Equal(before, conn.Calls);
-        Assert.Empty(conn.Inner.Broker.Orders);
+        Assert.Empty(conn.Broker.Orders);
     }
 
     /// <summary>Every name still works, and arrives at the connector as itself.</summary>
@@ -210,7 +210,7 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.True(reply.Ok, $"tif '{tif}' was refused: {reply.Error?.Message}");
         var placed = Assert.Single(conn.Placed);
         log.WriteLine($"tif={tif,-18} -> connector saw {placed.Tif}");
-        Assert.Equal(Enum.Parse<ConnectorSdk.TimeInForce>(tif, ignoreCase: true), placed.Tif);
+        Assert.Equal(Enum.Parse<TradeAgent.ConnectorSdk.TimeInForce>(tif, ignoreCase: true), placed.Tif);
     }
 
     /// <summary>An absent <c>tif</c> keeps the default the contract states: Day.</summary>
@@ -226,7 +226,7 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.True(reply.Ok, reply.Error?.Message);
         var placed = Assert.Single(conn.Placed);
         log.WriteLine($"tif omitted -> connector saw {placed.Tif}");
-        Assert.Equal(ConnectorSdk.TimeInForce.Day, placed.Tif);
+        Assert.Equal(TradeAgent.ConnectorSdk.TimeInForce.Day, placed.Tif);
     }
 
     /// <summary>
@@ -255,7 +255,7 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
         Assert.Contains(field, reply.Error.Message);
         Assert.Equal(before, conn.Calls);
-        Assert.Empty(conn.Inner.Broker.Orders);
+        Assert.Empty(conn.Broker.Orders);
     }
 
     /// <summary>
@@ -338,17 +338,23 @@ public class PipeContractTests(ITestOutputHelper log)
 
     // ---------------------------------------------------------------- helpers
 
-    /// <summary>A gateway whose connector counts every call and keeps every placement it was given.</summary>
-    static async Task<(TradingGateway Gw, CountingConnector Conn, Database Db, GatewayPipeServer Server, PipeClient Client)>
+    /// <summary>
+    /// A gateway whose connector counts every call — reads included — and keeps every placement whole.
+    ///
+    /// <see cref="RecordingConnector.Calls"/> rather than the broker's book, because "zero connector
+    /// calls" is the assertion these refusals are actually about and an empty book cannot make it: a
+    /// frame refused three reads into the risk check places no order either.
+    /// </summary>
+    static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db, GatewayPipeServer Server, PipeClient Client)>
         Counted(Action<TradeAgentSettings>? settings = null)
     {
         var db = TestEnv.NewDb();
-        var conn = new CountingConnector(new Connectors.Fake.FakeConnector(new Connectors.Fake.FakeBroker()));
+        var conn = new RecordingConnector(new Connectors.Fake.FakeConnector(new Connectors.Fake.FakeBroker()));
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {
             s.Mode = TradingMode.PAPER;
-            s.SelectedAccountId = conn.Inner.Broker.AccountId;
+            s.SelectedAccountId = conn.Broker.AccountId;
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -364,68 +370,6 @@ public class PipeContractTests(ITestOutputHelper log)
         var client = new PipeClient();
         await client.ConnectAsync(10_000, pipe);
         return (gw, conn, db, server, client);
-    }
-
-    /// <summary>
-    /// Every call to the trading backend, counted, and every placement kept whole.
-    ///
-    /// "Zero connector calls" is the assertion the refusals above are actually about, and
-    /// <c>Broker.Orders</c> cannot make it: a frame refused three reads into the risk check places
-    /// no order either. The <see cref="ConnectorSdk.PlaceOrderCommand"/> list is here for the same
-    /// reason — <see cref="ConnectorSdk.OrderInfo"/> does not carry the time-in-force, so the only
-    /// place the value the agent asked for can be READ BACK is the command itself.
-    /// </summary>
-    sealed class CountingConnector(Connectors.Fake.FakeConnector inner) : ConnectorSdk.ITradingConnector
-    {
-        public Connectors.Fake.FakeConnector Inner { get; } = inner;
-        int _calls;
-        public int Calls => Volatile.Read(ref _calls);
-        public List<ConnectorSdk.PlaceOrderCommand> Placed { get; } = [];
-
-        T Count<T>(T value) { Interlocked.Increment(ref _calls); return value; }
-
-        public string Id => Inner.Id;
-        public string DisplayName => Inner.DisplayName;
-        public ConnectorSdk.ConnectorCapabilities Capabilities => Inner.Capabilities;
-        public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;
-        public TimeSpan EmergencyBudget => Inner.EmergencyBudget;
-
-        public Task ConnectAsync(CancellationToken ct = default) => Inner.ConnectAsync(ct);
-        public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => Count(Inner.GetHealthAsync(ct));
-        public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Count(Inner.IsConnectedAsync(ct));
-        public Task<IReadOnlyList<ConnectorSdk.AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Count(Inner.GetAccountsAsync(ct));
-        public Task<ConnectorSdk.AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Count(Inner.GetAccountAsync(a, ct));
-        public Task<IReadOnlyList<ConnectorSdk.InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => Count(Inner.GetInstrumentsAsync(ct));
-        public Task<ConnectorSdk.QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => Count(Inner.GetQuoteAsync(s, ct));
-        public Task<IReadOnlyList<ConnectorSdk.PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) => Count(Inner.GetPositionsAsync(a, ct));
-        public Task<IReadOnlyList<ConnectorSdk.OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default) => Count(Inner.GetOrdersAsync(a, inactive, since, ct));
-        public Task<IReadOnlyList<ConnectorSdk.ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) => Count(Inner.GetExecutionsAsync(a, since, ct));
-
-        public Task<ConnectorSdk.OrderInfo> PlaceOrderAsync(ConnectorSdk.PlaceOrderCommand cmd, CancellationToken ct = default)
-        {
-            lock (Placed) Placed.Add(cmd);
-            return Count(Inner.PlaceOrderAsync(cmd, ct));
-        }
-
-        public Task<ConnectorSdk.OrderInfo> ModifyOrderAsync(ConnectorSdk.ModifyOrderCommand c, CancellationToken ct = default) => Count(Inner.ModifyOrderAsync(c, ct));
-        public Task CancelOrderAsync(string id, CancellationToken ct = default) => Count(Inner.CancelOrderAsync(id, ct));
-        public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) => Count(Inner.CancelAllOrdersAsync(a, ct));
-        public Task<ConnectorSdk.OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default) => Count(Inner.ClosePositionAsync(a, s, coid, ct));
-
-        public event Action<HealthState>? ConnectionChanged
-        { add => Inner.ConnectionChanged += value; remove => Inner.ConnectionChanged -= value; }
-        public event Action<ConnectorSdk.QuoteInfo>? QuoteChanged
-        { add => Inner.QuoteChanged += value; remove => Inner.QuoteChanged -= value; }
-        public event Action<ConnectorSdk.OrderInfo>? OrderChanged
-        { add => Inner.OrderChanged += value; remove => Inner.OrderChanged -= value; }
-        public event Action<ConnectorSdk.ExecutionInfo>? ExecutionReceived
-        { add => Inner.ExecutionReceived += value; remove => Inner.ExecutionReceived -= value; }
-        public event Action<ConnectorSdk.PositionInfo>? PositionChanged
-        { add => Inner.PositionChanged += value; remove => Inner.PositionChanged -= value; }
-        public event Action<ConnectorSdk.AccountInfo>? AccountChanged
-        { add => Inner.AccountChanged += value; remove => Inner.AccountChanged -= value; }
-
-        public ValueTask DisposeAsync() => Inner.DisposeAsync();
     }
 
     /// <summary>Every <c>protocol_rejected</c> line the pipe server wrote, oldest first.</summary>
