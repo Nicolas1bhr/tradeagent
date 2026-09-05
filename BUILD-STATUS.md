@@ -3323,3 +3323,41 @@ runner-speed probe of U-win-timing had left on this Mac (killed by the manager b
 `status.UnreconciledRequests`, so the strip can offer an update seconds before the press is refused (the refusal itself
 is right); `Doctor` and `GatewayHost` still ask `HasUnconfirmedWork()`, the trading question, on purpose. Nothing on
 Windows, no UI, no real ATAS.
+
+## 2026-09-05 — U-gates landed: every gate is decided at dispatch, for every mutating verb, and an unknown mode fails closed
+
+Codex's F2, F3 and F4 and the review's executed finding 6, one class: a request reached the connector without every
+gate that applied to it. One fresh builder on `docs/briefs/U-gates.md` (killed by a usage limit during its final
+suite, after all three items and its report were committed; the manager's gate supplied that suite). Merge `6f1ba77`,
+5 commits, 6 files of substance, +1147/−51.
+
+- **Modify goes through the gates (F2).** Before: over the pipe in LIVE_CONFIRM with `MaxOrderQuantity = 1`, a modify
+  from quantity 1 to 1000 answered `ok=True`, ACKNOWLEDGED, one modify call on the wire. Now it is risk-checked on the
+  RESULTING order and parked like a place: `RISK_LIMIT_EXCEEDED`, no record, zero calls; an in-limits LIVE_CONFIRM
+  modify parks at zero calls and the press sends one; PAPER in limits still applies; `RISK_CHECK_UNAVAILABLE` when the
+  book cannot show the target. `ApproveAsync` gained a MODIFY arm.
+- **An unknown mode fails closed (F3).** Before: `"mode": 999` with a real account read `ModeAllowsExecution: True`,
+  `ModeIsLive: False`, and a buy filled. Now `ModeIsRecognised` gates execution, health reads PAUSED every refresh,
+  `SetMode` refuses an undefined value, the owner gets a line naming the value, the value is NOT rewritten.
+- **Gates decided at dispatch (F4 / finding 6).** Before, with a barrier inside the risk check's position read: Stop
+  → `ok — FILLED`; `ActivateLive(false)` → FILLED; an approval whose mode moved to PAPER mid-check → FILLED; four callers
+  against a rate limit of one → four fills. Now zero sends in each case, and five callers against a budget of three send
+  exactly three: STOP, live activation and mode are re-checked at the dispatch gate after every awaited read, and the
+  rate limit is one atomic take.
+- **One property outside the unit's files, stated:** `GatewayPipeServer.ModifyHandlerPath` grew from 4W to 6W because a
+  modify now issues a placement's chain, so the drain table's arithmetic test moved 256 s → 306 s and `modify` is the
+  longest row.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED "`ok=True`, `ACKNOWLEDGED`, modify
+calls on the wire: 1" → GREEN; a mutant (check `before.Quantity`) SURVIVED the first test, so the test was made to name
+the gate that refused and the mutant then dies (`Expected: "RISK_LIMIT_EXCEEDED" Actual: "APPROVAL_REQUIRED"`). Item 2
+RED → GREEN, mutant (`||` for `&&`) → red. Item 3 four REDs → GREEN; mutants: drop `AuthorizeOrThrow` from the re-check
+→ both barriers red; budget checked only in the risk pass → both concurrency rows red; a third (take the place at
+`Commit`) SURVIVED, honestly stated: the place path holds `_dispatchGate` across check and commit, so the lock is
+load-bearing only for `modify`. Builder's gate at `0bee79b`, Release: 0 warnings; 201 + 207 + 534 = 942, 0 failed;
+names +16, 0 removed. Manager's gate at `6f1ba77` (rebased clean over U-interlock), Release: build → 0 warnings, 0 errors; suite →
+211 + 207 + 535 = 953, 0 failed; names vs `main` → 0 removed, 16 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done, stated by the builder:** no box, no real ATAS, no UI, no money. The re-check's mode arm is reachable only
+on the approval path (a fresh place re-reads the mode when it builds its record, so it parks instead). Untouched: the
+press and composite regions, the pipe protocol, the updater, the connectors.

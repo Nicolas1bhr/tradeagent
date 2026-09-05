@@ -13,7 +13,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `fd5c6d9`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded and four test-only fixes landed** — all in
+`main` is `6f1ba77`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates and four test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
 four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
 windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
@@ -21,7 +21,8 @@ money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / 
 executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
 section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher
 owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's own `WireTouched()` question on whichever
-gateway is live). Fix units still queued, in this order: `U-gates` (built, landing), `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
+gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown mode fails closed, gates decided at dispatch,
+one atomic rate limit). Fix units still queued, in this order: `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
 `U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
 decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
