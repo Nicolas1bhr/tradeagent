@@ -3611,7 +3611,7 @@ is item 1's), mutant (`MarkSaved()` deleted) → 1 of 14 red; proven in the RUNN
 "Execution capability PAUSED your settings could not be read; … on the Safety page", mode OBSERVE, stopped, allowlist
 [], caps 0. Builders' gate at `bab42fc`, Release: 0 warnings; 219 + 236 + 570 = 1025, 0 failed; names vs the branch
 base 16 added, 1 removed (a rename, `…everything_is_allowed` → `…nothing_is_allowed`). Manager's gate at `bcffac0`,
-Release: build → 0 warnings, 0 errors; suite → 219 + 238 + 582 = 1039, 0 failed; names vs `main` → 1 removed (the rename), 20 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+Release: build → 0 warnings, 0 errors; suite → 219 + 238 + 582 = 1039, 0 failed; names vs `main` → 1 removed (the rename), 20 added; scan clean; CI run 33970610692 at `c4ca0f1`: ubuntu, macos and windows all SUCCESS (1039), `package` SUCCESS.
 
 **A combination fix rode along (`U-settings-replay-fix`, test fixtures only):** at the rebased tip two of
 U-pipe-replay's offline-replay tests failed with `RISK_LIMIT_EXCEEDED — ES is not on the allowed instrument list`:
