@@ -33,9 +33,9 @@ U-gates has landed (both touch `TradingGateway.cs`; rebase onto that `main`).
 Yours: `src/TradeAgent.Gateway/TradingGateway.cs` (press and composite regions), `GatewayTypes.cs`, `Core/Db/Stores.cs`
 and the schema (bump if a column is added; migrations must be checksummed as the existing ones are), `Errors.cs`,
 `docs/CONTRACTS.md`, `AGENTS.md`, tests. Not yours: the pipe server, the updater, the connectors, the authorization
-path (U-gates). Every item: the RED quoted (or the finding refuted, with the probe), GREEN, one mutant watched red
-(commit before mutating; `cp` restore; `touch`). Test-name diff vs baseline: nothing removed. Commit per item, no
-trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
+path (U-gates). Every item: RED quoted (or refuted, with the probe), GREEN, one mutant watched red (commit before
+mutating; `cp` restore; `touch`). Names vs baseline: nothing removed. Commit per item, no trailers, no push, no other
+worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
-## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted) → GREEN → mutant;
-final counts; what you did NOT do. Verified or NOT VERIFIED.
+## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted) → GREEN →
+mutant; final counts; what you did NOT do. Verified or NOT VERIFIED.
