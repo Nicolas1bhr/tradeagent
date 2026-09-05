@@ -1837,6 +1837,80 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (created) return new CompositePlan(requestId, stored.Nonce, targets, null, false);
 
+        return ReplayOf(stored, requestId, op, ctx);
+    }
+
+    /// <summary>
+    /// THE SAME THING, WITH THE LOOKUP BEFORE THE LIVE READ THAT BUILDS THE PLAN.
+    ///
+    /// A sweep needs the book before it can say what its plan is, so its caller read the book and
+    /// THEN asked whether this request id had been seen. Two consequences, and the second is the one
+    /// a request id exists for:
+    ///
+    ///   - A replay is not offline-safe. The stored answer is sitting in the database, and the call
+    ///     that would have returned it fails first, on a connector that cannot be reached — so the
+    ///     agent whose reply was lost cannot get its answer back at exactly the moment it most needs
+    ///     to, and the honest reading of the failure is "unknown", not "already done".
+    ///   - A wrong-verb replay does work before it is refused. Cheap here; not cheap against a
+    ///     platform that charges for a book read, and not free at all when the read is what the
+    ///     operation's deadline is being spent on.
+    ///
+    /// So the plan arrives as a DELEGATE and is never invoked on a replay. <paramref name="capture"/>
+    /// runs exactly once, for a request id this installation has not seen (REVIEW 2026-09-05,
+    /// Codex F7).
+    /// </summary>
+    public async Task<CompositePlan> BeginCompositeAsync(AgentContext ctx, string requestId, string op,
+        Func<CancellationToken, Task<IReadOnlyList<string>>> capture, Func<string> freshNonce,
+        CancellationToken ct = default)
+    {
+        if (_composites.Get(requestId) is { } known) return ReplayOf(known, requestId, op, ctx);
+
+        var targets = await capture(ct);
+        var (created, stored) = _composites.TryBegin(new CompositeRequest
+        {
+            RequestId = requestId,
+            AgentSessionId = ctx.SessionId,
+            Op = op,
+            Nonce = freshNonce(),
+            PlanJson = Json.Write(targets),
+            CreatedAt = Now
+        });
+
+        return created
+            ? new CompositePlan(requestId, stored.Nonce, targets, null, false)
+            // Lost the insert to a caller that arrived between the lookup and here. The stored row
+            // is the one that counts, and it is checked exactly as any other replay is.
+            : ReplayOf(stored, requestId, op, ctx);
+    }
+
+    /// <summary>
+    /// WHAT A KNOWN REQUEST ID MAY BE REPLAYED AS: the operation that created it, from the session
+    /// that created it, and nothing else.
+    ///
+    /// The row has carried <c>op</c> and <c>agent_session_id</c> since it was introduced and nothing
+    /// read them back. So an incomplete <c>close-all</c> could be replayed as <c>cancel-all</c> and
+    /// would RESUME — against the close-all's captured plan, under the wrong verb — and a COMPLETED
+    /// one answered the second caller with the first operation's reply: an agent told
+    /// <c>cancelled: 0, nothing_to_do: true</c> for a cancel-all that never ran, with every order
+    /// still working (REVIEW 2026-09-05, Codex F7).
+    ///
+    /// Refused rather than reinterpreted, because the two readings of a reused id are "this is my
+    /// lost reply" and "this is a mistake", and only the first one is safe to act on. The words are
+    /// the replay contract's: an id is a name for ONE operation, and the answer to a mismatch is a
+    /// new id, not a guess about which operation was meant.
+    /// </summary>
+    CompositePlan ReplayOf(CompositeRequest stored, string requestId, string op, AgentContext ctx)
+    {
+        if (!string.Equals(stored.Op, op, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"request id '{requestId}' already names a '{stored.Op}'; it cannot be reused for a " +
+                $"'{op}'. Ask again with a new request id.");
+
+        if (!string.Equals(stored.AgentSessionId ?? "", ctx.SessionId, StringComparison.Ordinal))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"request id '{requestId}' belongs to another session; it cannot be replayed here. " +
+                "Ask again with a new request id.");
+
         _log.Engineering("Gateway", "composite_replayed", requestId: requestId,
             metadataJson: Json.Write(new { op, finished = stored.ResultJson is not null }));
 

@@ -93,6 +93,11 @@ public static class WorkspaceBuilder
     it returns the original outcome and will never place a second order. Use a *new* id only when you
     genuinely want another order.
 
+    **A request id names ONE operation, and it stays that operation.** An id you used for a
+    `close-all` cannot be reused for a `cancel-all`, and an id belongs to the session that made it;
+    either mismatch is refused with `INVALID_REQUEST` rather than answered with the first
+    operation's reply. So a re-run is a replay only when the command is the same command.
+
     **If an order command dies without printing a reply, the order may still have been placed.** The
     id is printed on stderr as `request-id: <id>` *before* the order is sent, and it is in the
     `--json` object as `request_id`, precisely so you still have it when the reply is what went

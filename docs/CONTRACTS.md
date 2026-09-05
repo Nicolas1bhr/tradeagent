@@ -524,6 +524,18 @@ go. Before this, a sweep minted its nonce per CALL: an agent that lost the reply
 request id got a second sweep over whatever was on the book by then, including orders it had placed
 since.
 
+**A request id names one operation, from one session, and a replay is looked up before anything is
+read.** The `composite_request` row has always carried `op` and `agent_session_id`; nothing read them
+back, so a `close-all` id reused for a `cancel-all` RESUMED the close-all's captured plan under the
+wrong verb — and a *completed* one answered the second caller with the first operation's reply, which
+tells an agent its cancellation is already done while every order is still working. Both mismatches
+are now refused with `INVALID_REQUEST`, naming the operation the id already has; the answer to one is
+a new request id, never a guess about which operation was meant. And the lookup is the FIRST step,
+before the book or position read that builds the plan (`TradingGateway.BeginCompositeAsync` takes the
+capture as a delegate and does not invoke it on a replay), so the case a request id exists for — a
+lost reply, re-sent — is answerable with the platform exactly as unreachable as it was when the reply
+went missing (REVIEW 2026-09-05, Codex F7).
+
 **A trading mode this build does not have allows nothing.** `TradingMode` is `OBSERVE`, `PAPER`,
 `LIVE_CONFIRM`, `LIVE_AUTONOMOUS`; it is persisted as a name, and the JSON enum converter also reads
 NUMBERS and casts one it does not recognise straight onto the enum. A settings row saying
