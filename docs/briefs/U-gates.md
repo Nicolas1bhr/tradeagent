@@ -2,7 +2,7 @@
 
 Fresh builder on Opus. Read `docs/HOW-WE-BUILD.md`, `CLAUDE.md` (the safety rules; operator authority in-process only;
 anything that moves money is two-press), `docs/CONTRACTS.md`, then Codex findings F2, F3 and F4 in
-`docs/REVIEW-2026-09-05-codex.md` — read-only claims you must first turn RED. `export PATH="$HOME/.dotnet:$PATH"
+`docs/REVIEW-2026-09-05.md` (the Codex section) — read-only claims you must first turn RED. `export PATH="$HOME/.dotnet:$PATH"
 DOTNET_ROOT="$HOME/.dotnet"`; no `timeout`; full suite 8–12 min in Release. No box. Fresh worktree
 `~/Projects/ai-trading-software-for-mihael-worktrees/u-gates`, new branch `u-gates` from `main`.
 
@@ -21,7 +21,9 @@ and anything the gates cannot classify is refused.
    refuses any value that is not one of the three named modes, and the refusal reaches the owner in the app's words.
 3. **Gates decided at dispatch (F4, `TradingGateway.cs` ~:531).** Authorization and risk run before awaited reads and
    before the dispatch gate, so an order authorized before STOP or live-off still sends after it, and concurrent
-   orders all pass one shared rate limit. RED first, with a barrier: authorize a buy, then call `StopAiTrading` (and,
+   orders all pass one shared rate limit. The milestone reviewer EXECUTED the kill-switch half as finding 6 (probe
+   P3 on `review-probes`: Stop pressed 300 ms into a place whose connector reads cost 400 ms each → FILLED). RED first,
+   with a barrier: authorize a buy, then call `StopAiTrading` (and,
    separately, `ActivateLive(false)`) while the connector is held, release it → expect zero sends; and N concurrent
    orders against a rate limit of 1 → expect exactly one send. Fix: re-check STOP, live activation and mode at the
    dispatch gate after every awaited read, and make the rate limit an atomic reservation.

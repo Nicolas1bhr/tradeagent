@@ -16,14 +16,17 @@ Work in flight is whatever is in `docs/briefs/` — one file per unit, the build
 `main` is `8591de8`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8 and three test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: green at the
 U2c1b landing; windows-latest otherwise draws one different timing-sensitive test per run — class fixer
-`docs/briefs/U-win-timing.md` in flight (branch `u-win-timing`, PR #4, continued after a usage-limit kill). The milestone review of
-the money path at `8591de8` is running (`docs/briefs/REVIEW.md`: a fresh Opus reviewer, findings → `docs/REVIEW-2026-09-05.md`);
-Codex's read-only pass is done and triaged in `docs/REVIEW-2026-09-05-codex.md` (6 HIGH / 2 MED / 11 UNVERIFIED): F1 is
-the U12 containment question and needs Nicolas's direction; the rest are four fix units, dispatched in this order as
-slots free — `U-gates` (F2+F3+F4), `U-interlock` (F5), `U-press-atomic` (F6+F7, after U-gates lands), `U-pipe-hello`
-(F8) — each fixer turns its finding RED first or refutes it. Then U-bridge-reinstall (`docs/briefs/U-bridge-reinstall.md`);
-the Opus reviewer's fix units; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
-`docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
+`docs/briefs/U-win-timing.md` in flight (branch `u-win-timing`, PR #4, continued after a usage-limit kill). The milestone review of the
+money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / MED 4 / LOW 2 / UNVERIFIED 6, twelve
+executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
+section of 2026-09-05 summarises it. Fix units, dispatched in this order as slots free: `U-stranded` (money is wrong
+today), `U-interlock`, `U-gates`, `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
+`U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
+protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
+decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
+in `atas.json` and fail closed when the vendor changes the file, or accept TLS as the whole integrity story and say
+so in the guide; (2) the U12 containment direction — the AI runs unsandboxed as the owner (Codex F1), so same-user
+credentials and the in-process gateway are not security boundaries. The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
 

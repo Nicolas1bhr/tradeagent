@@ -3188,3 +3188,38 @@ Release: 0 warnings, 17 projects; Unit 201 + Fault 188 + Integration 530 = 919, 
 build → 0 warnings, 0 errors; suite → 201 + 188 + 530 = 919, 0 failed; names vs `main` → 1 removed (the rename above), 7 added; scan clean; CI run 33939362147 at `9d0d94b`: ubuntu, macos and windows all SUCCESS (919), `package` SUCCESS.
 
 **NOT VERIFIED:** nothing on Windows, nothing against real ATAS, no UI run (Dashboard build-verified only).
+
+## 2026-09-05 — the milestone review of the money path at `8591de8`: what an executed adversary found
+
+The "ask questions later" step of `docs/HOW-WE-BUILD.md`, run once, after twelve landings: one fresh Opus reviewer told
+to break the money path, with every finding an executed probe on branch `review-probes` (`b952851`, 13 probes, suite
+932 / 0 failed there), and Codex `gpt-5.6-sol` read-only on the same sha in its own worktree. Both in
+`docs/REVIEW-2026-09-05.md`. **Reviewer: HIGH 4 · MED 4 · LOW 2 · UNVERIFIED 6. Codex: HIGH 6 · MED 2 · UNVERIFIED 11**
+(read-only claims; each fixer turns its finding red first or refutes it).
+
+**Executed and money-wrong today (fix units cut, in this order):**
+- **The reconciler writes off an order still on the wire** (`U-stranded`): `DispatchStrandedAfter` 30 s against a 50 s
+  `WorstCaseOrderPath`; at 1/1000 scale the record reads CANCELLED "never reached the broker", trading resumes, the order
+  fills, and the real answer is discarded as `already_settled`.
+- **Two concurrent Close All presses reverse the position** (`U-press-atomic`): long 2 → short 2, both "ok"; the guard
+  is unsynchronised, not wrong. Also: the press mints a client order id out of a broker symbol (58 chars with `' []'`;
+  65 for MES against a 64 ceiling).
+- **The update interlock asks the raw flag** (`U-interlock`): a DISPATCHING order pauses trading and does not stop an
+  install; Setup launched over it (P4, P5). This is U2d's deferred item 10, now landable.
+- **Settings fail OPEN** (`U-settings-closed`): an unparseable row re-arms the AI, empties the allowlist (read as
+  everything allowed) and resets every cap, silently.
+- **The kill switch is read once, then four connector reads happen before the wire** (`U-gates`, with Codex's Modify
+  bypass and unknown-mode findings): Stop pressed mid-place → FILLED.
+- The pipe's status answers with the operator's authorization, the frame cap counts UTF-16 chars, an agent can read an
+  operator press record (`U-pipe-hello`); the schema documents the "held still" rule U2c1a deleted, `close-all` answers
+  by record where `cancel-all` answers by leg word (`U-pipe-words`).
+
+**Decisions that need Nicolas (recorded in `docs/RESUME-HERE.md`):** the ATAS platform installer is downloaded with
+no checksum and run elevated — the vendor publishes no hash, so this is a design choice, not a line; and Codex F1: the
+AI runs unsandboxed as the owner, so same-user credentials and the in-process gateway are not security boundaries —
+the U12 containment question, challenged UNSOUND on 2026-09-03, still open. **Box items for v0.1.2:** whether ATAS
+round-trips the malformed press id; whether a real bridge spends 30–50 s in gate + frame.
+
+**NOT VERIFIED by either reviewer:** the witness, teardown, adapter and health code (barely touched), most of the App,
+the approval chain, the material ledger, `ForceResolve`, `BridgePipeAuth`; nothing on Windows or real ATAS. The next
+milestone's review starts there.

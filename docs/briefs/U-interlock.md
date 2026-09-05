@@ -2,9 +2,11 @@
 
 Fresh builder on Opus. Read `docs/HOW-WE-BUILD.md`, `CLAUDE.md`, the U2d and U2c1a/b/c sections of `BUILD-STATUS.md`
 (U2d deferred its "item 10" until U2c-1 landed: the provider must count every wire-touched record through U2c-1's
-store query — U2c-1 has landed), then Codex finding F5 in `docs/REVIEW-2026-09-05-codex.md` — a read-only claim you
-must first turn RED. `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`; no `timeout`; full suite 8–12 min
-in Release. No box. Fresh worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-interlock`, new branch
+store query — U2c-1 has landed), then finding 3 in `docs/REVIEW-2026-09-05.md`, EXECUTED by the reviewer (probes P4
+and P5 on `review-probes`, `tests/TradeAgent.UnitTests/ReviewUpdateProbes.cs` — lift them): `UnconfirmedWork = () =>
+gateway.Requests.NeedingReconciliation()` runs without `strandedDispatchBefore`, so a DISPATCHING order stops trading
+and does not stop an install; Codex's F5 says the same. `export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`;
+no `timeout`; full suite 8–12 min in Release. No box. Fresh worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-interlock`, new branch
 `u-interlock` from `main`.
 
 **The claim (F5, `src/TradeAgent.Diagnostics/UpdateTradingInterlock.cs` ~:47).** The updater's "unconfirmed work"
