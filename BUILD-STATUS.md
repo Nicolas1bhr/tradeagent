@@ -3317,7 +3317,9 @@ returned: False / Setup launched: 0"), then deleted. Builder's gate at `5f7c690`
 195 = 406, 0 failed; **Integration NOT run by the builder** — starved for 40 min by 14 orphaned CPU busy-loops the
 runner-speed probe of U-win-timing had left on this Mac (killed by the manager before the landing gate). Names vs
 `main`: 0 removed, 10 added. Manager's gate at `7ef6b1e`, Release: build → 0 warnings, 0 errors; suite → 211 + 195 + 531 = 937, 0 failed (after the busy-loops were killed); names →
-0 removed, 10 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+0 removed, 10 added; scan clean; CI run 33952871991 at `88617a0`: windows SUCCESS, macos SUCCESS, ubuntu FAILURE 194/195 on
+`Fault.OperatorPressIsAnEmergencyTests.Cancel_all_gives_up_on_a_stalled_platform_inside_the_emergency_budget` — `the press took 3.4s against a 2s emergency budget`
+— a fault-suite timing test outside the Windows-only retry category; product or runner NOT yet established.
 
 **NOT done, stated by the builder:** `MainWindow`'s pre-press cosmetic line still reads the narrower
 `status.UnreconciledRequests`, so the strip can offer an update seconds before the press is refused (the refusal itself
