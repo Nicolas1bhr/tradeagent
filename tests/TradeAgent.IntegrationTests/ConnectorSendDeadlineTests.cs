@@ -1423,6 +1423,66 @@ public class ConnectorSendDeadlineTests
     }
 
     /// <summary>
+    /// A CLOSING PLACEMENT IS ON THE OPERATION'S CLOCK, NOT ON ONE OF ITS OWN — the half of the intent
+    /// decision that only shows when there is an operation around it.
+    ///
+    /// Round 8's rule is that a risk-reducing operation has ONE deadline and every call inside it gets
+    /// what is LEFT of it; a per-call budget made a sweep pay the bound once per leg (three replies
+    /// delayed 1.9 s each cost about 5.7 s against a promise of 2). Marking a close as risk-reducing
+    /// without also letting it share the deadline would hand every `close-all` leg a fresh two seconds
+    /// and rebuild that defect on the one operation the intent was added for.
+    ///
+    /// A SPENT SCOPE IS THE WHOLE FIXTURE, because it makes the two behaviours differ by seconds rather
+    /// than by milliseconds: a call that shares an expired deadline refuses BEFORE the send gate and can
+    /// prove nothing was written, and one that starts its own is still waiting.
+    /// </summary>
+    [Fact]
+    public async Task A_closing_placement_shares_the_operations_deadline_and_an_opening_one_never_does()
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.ReadingAndHeartbeating(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var closing = new PlaceOrderCommand("TA-share-close", "ATAS-READING", "ES", OrderSide.Sell,
+            OrderType.Market, 1m, null, null, TimeInForce.Day, null) { Intent = OrderIntent.Close };
+        var opening = new PlaceOrderCommand("TA-share-open", "ATAS-READING", "ES", OrderSide.Buy,
+            OrderType.Market, 1m, null, null, TimeInForce.Day, null);
+
+        var record = new TransportRecord();
+        var timer = Stopwatch.StartNew();
+        using (TransportLedger.Attach(record))
+        using (RiskReducingScope.Begin(TimeSpan.Zero))
+        {
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(closing));
+            timer.Stop();
+            Assert.Contains("not sent", ex.Message);
+            Assert.Contains("ran out of time before this leg's turn came", ex.Message);
+        }
+
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1),
+            $"a closing placement inside a spent operation waited {timer.Elapsed.TotalSeconds:0.00}s — it " +
+            "started a budget of its own instead of taking what was left of the operation's, which is the " +
+            "per-leg bound round 8 removed");
+
+        // PROVABLY nothing was written, which is what makes the leg `not-sent` rather than an order to
+        // go and reconcile something that does not exist.
+        Assert.Equal(TransportOutcome.NothingWritten, record.Outcome);
+
+        // AND THE OTHER DIRECTION, in the same spent scope: an OPENING placement is not risk-reducing,
+        // so the expired operation deadline is none of its business and it is still waiting on its own
+        // ordinary bound. If the intent field ever became a way onto the fast path for everything, this
+        // would have refused instantly too.
+        Task<OrderInfo> unrelated;
+        using (RiskReducingScope.Begin(TimeSpan.Zero)) unrelated = connector.PlaceOrderAsync(opening);
+        Observe([unrelated]);
+        await Task.Delay(500);
+        Assert.False(unrelated.IsCompleted,
+            "an opening placement refused inside a spent risk-reducing scope — it took a deadline it is not entitled to");
+    }
+
+    /// <summary>
     /// THE SAME RULE THROUGH THE WHOLE STACK: `trade close ES` over the real pipe, through
     /// <see cref="GatewayPipeServer"/> and <see cref="TradingGateway"/>, onto a real
     /// <see cref="AtasConnector"/> whose bridge answers every prerequisite — the account, the
