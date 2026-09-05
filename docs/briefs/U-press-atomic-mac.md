@@ -29,23 +29,18 @@ Yours: `PressAtomicityTests.cs` and the fault-suite harness it uses. Not yours: 
 product is wrong, say so and stop. Commit per item, no trailers, no other worktree. Gate: Release `--no-incremental` →
 0 warnings; the fault suite 3×; full suite once; push, draft PR, three job conclusions.
 
-## Report — append as you go, commit it, ≤12 lines: tip sha; per item RED → GREEN → mutant; counts; CI per platform;
-what you did NOT do. Verified or NOT VERIFIED.
+## Report — the gate and CI ran at `dab3b0e`; this report is the commit on top of it
 
-- Mine only: `tests/TradeAgent.FaultTests/PressAtomicityTests.cs` and the fault harness
-  (`tests/Shared/RecordingConnector.cs`: a null-by-default `Seam` hook, and `Close` gated like the rest).
-  NO product file changed — both mutants reverted, `git status` shows nothing under `src/`.
-- **Item 1 RED** (a seam letting A's fill land before B's re-read; old assertion): `Assert.Single() Failure:
-  The collection did not contain any matching items` with `press B : ok — Nothing was sent for 1 of them,
-  because what is there changed after you pressed: ES was 2 when you pressed and is 0 now` — CI 33958941039
-  byte for byte. **GREEN**: the invariants (1 close on the wire, 2 orders, flat, 1 press row, one nonce) and
-  B's answer one of the refusals, both named — plus the third the capture read can give ("nothing open to
-  close"). 4/4 five times. That RED seam is kept as `The_drift_re_read_refuses_the_second_press_when_the_
-  first_fill_landed_first`, so the macos schedule is now proven on every runner, not only a slow one.
-- **Item 2** `Only_the_atomic_claim_can_refuse_a_press_whose_drift_re_read_saw_no_change`: the seam holds the
-  winning press's close until the other has answered, so the book cannot move under the loser's re-read and
-  only the insert can refuse it — GREEN, `press B : EMERGENCY_PRESS_UNRESOLVED — close-all sent at 14:45;
-  resolve it first`, and the drift sentence asserted absent. **Mutant** (the `NOT EXISTS` claim clause alone,
-  `AND ($claim IS NULL OR 1=1)`) → RED `Assert.Equal() Failure ... Expected: 1 Actual: 2` close calls, 2 press
-  rows, both presses "ok". **Item 1's mutant** (that clause AND `live != quantity` bypassed) → the same RED on
-  all three double-press tests: 2 closes, 2 rows.
+- Mine only: `PressAtomicityTests.cs` + the fault harness (`RecordingConnector`: a null-by-default `Seam`, `Close`
+  gated). NO product file — both mutants reverted, `git status` clean under `src/`.
+- **Item 1 RED** (a seam landing A's fill before B's re-read; old assertion) is CI 33958941039 byte for byte:
+  `Assert.Single() Failure: The collection did not contain any matching items` / `press B : ok — … ES was 2 when you
+  pressed and is 0 now`. **GREEN**: invariants (1 close, 2 orders, flat, 1 press row, one nonce) + B's answer one of
+  the refusals, both named. **Mutant** (claim clause AND drift guard) → RED `Expected: 1 Actual: 2`, 2 press rows.
+- **Item 2** `Only_the_atomic_claim_can_refuse_a_press_whose_drift_re_read_saw_no_change` holds the winner's close until
+  the other press has ANSWERED, so nothing else can refuse it: **GREEN** `EMERGENCY_PRESS_UNRESOLVED — close-all sent at
+  14:45; resolve it first`, drift sentence absent; **mutant** (`NOT EXISTS` alone) → the same RED. Item 1's RED seam is
+  kept as a third test, so that schedule now runs on every runner; class 4/4 17×, 12 of them under load.
+- **Gate** at `dab3b0e`, Release: `--no-incremental` → 0 warnings; fault 220 3×; 218 + 220 + 582 = 1020, 0 failed; names
+  0 removed, 2 added; scan clean. **CI** 33967839971, PR #5 (draft, NOT merged): ubuntu, windows, macos all SUCCESS.
+- **NOT done:** no product file, no `BUILD-STATUS.md`, no box, no ATAS, no UI, nothing outside this worktree.
