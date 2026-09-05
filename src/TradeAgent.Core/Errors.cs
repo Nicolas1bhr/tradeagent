@@ -52,10 +52,23 @@ public static class Labels
     public const string SettingsCouldNotBeRead =
         "your settings could not be read; trading is stopped until you review them on the " + SafetyPage + " page";
 
+    /// <summary>The card the Safety page shows above everything else while that is true.</summary>
+    public const string SettingsCouldNotBeReadTitle = "Settings TradeAgent could not read";
+
     /// <summary>The same fact, said on the page that repairs it, where it can be a whole sentence.</summary>
     public const string SettingsCouldNotBeReadBanner =
         "Your settings could not be read, so TradeAgent has stopped the AI and is allowing nothing. "
         + "Check every value on this page, then press " + SaveLimits + " to save them again.";
+
+    /// <summary>
+    /// THE HALF OF THE REPAIR THAT IS NOT ON THE SAFETY PAGE. Everything the owner had set was lost
+    /// together, and two of those values are set elsewhere: the mode is above this card, and the
+    /// account is on Settings. A repair sentence that only mentions the limits leaves an owner who
+    /// followed it exactly with the AI still unable to trade and no reason given.
+    /// </summary>
+    public const string SettingsCouldNotBeReadNext =
+        "The trading mode and your account were lost with them. Set the mode above, and choose your "
+        + "account again on the Settings page.";
 
     /// <summary>
     /// What an empty instrument allowlist means, said wherever the list is shown. An empty list is

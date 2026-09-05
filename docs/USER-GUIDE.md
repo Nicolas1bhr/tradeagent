@@ -408,6 +408,21 @@ futures.
 instrument, every order is refused, and the box says so. That is on purpose: "I have not said which
 ones yet" and "any of them" are different sentences, and only one of them is a decision you made.
 
+## If TradeAgent says your settings could not be read
+
+Everything you had set is stored together, and a version change or an interrupted write can leave
+that record in a state this version cannot make sense of. When that happens TradeAgent does **not**
+carry on with whatever it can salvage, and it does not fall back on the settings a new install ships
+with — those are wider than yours. It stops the AI, switches real money off, allows no instrument at
+all, and puts every limit at zero, and the Dashboard says *"your settings could not be read; trading
+is stopped until you review them on the Safety page."*
+
+To fix it, open **Safety**. A yellow panel at the top says the same thing. Check every value on that
+page — they are all showing zero, because none of them came from you — and press **Save limits**. The
+panel disappears as soon as you do. The trading mode and your account go the same way, so set the
+mode on that page too, and choose your account again on **Settings**. Nothing here needs a file, a
+folder or a command: if you can see the panel, you can undo it.
+
 ## Two behaviours that will look like faults, but are not
 
 **"AI trading paused — an earlier order is unconfirmed."**

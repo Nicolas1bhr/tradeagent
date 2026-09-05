@@ -620,6 +620,7 @@ sealed class SafetyPage
     readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
+    readonly Border _unreadableCard;
 
     public Control Root { get; }
 
@@ -727,8 +728,29 @@ sealed class SafetyPage
             Ui.With(Ui.Primary(Labels.SaveLimits, SaveLimits), b => b.HorizontalAlignment = HorizontalAlignment.Left),
             _limitsNote));
 
+        // THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.
+        //
+        // The failure is invisible without this. The gateway refuses everything and the health row on
+        // the Dashboard says why, but this page shows the boxes it is refusing on — zeros and an
+        // empty allowlist — as though the owner had typed them, and the button that fixes it looks
+        // like an ordinary save. It hides itself the moment the row is written again; see Update and
+        // SaveLimits, which both ask the gateway rather than remembering an answer.
+        _unreadableCard = new Border
+        {
+            Background = Theme.CautionSoft,
+            BorderBrush = Theme.Caution,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Theme.Radius,
+            Padding = new Thickness(Theme.S5),
+            IsVisible = false,
+            Child = Ui.Col(Theme.S3,
+                Ui.With(Ui.Eyebrow(Labels.SettingsCouldNotBeReadTitle), t => t.Foreground = Theme.Caution),
+                Ui.Body(Labels.SettingsCouldNotBeReadBanner),
+                Ui.Body(Labels.SettingsCouldNotBeReadNext, Theme.Caution))
+        };
+
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, modeCard, limits)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -738,6 +760,10 @@ sealed class SafetyPage
 
     public void Update(GatewayStatus status)
     {
+        // Read from the gateway, not from `status`: GatewayStatus is the agent-facing shape and this
+        // is a fact about the row this build read, not about what the AI may do.
+        _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
+
         var i = 0;
         foreach (var mode in Enum.GetValues<TradingMode>())
             if (_modeRow.Children[i++] is Button b) Ui.Emphasise(b, status.Mode == mode);
@@ -790,6 +816,11 @@ sealed class SafetyPage
             ? $"Saved. {Labels.NoInstrumentAllowed}"
             : "Saved. New orders are checked against these immediately.";
         _limitsNote.Foreground = nothingAllowed ? Theme.Caution : Theme.Positive;
+
+        // The save above rewrote the row, so the warning stops HERE rather than up to five seconds
+        // later on the refresh tick. Pressing the only button a warning names and watching nothing
+        // change is how an owner concludes the software is broken and stops trying.
+        _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
     }
 }
 

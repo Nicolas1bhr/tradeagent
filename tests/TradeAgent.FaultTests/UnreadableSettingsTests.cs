@@ -341,4 +341,118 @@ public class UnreadableSettingsTests(ITestOutputHelper log)
         await gw.DisposeAsync();
         await first.DisposeAsync();
     }
+
+    // ── item 3 ────────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// THE RECOVERY, END TO END, AS THE SAFETY PAGE PERFORMS IT. `SafetyPage.SaveLimits` is one
+    /// `Gateway.Update` of the five risk fields and nothing else, so this is that write: the owner
+    /// reads the banner, types their limits back and presses Save limits. Afterwards the row on disk
+    /// is one this build wrote — so the warning has to stop ON THIS PASS, not after a restart, or the
+    /// owner presses the only button on the page and nothing they can see changes — and a restart
+    /// over the same database has to agree.
+    /// </summary>
+    [Fact]
+    public async Task Saving_the_limits_rewrites_the_row_and_stops_the_warning()
+    {
+        var (db, _) = OwnersRowMadeUnreadable("\"LIVE_LOCKED\"");
+        using var _1 = db;
+        var health = new HealthRegistry();
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
+        var gw = new TradingGateway(db, conn, health);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var before = health.Get(Components.ExecutionCapability);
+        log.WriteLine($"before save   : {before.State} — {before.Detail}");
+        Assert.True(gw.Settings.CouldNotBeRead);
+        Assert.Contains("could not be read", before.Detail);
+
+        gw.Update(s =>                                   // exactly what SaveLimits writes
+        {
+            s.Risk.MaxOrderQuantity = 2m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 1;
+            s.Risk.MaxOrdersPerMinute = 4;
+            s.Risk.InstrumentAllowlist = ["MES"];
+        });
+
+        Assert.False(gw.Settings.CouldNotBeRead);
+        await gw.RefreshHealthAsync();
+        var after = health.Get(Components.ExecutionCapability);
+        log.WriteLine($"after save    : {after.State} — {after.Detail}");
+        Assert.DoesNotContain("could not be read", after.Detail);
+        await gw.DisposeAsync();
+
+        var (again, _2) = await RestartOver(db);
+        log.WriteLine($"after restart : CouldNotBeRead {again.Settings.CouldNotBeRead}, "
+                      + $"allowlist [{string.Join(",", again.Settings.Risk.InstrumentAllowlist)}], "
+                      + $"quantity {again.Settings.Risk.MaxOrderQuantity}");
+        Assert.False(again.Settings.CouldNotBeRead);
+        Assert.Equal(new[] { "MES" }, again.Settings.Risk.InstrumentAllowlist);
+        Assert.Equal(2m, again.Settings.Risk.MaxOrderQuantity);
+
+        // The damaged row is still kept. It is the only evidence of what the owner had asked for,
+        // and the save above overwrote the row it was taken from.
+        log.WriteLine($"kept row      : {db.GetKv("settings_unreadable")}");
+        Assert.Contains("LIVE_LOCKED", db.GetKv("settings_unreadable")!);
+        await again.DisposeAsync();
+    }
+
+    /// <summary>
+    /// NO FILE, NO FOLDER, NO PATH, NO TERMINAL, NO DATABASE — in any sentence this failure puts in
+    /// front of the owner. This is the product rule, not a style note: the person who bought this
+    /// never opens a shell, so a sentence that names a path, a file or a command is one they cannot
+    /// act on, and the repair it describes does not exist for them. Every string here is one they
+    /// can actually reach — the health row on the Dashboard, the activity log, the banner and the
+    /// note on the Safety page, and the refusal a denied order carries back.
+    /// </summary>
+    [Fact]
+    public async Task No_sentence_the_owner_reads_names_a_file_a_path_or_a_terminal()
+    {
+        var (db, _) = OwnersRowMadeUnreadable("\"LIVE_LOCKED\"");
+        using var _1 = db;
+        var health = new HealthRegistry();
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
+        var gw = new TradingGateway(db, conn, health);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "us-say", TestEnv.Buy()));
+
+        var sentences = new List<string>
+        {
+            Labels.SettingsCouldNotBeRead,
+            Labels.SettingsCouldNotBeReadTitle,
+            Labels.SettingsCouldNotBeReadBanner,
+            Labels.SettingsCouldNotBeReadNext,
+            Labels.NoInstrumentAllowed,
+            health.Get(Components.ExecutionCapability).Detail,
+            denied.Info.UserMessage,
+            denied.Info.Repair
+        };
+        sentences.AddRange(new LogStore(db).RecentActivity(50).Select(a => a.Text));
+
+        // "cmd" and "sh" are substrings of ordinary words; the rest are not.
+        string[] banned =
+        [
+            "\\", "/", ":\\", ".json", ".db", ".exe", "sqlite", "database", "terminal", "console",
+            "command prompt", "powershell", "appdata", "folder", "file", "directory", "path",
+            "json", "npm", "reinstall", "restart the computer"
+        ];
+
+        foreach (var s in sentences) log.WriteLine($"owner reads : {s}");
+        foreach (var s in sentences)
+            foreach (var b in banned)
+                Assert.False(s.Contains(b, StringComparison.OrdinalIgnoreCase),
+                    $"the owner is shown \"{b}\" in: {s}");
+
+        // And the sentences point at controls that exist: the page in the nav rail, and the button
+        // on it. Both come from the same constants the screens are built from.
+        Assert.Contains(Labels.SafetyPage, Labels.SettingsCouldNotBeRead);
+        Assert.Contains(Labels.SaveLimits, Labels.SettingsCouldNotBeReadBanner);
+
+        await gw.DisposeAsync();
+    }
 }
