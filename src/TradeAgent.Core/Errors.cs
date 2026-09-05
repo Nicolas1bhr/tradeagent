@@ -13,7 +13,7 @@ public enum ErrorCode
     IPC_UNAVAILABLE, IPC_UNAUTHENTICATED, WORKSPACE_CORRUPT, STATE_DATABASE_CORRUPT,
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
-    APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, TRADING_PAUSED_UNRECONCILED,
+    APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, RISK_CHECK_UNAVAILABLE, TRADING_PAUSED_UNRECONCILED,
     EMERGENCY_PRESS_UNRESOLVED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
@@ -64,6 +64,11 @@ public static class Errors
         [ErrorCode.EMERGENCY_PRESS_UNRESOLVED]     = ("The last press of this emergency control has not been resolved yet.", "Open the Dashboard, read what it did, and confirm each line. Then you can press it again.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
+        // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
+        // broken — TradeAgent could not work out whether one would be. A change to an order it
+        // cannot read is a change whose effect on your exposure is unknown, and an unknown is
+        // refused rather than waved through.
+        [ErrorCode.RISK_CHECK_UNAVAILABLE]         = ("TradeAgent could not read the order it was asked to change, so it could not check the change against your safety limits.", "Nothing was sent. Check the order on the trading platform, then ask again.", false),
         [ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE] = ("Fully automatic real-money trading is refused because this platform cannot confirm what happened to an order after a disconnection.", "Use confirm-each-order mode instead, or paper mode.", false),
         [ErrorCode.TRADING_PAUSED_UNRECONCILED]    = ("Trading is paused because an earlier order is unconfirmed.", "TradeAgent is checking with the broker. It resumes on its own.", true),
         [ErrorCode.INVALID_REQUEST]                = ("The AI sent a request TradeAgent did not understand.", "No action needed.", false),

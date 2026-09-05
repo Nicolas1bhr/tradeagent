@@ -228,7 +228,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
 | `connectors` `material-list` `material-note` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
-| `modify` | **4W** | the account, the orders read that resolves the target, the account again, the modify |
+| `modify` | **6W** | one orders read that both resolves the target and takes it as it stands, then everything a cold placement does — account, positions, quote, instruments — and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
 | `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
 | `close` | **E + W** | all of it inside the budget on a connector that reads the close intent, plus ONE ordinary placement for one that does not |
@@ -485,10 +485,24 @@ go. Before this, a sweep minted its nonce per CALL: an agent that lost the reply
 request id got a second sweep over whatever was on the book by then, including orders it had placed
 since.
 
+**Every mutating verb passes the same gates, and a modification is checked on the order as it will
+stand.** `place`, `modify` and `cancel` all run the authorization chain; `place` and `modify` also run
+every risk limit and both park in `LIVE_CONFIRM`. A `modify` used to run the authorization and
+nothing else, so the quantity cap, the notional cap, the open-position limit, the instrument
+allowlist and the rate limit did not apply to it and no person saw it in `LIVE_CONFIRM` — a working
+quantity-1 order was grown to 1000 against a cap of 1, over the authenticated pipe (REVIEW
+2026-09-05, Codex F2). A working order is a live claim on the account, so raising its quantity is the
+same act as placing an order of the new size by another name. The limits are therefore applied to the
+**resulting** order: the values the change names, and for every field it does not name, the value the
+target already has. **It fails closed when the target cannot be read** — `RISK_CHECK_UNAVAILABLE`,
+nothing sent — because the resulting size of a price-only change is the size the order already has and
+the instrument each limit is applied per is the one the order is on, and guessing either makes a cap
+decorative. A `cancel` reduces risk and is never refused for a limit.
+
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
-agent order is parked as `AWAITING_APPROVAL` after passing every gate and refused to the agent with
-`APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the decision again from the
-start, in this order:
+agent's order — or its modification — is parked as `AWAITING_APPROVAL` after passing every gate and
+refused to the agent with `APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the
+decision again from the start, in this order:
 
 1. the request must exist and still be `AWAITING_APPROVAL` — else `INVALID_REQUEST`;
 2. its age must be inside the approval time-to-live — else `APPROVAL_EXPIRED`, below;
@@ -507,7 +521,10 @@ start, in this order:
 6. the chosen account must be the one the record names — else `ACCOUNT_NOT_FOUND`, since the dispatch
    goes to the account on the record;
 7. every risk limit: allowlist, quantity, paper-vs-real, rate limit, open positions, quote freshness
-   for an order without its own price, and order value multiplied by contract size.
+   for an order without its own price, and order value multiplied by contract size. A parked
+   MODIFICATION re-reads its target from the book at the moment of the press and is judged on the
+   order as it will stand **now** — it may have moved, filled or been cancelled while it waited, and
+   a target that cannot be read refuses the approval rather than sending on a stale reading.
 
 Only then does it dispatch. A refusal at any step leaves the record `AWAITING_APPROVAL` for a person
 to decline deliberately — except step 2. A request as old as or older than the approval time-to-live

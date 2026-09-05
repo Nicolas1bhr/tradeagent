@@ -253,7 +253,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
-        new(Core.Ops.Modify, ModifyHandlerPath, "the account, the orders to resolve the target, the account again, the modify"),
+        new(Core.Ops.Modify, ModifyHandlerPath, "one orders read that both resolves the target and takes it as it stands, then a cold placement's own chain and the modify"),
 
         new(Core.Ops.Cancel, RiskReducingReadPath, "resolve the target, then cancel — both inside the one budget"),
         new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
@@ -277,12 +277,18 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     TimeSpan ReadPath => 2 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
-    /// `modify`: the account, the orders read that resolves the target reference, the account again
-    /// for the record, and the modification. Four in series on an installation with no account
-    /// selected, two on a configured one — and never the five a cold placement issues, which is why
-    /// this is its own row rather than sharing the placement's.
+    /// `modify`: ONE orders read — which both resolves the target reference and takes the target as
+    /// it stands — and then every call a cold placement makes, the account, positions, the quote and
+    /// the instruments, before the modification itself. Six in series.
+    ///
+    /// It was four, from the days when a modification went to the wire on an authorization and
+    /// nothing else. `TradingGateway.ModifyAsync` now risk-checks the order as it WILL STAND, which
+    /// is the same arithmetic on the same numbers a placement is checked against (REVIEW 2026-09-05,
+    /// Codex F2), so it issues a placement's chain on top of its own read. A row that is short is a
+    /// shutdown drain that abandons a modification mid-flight, so it grows with the handler — and
+    /// this is now the longest row in the table, which is why the drain moved with it.
     /// </summary>
-    TimeSpan ModifyHandlerPath => 4 * gateway.Connector.WorstCaseOperationPath;
+    TimeSpan ModifyHandlerPath => 6 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
     /// The worst an ORDINARY handler can cost: every call in its chain paying the full per-call

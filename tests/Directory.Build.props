@@ -12,5 +12,6 @@
   <ItemGroup>
     <Compile Include="../Shared/TestEnv.cs" Link="TestEnv.cs" />
     <Compile Include="../Shared/TestTime.cs" Link="TestTime.cs" />
+    <Compile Include="../Shared/RecordingConnector.cs" Link="RecordingConnector.cs" />
   </ItemGroup>
 </Project>

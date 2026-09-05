@@ -422,14 +422,20 @@ public class GatewayPipeBackpressureTests
         // than by abandoning an order at shutdown six months later.
         Assert.Equal(TimeSpan.FromSeconds(50), connector.WorstCaseOrderPath);
 
-        // FIVE of those in series, plus what the HANDLER costs on top of its connector calls, plus
-        // the settle: a handler is not one connector call (Codex F2), three was the wrong count for
-        // the longest one (Codex round-8 CHECK d) — a cold placement issues five — and a row is the
-        // connector chain rather than the handler (verifier round-11 L-2). This is the number an
-        // operator can experience at shutdown.
+        // FIVE of those in series is a cold PLACEMENT, plus what the HANDLER costs on top of its
+        // connector calls, plus the settle: a handler is not one connector call (Codex F2), three
+        // was the wrong count for the longest one (Codex round-8 CHECK d), and a row is the
+        // connector chain rather than the handler (verifier round-11 L-2).
         Assert.Equal(5, GatewayPipeServer.SerialConnectorCallsPerHandler);
         Assert.Equal(TimeSpan.FromSeconds(1), GatewayPipeServer.HandlerOverhead);
-        Assert.Equal(TimeSpan.FromSeconds(256), server.HandlerDrainTimeout);
+
+        // AND THE LONGEST ROW IS `modify`, WHICH IS SIX. It was four and the drain was 256 s, from
+        // the days when a modification went to the wire on an authorization and nothing else; it now
+        // risk-checks the order as it will stand, which is a placement's own chain (account,
+        // positions, quote, instruments) on top of the one orders read that resolves and describes
+        // its target (REVIEW 2026-09-05, Codex F2). 6 × 50 + 1 + 5. This is the number an operator
+        // can experience at shutdown, and it moved because the handler did.
+        Assert.Equal(TimeSpan.FromSeconds(306), server.HandlerDrainTimeout);
 
         // And the risk-reducing shape is covered too, rather than assumed smaller: at shipped values
         // it is 2 s of emergency budget plus one ordinary Place, which the 255 above already exceeds.

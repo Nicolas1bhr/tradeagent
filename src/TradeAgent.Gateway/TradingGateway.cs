@@ -637,14 +637,12 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.MODE_ACCOUNT_MISMATCH,
                 $"account {account.Id} is not a simulation account and the mode is PAPER");
 
-        lock (_recentDispatches)
-        {
-            var cutoff = Now - TimeSpan.FromMinutes(1);
-            _recentDispatches.RemoveAll(d => d < cutoff);
-            if (_recentDispatches.Count >= r.MaxOrdersPerMinute)
-                throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
-                    $"{r.MaxOrdersPerMinute} orders per minute is the limit");
-        }
+        // The rate limit's EARLY refusal, so a request over the limit is turned away before it costs
+        // a position read and a quote. It is advisory: what actually bounds the minute is the
+        // reservation taken at the wire (see ReserveDispatchOrThrow), because everything below this
+        // line is an awaited read and a check whose count is read here and spent there admits every
+        // caller that passed while the others were reading.
+        RateLimitOrThrow(r.MaxOrdersPerMinute);
 
         var positions = await Connector.GetPositionsAsync(account.Id, ct);
         var open = positions.Count(p => p.Quantity != 0);
@@ -671,6 +669,83 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                     $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
         }
+    }
+
+    void RateLimitOrThrow(int limit)
+    {
+        lock (_recentDispatches)
+        {
+            _recentDispatches.RemoveAll(d => d < Now - TimeSpan.FromMinutes(1));
+            if (_recentDispatches.Count >= limit)
+                throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{limit} orders per minute is the limit");
+        }
+    }
+
+    /// <summary>
+    /// A PLACE IN THE MINUTE'S BUDGET, TAKEN AT THE WIRE AND GIVEN BACK IF NOTHING IS SENT.
+    ///
+    /// The limit used to be a COUNT READ in <see cref="RiskCheckOrThrow"/> and an unrelated add in
+    /// the dispatcher, with two awaited connector reads in between. N callers arriving together all
+    /// read the same count, all passed it, and all then added — so `MaxOrdersPerMinute = 1` admitted
+    /// as many orders as there were callers (REVIEW 2026-09-05, Codex F4). Check-and-take is now ONE
+    /// step under ONE lock, which is the difference between a limit and a hint.
+    ///
+    /// It is taken BEFORE the write-ahead and committed at the wire, so a dispatch refused in
+    /// between — by the authorization re-check, or by a store that will not take the record — gives
+    /// its place back rather than spending a minute's worth of budget on an order nobody placed.
+    /// </summary>
+    DispatchSlot ReserveDispatchOrThrow()
+    {
+        var limit = Settings.Risk.MaxOrdersPerMinute;
+        lock (_recentDispatches)
+        {
+            var at = Now;
+            _recentDispatches.RemoveAll(d => d < at - TimeSpan.FromMinutes(1));
+            if (_recentDispatches.Count >= limit)
+                throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED, $"{limit} orders per minute is the limit");
+            _recentDispatches.Add(at);
+            return new DispatchSlot(this, at);
+        }
+    }
+
+    /// <summary>One taken place in the minute's budget. Disposing it without <see cref="Commit"/> returns it.</summary>
+    sealed class DispatchSlot(TradingGateway gw, DateTimeOffset at) : IDisposable
+    {
+        bool _spent;
+
+        /// <summary>The wire is about to be touched: the place is spent whatever happens next.</summary>
+        public void Commit() => _spent = true;
+
+        public void Dispose()
+        {
+            if (_spent) return;
+            lock (gw._recentDispatches) gw._recentDispatches.Remove(at);
+        }
+    }
+
+    /// <summary>
+    /// EVERY GATE, AGAIN, AT THE MOMENT OF DISPATCH — after the awaited reads and immediately before
+    /// the wire.
+    ///
+    /// <see cref="AuthorizeOrThrow"/> at the top of a mutating method is a verdict about a moment
+    /// that has passed by the time anything is sent: <c>PlaceAsync</c> authorized once and then made
+    /// four connector reads, so Stop AI trading pressed inside that window did not stop the order it
+    /// was pressed to stop — measured, at shipped ATAS deadlines a 200-second window (REVIEW
+    /// 2026-09-05 finding 6, probe P3; Codex F4). The same window swallows switching real-money
+    /// trading back off, and an install that started while the reads were in flight.
+    ///
+    /// THE MODE IS CHECKED AGAINST THE RECORD RATHER THAN AGAINST A LIST. Re-running the authorize
+    /// alone would miss the direction that matters most: a placement authorized in PAPER, with the
+    /// mode moved to LIVE_CONFIRM while it read, is a record built as CREATED — already past the
+    /// question of whether a person should see it — and it would dispatch unapproved. A record
+    /// carries the mode it was decided under, and only that mode may send it.
+    /// </summary>
+    void ReauthorizeAtDispatchOrThrow(AgentContext ctx, ExecutionRequest stored)
+    {
+        AuthorizeOrThrow(ctx);
+        if (Settings.Mode != stored.Mode)
+            throw new GatewayDeniedException(ErrorCode.MODE_FORBIDS_EXECUTION,
+                $"mode is now {Settings.Mode}; this request was authorized under {stored.Mode} and is not sent");
     }
 
     // ---------------------------------------------------------------- mutations
@@ -729,7 +804,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.APPROVAL_REQUIRED, $"request {requestId} is waiting for your approval");
             }
 
-            return await DispatchPlaceAsync(stored, intent, ct);
+            return await DispatchPlaceAsync(ctx, stored, intent, ct);
         }
         finally { _dispatchGate.Release(); }
     }
@@ -1025,15 +1100,20 @@ public sealed class TradingGateway : IAsyncDisposable
         _                               => (ExecutionState.UNKNOWN, true)
     };
 
-    async Task<ExecutionRequest> DispatchPlaceAsync(ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
+    async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
+        // EVERY GATE IS EVALUATED HERE, at the last point where refusing still means nothing was
+        // sent. See ReauthorizeAtDispatchOrThrow and ReserveDispatchOrThrow: the first closes the
+        // window between the authorization and the wire, the second makes the minute's budget an
+        // atomic take rather than a count that several callers all read as free.
+        ReauthorizeAtDispatchOrThrow(ctx, stored);
+        using var slot = ReserveDispatchOrThrow();
+
         // Write-ahead: DISPATCHING is durable before the wire is touched, so a crash mid-flight is
         // recoverable as "we may have sent this" rather than lost entirely.
         var current = _opt.IdempotencyEnabled
             ? _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING)
             : stored;
-
-        lock (_recentDispatches) _recentDispatches.Add(Now);
 
         // THE INTENT TRAVELS ONTO THE COMMAND. A close is an offsetting placement, so the connector
         // cannot tell it from an opening order by anything on the wire — and it is the connector that
@@ -1055,6 +1135,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // DISPATCHING row on disk cannot say whether anyone is still flying it, and the reconciler
         // must not settle one that is.
         using var held = HoldDispatch(current.RequestId);
+        slot.Commit();
 
         // ONLY THE WIRE CALL IS INSIDE THE TRY, and that is deliberate. The catch below is a
         // catch-all, so anything left in here would be read as "we do not know what the broker did"
@@ -1142,8 +1223,21 @@ public sealed class TradingGateway : IAsyncDisposable
             var stored = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
             if (stored.State != ExecutionState.AWAITING_APPROVAL)
                 throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"request is {stored.State}, not awaiting approval");
-            var intent = Json.Read<PlaceIntent>(stored.ParametersJson)!;
-            var what = $"{intent.Side} {intent.Quantity} {intent.Symbol}";
+
+            // TWO KINDS OF REQUEST PARK, AND EACH IS DISPATCHED AS ITSELF. A placement carries a
+            // PlaceIntent; a modification carries the target and the values it asked for, in exactly
+            // the shape the reconciler reads back (TargetRef). Reading a modification as a placement
+            // would hand DispatchPlaceAsync a symbol-less intent and turn an approved change into a
+            // new order, so the shape is chosen by the record's own intent and nothing else may park.
+            if (stored.Intent is not (RequestIntent.PLACE or RequestIntent.MODIFY))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"a {stored.Intent} request is not something that waits for approval");
+
+            var intent = stored.Intent == RequestIntent.PLACE ? Json.Read<PlaceIntent>(stored.ParametersJson)! : null;
+            var change = stored.Intent == RequestIntent.MODIFY ? Json.Read<TargetRef>(stored.ParametersJson)! : null;
+            var what = intent is not null
+                ? $"{intent.Side} {intent.Quantity} {intent.Symbol}"
+                : $"the change to order {change!.Order}";
 
             // AGE IS BOUNDED AT BOTH ENDS, AND BOTH BOUNDS FAIL CLOSED.
             //
@@ -1175,6 +1269,16 @@ public sealed class TradingGateway : IAsyncDisposable
                     : $"this order waited {age.TotalMinutes:0} minutes for approval and the limit is {minutes}; it has been declined, and the AI has to propose it again");
             }
 
+            // Authorized as the AI, never as the operator. A parked record always carries the
+            // agent's own session (operator orders are never parked); "agent" stands in if not.
+            var proposer = new AgentContext(stored.AgentSessionId ?? "agent");
+            if (proposer.IsOperator) proposer = new AgentContext("agent");
+
+            // The target as the platform holds it at the moment of the PRESS, read inside the gates
+            // below and carried out of them so the dispatcher judges the answer against the same
+            // reading the risk check used.
+            OrderInfo? before = null;
+
             try
             {
                 // The mode it was proposed under is the only mode it may be approved in. PAPER would
@@ -1184,10 +1288,6 @@ public sealed class TradingGateway : IAsyncDisposable
                     throw new GatewayDeniedException(ErrorCode.MODE_FORBIDS_EXECUTION,
                         $"mode is now {Settings.Mode}; this order was proposed under {stored.Mode} and can only be approved in LIVE_CONFIRM");
 
-                // Authorized as the AI, never as the operator. A parked record always carries the
-                // agent's own session (operator orders are never parked); "agent" stands in if not.
-                var proposer = new AgentContext(stored.AgentSessionId ?? "agent");
-                if (proposer.IsOperator) proposer = new AgentContext("agent");
                 AuthorizeOrThrow(proposer);
 
                 // A RECORD NAMES A PLATFORM AND AN ACCOUNT, AND ONLY THE PAIR SAYS WHERE THE ORDER GOES.
@@ -1209,7 +1309,14 @@ public sealed class TradingGateway : IAsyncDisposable
                     throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND,
                         $"this order was proposed for account {stored.AccountId}, but {account.Id} is now the chosen account");
 
-                await RiskCheckOrThrow(intent, account, ct);
+                // A MODIFICATION IS RE-READ AND RE-JUDGED AGAINST THE BOOK AS IT IS NOW. The target
+                // moved, filled or was cancelled while this waited, and the resulting size the
+                // limits are applied to is the size the order has NOW — not the one it had when the
+                // AI asked. ResultingOrderOrThrow refuses when the target cannot be read at all.
+                before = change is null ? null : await TargetBeforeAsync(account.Id, change.Order!, ct);
+                await RiskCheckOrThrow(intent
+                    ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice),
+                    account, ct);
             }
             catch (GatewayDeniedException ex)
             {
@@ -1220,7 +1327,10 @@ public sealed class TradingGateway : IAsyncDisposable
             }
 
             _log.Activity($"You approved {what}");
-            return await DispatchPlaceAsync(stored, intent, ct);
+            return intent is not null
+                ? await DispatchPlaceAsync(proposer, stored, intent, ct)
+                : await DispatchModifyAsync(proposer, stored, change!.Order!, change.Quantity,
+                    change.LimitPrice, change.StopPrice, before, ct);
         }
         finally { _dispatchGate.Release(); }
     }
@@ -1260,6 +1370,12 @@ public sealed class TradingGateway : IAsyncDisposable
         var (created, stored) = _requests.TryCreate(record);
         if (!created && _opt.IdempotencyEnabled) return stored;
 
+        // The same re-check the place and modify paths make, for the same reason: the target
+        // resolution above is an awaited read, and authority granted before it is not authority now.
+        // A cancel is risk-reducing, so nothing here can refuse it for a LIMIT — ReauthorizeAtDispatch
+        // asks only about authority and the mode the record was written under.
+        ReauthorizeAtDispatchOrThrow(ctx, stored);
+
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
 
         // The dispatcher's own attempt mark — see DispatchPlaceAsync for why it is not the
@@ -1297,22 +1413,43 @@ public sealed class TradingGateway : IAsyncDisposable
         return cancelled;
     }
 
+    /// <summary>
+    /// A MODIFICATION IS A MUTATING VERB AND IT PASSES THE SAME GATES AS A PLACEMENT.
+    ///
+    /// It called <see cref="AuthorizeOrThrow"/> and then went to the wire, which is the kill switch,
+    /// the mode and the unconfirmed-work pause and NOTHING ELSE: no <see cref="RiskCheckOrThrow"/>,
+    /// so the quantity cap, the notional cap, the open-position limit, the instrument allowlist and
+    /// the rate limit did not apply to it — and no parking, so in LIVE_CONFIRM a change no person
+    /// had seen went straight to the broker (REVIEW 2026-09-05, Codex F2; measured over the pipe as
+    /// a working quantity-1 order grown to 1000 against a cap of 1).
+    ///
+    /// A working order is a live claim on the account, so raising its quantity is the same act as
+    /// placing an order of the new size, arrived at by a different verb. It is therefore risk-checked
+    /// ON THE ORDER AS IT WILL STAND — see <see cref="ResultingOrderOrThrow"/> — and parked for a
+    /// person in LIVE_CONFIRM exactly as a placement is. What sends a parked one is
+    /// <see cref="ApproveAsync"/>, which re-reads the target and re-runs every gate at the moment of
+    /// the press rather than trusting the verdict this method reached.
+    /// </summary>
     public async Task<ExecutionRequest> ModifyAsync(AgentContext ctx, string requestId, string orderRef,
         decimal? quantity, decimal? limitPrice, decimal? stopPrice, CancellationToken ct = default)
     {
         AuthorizeOrThrow(ctx);
         if (!Connector.Capabilities.SupportsModify)
             throw new GatewayDeniedException(ErrorCode.TRADING_PERMISSION_UNAVAILABLE, $"{Connector.DisplayName} cannot modify orders");
-        var target = await ResolveConnectorOrderId(orderRef, ct);
         var accountId = await RequireAccountId(ct);
 
         // THE TARGET AS IT STANDS BEFORE THE CHANGE, and it is written down rather than only used
         // here, because the reconciler judges the same modification later from the record alone. It
         // is what makes "the platform handed back the price it already had" distinguishable from
         // "the platform applied the change": a returned price is only evidence of a change if it is
-        // not the price that was there before. Best effort — a book we cannot read leaves it null,
-        // and the verdict below then simply has one fewer thing to check.
-        var before = await TargetBeforeAsync(accountId, target, ct);
+        // not the price that was there before.
+        //
+        // It is ALSO the basis of the risk check below, and that is why it is no longer best effort:
+        // a change's effect on exposure is a statement about the order it is aimed at, and there is
+        // no honest one to make without it.
+        var (target, before) = await ResolveModifyTargetAsync(orderRef, accountId, ct);
+        var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");
+        await RiskCheckOrThrow(ResultingOrderOrThrow(target, before, quantity, limitPrice, stopPrice), account, ct);
 
         var record = new ExecutionRequest
         {
@@ -1325,16 +1462,104 @@ public sealed class TradingGateway : IAsyncDisposable
                 wasLimit = before?.LimitPrice, wasStop = before?.StopPrice
             }),
             ClientOrderId = ClientOrderIdFor(requestId), CreatedAt = Now,
-            State = ExecutionState.CREATED, Mode = Settings.Mode
+            State = Settings.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
+                ? ExecutionState.AWAITING_APPROVAL : ExecutionState.CREATED,
+            Mode = Settings.Mode
         };
         var (created, stored) = _requests.TryCreate(record);
-        if (!created && _opt.IdempotencyEnabled) return stored;
+        if (!created && _opt.IdempotencyEnabled)
+        {
+            // The place path answers a repeat of a parked id with APPROVAL_REQUIRED rather than the
+            // row, so that an agent polling its own request is told what is holding it up instead of
+            // reading AWAITING_APPROVAL as an outcome. A parked modification is the same situation.
+            if (stored.State == ExecutionState.AWAITING_APPROVAL)
+                throw new GatewayDeniedException(ErrorCode.APPROVAL_REQUIRED, $"request {requestId} is still waiting for your approval");
+            return stored;
+        }
+
+        if (stored.State == ExecutionState.AWAITING_APPROVAL)
+        {
+            _log.Activity($"AI is asking permission to change order {target}");
+            throw new GatewayDeniedException(ErrorCode.APPROVAL_REQUIRED, $"request {requestId} is waiting for your approval");
+        }
+
+        return await DispatchModifyAsync(ctx, stored, target, quantity, limitPrice, stopPrice, before, ct);
+    }
+
+    /// <summary>
+    /// THE ORDER AS IT WILL STAND IF THE PLATFORM APPLIES THE CHANGE — what a modification has to be
+    /// risk-checked against, since every limit the owner set is a statement about an order rather
+    /// than about a delta. A field the change does not name keeps the value the order already has.
+    ///
+    /// IT FAILS CLOSED WHEN THE TARGET CANNOT BE READ. The resulting size of a price-only change is
+    /// the size the order already has, and the instrument every limit is applied per is the one the
+    /// order is on; guessing either is how a cap becomes decorative. Reading the book is still best
+    /// effort for the VERDICT — <see cref="CheckModification"/> simply has one fewer thing to check
+    /// without it — but it cannot be best effort for the CHECK.
+    ///
+    /// The time in force is not carried on <see cref="OrderInfo"/> and no limit reads it, so the
+    /// resulting order is described with the default rather than with a guess at the target's.
+    /// </summary>
+    /// <summary>
+    /// THE TARGET'S BROKER ID AND THE TARGET ITSELF, FROM ONE READING OF THE BOOK.
+    ///
+    /// <see cref="ResolveConnectorOrderId"/> and <see cref="TargetBeforeAsync"/> issue the same
+    /// `orders` RPC against the same account a moment apart, and a modification needs both. One read
+    /// is a whole connector deadline off the handler's chain — 50 s at shipped ATAS values, which is
+    /// a term in the shutdown drain — and it is also the more honest reading: a target resolved from
+    /// one snapshot and described from another can be two different orders.
+    ///
+    /// A reference the REQUEST STORE can name resolves without the book, as it always could; the
+    /// book is still read, because the risk check needs the order and not just its id, and a read
+    /// that fails leaves the change unjudgeable rather than unresolvable — which is a refusal in the
+    /// owner's words (<see cref="ResultingOrderOrThrow"/>) instead of a connector error.
+    /// </summary>
+    async Task<(string Target, OrderInfo? Before)> ResolveModifyTargetAsync(string reference, string accountId, CancellationToken ct)
+    {
+        var known = _requests.Get(reference)?.ConnectorOrderId;
+        IReadOnlyList<OrderInfo> book;
+        try { book = await Connector.GetOrdersAsync(accountId, true, null, ct); }
+        catch (Exception) when (known is not null) { return (known, null); }
+
+        var hit = book.FirstOrDefault(o =>
+            string.Equals(o.ConnectorOrderId, known ?? reference, StringComparison.Ordinal) ||
+            string.Equals(o.ClientOrderId, reference, StringComparison.Ordinal));
+
+        return (hit?.ConnectorOrderId ?? known
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"no order matches '{reference}'"), hit);
+    }
+
+    PlaceIntent ResultingOrderOrThrow(string target, OrderInfo? before, decimal? quantity, decimal? limitPrice, decimal? stopPrice)
+    {
+        if (before is null)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"order {target} could not be read back from the platform, so what this change would do " +
+                "to your exposure cannot be checked against your limits");
+
+        return new PlaceIntent(before.Symbol, before.Side, before.Type,
+            quantity ?? before.Quantity, limitPrice ?? before.LimitPrice, stopPrice ?? before.StopPrice,
+            TimeInForce.Day, "modify");
+    }
+
+    async Task<ExecutionRequest> DispatchModifyAsync(AgentContext ctx, ExecutionRequest stored, string target,
+        decimal? quantity, decimal? limitPrice, decimal? stopPrice, OrderInfo? before, CancellationToken ct)
+    {
+        var accountId = stored.AccountId;
+
+        // THE GATES ARE DECIDED HERE, not where the request came in. Everything above this line is
+        // an awaited read, and the kill switch, the mode and the live-activation switch are all
+        // things the person at the keyboard can change while one is in flight (REVIEW 2026-09-05
+        // finding 6 / Codex F4). This is the last point at which refusing still means nothing was
+        // sent.
+        ReauthorizeAtDispatchOrThrow(ctx, stored);
+        using var slot = ReserveDispatchOrThrow();
 
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
         var command = new ModifyOrderCommand(target, quantity, limitPrice, stopPrice);
         OrderInfo o;
         using var dispatch = TransportLedger.MarkDispatch();
         using var held = HoldDispatch(current.RequestId);
+        slot.Commit();
         try
         {
             o = await Connector.ModifyOrderAsync(command, ct);
