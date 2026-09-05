@@ -658,7 +658,7 @@ sealed class SafetyPage
 {
     readonly AppHost _host;
 
-    readonly StackPanel _modeRow;
+    readonly Panel _modeRow;
     readonly TextBlock _modeNote = Ui.Muted("");
     readonly TextBlock _liveNote = Ui.Body("");
     readonly Button _liveButton;
@@ -669,6 +669,7 @@ sealed class SafetyPage
     readonly Border _unreadableCard;
 
     public Control Root { get; }
+
 
     /// <summary>
     /// Runs one press of an emergency control. ONE SHOT, AND THE OWNER IS TOLD WHAT IT DID.
@@ -714,9 +715,19 @@ sealed class SafetyPage
     /// it, from a button sitting beside two that already asked twice (REVIEW 2026-09-05b finding 3,
     /// probe P1). Watch only and Practice stay one press: they only ever reduce.
     /// </summary>
-    internal static StackPanel BuildModeRow(Action<TradingMode> setMode)
+    internal static Panel BuildModeRow(Action<TradingMode> setMode)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+        // A ROW THAT WRAPS, NOT A HORIZONTAL STACK. An armed real-money button carries a whole
+        // sentence — "Confirm: let the AI place real orders without asking" — three times the width
+        // of the label it replaces. In a StackPanel the row ran past its card and the sentence was
+        // clipped mid-word on the running app ("Confirm: let the AI place real or"), so the one
+        // control whose entire purpose is to say what the second press does could not be read.
+        var row = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = Theme.S2,
+            LineSpacing = Theme.S2
+        };
         foreach (var mode in Enum.GetValues<TradingMode>())
         {
             var m = mode;
@@ -733,7 +744,15 @@ sealed class SafetyPage
     internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume)
     {
         var b = Ui.KillSwitch("emergency", stopped, stop, resume);
-        Ui.Repaints(b, (btn, armed) => btn.Background = armed || !stopped() ? Theme.Danger : Theme.Positive);
+        Ui.Repaints(b, (btn, armed) =>
+        {
+            // THE FOREGROUND IS PART OF THE REPAINT, NOT JUST THE FILL. Arming swaps the control to
+            // the "danger" class, whose foreground is red — and this button's fill is red too, so
+            // the armed sentence was painted red on red and the half-pressed RESUME read as a blank
+            // red block on the running app. The emergency variant keeps its own look while armed.
+            btn.Background = armed || !stopped() ? Theme.Danger : Theme.Positive;
+            btn.Foreground = Theme.TextOnEmergency;
+        });
         return b;
     }
 

@@ -26,7 +26,7 @@ public class TwoPressGrantTests
 {
     static void Press(Button b) => b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
-    static Button ModeButton(StackPanel row, TradingMode m) =>
+    static Button ModeButton(Panel row, TradingMode m) =>
         (Button)row.Children[Array.IndexOf(Enum.GetValues<TradingMode>(), m)];
 
     // ---- 1. the mode row -------------------------------------------------------------------------
@@ -266,7 +266,50 @@ public class TwoPressGrantTests
         Assert.Empty(RiskPolicy.Widenings(Policy(positions: 2), Policy(positions: 0)));
     }
 
-    // ---- 4. the composition ----------------------------------------------------------------------
+    // ---- 4. what the armed control looks like, which the running app settled ----------------------
+
+    /// <summary>
+    /// THE ARMED SENTENCE HAS TO FIT ON THE SCREEN. A horizontal <c>StackPanel</c> gave the row a
+    /// width it could not have: an armed real-money button carries a whole sentence, three times
+    /// the width of the label it replaces, and on the running app the row ran past its card and the
+    /// sentence was cut off mid-word — "Confirm: let the AI place real or". A control whose only
+    /// job is to say what the second press does had become unreadable at exactly the moment it
+    /// mattered. A wrapping row gives it its own line instead; the resting row still fits on one.
+    /// This asserts the panel, because measuring text needs a running app — the screenshot is in
+    /// the unit's report.
+    /// </summary>
+    [Fact]
+    public void The_mode_row_wraps_so_an_armed_sentence_is_not_clipped()
+    {
+        var row = SafetyPage.BuildModeRow(_ => { });
+
+        Assert.IsType<WrapPanel>(row);
+        Assert.Equal(Enum.GetValues<TradingMode>().Length, row.Children.Count);
+    }
+
+    /// <summary>
+    /// THE EMERGENCY CONTROL PAINTS ITS OWN TEXT WHILE ARMED. Arming swaps a two-step button to the
+    /// "danger" class, whose foreground is red — and this button's fill is red, so the armed
+    /// sentence was painted red on red and the half-pressed RESUME was a blank red block on the
+    /// running app. The fill and the text are both local values here, and a local value beats a
+    /// style, so the repaint has to set both or neither.
+    /// </summary>
+    [Fact]
+    public void The_armed_emergency_kill_switch_paints_text_that_is_not_its_own_fill()
+    {
+        var b = SafetyPage.BuildKillSwitch(() => true, () => { }, () => { });
+        Ui.SetResting(b, Labels.ResumeAiTrading, "emergency");
+
+        Press(b);
+
+        Assert.True(Ui.IsArmed(b));
+        Assert.Equal(Labels.ResumeAiTradingArmed, b.Content);
+        Assert.Equal(Theme.Danger, b.Background);
+        Assert.Equal(Theme.TextOnEmergency, b.Foreground);
+        Assert.NotEqual(b.Background, b.Foreground);
+    }
+
+    // ---- 5. the composition ----------------------------------------------------------------------
 
     /// <summary>
     /// What ties the controls above to the screens that show them. Everything the factories DO is

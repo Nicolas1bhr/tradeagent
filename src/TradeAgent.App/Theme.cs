@@ -51,6 +51,14 @@ static class Theme
     public static readonly IBrush TextFaint = B("#6A7382");
     public static readonly IBrush TextOnAccent = B("#0B0E13");
 
+    /// <summary>
+    /// Text on the one saturated fill in the app — the emergency control. Named here rather than
+    /// written at the widget because the control is repainted from code while it is half-pressed,
+    /// and the two places that paint it have to agree: arming swaps the button to the "danger"
+    /// class, whose foreground is red, over a fill that is also red.
+    /// </summary>
+    public static readonly IBrush TextOnEmergency = Brushes.White;
+
     // ---- accent: indigo, the one colour with no money meaning ------------------------------
     public static readonly IBrush Accent = B("#7C8CF8");
     public static readonly IBrush AccentHover = B("#93A1FF");
@@ -162,7 +170,7 @@ static class Theme
                 S(TemplatedControl.FontWeightProperty, FontWeight.Bold),
                 S(TemplatedControl.PaddingProperty, new Thickness(S4, 15)),
                 S(TemplatedControl.CornerRadiusProperty, Radius),
-                S(TemplatedControl.ForegroundProperty, Brushes.White),
+                S(TemplatedControl.ForegroundProperty, TextOnEmergency),
                 S(TemplatedControl.BorderThicknessProperty, new Thickness(0))
             }
         });
