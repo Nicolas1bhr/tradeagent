@@ -22,8 +22,9 @@ executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into 
 section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher
 owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's own `WireTouched()` question on whichever
 gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown mode fails closed, gates decided at dispatch,
-one atomic rate limit). Fix units still queued, in this order: `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
-`U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
+one atomic rate limit). Fix units still queued, in this order: `U-press-atomic` (after U-gates), `U-settings-closed` (after U-press-atomic), `U-press-budget`
+(after U-press-atomic: an ubuntu-only "the press took 3.4s against a 2s emergency budget", once), `U-pipe-hello`
+(building), `U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
 decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
 in `atas.json` and fail closed when the vendor changes the file, or accept TLS as the whole integrity story and say
