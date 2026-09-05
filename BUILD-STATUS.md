@@ -3185,6 +3185,6 @@ a leg the connector PROVED it never sent" → GREEN, mutant (`is ReplyReceived`)
 "PossiblyWritten" / Actual null` → GREEN, mutant (drop `existing.Attempt()`) → RED. Builder's gate at `b53b29a`,
 Release: 0 warnings, 17 projects; Unit 201 + Fault 188 + Integration 530 = 919, 0 failed; names 1 removed (a rename:
 `…even_though_its_record_is_unknown` → `…and_leaves_nothing_to_reconcile`), 7 added. Manager's gate at `8591de8`, Release:
-build → 0 warnings, 0 errors; suite → 201 + 188 + 530 = 919, 0 failed; names vs `main` → 1 removed (the rename above), 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the milestone review.
+build → 0 warnings, 0 errors; suite → 201 + 188 + 530 = 919, 0 failed; names vs `main` → 1 removed (the rename above), 7 added; scan clean; CI run 33939362147 at `9d0d94b`: ubuntu, macos and windows all SUCCESS (919), `package` SUCCESS.
 
 **NOT VERIFIED:** nothing on Windows, nothing against real ATAS, no UI run (Dashboard build-verified only).
