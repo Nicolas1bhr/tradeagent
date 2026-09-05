@@ -86,6 +86,9 @@ sealed class HangingConnector(FakeConnector inner) : ITradingConnector
     /// <summary>Completed the moment a placement is inside the connector call.</summary>
     public readonly TaskCompletionSource Reached = new();
 
+    /// <summary>Thrown instead of reaching the broker, once any hang is released.</summary>
+    public Exception? ThrowInsteadOfPlacing;
+
     public string Id => inner.Id;
     public string DisplayName => inner.DisplayName;
     public ConnectorCapabilities Capabilities => inner.Capabilities;
@@ -108,6 +111,7 @@ sealed class HangingConnector(FakeConnector inner) : ITradingConnector
     {
         Reached.TrySetResult();
         if (HangPlaceBeforeTheBroker is { } hang) await hang.Task;
+        if (ThrowInsteadOfPlacing is { } ex) throw ex;
         return await inner.PlaceOrderAsync(cmd, ct);
     }
 
@@ -252,6 +256,140 @@ public class StrandedBoundDerivationTests(ITestOutputHelper log)
         Assert.Equal(1, late.Resolved);
         Assert.Equal(ExecutionState.CANCELLED, settled.State);
         Assert.Contains("never reached", settled.LastError!);
+        await gw.DisposeAsync();
+    }
+}
+
+// =================================================================================================
+// Item 2 — a live dispatcher owns its record
+// =================================================================================================
+
+/// <summary>
+/// REVIEW 2026-09-05 UNVERIFIED 4. `ReconcileAsync` moved a stranded DISPATCHING row to UNKNOWN and
+/// on to RECONCILING while the handler flying it was still inside the connector call; the handler's
+/// later `Settle` then lost the CAS and was filed `already_settled`, discarding the broker's real
+/// answer. Both halves are here: the reconciler leaves a live dispatcher's row alone, and a definite
+/// answer that arrives after some OTHER party moved the row still wins.
+/// </summary>
+public class LiveDispatcherOwnsItsRowTests(ITestOutputHelper log)
+{
+    [Fact]
+    public async Task The_reconciler_leaves_a_row_alone_while_its_dispatcher_is_inside_the_call()
+    {
+        var (gw, c, db, clock) = await Stranded.Ready();
+        using var dbh = db;
+        var release = new TaskCompletionSource();
+        c.HangPlaceBeforeTheBroker = release;
+
+        var inFlight = gw.PlaceAsync(new AgentContext("a"), "owned-1", TestEnv.Buy());
+        await c.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Well past the bound: this IS unconfirmed work and trading is right to be paused. What it
+        // is not is a record anybody else may settle.
+        clock.Advance(TimeSpan.FromSeconds(120));
+        Assert.True(gw.HasUnconfirmedWork());
+
+        var result = await gw.ReconcileAsync();
+        var during = gw.GetRequest("owned-1")!;
+        var tradingResumed = gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _);
+        log.WriteLine($"reconcile              : resolved={result.Resolved} inconclusive={result.Inconclusive}");
+        log.WriteLine($"detail                 : {string.Join("; ", result.Details)}");
+        log.WriteLine($"record during          : {during.State}, needs_reconciliation={during.NeedsReconciliation}");
+        log.WriteLine($"trading resumed        : {tradingResumed}");
+
+        Assert.Equal(0, result.Resolved);
+        Assert.Equal(1, result.Inconclusive);
+        Assert.Equal(ExecutionState.DISPATCHING, during.State);
+        Assert.False(tradingResumed);
+
+        // ...and the broker's own answer is what the record ends up carrying.
+        release.SetResult();
+        var placed = await inFlight;
+        var final = gw.GetRequest("owned-1")!;
+        log.WriteLine($"orders at the broker   : {c.Inner.Broker.Orders.Count}");
+        log.WriteLine($"record now             : {final.State}, needs_reconciliation={final.NeedsReconciliation}");
+        Assert.Equal(ExecutionState.FILLED, placed.State);
+        Assert.Equal(ExecutionState.FILLED, final.State);
+        Assert.False(final.NeedsReconciliation);
+        Assert.DoesNotContain(Recovery.Engineering(db, "owned-1"), e => e.Event == "already_settled");
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The half the lease cannot cover: a SECOND gateway over the same store — the shape the app and
+    /// `GatewayHost` really are — sweeps the row at construction and reconciles it, because nothing
+    /// in that process knows a dispatcher is alive. The dispatcher's answer arrives afterwards, and
+    /// it is the broker's own word about this very request: it must land on the record rather than
+    /// be filed `already_settled`.
+    /// </summary>
+    [Fact]
+    public async Task A_definite_answer_wins_over_a_row_somebody_else_moved_to_reconciling()
+    {
+        var (gw, c, db, _) = await Stranded.Ready();
+        using var dbh = db;
+        var release = new TaskCompletionSource();
+        c.HangPlaceBeforeTheBroker = release;
+
+        var inFlight = gw.PlaceAsync(new AgentContext("a"), "raced-1", TestEnv.Buy());
+        await c.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(ExecutionState.DISPATCHING, gw.GetRequest("raced-1")!.State);
+
+        // The other process. Its own connector cannot prove order history, so its reconcile pass
+        // parks the row at RECONCILING instead of settling it — which is exactly the window in
+        // which the real answer used to be thrown away.
+        var other = new TradingGateway(db, new FakeConnector(c.Inner.Broker, new FaultProfile { HideOrderHistory = true }),
+            new HealthRegistry());
+        Assert.Equal(ExecutionState.UNKNOWN, gw.GetRequest("raced-1")!.State);      // its constructor swept the row
+        var swept = await other.ReconcileAsync();
+        log.WriteLine($"other gateway reconcile : resolved={swept.Resolved} inconclusive={swept.Inconclusive}");
+        log.WriteLine($"record after the sweep  : {gw.GetRequest("raced-1")!.State}");
+        Assert.Equal(ExecutionState.RECONCILING, gw.GetRequest("raced-1")!.State);
+
+        release.SetResult();
+        var placed = await inFlight;
+        var final = gw.GetRequest("raced-1")!;
+        var engineering = Recovery.Engineering(db, "raced-1").Select(e => e.Event).ToList();
+        log.WriteLine($"dispatch answered       : {placed.State}");
+        log.WriteLine($"record now              : {final.State}, needs_reconciliation={final.NeedsReconciliation}");
+        log.WriteLine($"engineering             : {string.Join(", ", engineering)}");
+
+        Assert.Equal(ExecutionState.FILLED, final.State);
+        Assert.False(final.NeedsReconciliation);
+        Assert.DoesNotContain("already_settled", engineering);
+        Assert.Contains("late_definite_settle", engineering);
+        await other.DisposeAsync();
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The other direction, so the lease cannot become a way to hold a row out of reconciliation for
+    /// ever: a dispatch that has FINISHED releases its claim, and the record it left behind is
+    /// settled on the ordinary rule — the grace from its own dispatch, because this process watched
+    /// the wire go quiet.
+    /// </summary>
+    [Fact]
+    public async Task A_dispatch_that_has_ended_no_longer_holds_its_row()
+    {
+        var (gw, c, db, clock) = await Stranded.Ready();
+        using var dbh = db;
+        c.ThrowInsteadOfPlacing = new ConnectorTransportException("the bridge went away mid-frame");
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "ended-1", TestEnv.Buy());
+        Assert.Equal(ExecutionState.UNKNOWN, placed.State);
+        Assert.True(placed.NeedsReconciliation);
+        Assert.Empty(c.Inner.Broker.Orders);
+
+        // The dispatcher is gone, so the grace runs from the dispatch itself and nothing has to wait
+        // out the whole stranded bound on top of it.
+        clock.Advance(new GatewayOptions().AbsenceGrace);
+        var result = await gw.ReconcileAsync();
+        var final = gw.GetRequest("ended-1")!;
+        log.WriteLine($"reconcile at grace : resolved={result.Resolved} inconclusive={result.Inconclusive}");
+        log.WriteLine($"record now         : {final.State}, last_error={final.LastError}");
+        Assert.Equal(1, result.Resolved);
+        Assert.Equal(ExecutionState.CANCELLED, final.State);
+        Assert.Contains("never reached", final.LastError!);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
         await gw.DisposeAsync();
     }
 }

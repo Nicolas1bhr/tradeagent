@@ -737,6 +737,23 @@ public sealed class TradingGateway : IAsyncDisposable
                 return actual;
             }
 
+            // A DEFINITE ANSWER FROM THE BROKER OUTRANKS A ROW SOMEBODY ELSE MOVED OUT OF DISPATCHING.
+            //
+            // `already_settled` is the right word for a race with the EVENT STREAM, which settles a
+            // record from the same broker and to the same effect. It is the wrong word — and it was
+            // the whole of REVIEW 2026-09-05 UNVERIFIED 4 — for a race with the RECONCILER, which
+            // moved the row to UNKNOWN and on to RECONCILING precisely because nobody had written an
+            // answer down yet. What arrives here is that answer: the broker's own word about this
+            // very request, carried by the handler that asked the question. Filing it and returning
+            // a row that says the opposite is how a FILLED order came to be recorded CANCELLED.
+            //
+            // UNKNOWN and RECONCILING are the only two states this may overrule, and both are states
+            // whose whole meaning is "we do not know". A TERMINAL row is left exactly as it is: the
+            // state table refuses to leave one, and something with an answer of its own already did.
+            if (actual.State is ExecutionState.UNKNOWN or ExecutionState.RECONCILING && IsDefinite(to)
+                && LateDefiniteSettle(requestId, actual.State, to, connectorOrderId, filled, error) is { } won)
+                return won;
+
             _log.Engineering("Gateway", "already_settled", requestId: requestId,
                 metadataJson: Json.Write(new { intended = to.ToString(), actual = actual.State.ToString() }));
             return actual;
@@ -762,6 +779,41 @@ public sealed class TradingGateway : IAsyncDisposable
             // outcome. The pause stands whether or not anyone catches this.
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"the outcome of {requestId} could not be written down ({persist.Message}); trading is paused");
+        }
+    }
+
+    /// <summary>
+    /// Lands a dispatch's definite answer on a row that had already been moved to UNKNOWN or
+    /// RECONCILING by somebody else — the reconciler in this process before the lease existed, or
+    /// one in another process over the same store, which is what the app and `GatewayHost` are.
+    ///
+    /// It walks the record the same way the reconciler would (UNKNOWN leaves only through
+    /// RECONCILING, and this does not widen that), clears the flag and marks the record reconciled,
+    /// because it IS reconciled: the answer came from the broker, about this request, by way of the
+    /// call that asked. Null means the row moved again underneath us, and the caller then files
+    /// `already_settled` as before — the row is being written by something with its own evidence and
+    /// the state table is the arbiter, not this method.
+    /// </summary>
+    ExecutionRequest? LateDefiniteSettle(string requestId, ExecutionState from, ExecutionState to,
+        string? connectorOrderId, decimal? filled, string? error)
+    {
+        try
+        {
+            if (from == ExecutionState.UNKNOWN)
+                _requests.Transition(requestId, ExecutionState.UNKNOWN, ExecutionState.RECONCILING);
+
+            var settled = _requests.Transition(requestId, ExecutionState.RECONCILING, to,
+                connectorOrderId: connectorOrderId, filled: filled, error: error,
+                needsReconciliation: false, markReconciled: true);
+
+            ClearLatch(requestId);
+            _log.Engineering("Gateway", "late_definite_settle", "warn", requestId: requestId,
+                metadataJson: Json.Write(new { from = from.ToString(), state = to.ToString() }));
+            return settled;
+        }
+        catch (TradeAgentException)
+        {
+            return null;
         }
     }
 
@@ -2098,6 +2150,31 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 inconclusive++;
                 details.Add($"{req.RequestId}: placed on {req.ConnectorId}; connected to {Connector.Id}");
+                continue;
+            }
+
+            // A LIVE DISPATCHER OWNS ITS ROW, AND THIS IS THE ONE FACT THE AGE COULD NOT SUPPLY.
+            //
+            // A DISPATCHING record on disk looks identical whether a handler is inside the connector
+            // call right now or died in it last week — it is written before the call and overwritten
+            // by the answer — so the reconciler judged it by age alone and, at the shipped deadlines,
+            // judged the whole 30..50 s window wrong. It moved the row to UNKNOWN and on to
+            // RECONCILING under a handler that was still waiting for the broker, wrote off the order
+            // as "never reached the broker", and the real answer was then filed `already_settled`
+            // (REVIEW 2026-09-05 finding 1 and UNVERIFIED 4).
+            //
+            // The lease is in memory, and that is what makes it safe rather than a hole: a claim
+            // that outlived the process holding it would be a claim nothing could ever release, so a
+            // genuinely abandoned record — a crash, a restart, an update — has no claim on it at the
+            // next start and reconciles at the bound like any other.
+            //
+            // It does NOT lift the pause. A dispatch that has outlived the bound is still unconfirmed
+            // work and trading stays refused over it; what it is not is a record anybody else may
+            // settle.
+            if (_dispatches.TryGetValue(req.RequestId, out var span) && span.Live)
+            {
+                inconclusive++;
+                details.Add($"{req.RequestId}: a dispatch is still in progress");
                 continue;
             }
 
