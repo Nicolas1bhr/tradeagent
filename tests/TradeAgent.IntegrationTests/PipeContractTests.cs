@@ -336,6 +336,105 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.Contains(value, reply.Error.Message);
     }
 
+    // ── 3. The frame cap counts bytes ──────────────────────────────────────────────────────────
+    // Finding 10, probe P9. `ReadFrame` compared `StringBuilder.Length` — UTF-16 CHARS after
+    // decoding — against `MaxFrameBytes`, so a frame of legal multi-byte JSON was accepted at 2.6x
+    // the stated cap and buffered whole in the server. `ReadFrame` runs BEFORE the hello check, so
+    // the peer that reaches it need not have authenticated at all.
+
+    /// <summary>
+    /// The frame the review measured, unauthenticated: 2,700,096 bytes against a cap the contract
+    /// states as 1 MiB. It is refused and the peer is dropped.
+    /// </summary>
+    [Fact]
+    public async Task A_frame_over_the_cap_in_bytes_is_refused_even_before_the_hello()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+
+        // Raw, because the point is the BYTES: Json.Write escapes non-ASCII to \uXXXX, which is what
+        // hid this. JSON strings may carry raw UTF-8 and the server decodes with a StreamReader, so
+        // each of these was 3 bytes in and 1 char out.
+        var padding = new string('中', 900_000);
+        var frame = "{\"v\":1,\"id\":\"p9frame\",\"op\":\"material-note\",\"session\":\"agent-1\","
+                  + "\"args\":{\"kind\":\"note\",\"text\":\"" + padding + "\"}}";
+        var bytes = Encoding.UTF8.GetByteCount(frame);
+        log.WriteLine($"frame bytes on the wire  : {bytes:N0}   (stated cap: {1 << 20:N0})");
+        log.WriteLine($"frame chars after decode : {frame.Length:N0}");
+        Assert.True(bytes > 2 * (1 << 20), $"the frame was only {bytes} bytes");
+
+        var reply = await raw.TrySendLine(frame);
+        log.WriteLine($"reply : {reply?[..Math.Min(160, reply?.Length ?? 0)] ?? "<the connection was dropped>"}");
+        Assert.Null(reply);                                 // dropped, as the backpressure rules drop a peer
+
+        // And DROPPED, not merely ignored: a perfectly good hello on the same connection is not
+        // answered either, because there is no longer a connection to answer it.
+        var after = await raw.TrySendLine($$"""{"v":1,"id":"after","op":"hello","token":"{{IpcToken.Peek()}}"}""");
+        log.WriteLine($"a valid hello afterwards : {after ?? "<no connection>"}");
+        Assert.Null(after);
+    }
+
+    /// <summary>
+    /// The boundary from the other side: a frame of the same shape that fits IN BYTES is still
+    /// served. A cap that counted bytes by refusing everything would pass the test above.
+    /// </summary>
+    [Fact]
+    public async Task A_multi_byte_frame_that_fits_the_cap_in_bytes_is_still_answered()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var pipe = NewPipe();
+        var token = IpcToken.Ensure();
+        await using var server = new GatewayPipeServer(gw, token, pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+        Assert.Contains("\"ok\":true", await raw.SendLine($$"""{"v":1,"id":"h","op":"hello","token":"{{token}}"}"""));
+
+        // Three bytes per character, sized so the WHOLE frame lands just under 1 MiB.
+        var padding = new string('中', 340_000);
+        var frame = "{\"v\":1,\"id\":\"fits\",\"op\":\"material-note\",\"session\":\"agent-1\","
+                  + "\"args\":{\"kind\":\"note\",\"text\":\"" + padding + "\"}}";
+        var bytes = Encoding.UTF8.GetByteCount(frame);
+        log.WriteLine($"frame bytes : {bytes:N0} of {1 << 20:N0}   chars : {frame.Length:N0}");
+        Assert.InRange(bytes, 1_000_000, 1 << 20);
+
+        var reply = await raw.TrySendLine(frame);
+        log.WriteLine($"reply : {reply?[..Math.Min(120, reply?.Length ?? 0)] ?? "<dropped>"}");
+        Assert.NotNull(reply);
+        Assert.Contains("\"ok\":true", reply);
+    }
+
+    /// <summary>
+    /// The cap is counted on the way IN, not after the fact: an ASCII frame past it is refused too,
+    /// so the rule is one rule and not a special case for wide characters.
+    /// </summary>
+    [Fact]
+    public async Task An_ascii_frame_over_the_cap_is_refused_the_same_way()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var pipe = NewPipe();
+        var token = IpcToken.Ensure();
+        await using var server = new GatewayPipeServer(gw, token, pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+        Assert.Contains("\"ok\":true", await raw.SendLine($$"""{"v":1,"id":"h","op":"hello","token":"{{token}}"}"""));
+
+        var frame = "{\"v\":1,\"id\":\"big\",\"op\":\"material-note\",\"session\":\"agent-1\","
+                  + "\"args\":{\"kind\":\"note\",\"text\":\"" + new string('x', 1 << 20) + "\"}}";
+        log.WriteLine($"frame bytes : {Encoding.UTF8.GetByteCount(frame):N0}");
+
+        Assert.Null(await raw.TrySendLine(frame));
+        Assert.Null(await raw.TrySendLine($$"""{"v":1,"id":"after","op":"hello","token":"{{token}}"}"""));
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>
@@ -403,11 +502,21 @@ public class PipeContractTests(ITestOutputHelper log)
 
         public async Task<IpcResponse> Send(IpcRequest req) => Json.Read<IpcResponse>(await SendLine(Json.Write(req)))!;
 
-        public async Task<string> SendLine(string frame)
+        public async Task<string> SendLine(string frame) =>
+            await TrySendLine(frame) ?? throw new IOException("the gateway closed the connection without answering");
+
+        /// <summary>Null means the gateway hung up rather than answering — which is a result, not a fault.</summary>
+        public async Task<string?> TrySendLine(string frame)
         {
-            await _w.WriteLineAsync(frame);
-            return await _r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30))
-                   ?? throw new IOException("the gateway closed the connection without answering");
+            try
+            {
+                await _w.WriteLineAsync(frame);
+                return await _r.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            {
+                return null;      // the handle went away mid-write: the peer was dropped
+            }
         }
 
         public async ValueTask DisposeAsync()

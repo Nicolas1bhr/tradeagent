@@ -120,7 +120,13 @@ are the same code with different data. Runtime-specific awkwardness stays inside
 
 ## Gateway IPC — `src/TradeAgent.Core/Protocol.cs`
 
-Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap.
+Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap **counted in bytes on the
+wire**. A frame past it is not answered: the peer is dropped, the way a peer that stops reading is,
+because finding the end of an unbounded frame in order to reply to it is the thing the cap forbids.
+The count was `StringBuilder.Length` — UTF-16 chars after decoding — until 2026-09-05, so a legal
+frame of CJK text was accepted at 2.6x the stated cap and held whole in the server: measured at
+2,700,096 bytes. It is the only bound on what a peer can make this server hold, and the read runs
+BEFORE the `hello` check, so the peer that spends it need not have authenticated (finding 10).
 
 ```jsonc
 // request

@@ -522,11 +522,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         try
         {
             await using var _ = pipe;
-            var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            var buffer = new FrameBuffer();
 
             while (!ct.IsCancellationRequested && pipe.IsConnected)
             {
-                var line = await ReadFrame(reader, ct);
+                var line = await ReadFrame(pipe, buffer, ct);
                 if (line is null) break;
                 if (line.Length == 0) continue;
 
@@ -633,19 +633,72 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         }
     }
 
-    static async Task<string?> ReadFrame(StreamReader reader, CancellationToken ct)
+    /// <summary>
+    /// One newline-delimited frame, with the cap counted IN BYTES ON THE WIRE.
+    ///
+    /// It used to read CHARACTERS through a <c>StreamReader</c> and compare
+    /// <c>StringBuilder.Length</c> — UTF-16 chars AFTER decoding — with <see cref="MaxFrameBytes"/>.
+    /// Every non-ASCII character in a legal JSON string is two or three bytes in and one char out,
+    /// so a frame of ordinary CJK text was accepted at 2.6x the cap the contract states: measured
+    /// at 2,700,096 bytes against 1,048,576, read whole into the server's memory and answered
+    /// (finding 10, probe P9). It is the one bound this server puts on what a peer may make it hold,
+    /// and <c>ReadFrame</c> runs BEFORE the hello check — so the peer that spends it need not have
+    /// authenticated, or hold a token at all.
+    ///
+    /// So the bytes are counted as bytes and decoded afterwards, which is the only way the number
+    /// can mean what it says. Counting UTF-8 lengths per decoded char would be a second encoder
+    /// alongside the real one, wrong for surrogate pairs and wrong again for invalid input the
+    /// decoder replaces; the wire is the authority on how many bytes arrived.
+    ///
+    /// Buffered, because the alternative is a syscall per byte. The buffer belongs to the caller —
+    /// one per connection — so a frame that spans reads keeps whatever the previous read had left
+    /// over, which a fresh local buffer would silently discard.
+    ///
+    /// Over the cap throws, which the connection handler treats as the peer going away: it is
+    /// dropped without a reply, exactly as a peer that stops reading is. Answering would mean
+    /// finding the end of a frame that is by definition unbounded first.
+    /// </summary>
+    static async Task<string?> ReadFrame(Stream stream, FrameBuffer buffer, CancellationToken ct)
     {
-        var sb = new StringBuilder();
-        var buf = new char[1];
+        using var frame = new MemoryStream(capacity: 512);
         while (true)
         {
-            var n = await reader.ReadAsync(buf.AsMemory(0, 1), ct);
-            if (n == 0) return sb.Length > 0 ? sb.ToString() : null;
-            if (buf[0] == '\n') return sb.ToString().TrimEnd('\r');
-            sb.Append(buf[0]);
-            if (sb.Length > MaxFrameBytes) throw new IOException("frame exceeds the maximum size");
+            if (!buffer.HasBytes)
+            {
+                buffer.Count = await stream.ReadAsync(buffer.Bytes, ct);
+                buffer.Position = 0;
+                if (buffer.Count == 0)
+                    return frame.Length > 0 ? Decode(frame) : null;      // the peer hung up mid-frame
+            }
+
+            var b = buffer.Bytes[buffer.Position++];
+            if (b == (byte)'\n') return Decode(frame);
+            frame.WriteByte(b);
+            if (frame.Length > MaxFrameBytes)
+                throw new IOException($"frame exceeds the maximum size of {MaxFrameBytes} bytes");
         }
+
+        static string Decode(MemoryStream m) =>
+            Utf8.GetString(m.GetBuffer(), 0, (int)m.Length).TrimEnd('\r');
     }
+
+    /// <summary>
+    /// The read buffer for ONE connection, and it is a class because the leftovers matter.
+    ///
+    /// A read off the pipe returns whatever has arrived, which is routinely more than one frame or
+    /// part of the next one. Holding that between calls is what makes the frames after the first
+    /// arrive at all.
+    /// </summary>
+    sealed class FrameBuffer
+    {
+        public readonly byte[] Bytes = new byte[PipeBuffer];
+        public int Count;
+        public int Position;
+        public bool HasBytes => Position < Count;
+    }
+
+    /// <summary>No BOM, and never throwing: a peer's malformed bytes are its own frame's problem.</summary>
+    static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>
     /// One reply to one peer, with a deadline on it. False means this connection is finished.
