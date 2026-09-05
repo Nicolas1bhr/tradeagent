@@ -4120,4 +4120,75 @@ public class CoidWitnessTests : IDisposable
         Assert.Equal(ClientOrderIdProof.SameRef, ClientOrderIdProofs.Observed(adapterTouched: true));
         Assert.Equal(ClientOrderIdProof.Distinct, ClientOrderIdProofs.Observed(adapterTouched: false));
     }
+
+    /// <summary>
+    /// FINDING 9 (Codex F9). THE CLAIM REACHES THE DEVICE BEFORE <c>Submitting</c> SAYS IT HAS.
+    ///
+    /// The whole evidential value of this file is an ORDER: the claim "this product is about to
+    /// submit this identifier" is durable before the order is on the wire, so it cannot be a story
+    /// composed afterwards to fit an order somebody found in ATAS's book. <c>Save</c> built the
+    /// rewrite with <c>File.WriteAllText</c> and renamed it. That rename is atomic for a READER and
+    /// says nothing about the platter, and <c>WriteAllText</c> returns as soon as the bytes are in
+    /// the page cache — so a machine that lost power in that window came back with an order at the
+    /// broker and no record of the claim, while <c>Submitting</c> had already answered true. The
+    /// sidecar carrying a rotation was flushed; the record itself was not.
+    ///
+    /// AN FSYNC HAS NO OBSERVATION POINT, so what is asserted is the order, which is the part that
+    /// can be wrong. A <c>SIGKILL</c> does not lose the page cache and a developer machine cannot be
+    /// power-cut from inside a test; the seam records every act at the device boundary instead, and
+    /// the sequence has to be: the bytes, then the flush to disk, then the rename, then true.
+    ///
+    /// The stream is a real <see cref="FileStream"/> subclass over the real temp file, so the write
+    /// and the rename that follows it are the real ones — only the recording is added.
+    /// </summary>
+    [Fact]
+    public void The_write_ahead_record_is_flushed_to_the_device_before_the_rename()
+    {
+        var acts = new List<string>();
+        var witness = new CoidWitness(File_,
+            replace: (tmp, destination) =>
+            {
+                acts.Add("rename");
+                System.IO.File.Move(tmp, destination, overwrite: true);
+            },
+            openTemp: path => new RecordingFileStream(path, acts));
+
+        var submitted = witness.Submitting("TA-DURABLE-1", "SIM", "ES", "Buy", 1m, null);
+        acts.Add(submitted ? "Submitting returned true" : "Submitting returned false");
+
+        Assert.Equal(
+            new[] { "write", "flush(flushToDisk:true)", "rename", "Submitting returned true" },
+            acts);
+
+        // And the claim really is in the file the rename published — the recording must not have
+        // replaced the write with an observation of one.
+        Assert.Contains("TA-DURABLE-1", new CoidWitness(File_).All().Select(r => r.ClientOrderId));
+    }
+
+    /// <summary>
+    /// A real file stream that says what it was asked to do at the device boundary.
+    /// <c>Flush(bool)</c> is virtual on <see cref="FileStream"/>, which is what makes the fsync
+    /// itself — as opposed to a plain flush to the operating system — observable at all.
+    /// </summary>
+    sealed class RecordingFileStream(string path, List<string> acts)
+        : FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read)
+    {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            acts.Add("write");
+            base.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            acts.Add("write");
+            base.Write(buffer);
+        }
+
+        public override void Flush(bool flushToDisk)
+        {
+            acts.Add($"flush(flushToDisk:{(flushToDisk ? "true" : "false")})");
+            base.Flush(flushToDisk);
+        }
+    }
 }

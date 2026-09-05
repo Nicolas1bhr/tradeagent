@@ -305,6 +305,32 @@ public sealed class CoidWitness : IDisposable
     readonly Func<string, Stream> _open;
 
     /// <summary>
+    /// THE STEP THAT DECIDES WHETHER THE WRITE-AHEAD RECORD SURVIVES THE POWER GOING OUT — opening
+    /// the temp file the rewrite is built in (review 2026-09-05b finding 9 / Codex F9).
+    ///
+    /// <see cref="Save"/>'s whole promise is that the claim "this product is about to submit this
+    /// identifier" is on the DISK before the order is on the wire. It was not.
+    /// <c>File.WriteAllText</c> returns once the bytes are in the operating system's page cache, and
+    /// the rename that follows is atomic with respect to READERS and says nothing about the platter
+    /// — so a machine that lost power in that window came back with an order at the broker and no
+    /// record that this product had ever claimed it. That is the one failure the file exists to
+    /// prevent, and <c>Submitting</c> returned true through it.
+    ///
+    /// The fix is <c>Flush(flushToDisk: true)</c> before the rename, which is the same remedy
+    /// <see cref="DefaultWriteSidecar"/> already used for the rotation's carry — the sidecar was
+    /// durable while the record itself was not.
+    ///
+    /// IT IS A SEAM BECAUSE AN FSYNC HAS NO OBSERVATION POINT. No in-process test on any machine can
+    /// tell a flushed write from an unflushed one: a SIGKILL does not lose the page cache, and
+    /// pulling the power out of a developer's laptop is not a test. What CAN be asserted is the
+    /// ORDER — that the flush to the device happened before the rename, and both before
+    /// <see cref="Submitting"/> answered true — and that is what this makes reachable. Production
+    /// passes nothing; a test passes an opener returning a <see cref="FileStream"/> subclass that
+    /// records <c>Flush(bool)</c>.
+    /// </summary>
+    readonly Func<string, FileStream> _openTemp;
+
+    /// <summary>
     /// THE STEP THAT DECIDES WHETHER THE ROTATION ORDER IS LOAD-BEARING — writing the restatement
     /// into the new log, in <see cref="Rotate"/>.
     ///
@@ -649,7 +675,8 @@ public sealed class CoidWitness : IDisposable
                        Action<string, string>? writeSidecar = null,
                        Func<string, string[]>? readSidecar = null,
                        Func<string, string, string[]>? listSidecars = null,
-                       Action<string, string, bool>? moveSidecar = null)
+                       Action<string, string, bool>? moveSidecar = null,
+                       Func<string, FileStream>? openTemp = null)
     {
         _path = path;
         _cap = cap < 1 ? 1 : cap;
@@ -657,6 +684,7 @@ public sealed class CoidWitness : IDisposable
         _session8 = SessionId.Length >= 8 ? SessionId[..8] : SessionId;
         _replace = replace ?? DefaultReplace;
         _open = open ?? DefaultOpen;
+        _openTemp = openTemp ?? DefaultOpenTemp;
         _writeSidecar = writeSidecar ?? DefaultWriteSidecar;
         _moveSidecar = moveSidecar ?? DefaultMoveSidecar;
         _readSidecar = readSidecar ?? File.ReadAllLines;
@@ -681,6 +709,10 @@ public sealed class CoidWitness : IDisposable
     /// </summary>
     static Stream DefaultOpen(string path) =>
         new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+    /// <inheritdoc cref="_openTemp"/>
+    static FileStream DefaultOpenTemp(string path) =>
+        new(path, FileMode.Create, FileAccess.Write, FileShare.Read);
 
     /// <summary>
     /// The real write: create or replace, whole file, one call — and FLUSHED TO THE DISK before it
@@ -739,6 +771,17 @@ public sealed class CoidWitness : IDisposable
     /// strings are not ASCII grew to two or three times its cap before anything rotated it.
     /// </summary>
     static long ByteCount(string text) => System.Text.Encoding.UTF8.GetByteCount(text);
+
+    /// <inheritdoc cref="_openTemp"/>
+    void WriteTempDurably(string path, string text)
+    {
+        using var stream = _openTemp(path);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        stream.Write(bytes, 0, bytes.Length);
+        // BEFORE the using disposes it, and before the caller renames it. Dispose alone flushes to
+        // the operating system, which is where the bytes already were.
+        stream.Flush(flushToDisk: true);
+    }
 
     static void WriteDurably(string path, string text, FileMode mode)
     {
@@ -2428,7 +2471,12 @@ public sealed class CoidWitness : IDisposable
         // NOT "the temp holds the newer state" on this branch, because it does not: the write is
         // what failed. Saying otherwise sends whoever reads the sidecar to a file that is absent or
         // half-written, looking for a claim that is not in it.
-        try { File.WriteAllText(tmp, text); }
+        // FLUSHED TO THE DEVICE, AND THAT IS THE ORDER RATHER THAN A DETAIL. The rename below is
+        // what publishes this claim, and it is atomic for a READER; it says nothing about the
+        // platter. Written through the page cache only, a power cut between these two lines left a
+        // machine with an order at the broker and no record that this product had claimed it — while
+        // Submitting had already answered true. See _openTemp.
+        try { WriteTempDurably(tmp, text); }
         catch (Exception e) { ReportWriteFailure(e, tmp, claim, tempHoldsTheClaim: false); return false; }
 
         // THE NEW REWRITE SUPERSEDES THIS INSTANCE'S EARLIER FAILED ONE, and the ordering here is
