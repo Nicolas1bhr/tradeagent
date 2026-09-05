@@ -38,3 +38,17 @@ worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted) → GREEN →
 mutant; final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+**1 — the second-press refusal and the first press row are one step. VERIFIED.**
+RED `PressAtomicityTests.Two_close_all_presses_released_together_send_one_close_and_refuse_the_other`
+(barrier: both presses held inside the capture read, released together) reproduced P10 exactly —
+`press A : ok`, `press B : ok`, `close calls on the wire : 2`, `position after : ES -2`, two press rows.
+GREEN: `press A : EMERGENCY_PRESS_UNRESOLVED — close-all sent at 09:56; resolve it first`,
+`close calls on the wire : 1`, `position after : flat`, one press row. Other direction
+(`A_press_after_the_previous_one_is_resolved_still_reaches_the_wire`) green: `second press : close calls 2`.
+Fix: `ExecutionRequestStore.TryCreateFlagged` — the flag and the `NOT EXISTS(… LIKE $claim AND
+needs_reconciliation=1)` guard are in the INSERT, so the check and the first durable row are one statement and
+hold across the two processes that reach this button. Mutant (exclusion clause → `$claim IS NOT NULL`) → red,
+`Expected: 1 Actual: 2`, `close calls on the wire : 2`. Fault suite in Release: 209 passed, 0 failed.
