@@ -42,3 +42,10 @@ what you did NOT do. Verified or NOT VERIFIED.
   B's answer one of the refusals, both named — plus the third the capture read can give ("nothing open to
   close"). 4/4 five times. That RED seam is kept as `The_drift_re_read_refuses_the_second_press_when_the_
   first_fill_landed_first`, so the macos schedule is now proven on every runner, not only a slow one.
+- **Item 2** `Only_the_atomic_claim_can_refuse_a_press_whose_drift_re_read_saw_no_change`: the seam holds the
+  winning press's close until the other has answered, so the book cannot move under the loser's re-read and
+  only the insert can refuse it — GREEN, `press B : EMERGENCY_PRESS_UNRESOLVED — close-all sent at 14:45;
+  resolve it first`, and the drift sentence asserted absent. **Mutant** (the `NOT EXISTS` claim clause alone,
+  `AND ($claim IS NULL OR 1=1)`) → RED `Assert.Equal() Failure ... Expected: 1 Actual: 2` close calls, 2 press
+  rows, both presses "ok". **Item 1's mutant** (that clause AND `live != quantity` bypassed) → the same RED on
+  all three double-press tests: 2 closes, 2 rows.
