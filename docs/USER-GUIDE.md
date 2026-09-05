@@ -431,6 +431,22 @@ broker, or might not. Rather than guess — or worse, send it again and risk two
 asks your broker what actually happened, and continues once it knows. This is the single most
 important thing this software does. Let it finish.
 
+**Sometimes a line offers you no buttons, and says it is still sending.** *"TradeAgent is still
+sending this order — still on the wire for 84s of a possible 50s. Wait for it to answer: it can still
+reach the broker, so what ATAS shows right now is not its outcome."* That is not the software
+doubting you. It is that the order can still arrive at your broker after you have finished looking,
+so ATAS's book at this moment cannot tell you what happened to it. The two numbers are how long this
+one has been going out against how long a single instruction can possibly take; past the second
+figure something is wrong with the connection, and that is the moment to look at the platform. The
+buttons come back on their own the moment the order is answered, without you doing anything.
+
+**And if the platform answers after you have.** Your answer stays on the record — it is the only
+account of what you saw — but the line comes back, flagged, with the platform's own words and its
+order number beside yours: *"resolved by user: no such order exists — but ATAS then answered FILLED
+for order 24681, 1 filled."* Trading pauses again until you have read it. This is rare and it means
+exactly one thing: the two accounts of that order disagree, and the position is worth checking in
+ATAS before anything else trades.
+
 **It also does this after a crash or a power cut.** When TradeAgent starts, any order that was still
 being sent when it last stopped is marked as unknown, trading is paused, and the Activity page says
 so: *"1 order(s) were still being sent when TradeAgent last stopped. Trading is paused until you or

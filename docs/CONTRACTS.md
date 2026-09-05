@@ -440,11 +440,35 @@ move that row: it is counted, it keeps trading paused, and its reconcile line na
 *still on the wire for N s of a possible M s*, against the connector's own worst case. The lease is
 deliberately not durable, because a claim that outlived the process holding it could never be
 released: a genuinely abandoned record — crash, restart, update — has no lease at the next start and
-reconciles at the bound like any other. **And a `Settle` that arrives after some other party moved
-the row to `UNKNOWN` or `RECONCILING` WINS when it carries a definite broker answer** (logged
-`late_definite_settle`): `already_settled` is the right word for a race with the event stream and was
-the wrong word for a race with the reconciler, which had moved the row precisely because no answer
-had been written down yet. It cannot resurrect a terminal row — the state table refuses to leave one.
+reconciles at the bound like any other.
+
+**The owner's override obeys the same lease, in the same words.** `ForceResolve` refuses a request
+this process is still inside the connector call for, and the Dashboard's unconfirmed card asks
+`TradingGateway.StillOnTheWire` on every tick and shows that sentence where the two override buttons
+would be. The reason is not deference to the machine: while the order can still reach the broker
+there is nothing in ATAS for the owner to have seen, so the book at that instant is not evidence
+about this request. **The row is not hidden** — `Unreconciled()` still lists it, it is still
+unconfirmed work, and it still keeps trading paused; taking it out of that list would let the gate
+authorize a new order over a live dispatch. What it loses is the pair of buttons. A row whose
+dispatcher is dead — an entry this process watched end, or no entry at all — is unaffected, which is
+the ordinary case the override exists for. It was reachable through the button until 2026-09-05:
+the card wrote CANCELLED / "resolved by user: no such order exists" onto a live `DISPATCHING` row,
+cleared the flag and the latch, and trading resumed while the placement was on the wire (REVIEW
+2026-09-05b finding 1, probe P3).
+
+**And a `Settle` that arrives after some other party moved the row WINS when it carries a definite
+broker answer** (logged `late_definite_settle`): `already_settled` is the right word for a race with
+the event stream and was the wrong word for a race with the reconciler, which had moved the row
+precisely because no answer had been written down yet. `UNKNOWN` and `RECONCILING` are the only two
+states it may overrule, and it still cannot resurrect a terminal row — the state table refuses to
+leave one. **A terminal row a PERSON asserted is the third case, and it is re-flagged rather than
+overruled**: the dispatch lease stops one process overriding its own live dispatch, but two gateways
+over one store (the app and `tradeagent-gateway.exe`) and a restart both still reach it. The record
+keeps the state the owner put there — overwriting it would erase the only account of what they saw —
+and gains the platform's own answer and reference beside the claim, the flag, and a paused gate
+(logged `late_definite_over_an_override` at error). Only when the two genuinely differ; an answer
+that agrees is agreement. The stream disagreeing with the dispatch about a row no person touched is
+not adjudicated here, exactly as `ForceResolve` refuses to adjudicate it.
 
 Unconfirmed work is therefore "flagged, **or** dispatching for too long, **or** an outcome TradeAgent
 could not write down"; `trade status`'s `unreconciled_requests` counts the first two, and every
