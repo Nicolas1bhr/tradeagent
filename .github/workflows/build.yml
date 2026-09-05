@@ -24,12 +24,69 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet restore TradeAgent.sln
       - run: dotnet build TradeAgent.sln -c Release --no-restore
-      - run: dotnet test TradeAgent.sln -c Release --no-build --logger "trx;LogFileName=results.trx"
+
+      # THE SUITE MINUS ONE CATEGORY — every platform, no retry, no rescue. A red here is a red run.
+      # This is 833 of the 914 tests, including every test that asserts what the product does.
+      - name: Test everything outside the timing category
+        run: dotnet test TradeAgent.sln -c Release --no-build --filter "Category!=Timing" --logger "trx;LogFileName=results.trx"
+
+      # THE TIMING CATEGORY — run everywhere, RE-RUN ONCE ON WINDOWS AND NOWHERE ELSE.
+      #
+      # WHY. `RunnerSpeedProbeTests` measures, on every run and every platform, how much slower the
+      # runner is than the machine these fixtures were tuned on. Over three runs of PR #4 the
+      # windows-latest figures were: arithmetic 1.20/1.22/1.06, timers 1.02/1.18/1.08, pipes
+      # 2.24/2.54/3.31 — and file IO 3.79/39.52/4.89. File IO is what the failures are made of and
+      # it is the one that will not hold still, so there is no factor to scale the fixtures by:
+      # covering the worst of those three needs more than 40x, applied to fixtures whose real
+      # bottleneck is 1.08x. Six windows-only reds across three fix units, one per run, each fixed
+      # by hand. This is the net under them.
+      #
+      # WHAT IT COSTS, SAID PLAINLY: inside these two classes, on Windows, a genuine regression that
+      # fails intermittently can be rescued by the second attempt. That is why the category is two
+      # classes and not a convenience anyone can reach for, why the first failure is printed, named
+      # in the job summary, annotated on the run and uploaded as its own trx, and why ubuntu and
+      # macos do not get a second attempt at all.
+      - name: Test the timing category
+        shell: bash
+        run: |
+          set -uo pipefail
+          # THE WHOLE SOLUTION, not the one project that has timing tests today: a project with no
+          # match exits 0 with "No test matches the given testcase filter" (verified), so this stays
+          # correct if the trait ever lands outside the integration assembly. The two steps together
+          # run every test exactly once.
+          if dotnet test TradeAgent.sln -c Release --no-build \
+               --filter "Category=Timing" --logger "trx;LogFileName=results-timing.trx"; then
+            exit 0
+          fi
+
+          # THE FIRST FAILURE IS THE RECORD, whatever the second attempt goes on to say.
+          failed=$(cat tests/*/TestResults/results-timing.trx 2>/dev/null | tr '<' '\n' \
+                   | grep 'outcome="Failed"' | grep -o 'testName="[^"]*"' | cut -d'"' -f2 || true)
+          {
+            echo "### The timing category failed on its first attempt"
+            echo
+            echo '```'
+            echo "${failed:-(no test name in the trx - read the step log above)}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Timing category failed on its first attempt::${failed//$'\n'/, }"
+
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            echo "Not windows-latest, so there is no second attempt: this run is red."
+            exit 1
+          fi
+
+          echo "Re-running the timing category once; the failure above stands in the record either way."
+          dotnet test TradeAgent.sln -c Release --no-build \
+            --filter "Category=Timing" --logger "trx;LogFileName=results-timing-retry.trx"
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results-${{ matrix.os }}
-          path: '**/results.trx'
+          # results*.trx, so a rescued run uploads the attempt that failed as well as the one that
+          # passed. A green whose second trx exists is a green that needed two attempts.
+          path: '**/results*.trx'
 
   package:
     needs: test

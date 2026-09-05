@@ -29,7 +29,14 @@ namespace TradeAgent.Tests.Integration;
 /// buffer at all, so the same stall happens on ANY reply, however small. A reply near the frame cap
 /// is the one shape that shows the defect on both, and it is a legal reply the product really
 /// produces: material-list carries the twenty most recent notes verbatim.
+///
+/// CATEGORY "Timing", because two of this class's tests have gone red on `windows-latest` and
+/// nowhere else — one in U-win-flakes, one in U-win-timing — and both were a fixture margin that
+/// did not cover what the work costs on that runner. <see cref="RunnerSpeedProbeTests"/> says what
+/// that category buys and what it costs; the short version is that this class is re-run once on
+/// windows-latest and only there, and the first failure is still logged and still uploaded.
 /// </summary>
+[Trait("Category", "Timing")]
 public class GatewayPipeBackpressureTests
 {
     static string NewPipe() => "ta-bp-" + Guid.NewGuid().ToString("n")[..12];
