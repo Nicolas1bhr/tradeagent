@@ -3577,7 +3577,8 @@ the drift re-read instead of the atomic press guard, and the test had asserted t
 fixer's gate at `dab3b0e`, Release: 0 warnings; fault 220 3×; 218 + 220 + 582 = 1020, 0 failed; names 0 removed, 2
 added; **CI run 33967839971 on draft PR #5 (merged with `main`): ubuntu, windows and macos all SUCCESS, 1020 each,
 `package` SUCCESS.** Manager's gate at `d94fd12` (the merge sha's code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 218 + 220 + 582 = 1020, 0 failed; names vs `main` →
-0 removed, 2 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+0 removed, 2 added; scan clean; CI run 33969815371 at `8e821fe`: ubuntu, macos and windows all SUCCESS (1020), `package` SUCCESS — macos green on the
+rewritten test.
 
 **NOT done:** no product file, no box, no ATAS, no UI.
 
