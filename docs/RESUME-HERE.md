@@ -13,10 +13,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `69c2545`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded and three test-only fixes landed** — all in
-`BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: green at the
-U2c1b landing; windows-latest otherwise draws one different timing-sensitive test per run — class fixer
-`docs/briefs/U-win-timing.md` in flight (branch `u-win-timing`, PR #4, continued after a usage-limit kill). The milestone review of the
+`main` is `fd5c6d9`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded and four test-only fixes landed** — all in
+`BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
+four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
+windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
 money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / MED 4 / LOW 2 / UNVERIFIED 6, twelve
 executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
 section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher

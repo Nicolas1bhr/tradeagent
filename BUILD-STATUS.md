@@ -3256,3 +3256,34 @@ Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 530 = 926, 0 fail
 **NOT VERIFIED:** that a real bridge really spends 30–50 s in gate + frame (the review said the same); nothing on the
 box, no real ATAS, no UI. **Still open, by design of the cut:** `UpdateTradingInterlock` asks the raw flag and sees none
 of this (finding 3 → `U-interlock`).
+
+## 2026-09-05 — U-win-timing landed: the Windows timing class is measured, and CI retries it once, on Windows only
+
+A fix unit under `docs/HOW-WE-BUILD.md` for the class behind the one-test-per-run Windows reds: two fixers (the first
+killed by a usage limit after measuring; the second continued from its branch), product code untouched. Merge
+`fd5c6d9`, 7 files of substance (`build.yml`, `tests/Directory.Build.props`, `tests/Shared/TestTime.cs`, the two timing classes, the probe, the brief); six committed `TestResults/*.trx` files were removed by the manager at landing and the directory is now ignored.
+
+- **The factor, measured by a probe kept in the suite** (ratios against this Mac, from the PR's own runs): windows CPU
+  1.06–1.22, timer 1.02–1.18, pipe 2.24–4.27, **file IO 3.79 / 39.52 / 4.89 / 5.69**; ubuntu under 1.6 throughout;
+  macos under 1.6 except timer 3.26 / 4.58. File IO is what the failures are made of and it spread tenfold across four
+  runs, so no single scale covers it — option (b) was chosen on that ground. `TA_TEST_TIME_SCALE` is not set in CI and
+  the probe prints `in-effect=1.00` every run to prove it.
+- **The mechanism.** `Trait("Category","Timing")` on `ConnectorSendDeadlineTests` and `GatewayPipeBackpressureTests`
+  (the only two classes with Windows-only reds: 4 + 2 tests across three fix units). `build.yml` runs
+  `Category!=Timing` with no retry on all three platforms, then `Category=Timing` re-run ONCE on windows-latest alone,
+  the first failure printed, named in the job summary, annotated and uploaded as its own trx.
+- **It caught a real one in flight.** The first fixer's 2 s settle margin on
+  `Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows` failed again on attempt 2 of run 33941113025 with the
+  identical symptom and was rescued by the retry; it was replaced, not kept: the settle window runs at the shipped 5 s,
+  the slow call grows to 12 s so the derived 6.1 s drain still expires inside it, the record wait is 90 s against a
+  measured 36 s. Mutant (1 ms settle) → RED with that message. A second premise gap (`OurWriteIsOver` leaving its own
+  request pending) is closed; mutant (200 ms between the two frames) → RED.
+
+**Verified by running (the fixers, quoted; then the manager's gate):** local Release 0 warnings; `Category=Timing` 3×
+→ 81/81; `Category!=Timing` → 833; `--list-tests` splits 914 as 833 + 81 exactly. **windows-latest on `0ee01ef`, run
+33943343018, attempts 1–3: all green, 920, 0 failed, 0 skipped, no retry used** (CI on a PR builds the merge with
+`main`, hence 920). Manager's gate at `4988682`, Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 531 = 927, 0 failed; names vs `main` →
+0 removed, 1 added (the probe); scan clean; CI at the merge, the first run of the two-step workflow, was in progress when this was written; recorded with the next landing.
+
+**NOT done:** no product code; nothing shipped was shortened (one un-shortened); no premise dropped; no `Skip`; the
+scale option is not wired into CI (`TestTime` stays as the knob for a deliberately slowed local run); no box.
