@@ -299,7 +299,20 @@ public class PressReachesTheWireOnItsOwnTermsTests
 ///
 /// The scope belongs where the intent is known, which is inside the emergency methods themselves.
 /// Then all three callers get it, and so does every read they do on the way.
+///
+/// IN THE `Timing` CATEGORY BECAUSE ITS VERDICT NEEDS THE RUNNER TO KEEP A CLOCK, and U-press-stopwatch
+/// measured which one. Every test here presses against a stalled platform and then judges what the
+/// press did about a wall-clock deadline; the press's own local writes are what it spends after that
+/// deadline, and on a hosted runner those writes are not a fixed cost. A throwaway harness timed
+/// `OperatorCancelAllAsync` per step on all three runners: `SafelyRecordIndefinite` — one SQLite
+/// settle at `synchronous=FULL` — took 3 ms on ubuntu in two runs and 547 ms and 593 ms in a third,
+/// off the SAME code, and 93-187 ms on windows, while a 20 ms tick on a dedicated thread and on the
+/// pool kept arriving at 21 ms and GC pause time stayed at 0. So the process was RUNNING: it is the
+/// runner's file IO, the same spread `U-win-timing` measured at 3.79-39.52x, and it lands on this
+/// class as a whole because the assertion that catches it is the one every test here shares.
+/// Nothing is loosened by the move — the assertions below are exactly what they were.
 /// </summary>
+[Trait("Category", "Timing")]
 public class OperatorPressIsAnEmergencyTests
 {
     /// <summary>Comfortably longer than the 2 s emergency budget, so an unbounded press is obvious.</summary>

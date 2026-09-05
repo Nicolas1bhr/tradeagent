@@ -273,7 +273,10 @@ public class SweepRequestIdTests
     ///
     /// The scope now carries ONE absolute deadline and every RPC inside it gets what is left.
     /// </summary>
+    // `Timing`: the assertion below is a raw stopwatch over a press, so the runner's file IO is
+    // inside the number. Same measurement and same reason as `OperatorPressIsAnEmergencyTests`.
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task A_sweep_pays_the_emergency_budget_once_not_once_per_rpc()
     {
         var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2));
@@ -313,7 +316,9 @@ public class SweepRequestIdTests
     /// because the whole sweep surfaced as a single transport error that named none of the orders
     /// left working. Every order now appears in the answer with what became of it.
     /// </summary>
+    // `Timing`, for the reason its neighbour above is: one stopwatch over five legs of a press.
     [Fact]
+    [Trait("Category", "Timing")]
     public async Task A_five_order_sweep_answers_within_the_budget_and_accounts_for_every_order()
     {
         var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(2));
