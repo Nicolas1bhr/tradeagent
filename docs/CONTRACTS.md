@@ -365,10 +365,34 @@ broker did. Two things follow, and both are the gateway's own behaviour rather t
   `DISPATCHING` record becomes `UNKNOWN`, flagged for reconciliation, with execution capability
   `PAUSED`. A record left mid-flight by a crash, a Windows restart or an update therefore pauses
   trading on the next start instead of being silently trodden on by the next order.
-- **While running**, a record still `DISPATCHING` longer than `GatewayOptions.DispatchStrandedAfter`
-  (30 s: the connector's own 10 s RPC deadline plus slack) counts as unconfirmed work for the gate,
-  the status fields and the health row, without waiting for a restart to notice. Under that bound an
-  order in flight is ordinary and pauses nothing.
+- **While running**, a record still `DISPATCHING` longer than `TradingGateway.DispatchStrandedAfter`
+  counts as unconfirmed work for the gate, the status fields and the health row, without waiting for
+  a restart to notice. Under that bound an order in flight is ordinary and pauses nothing.
+
+**The stranded bound is DERIVED from the connector, exactly as the shutdown drain is**, and it is
+`Connector.WorstCaseOperationPath + GatewayOptions.DispatchSettleSlack` — 50 + 20 = **70 s** at
+shipped ATAS values. An explicit `GatewayOptions.DispatchStrandedAfter` may only LENGTHEN it. It was
+the constant 30 s until 2026-09-05, justified as "the connector's 10 s RPC deadline plus 20 s of
+slack" while one ordinary order path is 50 s — the send gate, the whole frame and the reply, which is
+what the drain has been derived from since the 2026-09-03 correction and what the stranded bound
+never got. A placement legitimately in flight for 30–50 s was therefore "stranded", was already past
+`AbsenceGrace` when the reconciler could first see it, and was settled `CANCELLED` / "never reached
+the broker" / unflagged with trading resumed — and then filled (REVIEW 2026-09-05 finding 1, probe
+P6b). The second term is not a second deadline: the connector's own bounds cover the CALL, and a
+dispatch also has to be rescheduled and write the outcome down after it returns.
+
+**A DISPATCHING row on disk cannot say whether anyone is still flying it, so the gateway remembers.**
+`TradingGateway` holds an in-memory lease over every request from immediately before a mutating
+connector call until the dispatcher has settled it. While the lease is live the reconciler will not
+move that row: it is counted, it keeps trading paused, and its reconcile line names the wire —
+*still on the wire for N s of a possible M s*, against the connector's own worst case. The lease is
+deliberately not durable, because a claim that outlived the process holding it could never be
+released: a genuinely abandoned record — crash, restart, update — has no lease at the next start and
+reconciles at the bound like any other. **And a `Settle` that arrives after some other party moved
+the row to `UNKNOWN` or `RECONCILING` WINS when it carries a definite broker answer** (logged
+`late_definite_settle`): `already_settled` is the right word for a race with the event stream and was
+the wrong word for a race with the reconciler, which had moved the row precisely because no answer
+had been written down yet. It cannot resurrect a terminal row — the state table refuses to leave one.
 
 Unconfirmed work is therefore "flagged, **or** dispatching for too long, **or** an outcome TradeAgent
 could not write down"; `trade status`'s `unreconciled_requests` counts the first two, and every
@@ -395,8 +419,13 @@ derived from that one rule:
   never transmitted, and the target is looked up by id against the whole book — never a time window,
   because an order that has rested longer than the window is not absent, it is old.
 - **Absence is evidence only after the grace window** (`GatewayOptions.AbsenceGrace`), measured from
-  the operation's own dispatch, on a connector that can prove its own history. Then a cancel whose
-  target does not exist is `CANCELLED`.
+  **the later of the operation's own dispatch and the stranded bound**, on a connector that can prove
+  its own history. Then a cancel whose target does not exist is `CANCELLED`. The later of the two,
+  because "the broker has never heard of this" says nothing while the order can still be on its way
+  there — and measured from the dispatch alone the window had always already expired on any stranded
+  record the reconciler could see, the bound being longer than the grace. Where this process watched
+  the dispatch END, the wire went quiet then and the dispatch instant is the honest reference; where
+  it did not — a crash, a restart, a second process over the same store — the bound is all there is.
 - **A target that is `UNKNOWN`, `DISPATCHING`, `RECONCILING` or `CANCEL_PENDING` decides nothing.**
 - **"The cancel did not take effect" needs a TERMINAL target, a definite refusal, or the owner's
   card.** A target that is merely working is not proof, and it does not become proof by holding

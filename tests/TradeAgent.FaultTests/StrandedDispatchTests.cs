@@ -393,3 +393,37 @@ public class LiveDispatcherOwnsItsRowTests(ITestOutputHelper log)
         await gw.DisposeAsync();
     }
 }
+
+// =================================================================================================
+// Item 3 — the row says what the owner needs
+// =================================================================================================
+
+public class InconclusiveReasonTests(ITestOutputHelper log)
+{
+    /// <summary>
+    /// "A dispatch is still in progress" is true and useless. The person looking at a paused machine
+    /// needs the two numbers that say whether to wait or to go and look in the platform: how long
+    /// this one has been on the wire, and how long the connector says one call can possibly take.
+    /// </summary>
+    [Fact]
+    public async Task An_inconclusive_dispatch_says_how_long_it_has_been_on_the_wire_and_of_what()
+    {
+        var (gw, c, db, clock) = await Stranded.Ready();
+        using var dbh = db;
+        var release = new TaskCompletionSource();
+        c.HangPlaceBeforeTheBroker = release;
+
+        var inFlight = gw.PlaceAsync(new AgentContext("a"), "wire-1", TestEnv.Buy());
+        await c.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(90));
+
+        var result = await gw.ReconcileAsync();
+        var detail = Assert.Single(result.Details);
+        log.WriteLine($"detail : {detail}");
+        Assert.Equal("wire-1: still on the wire for 90s of a possible 50s", detail);
+
+        release.SetResult();
+        await inFlight;
+        await gw.DisposeAsync();
+    }
+}
