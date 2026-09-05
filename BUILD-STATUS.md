@@ -3816,8 +3816,7 @@ Builder's gate at `ef7c4b2`, Release: 0 warnings; the classes 3× → 8/8 Fault 
 0 failed; names 0 removed, 10 added; scan clean. Manager's gate at `a887507` (rebased onto `d14a2f0`; the merge sha's
 code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 219 + 250 + 584 = 1053, 0 failed; names vs
 `main` → 0 removed, 10 added (sets 840 → 850); scan → one hit, the word "secret" in the report's own "secret scan
-clean"; `rev-list --count u-press-inflight..main` → 0; CI run 33987379533 at `145e725`: ubuntu, macos and windows all
-SUCCESS, `package` SUCCESS.
+clean"; `rev-list --count` → 0; CI run 33987379533 at `145e725`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no box, no real ATAS, no money, no UI run (`DashboardView.PressAsync` renders `PressOutcome.Summary`
 verbatim — read, not run); `AtasStrategyAdapter.Modify:1596` quoted from source, never executed; no new pipe op, no new
