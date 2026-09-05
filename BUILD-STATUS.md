@@ -3364,3 +3364,43 @@ press-budget red of the previous run did not repeat (one occurrence in seven mai
 **NOT done, stated by the builder:** no box, no real ATAS, no UI, no money. The re-check's mode arm is reachable only
 on the approval path (a fresh place re-reads the mode when it builds its record, so it parks instead). Untouched: the
 press and composite regions, the pipe protocol, the updater, the connectors.
+
+## 2026-09-05 — U-pipe-hello landed: the pipe refuses what it cannot name, counts what it says it counts, answers for the caller
+
+The review's findings 7 and 10, UNVERIFIED 6 and Codex F8, all CONFIRMED red-first by one fresh builder on
+`docs/briefs/U-pipe-hello.md` (a first builder was killed before its first commit). Merge `db638ab`, 8 commits,
+7 files of substance, +1136/−38.
+
+- **Protocol before session.** A hello naming protocol 2 was accepted (`"compatible": false`) and with a bad token
+  answered `IPC_UNAUTHENTICATED`. Now `INCOMPATIBLE_PROTOCOL` is decided before the token, one `protocol_rejected` line,
+  no session, the next buy `IPC_UNAUTHENTICATED`, zero orders; the current version still trades. `v` is checked at
+  `hello` only, not on later frames.
+- **Enumerated fields fail closed.** `tif: "ImmediateOrCancle"` reached the connector as Day and `tif: "999"` as the
+  integer 999 (`TryParse` takes any integer, so an undefined enum value reached the connector). Now `INVALID_REQUEST`
+  names the field and its four names; the same integer hole was closed on `kind` (notes), and `all` (orders) was
+  `Str("all") is "true"`, so `"yes"` meant working-only — now a real boolean. `side` and `type` are not frame fields:
+  side is the op, type is the prices sent, and a frame naming one is refused rather than ignored.
+- **The frame cap counts bytes.** An unauthenticated peer's 2,700,096-byte frame was read whole and answered against a
+  "1 MiB" cap that counted UTF-16 chars; `ReadFrame`, the only frame parser on this pipe, now counts bytes into a
+  per-connection buffer and drops the peer past the cap; 1,020,093 bytes of CJK are still served.
+- **Status answers for the caller.** An agent with the kill switch down read `execution_available: true` with no reason
+  while its own buy was refused `AI_TRADING_STOPPED`; `status` and `schema` are now computed with the caller's context,
+  the operator's own status unchanged. Fixed at the pipe, so the Dashboard keeps `AgentContext.Operator`.
+- **An agent reads only its own records.** `trade order op-close-<nonce>-ES` returned the operator's press row whole
+  ("you pressed Close all positions at 10:15"); an `operator` row never resolves on the agent path and an `op-` id only
+  for its own session, answered identically to an id nobody minted; the agent's own buy and sweep-leg ids still resolve.
+
+**Verified by running (the builder, quoted; then the manager's gate):** every item RED with the quoted output above →
+GREEN → one mutant red each (`!=` → `<`: 2 red; the old `TryParse` line: 4 red; `MaxFrameBytes * 3`: 2 red; back to
+`AgentContext.Operator`: 2 red; `MayRead → true`: 2 red). Builder's gate at `535e8d8`, Release: 0 warnings; Unit 211 +
+Fault 207 + Integration 569 = 987, 0 failed; names nothing removed, +20 methods / +34 cases. `docs/CONTRACTS.md`,
+`AGENTS.md` (via `WorkspaceBuilder`), the `--tif` help and `GatewaySchema`'s argument text say the same words;
+`INCOMPATIBLE_PROTOCOL` is in `Errors.cs`. Manager's gate at `db638ab`, Release: build → 0 warnings, 0 errors; suite →
+Unit 211 + Fault 207 + Integration 569 = 987, 0 failed — the integration project in two runs, because
+`tools/mac-run.sh`'s old pkill (fixed at `f7f1baa`) killed three attempts while another leg iterated the app: 558 from a
+relocated build plus the 11 path-dependent tests (26 with their classes) from the normal output path; names vs `main` → 0 removed, 34 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done, stated:** no box, no ATAS, no money, no UI; `TradingGateway.cs` untouched; `order` still reads the
+BROKER's book unrestricted; a non-`op-` id is deliberately not session-scoped, since a restart renames the session.
+Three one-line edits to `GatewaySchema.cs`'s argument descriptions, nominally U-pipe-words' file, far from the string
+that unit owns.
