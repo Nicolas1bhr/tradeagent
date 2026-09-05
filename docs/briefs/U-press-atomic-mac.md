@@ -31,3 +31,14 @@ product is wrong, say so and stop. Commit per item, no trailers, no other worktr
 
 ## Report — append as you go, commit it, ≤12 lines: tip sha; per item RED → GREEN → mutant; counts; CI per platform;
 what you did NOT do. Verified or NOT VERIFIED.
+
+- Mine only: `tests/TradeAgent.FaultTests/PressAtomicityTests.cs` and the fault harness
+  (`tests/Shared/RecordingConnector.cs`: a null-by-default `Seam` hook, and `Close` gated like the rest).
+  NO product file changed — both mutants reverted, `git status` shows nothing under `src/`.
+- **Item 1 RED** (a seam letting A's fill land before B's re-read; old assertion): `Assert.Single() Failure:
+  The collection did not contain any matching items` with `press B : ok — Nothing was sent for 1 of them,
+  because what is there changed after you pressed: ES was 2 when you pressed and is 0 now` — CI 33958941039
+  byte for byte. **GREEN**: the invariants (1 close on the wire, 2 orders, flat, 1 press row, one nonce) and
+  B's answer one of the refusals, both named — plus the third the capture read can give ("nothing open to
+  close"). 4/4 five times. That RED seam is kept as `The_drift_re_read_refuses_the_second_press_when_the_
+  first_fill_landed_first`, so the macos schedule is now proven on every runner, not only a slow one.
