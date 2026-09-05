@@ -21,7 +21,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner). The bridge protocol is 3: the box's bridge
    DLL must be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now
    press `Reinstall the bridge` on Checks).
-3. **`docs/briefs/` holds ONE file, `REVIEW.md`: the second milestone review, in flight at `d92a61b`** — a fresh Opus
+3. **`docs/briefs/` holds TWO files. `REVIEW.md`: the second milestone review, in flight at `d92a61b`** — a fresh Opus
    reviewer (worktree `~/Projects/ai-trading-software-for-mihael-worktrees/review`, probes on branch `review-probes`,
    findings to `docs/REVIEW-2026-09-05b.md` in the main worktree) and Codex read-only in parallel (`codex exec -s read-only`
    in worktree `…-worktrees/codex-review`, its last message written to `docs/REVIEW-2026-09-05b-codex.md`). When both
@@ -29,6 +29,11 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    HIGH is a fix unit before v0.1.2 is cut, MED and LOW together one batch unit — and delete the brief. A killed leg is
    re-briefed from `docs/briefs/REVIEW.md`; read `review-probes` first, the probes may already be there. Three hosted-runner
    reds are recorded once each in the U-sweep-words-win section, none briefed: a brief each when one recurs (doctrine step 6).
+   **`U-box-precut.md`: the v0.1.2 box session minus the cut**, a fresh Opus builder with the box granted to it alone
+   (worktree `…-worktrees/box-precut`, branch `u-box-precut`): the pushed tree proven by hash, the protocol-3 refusal and
+   `Reinstall the bridge` walked, `tools/atas-gate`, the first review's two box items, the backlog's box measurements;
+   its report lands in the brief. The cut itself (installer, `gh release`, the update watched installing) waits for the
+   second review's HIGH fix units, then is a short second box leg.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b` is 33981829058; its verdict is in
@@ -39,8 +44,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
    containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
    the in-process gateway are not security boundaries.
-6. **Then, in order:** the v0.1.2 cut on the box (needs Nicolas's box credentials in the environment — `TA_WIN_HOST`,
-   `TA_WIN_USER`, `TA_WIN_PASSWORD`, `TA_WIN_NAME`, none set in the 2026-09-05 evening session: redeploy the bridge at
+6. **Then, in order:** the v0.1.2 cut on the box (the credentials are in `~/.tradeagent/win.env` on this Mac and every
+   `tools/*.sh` script sources it — the earlier note that the box had no credentials in these sessions was WRONG; on
+   2026-09-05 evening `tools/win-state.sh` answered: console session active, desktop live, ATAS running, the installed
+   app 0.1.1 answering `status`, the UI agent not running. The items: redeploy the bridge at
    protocol 3, `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real
    bridge spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`), with the second review's
    HIGH fix units landed first; the non-box LOW batch in that backlog (`AtasConnector._pending` leaks an entry when a
@@ -48,7 +55,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    a leg is free.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
-   before the Mac UI loop; the box has no credentials in these sessions; four usage-limit kills were survived by
+   before the Mac UI loop; the box IS reachable (see step 6); four usage-limit kills were survived by
    re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
    check a command's exit with `$?` on the bare command.
 
