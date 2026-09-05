@@ -3,3 +3,4 @@ obj/
 *.user
 artifacts/
 .DS_Store
+TestResults/
