@@ -809,31 +809,28 @@ public class GatewayPipeBackpressureTests
         var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
         using var _1 = db;
         var pipe = NewPipe();
-        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
-        {
-            // TWO SECONDS, MEASURED, AND STILL A THIRTIETH OF WHAT IT COSTS TO GET WRONG.
-            //
-            // This is the fixture's margin, not a shipped one: `SettleAfterCancelTimeout` ships at
-            // 5 s and the fixture shortens it so the test finishes quickly. At 300 ms it was
-            // shortened past what the work costs on a hosted runner. What the handler does in this
-            // window is write its record and its reply — SQLite and a pipe — and `RunnerSpeedProbeTests`
-            // measures both on windows-latest: 28.3x this Mac for a write-through file cycle and 6.7x
-            // for a pipe round trip, against 1.1x for arithmetic. The handler settles here in ~30 ms
-            // (U-win-flakes, measured five times); 30 ms x 28 is 840 ms, which is why 300 ms was
-            // reachable on that runner and never here. Two seconds is above it with room to spare,
-            // and it is nowhere near the quantity the test asserts.
-            //
-            // The premise below is what bounds it: the derived drain must still expire inside the
-            // slow call, and at 2 s it is 100 ms + 1 s + 2 s = 3.1 s against 5 s. Raising this
-            // number further means raising `slowCallMs` with it.
-            SettleAfterCancelTimeout = TimeSpan.FromSeconds(2)
-        };
+        // NO OVERRIDE AT ALL — THE SHIPPED FIVE SECONDS. Every value this fixture has invented for
+        // the settle window has been wrong on a hosted runner, and each one was defended with an
+        // arithmetic that looked sound: 300 ms until U-win-flakes, then 2 s, derived from the ~30 ms
+        // this Mac needs times the worst file-IO ratio `RunnerSpeedProbeTests` had seen. That was
+        // wrong too — windows-latest failed this exact line at 2 s with `Expected: null /
+        // Actual: "error"` (run 33941113025, attempt 2). The window is how long disposal really
+        // gives a cancelled handler to write its record and its reply; the product's number for it
+        // is 5 s, and a fixture that shortens it is testing a gateway nobody ships. So it is not
+        // shortened, there is no fixture margin here left to be wrong, and the price is that the
+        // derived drain grows by the difference and the slow call below has to grow with it.
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
         // THE PREMISE, TIED TO THE FAULT RATHER THAN TO A LITERAL. The drain has to expire while the
         // handler is still inside its connector call, or the handler finishes on its own and this
         // test passes without ever reaching the cancellation it is about. It was written as "under a
         // second", which stopped being the right comparison the moment the drain grew a
         // handler-overhead term (round 12) — the quantity it was always about is the SLOW CALL.
-        const int slowCallMs = 5000;                               // cancellable: it unwinds when asked
+        //
+        // Twelve seconds, because the drain derives as the handler's chain (5 x the 20 ms declared
+        // above) + `HandlerOverhead` (1 s) + `SettleAfterCancelTimeout` (5 s) = 6.1 s, and that has
+        // to expire INSIDE the call. The assertion is what holds it; the arithmetic is only why the
+        // number is 12 and not 5.
+        const int slowCallMs = 12_000;                             // cancellable: it unwinds when asked
         Assert.True(server.HandlerDrainTimeout < TimeSpan.FromMilliseconds(slowCallMs),
             $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0.00}s against a " +
             $"{slowCallMs} ms call — the handler will finish inside it and never be cancelled, so this " +
@@ -855,7 +852,11 @@ public class GatewayPipeBackpressureTests
                 ["quantity"] = JsonSerializer.SerializeToElement("1")
             }
         });
-        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(30));
+        // NINETY SECONDS OF PATIENCE FOR A STATE, against a measured ~36. The fault is a per-call
+        // latency and the record appears three calls in, so this wait costs 3 x `slowCallMs`; it was
+        // 30 s when the call was 5 s and had to grow with it. It is a fixture's patience and bounds
+        // nothing the test asserts — a healthy run leaves it after about 36 s.
+        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(90));
 
         await server.DisposeAsync();
 
