@@ -1498,16 +1498,30 @@ public sealed class TradingGateway : IAsyncDisposable
 
     async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
+        // A CLOSE IS SIZED HERE, not where it was decided. See RefuseAStaleCloseOrThrow: an
+        // offsetting order is the one placement whose size and side are a statement about something
+        // that moves, and everything above this line was an awaited read.
+        await RefuseAStaleCloseOrThrow(stored, intent, ct);
+
         // EVERY GATE IS EVALUATED HERE, at the last point where refusing still means nothing was
         // sent. See ReauthorizeAtDispatchOrThrow and ReserveDispatchOrThrow: the first closes the
         // window between the authorization and the wire, the second makes the minute's budget an
         // atomic take rather than a count that several callers all read as free.
+        //
+        // AND IT COMES AFTER THE STALE-CLOSE READ, WHICH IS THE WHOLE POINT OF ITS POSITION. The
+        // re-check used to sit above that read — so a close re-authorized, then made ONE MORE awaited
+        // connector round trip, and the kill switch pressed inside it arrived after the last gate had
+        // already been passed. The order went out with the switch down, over a window one
+        // WorstCaseOperationPath wide: 50 s at shipped ATAS values (REVIEW 2026-09-05b, Codex F5).
+        // The rule this restores is the one the re-check exists for and is the only one that makes it
+        // true: NOTHING AWAITED MAY COME BETWEEN THIS LINE AND THE WIRE. Everything below is
+        // synchronous — a reservation, the write-ahead row, two ledger marks — and the modify and
+        // cancel paths already obey it.
+        //
+        // The cost is that a close whose position moved is refused with POSITION_MOVED even when
+        // authority was also revoked. Both are true, both refuse, and nothing is sent; the agent's
+        // next attempt is refused at the top of PlaceAsync with the authority code.
         ReauthorizeAtDispatchOrThrow(ctx, stored);
-
-        // AND A CLOSE IS SIZED HERE TOO, not where it was decided. See RefuseAStaleCloseOrThrow: an
-        // offsetting order is the one placement whose size and side are a statement about something
-        // that moves, and everything above this line was an awaited read.
-        await RefuseAStaleCloseOrThrow(stored, intent, ct);
 
         using var slot = ReserveDispatchOrThrow();
 

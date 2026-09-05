@@ -711,6 +711,26 @@ and **the mode is checked against the record rather than against a list**: a pla
 past the question of whether a person should see it, and only the mode a record was decided under may
 send it.
 
+**Nothing awaited may come between the last gate and the wire — and what is left after it is the
+connector's own send, which is a WINDOW that is stated rather than closed.** The re-check used to sit
+above the close's stale-position re-read, so a `close` re-authorized and then made ONE MORE awaited
+connector round trip before touching the wire: a kill switch pressed inside that read arrived after
+the last gate had been passed and the order went out with the switch down, over a window one
+`WorstCaseOperationPath` wide — 50 s at shipped ATAS values (REVIEW 2026-09-05b, Codex F5). It is now
+the last thing before the wire on all three dispatch paths, with only synchronous work after it.
+**What remains cannot be closed, and is not claimed to be.** Once the command is inside
+`PlaceOrderAsync` the frame is on its way, and the two levers that could reach into it are both worse
+than the window. The gateway ALREADY holds `_dispatchGate` across the whole wire call, so making
+`SetMode`, `ActivateLive`, `StopAiTrading` or `Update` take that gate would not stop the order — it
+would make the owner's press *wait* for it, up to a full `WorstCaseOperationPath`, which is the wrong
+thing to do with an emergency control; the emergency controls are outside that gate deliberately.
+Cancelling the send instead manufactures exactly the ambiguity safety rule 3 exists to avoid: a
+cancelled write cannot say whether the broker saw the order, so the record settles `UNKNOWN`, trading
+pauses on unconfirmed work, and one authorized order becomes an unresolved position. So the bound is:
+**an order already handed to the connector when authority is revoked may still reach the broker, for
+up to one `WorstCaseOperationPath`; every order that has not been is refused.** A test pins that
+answer as an answer, so making the send cancellable cannot happen quietly.
+
 **And a `close` is SIZED at the moment of dispatch too, for the same reason and one more.** A close
 is the only placement whose side and quantity are a claim about something that moves: `close` reads
 the position, turns it into "sell 2 ES", and then makes those same four awaited reads. A fill landing
