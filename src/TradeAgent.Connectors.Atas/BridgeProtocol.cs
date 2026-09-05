@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using TradeAgent.Core;
 
 namespace TradeAgent.Connectors.Atas;
 
@@ -162,7 +163,17 @@ public sealed record IncompatibleBridge(int ReportedProtocolVersion, int Expecte
         return kept.Length == 0 ? "unknown" : kept;
     }
 
+    /// <summary>
+    /// The sentence the owner reads when a bridge is refused, and the one that has to be actionable:
+    /// a protocol bump refuses EVERY bridge deployed before it, so this line is what the whole
+    /// installed base sees on the morning after an update.
+    ///
+    /// It used to end "reinstall the add-on from TradeAgent" — the right diagnosis pointed at no
+    /// control. "Add-on" is not what anything else in the product calls this, and reinstalling was
+    /// possible only inside the setup wizard, which an owner past setup can never open again. Both
+    /// halves are now the same repair the row and the Checks page name, with its on-screen label.
+    /// </summary>
     public override string ToString() =>
         $"bridge {BridgeVersion} speaks protocol {ReportedProtocolVersion}, this build speaks " +
-        $"{ExpectedProtocolVersion} — reinstall the add-on from TradeAgent";
+        $"{ExpectedProtocolVersion} — press {Labels.ReinstallBridge} on the Checks page";
 }

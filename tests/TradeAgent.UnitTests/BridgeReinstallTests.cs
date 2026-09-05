@@ -147,14 +147,32 @@ public class BridgeReinstallTests
     [Fact]
     public void Every_sentence_that_sends_the_owner_to_the_repair_names_the_control_that_exists()
     {
+        var refusal = new IncompatibleBridge(2, 3, "0.1.1", "8.0.14.397").ToString();
         var missingRow = AtasHealth.BridgeRow(true, Machine(bridge: false), HealthState.FAILED, null, null).Detail;
         var catalogue = Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING);
 
-        foreach (var said in new[] { missingRow, $"{catalogue.UserMessage} {catalogue.Repair}" })
+        foreach (var said in new[] { refusal, missingRow, $"{catalogue.UserMessage} {catalogue.Repair}" })
         {
             Assert.Contains(Labels.ReinstallBridge, said);
             // "add-on" is what the owner's documents stopped calling it; the app said it last.
             Assert.DoesNotContain("add-on", said);
+        }
+    }
+
+    /// <summary>
+    /// No sentence in the catalogue may name a control that is on no screen. "Press Retry" was the
+    /// other one — there has never been a Retry button anywhere in this product, and pressing the
+    /// new repair on a computer without ATAS is exactly how an owner would have read it.
+    /// </summary>
+    [Fact]
+    public void No_repair_sentence_sends_the_owner_to_a_button_that_does_not_exist()
+    {
+        string[] never = ["press Retry", "Press Retry", "Install bridge"];
+        foreach (var code in Enum.GetValues<ErrorCode>())
+        {
+            var repair = Errors.Get(code).Repair;
+            foreach (var ghost in never)
+                Assert.DoesNotContain(ghost, repair);
         }
     }
 

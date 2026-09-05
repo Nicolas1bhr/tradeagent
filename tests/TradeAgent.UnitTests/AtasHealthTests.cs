@@ -74,7 +74,7 @@ public class AtasHealthTests
 
     /// <summary>
     /// The whole point of the bridge row. All three of these are "the pipe is quiet"; only one of
-    /// them is fixed by pressing Install bridge, and the third is the one that happens after every
+    /// them is fixed by pressing Reinstall the bridge, and the third is the one that happens after every
     /// single ATAS restart because ATAS restores a chart strategy stopped.
     /// </summary>
     [Fact]
@@ -111,8 +111,8 @@ public class AtasHealthTests
     /// Both refusals became permanent — a protocol mismatch until a compatible hello, a credential
     /// failure until a peer proves itself — and this row returned any non-empty refusal ahead of
     /// everything derived from the machine. So a version-2 bridge refused this morning still reads
-    /// "reinstall the add-on from TradeAgent" this afternoon with ATAS closed, and the operator is
-    /// sent to repair an add-on inside a platform that is not running. Whether ATAS is up is read
+    /// "press Reinstall the bridge on the Checks page" this afternoon with ATAS closed, and the
+    /// operator is sent to repair a bridge inside a platform that is not running. Whether ATAS is up is read
     /// from the process table on every pass; it is the NEWER fact, and the newer fact leads.
     ///
     /// Kept, not dropped: the refusal is still on the row, after the live state, because it is the
@@ -121,7 +121,7 @@ public class AtasHealthTests
     [Fact]
     public void A_recorded_refusal_does_not_outrank_a_platform_that_is_not_there()
     {
-        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — reinstall the add-on from TradeAgent";
+        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — press Reinstall the bridge on the Checks page";
 
         // ATAS itself is closed. That is what is true now.
         var down = AtasHealth.BridgeRow(true, Machine(running: false), HealthState.FAILED, null, refusal);
@@ -185,7 +185,7 @@ public class AtasHealthTests
         Assert.False(Versions.BridgeCompatible(2));
         Assert.True(Versions.BridgeCompatible(Versions.BridgeProtocolVersion));
 
-        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — reinstall the add-on";
+        const string refusal = "bridge 0.1.1 speaks protocol 2, this build speaks 3 — press Reinstall the bridge";
         var (state, detail) = AtasHealth.BridgeRow(true, Machine(), HealthState.READY, null, refusal);
         Assert.Equal(HealthState.FAILED, state);
         Assert.Equal(refusal, detail);

@@ -374,7 +374,7 @@ public class AtasProtocolTests
         Assert.Contains("failed to load", said);
         Assert.Contains("Strategies folder", said);
         Assert.Contains("restored stopped", said);
-        Assert.Contains("reinstall the add-on", said);
+        Assert.Contains("press Reinstall the bridge", said);
     }
 
     /// <summary>

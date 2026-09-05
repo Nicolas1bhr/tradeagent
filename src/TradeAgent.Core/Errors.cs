@@ -45,12 +45,17 @@ public static class Errors
     {
         [ErrorCode.UNKNOWN_ERROR]                  = ("Something unexpected went wrong.", "Run Check everything from the Diagnostics screen.", false),
         [ErrorCode.AI_RUNTIME_NOT_FOUND]           = ("The AI assistant program is not installed yet.", "TradeAgent can install it for you.", true),
-        [ErrorCode.AI_INSTALL_FAILED]              = ("The AI assistant could not be installed.", "Check your internet connection, then press Retry.", true),
+        // The other sentence that named Retry. The control it means is the setup step's "Try again"
+        // (OnboardingView.cs:597), which is what an owner is actually looking at when they read this.
+        [ErrorCode.AI_INSTALL_FAILED]              = ("The AI assistant could not be installed.", "Check your internet connection, then press Try again.", true),
         [ErrorCode.AI_VERSION_UNSUPPORTED]         = ("The installed AI assistant is too old for this version of TradeAgent.", "TradeAgent can update it for you.", true),
         [ErrorCode.AI_AUTH_REQUIRED]               = ("You need to sign in to your AI account.", "Press Sign in. A browser window will open.", false),
         [ErrorCode.AI_AUTH_FAILED]                 = ("Signing in to the AI account did not work.", "Press Sign in again and complete the browser steps.", false),
         [ErrorCode.AI_AUTH_TIMEOUT]                = ("Signing in took too long and was cancelled.", "Press Sign in again.", false),
-        [ErrorCode.ATAS_NOT_FOUND]                 = ("ATAS is not installed on this computer.", "Install ATAS, then press Retry.", false),
+        // No control anywhere in this product is called Retry, and this is the sentence an owner gets
+        // for pressing the bridge repair on a computer where ATAS is not installed. It now names the
+        // action instead of a button that does not exist.
+        [ErrorCode.ATAS_NOT_FOUND]                 = ("ATAS is not installed on this computer.", "Install ATAS on this computer, then try again.", false),
         [ErrorCode.ATAS_NOT_RUNNING]               = ("ATAS is not running.", "Press Open ATAS.", true),
         [ErrorCode.ATAS_VERSION_UNSUPPORTED]       = ("Your ATAS version changed and the TradeAgent bridge needs updating.", "Press Repair.", true),
         [ErrorCode.ATAS_BRIDGE_MISSING]            = ("The TradeAgent bridge is not installed into ATAS yet.", $"Press {Labels.ReinstallBridge} on the Checks page.", true),

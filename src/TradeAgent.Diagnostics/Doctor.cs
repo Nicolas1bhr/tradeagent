@@ -125,7 +125,7 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
         r.Add(atas.Installed
             ? CheckResult.Ok("ATAS installation", $"{atas.InstallDir} {atas.Version}")
             : CheckResult.Bad("ATAS installation", "not found",
-                "Install ATAS, then press Retry.", ErrorCode.ATAS_NOT_FOUND));
+                Errors.Get(ErrorCode.ATAS_NOT_FOUND).Repair, ErrorCode.ATAS_NOT_FOUND));
         if (!atas.LayoutVerified)
             r.Add(CheckResult.Warn("ATAS folder layout",
                 "the folders TradeAgent looks in have not been confirmed against a real ATAS install",

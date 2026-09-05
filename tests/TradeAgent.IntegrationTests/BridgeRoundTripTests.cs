@@ -428,9 +428,9 @@ public class BridgeRoundTripTests
     /// Both markers are permanent — `_incompatible` until a compatible hello, `_unauthenticated`
     /// until a peer proves itself — and the row returned the protocol one first, which is the OLDER
     /// of the two. So the sequence an operator actually walks through reads wrong at exactly the
-    /// moment they need it: a version-2 bridge is refused, they reinstall the add-on as the row told
+    /// moment they need it: a version-2 bridge is refused, they reinstall the bridge as the row told
     /// them to, the new DLL reaches the pipe and fails AUTHENTICATION — and the row still says
-    /// "speaks protocol 2, reinstall the add-on". They are told to repeat what they just did, while
+    /// "speaks protocol 2, press Reinstall the bridge". They are told to repeat what they just did, while
     /// the live sentence, which says another program may have taken the pipe name and that
     /// TradeAgent will not trade through it, is held behind it.
     ///
@@ -749,7 +749,7 @@ public class BridgeRoundTripTests
     /// erase the version number and the repair from the row. The pipe is created with
     /// `maxNumberOfServerInstances = 1`, and the accept loop creates the next instance only after the
     /// inner read loop ENDS — so a refused peer that holds the connection open and never speaks again
-    /// occupies the only slot there is. The operator reads "reinstall the add-on from TradeAgent",
+    /// occupies the only slot there is. The operator reads "press Reinstall the bridge on the Checks page",
     /// does it, and the fixed bridge's `ConnectAsync` times out against a pipe held by the peer it
     /// was sent to replace.
     ///
@@ -807,7 +807,7 @@ public class BridgeRoundTripTests
         await Wait(async () => await Task.FromResult(Volatile.Read(ref failures) > 0));
         Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
         Assert.Equal(Versions.BridgeProtocolVersion, connector.Incompatible.ExpectedProtocolVersion);
-        Assert.Contains("reinstall the add-on", connector.StatusDetail);
+        Assert.Contains("press Reinstall the bridge", connector.StatusDetail);
         Assert.Contains("protocol 2", connector.StatusDetail);
         Assert.Null(connector.Bridge);
         Assert.False(connector.Capabilities.ReconciliationProvable);
@@ -845,7 +845,7 @@ public class BridgeRoundTripTests
     /// that mattered then. It left an edge: the reason was still cleared by the NEXT `Drop` for any
     /// other cause — an unrelated peer connecting and going, a silent hang-up — so the row went blank
     /// with nothing having been repaired and nothing having replaced the bridge. The operator is told
-    /// to reinstall the add-on and the instruction disappears while they are doing it.
+    /// to reinstall the bridge and the instruction disappears while they are doing it.
     ///
     /// `_unauthenticated` has always been kept on exactly this argument: it is not a fact that leaves
     /// with the peer, and only a peer proving itself ends it. A mismatch is the same shape — "the
@@ -870,7 +870,7 @@ public class BridgeRoundTripTests
 
         Assert.NotNull(connector.Incompatible);
         Assert.Equal(2, connector.Incompatible!.ReportedProtocolVersion);
-        Assert.Contains("reinstall the add-on", connector.StatusDetail);
+        Assert.Contains("press Reinstall the bridge", connector.StatusDetail);
 
         // And a second one, so this is a rule and not a one-drop grace.
         await TouchAndLeave(pipe);
@@ -923,7 +923,7 @@ public class BridgeRoundTripTests
     /// a peer whose hello was refused as protocol 2 set <c>_hello</c>, and with it
     /// <c>SupportsClientOrderId</c>, <c>SupportsOrderHistory</c> and <c>ReconciliationProvable</c>,
     /// by sending ONE heartbeat claiming protocol 3. The connector then displayed "speaks protocol 2
-    /// — reinstall the add-on" and reported <c>ReconciliationProvable = true</c> at the same moment.
+    /// — press Reinstall the bridge" and reported <c>ReconciliationProvable = true</c> at the same moment.
     ///
     /// That flag is not decoration. `TradingGateway` consults exactly it to refuse LIVE_AUTONOMOUS
     /// with AUTONOMY_REQUIRES_PROVABLE_STATE, and again to escalate an UNKNOWN order to "needs a

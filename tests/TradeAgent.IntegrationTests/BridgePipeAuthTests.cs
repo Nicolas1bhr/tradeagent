@@ -297,7 +297,7 @@ public class BridgePipeAuthTests
 
         var named = connector.StatusDetail!;
         Assert.Contains("did not authenticate", named);
-        Assert.Contains("reinstall the add-on", named);
+        Assert.Contains("press Reinstall the bridge", named);
     }
 
     /// <summary>

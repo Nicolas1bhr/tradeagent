@@ -935,13 +935,13 @@ public sealed class OnboardingView
 
     Screen InstallBridge() => UsingAtas
         ? new Screen(
-            "TradeAgent needs to place a small add-on inside ATAS so the two can talk to each other.",
-            Note("Close ATAS first if it is open. The add-on cannot be placed while ATAS is using the folder.",
+            "TradeAgent needs to place a small bridge inside ATAS so the two can talk to each other.",
+            Note("Close ATAS first if it is open. The bridge cannot be placed while ATAS is using the folder.",
                 Theme.Caution),
-            Ui.Primary("Install the add-on", Act(() =>
+            Ui.Primary("Install the bridge", Act(() =>
             {
                 var dir = AtasInstallation.InstallBridge(Path.Combine(AppContext.BaseDirectory, "bridge"));
-                _note = $"The add-on is in place, in {dir}.";
+                _note = $"The bridge is in place, in {dir}.";
             })))
         : Skipped("Not needed for the practice simulator.");
 

@@ -288,7 +288,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// credential refusal already lasted until a peer proved itself. Neither supersedes the other,
     /// and the row returned the protocol one first — the OLDER of the two — so the sequence an
     /// operator walks reads wrong at the moment they need it: refused on protocol, told to reinstall,
-    /// the new DLL fails AUTHENTICATION, and the row still says "reinstall the add-on".
+    /// the new DLL fails AUTHENTICATION, and the row still says "press Reinstall the bridge".
     ///
     /// A counter and not a clock: two observations in the same tick must still order, and nothing
     /// here needs to know how long ago anything was — only which came last. Zero means "not set",
@@ -441,7 +441,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             ? "the ATAS bridge is connected and has not said hello yet — it proved itself and has " +
               "not announced its version. If this line stays, the strategy on the chart is loaded " +
               "but is not the TradeAgent bridge, or it is a build that stops before its handshake; " +
-              "reinstall the add-on from TradeAgent"
+              $"press {Labels.ReinstallBridge} on the Checks page"
             : null;
 
     /// <summary>
@@ -703,7 +703,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // there erased the reason microseconds after writing it. That left an edge: the NEXT Drop for
         // any other cause — an unrelated peer arriving and going, a silent hang-up — still wiped it,
         // so the row went blank with nothing repaired and nothing having replaced the bridge. The
-        // operator is told to reinstall the add-on and the instruction disappears while they do it.
+        // operator is told to reinstall the bridge and the instruction disappears while they do it.
         //
         // So it is kept outright, exactly as a credential refusal is kept below and for the reason
         // stated there: it is not a fact that leaves with the peer, it is "the thing that holds this
@@ -1769,8 +1769,8 @@ public sealed record UnauthenticatedBridge(string Reason)
     /// </summary>
     public static readonly UnauthenticatedBridge Silent = new(
         "a program is holding the far end of the bridge pipe and has neither proved itself nor said " +
-        "hello. If ATAS is running with the TradeAgent strategy started, reinstall the add-on from " +
-        "TradeAgent so the DLL in the ATAS Strategies folder is this one");
+        $"hello. If ATAS is running with the TradeAgent strategy started, press {Labels.ReinstallBridge} " +
+        "on the Checks page so the bridge in the ATAS Strategies folder is this one");
 
     /// <summary>
     /// A peer that said hello without ever proving it holds this installation's bridge secret. It is
@@ -1789,8 +1789,8 @@ public sealed record UnauthenticatedBridge(string Reason)
         "secret, so everything it claimed was discarded and it was disconnected. Something is " +
         "answering on this pipe, so this is not a bridge that failed to load, not the wrong ATAS " +
         "Strategies folder and not a strategy restored stopped — all three of those are silence. " +
-        "The repair is to reinstall the add-on from TradeAgent; if this line survives that, another " +
-        "program has taken the pipe name and TradeAgent will not trade through it");
+        $"The repair is to press {Labels.ReinstallBridge} on the Checks page; if this line survives " +
+        "that, another program has taken the pipe name and TradeAgent will not trade through it");
 
     public override string ToString() => $"the ATAS bridge did not authenticate — {Reason}";
 }

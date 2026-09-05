@@ -43,3 +43,8 @@ Branch `u-bridge-reinstall` off `main` `421b5d8`. No push, no other worktree, no
    GREEN: 6/6. Mutant `Forget() { }` → RED `Assert.DoesNotContain() Failure: Sub-string found`. Seen on the Mac loop:
    `.../scratchpad/ui-checks.png` — the card and `Reinstall the bridge` on Checks, shown because the bridge row is
    FAILED and not installed. Settings shot: `.../scratchpad/ui-settings.png`.
+2. **The sentences agree — DONE.** RED: 2 fails — `Not found: "Reinstall the bridge"` (the refusal) and
+   `Found: "press Retry"` (a button no screen has ever had). GREEN: 218 unit. Mutant: old refusal text back →
+   RED `Not found: "Reinstall the bridge"`. Beyond the brief's two "add-on" spots I found three more live
+   sentences (`AtasConnector.cs` `PendingHello`, `Silent`, `PresentedNoProof`) and fixed the text only; and
+   two catalogue repairs naming a phantom Retry (`ATAS_NOT_FOUND`, `AI_INSTALL_FAILED`).
