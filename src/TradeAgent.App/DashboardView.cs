@@ -311,6 +311,21 @@ sealed class DashboardPage
         public required TextBlock LastCheck { get; init; }
         /// <summary>Only on a press row: which press this came from, and what is on the account now.</summary>
         public TextBlock? Press { get; init; }
+
+        /// <summary>
+        /// The two halves of the bottom of the row, and exactly one of them is on screen.
+        ///
+        /// <see cref="Answer"/> is the note box and the two assertions. <see cref="OnTheWire"/> is
+        /// the sentence that replaces them while a dispatcher of this process is still inside the
+        /// connector call for this request: there is nothing for the owner to have seen yet, so the
+        /// buttons would be asserting an outcome that does not exist. The lease is asked every tick
+        /// rather than at build time because it EXPIRES — the row's id does not change when the
+        /// dispatch ends, so nothing else would rebuild this row, and the owner would be left
+        /// looking at a refusal that had stopped being true.
+        /// </summary>
+        public required Control Answer { get; init; }
+        public required TextBlock OnTheWire { get; init; }
+        public required IReadOnlyList<Button> Buttons { get; init; }
     }
 
     /// <summary>
@@ -386,6 +401,23 @@ sealed class DashboardPage
             row.State.Text = StateSentence(r.State);
             row.BrokerId.Text = r.ConnectorOrderId ?? "none — the broker never sent one back";
             row.LastCheck.Text = LastCheckSentence(r);
+
+            // THE CARD ASKS THE LEASE, and it is the only surface that has to. `Unreconciled()`
+            // deliberately still lists a row a dispatcher is inside the connector call for — it is
+            // unconfirmed work and it keeps trading paused — but the two buttons on it assert what
+            // the owner saw in ATAS, and while the order can still reach the broker there is nothing
+            // there to have seen. `ForceResolve` refuses such a row for the same reason; this is
+            // what stops the owner meeting that refusal as an error after pressing twice.
+            var wire = _host.Gateway.StillOnTheWire(row.RequestId);
+            row.OnTheWire.Text = wire is null ? "" :
+                $"TradeAgent is still sending this order — {wire}. Wait for it to answer: it can still "
+                + "reach the broker, so what ATAS shows right now is not its outcome.";
+            row.OnTheWire.IsVisible = wire is not null;
+            row.Answer.IsVisible = wire is null;
+
+            // A confirmation half-pressed before the lease appeared must not survive to be completed
+            // under it. The same reasoning as editing the note: what the press meant has changed.
+            if (wire is not null) foreach (var b in row.Buttons) Ui.DisarmConfirm(b);
         }
 
         RefreshPressFacts(pending);
@@ -400,11 +432,14 @@ sealed class DashboardPage
         var lastCheck = Fact("Last check", LastCheckSentence(r), mono: false);
         var press = isPress ? Fact("Emergency press", "reading the account…", mono: false) : default;
 
-        _unconfirmedRows.Add(new UnconfirmedRow
+        // What stands where the note and the buttons stand while a dispatcher of this process is
+        // still inside the connector call for this request. Written by the tick below, never here:
+        // the lease can expire while this row is on screen, and this row is built once.
+        var onTheWire = new TextBlock
         {
-            RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value,
-            Press = isPress ? press.Value : null
-        });
+            FontSize = Theme.Small, Foreground = Theme.Caution, TextWrapping = TextWrapping.Wrap,
+            IsVisible = false, Margin = new Thickness(0, Theme.S2, 0, 0)
+        };
 
         // Required. ForceResolve writes the note onto the record and logs it at warn, which is the
         // only durable trace of a human overriding the machine — an empty one turns a loud log into
@@ -463,6 +498,17 @@ sealed class DashboardPage
             foreach (var b in buttons) { Ui.DisarmConfirm(b); b.IsEnabled = armed; }
         };
 
+        var answer = Ui.Col(Theme.S2,
+            note,
+            Ui.With(Ui.Col(Theme.S2, [.. buttons]), c => c.Margin = new Thickness(0, Theme.S2, 0, 0)));
+
+        _unconfirmedRows.Add(new UnconfirmedRow
+        {
+            RequestId = id, State = state.Value, BrokerId = brokerId.Value, LastCheck = lastCheck.Value,
+            Press = isPress ? press.Value : null,
+            Answer = answer, OnTheWire = onTheWire, Buttons = buttons
+        });
+
         var row = Ui.Col(Theme.S2,
             new TextBlock
             {
@@ -477,8 +523,8 @@ sealed class DashboardPage
                     brokerId.Root,
                     lastCheck.Root]),
                 c => c.Margin = new Thickness(0, Theme.S2, 0, 0)),
-            note,
-            Ui.With(Ui.Col(Theme.S2, [.. buttons]), c => c.Margin = new Thickness(0, Theme.S2, 0, 0)));
+            onTheWire,
+            answer);
 
         if (_unconfirmed.Children.Count > 0) row.Margin = new Thickness(0, Theme.S3, 0, 0);
         return row;

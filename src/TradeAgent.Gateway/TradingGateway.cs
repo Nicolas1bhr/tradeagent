@@ -154,6 +154,32 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// IS A HANDLER OF THIS PROCESS INSIDE THE CONNECTOR CALL FOR THIS REQUEST RIGHT NOW — and if
+    /// it is, the sentence that says so, in the two numbers a person needs.
+    ///
+    /// The lease has always been checked by <see cref="ReconcileAsync"/>. It is asked here, from
+    /// outside, because the reconciler is not the only thing that moves a row: the owner's card
+    /// moves one too, through <see cref="ForceResolve"/>, and it was reading
+    /// <see cref="Unreconciled"/> — which does not consult the lease — and rendering its two
+    /// override buttons over a placement still in flight (REVIEW 2026-09-05b finding 1, probe P3).
+    ///
+    /// NOTE WHAT THIS IS NOT: it is not a filter on <see cref="Unreconciled"/>. A leased row is
+    /// unconfirmed work, it keeps trading paused, and it belongs on the card — taking it out of that
+    /// list would let the gate authorize a new order over a dispatch that is still on the wire,
+    /// which is the opposite of the direction this whole mechanism fails in. The row stays; what it
+    /// loses is the pair of buttons that assert an outcome nobody can yet have observed.
+    ///
+    /// The two numbers are how long THIS dispatch has been on the wire against how long the
+    /// connector says ONE call can possibly take, and they are built here so the reconciler's line
+    /// and the card's sentence cannot drift into two different accounts of one fact.
+    /// </summary>
+    public string? StillOnTheWire(string requestId) =>
+        _dispatches.TryGetValue(requestId, out var span) && span.Live
+            ? $"still on the wire for {(Now - span.Started).TotalSeconds:0}s " +
+              $"of a possible {Connector.WorstCaseOperationPath.TotalSeconds:0}s"
+            : null;
+
+    /// <summary>
     /// WHEN ABSENCE MAY START COUNTING FOR THIS RECORD — the later of the dispatch and the moment
     /// the dispatch could last have been in flight.
     ///
@@ -2701,17 +2727,17 @@ public sealed class TradingGateway : IAsyncDisposable
             // It does NOT lift the pause. A dispatch that has outlived the bound is still unconfirmed
             // work and trading stays refused over it; what it is not is a record anybody else may
             // settle.
-            if (_dispatches.TryGetValue(req.RequestId, out var span) && span.Live)
+            // THE TWO NUMBERS THE OWNER NEEDS, and neither of them is "in progress". A person
+            // reading a paused machine is deciding whether to wait or to go and look in the
+            // platform, and that decision is how long THIS dispatch has been on the wire against
+            // how long the connector says ONE call can possibly take. Past the second figure the
+            // connector has overrun its own claim, which is the moment to go and look. The sentence
+            // is built by StillOnTheWire, which the owner's card also asks, so the two accounts of
+            // one fact cannot drift apart.
+            if (StillOnTheWire(req.RequestId) is { } onTheWire)
             {
                 inconclusive++;
-
-                // THE TWO NUMBERS THE OWNER NEEDS, and neither of them is "in progress". A person
-                // reading a paused machine is deciding whether to wait or to go and look in the
-                // platform, and that decision is how long THIS dispatch has been on the wire against
-                // how long the connector says ONE call can possibly take. Past the second figure the
-                // connector has overrun its own claim, which is the moment to go and look.
-                details.Add($"{req.RequestId}: still on the wire for {(Now - span.Started).TotalSeconds:0}s " +
-                            $"of a possible {Connector.WorstCaseOperationPath.TotalSeconds:0}s");
+                details.Add($"{req.RequestId}: {onTheWire}");
                 continue;
             }
 
@@ -3052,6 +3078,29 @@ public sealed class TradingGateway : IAsyncDisposable
     public ExecutionRequest ForceResolve(string requestId, ExecutionState finalState, string note)
     {
         var req = _requests.Get(requestId) ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, "unknown request");
+
+        // A LIVE DISPATCHER OWNS ITS ROW, AND THAT IS TRUE OF THE OWNER'S BUTTON TOO.
+        //
+        // `U-stranded` gave the reconciler this lease and stopped it writing off an order a handler
+        // was still inside the connector call for. The card was the other way in: it is fed by
+        // `Unreconciled()`, which does not consult the lease, so the same live row was rendered with
+        // "It was filled" and "No order exists" — and this method wrote a TERMINAL state onto it,
+        // cleared the flag and the latch, and trading resumed while the placement was still on the
+        // wire. Then the broker filled it (REVIEW 2026-09-05b finding 1, probe P3).
+        //
+        // The refusal is not a matter of trusting the machine over the person. It is that there is
+        // nothing for the person to have seen yet: the order may still reach the broker after they
+        // look, so ATAS's book at this instant is not evidence about this request. A minute later,
+        // when the dispatch has ended, their answer is worth exactly what it always was.
+        //
+        // It names the same two numbers the reconciler's refusal names, because a person deciding
+        // whether to wait needs how long this has been on the wire against how long one call can
+        // take — and because one sentence for one fact is what stops the two surfaces disagreeing.
+        if (StillOnTheWire(requestId) is { } onTheWire)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"TradeAgent is still sending this order — {onTheWire}. Wait for it to answer before " +
+                "resolving it: it can still reach the broker, so what ATAS shows right now is not its outcome.");
+
         var from = req.State;
 
         // A FLAGGED RECORD IS NOT NECESSARILY AN UNKNOWN ONE, and that is what made this method
