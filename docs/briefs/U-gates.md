@@ -35,5 +35,22 @@ red after an honest attempt, say the finding is refuted and why, with the probe)
 (commit before mutating; `cp` restore; `touch`). Test-name diff vs baseline: nothing removed. Commit per item, no
 trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
-## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted, with the probe) →
-GREEN → mutant; final counts; what you did NOT do. Verified or NOT VERIFIED.
+## Report
+
+Code tip `0bee79b` (from `main` @ `798ed4b`); this report is the commit on top. No box, no push, no trailers.
+1. **Modify through the gates (F2).** RED over the pipe, LIVE_CONFIRM + `MaxOrderQuantity=1`, quantity 1→1000: `ok=True`, `ACKNOWLEDGED`, `modify calls on the wire : 1`.
+   GREEN: risk-checked on the RESULTING order and parked like a place — `RISK_LIMIT_EXCEEDED`, no record, 0 calls; in-limits LIVE_CONFIRM parks at 0 calls and the press sends 1;
+   PAPER in-limits still applies; `RISK_CHECK_UNAVAILABLE` when the book cannot show the target. Mutant (check `before.Quantity`, not the requested one) SURVIVED the first test —
+   `0bee79b` makes it name the gate, then it dies: `Expected: "RISK_LIMIT_EXCEEDED" Actual: "APPROVAL_REQUIRED"`.
+2. **Unknown mode fails closed (F3).** RED: `"mode":999`, `live_activated:false`, `REAL-001 simulated=False` → `ModeAllowsExecution : True`, `ModeIsLive : False`,
+   `TryAuthorizeExecution : True`, buy filled. GREEN: `ModeIsRecognised` gates execution, health `PAUSED` every refresh, `SetMode` refuses an undefined value, the owner gets a
+   line naming 999, the value is NOT rewritten, four named modes unchanged. Mutant (`||` for `&&`) red: `Expected: MODE_FORBIDS_EXECUTION Actual: TRADING_PERMISSION_UNAVAILABLE`.
+3. **Gates decided at dispatch (F4 / finding 6).** RED, barrier inside the risk check's position read: Stop → `ok — FILLED`, 1 at the broker; `ActivateLive(false)` → `ok — FILLED`;
+   an approval whose mode moved to PAPER mid-check → `ok — FILLED`; 4 callers vs limit 1 → 4 fills. GREEN: 0 sends each; 5 callers vs a budget of 3 send exactly 3. Mutants: drop
+   `AuthorizeOrThrow` from the re-check → both barriers red; check the budget only in the risk pass → both concurrency rows red. A third (take the place at `Commit`) SURVIVED —
+   the place path holds `_dispatchGate` across check and commit, so the lock is load-bearing only for `modify`, which has no gate.
+
+Gate: Release `--no-incremental` **0 warnings**; suite Release **201 + 207 + 534 = 942, 0 failed**; test names **+16, 0 removed**.
+NOT done: no box, no real ATAS, no UI, no money. One property outside my files — `GatewayPipeServer.ModifyHandlerPath` 4W → 6W, since `modify` now issues a placement's chain and
+the drain is the max over that table (arithmetic test 256 s → 306 s; `modify` is now the longest row). `ApproveAsync` gained a MODIFY arm. The re-check's mode arm is reachable
+only on the approval path: a fresh place re-reads the mode when it builds its record, so it parks instead. Untouched: press/composite, pipe protocol, updater, connectors.
