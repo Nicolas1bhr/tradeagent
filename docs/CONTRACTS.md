@@ -229,9 +229,20 @@ reading there costs a refusal to identify the close, which is the safe direction
 **`Order.Comment` on a close is ATAS's, not ours.** `ITradingManager.ClosePosition` builds the order
 itself and writes `Close position` into the comment, so a close carries nothing of ours at submission
 time; `ClosePosition` identifies it afterwards by (account, instrument, closing direction, size) over
-the orders that appeared during the call, and refuses to name one unless exactly one matches.
-Measured 2026-09-05: the press minted `TA-op-close-31d4779568274e53-0` and ATAS's own order read back
-`client_order_id: "Close position"`.
+the orders **and the fills** that appeared during the call, and refuses to name one unless exactly one
+matches. Measured 2026-09-05: the press minted `TA-op-close-31d4779568274e53-0` and ATAS's own order
+read back `client_order_id: "Close position"`.
+
+**A filled close is in NO order collection — it is on the fill.** Measured 2026-09-06 (ATAS
+8.0.14.397, simulated `CRYPTO5EB41`, BTCUSDT): a short of 1 closed by the operator's Close All filled
+at 79720.2, and the diff over `ITradingManager.Orders`, `ChartStrategy.Orders` and `Connector.Orders`
+saw **zero** new orders — the bridge answered, inside its budget, `0 of the 0 order(s) ATAS added
+match Buy 1 BTCUSDT on CRYPTO5EB41`. A market close on this platform is Done before the adapter can
+look, and a Done order is in none of the three. The same fill is in `MyTrades` inside the window and
+carries `MyTrade.Order` — the order object itself, which is where `client_order_id: "Close position"`
+in `trade executions` is read from. So the causal window is over both collections; the four terms that
+must match are unchanged. With the fill included, the same press read `the platform filled it`,
+`TradeAgent thinks: filled`, `Broker reference: 12063688` — the id of the execution ATAS recorded.
 
 **`Order.Comment` carries at least 65 characters.** `TA-COID64-…` and `TA-COID65-…` were both accepted
 verbatim and read back byte-identical (2026-09-05, ATAS's own collection, no broker attached). The

@@ -32,6 +32,12 @@ public sealed class StubTrading : ITradingManager
     /// <summary>ATAS's own order collection, as this stub lets the gate write it.</summary>
     public readonly List<Order> Book = [];
 
+    /// <summary>ATAS's own fill collection. On the real box a market close is Done before the
+    /// adapter can look and is in NONE of the order collections — but its fill is here, carrying the
+    /// order object (measured 2026-09-06). So the gate has to be able to answer a close that arrives
+    /// only as a fill.</summary>
+    public readonly List<MyTrade> Fills = [];
+
     /// <summary>Run inside ClosePosition, i.e. inside the before/after window the adapter diffs.</summary>
     public Action? OnClose;
 
@@ -52,7 +58,7 @@ public sealed class StubTrading : ITradingManager
 
     public bool IsStopLossModeActivated => false;
     public bool IsTakeProfitModeActivated => false;
-    public IEnumerable<MyTrade> MyTrades => [];
+    public IEnumerable<MyTrade> MyTrades => Fills;
     public IEnumerable<Order> Orders => Book;
     public TPlusLimits? TPlusLimit => null;
     public ITradingVolumeInfo TradingVolumeInfo => null!;

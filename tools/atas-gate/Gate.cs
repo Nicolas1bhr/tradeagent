@@ -198,8 +198,44 @@ public static class Gate
               $"close comment = \"{both.Comment}\", returned = {(picked is null ? "<nothing>" : "an order")}");
         Check("with a stranger in the window the STRANGER is left alone",
               string.IsNullOrEmpty(alsoStranger.Comment), $"its comment is \"{alsoStranger.Comment}\"");
+
+        // 3d — THE CLOSE ARRIVES ONLY AS A FILL, which is what the real box does. Measured
+        // 2026-09-06 on ATAS 8.0.14.397 (simulated CRYPTO5EB41): the operator's Close All filled at
+        // 79720.2 and the diff over the three order collections saw ZERO new orders — a market close
+        // is Done before this method looks, and a Done order is in none of them. The fill is in
+        // MyTrades inside the window and carries the order object itself.
+        trading.Book.Clear();
+        trading.Fills.Clear();
+        var onlyAFill = TheClose();
+        trading.OnClose = () => trading.Fills.Add(new MyTrade { Order = onlyAFill });
+        OrderInfo? viaFill = null;
+        string? fillFailed = null;
+        var fillClock = Stopwatch.StartNew();
+        try { viaFill = adapter.ClosePosition(Account, "ES", "TA-CLOSE-VIA-FILL"); }
+        catch (Exception e) { fillFailed = $"{e.GetType().Name}: {e.Message}"; }
+        fillClock.Stop();
+
+        Check("a close that reaches ATAS's collections ONLY as a fill is still identified",
+              viaFill is not null && onlyAFill.Comment == "TA-CLOSE-VIA-FILL",
+              fillFailed ?? $"comment = \"{onlyAFill.Comment}\", {fillClock.ElapsedMilliseconds} ms");
+
+        // 3e — and the terms still decide. An unrelated fill in the same window is not the close.
+        trading.Book.Clear();
+        trading.Fills.Clear();
+        var strangerFill = Unrelated();
+        trading.OnClose = () => trading.Fills.Add(new MyTrade { Order = strangerFill });
+        OrderInfo? viaStrangerFill = null;
+        string? fillRefusal = null;
+        try { viaStrangerFill = adapter.ClosePosition(Account, "ES", "TA-CLOSE-STRANGER-FILL"); }
+        catch (Exception e) { fillRefusal = $"{e.GetType().Name}: {e.Message}"; }
+
+        Check("an unrelated fill in the window is NOT returned as the close",
+              viaStrangerFill is null && string.IsNullOrEmpty(strangerFill.Comment),
+              fillRefusal ?? $"it returned an order; stranger comment = \"{strangerFill.Comment}\"");
+
         trading.OnClose = null;
         trading.Book.Clear();
+        trading.Fills.Clear();
 
         // ---------------------------------------------------------------- 4. order history coverage
         //

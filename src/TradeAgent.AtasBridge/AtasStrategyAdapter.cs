@@ -2014,6 +2014,23 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // entity once by the same identity, so the two agree.
         var before = new HashSet<AtasOrder>(LiveOrders());
 
+        // AND THE FILLS, BECAUSE ON THIS PLATFORM THE CLOSE IS NEVER IN THE ORDER COLLECTIONS AT ALL.
+        //
+        // Measured on the box, 2026-09-06, ATAS 8.0.14.397, simulated CRYPTO5EB41: a short of 1
+        // BTCUSDT closed by the operator's Close All filled at 79720.2 and the diff over
+        // ITradingManager.Orders / ChartStrategy.Orders / Connector.Orders saw **zero** new orders —
+        // "0 of the 0 order(s) ATAS added match Buy 1 BTCUSDT". A market close on a simulated account
+        // is Done before this method can look, and a Done order is not in any of the three
+        // collections LiveOrders unions. The SAME fill is in MyTrades within the window, carrying the
+        // order object itself (that is where `client_order_id: "Close position"` in `trade
+        // executions` comes from — it is read off `MyTrade.Order.Comment`).
+        //
+        // So the causal window is over both, and the terms are unchanged: an order is the close
+        // because it matches account, instrument, closing direction and size, whether it was found
+        // beside the other orders or hanging off a fill that landed in the same window. Widening
+        // WHERE we look is not weakening WHAT must match.
+        var beforeFills = new HashSet<AtasMyTrade>(LiveTrades());
+
         // WHAT ATAS MUST HAVE BUILT, worked out BEFORE the call so the answer cannot be fitted to
         // whatever turned up. Size is what was asked for; direction is the position's own, reversed.
         var closingSize = Math.Abs(position.Volume);
@@ -2049,14 +2066,25 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             && o.QuantityToFill == closingSize;
 
         // EVERY candidate, not the first — because "how many match" is the question that decides
-        // whether this is an identification or a guess.
+        // whether this is an identification or a guess. Deduplicated by reference identity, so an
+        // order that is both in a collection and on a fill is one candidate, not two.
         List<AtasOrder> candidates = [];
         var appeared = 0;
+        var fills = 0;
+        var saw = "";
         WaitFor(() =>
         {
-            var fresh = LiveOrders().Where(o => !before.Contains(o)).ToList();
+            var fresh = new HashSet<AtasOrder>(LiveOrders().Where(o => !before.Contains(o)));
             appeared = fresh.Count;
+            var freshFills = LiveTrades().Where(t => !beforeFills.Contains(t)).ToList();
+            fills = freshFills.Count;
+            foreach (var t in freshFills) if (t.Order is { } o) fresh.Add(o);
             candidates = [.. fresh.Where(Caused)];
+            // WHAT IT LOOKED AT, not just how many. A refusal that says "0 of 1 match" leaves the
+            // operator — and the next reader of this file — with no way to tell an unrelated order
+            // from a term this adapter reads wrongly off ATAS's object. Guarded like every other
+            // diagnostic here: describing a candidate must never be what fails the close.
+            saw = Clip(string.Join(", ", fresh.Take(3).Select(Terms)), 200);
             return candidates.Count > 0;
         }, EmergencyAckTimeout);
 
@@ -2064,8 +2092,9 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             throw new InvalidOperationException(
                 $"ATAS was asked to close {symbol} (it returned {(accepted ? "true" : "false")}) but the " +
                 $"resulting order could not be identified: {candidates.Count} of the {appeared} order(s) " +
-                $"ATAS added match {closingSide} {closingSize} {symbol} on " +
-                $"{(string.IsNullOrEmpty(positionAccount) ? "this account" : positionAccount)}; " +
+                $"and {fills} fill(s) ATAS added match {closingSide} {closingSize} {symbol} on " +
+                $"{(string.IsNullOrEmpty(positionAccount) ? "this account" : positionAccount)}" +
+                (saw.Length == 0 ? "" : $" (it added {saw})") + "; " +
                 "it must be reconciled, not assumed flat");
         var created = candidates[0];
 
@@ -3257,6 +3286,22 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// </summary>
     static AtasDirections ClosingDirection(decimal volume) =>
         volume > 0m ? AtasDirections.Sell : AtasDirections.Buy;
+
+    /// <summary>
+    /// The four terms <c>ClosePosition</c> matches on, as one short phrase, for a refusal message.
+    /// Guarded: reading an ATAS object that is being torn down must never be what turns "I could not
+    /// identify the close" into a different exception.
+    /// </summary>
+    static string Terms(AtasOrder o)
+    {
+        try
+        {
+            var account = o.AccountID ?? o.Portfolio?.AccountID;
+            var symbol = SymbolOf(o.Security) is { Length: > 0 } s ? s : o.SecurityId ?? "?";
+            return $"{o.Direction} {o.QuantityToFill} {symbol} on {(string.IsNullOrEmpty(account) ? "no account" : account)}";
+        }
+        catch (Exception e) { return $"<{Clip(e.GetType().Name, 40)}>"; }
+    }
 
     static bool AccountMatches(string? candidate, string wanted) =>
         string.IsNullOrWhiteSpace(wanted) || string.Equals(candidate, wanted, StringComparison.OrdinalIgnoreCase);
