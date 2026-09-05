@@ -31,3 +31,27 @@ per item, no trailers, no push, no other worktree. Gate: Release `--no-increment
 
 ## Report — append as you go, commit with each item, ≤12 lines: tip sha; RED → GREEN → mutant; final counts; what you
 did NOT do. Verified or NOT VERIFIED.
+
+## Report — fresh fixer, 2026-09-05
+
+Branch `u-pipe-replay`, rebased onto `main` `25586ee`; 4 commits, 4 files of substance (+236/−17); last code commit `eb0f959`, this report on top of it.
+1. **RED over the real pipe**, new `OfflineSweepReplayTests` (4 tests, 2 red): completed sweep, `Faults.Disconnected`,
+   same id replayed → `ok=False {"code":"TRADING_CONNECTION_MISSING","message":"simulator is disconnected"}` and
+   `connector calls during the replay : 1`, for cancel-all AND close-all — exactly what U-pipe-words measured.
+   **GREEN** after one change at each call site (`BeginComposite` → `await BeginCompositeAsync`, the book/position read
+   moved into the capture delegate): `ok=True`, the first answer byte-for-byte, `connector calls during the replay : 0`.
+   **Mutant** (the read hoisted back above the call at both sites, the delegate handed the already-read list) → the same
+   2 RED at `... : 1`; `cp` restored, `touch`ed, re-run 4/4.
+2. Other direction, green: a NEW id with the connector unreachable still answers `TRADING_CONNECTION_MISSING` on both
+   sweeps and claims no `composite_request` row; a fresh sweep reads once (`order reads it made : 1`, `position reads
+   it made : 1`).
+3. `docs/CONTRACTS.md`'s replay paragraph now states a replayed sweep performs NO read; the `AGENTS.md` template says it
+   in one sentence, pinned by an assertion in the existing `The_agent_is_told_the_things_it_must_not_get_wrong`; second
+   mutant (sentence deleted) → RED `Not found: "reads nothing from the platform"`, restored.
+Gate, Release: `--no-incremental` → 0 Warning(s), 0 Error(s), 17 projects. Suite pre-rebase at `f3e8847`: 218 + 218 +
+582 = 1018, 0 failed. Suite at the rebased tip: 218 + 218 + **581/582**, the one failure
+`GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled` thrown by its own setup
+(`PipeClient.ConnectAsync` → "the trading service closed the connection", 10 ms) in the `Category=Timing` class, while
+another builder's full suite ran on this Mac; that class re-run 3× at the tip → 34/34 each. Names vs `main`: 0 removed,
+4 added. **NOT done:** `TradingGateway.cs`, `GatewaySchema.cs`, the connectors untouched; sync `BeginComposite` left in
+place (the two operator press paths still call it); no box, no ATAS, no UI, no push, no other worktree.
