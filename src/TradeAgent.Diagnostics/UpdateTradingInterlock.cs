@@ -31,36 +31,97 @@ namespace TradeAgent.Diagnostics;
 public static class UpdateTradingInterlock
 {
     /// <summary>
-    /// Hands each side the narrowest view of the other it can work with: a count, a log sink, and a
-    /// flag. Neither object learns the other's type.
-    ///
-    /// Call once, after the gateway exists. Calling it again is harmless — it overwrites the same
-    /// three delegates with equivalent ones.
+    /// One gateway, for the life of the process. Tests use it; the composition root does not, because
+    /// switching trading platforms replaces the gateway (see the other overload).
     /// </summary>
     public static void Attach(TradingGateway gateway, UpdateService updates)
     {
         ArgumentNullException.ThrowIfNull(gateway);
+        Attach(() => gateway, updates);
+    }
+
+    /// <summary>
+    /// Hands each side the narrowest view of the other it can work with: a count, a log sink, and a
+    /// flag. Neither object learns the other's type.
+    ///
+    /// <b>Why a source rather than a gateway.</b> <c>AppHost.SwitchConnectorAsync</c> disposes the
+    /// gateway and builds another one when the owner changes trading platform. Attached to an
+    /// instance, this stop went on reading the discarded gateway — so the latch it held, and the
+    /// bound it derived from the connector that was just replaced, described a gateway nobody was
+    /// trading through, while the live one was never asked and was never told an install had started.
+    /// The composition root passes <c>() =&gt; Gateway</c>: the indirection is read at every question,
+    /// so there is no moment at which this points at the wrong one and no re-attach to forget.
+    ///
+    /// Call once. Calling it again is harmless — it overwrites the same three delegates.
+    /// </summary>
+    /// <param name="liveGateway">
+    /// The gateway that is live RIGHT NOW, re-read at every question. May answer null (before the
+    /// first gateway exists, or mid-switch); null is not "all clear" and refuses, below.
+    /// </param>
+    public static void Attach(Func<TradingGateway?> liveGateway, UpdateService updates)
+    {
+        ArgumentNullException.ThrowIfNull(liveGateway);
         ArgumentNullException.ThrowIfNull(updates);
+
+        var binder = new Binder(liveGateway, updates);
 
         // The updater's view of trading: how many of the owner's orders the wire may still be holding.
         // Not the gateway, not the orders — a number.
-        //
-        // It is the GATEWAY'S question (WireTouched: flagged, DISPATCHING at any age, UNKNOWN,
-        // RECONCILING, and the in-memory latch), asked once, never a count assembled here. It used to
-        // be `Requests.NeedingReconciliation()` with no argument — the raw needs_reconciliation flag —
-        // which is a narrower set than the gateway's own, and the milestone review of 2026-09-05
-        // (finding 3, probes P4 and P5) walked an install straight over an order the gateway was at
-        // that moment refusing to trade over. An updater that reads a smaller number than the gate is
-        // not a second opinion, it is a hole.
-        updates.UnconfirmedWork = () => gateway.WireTouched().Count;
+        updates.UnconfirmedWork = binder.WireTouchedCount;
 
         // Somewhere the owner can find a refusal afterwards. A refusal nobody can find later is
         // indistinguishable from a button that did nothing.
-        updates.Activity = (text, level) => gateway.Log.Activity(text, level);
+        updates.Activity = binder.Record;
 
-        // The gateway's view of updating: whether this process is in the middle of being replaced.
-        // Without it the gateway would keep dispatching orders whose answers arrive after the
-        // process that was going to reconcile them has been overwritten.
-        gateway.InstallInProgress = () => updates.InstallInProgress;
+        // The gateway's view of updating goes on now rather than at the first question, so a gateway
+        // that exists already is never briefly free to dispatch into an install.
+        binder.Live();
+    }
+
+    /// <summary>
+    /// Holds the one piece of state this seam has: which gateway it last wired the updating half into.
+    /// Every question resolves the live gateway first, and a gateway it has not seen before is wired
+    /// as it is resolved — so the half that cannot be a delegate on the updater (the flag lives on the
+    /// gateway) still follows a switch, without the composition root having to remember anything.
+    ///
+    /// <c>InstallAsync</c> asks for the count BEFORE it raises <c>InstallInProgress</c>, so by the
+    /// moment the flag matters the live gateway has already been wired to read it.
+    /// </summary>
+    sealed class Binder(Func<TradingGateway?> liveGateway, UpdateService updates)
+    {
+        readonly object _gate = new();
+        TradingGateway? _wired;
+
+        public TradingGateway? Live()
+        {
+            var gateway = liveGateway();
+            lock (_gate)
+            {
+                if (!ReferenceEquals(gateway, _wired))
+                {
+                    _wired = gateway;
+                    // Without it the gateway would keep dispatching orders whose answers arrive after
+                    // the process that was going to reconcile them has been overwritten.
+                    if (gateway is not null) gateway.InstallInProgress = () => updates.InstallInProgress;
+                }
+            }
+            return gateway;
+        }
+
+        /// <summary>
+        /// The GATEWAY'S question (<c>WireTouched</c>: flagged, DISPATCHING at any age, UNKNOWN,
+        /// RECONCILING, and the in-memory latch), asked once, never a count assembled here. It used to
+        /// be <c>Requests.NeedingReconciliation()</c> with no argument — the raw needs_reconciliation
+        /// flag — which is a narrower set than the gateway's own, and the milestone review of
+        /// 2026-09-05 (finding 3, probes P4 and P5) walked an install straight over an order the
+        /// gateway was at that moment refusing to trade over. An updater that reads a smaller number
+        /// than the gate is not a second opinion, it is a hole.
+        ///
+        /// No gateway is not zero. −1 is the updater's "I cannot tell", which refuses — the same
+        /// answer it gives when nobody wired this up at all.
+        /// </summary>
+        public int WireTouchedCount() => Live() is { } gateway ? gateway.WireTouched().Count : -1;
+
+        public void Record(string text, string level) => Live()?.Log.Activity(text, level);
     }
 }

@@ -133,7 +133,11 @@ public sealed class AppHost : IAsyncDisposable
             // refuses to dispatch while the program is being replaced. It is a seam rather than
             // three assignments here because this project is not built by the test suite, and a
             // guard that can only be checked by grepping for it is a guard nobody is checking.
-            UpdateTradingInterlock.Attach(Gateway, Updates);
+            //
+            // It is handed the PROPERTY, not this gateway: SwitchConnectorAsync below replaces
+            // Gateway, and an interlock bound to the instance goes on answering for a gateway nobody
+            // trades through. There is deliberately no second Attach call down there to forget.
+            UpdateTradingInterlock.Attach(() => Gateway, Updates);
 
             _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
             _server.Start();

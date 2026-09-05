@@ -1174,7 +1174,7 @@ public class UpdateTrustTests
     public void The_composition_root_still_calls_the_seam()
     {
         var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "AppHost.cs"));
-        Assert.Contains("UpdateTradingInterlock.Attach(Gateway, Updates);", text);
+        Assert.Contains("UpdateTradingInterlock.Attach(() => Gateway, Updates);", text);
     }
 
     /// <summary>

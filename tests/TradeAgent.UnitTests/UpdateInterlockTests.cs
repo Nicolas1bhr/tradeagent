@@ -249,6 +249,123 @@ public class UpdateInterlockTests(ITestOutputHelper log)
         await gw.DisposeAsync();
     }
 
+    // ---- 2. the interlock follows the live gateway -------------------------------------------------
+
+    /// <summary>
+    /// <c>AppHost.SwitchConnectorAsync</c> disposes the gateway and builds another one against the
+    /// same store. The interlock was attached once, at startup, to the first — so the updater went on
+    /// asking an object that had been thrown away, and the gateway actually holding the owner's orders
+    /// was never asked.
+    ///
+    /// The store is shared across the switch, so the half of the question that lives in SQL follows on
+    /// its own. What does not is everything the gateway holds in ITSELF: the in-memory latch that
+    /// U2c-1 raises when an outcome cannot be written down, and the stranded-dispatch bound, which
+    /// U-stranded derives from the connector — the very thing a switch replaces. This test pins the
+    /// latch, because it is the arm no store query can ever reach.
+    ///
+    /// A real swap, two real gateways, no AppHost: this suite does not build <c>TradeAgent.App</c>,
+    /// which is the whole reason the seam exists.
+    /// </summary>
+    [Fact]
+    public async Task The_interlock_follows_the_gateway_a_connector_switch_creates()
+    {
+        using var db = TestEnv.NewDb();
+        var first = new FakeConnector(new FakeBroker());
+        var a = await Ready(db, first, first.Broker.AccountId);
+
+        var f = new Fake();
+        var updates = Offered(f);
+        TradingGateway live = a;
+        UpdateTradingInterlock.Attach(() => live, updates);
+        await updates.CheckAsync();
+        Assert.Equal(0, updates.UnconfirmedWork!());              // control: nothing outstanding on A
+
+        // The switch, as the composition root performs it: the old gateway goes, a new one is built
+        // on the same store against a different connector.
+        await a.DisposeAsync();
+        var second = new FakeConnector(new FakeBroker());
+        var conn = new AtTheWire(second) { AfterPlace = () => db.Exec("PRAGMA query_only = ON") };
+        var b = await Ready(db, conn, second.Broker.AccountId);
+        live = b;
+
+        // B takes an order the broker accepts and the store will not record: latched in B's memory,
+        // and in nothing else anywhere.
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => b.PlaceAsync(new AgentContext("a"), "afterswitch-1", TestEnv.Buy()));
+        db.Exec("PRAGMA query_only = OFF");
+        db.Exec("UPDATE execution_request SET execution_state='WORKING', needs_reconciliation=0 " +
+                "WHERE request_id='afterswitch-1'");              // the store now looks clean
+
+        log.WriteLine($"store says                : {b.Requests.NeedingReconciliation().Count} flagged, " +
+                      $"{b.Requests.Dispatching().Count} dispatching");
+        log.WriteLine($"B HasUnconfirmedWork()    : {b.HasUnconfirmedWork()}");
+        log.WriteLine($"updater UnconfirmedWork() : {updates.UnconfirmedWork!()}");
+        var installed = await updates.InstallAsync();
+        log.WriteLine($"InstallAsync returned     : {installed}  (Setup launched {f.Launches} time(s))");
+
+        Assert.True(b.HasUnconfirmedWork());
+        Assert.Equal(1, updates.UnconfirmedWork!());
+        Assert.False(installed);
+        Assert.Equal(0, f.Launches);
+        Assert.Contains("unconfirmed", updates.Message);
+
+        await b.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The other half of the same swap: the gateway a switch creates must also learn that an install
+    /// is running, or it dispatches orders whose answers arrive after this process is gone. Nothing
+    /// re-assigned <c>InstallInProgress</c> on the new gateway, so it did not.
+    /// </summary>
+    [Fact]
+    public async Task The_gateway_a_switch_creates_still_refuses_to_dispatch_during_an_install()
+    {
+        using var db = TestEnv.NewDb();
+        var first = new FakeConnector(new FakeBroker());
+        var a = await Ready(db, first, first.Broker.AccountId);
+
+        var f = new Fake();
+        var updates = Offered(f);
+        TradingGateway live = a;
+        UpdateTradingInterlock.Attach(() => live, updates);
+        await updates.CheckAsync();
+
+        await a.DisposeAsync();
+        var second = new FakeConnector(new FakeBroker());
+        var b = await Ready(db, second, second.Broker.AccountId);
+        live = b;
+
+        Assert.True(b.TryAuthorizeExecution(new AgentContext("a"), out _, out _));   // control
+        Assert.True(await updates.InstallAsync());
+
+        var allowed = b.TryAuthorizeExecution(new AgentContext("a"), out var why, out var code);
+        log.WriteLine($"B will trade during install : {allowed}  ({code}: {why})");
+        Assert.False(allowed);
+        Assert.Equal(ErrorCode.UPDATE_INSTALL_IN_PROGRESS, code);
+
+        await b.DisposeAsync();
+    }
+
+    /// <summary>
+    /// No gateway at all is not "all clear". A live-gateway source that answers null — the window
+    /// before the first gateway exists, or a switch caught halfway — must refuse, exactly as a null
+    /// provider does. Fail closed is the whole design of this stop.
+    /// </summary>
+    [Fact]
+    public async Task A_live_gateway_source_with_no_gateway_yet_refuses()
+    {
+        var f = new Fake();
+        var updates = Offered(f);
+        UpdateTradingInterlock.Attach(() => null, updates);
+        await updates.CheckAsync();
+
+        log.WriteLine($"updater UnconfirmedWork() : {updates.UnconfirmedWork!()}");
+        Assert.True(updates.UnconfirmedWork!() < 0);
+        Assert.False(await updates.InstallAsync());
+        Assert.Equal(0, f.Launches);
+        Assert.Contains("cannot tell", updates.Message);
+    }
+
     // ---- 3. both directions ------------------------------------------------------------------------
 
     /// <summary>
