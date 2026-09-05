@@ -13,13 +13,13 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `19fe6e5`: **U2a, U2d, U14 (a+b), U2c1a, the U2a-fix test rewrite and the U14-win harness fix landed** — all
-in `BUILD-STATUS.md` under 2026-09-04/05. CI on `main`: ubuntu and macos green; windows fails one unrelated test per
-run (teardown/timing shapes) — fix unit `docs/briefs/U-win-flakes.md`, building. The queue, in order: U2c1b (the
-emergency-press rewrite with C2/C3, `docs/briefs/U2c1b.md`) is building; then U2c1c (C1/C4/C5, the dispatch-layer
-class — cut it from `docs/hardening/briefs/U2c1-r4-build.md` class C); then the milestone review of the money path on
-`main`; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
-`docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
+`main` is `ff3ab4e`: **U2a, U2d, U14 (a+b), U2c1a and three test-only fixes landed** — all in `BUILD-STATUS.md`
+under 2026-09-04/05. CI on `main` is green on all three platforms at the last two fixes' PR runs; one Windows
+pipe-disposal test (`Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows`) has flaked once and is
+measured but not fixed. The queue, in order: U2c1b (the emergency-press rewrite with C2/C3) is built and landing;
+then U2c1c (C1/C4/C5, `docs/briefs/U2c1c.md`) and U8 (deployment and monitoring docs, `docs/briefs/U8.md`) in
+parallel; then the milestone review of the money path on `main`; then the v0.1.2 cut on the box (bridge redeploy at
+protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
 

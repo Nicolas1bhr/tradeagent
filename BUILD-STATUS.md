@@ -3051,3 +3051,33 @@ harness NOT yet established (this unit's item 0 changed how a cancelled handler 
 abandoned mid-sweep by a store failure (pre-existing, U2c1b's area); a persist failure inside the reconciler's `Resolve`
 is caught per request and counted inconclusive — read, not tested. **Deferred with an owner:** the emergency-press
 rewrite with C2/C3 → U2c1b; C1 (intent through the connector), C4 (cancelled handler settles), C5 (attempt marking) → U2c1c.
+
+## 2026-09-05 — U-win-flakes landed: two Windows-only test failures were harness margins, and the matrix is green twice
+
+A fix unit under `docs/HOW-WE-BUILD.md`: one fresh fixer on `docs/briefs/U-win-flakes.md`, product code untouched.
+Merge `ff3ab4e`, 3 files, +64/−3 with the brief (`GatewayPipeBackpressureTests.cs`, `Harness.cs`).
+
+- **`AtasProtocolTests.Capabilities_and_accounts_come_from_the_bridge_handshake`.** Measured, not inferred: a
+  `StreamWriter` disposed with a write in flight throws `InvalidOperationException: The stream is currently in use by a
+  previous operation` (reproduced against a pipe whose far end never reads), and the stub bridge's `Quietly` caught only
+  `IOException` and `ObjectDisposedException`. `StubBridge.DisposeAsync` now waits, bounded at 5 s, for its loop to release
+  the writer, and `Quietly` covers that exception and `TimeoutException`. 3× Release; class 7/7.
+- **`GatewayPipeBackpressureTests.A_close_all_wave_that_disposal_lands_in_leaves_nothing_unsettled`.** Not the product:
+  the gateway did what it documents — the drain expired, step 4 cancelled, step 6 logged `handlers_did_not_finish`. The
+  fixture's margin was wrong: `close-all`'s prefix is five 500 ms calls and its first leg reached the broker at 3028 ms
+  against a 3200 ms emergency budget, 172 ms of slack; the drain derived from that budget was 6300 ms against a 4557 ms
+  wave. The fixture's budget is now 12 s, which a healthy run never waits out. Mutant: a 2 s stall injected once the wave
+  is issued fails at 3200 ms with the CI assertion exactly (`Expected: 0 / Actual: 1`, sentinel `unsettled:1`) and passes
+  at 12 s. 3× Release; class 32/32.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** Release at the rebased tip `bcaf4cf`: 0 warnings;
+201 + 191 + 520 = 912, 0 failed. CI run 33929007448 on draft PR #3: ubuntu SUCCESS, macos SUCCESS, windows SUCCESS
+(912, 0 failed), and the windows job re-run on the same sha SUCCESS with the same counts — two consecutive green Windows
+runs, the acceptance. Manager's gate at `ff3ab4e`, Release: build → 0 warnings, 0 errors; suite → 201 + 191 + 520 = 912, 0 failed; test names vs `main`
+→ 0 removed, 0 added; scan clean; CI at the merge was in progress when this was written; recorded with U2c1b.
+
+**NOT VERIFIED:** nothing on the box. **Open, stated by the fixer:** the third Windows flake,
+`GatewayPipeBackpressureTests.Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows` (red once, at `b5446b7`),
+is untouched: measured over five runs its handler settles in ~30 ms against a 300 ms margin, not the 6 % shape of the
+other two; it passed both acceptance runs; U2c1a's item 0 as its cause is NOT INVESTIGATED. If it reds again, it gets
+its own brief with that measurement. No deadline shortened, no `Skip`, no premise assertion removed.
