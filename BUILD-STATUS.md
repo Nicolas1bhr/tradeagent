@@ -3287,3 +3287,39 @@ killed by a usage limit after measuring; the second continued from its branch), 
 
 **NOT done:** no product code; nothing shipped was shortened (one un-shortened); no premise dropped; no `Skip`; the
 scale option is not wired into CI (`TestTime` stays as the knob for a deliberately slowed local run); no box.
+
+## 2026-09-05 — U-interlock landed: the updater asks the gateway's own question, on whichever gateway is live
+
+The review's finding 3 (executed as P4/P5) and Codex F5, and U2d's item 10 deferred since 2026-09-03: the update
+interlock's "unconfirmed work" provider counted only persisted `needs_reconciliation` flags, so an order on the wire
+right now, a stranded one, or a latched persist failure all read 0 and Setup launched over them; and a connector switch
+built a gateway the interlock never met. One fresh builder on `docs/briefs/U-interlock.md`. Merge `7ef6b1e`, 4
+commits, 5 files of substance, +725/−17.
+
+- **One query.** `TradingGateway.WireTouched()` — flagged OR DISPATCHING at any age OR UNKNOWN OR RECONCILING, plus the
+  in-memory latch — is what the provider returns; a strict SUPERSET of `Unreconciled()` (the trading question), not a
+  second count, with a test pinning that direction, because widening the trading gate itself would stop trading during
+  every ordinary placement. `UpdateService`'s doc comment now says so.
+- **It follows the live gateway.** `Attach(Func<TradingGateway?>, …)` re-reads the gateway at every question and wires
+  `InstallInProgress` onto each gateway it first sees; `AppHost` passes `() => Gateway`, so `SwitchConnectorAsync` has
+  nothing to forget; a null source answers −1 = refuse.
+- **Both directions.** A quiet wire still installs; the refusal is `Refused` + `RefusedPendingWork` + Failed, names the
+  count in the app's words ("an order's outcome is" / "2 orders' outcomes are") and is written once into the activity
+  history that the strip and the Settings card render.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED 4 of 6 ("record state while
+installing: DISPATCHING / updater UnconfirmedWork(): 0 / InstallAsync returned: True / Setup launched: 1"; the stranded
+and latched shapes likewise) → GREEN, mutant (SQL back to `needs_reconciliation=1`) → 4 red; item 2 RED 2 (attached as
+`AppHost` attached it, then swapped: "B HasUnconfirmedWork(): True / updater UnconfirmedWork(): 0 / Setup launched 1")
+→ GREEN, mutant (bind once) → 1 red; item 3 RED 1 → GREEN, mutant (count dropped from the sentence) → 3 red. P4/P5
+lifted, run verbatim against the fix (they fail at their premise: "updater UnconfirmedWork(): 1 / InstallAsync
+returned: False / Setup launched: 0"), then deleted. Builder's gate at `5f7c690`, Release: 0 warnings; Unit 211 + Fault
+195 = 406, 0 failed; **Integration NOT run by the builder** — starved for 40 min by 14 orphaned CPU busy-loops the
+runner-speed probe of U-win-timing had left on this Mac (killed by the manager before the landing gate). Names vs
+`main`: 0 removed, 10 added. Manager's gate at `7ef6b1e`, Release: build → 0 warnings, 0 errors; suite → 211 + 195 + 531 = 937, 0 failed (after the busy-loops were killed); names →
+0 removed, 10 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done, stated by the builder:** `MainWindow`'s pre-press cosmetic line still reads the narrower
+`status.UnreconciledRequests`, so the strip can offer an update seconds before the press is refused (the refusal itself
+is right); `Doctor` and `GatewayHost` still ask `HasUnconfirmedWork()`, the trading question, on purpose. Nothing on
+Windows, no UI, no real ATAS.

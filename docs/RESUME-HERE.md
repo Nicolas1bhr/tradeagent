@@ -20,7 +20,8 @@ windows-latest only, the first failure always recorded; the runner-speed probe r
 money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / MED 4 / LOW 2 / UNVERIFIED 6, twelve
 executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
 section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher
-owns its row). Fix units still queued, in this order: `U-gates` (building), `U-interlock`, `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
+owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's own `WireTouched()` question on whichever
+gateway is live). Fix units still queued, in this order: `U-gates` (built, landing), `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
 `U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
 decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
