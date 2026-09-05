@@ -132,8 +132,20 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.Empty(ProtocolRefusals(db));
     }
 
-    /// <summary>A frame that omits <c>v</c> altogether means the current version, as it always has.</summary>
-    [Fact]
+    /// <summary>
+    /// SUPERSEDED, AND KEPT ONLY SO THE CLAIM IT MADE STAYS FINDABLE.
+    ///
+    /// U-pipe-hello wrote this: a frame that omits <c>v</c> "means the current version, as it always
+    /// has". The 2026-09-05b review (Codex F13) named that as the one field whose ABSENCE was read
+    /// as agreement, on the frame every other field is read on the strength of — so an omitted
+    /// <c>v</c> is now refused, and the assertion below is false by design rather than by accident.
+    /// The property that replaced it is
+    /// <see cref="A_hello_that_does_not_say_which_protocol_it_speaks_gets_no_session"/>. The method
+    /// is retired rather than deleted because a name that vanishes from the suite takes its history
+    /// with it; delete it whenever the record no longer needs the pointer.
+    /// </summary>
+    [Fact(Skip = "Superseded by A_hello_that_does_not_say_which_protocol_it_speaks_gets_no_session " +
+                 "(review 2026-09-05b, Codex F13): an omitted 'v' is refused, not read as the current version.")]
     public async Task A_hello_that_omits_the_version_field_is_read_as_the_current_one()
     {
         var (gw, _, db) = await TestEnv.Ready();
@@ -863,6 +875,65 @@ public class PipeContractTests(ITestOutputHelper log)
         log.WriteLine($"limit=4300.25 -> {conn.Placed[0].Type} · limit absent -> {conn.Placed[1].Type}");
         Assert.Equal(TradeAgent.ConnectorSdk.OrderType.Market, conn.Placed[1].Type);
         Assert.Null(conn.Placed[1].LimitPrice);
+    }
+
+    // ── 7. The version is a thing the peer SAYS, not a thing this build assumes ────────────────
+    // Milestone review 2026-09-05b, Codex F13: "IpcRequest defaults an omitted v to the current
+    // version, so a versionless peer passes the protocol hello instead of failing closed." Every
+    // other field on this frame fails closed when it is present and unreadable; `v` was the one
+    // field whose ABSENCE was read as agreement, and it is the field the other reads rest on.
+
+    /// <summary>
+    /// A hello that does not say which protocol it speaks opens no session, and the order behind it
+    /// is refused as unauthenticated. Against the code this unit found, the hello was answered
+    /// <c>ok:true</c> — the default on <c>IpcRequest.V</c> answered the question on the peer's
+    /// behalf, so the one check that must never be optional was.
+    /// </summary>
+    [Fact]
+    public async Task A_hello_that_does_not_say_which_protocol_it_speaks_gets_no_session()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+        var hello = await raw.SendLine($$"""{"id":"h","op":"hello","token":"{{IpcToken.Peek()}}"}""");
+        log.WriteLine($"hello with no 'v'    : {hello}");
+        Assert.DoesNotContain("\"ok\":true", hello);
+        Assert.Contains(nameof(ErrorCode.INCOMPATIBLE_PROTOCOL), hello);
+
+        var buy = await raw.Send(Buy());
+        log.WriteLine($"the buy that follows : ok={buy.Ok} code={buy.Error?.Code}");
+        Assert.False(buy.Ok, "a hello that named no protocol version authenticated the connection");
+        Assert.Equal(nameof(ErrorCode.IPC_UNAUTHENTICATED), buy.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The refusal is about the FRAME, not about the hello: a versionless frame is unreadable
+    /// wherever it arrives, so an authenticated session cannot go on placing orders with the field
+    /// left off either.
+    /// </summary>
+    [Fact]
+    public async Task A_versionless_frame_on_an_authenticated_session_is_refused_too()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var dbh = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+
+        await using var raw = await RawFrames.Connect(pipe);
+        var hello = await raw.Send(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Peek(), Session = "agent-1" });
+        Assert.True(hello.Ok, hello.Error?.Message);
+
+        var buy = await raw.SendLine(
+            """{"id":"b","op":"buy","session":"agent-1","request_id":"pipec-noversion","args":{"symbol":"ES","quantity":"1"}}""");
+        log.WriteLine($"versionless buy on a live session : {buy}");
+        Assert.DoesNotContain("\"ok\":true", buy);
+        Assert.Empty(conn.Broker.Orders);
     }
 
     // ---------------------------------------------------------------- helpers

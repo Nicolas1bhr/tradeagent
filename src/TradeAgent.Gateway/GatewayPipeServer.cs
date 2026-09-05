@@ -534,7 +534,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 try { req = Json.Read<IpcRequest>(line); }
                 catch (Exception)
                 {
-                    if (!await Send(pipe, IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON"), "", null, null)) return;
+                    // A FRAME THAT NEVER SAID WHICH PROTOCOL IT SPEAKS IS ANSWERED ON THE PROTOCOL,
+                    // not as bad JSON (Codex F13). `v` is now required on the type, so such a frame
+                    // arrives here rather than at the version check below — and "frame is not valid
+                    // JSON" would send whoever owns that peer hunting a syntax error in a document
+                    // that has none. Same code and same engineering line as a version this build
+                    // does not speak, because it is the same fault: the two ends have not agreed
+                    // what the frame is, and every other field is read on the strength of that.
+                    var unversioned = NamesNoVersion(line);
+                    if (unversioned)
+                        gateway.Log.Engineering("Ipc", "protocol_rejected", "warn",
+                            metadataJson: Json.Write(new { said = "absent", speaks = Versions.ProtocolVersion }));
+
+                    var unreadable = unversioned
+                        ? IpcResponse.Fail("", ErrorCode.INCOMPATIBLE_PROTOCOL,
+                            $"this frame does not say which protocol version it speaks; TradeAgent speaks {Versions.ProtocolVersion}. " +
+                            "Send 'v' on every frame: a version this build assumed on your behalf would be a version " +
+                            "neither end agreed, and every other field is read on the strength of that agreement.")
+                        : IpcResponse.Fail("", ErrorCode.INVALID_REQUEST, "frame is not valid JSON");
+                    if (!await Send(pipe, unreadable, "", null, null)) return;
                     continue;
                 }
                 if (req is null)
@@ -1707,6 +1725,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"no file in the ledger has a hash starting '{prefix}' — run 'trade material list' for what is there. " +
                 "A file only gets a hash once TradeAgent has read it, which can lag a large drop by a pass.");
         return found.Sha256;
+    }
+
+    /// <summary>
+    /// Whether a frame this build could not read is one that never named its version. Asked only on
+    /// the failure path, so the cost is paid by frames that are already being refused.
+    ///
+    /// It re-parses rather than trusting the deserializer's message, because the message is a
+    /// framework string and a refusal reason is a contract. A document that is not valid JSON at all
+    /// answers false: it is not a versionless frame, it is not a frame.
+    /// </summary>
+    static bool NamesNoVersion(string line)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                   && !doc.RootElement.TryGetProperty("v", out _);
+        }
+        catch (JsonException) { return false; }
     }
 
     static string Require(IpcRequest r, string key) =>

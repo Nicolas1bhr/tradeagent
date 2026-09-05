@@ -34,6 +34,23 @@ public static class Ops
 
 public sealed class IpcRequest
 {
+    /// <summary>
+    /// THE VERSION IS A THING THE PEER SAYS, NOT A THING THIS BUILD ASSUMES ON ITS BEHALF (Codex F13).
+    ///
+    /// The initializer is the OUTGOING default — everything this product constructs and sends stamps
+    /// the version it was built against, which is why no client needed changing. <see cref="JsonRequired"/>
+    /// is the INCOMING rule, and it is the whole fix: without it a frame that omitted <c>v</c>
+    /// deserialized straight onto this default, so the gateway's <c>req.V != ProtocolVersion</c> check
+    /// compared the current version against itself and a versionless peer walked through the one
+    /// check that must never be optional. Measured over the real pipe before this changed: a hello
+    /// carrying no <c>v</c> at all was answered
+    /// <c>{"ok":true,"data":{"protocol_version":1,...,"compatible":true}}</c>.
+    ///
+    /// It is enforced on the TYPE rather than in the hello handler, deliberately. Every other field
+    /// on this frame is read on the strength of both ends agreeing what the frame IS, so a frame that
+    /// never said is unreadable wherever it arrives — not merely at the handshake.
+    /// </summary>
+    [JsonRequired]
     [JsonPropertyName("v")] public int V { get; set; } = Versions.ProtocolVersion;
     [JsonPropertyName("id")] public string Id { get; set; } = Guid.NewGuid().ToString("n");
     [JsonPropertyName("op")] public string Op { get; set; } = "";
