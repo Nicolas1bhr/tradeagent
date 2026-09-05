@@ -76,9 +76,12 @@ allocation. The combination verify. The integration scribe. A box run per round.
 2. `git rebase main` if `main` moved; a conflict goes back to a builder, the manager does not resolve it.
 3. `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; full suite in Release to a file → 0 failed;
    counts pasted. Release, because CI tests Release and a Debug-only green has already let a runner failure through.
+   One gate at a time on this Mac: two suites overlapping flake the timing tests. Two units each green alone can be red
+   together; that is a one-item fixer brief on the landing branch, and neither unit's builder is reopened.
 4. Test-name diff against `main` → nothing removed. A deleted test cannot fail; it happened three times.
 5. Secret scan of the whole diff against `main`, as a gate, not a neighbouring command.
-6. `git merge --ff-only`, push, CI green on all three platforms at the merge sha. Red CI in the product: `git reset
+6. `git merge --ff-only` with its exit status checked — never behind a pipe — then `git rev-list --count <branch>..main`
+   must print 0 before any record is written; push; CI green on all three platforms at the merge sha. Red CI in the product: `git reset
    --hard` to the pre-merge sha, `--force-with-lease`, then a fixer on the branch. Red CI only on a hosted runner, in a
    test the Windows target passes, or a failure thrown by a test's own setup (a harness writer hitting a sharing
    violation): a fresh fixer on top of `main`, and the sha is recorded red until it lands. If a running builder owns
