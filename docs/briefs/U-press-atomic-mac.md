@@ -42,5 +42,6 @@ product is wrong, say so and stop. Commit per item, no trailers, no other worktr
   14:45; resolve it first`, drift sentence absent; **mutant** (`NOT EXISTS` alone) → the same RED. Item 1's RED seam is
   kept as a third test, so that schedule now runs on every runner; class 4/4 17×, 12 of them under load.
 - **Gate** at `dab3b0e`, Release: `--no-incremental` → 0 warnings; fault 220 3×; 218 + 220 + 582 = 1020, 0 failed; names
-  0 removed, 2 added; scan clean. **CI** 33967839971, PR #5 (draft, NOT merged): ubuntu, windows, macos all SUCCESS.
+  0 removed, 2 added; scan clean. **CI** 33967839971 at `dab3b0e`, PR #5 (draft, NOT merged): ubuntu, windows and
+  macos all SUCCESS — 218 + 220 + 496 + 86 = 1020 on each — and `package` SUCCESS.
 - **NOT done:** no product file, no `BUILD-STATUS.md`, no box, no ATAS, no UI, nothing outside this worktree.
