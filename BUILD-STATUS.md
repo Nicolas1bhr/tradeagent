@@ -3475,7 +3475,9 @@ op to itself → 3 red; lookup after the read → 1 red); item 3 RED → GREEN, 
 latch before the create → 1 red). Builder's gate at `052a249`, Release: 0 warnings; Unit 211 + Fault 218 + Integration
 536 = 965, 0 failed; names 0 removed, 11 added; `docs/CONTRACTS.md` states the atomic claim, the leg-id shape and the
 binding; the `AGENTS.md` template states the binding. Manager's gate at `a53378b`, Release: build → 0 warnings, 0 errors; suite →
-218 + 218 + 570 = 1006, 0 failed; names vs `main` → 0 removed, 12 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+218 + 218 + 570 = 1006, 0 failed; names vs `main` → 0 removed, 12 added; scan clean; CI run 33958941039 at `9cc3fb4`: windows SUCCESS, ubuntu SUCCESS, macos FAILURE 217/218 on this unit's own
+`PressAtomicityTests.Two_close_all_presses_released_together_send_one_close_and_refuse_the_other` — `Assert.Single() Failure: The collection did not contain any matching items` —
+green 3× on this Mac and in the manager's gate; harness margin or real race NOT yet established (fixer briefed).
 
 **A combination fix rode along (`U-press-pipe-fix`, one test file):** at the rebased tip U-pipe-hello's new
 `An_operator_press_record_is_not_readable_over_the_agent_channel` failed ("Sequence contains no matching element") — its
