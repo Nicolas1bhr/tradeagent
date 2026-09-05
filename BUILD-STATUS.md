@@ -3401,7 +3401,7 @@ Fault 207 + Integration 569 = 987, 0 failed; names nothing removed, +20 methods 
 `INCOMPATIBLE_PROTOCOL` is in `Errors.cs`. Manager's gate at `db638ab`, Release: build → 0 warnings, 0 errors; suite →
 Unit 211 + Fault 207 + Integration 569 = 987, 0 failed — the integration project in two runs, because
 `tools/mac-run.sh`'s old pkill (fixed at `f7f1baa`) killed three attempts while another leg iterated the app: 558 from a
-relocated build plus the 11 path-dependent tests (26 with their classes) from the normal output path; names vs `main` → 0 removed, 34 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+relocated build plus the 11 path-dependent tests (26 with their classes) from the normal output path; names vs `main` → 0 removed, 34 added; scan clean; CI run 33957047971 at `6bd009e`: ubuntu, macos and windows all SUCCESS (987), `package` SUCCESS.
 
 **NOT done, stated:** no box, no ATAS, no money, no UI; `TradingGateway.cs` untouched; `order` still reads the
 BROKER's book unrestricted; a non-`op-` id is deliberately not session-scoped, since a restart renames the session.
