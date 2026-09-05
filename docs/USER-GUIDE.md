@@ -281,12 +281,21 @@ It does not remember your permission.
 
 The AI decides it wants to buy or sell. Nothing is sent. Instead:
 
-1. An amber bar appears at the top of the window: *The AI is asking permission.*
+1. An amber bar appears at the top of the window: *"The AI is asking permission — 1 order waiting"*,
+   with **Review the request**.
 2. The Dashboard shows exactly what it wants to do — buy or sell, which instrument, how many, at what
    kind of price.
 3. **Decline** takes one press. **Approve** takes two: the first press changes the button to say what
-   you are about to confirm, and the second does it. A single misplaced click cannot send an order.
-4. If nothing is approved, nothing happens. There is no timer that decides for you.
+   you are about to confirm — *"Confirm: place this order"* — and the second does it. A single
+   misplaced click cannot send an order.
+4. **A request goes stale after fifteen minutes.** The line under it says so: *"asked at 14:02 —
+   approve before 14:17; from then, approving declines it instead."* Nothing is sent when the time
+   runs out; the request simply stops being approvable, and pressing Approve after that declines it.
+   A price that was worth acting on a quarter of an hour ago is not one to act on now.
+5. **Approving is not a rubber stamp on an earlier decision.** Every rule is checked again at the
+   moment you press — the mode, the kill switch, the account, your limits, the connection, the price.
+   So an approval can be refused for a reason that did not exist when the AI asked, and the Dashboard
+   tells you which one.
 
 ## The three emergency buttons
 
@@ -321,8 +330,10 @@ your account a moment later — what your position on that instrument is *now*. 
 facts, and a close that reported "filled" over a position that is still open is exactly the case this
 exists to show you.
 
-You clear each line the same way you clear any unconfirmed order: type what you saw in ATAS, then
-press one of the two-press buttons. Trading resumes when the last one is cleared.
+You clear each line the same way you clear any unconfirmed order: type what you saw into the box —
+it says *"What you saw in ATAS — required"*, and the buttons stay switched off until you have — then
+press the button that matches. Editing what you typed switches the buttons off again, because the
+words are the assertion. Trading resumes when the last line is cleared.
 
 **A second press while lines are still open is refused**, with the time of the first one: *"close-all
 sent at 14:32; resolve it first."* There is no retry button, and there is no press that a failure can
@@ -343,7 +354,9 @@ thirty seconds is a button that has failed them.
 
 If the two seconds run out, you get this, and it is worth reading slowly:
 
-> **'close-all' is NOT confirmed — check your positions and orders in ATAS.** The bridge is …; ….
+> **'cancel-all' is NOT confirmed — check your positions and orders in ATAS.** The bridge is …; ….
+
+(The word in quotes is whichever instruction it was: `cancel-all`, `close`, `cancel`, `place`.)
 
 **What it is telling you.** TradeAgent asked ATAS to close everything and did not hear back in time.
 It does **not** mean nothing was sent. It does not mean everything was sent. It means nobody knows
