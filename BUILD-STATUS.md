@@ -3119,7 +3119,7 @@ budget" → GREEN → mutant (`Begin()`, no budget) → 3 red. Builder's gate at
 Fault 188 / Integration 524 = 913, 0 failed; names −20 / +21, all 20 pinning a retired path (3 retry, 3 `OperatorPress`,
 5 press-set-and-restart, 4 press reconciliation, 4 F2-through-a-press, 1 partial-sweep answer), the F2 rule and "a
 press is judged by its own records" re-homed onto surviving paths. Manager's gate at `73f3542`, Release: build →
-0 warnings, 0 errors; suite → 201 + 188 + 524 = 913, 0 failed; names vs `main` → 20 removed (the six categories above, checked name by name), 21 added; scan clean; CI at the merge was in progress when this was written; recorded with U2c1c.
+0 warnings, 0 errors; suite → 201 + 188 + 524 = 913, 0 failed; names vs `main` → 20 removed (the six categories above, checked name by name), 21 added; scan clean; CI run 33932534657 at `44fb21f`: ubuntu, macos and windows all SUCCESS (913), `package` SUCCESS.
 
 **NOT VERIFIED:** the Dashboard card (compiles; no UI run — see it on the Mac loop or the box); nothing on the box or
 against real ATAS. **Outside its brief, declared:** ~12 lines in `GatewayPipeServer.CancelAll`/`CloseAll`, without
