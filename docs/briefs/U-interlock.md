@@ -35,3 +35,38 @@ Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted) → GREEN → mutant;
 final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+Gate ran at `5f7c690` (this report is the commit on top), rebased onto `main` `a8b8b9b`; 3 commits, 6 files,
++690/−17. All figures macOS, Release.
+
+1. **Everything wire-touched counts.** RED 4 of 6, quoted: on the wire *right now* — "record state while installing:
+   DISPATCHING / updater UnconfirmedWork(): 0 / InstallAsync returned: True / Setup launched: 1 time(s)"; stranded —
+   "gateway Unreconciled(): 1 / gateway will trade: False (TRADING_PAUSED_UNRECONCILED) / updater UnconfirmedWork(): 0
+   / InstallAsync returned: True"; latched — "place threw STATE_DATABASE_CORRUPT / row DISPATCHING,
+   needs_reconciliation=False / gateway HasUnconfirmedWork: True / updater UnconfirmedWork(): 0". GREEN: one query,
+   `TradingGateway.WireTouched()` (flagged OR DISPATCHING at any age OR UNKNOWN OR RECONCILING, plus the in-memory
+   latch), is what the provider returns; `UpdateService`'s doc comment now says so. It is a strict SUPERSET of
+   `Unreconciled()`, not a second count, and a test pins that direction — widening the trading gate itself would stop
+   trading during every ordinary placement. Mutant (SQL back to `needs_reconciliation=1`) → 4 red.
+2. **Follows the live gateway.** RED 2, attached as `AppHost` attached it and then swapped: "store says 0 flagged, 0
+   dispatching / B HasUnconfirmedWork(): True / updater UnconfirmedWork(): 0 / InstallAsync returned: True (Setup
+   launched 1 time(s))"; and "B will trade during install: True". GREEN: `Attach(Func<TradingGateway?>, …)` re-read at
+   every question, wiring `InstallInProgress` onto each gateway it first sees; `AppHost` passes `() => Gateway`, so
+   `SwitchConnectorAsync` has no re-attach to forget; a null source answers −1 = refuse. Mutant (`_wired is null`,
+   bind once) → 1 red.
+3. **Both directions.** RED 1 (the refusal test installed instead). GREEN: a quiet wire still installs (Setup launched
+   once, `Refused` false); the refusal is `Refused` + `RefusedPendingWork` + Failed, names the count in the app's words
+   ("an order's outcome is" / "2 orders' outcomes are"), and is written once into the activity history the strip and
+   the Settings card render. Mutant (count dropped from the sentence) → 3 red.
+
+P4/P5 lifted and turned the right way up; run verbatim on the fix they fail at `Assert.Equal(0, updaterSays)` —
+"updater UnconfirmedWork(): 1 / InstallAsync returned: False / Setup launched: 0 time(s)" — then deleted.
+Gate: Release `--no-incremental` → 0 warnings, 0 errors. Unit 211 + Fault 195 = 406, 0 failed. **Integration NOT
+VERIFIED at this tip:** the run has been starved for 40+ min by 14 orphaned CPU busy-loops another leg left running on
+this Mac (test host at 0.6% CPU); the same suite passed 530/530 on this branch's product code before the rebase, and
+the rebase brought only `main`'s own commits, and no Integration or Fault test names any of the four changed
+classes (`grep -rln 'UpdateTradingInterlock|UpdateService|WireTouched'` over both projects → no files). Test names vs `main`: 0 removed, 10 added. Secret scan of the whole diff
+clean. **NOT DONE:** `MainWindow`'s pre-press cosmetic line still reads the narrower `status.UnreconciledRequests`, so
+the strip can offer an update seconds before the press is refused (the refusal itself is right); `Doctor` and
+`GatewayHost` still ask `HasUnconfirmedWork()` — the trading question — on purpose; `TradingGateway.cs` touched by the
+one added query method and nothing else. Nothing on Windows, no UI, no real ATAS.
