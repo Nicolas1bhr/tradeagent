@@ -3552,3 +3552,31 @@ one-off windows red, run 33966990967: `SweepRequestIdTests.A_five_order_sweep_ca
 category, did not recur on the next windows run; recorded, briefed if it recurs.
 
 **NOT done, stated:** `TradingGateway.cs`, `GatewaySchema.cs` and the connectors untouched; no box, no ATAS, no UI.
+
+## 2026-09-05 — U-press-atomic-mac landed: the double-press test asserts the invariants, not the schedule
+
+A test-only fix under `docs/HOW-WE-BUILD.md` (one fresh fixer, after a first one was killed before starting): on
+macos-latest, twice in four runs, U-press-atomic's own barrier test failed while the product was RIGHT — one close on the
+wire, the position flat, one press row — because press A's fill landed before press B's re-read and B was refused by
+the drift re-read instead of the atomic press guard, and the test had asserted the guard's sentence. Merge `3224183`,
+5 commits, 2 test files, +327/−48 with the brief; no product file touched.
+
+- **The race test asserts what the product promises:** exactly one close, two orders, flat, one press row, one nonce,
+  and press B refused with nothing sent by ANY of the three truthful answers (the atomic claim, the drift re-read, or a
+  capture read that found nothing open). RED was CI run 33958941039 byte for byte, reproduced with a seam that lands A's
+  fill before B's re-read; mutant (the claim clause AND the drift guard neutralised) → RED `Expected: 1 Actual: 2`, two
+  press rows.
+- **The atomic guard keeps its own deterministic proof:** `Only_the_atomic_claim_can_refuse_a_press_whose_drift_re_read_saw_no_change`
+  holds the winner's close until the other press has ANSWERED, so nothing else can refuse it — "EMERGENCY_PRESS_UNRESOLVED
+  — close-all sent at HH:MM; resolve it first", the drift sentence absent; mutant (`NOT EXISTS` alone) → the same RED.
+- **The macos schedule now runs everywhere:** item 1's RED seam is kept as a third test,
+  `The_drift_re_read_refuses_the_second_press_when_the_first_fill_landed_first`. The harness's `RecordingConnector` gained
+  a null-by-default `Seam` and a gated `Close`.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** class 4/4 seventeen times, twelve under load;
+fixer's gate at `dab3b0e`, Release: 0 warnings; fault 220 3×; 218 + 220 + 582 = 1020, 0 failed; names 0 removed, 2
+added; **CI run 33967839971 on draft PR #5 (merged with `main`): ubuntu, windows and macos all SUCCESS, 1020 each,
+`package` SUCCESS.** Manager's gate at `d94fd12` (the merge sha's code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 218 + 220 + 582 = 1020, 0 failed; names vs `main` →
+0 removed, 2 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done:** no product file, no box, no ATAS, no UI.

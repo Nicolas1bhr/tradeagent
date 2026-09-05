@@ -13,7 +13,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `11248b6`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
+`main` is `3224183`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
 four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
 windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
@@ -24,7 +24,8 @@ owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's o
 gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown mode fails closed, gates decided at dispatch,
 one atomic rate limit). `U-press-atomic` LANDED (`a53378b`: one press at a time, replay bound to verb and session, ids the gateway may send).
 Fix units still queued, in this order: `U-settings-closed` (building), `U-pipe-replay` LANDED (`11248b6`: a replayed sweep reads nothing; `U-pipe-words` landed at `4305ae6`
-before it), `U-press-atomic-mac` (a test that asserted which of two correct guards refused; macos once), `U-press-budget`
+before it), `U-press-atomic-mac` LANDED (`3224183`: the double-press test asserts the invariants, not the schedule), `U-press-budget`
+(building)
 (after U-press-atomic: an ubuntu-only "the press took 3.4s against a 2s emergency budget", once), `U-pipe-hello` LANDED
 (`db638ab`: protocol before session, enumerated fields fail closed, the frame cap counts bytes, status for the caller,
 an agent reads only its own records), `U-pipe-words` (next); `U-bridge-reinstall` LANDED (`b37e4de`: the `Reinstall the bridge` control on Checks and Settings); then the v0.1.2 cut on the box (bridge redeploy at
