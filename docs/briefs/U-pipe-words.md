@@ -37,3 +37,19 @@ Test-name diff vs baseline: nothing removed. Commit per item, no trailers, no pu
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant; the schema
 sentences swept and changed; final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+**Item 1 — VERIFIED.** RED (`SchemaMatchesReconcilerTests`, 4 tests, 3 red on the sentence): reconciler drove
+`target CANCELLED -> CANCELLED (resolved=1)`, `target FILLED -> REJECTED`, `target WORKING -> RECONCILING
+(resolved=0, inconclusive=1)` twice with `AbsenceGrace = 0`, while the schema said "when it has stayed working and
+unchanged for a whole grace window". GREEN 4/4. Mutant (that clause put back into the sentence) → 2 RED
+(`Assert.DoesNotContain ... Sub-string found`); `cp` restore → 4/4.
+**Schema swept against the reconciler — two sentences were false, both in `cancel_and_modify_outcomes`:** the
+held-still cancel verdict (deleted with `_settleWatch`/`HeldStill`), and "a price within one tick of the request on
+the instrument's grid counts", which `PriceCarries` replaced with exactly `floor(want/tick)*tick` and
+`ceil(want/tick)*tick`. Both now state the rule as CONTRACTS.md does. A third, `unknown_state_meaning`, was true but
+incomplete — it named only the UNKNOWN half of a failed mutation, so a proven-unsent one (settled CANCELLED,
+unflagged, no pause, since U2c1c) had no entry; the clause is added and pinned behaviourally.
+`transport`, `idempotency`, `approval`, `execution_states`, `unconfirmed_work`, `trading_modes` and the op list:
+checked against the code, unchanged. **NOT behaviourally pinned:** the one-tick clause is pinned by text only —
+reaching the band needs a platform that answers with a price it was not asked for, and neither the simulator nor the
+recording connector will (the connectors are not this unit's).
