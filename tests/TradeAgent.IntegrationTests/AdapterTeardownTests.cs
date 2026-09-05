@@ -551,4 +551,75 @@ public class AdapterTeardownTests : IDisposable
         Assert.Equal(new[] { "the write finished", "the teardown began" }, order);
         Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
     }
+
+    /// <summary>
+    /// FINDING 14 (Codex F14). A START THAT ARRIVES MID-TEARDOWN MUST NOT START A BRIDGE.
+    ///
+    /// The state machine has answered false to <c>Started()</c> during a teardown since round 10,
+    /// and <c>AtasStrategyAdapter.StartBridge</c> DISCARDED that answer: it called it for the side
+    /// effect and built and started a <c>BridgeServer</c> regardless. The result is the worst shape
+    /// this class exists to prevent, one step further out — not a refused write, but a bridge that
+    /// dials TradeAgent, passes the handshake and reports READY over a witness whose lease the
+    /// teardown is a moment from releasing, so every order it carries is refused "another writer
+    /// owns this witness" and the failure reads as a disk problem.
+    ///
+    /// The rule needs no ATAS type: it is a boolean, a lock and a delegate. So the effect goes
+    /// through <see cref="AdapterTeardown.Start"/>, where the decision and the thing it guards are
+    /// one act, and this drives BOTH interleavings against a real witness. The stand-in for the
+    /// BridgeServer is a counter, because what is at stake is whether the construction happens at
+    /// all — a double for the server would prove nothing the counter does not.
+    ///
+    /// What is NOT proven here is that the adapter calls <c>Start</c> rather than <c>Started</c>;
+    /// that is a compile away, and the compile only exists on the box (tools/atas-gate).
+    /// </summary>
+    [Fact]
+    public void A_start_mid_teardown_starts_no_server_and_one_after_it_does()
+    {
+        var witness = Session();
+        Assert.True(Submit(witness, "TA-RESTING"));
+        var teardown = new AdapterTeardown(witness);
+
+        var servers = 0;
+        bool? allowedDuringStop = null;
+
+        teardown.Stop(steps: () => allowedDuringStop = teardown.Start(() => servers++));
+
+        Assert.False(allowedDuringStop, "a start mid-teardown was allowed");
+        Assert.Equal(0, servers);
+
+        // The other direction, without which the assertion above is satisfied by a Start that never
+        // starts anything: the teardown has finished, so the strategy may run again.
+        Assert.Equal(AdapterTeardown.State.Stopped, teardown.Now);
+        Assert.True(teardown.Start(() => servers++));
+        Assert.Equal(1, servers);
+        Assert.Equal(AdapterTeardown.State.Running, teardown.Now);
+        Assert.True(teardown.Submitting("TA-AGAIN", "SIM", "ES", "Buy", 1m, null));
+    }
+
+    /// <summary>
+    /// AND THE SERVER IS BUILT UNDER THE SAME LOCK THE TEARDOWN TAKES, which is what makes the test
+    /// above about an ACT rather than about a boolean. A start whose decision and effect are two
+    /// steps can still be interleaved: read RUNNING, teardown runs to completion, then construct.
+    /// Here the teardown cannot begin until the construction inside <c>Start</c> has finished.
+    /// </summary>
+    [Fact]
+    public async Task A_teardown_does_not_begin_while_a_start_is_inside_the_lock()
+    {
+        var teardown = new AdapterTeardown(Session());
+        var order = new List<string>();
+        using var starting = new ManualResetEventSlim();
+
+        var starter = Task.Run(() => teardown.Start(() =>
+        {
+            starting.Set();
+            Thread.Sleep(300);
+            lock (order) order.Add("the server was built");
+        }));
+        Assert.True(starting.Wait(5_000));
+
+        teardown.Stop(steps: () => { lock (order) order.Add("the teardown began"); });
+        Assert.True(await starter.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(new[] { "the server was built", "the teardown began" }, order);
+    }
 }

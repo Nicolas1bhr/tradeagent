@@ -113,6 +113,42 @@ public sealed class AdapterTeardown
         }
     }
 
+    /// <summary>
+    /// THE START AND THE DECISION ARE ONE ACT, for the same reason <see cref="Record"/> exists
+    /// (review 2026-09-05b finding 14 / Codex F14).
+    ///
+    /// <see cref="Started"/> has answered false during a teardown since round 10, and the adapter's
+    /// <c>StartBridge</c> DISCARDED that answer: it called it for the side effect and went on to
+    /// build and start a <c>BridgeServer</c> regardless. So a start arriving mid-teardown produced a
+    /// bridge that dials TradeAgent, passes the handshake and reports READY, over a witness whose
+    /// lease the teardown is about to release — every order it then carries is refused "another
+    /// writer owns this witness", and the failure looks like a disk problem rather than a lifecycle
+    /// one. ATAS produces exactly this pairing: <c>OnStopping</c> and a dispose arrive together on
+    /// the way down (measured on the box 2026-09-05, 1 ms apart), and a workspace switch can start
+    /// the strategy again in between.
+    ///
+    /// Returning the boolean was not enough, because a caller can ignore a boolean — the two defects
+    /// in this class have both been a check whose result was separable from the thing it guarded. So
+    /// the effect goes through here and happens under the same lock as the transition: a start that
+    /// finds STOPPING changes nothing and starts nothing.
+    ///
+    /// <paramref name="start"/> RUNS UNDER THE LOCK, so it must be cheap and must not call into
+    /// ATAS — <see cref="Stop"/> runs its own steps outside the lock precisely because those do. The
+    /// adapter's use of it constructs a BridgeServer and returns; the server's own
+    /// <c>Start()</c> happens after this returns.
+    /// </summary>
+    /// <returns>Whether the start was allowed, i.e. whether <paramref name="start"/> ran.</returns>
+    public bool Start(Action start)
+    {
+        lock (_gate)
+        {
+            if (_state == State.Stopping) return false;
+            _state = State.Running;
+            start();
+            return true;
+        }
+    }
+
     // ---------------------------------------------------------------- the two writes
 
     /// <summary>

@@ -451,18 +451,32 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         else if (State == ATAS.Strategies.StrategyStates.Stopped) StopBridge();
     }
 
+    /// <summary>
+    /// NO SERVER UNLESS THE TEARDOWN SAYS RUNNING (review 2026-09-05b finding 14 / Codex F14).
+    ///
+    /// This used to call <c>_teardown.Started()</c> for its side effect and throw the answer away,
+    /// so a start arriving while <see cref="StopBridge"/> was half way through built and started a
+    /// BridgeServer anyway — a bridge that looks alive and whose every witness write is refused,
+    /// because the teardown it raced is about to release the lease. See
+    /// <see cref="AdapterTeardown.Start"/> for why the decision and the effect are now one act
+    /// rather than a boolean this method may ignore.
+    /// </summary>
     void StartBridge()
     {
         TryBind();
-        _teardown.Started();
-        BridgeServer bridge;
-        lock (_gate)
+        BridgeServer? bridge = null;
+        var allowed = _teardown.Start(() =>
         {
-            if (_bridge is not null) return;
-            _bridge = bridge = new BridgeServer(this);
-        }
-        // Start outside the lock, off a local: a stop racing this must not turn Start() into a null
-        // dereference inside an ATAS callback.
+            lock (_gate)
+            {
+                if (_bridge is not null) return;
+                _bridge = bridge = new BridgeServer(this);
+            }
+        });
+        if (!allowed || bridge is null) return;
+        // Start outside both locks, off a local: a stop racing this must not turn Start() into a
+        // null dereference inside an ATAS callback, and BridgeServer.Start must not run while the
+        // teardown gate — which ATAS's own stop waits on — is held.
         bridge.Start();
     }
 
