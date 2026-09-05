@@ -849,6 +849,72 @@ public class GatewayPipeBackpressureTests
     }
 
     /// <summary>
+    /// THE CANCELLATION ITSELF SETTLES THE ROW — with the write-back margin configured to NOTHING, so
+    /// what is measured is the dispatch path and not disposal's willingness to wait for it.
+    ///
+    /// The sibling above gives the handler 300 ms after cancellation and asserts it used them. This
+    /// one takes that away. `SettleAfterCancelTimeout` is `init`-settable to zero, and at zero
+    /// disposal cancels and returns; AppHost then closes the gateway (:275) and the database (:276)
+    /// straight after. So a cancelled mutation that settles LATER settles into a store that is being
+    /// taken away, and the row it should have written is the one the whole drain exists to prevent —
+    /// `DISPATCHING`, unflagged, invisible until the next start's sweep (measured by U2a and recorded
+    /// against `TradingGateway` in `docs/CONTRACTS.md`).
+    ///
+    /// What closes it is the catch-all on every dispatch path: an `OperationCanceledException` out of
+    /// a connector call is indefinite like any other, so it reaches `RecordIndefinite`, which pauses
+    /// in memory and then writes UNKNOWN — all of it inside the handler's own unwind, before disposal
+    /// returns. That is what is asserted here, and it is asserted on the FLAG as well as the state:
+    /// a row that leaves DISPATCHING without being flagged is not settled, it is forgotten.
+    /// </summary>
+    [Fact]
+    public async Task A_cancelled_handler_settles_before_disposal_returns_even_with_no_write_back_margin()
+    {
+        var (gw, conn, db) = await ReadyWithDeclaredWorstCase(TimeSpan.FromMilliseconds(20));
+        using var _1 = db;
+        var pipe = NewPipe();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
+        {
+            SettleAfterCancelTimeout = TimeSpan.Zero      // the margin, configured away
+        };
+        const int slowCallMs = 5000;                      // cancellable: it unwinds when asked
+        Assert.True(server.HandlerDrainTimeout < TimeSpan.FromMilliseconds(slowCallMs),
+            $"the derived drain is {server.HandlerDrainTimeout.TotalSeconds:0.00}s against a {slowCallMs} ms " +
+            "call — the handler would finish inside it and never be cancelled");
+        server.Start();
+
+        const string rid = "cli-cancel-settles-1";
+        await using var agent = await RawAgent.ConnectAndHello(pipe);
+        await WarmUp(agent);
+        conn.Faults.LatencyMs = slowCallMs;
+        await agent.WriteAsync(new IpcRequest
+        {
+            Op = Ops.Buy,
+            Session = "agent-cancel-settles",
+            RequestId = rid,
+            Args = new()
+            {
+                ["symbol"] = JsonSerializer.SerializeToElement("ES"),
+                ["quantity"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+        // The premise: the row must be AT the wire when disposal arrives, or there is nothing to
+        // settle and this passes without testing anything.
+        await WaitFor(() => gw.GetRequest(rid)?.State == ExecutionState.DISPATCHING, TimeSpan.FromSeconds(30));
+
+        await server.DisposeAsync();
+
+        // Read the instant disposal returns. Anything written after this line is written into a
+        // store the app is already closing.
+        var record = gw.GetRequest(rid)!;
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation,
+            $"the row left DISPATCHING as {record.State} with no flag — nothing will ever reconcile it, and " +
+            "the next order goes out over an outcome that exists nowhere");
+        Assert.False(gw.TryAuthorizeExecution(new AgentContext("agent-after"), out _),
+            "an order that may be at the broker was abandoned and trading was left open");
+    }
+
+    /// <summary>
     /// A handler that really will not finish is abandoned rather than waited on — and that has to be
     /// an ERROR in the record, not a note. It is the only trace that an order may have been left
     /// unsettled, so it must reach whatever an operator actually reads.

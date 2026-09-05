@@ -46,6 +46,18 @@ public static class TransportLedger
     }
 
     /// <summary>
+    /// The record attached to this execution context, or null when this work has none.
+    ///
+    /// READ BY THE DISPATCHER, not by a connector. `TradingGateway` needs it for the one decision
+    /// that turns on the difference between an ambiguous failure and a proven one: a
+    /// <see cref="ConnectorTransportException"/> reporting <see cref="TransportOutcome.NothingWritten"/>
+    /// is a PROOF that nothing reached the broker, and settling that as UNKNOWN pauses all execution
+    /// over an order that does not exist. The pipe server had already stopped saying it in the leg's
+    /// WORD; the record it contradicted is the gateway's.
+    /// </summary>
+    public static TransportRecord? Attached => Current.Value;
+
+    /// <summary>
     /// Called by a connector at a site where it KNOWS where a mutating frame got to. Outside any
     /// attached record it does nothing, so a connector may call it unconditionally.
     /// </summary>

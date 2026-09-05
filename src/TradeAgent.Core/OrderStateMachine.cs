@@ -18,10 +18,10 @@ public static class OrderStateMachine
         // Why it was excluded: a PLACE that is still DISPATCHING cannot KNOW it was cancelled. It has
         //   not heard back from the broker at all, so "cancelled" would be an inference, and forcing
         //   that case down UNKNOWN -> RECONCILING instead is the safe direction to fail.
-        // Why it is safe to allow: THREE callers settle a DISPATCHING record as CANCELLED, and every
-        //   one of them holds a definite platform answer rather than an inference (verified
-        //   2026-09-02 by reading every call site of Settle(..., CANCELLED); if you add a fourth,
-        //   this comment is the thing to correct first).
+        // Why it is safe to allow: every caller that settles a DISPATCHING record as CANCELLED holds
+        //   DEFINITE evidence rather than an inference (verified 2026-09-02 by reading every call site
+        //   of Settle(..., CANCELLED), and re-verified 2026-09-05 when the fifth was added; if you add
+        //   another, this comment is the thing to correct first).
         //     - TradingGateway.CancelAsync, reached only after Connector.CancelOrderAsync returned
         //       without an exception. Without this edge every successful cancel stranded its own
         //       CANCEL request at DISPATCHING forever.
@@ -36,6 +36,12 @@ public static class OrderStateMachine
         //     - TradingGateway.OperatorCloseAllAsync, which maps the close order's returned state
         //       through the same MapDispatchOutcome table as a place: CANCELLED there is the
         //       platform saying the closing order itself was killed.
+        //     - TradingGateway.SettleIfNothingWasSent, the one caller whose evidence is NOT a platform
+        //       answer, and it is admitted because it is stronger rather than weaker: the connector
+        //       reported TransportOutcome.NothingWritten, which docs/CONTRACTS.md defines as a PROOF
+        //       that no byte of this mutation left the process and names the one report allowed to
+        //       overrule a record. Nothing is at the broker to be inferred about. Reached only from a
+        //       ConnectorTransportException carrying that proof; silence does not qualify.
         // Why widening a deliberately intent-agnostic table is acceptable: any OTHER caller that takes
         //   this edge wrongly is not silent — TradingGateway.Settle now files `illegal_settle` at error
         //   severity the first time a table refusal happens. The table stays a small pure function

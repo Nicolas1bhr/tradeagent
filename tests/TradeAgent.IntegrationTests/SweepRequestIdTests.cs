@@ -487,15 +487,16 @@ public class SweepRequestIdTests
     /// <c>TRADING_PAUSED_UNRECONCILED</c> — including the retry the sentence itself advises, and
     /// including the next <c>cancel-all</c>.
     ///
-    /// WHAT IS FIXED HERE AND WHAT IS NOT. The WORD is the pipe server's and it is fixed: the leg
-    /// reads <c>not-sent</c> and is not counted as attempted, and the answer now carries the
-    /// transport result itself so the evidence is visible rather than inferred. The RECORD is
-    /// <c>TradingGateway.SettleUnknown</c>'s, which this unit may not edit — so the row stays UNKNOWN
-    /// with the flag set, the reply says so in the same object, and it is routed to U2c-1 with this
-    /// measurement attached.
+    /// BOTH HALVES ARE FIXED NOW, and the name of this test changed with the second one (it was
+    /// <c>…_even_though_its_record_is_unknown</c>, which is what U2a could measure and not repair).
+    /// The WORD was the pipe server's: the leg reads <c>not-sent</c>, is not counted as attempted, and
+    /// carries the connector's transport result so the evidence is visible rather than inferred. The
+    /// RECORD is <c>TradingGateway</c>'s, and it stayed UNKNOWN and flagged behind that word until
+    /// <c>SettleIfNothingWasSent</c> — so the reply said "nothing was sent" while the row it described
+    /// refused every further order. A proof is a proof on both sides of the seam.
     /// </summary>
     [Fact]
-    public async Task A_leg_refused_before_the_wire_reads_not_sent_even_though_its_record_is_unknown()
+    public async Task A_leg_refused_before_the_wire_reads_not_sent_and_leaves_nothing_to_reconcile()
     {
         var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
         using var _1 = db;
@@ -524,11 +525,24 @@ public class SweepRequestIdTests
         // The evidence is IN the answer: the connector's own report of where the frame got to.
         Assert.Equal("NothingWritten", leg.GetProperty("transport").GetString());
 
-        // And the honest residual, asserted rather than left for somebody to discover: the RECORD is
-        // still UNKNOWN and still flagged, because `TradingGateway.SettleUnknown` writes it and this
-        // unit may not open that file. The leg no longer LIES about it; the row is U2c-1's to fix.
-        Assert.Equal("UNKNOWN", leg.GetProperty("state").GetString());
-        Assert.Single(gw.Requests.NeedingReconciliation());
+        // THE HARM, ASSERTED FIRST BECAUSE IT IS THE POINT. `needs_reconciliation` refuses ALL
+        // further execution with TRADING_PAUSED_UNRECONCILED — including the retry the message
+        // itself advises — and it was being set for an order the broker never heard about.
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("agent-after-not-sent"), out var refusal),
+            $"trading is still paused after a leg the connector PROVED it never sent: {refusal}");
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        // AND THE ROW AGREES WITH THE WORD. The request is terminal, because it is over and produced
+        // nothing at the broker; it is not UNKNOWN, which would be a row nothing ever moves — the
+        // reconciler scans the flagged set — and not REJECTED, which claims a refusal by a broker
+        // that was never asked.
+        Assert.Equal("CANCELLED", leg.GetProperty("state").GetString());
+
+        // AND THE COUNT DOES NOT READ THE TERMINAL STATE AS A CANCELLATION THAT LANDED. `cancelled`
+        // is the number of orders this sweep actually stopped, and this one was never asked about.
+        Assert.Equal(0, data.GetProperty("cancelled").GetInt32());
+        var still = data.GetProperty("not_cancelled").EnumerateArray().Single();
+        Assert.Equal("not-sent", still.GetProperty("outcome").GetString());
     }
 
     /// <summary>

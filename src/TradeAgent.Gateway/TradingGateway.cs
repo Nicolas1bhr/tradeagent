@@ -690,6 +690,52 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE ONE FAILURE A CONNECTOR CAN PROVE, AND THE ONLY ONE THAT MAY SETTLE WITHOUT A PAUSE.
+    ///
+    /// Every ambiguous connector failure is UNKNOWN, and that is right from up here: a refusal taken
+    /// before the send gate and a half-written frame arrive as the same exception. But they are not
+    /// the same fact, and since round 10 the connector says which — <see cref="TransportOutcome"/> on
+    /// the work's own <see cref="TransportRecord"/>. <c>NothingWritten</c> is a PROOF that no byte of
+    /// this mutation left the process, and <c>docs/CONTRACTS.md</c> already names it the one report
+    /// allowed to overrule a record.
+    ///
+    /// WHAT IT COSTS TO IGNORE IT, measured through the real pipe (verifier round-9 F-1): a sweep leg
+    /// the connector refused before the wire was reported <c>not-sent</c> — the one word in the set
+    /// that is an ASSURANCE — while the row behind it was UNKNOWN and flagged, and the flag refuses
+    /// ALL further execution with TRADING_PAUSED_UNRECONCILED, including the retry the message
+    /// itself advises. The word and the record were describing the same leg and disagreeing.
+    ///
+    /// CANCELLED, AND NOT `REJECTED` OR A STRANDED `UNKNOWN`. The request is over and produced
+    /// nothing at the broker, so it needs a TERMINAL state: an UNKNOWN row that nothing flags is a
+    /// row nothing will ever move, since the reconciler scans the flagged set. `REJECTED` is
+    /// reserved for a definite refusal BY THE BROKER (safety rule 3) and the broker was never asked.
+    /// The two places that could read a CANCELLED cancel-leg as "the target was cancelled" —
+    /// `cancel-all`'s `cancelled` count and its `not_cancelled` list — read the LEG WORD instead, so
+    /// they consult the same transport evidence this does.
+    ///
+    /// NARROW ON PURPOSE. Only <see cref="ConnectorTransportException"/> qualifies: a JsonException
+    /// or a NullReferenceException out of a connector that also happens to have reported
+    /// <c>NothingWritten</c> is a connector defect, and a defect is not a proof. Everything else, and
+    /// every silence, stays indefinite — including a connector that never marks its attempts, whose
+    /// record reports null rather than <c>NothingWritten</c>.
+    /// </summary>
+    ExecutionRequest? SettleIfNothingWasSent(string requestId, Exception ex, string what)
+    {
+        if (ex is not ConnectorTransportException) return null;
+        if (TransportLedger.Attached?.Outcome is not TransportOutcome.NothingWritten) return null;
+
+        // Settle first, log second: both are writes to the same store and the outcome is the one
+        // that must land. `Settle` latches and throws if it cannot be written down, which is right —
+        // a definite outcome nobody could record is an unconfirmed one.
+        var settled = Settle(requestId, ExecutionState.CANCELLED, error: ex.Message);
+        _log.Activity($"{what} was not sent, and the platform never saw it: {ex.Message}", "warn");
+        _log.Engineering("Gateway", "dispatch_not_sent", requestId: requestId,
+            metadataJson: Json.Write(new { reason = ex.Message, transport = TransportOutcome.NothingWritten.ToString() }));
+        StateChanged?.Invoke();
+        return settled;
+    }
+
+    /// <summary>
     /// Records an indefinite outcome and takes trading down with it: one place for the four things
     /// that must always happen together, because until 2026-09-02 they happened together on some
     /// paths and not at all on others.
@@ -803,6 +849,11 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            // UNLESS THE CONNECTOR CAN PROVE NOTHING LEFT THE PROCESS. See SettleIfNothingWasSent:
+            // this is the one failure that is definite without a broker having answered.
+            if (SettleIfNothingWasSent(current.RequestId, ex,
+                    $"{intent.Side} {intent.Quantity} {intent.Symbol}") is { } notSent) return notSent;
+
             // EVERYTHING ELSE IS INDEFINITE, which is what docs/CONTRACTS.md always said and what
             // the taxonomy did not do: it named ConnectorTransportException, TimeoutException and
             // OperationCanceledException, and a JsonException or a NullReferenceException from a
@@ -993,6 +1044,9 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            if (SettleIfNothingWasSent(current.RequestId, ex, $"the cancellation of order {target}") is { } notSent)
+                return notSent;
+
             // Same taxonomy as a place, and it did not used to be: this path caught neither
             // TimeoutException nor OperationCanceledException, so a cancel the broker CARRIED OUT
             // could throw on the way home and the ledger would never say the order was cancelled.
@@ -1057,6 +1111,9 @@ public sealed class TradingGateway : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            if (SettleIfNothingWasSent(current.RequestId, ex, $"the change to order {target}") is { } notSent)
+                return notSent;
+
             return RecordIndefinite(current.RequestId, ex.Message,
                 "TradeAgent could not confirm whether an order was changed.", ex);
         }

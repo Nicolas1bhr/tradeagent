@@ -425,8 +425,38 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     ///
     /// Short on purpose. This is not another chance to finish the operation — that chance was the
     /// drain above, and it is over. It is time to record an outcome that is already decided.
+    ///
+    /// A CALLER MAY ONLY LENGTHEN IT. See <see cref="WriteBackAfterCancel"/>, which is what disposal
+    /// actually waits.
     /// </summary>
     public TimeSpan SettleAfterCancelTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// WHAT DISPOSAL ACTUALLY WAITS AFTER CANCELLING, and it has a floor because a bound a caller can
+    /// configure to nothing is not a bound.
+    ///
+    /// <see cref="SettleAfterCancelTimeout"/> is `init`-settable, and at ZERO step 5 waits for
+    /// nothing: disposal cancels, times out immediately, reports the row as unsettled and returns —
+    /// while the handler is one continuation away from writing UNKNOWN. AppHost then closes the
+    /// gateway (:275) and the database (:276), so the settle lands in a store that is being taken
+    /// away and the row stays `DISPATCHING`, unflagged, until the NEXT start's sweep notices.
+    /// Measured at that setting on 2026-09-05: `Expected: UNKNOWN / Actual: DISPATCHING` at the
+    /// instant disposal returned. It is the same shape as verifier round-11 L-2, which found the
+    /// drain itself resting on this settable number, and the same answer: separate the promise from
+    /// the setting.
+    ///
+    /// THE FLOOR IS <see cref="HandlerOverhead"/> BECAUSE IT IS ALREADY THE NAME FOR THIS WORK — a
+    /// pipe read, a JSON parse and two or three local SQLite writes, not scaling with anything a
+    /// connector reports. Writing an outcome down after cancellation is a subset of it. Lengthening
+    /// is still a caller's to ask for; shortening it below what the write-back costs is asking for an
+    /// order to be abandoned at shutdown, which is not.
+    ///
+    /// The DRAIN is deliberately left reading the raw setting: it is a different quantity — how long
+    /// a handler gets to FINISH — and the test that configures the margin away to prove the drain
+    /// does not depend on it must go on proving exactly that.
+    /// </summary>
+    TimeSpan WriteBackAfterCancel =>
+        SettleAfterCancelTimeout > HandlerOverhead ? SettleAfterCancelTimeout : HandlerOverhead;
 
     Task? _loop;
     volatile bool _disposed;
@@ -876,7 +906,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             async (legId, target) => await gateway.CancelAsync(ctx, legId, target, ct));
 
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
-        var landed = results.Count(r => r.State is ExecutionState.CANCELLED);
+
+        // COUNTED FROM THE WORD, NOT FROM THE BARE STATE, and the two can differ. `confirmed` is
+        // CANCELLED *plus* a transport that is not `NothingWritten` — and since a leg the connector
+        // proved it never sent is now settled CANCELLED rather than stranded UNKNOWN, reading the
+        // state alone would report a cancellation that landed for an order the broker never heard
+        // about. On the one command a person reaches for when they want everything to stop, that is
+        // the worst possible lie, which is what this count was rewritten for in the first place.
+        var landed = legs.Count(l => l.Outcome is LegOutcome.Confirmed);
         return Answer(rid, new
         {
             cancelled = landed,
@@ -891,8 +928,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             attempted = legs.Count(l => l.Attempted),
             // Named rather than inferred: anything not cancelled is still out there, and the agent
             // has to be able to see which without diffing two lists.
-            not_cancelled = results.Where(r => r.State is not ExecutionState.CANCELLED)
-                .Select(r => new { request_id = r.RequestId, order = r.ConnectorOrderId, state = r.State.ToString() }),
+            not_cancelled = legs.Where(l => l.Record is not null && l.Outcome is not LegOutcome.Confirmed)
+                .Select(l => new
+                {
+                    request_id = l.Record!.RequestId, order = l.Record.ConnectorOrderId,
+                    state = l.Record.State.ToString(), outcome = Word(l.Outcome)
+                }),
             not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
             outcomes = legs.Select(l => l.Describe()),
             requests = results
@@ -1095,10 +1136,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     ///
     /// <c>DISPATCHING</c> and <c>RECONCILING</c> reach <c>sent-not-confirmed</c> from here, and that
     /// is deliberate: the word is about the WIRE, and a frame that may have landed is exactly what it
-    /// means. Their record is not `UNKNOWN + needs_reconciliation` — a mutation cancelled by disposal
-    /// stays `DISPATCHING` and unflagged, which is `TradingGateway`'s half and is routed to U2c-1 —
-    /// so the leg carries the connector's own <c>transport</c> beside the word rather than the pipe
-    /// server editing a row it does not own.
+    /// means. A record in one of them is not necessarily `UNKNOWN + needs_reconciliation`, so the leg
+    /// carries the connector's own <c>transport</c> beside the word rather than the pipe server
+    /// editing a row it does not own. (The shape this used to name — a mutation cancelled by disposal
+    /// left `DISPATCHING` and unflagged — was `TradingGateway`'s half and is closed: every dispatch
+    /// path catches a cancellation and settles UNKNOWN before disposal can take the store away.
+    /// `A_cancelled_handler_settles_before_disposal_returns_even_with_no_write_back_margin` is the
+    /// measurement. `DISPATCHING` is still reachable here — a handler that outlasts the drain and
+    /// never unwinds leaves one, and that is the `handlers_did_not_finish` case.)
     /// </summary>
     static LegOutcome Dispatched(TransportOutcome? transport) => TheAnswer(LegOutcome.NotConfirmed, transport);
 
@@ -1537,9 +1582,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         //    It is time to write down an outcome that is already decided.
         //    It is skipped when there is nothing to wait for; the REPORT below is not, because the
         //    report is about REQUESTS.
+        //
+        //    BOUNDED BY `WriteBackAfterCancel` AND NOT BY THE RAW SETTING. At a settle margin of zero
+        //    this waited for nothing at all, so a handler that unwinds correctly and settles UNKNOWN
+        //    a continuation later was reported unsettled and left DISPATCHING when disposal returned
+        //    — the very state steps 3 to 5 exist to prevent, produced by configuring the margin away.
         if (handlers.Length > 0)
         {
-            try { await Task.WhenAll(handlers).WaitAsync(SettleAfterCancelTimeout); }
+            try { await Task.WhenAll(handlers).WaitAsync(WriteBackAfterCancel); }
             catch (Exception) { /* the report below is what matters */ }
         }
 
@@ -1580,7 +1630,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     unsettled = unsettled.Count,
                     requests = unsettled.Select(r => r.RequestId).ToArray(),
                     drain_timeout_ms = (int)HandlerDrainTimeout.TotalMilliseconds,
-                    settle_timeout_ms = (int)SettleAfterCancelTimeout.TotalMilliseconds
+                    settle_timeout_ms = (int)WriteBackAfterCancel.TotalMilliseconds
                 }));
 
         _cts.Dispose();

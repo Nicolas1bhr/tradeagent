@@ -304,10 +304,22 @@ The distinction the words exist for is `not-sent` versus `sent-not-confirmed`. `
 sets `needs_reconciliation`, which **pauses all further execution** (`TRADING_PAUSED_UNRECONCILED`) —
 including the retry the message itself advises. Claiming it for a leg the connector PROVED it never
 sent is therefore not a wording problem, and it is why the word comes from the transport result.
-`DISPATCHING` and `RECONCILING` are in that row because the word is about the WIRE: a mutation
-cancelled by disposal stays `DISPATCHING` and unflagged (`TradingGateway`'s half, routed to U2c-1),
-and the leg carries the connector's own `transport` beside the word rather than the pipe server
-editing a row it does not own.
+`DISPATCHING` and `RECONCILING` are in that row because the word is about the WIRE, and the leg
+carries the connector's own `transport` beside the word rather than the pipe server editing a row it
+does not own. A mutation cancelled by disposal no longer stays `DISPATCHING` and unflagged: every
+dispatch path catches the cancellation and settles UNKNOWN while the store is still open. What still
+reaches `DISPATCHING` is a handler that outlasts the drain and never unwinds — the
+`handlers_did_not_finish` case.
+
+**And the gateway now agrees with the word rather than contradicting it.** A
+`ConnectorTransportException` whose transport result is `NothingWritten` is settled `CANCELLED` with
+no flag and no pause: the connector PROVED nothing left the process, so there is nothing at the
+broker to reconcile, and flagging it refused every further order — including the retry the message
+advises. Only `PossiblyWritten`, `ReplyReceived` and silence stay indefinite. `CANCELLED` rather than
+`REJECTED`, which is reserved for a definite refusal by a broker that was never asked, and rather
+than an unflagged `UNKNOWN`, which nothing would ever move. `cancel-all`'s `cancelled` count and its
+`not_cancelled` list read the per-leg WORD, so a terminal row that was never sent is not counted as a
+cancellation that landed.
 
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
