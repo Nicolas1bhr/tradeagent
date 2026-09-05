@@ -804,7 +804,22 @@ public class GatewayPipeBackpressureTests
         var pipe = NewPipe();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
         {
-            SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(300)
+            // TWO SECONDS, MEASURED, AND STILL A THIRTIETH OF WHAT IT COSTS TO GET WRONG.
+            //
+            // This is the fixture's margin, not a shipped one: `SettleAfterCancelTimeout` ships at
+            // 5 s and the fixture shortens it so the test finishes quickly. At 300 ms it was
+            // shortened past what the work costs on a hosted runner. What the handler does in this
+            // window is write its record and its reply — SQLite and a pipe — and `RunnerSpeedProbeTests`
+            // measures both on windows-latest: 28.3x this Mac for a write-through file cycle and 6.7x
+            // for a pipe round trip, against 1.1x for arithmetic. The handler settles here in ~30 ms
+            // (U-win-flakes, measured five times); 30 ms x 28 is 840 ms, which is why 300 ms was
+            // reachable on that runner and never here. Two seconds is above it with room to spare,
+            // and it is nowhere near the quantity the test asserts.
+            //
+            // The premise below is what bounds it: the derived drain must still expire inside the
+            // slow call, and at 2 s it is 100 ms + 1 s + 2 s = 3.1 s against 5 s. Raising this
+            // number further means raising `slowCallMs` with it.
+            SettleAfterCancelTimeout = TimeSpan.FromSeconds(2)
         };
         // THE PREMISE, TIED TO THE FAULT RATHER THAN TO A LITERAL. The drain has to expire while the
         // handler is still inside its connector call, or the handler finishes on its own and this
