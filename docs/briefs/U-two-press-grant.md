@@ -35,3 +35,24 @@ test that fails while another suite runs → that class alone 3×); names vs `ma
 
 ## Report — append here, commit it, ≤20 lines: tip sha; RED → GREEN → mutant; the labels read on screen or NOT
 VERIFIED; gate counts; what you did NOT do.
+
+Code tip `8d34072`, this report on top; rebased onto `main` (17 commits, no conflict). **Kept all four earlier commits unchanged** — the factories,
+`Ui.ConfirmIf`/`KillSwitch`/`ModeButton`, `RiskPolicy.Widenings`, the guides and the 15 tests are right; I added one commit.
+**1–4, re-verified.** RED against `main`'s widgets (the three factories rebuilt with `Ui.Secondary`/`Primary`/`Danger`, nothing
+else touched): `Failed: 9, Passed: 6, Total: 15` — `A_real_money_mode…(LIVE_AUTONOMOUS)` → `Expected: null / Actual:
+LIVE_AUTONOMOUS`. GREEN at the tip `Failed: 0, Passed: 17`. MUTANT `Ui.Confirm`→`Ui.Secondary`, autonomous row only:
+`Failed: 2, Passed: 15` — that same line, plus `The_five_second_refresh…` `Expected: True / Actual: False`.
+
+**5 — running it found two defects, both fixed in `8d34072`.** (a) The armed sentence did not FIT: in the horizontal
+`StackPanel` the row ran past its card and the button read `Confirm: let the AI place real or`, cut mid-word. (b) The Safety
+page's armed kill switch was a blank red block — arming swaps the control to class `danger`, red text, over its own red fill.
+Fixed by a `WrapPanel` mode row and a repaint that sets `Theme.TextOnEmergency` as well as the fill; RED first for both
+(`Expected typeof(WrapPanel) / Actual typeof(StackPanel)`; `Expected: White / Actual: Black`) → 17/17, 3×. **Read off the
+screen:** chrome *"Confirm: let the AI trade again"*; mode row *"Confirm: let the AI place real orders without asking"*;
+Safety switch the same sentence, white on red; the resting row still fits one line. **The presses were NOT a mouse:**
+`CGPreflightPostEventAccess()` is False and the Accessibility grant was refused, so a temporary uncommitted in-app probe
+raised the same `Click` routed event on the same controls and was then deleted — `git status` clean, nothing carries it.
+
+Gate: Release `--no-incremental` **0 warnings, 0 errors**; the class 3× `Failed: 0, Passed: 17`; full suite in Release once,
+alone (`pgrep testhost` 0 first) — **Unit 236 + Fault 250 + Integration 584 = 1070, 0 failed**. Names vs `main`: **0 removed,
+15 added**. Secret scan clean. NOT done: no mouse press, no box, no Windows, no gateway change, no push, no merge.
