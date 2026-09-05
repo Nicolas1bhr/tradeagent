@@ -3776,3 +3776,44 @@ Release: build → 0 warnings, 0 errors; suite → 219 + 242 + 582 = 1043, 0 fai
 
 **NOT VERIFIED:** the card's two visual states on screen — the query they read and the refusal behind them are run; no
 UI run. **NOT done:** no pipe op, no CLI verb; nothing in the press code (`U-press-inflight` owns it); no box, no ATAS.
+
+## 2026-09-05 — U-press-inflight landed: the press waits on an order still on the wire, and an agent's close is sized at dispatch
+
+Review-2 finding 2 (HIGH) and Codex F3, by one fresh builder on `docs/briefs/U-press-inflight.md`. Merge `145e725`, 5
+commits, 9 files, +822/−23 (`TradingGateway.cs`, `Stores.cs`, `Errors.cs`, `GatewaySchema.cs`, `CONTRACTS.md`, three new
+test files). Before it, an agent's `close` inside the connector call was invisible to the press — the drift re-read
+compares positions and the uniqueness constraint covers press rows — so Close All sent a second sell 2 while the agent's
+sell 2 was on the wire, and long 2 became short 2 (P6).
+
+- **A press leg is refused while the gateway still has an order on the wire for that instrument.** The guard is the
+  leg's own write-ahead INSERT (`Stores.TryCreateFlagged`'s new `$wire` clause: no `DISPATCHING` `execution_request` on
+  the instrument), so the check and the wire are one statement, cross-process; per leg — NQ still closed while ES
+  waited. The press answers `1 leg waited on an order still on the wire, so nothing was sent for it: ES is waited on by
+  p6-agent, still DISPATCHING.`; the leg's word is `not-sent`. P6b (the press row first → the agent's leg refused
+  `TRADING_PAUSED_UNRECONCILED`) lifted unchanged.
+- **The agent's own `close` is sized at dispatch, inside the gate** (Codex F3): a fill between the snapshot and the wire
+  → `POSITION_MOVED — ES was 2 when this close was sized and is 1 now…`, record CREATED, nothing sent; over the pipe
+  `outcome: not-sent`, `state: CREATED`, `not_sent: 1`, `attempted: 0`, `closed: 0`; the flipped case (2 → −2) refused,
+  not doubled; the ordinary close still FILLED. One `ErrorCode` added with its catalogue entry; `ModifyAsync`'s record
+  now carries its instrument instead of `"-"`, which is what makes an in-flight modify visible to the guard.
+- **Cancel All is not the same class**, by two probes (an agent modify and an agent cancel held inside the connector
+  call): no order left working; the modify ends `UNKNOWN, flagged=True`, the cancel `REJECTED`. In `CONTRACTS.md`.
+- **A stated deviation, and the residual it leaves:** the set is `DISPATCHING`, not `DISPATCHING or UNKNOWN`. With
+  UNKNOWN in it the shipped `UnconfirmedLatchTests.Confirming_one_outcome_does_not_lift_another_requests_pause` went
+  RED — the press wrote no row at all — because an UNKNOWN record is the ordinary state of the emergency the button is
+  pressed about, and refusing on it re-imposes the pause these controls bypass on purpose. **NOT fixed:** an UNKNOWN
+  closing order on the same instrument can still fill after the press's close and reverse it; stated in `CONTRACTS.md`.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED (P6 lifted into `PressInFlightTests`)
+`orders at the broker: 3 … position at the end: ES -2` → GREEN 2 orders, agent close FILLED, position flat; mutant
+(`$wire` NOT EXISTS → `1=1`) → 2 RED `Expected: 2 Actual: 3`, `ES -2`. Item 2 RED `Assert.Throws() Failure: No exception
+was thrown`, position 2 → 1, Sell 2 sent → GREEN; mutant (`if (live == sizedFrom) return;` → `return;`) → 2 RED.
+Builder's gate at `ef7c4b2`, Release: 0 warnings; the classes 3× → 8/8 Fault + 2/2 Integration; 219 + 247 + 584 = 1050,
+0 failed; names 0 removed, 10 added; scan clean. Manager's gate at `a887507` (rebased onto `d14a2f0`; the merge sha's
+code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 219 + 250 + 584 = 1053, 0 failed; names vs
+`main` → 0 removed, 10 added (sets 840 → 850); scan → one hit, the word "secret" in the report's own "secret scan
+clean"; `rev-list --count u-press-inflight..main` → 0; CI at `145e725`: pending.
+
+**NOT done:** no box, no real ATAS, no money, no UI run (`DashboardView.PressAsync` renders `PressOutcome.Summary`
+verbatim — read, not run); `AtasStrategyAdapter.Modify:1596` quoted from source, never executed; no new pipe op, no new
+operator authority; `ForceResolve`/`Settle`/`LateDefiniteSettle` untouched.
