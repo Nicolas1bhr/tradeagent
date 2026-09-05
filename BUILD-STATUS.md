@@ -3124,3 +3124,29 @@ press is judged by its own records" re-homed onto surviving paths. Manager's gat
 **NOT VERIFIED:** the Dashboard card (compiles; no UI run — see it on the Mac loop or the box); nothing on the box or
 against real ATAS. **Outside its brief, declared:** ~12 lines in `GatewayPipeServer.CancelAll`/`CloseAll`, without
 which item 4 was unreachable. **Deferred with an owner:** C1, C4, C5 → U2c1c (`docs/briefs/U2c1c.md`).
+
+## 2026-09-05 — U8 landed: the deployment and monitoring documents exist, and the user guide tells the truth
+
+A docs-only unit under `docs/HOW-WE-BUILD.md`: one fresh builder on `docs/briefs/U8.md`, no code, no tests. Merge
+`4f7baa7`, 7 commits. `docs/USER-GUIDE.md` 288 → 494 lines; `docs/DEPLOYMENT.md` 319 lines new; `docs/MONITORING-PHASE.md`
+247 lines new. 86 behavioural sentences sourced to a file:line or a record section (the map is in the unit's report on
+the branch); 11 marked "not yet walked" or NOT verified: SmartScreen on a browser download, a clean-machine install, the
+eight auto-passing setup screens, `proto=3` on hardware, rollback, downgrade and an interrupted install, a support zip
+opened or a log read on a deployed machine, the five-minute stop threshold (a judgment, no constant), `PresentedNoProof`,
+real money, the strip's refusal.
+
+- **Three guide claims were false and are corrected:** "Trading through ATAS does not work yet" (walked 2026-08-31);
+  "12 screens" (16, `Onboarding.cs:4-12`); "There is no timer that decides for you" (a 15-minute approval TTL,
+  `GatewayTypes.cs:27`). Six pages → seven; "add-on" → "bridge" except in two verbatim quotes where the app itself still
+  says "add-on" (`OnboardingView.cs:941`, `BridgeProtocol.cs:167`) — an app inconsistency, recorded not papered over.
+- **Could not confirm either way:** whether anything writes into `%LOCALAPPDATA%\TradeAgent\logs` — created
+  (`Paths.cs:21`), swept by the support collector (`Doctor.cs:279`), and no writer found anywhere in `src/`.
+- **Found while sourcing, a product defect:** there is no in-app way to reinstall the bridge once setup completes —
+  setup renders only while onboarding is incomplete (`MainWindow.cs:183`), `Onboarding.Clear`'s only caller is the
+  wizard's Back (`OnboardingView.cs:349`), and Checks prints repair text with no buttons (`DashboardView.cs:910-919`).
+  So `Doctor.cs`'s "Press Install bridge." names a control that does not exist, and the protocol-3 refusal sentence
+  ("reinstall the add-on from TradeAgent") has no in-product repair path. Written into both new documents as a defect,
+  not a procedure → unit `docs/briefs/U-bridge-reinstall.md`.
+
+**Verified by running:** nothing to build; the diff is `docs/` only (checked); scan clean. **NOT VERIFIED:** every
+sentence the report marks "not yet walked"; no app run, no screenshot, no box.

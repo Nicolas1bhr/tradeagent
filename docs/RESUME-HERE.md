@@ -15,9 +15,10 @@ program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
 `main` is `73f3542`: **U2a, U2d, U14 (a+b), U2c1a, U2c1b and three test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. CI on `main` is green on all three platforms at the last fixes' PR runs; one
-Windows pipe-disposal test has flaked once, measured, not fixed. The queue, in order: U2c1c (C1/C4/C5,
-`docs/briefs/U2c1c.md`) and U8 (deployment and monitoring docs, `docs/briefs/U8.md`) are building in parallel; then
-the milestone review of the money path on `main` (brief drafted); then the v0.1.2 cut on the box (bridge redeploy at
+Windows pipe-disposal test has flaked once, measured, not fixed. U8 landed (`docs/DEPLOYMENT.md`, `docs/MONITORING-PHASE.md`,
+the user guide corrected). The queue, in order: U2c1c (C1/C4/C5, `docs/briefs/U2c1c.md`) and U-win-timing (the Windows
+timing class, `docs/briefs/U-win-timing.md`) are building; then U-bridge-reinstall (the repair path the protocol-3
+refusal names but the app lacks); then the milestone review of the money path on `main` (brief drafted); then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
