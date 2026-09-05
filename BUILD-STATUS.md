@@ -3653,7 +3653,7 @@ named test 5×; Unit 218 + Fault 221 + Integration 582 = 1021, 0 failed; names 0
 on draft PR #6: ubuntu SUCCESS; windows and macos red on the first attempt on tests outside this change (windows the
 sweep-outcomes test, its second occurrence → `U-sweep-words-win`; macos a `Timing` shutdown test), both SUCCESS on
 re-run, `package` SUCCESS. Manager's gate at `08796d0` (the merge sha's code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 219 + 239 + 582 = 1040, 0 failed; names vs
-`main` → 0 removed, 1 added; scan clean; CI run 33972744178 at `6620d3d` was still running when this session closed (all three test jobs in progress); the
+`main` → 0 removed, 1 added; scan clean; CI run 33972744178 at `6620d3d` finished after this session closed: test (ubuntu-latest) success; test (windows-latest) success; test (macos-latest) success; package success; the
 run before it, at the docs-only commit `3876efa`, failed on: Integration.BridgeRoundTripTests.Reconciliation_works_across_the_bridge_after_a_lost_acknowledgement — the hosted-runner class recorded above.
 
 **NOT VERIFIED:** which runner-side stall produced the 1.4 s at `88617a0` — a late timer or a slow fsync; it did not
