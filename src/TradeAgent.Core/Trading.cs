@@ -84,6 +84,60 @@ public sealed class TradeAgentSettings
 
     [JsonIgnore] public bool ModeAllowsExecution => ModeIsRecognised && Mode != TradingMode.OBSERVE;
     [JsonIgnore] public bool ModeIsLive => Mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
+
+    /// <summary>
+    /// TRUE WHEN NONE OF THE VALUES ABOVE CAME FROM THE OWNER. Not persisted — it is a fact about
+    /// this run, and it stops being true the moment the row is written again (see
+    /// <see cref="MarkSaved"/>). The health row and the Safety page read it; nothing else sets it.
+    /// </summary>
+    [JsonIgnore] public bool CouldNotBeRead { get; private set; }
+
+    /// <summary>The row on disk is now one this build wrote, so it is readable by definition.</summary>
+    public void MarkSaved() => CouldNotBeRead = false;
+
+    /// <summary>
+    /// THE SETTINGS A BUILD USES WHEN IT CANNOT READ THE ROW THE OWNER SAVED (REVIEW 2026-09-05,
+    /// finding 5).
+    ///
+    /// <c>new TradeAgentSettings()</c> was what that failure produced, and its defaults are the
+    /// permissions of a FRESH INSTALL: the kill switch up, an allowlist that used to mean
+    /// "everything", a quantity cap of one and two open positions. So the one event proving the
+    /// software cannot read what the owner asked for was also the event that granted the AI
+    /// authority nobody gave it.
+    ///
+    /// Every field here is instead the most restrictive value that field has:
+    ///
+    ///   Mode = OBSERVE            the only mode that executes nothing at all
+    ///   AiTradingStopped = true   the kill switch, down
+    ///   LiveActivated = false     real money off
+    ///   SelectedAccountId = null  no account was chosen, and a guess is not a choice
+    ///   allowlist = []            which now allows NOTHING
+    ///   quantity, positions, orders-per-minute = 0
+    ///
+    /// <c>MaxNotionalPerOrder</c> stays at 0, which for that field alone means "not enforced": it has
+    /// no floor, and a quantity cap of zero has already refused every order before a notional is
+    /// computed. The emergency controls are deliberately still reachable — they take no mode, no
+    /// allowlist and no cap, and an owner holding a live position needs them most on the day the
+    /// software cannot read its own settings.
+    ///
+    /// The raw row is not destroyed by this; the caller keeps it, because the owner's own values are
+    /// the only evidence of what they had asked for.
+    /// </summary>
+    public static TradeAgentSettings Unreadable() => new()
+    {
+        CouldNotBeRead = true,
+        Mode = TradingMode.OBSERVE,
+        AiTradingStopped = true,
+        LiveActivated = false,
+        SelectedAccountId = null,
+        Risk = new RiskPolicy
+        {
+            MaxOrderQuantity = 0m,
+            MaxOpenPositions = 0,
+            MaxOrdersPerMinute = 0,
+            InstrumentAllowlist = []
+        }
+    };
 }
 
 /// <summary>

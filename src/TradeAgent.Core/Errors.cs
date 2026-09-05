@@ -38,6 +38,25 @@ public static class Labels
     /// <summary>The button on the Safety page that writes the limits back.</summary>
     public const string SaveLimits = "Save limits";
 
+    /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
+    public const string SafetyPage = "Safety";
+
+    /// <summary>
+    /// WHAT THE OWNER READS WHEN THE SAVED SETTINGS ROW CANNOT BE PARSED.
+    ///
+    /// It is the <c>Execution capability</c> health row's detail, so it appears on the Dashboard they
+    /// are already looking at. It names the one page that can repair it and nothing else: the owner
+    /// of this product never sees a terminal, a file path or a database, so a sentence mentioning any
+    /// of those is a sentence they cannot act on.
+    /// </summary>
+    public const string SettingsCouldNotBeRead =
+        "your settings could not be read; trading is stopped until you review them on the " + SafetyPage + " page";
+
+    /// <summary>The same fact, said on the page that repairs it, where it can be a whole sentence.</summary>
+    public const string SettingsCouldNotBeReadBanner =
+        "Your settings could not be read, so TradeAgent has stopped the AI and is allowing nothing. "
+        + "Check every value on this page, then press " + SaveLimits + " to save them again.";
+
     /// <summary>
     /// What an empty instrument allowlist means, said wherever the list is shown. An empty list is
     /// not a wildcard (see <see cref="RiskPolicy.InstrumentAllowlist"/>), and the box the owner

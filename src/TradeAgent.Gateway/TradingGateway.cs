@@ -306,10 +306,37 @@ public sealed class TradingGateway : IAsyncDisposable
     TradeAgentSettings LoadSettings()
     {
         var json = _db.GetKv("settings");
-        if (string.IsNullOrWhiteSpace(json)) return new TradeAgentSettings();
+
+        // AN ABSENT ROW IS A FRESH INSTALL. AN EMPTY ONE IS A ROW THAT WAS LOST.
+        //
+        // `GetKv` returns null only for a key that has never been written, which happens exactly once
+        // in a TradeAgent's life — before the first save. A row that EXISTS and holds nothing is a
+        // write that truncated to zero bytes, and this line used to answer it with the same fresh
+        // install's defaults as the damaged row below: the widest permissions in the product, handed
+        // out by the accident that destroyed the owner's own.
+        if (json is null) return new TradeAgentSettings();
+        if (string.IsNullOrWhiteSpace(json))
+            return SettingsThatCouldNotBeRead(json, new InvalidOperationException("the settings row is empty"));
+
+        // A ROW THIS BUILD CANNOT READ IS NOT AN EMPTY ROW (REVIEW 2026-09-05, finding 5).
+        //
+        // This catch returned `new TradeAgentSettings()`, and those defaults are the permissions of
+        // a fresh install: the kill switch UP, the allowlist empty — which InstrumentAllowed then
+        // read as "everything is allowed" — and every cap back at its shipped value. The single
+        // event proving the software could not read what the owner asked for was therefore also the
+        // event that granted the AI more authority than the owner had ever given it, silently: no
+        // log line, no health change, and every value still shown on the screen it was set on,
+        // because the screens read this object rather than the row.
+        //
+        // What replaces it is not a repair. It is a refusal that says so, in the owner's words,
+        // where they are already looking. See TradeAgentSettings.Unreadable.
         TradeAgentSettings settings;
-        try { settings = Json.Read<TradeAgentSettings>(json) ?? new TradeAgentSettings(); }
-        catch (Exception) { return new TradeAgentSettings(); }
+        try
+        {
+            settings = Json.Read<TradeAgentSettings>(json)
+                       ?? throw new InvalidOperationException("the settings row is the JSON literal null");
+        }
+        catch (Exception ex) { return SettingsThatCouldNotBeRead(json, ex); }
 
         // A MODE THIS BUILD DOES NOT HAVE ALLOWS NOTHING, AND THE OWNER IS TOLD SO.
         //
@@ -338,9 +365,39 @@ public sealed class TradingGateway : IAsyncDisposable
         return settings;
     }
 
+    /// <summary>
+    /// The fail-closed half of <see cref="LoadSettings"/>, kept apart so the ordinary path stays
+    /// short. Three things happen and none of them may throw over the other two: the owner's own row
+    /// is preserved, the owner is told, and the health row is set BEFORE the constructor returns —
+    /// a gateway whose health has not been refreshed yet is already one an agent can reach.
+    /// </summary>
+    TradeAgentSettings SettingsThatCouldNotBeRead(string raw, Exception cause)
+    {
+        // KEEP THE RAW ROW. The owner's values are the only evidence of what they had asked for, and
+        // the first Save on the Safety page overwrites `settings` with this build's own JSON. Under
+        // its own key, so nothing that reads settings can pick it up by accident.
+        try { _db.SetKv("settings_unreadable", raw); } catch (Exception) { /* evidence, not a guarantee */ }
+
+        try
+        {
+            _log.Activity(Labels.SettingsCouldNotBeReadBanner, "warn");
+            _log.Engineering("Gateway", "settings_unreadable", "error",
+                metadataJson: Json.Write(new { bytes = raw.Length, why = cause.Message }));
+        }
+        catch (Exception) { /* the refusal is the guarantee; the sentence about it is the nicety */ }
+
+        _health.Set(Components.ExecutionCapability, HealthState.PAUSED, Labels.SettingsCouldNotBeRead);
+        return TradeAgentSettings.Unreadable();
+    }
+
     void SaveSettings()
     {
         _db.SetKv("settings", Json.Write(Settings));
+        // THIS IS THE RECOVERY. The row on disk is now one this build wrote, so it is readable by
+        // definition, and the banner and the health row that were saying otherwise have to stop on
+        // this pass rather than after a restart. The kept `settings_unreadable` row is left alone:
+        // it is what the owner had, and it is not what the software is running on.
+        Settings.MarkSaved();
         StateChanged?.Invoke();
     }
 
@@ -3096,10 +3153,17 @@ public sealed class TradingGateway : IAsyncDisposable
             var unreconciled = Unreconciled().Count;
             var latched = _unconfirmed.Values.FirstOrDefault();
             var unknownMode = !Settings.ModeIsRecognised;
+            // A row that could not be read is FIRST, above the mode: when the whole row failed there
+            // is no saved mode to name, and "the mode is not one this version knows" would be the
+            // software reporting a value it invented a moment ago. It lives here at all for the same
+            // reason the mode arm does — this method recomputes the row from scratch every five
+            // seconds, so a state set once at startup is a claim that does not hold.
+            var unreadable = Settings.CouldNotBeRead;
             _health.Set(Components.ExecutionCapability,
-                unknownMode || unreconciled > 0 || latched is not null ? HealthState.PAUSED
+                unreadable || unknownMode || unreconciled > 0 || latched is not null ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
-                unknownMode ? $"the saved trading mode ({(int)Settings.Mode}) is not one this version knows"
+                unreadable ? Labels.SettingsCouldNotBeRead
+                : unknownMode ? $"the saved trading mode ({(int)Settings.Mode}) is not one this version knows"
                 : unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
         }
         catch (Exception ex)
