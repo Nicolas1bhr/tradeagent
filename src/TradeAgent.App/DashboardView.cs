@@ -658,7 +658,7 @@ sealed class SafetyPage
 {
     readonly AppHost _host;
 
-    readonly StackPanel _modeRow = new() { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+    readonly StackPanel _modeRow;
     readonly TextBlock _modeNote = Ui.Muted("");
     readonly TextBlock _liveNote = Ui.Body("");
     readonly Button _liveButton;
@@ -705,15 +705,43 @@ sealed class SafetyPage
         }
     }
 
+    /// <summary>
+    /// THE MODE ROW, AND WHICH OF ITS BUTTONS ASK TWICE.
+    ///
+    /// Static and handed the one thing it does, so the row a test presses is the row the page
+    /// builds. One press here used to move a live-activated installation from "Real, ask me first"
+    /// to "Real, fully automatic" — the AI's next order reached the broker with nobody approving
+    /// it, from a button sitting beside two that already asked twice (REVIEW 2026-09-05b finding 3,
+    /// probe P1). Watch only and Practice stay one press: they only ever reduce.
+    /// </summary>
+    internal static StackPanel BuildModeRow(Action<TradingMode> setMode)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = Theme.S2 };
+        foreach (var mode in Enum.GetValues<TradingMode>())
+        {
+            var m = mode;
+            row.Children.Add(Ui.ModeButton(m, () => setMode(m)));
+        }
+        return row;
+    }
+
+    /// <summary>
+    /// The emergency toggle as this page wears it: the one saturated fill in the app, red while the
+    /// AI may trade, green while it may not, and red again the moment RESUME is half-pressed. The
+    /// fill is a local brush, so it is registered rather than assigned — see <see cref="Ui.Repaints"/>.
+    /// </summary>
+    internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume)
+    {
+        var b = Ui.KillSwitch("emergency", stopped, stop, resume);
+        Ui.Repaints(b, (btn, armed) => btn.Background = armed || !stopped() ? Theme.Danger : Theme.Positive);
+        return b;
+    }
+
     public SafetyPage(AppHost host)
     {
         _host = host;
 
-        foreach (var mode in Enum.GetValues<TradingMode>())
-        {
-            var m = mode;
-            _modeRow.Children.Add(Ui.Secondary(Ui.ModeLabel(m), () => _host.Gateway.SetMode(m)));
-        }
+        _modeRow = BuildModeRow(m => _host.Gateway.SetMode(m));
 
         _liveButton = Ui.Confirm("Switch real-money trading ON", "Confirm: allow real money",
             () => _host.Gateway.ActivateLive(!_host.Gateway.Settings.LiveActivated));
@@ -726,17 +754,18 @@ sealed class SafetyPage
             _liveNote,
             _liveButton));
 
-        // The emergency block. The stop is one press in both directions because a mis-press that
-        // removes the AI's permission to trade costs nothing, and hesitation here costs money.
-        _stopButton = Ui.Big("STOP AI TRADING", Theme.Danger, () =>
-        {
-            if (_host.Gateway.Settings.AiTradingStopped) _host.Gateway.EnableAiTrading();
-            else _host.Gateway.StopAiTrading("you pressed STOP AI TRADING");
-        });
+        // The emergency block. STOP is one press because a mis-press that removes the AI's
+        // permission costs nothing and hesitation here costs money; RESUME is two, because that
+        // direction gives the permission back — to something that trades real money.
+        _stopButton = BuildKillSwitch(
+            () => _host.Gateway.Settings.AiTradingStopped,
+            () => _host.Gateway.StopAiTrading($"you pressed {Labels.StopAiTrading}"),
+            () => _host.Gateway.EnableAiTrading());
 
         var emergency = Ui.Section("Emergency", Ui.Col(Theme.S4,
             _stopButton,
-            Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions."),
+            Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
+                + "Stopping takes one press; letting it trade again takes two."),
             Ui.Divider(),
             // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON. The screen holds nothing about the
             // press: the gateway writes a flagged row per target before the wire, pauses trading on
@@ -832,8 +861,10 @@ sealed class SafetyPage
             status.LiveActivated ? "Switch real-money trading OFF" : "Switch real-money trading ON",
             status.LiveActivated ? "Confirm: switch real money off" : "Confirm: allow real money");
 
-        _stopButton.Content = status.AiTradingStopped ? "RESUME AI TRADING" : "STOP AI TRADING";
-        _stopButton.Background = status.AiTradingStopped ? Theme.Positive : Theme.Danger;
+        // Through SetResting, never by assigning Content: a half-pressed RESUME must survive the
+        // five-second tick, and the fill it wears while armed is registered with the control.
+        Ui.SetResting(_stopButton,
+            status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading, "emergency");
     }
 
     /// <summary>

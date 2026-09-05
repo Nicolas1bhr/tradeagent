@@ -195,19 +195,27 @@ static class Ui
     public static Button Button(string text, Func<Task> onClick, bool emphasised = false) =>
         Make(emphasised ? "primary" : "secondary", text, onClick);
 
-    public static Button Big(string text, IBrush background, Action onClick)
-    {
-        var b = new Button { Content = text, Classes = { "emergency" }, Background = background };
-        b.Click += (_, _) => { try { onClick(); } catch (Exception ex) { Report(ex); } };
-        return b;
-    }
-
     /// <summary>Arming state for a two-step button, kept on the control so it survives a relabel.</summary>
     sealed class ConfirmState
     {
         public string Label = "";
         public string ConfirmLabel = "";
         public bool Armed;
+
+        /// <summary>
+        /// The theme class the control wears when it is NOT armed. It is not always "secondary":
+        /// the kill switch is the emergency variant on the Safety page and the danger/primary pair
+        /// in the window chrome, and arming has to be able to give that class back afterwards.
+        /// </summary>
+        public string RestingClass = "secondary";
+
+        /// <summary>
+        /// How the control paints itself in each of its two states, where a caller paints it with
+        /// LOCAL brushes rather than a class. A local value beats a style in Avalonia, so without
+        /// this the armed red of a mode button or the emergency fill is simply not visible — the
+        /// class is set and the brush the row painted last is what the owner sees.
+        /// </summary>
+        public Action<Button, bool>? Repaint;
     }
 
     /// <summary>
@@ -246,10 +254,10 @@ static class Ui
         return b;
     }
 
-    static (Button, ConfirmState) ConfirmShell(string label, string confirmLabel)
+    static (Button, ConfirmState) ConfirmShell(string label, string confirmLabel, string restingClass = "secondary")
     {
-        var state = new ConfirmState { Label = label, ConfirmLabel = confirmLabel };
-        return (new Button { Content = label, Classes = { "secondary" }, Tag = state }, state);
+        var state = new ConfirmState { Label = label, ConfirmLabel = confirmLabel, RestingClass = restingClass };
+        return (new Button { Content = label, Classes = { restingClass }, Tag = state }, state);
     }
 
     static bool Arm(Button b, ConfirmState state)
@@ -257,8 +265,9 @@ static class Ui
         if (state.Armed) return false;
         state.Armed = true;
         b.Content = state.ConfirmLabel;
-        b.Classes.Remove("secondary");
-        b.Classes.Add("danger");
+        b.Classes.Remove(state.RestingClass);
+        if (!b.Classes.Contains("danger")) b.Classes.Add("danger");
+        state.Repaint?.Invoke(b, true);
         return true;
     }
 
@@ -268,8 +277,120 @@ static class Ui
         state.Armed = false;
         b.Content = state.Label;
         b.Classes.Remove("danger");
-        if (!b.Classes.Contains("secondary")) b.Classes.Add("secondary");
+        if (!b.Classes.Contains(state.RestingClass)) b.Classes.Add(state.RestingClass);
+        state.Repaint?.Invoke(b, false);
     }
+
+    /// <summary>
+    /// Whether a two-step button is half-pressed. Callers that repaint on the refresh tick ask
+    /// this so a five-second redraw cannot quietly undo an arming the owner is looking at.
+    /// </summary>
+    public static bool IsArmed(Button b) => b.Tag is ConfirmState { Armed: true };
+
+    /// <summary>
+    /// Registers how a two-step button paints itself, and paints it now. See
+    /// <see cref="ConfirmState.Repaint"/>: without it a local brush hides the armed state.
+    /// </summary>
+    public static void Repaints(Button b, Action<Button, bool> paint)
+    {
+        if (b.Tag is not ConfirmState state) { paint(b, false); return; }
+        state.Repaint = paint;
+        paint(b, state.Armed);
+    }
+
+    /// <summary>
+    /// Points a two-step button at a different resting label and variant, from the refresh tick,
+    /// without disturbing an arming already half-made — unless the LABEL changed, in which case the
+    /// control no longer says what the armed sentence promised and the arming is abandoned.
+    /// </summary>
+    public static void SetResting(Button b, string label, string restingClass)
+    {
+        if (b.Tag is not ConfirmState state) return;
+
+        var wasClass = state.RestingClass;
+        state.RestingClass = restingClass;
+
+        if (state.Label != label)
+        {
+            state.Label = label;
+            b.Classes.Remove(wasClass);
+            Disarm(b);
+            return;
+        }
+
+        if (!state.Armed && wasClass != restingClass)
+        {
+            b.Classes.Remove(wasClass);
+            if (!b.Classes.Contains(restingClass)) b.Classes.Add(restingClass);
+        }
+        state.Repaint?.Invoke(b, state.Armed);
+    }
+
+    /// <summary>
+    /// A two-step button whose second press is required only in the direction that GRANTS. The
+    /// delegate is asked at the moment of the press and returns the sentence the second press will
+    /// carry out, or null for "this press only takes authority away — do it now".
+    ///
+    /// It is what separates STOP from RESUME on one control, and a save that lowers a cap from a
+    /// save that raises one. Hesitating on the way down costs money; a mis-press on the way up
+    /// hands the AI room nobody meant to give it.
+    /// </summary>
+    public static Button ConfirmIf(string label, Func<string?> armedSentence, Action onPressed,
+        string restingClass = "secondary")
+    {
+        var (b, state) = ConfirmShell(label, "", restingClass);
+        b.Click += (_, _) =>
+        {
+            try
+            {
+                if (!state.Armed)
+                {
+                    var sentence = armedSentence();
+                    if (sentence is not null)
+                    {
+                        state.ConfirmLabel = sentence;
+                        Arm(b, state);
+                        return;
+                    }
+                }
+                Disarm(b);
+                onPressed();
+            }
+            catch (Exception ex) { Report(ex); }
+        };
+        return b;
+    }
+
+    /// <summary>
+    /// The kill switch, built the same way in both places it appears. STOP is ONE press — a
+    /// mis-press only removes the AI's permission, and hesitation there costs money. RESUME is two,
+    /// because in a real-money mode it hands that permission back to something that trades.
+    /// </summary>
+    public static Button KillSwitch(string restingClass, Func<bool> stopped, Action stop, Action resume) =>
+        ConfirmIf(stopped() ? Labels.ResumeAiTrading : Labels.StopAiTrading,
+            () => stopped() ? Labels.ResumeAiTradingArmed : null,
+            () => { if (stopped()) resume(); else stop(); },
+            restingClass);
+
+    /// <summary>Whether choosing this mode gives the AI room it did not have. Both real-money modes do.</summary>
+    public static bool ModeGrants(TradingMode m) => m is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
+
+    /// <summary>What the second press on a real-money mode does, in the owner's words.</summary>
+    public static string ModeArmedLabel(TradingMode m) => m switch
+    {
+        TradingMode.LIVE_AUTONOMOUS => Labels.ModeAutonomousArmed,
+        TradingMode.LIVE_CONFIRM => Labels.ModeAskFirstArmed,
+        _ => ModeLabel(m)
+    };
+
+    /// <summary>
+    /// One button of the trading-mode row. The two real-money modes GRANT, so they are two-press
+    /// with the sentence spelled out; Watch only and Practice only ever reduce, so they are one.
+    /// </summary>
+    public static Button ModeButton(TradingMode m, Action apply) =>
+        ModeGrants(m)
+            ? Confirm(ModeLabel(m), ModeArmedLabel(m), apply)
+            : Secondary(ModeLabel(m), apply);
 
     /// <summary>
     /// Takes a two-step button back to its resting state from outside. Needed where the thing being
@@ -289,11 +410,30 @@ static class Ui
         Disarm(b);
     }
 
-    /// <summary>Marks the selected one of a row of buttons, in place.</summary>
+    /// <summary>
+    /// Marks the selected one of a row of buttons, in place — and remembers how, so a two-step
+    /// button in that row can be armed without the row's own brushes painting over its red.
+    /// </summary>
     public static void Emphasise(Button b, bool on)
+    {
+        if (b.Tag is ConfirmState) { Repaints(b, (btn, armed) => PaintEmphasis(btn, on, armed)); return; }
+        PaintEmphasis(b, on, false);
+    }
+
+    static void PaintEmphasis(Button b, bool on, bool armed)
     {
         if (on) { if (!b.Classes.Contains("on")) b.Classes.Add("on"); }
         else b.Classes.Remove("on");
+
+        if (armed)
+        {
+            // Hand the control back to the danger class. These are LOCAL values, and a local value
+            // beats a style, so leaving them set is how an armed button goes on looking unarmed.
+            b.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BackgroundProperty);
+            b.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.BorderBrushProperty);
+            b.ClearValue(Avalonia.Controls.Primitives.TemplatedControl.ForegroundProperty);
+            return;
+        }
 
         // Segmented rows are built from plain buttons, so carry the selection on colour too.
         b.Background = on ? Theme.AccentSoft : Theme.BgElevated;

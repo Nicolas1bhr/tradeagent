@@ -288,7 +288,10 @@ public sealed class MainWindow : Window
 
         // The kill switch lives in the chrome, not on a page. A stop that is one nav click away is
         // not a stop.
-        _stopButton = Ui.Danger("STOP AI TRADING", ToggleAiTrading);
+        _stopButton = BuildKillSwitch(
+            () => _host.Gateway.Settings.AiTradingStopped,
+            () => _host.Gateway.StopAiTrading($"you pressed {Labels.StopAiTrading}"),
+            () => _host.Gateway.EnableAiTrading());
         _stopButton.VerticalAlignment = VerticalAlignment.Center;
         _stopButton[Grid.ColumnProperty] = 2;
 
@@ -509,11 +512,12 @@ public sealed class MainWindow : Window
         else if (status.ExecutionAvailable) { _metaAi.Text = "AI trading allowed"; _aiDot.Fill = Tokens.Positive; }
         else { _metaAi.Text = $"AI paused — {status.ExecutionBlockedReason}"; _aiDot.Fill = Tokens.Caution; }
 
+        // SetResting, not Content plus SetVariant: a half-pressed RESUME has to survive the
+        // five-second tick, and only the control knows whether it is half-pressed.
         if (_stopButton is not null)
-        {
-            _stopButton.Content = status.AiTradingStopped ? "RESUME AI TRADING" : "STOP AI TRADING";
-            SetVariant(_stopButton, status.AiTradingStopped ? "primary" : "danger");
-        }
+            Ui.SetResting(_stopButton,
+                status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading,
+                status.AiTradingStopped ? "primary" : "danger");
 
         var waiting = _host.Gateway.Requests
             .Query("execution_state=$s", ("$s", ExecutionState.AWAITING_APPROVAL.ToString()));
@@ -654,11 +658,14 @@ public sealed class MainWindow : Window
         _healthSummary.Foreground = tone == Tokens.Positive ? Tokens.TextMuted : tone;
     }
 
-    void ToggleAiTrading()
-    {
-        if (_host.Gateway.Settings.AiTradingStopped) _host.Gateway.EnableAiTrading();
-        else _host.Gateway.StopAiTrading("you pressed STOP AI TRADING");
-    }
+    /// <summary>
+    /// The same control as the one on the Safety page, built the same way and asking twice in the
+    /// same direction — the header's copy is the one an owner reaches from every page, so a version
+    /// of it that resumed on a single press would make the Safety page's second press decorative.
+    /// It is the chrome's variant pair rather than the emergency fill; the behaviour is identical.
+    /// </summary>
+    internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume) =>
+        Ui.KillSwitch(stopped() ? "primary" : "danger", stopped, stop, resume);
 
     /// <summary>
     /// Starting the AI opens a conversation, not a console. The page switch is the whole point of

@@ -76,6 +76,28 @@ public static class Labels
     /// clears has to say which of the two it did.
     /// </summary>
     public const string NoInstrumentAllowed = "No instrument is allowed until you add one.";
+
+    // ---- the armed sentences of every control that GRANTS authority ----------------------------
+    //
+    // A two-step control says what its second press will do, in full, and the sentence lives here
+    // rather than at the widget so a test and a guide can quote the words the owner actually reads.
+    // The rule the sentences implement: a press that gives the AI more room is two, a press that
+    // takes room away is one (REVIEW 2026-09-05b finding 3, Codex F12).
+
+    /// <summary>The kill switch, in the window chrome and on the Safety page. One press, always.</summary>
+    public const string StopAiTrading = "STOP AI TRADING";
+
+    /// <summary>The same control once the AI is stopped. This direction hands permission back.</summary>
+    public const string ResumeAiTrading = "RESUME AI TRADING";
+
+    /// <summary>What RESUME's second press does. STOP has no armed sentence: it is one press.</summary>
+    public const string ResumeAiTradingArmed = "Confirm: let the AI trade again";
+
+    /// <summary>The mode that places real orders with nobody in the loop.</summary>
+    public const string ModeAutonomousArmed = "Confirm: let the AI place real orders without asking";
+
+    /// <summary>The mode that proposes real orders. Still real money, still a grant, still two.</summary>
+    public const string ModeAskFirstArmed = "Confirm: let the AI propose real orders";
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
