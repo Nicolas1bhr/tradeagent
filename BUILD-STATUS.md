@@ -3074,7 +3074,10 @@ Merge `ff3ab4e`, 3 files, +64/−3 with the brief (`GatewayPipeBackpressureTests
 201 + 191 + 520 = 912, 0 failed. CI run 33929007448 on draft PR #3: ubuntu SUCCESS, macos SUCCESS, windows SUCCESS
 (912, 0 failed), and the windows job re-run on the same sha SUCCESS with the same counts — two consecutive green Windows
 runs, the acceptance. Manager's gate at `ff3ab4e`, Release: build → 0 warnings, 0 errors; suite → 201 + 191 + 520 = 912, 0 failed; test names vs `main`
-→ 0 removed, 0 added; scan clean; CI at the merge was in progress when this was written; recorded with U2c1b.
+→ 0 removed, 0 added; scan clean; CI run 33931934317 at `36cda57`: ubuntu SUCCESS, macos SUCCESS, windows FAILURE 519/520 on a FOURTH distinct timing
+test, `ConnectorSendDeadlineTests.A_caller_that_cancels_an_emergency_releases_its_slot_and_still_counts_a_late_answer`
+("the connection was judged on a cancellation that came from this side") — the two fixed here stayed fixed; the
+class is open and gets a class-level brief, `docs/briefs/U-win-timing.md`, instead of a fourth instance fixer.
 
 **NOT VERIFIED:** nothing on the box. **Open, stated by the fixer:** the third Windows flake,
 `GatewayPipeBackpressureTests.Disposal_waits_for_a_cancelled_handler_to_record_what_it_knows` (red once, at `b5446b7`),
