@@ -3688,7 +3688,7 @@ TheAnswer(LegOutcome.Confirmed, t)`, a late fill reading `confirmed`) → RED `A
 219 + 239 + 582 = 1040, 0 failed; the windows job green on draft PR #7 five times running (33973434576, 33974221120,
 33974342472 ×2, 33975999193 at `6ac626b`, all four jobs SUCCESS). Manager's gate at `d92a61b`, Release: build → 0 warnings,
 0 errors; suite → 219 + 239 + 582 = 1040, 0 failed; names vs `main` → 0 removed, 0 added; scan → one hit, the identifier
-`IpcToken` on a context line; `git rev-list --count u-sweep-words-win..main` → 0; CI run 33981829058 at `d92a61b`: pending.
+`IpcToken` on a context line; `rev-list --count u-sweep-words-win..main` → 0; CI 33981829058 at `d92a61b`: all three platforms and `package` SUCCESS.
 
 **Three hosted-runner reds recorded here once each, none briefed — a brief each when one recurs:** macos on 33973434576,
 `SweepRequestIdTests.A_sweep_pays_the_emergency_budget_once_not_once_per_rpc`, an NRE at `(JsonElement)reply.Data!` (its

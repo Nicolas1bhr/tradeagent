@@ -36,8 +36,8 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    second review's HIGH fix units, then is a short second box leg.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
-   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b` is 33981829058; its verdict is in
-   the U-sweep-words-win section or the commit after it. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red →
+   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
+   three platforms with `package` SUCCESS. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red →
    reset; runner or harness red → a fixer on top.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
