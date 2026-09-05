@@ -1730,8 +1730,13 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     static T? NamedValue<T>(IpcRequest r, string key) where T : struct, Enum
     {
+        // ABSENT IS THE ONLY THING THAT KEEPS THE DEFAULT (Codex F6). This asked whether the VALUE
+        // was empty, so the one shape that is neither a name nor an absence — the field present and
+        // blank — fell through the refusal and took the default with it: `tif: ""` was a resting Day
+        // order and `tif: null` reads the same way through Str. Measured over the real pipe before
+        // this changed: `tif='' -> ok=True · connector saw: Day`.
+        if (r.Args is null || !r.Args.ContainsKey(key)) return null;
         var raw = r.Str(key);
-        if (string.IsNullOrEmpty(raw)) return null;
         foreach (var name in Enum.GetNames<T>())
             if (string.Equals(name, raw, StringComparison.OrdinalIgnoreCase)) return Enum.Parse<T>(name);
 
@@ -1748,8 +1753,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     static bool NamedFlag(IpcRequest r, string key, bool whenAbsent)
     {
+        // Same rule and the same hole as NamedValue above: `all: ""` asked a question and was
+        // answered with the default rather than refused.
+        if (r.Args is null || !r.Args.ContainsKey(key)) return whenAbsent;
         var raw = r.Str(key);
-        if (string.IsNullOrEmpty(raw)) return whenAbsent;
         if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase)) return false;
         throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,

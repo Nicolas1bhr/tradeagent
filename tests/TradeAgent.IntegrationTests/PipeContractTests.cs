@@ -674,6 +674,197 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.Null(otherSession.Data);
     }
 
+    // ── 6. A price that is present and unreadable is refused, not dropped ──────────────────────
+    // Milestone review 2026-09-05b, Codex F6: "Malformed present optional order fields are collapsed
+    // to absence, making limit 'bad' a Market order and empty tif a Day order instead of failing
+    // closed." U-pipe-hello closed the ENUMERATED fields; the NUMBERS were left on
+    // `decimal.TryParse(...) ? d : null`, which cannot tell "the caller sent no price" from "the
+    // caller sent a price this build could not read". The two answers are different orders.
+
+    /// <summary>
+    /// A limit or stop price the gateway cannot read as a number is refused, and nothing whatever
+    /// reaches the connector. Against the code this unit found, every one of these placed a MARKET
+    /// order at whatever the book was — the price was dropped and the order type was then derived
+    /// from its absence.
+    ///
+    /// <c>"1,5"</c> is the case that shows the parse was never strict either: the framework default
+    /// is <c>NumberStyles.Number</c>, which allows thousands separators, so a price written
+    /// <c>1,5</c> was read as <c>15</c> — a tenfold price, silently, with no refusal anywhere.
+    /// </summary>
+    [Theory]
+    [InlineData("limit", "bad")]
+    [InlineData("stop", "bad")]
+    [InlineData("limit", "")]
+    [InlineData("stop", "")]
+    [InlineData("limit", "1.2.3")]
+    [InlineData("limit", "1,5")]
+    [InlineData("limit", "4300 ")]
+    public async Task A_price_the_gateway_cannot_read_as_a_number_is_refused_and_nothing_is_placed(string field, string value)
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var before = conn.Calls;
+        var reply = await client.SendAsync(Buy(extra: new()
+        {
+            [field] = JsonSerializer.SerializeToElement(value)
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"{field}='{value}' -> ok={reply.Ok} code={reply.Error?.Code} — {reply.Error?.Message} · " +
+                      $"connector saw: {string.Join(", ", conn.Placed.Select(p => $"{p.Type} limit={p.LimitPrice?.ToString() ?? "none"} stop={p.StopPrice?.ToString() ?? "none"}"))}");
+        Assert.False(reply.Ok, $"{field}='{value}' was dropped and the order was placed as something else");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains(field, reply.Error.Message);
+        Assert.Equal(before, conn.Calls);
+        Assert.Empty(conn.Placed);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The same rule when the malformed price is not even a JSON string. <c>Dec</c> asked
+    /// <c>GetString()</c> of whatever was there, which THROWS for a boolean or an object — so this
+    /// frame did not become a market order, it became <c>UNKNOWN_ERROR</c> out of the catch-all,
+    /// which tells the agent nothing about which field it got wrong.
+    /// </summary>
+    [Fact]
+    public async Task A_price_that_is_not_a_number_at_all_is_named_rather_than_thrown_over()
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var before = conn.Calls;
+        var reply = await client.SendAsync(Buy(extra: new()
+        {
+            ["limit"] = JsonSerializer.SerializeToElement(true)
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"limit=true -> ok={reply.Ok} code={reply.Error?.Code} — {reply.Error?.Message}");
+        Assert.False(reply.Ok);
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains("limit", reply.Error.Message);
+        Assert.Equal(before, conn.Calls);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// A <c>tif</c> that is present and empty is refused rather than read as a resting Day order.
+    /// <see cref="NamedValue"/> refused every undefined WORD and then returned null for the empty
+    /// string, which is the same collapse one door to the left: the caller said something about the
+    /// time in force and the gateway substituted its own answer.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task An_empty_tif_is_refused_rather_than_read_as_a_resting_day_order(string tif)
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var before = conn.Calls;
+        var reply = await client.SendAsync(Buy(extra: new()
+        {
+            ["tif"] = JsonSerializer.SerializeToElement(tif)
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"tif='{tif}' -> ok={reply.Ok} code={reply.Error?.Code} · " +
+                      $"connector saw: {string.Join(", ", conn.Placed.Select(p => $"{p.Tif}"))}");
+        Assert.False(reply.Ok, $"tif='{tif}' became a resting Day order the agent did not ask for");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains("tif", reply.Error.Message);
+        Assert.Equal(before, conn.Calls);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The same reader is on <c>modify</c>, where the collapse means something worse than a wrong
+    /// order type: an unreadable price is read as "leave that price where it is", so a frame asking
+    /// to move a stop to safety is answered by leaving the stop where it was. The refusal has to
+    /// name the field, which is how this test tells the fix from the pre-existing "no such order".
+    /// </summary>
+    [Fact]
+    public async Task A_malformed_price_on_modify_is_refused_rather_than_read_as_no_change()
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Modify, Session = "agent-1",
+            RequestId = "pipec-" + Guid.NewGuid().ToString("n")[..8],
+            Args = new()
+            {
+                ["id"] = JsonSerializer.SerializeToElement("no-such-order"),
+                ["limit"] = JsonSerializer.SerializeToElement("bad")
+            }
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"modify limit='bad' -> ok={reply.Ok} code={reply.Error?.Code} — {reply.Error?.Message}");
+        Assert.False(reply.Ok);
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains("limit", reply.Error!.Message);
+    }
+
+    /// <summary>
+    /// The other direction, and the half a fix by blanket refusal would break: every price shape the
+    /// CLI and a JSON client actually send still works. The CLI sends prices as TEXT — every value
+    /// on its command line is a string — so a reader that took JSON numbers only would refuse the
+    /// only client this product ships.
+    /// </summary>
+    [Theory]
+    [InlineData("4300.25", 4300.25)]
+    [InlineData("4300", 4300)]
+    [InlineData("-1.5", -1.5)]
+    [InlineData(".5", 0.5)]
+    public async Task A_price_written_as_text_still_reaches_the_connector_unchanged(string sent, double expected)
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var reply = await client.SendAsync(Buy(extra: new()
+        {
+            ["limit"] = JsonSerializer.SerializeToElement(sent)
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(reply.Ok, $"limit='{sent}' was refused: {reply.Error?.Message}");
+        var placed = Assert.Single(conn.Placed);
+        log.WriteLine($"limit='{sent}' -> connector saw {placed.Type} at {placed.LimitPrice}");
+        Assert.Equal((decimal)expected, placed.LimitPrice);
+        Assert.Equal(TradeAgent.ConnectorSdk.OrderType.Limit, placed.Type);
+    }
+
+    /// <summary>A price sent as a JSON number still works, and an absent one is still a Market order.</summary>
+    [Fact]
+    public async Task A_json_number_price_works_and_an_absent_one_is_still_a_market_order()
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var numeric = await client.SendAsync(Buy(extra: new()
+        {
+            ["limit"] = JsonSerializer.SerializeToElement(4300.25m)
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(numeric.Ok, numeric.Error?.Message);
+        Assert.Equal(4300.25m, conn.Placed[0].LimitPrice);
+
+        var market = await client.SendAsync(Buy()).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(market.Ok, market.Error?.Message);
+        log.WriteLine($"limit=4300.25 -> {conn.Placed[0].Type} · limit absent -> {conn.Placed[1].Type}");
+        Assert.Equal(TradeAgent.ConnectorSdk.OrderType.Market, conn.Placed[1].Type);
+        Assert.Null(conn.Placed[1].LimitPrice);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>

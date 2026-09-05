@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -46,12 +47,46 @@ public sealed class IpcRequest
             ? v.ValueKind == JsonValueKind.String ? v.GetString() : v.ToString()
             : null;
 
+    /// <summary>
+    /// A NUMBER THIS FRAME CARRIES. Absent is null; PRESENT AND UNREADABLE IS A REFUSAL, never a
+    /// null that the caller's default then fills in (Codex F6).
+    ///
+    /// It was <c>decimal.TryParse(...) ? d : null</c>, which cannot tell "no price was sent" from
+    /// "a price was sent and this build could not read it" — and those are two different orders.
+    /// <c>limit: "bad"</c> became null, the order type is derived from which prices are PRESENT, so
+    /// the frame that asked to rest at a price bought at the market instead. Measured over the real
+    /// pipe before this changed: <c>limit='bad' -> ok=True · connector saw: Market limit=none</c>.
+    ///
+    /// STRICT, AND INVARIANT, which is the second half of the same defect. The framework default is
+    /// <see cref="NumberStyles.Number"/> — thousands separators and surrounding whitespace included —
+    /// read in the AMBIENT culture, so <c>limit: "1,5"</c> was accepted as <b>15</b> on this machine
+    /// and would be 1.5 on a machine whose culture writes decimals with a comma. A price is not a
+    /// number a program may interpret two ways. Names of the styles rather than a bare TryParse, for
+    /// the same reason <c>NamedValue</c> matches names rather than parsing: a value with a stray
+    /// character in it and a value the caller meant are not distinguishable from here.
+    ///
+    /// JSON <c>null</c> is a refusal too, not an absence. The frame named the field; a field named
+    /// with no value in it is the caller saying something this end cannot act on, and the whole rule
+    /// is that such a frame is answered rather than half-read.
+    /// </summary>
     public decimal? Dec(string k)
     {
         if (Args is null || !Args.TryGetValue(k, out var v)) return null;
-        if (v.ValueKind == JsonValueKind.Number) return v.GetDecimal();
-        return decimal.TryParse(v.GetString(), out var d) ? d : null;
+        if (v.ValueKind == JsonValueKind.Number)
+            return v.TryGetDecimal(out var n) ? n : throw Unreadable(k, v.GetRawText());
+        if (v.ValueKind == JsonValueKind.String && v.GetString() is { } s
+            && decimal.TryParse(s, Numeric, CultureInfo.InvariantCulture, out var d)) return d;
+        throw Unreadable(k, v.GetRawText());
     }
+
+    /// <summary>A sign, digits and at most one <c>.</c> — no separators, no exponent, no whitespace.</summary>
+    const NumberStyles Numeric = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
+
+    static TradeAgentException Unreadable(string k, string raw) => new(ErrorCode.INVALID_REQUEST,
+        $"'{k}' is not a number this build can read: {raw}. Send digits with an optional leading sign " +
+        "and at most one '.' — no thousands separators, no exponent and no surrounding spaces. TradeAgent " +
+        "does not read an unreadable price as an absent one: that would place a different order from the " +
+        "one you asked for.");
 }
 
 public sealed class IpcError
