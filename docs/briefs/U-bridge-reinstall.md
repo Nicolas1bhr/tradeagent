@@ -36,20 +36,23 @@ full suite in Release → 0 failed. No box: the real ATAS copy-while-open case s
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant or the
 screenshot; final counts; what you did NOT do. Verified or NOT VERIFIED.
 
-Branch `u-bridge-reinstall` off `main` `421b5d8`. No push, no other worktree, no Windows box.
-
-1. **The button — DONE.** RED: `tests/.../BridgeReinstallTests.cs` would not compile — `ErrorCode.ATAS_BRIDGE_IN_USE`,
-   `Labels.ReinstallBridge`, `AtasHealthReporter.Forget`, `AtasHealth.RepairOffered` did not exist (13 CS errors).
-   GREEN: 6/6. Mutant `Forget() { }` → RED `Assert.DoesNotContain() Failure: Sub-string found`. Seen on the Mac loop:
-   `.../scratchpad/ui-checks.png` — the card and `Reinstall the bridge` on Checks, shown because the bridge row is
-   FAILED and not installed. Settings shot: `.../scratchpad/ui-settings.png`.
-2. **The sentences agree — DONE.** RED: 2 fails — `Not found: "Reinstall the bridge"` (the refusal) and
-   `Found: "press Retry"` (a button no screen has ever had). GREEN: 218 unit. Mutant: old refusal text back →
-   RED `Not found: "Reinstall the bridge"`. Beyond the brief's two "add-on" spots I found three more live
-   sentences (`AtasConnector.cs` `PendingHello`, `Silent`, `PresentedNoProof`) and fixed the text only; and
-   two catalogue repairs naming a phantom Retry (`ATAS_NOT_FOUND`, `AI_INSTALL_FAILED`).
-3. **The docs — DONE.** `USER-GUIDE.md`: the "no button for that repair yet" paragraph is replaced by how to
-   press it (owner's words, no paths), the quoted refusal is the new sentence, and the "Still not finished"
-   bullet is gone. `DEPLOYMENT.md`: the redeploy note and §5 point at the button; the "not yet walked" bullet
-   now says what is NOT verified — a real ATAS holding the DLL. `MONITORING-PHASE.md` too, because its row-4
-   grep string was one I had just deleted.
+Gate run at `e658947` (4 commits, rebased onto `main` `6bd009e`); this report sits on top. No push, no box.
+1. **The button — DONE.** RED: `BridgeReinstallTests.cs` would not compile, 13 CS errors — `ATAS_BRIDGE_IN_USE`,
+   `Labels.ReinstallBridge`, `AtasHealthReporter.Forget`, `AtasHealth.RepairOffered` did not exist. GREEN 6/6.
+   Mutant `Forget() { }` → RED `Assert.DoesNotContain() Failure: Sub-string found`. Its unexpected-failure
+   sentence is `UNKNOWN_ERROR`, whose repair no longer names a "Diagnostics screen" that does not exist. Seen:
+   `/private/tmp/claude-501/-Users-nicolasbeeckman-Projects-ai-trading-software-for-mihael/7fe21c6c-d09b-48d0-a0fe-e2b7be859c31/scratchpad/ui-checks.png` (the card and `Reinstall the bridge` on Checks), `/private/tmp/claude-501/-Users-nicolasbeeckman-Projects-ai-trading-software-for-mihael/7fe21c6c-d09b-48d0-a0fe-e2b7be859c31/scratchpad/ui-settings.png`.
+2. **The sentences agree — DONE.** RED 2: `Not found: "Reinstall the bridge"`; `Found: "press Retry"`. GREEN 218
+   unit. Mutant: old refusal text back → RED `Not found: "Reinstall the bridge"`. Past the brief's two "add-on"
+   spots I fixed, text only, three more live sentences (`AtasConnector.cs` `PendingHello`, `Silent`,
+   `PresentedNoProof`) and two catalogue repairs naming a Retry button no screen ever had (`ATAS_NOT_FOUND`;
+   `AI_INSTALL_FAILED` → `Try again`, `OnboardingView.cs:597`).
+3. **The docs — DONE.** USER-GUIDE: the "no button for that repair yet" paragraph and the "Still not finished"
+   bullet become how to press it — owner's words, no paths. DEPLOYMENT: the redeploy note and §5 point at the
+   button; its "not yet walked" bullet names what is NOT verified. MONITORING-PHASE too — its row-4 grep string
+   was a sentence I had just deleted.
+**Gate at the tip, Release:** build `--no-incremental` → 0 warnings, 0 errors; suite 218+207+569=994, 0 failed; test names vs `main` 7 added, 0 removed; scan clean.
+**NOT VERIFIED:** the real ATAS-holds-the-DLL refusal — no box; the test stands a destination the copy cannot
+overwrite in its place. Armed label and result sentence never photographed — no Accessibility permission in this
+shell, so both shots are resting state, taken with a capture-only edit, reverted and in no commit. **NOT done:**
+three "press Retry" sentences in `Prerequisites.cs`, two `Versioning.cs` comments quoting the retired refusal.
