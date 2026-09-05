@@ -38,31 +38,23 @@ Test-name diff vs baseline: nothing removed. Commit per item, no trailers, no pu
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant; the schema
 sentences swept and changed; final counts; what you did NOT do. Verified or NOT VERIFIED.
 
-**Item 1 — VERIFIED.** RED (`SchemaMatchesReconcilerTests`, 4 tests, 3 red on the sentence): reconciler drove
-`target CANCELLED -> CANCELLED (resolved=1)`, `target FILLED -> REJECTED`, `target WORKING -> RECONCILING
-(resolved=0, inconclusive=1)` twice with `AbsenceGrace = 0`, while the schema said "when it has stayed working and
-unchanged for a whole grace window". GREEN 4/4. Mutant (that clause put back into the sentence) → 2 RED
-(`Assert.DoesNotContain ... Sub-string found`); `cp` restore → 4/4.
-**Schema swept against the reconciler — two sentences were false, both in `cancel_and_modify_outcomes`:** the
-held-still cancel verdict (deleted with `_settleWatch`/`HeldStill`), and "a price within one tick of the request on
-the instrument's grid counts", which `PriceCarries` replaced with exactly `floor(want/tick)*tick` and
-`ceil(want/tick)*tick`. Both now state the rule as CONTRACTS.md does. A third, `unknown_state_meaning`, was true but
-incomplete — it named only the UNKNOWN half of a failed mutation, so a proven-unsent one (settled CANCELLED,
-unflagged, no pause, since U2c1c) had no entry; the clause is added and pinned behaviourally.
-`transport`, `idempotency`, `approval`, `execution_states`, `unconfirmed_work`, `trading_modes` and the op list:
-checked against the code, unchanged. **NOT behaviourally pinned:** the one-tick clause is pinned by text only —
-reaching the band needs a platform that answers with a price it was not asked for, and neither the simulator nor the
-recording connector will (the connectors are not this unit's).
-
-**Item 2 — VERIFIED.** RED (`CloseAllAnswersByTheWordTests`, 4 tests, 3 red): a never-sent close leg answered
-`{"closed":0,...,"not_closed":[{"request_id":"op-…-closeall-0","instrument":"ES","state":"CANCELLED"}]}` —
-`KeyNotFoundException` on `outcome`, and `state: CANCELLED` for a position nothing was sent about. GREEN 4/4;
-integration suite 577/577, 0 failed. Mutant (both halves back to `ExecutionRequest.State`, `outcome` dropped) → 2 RED
-(`KeyNotFoundException`); `cp` restore → 4/4.
-`closed` is the word AND a FILLED record, not the word alone: `Classify` reads `confirmed` off a CANCELLED *or*
-FILLED row, and a closing order that was itself cancelled has flattened nothing — the word alone would over-claim
-from the other side. Recorded in `docs/CONTRACTS.md` beside the `cancel-all` sentence.
-**There is no `AGENTS.md` `cancel-all` paragraph to match** — the workspace file `WorkspaceBuilder.Instructions`
-writes says nothing about either sweep, and tells the agent to read `trade schema --json` instead of trusting it. So
-the parity was done there: both op descriptions now state the answer shape, the count, and the five words, in the
-same sentences, and a test asserts they agree. `AGENTS.md` itself: NOT CHANGED.
+Tip = this report commit; last code commit `8ca805c`, from `main` @ `6bd009e`. Gate, Release: `--no-incremental` → **0 warnings, 0 errors**; suite
+211 + 207 + 577 = **995, 0 failed**; test names vs base **0 removed, 8 added**; secret scan of the diff clean.
+**Item 1 — VERIFIED.** RED `SchemaMatchesReconcilerTests` 3/4: at `AbsenceGrace = 0` the reconciler drove target
+CANCELLED→CANCELLED, FILLED→REJECTED, WORKING→RECONCILING (`resolved=0 inconclusive=1`) twice while the schema
+promised REJECTED "when it has stayed working and unchanged for a whole grace window". GREEN 4/4; mutant (that clause
+back in) → 2 RED (`DoesNotContain … Sub-string found`); restore → 4/4. **Swept — two false sentences, both in
+`cancel_and_modify_outcomes`:** that held-still verdict, and "a price within one tick of the request on the
+instrument's grid counts", which `PriceCarries` replaced with floor/ceil of the request. Also `unknown_state_meaning`,
+true but naming only the UNKNOWN half of a failed mutation: a proven-unsent one (CANCELLED, unflagged, no pause since
+U2c1c) had no entry. Rest checked, unchanged. **One-tick is pinned by text only** — no test connector can produce it.
+**Item 2 — VERIFIED.** RED `CloseAllAnswersByTheWordTests` 3/4: a never-sent close leg answered
+`{"closed":0,…,"not_closed":[{…,"state":"CANCELLED"}]}` — `KeyNotFoundException` on `outcome`. GREEN 4/4; mutant
+(both halves back to `ExecutionRequest.State`, `outcome` dropped) → 2 RED; restore → 4/4. `closed` is the word AND a
+FILLED record — `confirmed` reads off a CANCELLED *or* FILLED row, and a cancelled closing order flattened nothing.
+**No `AGENTS.md` sweep paragraph exists to match**, so the parity is in the schema's two op descriptions.
+**Item 3 — NOT DONE, blocked.** RED over the pipe, both sweeps: after a completed sweep, `Faults.Disconnected`, same
+id → `ok=False code=TRADING_CONNECTION_MISSING`, `connector calls during the replay : 1`. `BeginCompositeAsync` is
+not on `main` (unlanded `u-press-atomic`) and `TradingGateway.cs` is not mine; an early `Composites.Get` in the pipe
+server would rebase cleanly over it and bypass its verb/session binding, so I added none. The RED test is written and
+NOT committed, so the gate stays green. Also NOT done: `AGENTS.md`, the box, any push, any other worktree.
