@@ -257,8 +257,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
         new(Core.Ops.Cancel, RiskReducingReadPath, "resolve the target, then cancel — both inside the one budget"),
         new(Core.Ops.CancelAll, RiskReducingReadPath, "the orders read and every leg — all inside the one budget"),
-        new(Core.Ops.Close, RiskReducingHandlerPath, "the prefix inside the budget, then ONE ordinary placement"),
-        new(Core.Ops.CloseAll, CloseAllHandlerPath, "the prefix inside the budget, then ONE WAVE of placements, serialised"),
+        new(Core.Ops.Close, RiskReducingHandlerPath, "all of it inside the budget, plus ONE ordinary placement for a connector that ignores the close intent"),
+        new(Core.Ops.CloseAll, CloseAllHandlerPath, "all of it inside the budget, plus ONE WAVE of placements, serialised, for a connector that ignores the close intent"),
     ];
 
     /// <param name="Handler">The IPC op, so a handler and its row cannot drift apart by name.</param>
@@ -300,11 +300,19 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// NOT SENT instead of being issued. So the entire risk-reducing part of such a handler costs
     /// the budget ONCE however many calls it decomposes into.
     ///
-    /// Plus exactly one ordinary call, and that one is not a rounding allowance. `close` and
-    /// `close-all` are implemented as a PLACE of an offsetting order, and `Place` is excluded from
-    /// the emergency deadline on purpose (an op that can open exposure has no claim on it) — so the
-    /// last call of a close is served the full ordinary bound while everything in front of it was
-    /// served the budget.
+    /// Plus exactly one ordinary call, and it is RETAINED rather than left over. `close` and
+    /// `close-all` are implemented as a PLACE of an offsetting order, and that placement used to be
+    /// excluded from the emergency deadline outright — so the last call of a close was served the
+    /// full ordinary bound while everything in front of it was served the budget. It is not excluded
+    /// any more: <see cref="PlaceOrderCommand.Intent"/> carries the fact that a close REDUCES risk,
+    /// both shipped connectors read it, and on either of them the whole handler now fits inside the
+    /// budget.
+    ///
+    /// THE TERM STAYS BECAUSE THE INTENT IS AN OBLIGATION AND NOT A GUARANTEE. It is a field on a
+    /// command, like the transport ledger's two calls: a third-party `ITradingConnector` that ignores
+    /// it is safe and slow, and serves that placement the ordinary bound. A drain is a bound over
+    /// whatever connector this gateway was handed, and one that is too long only costs shutdown
+    /// seconds while one that is too short abandons an order that reached the broker.
     ///
     /// It matters at values the suite actually uses: a fixture with a 30 s emergency budget over a
     /// 4 s connector needs 34 s, against 20 s from the ordinary term alone.
@@ -321,11 +329,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>
     /// `close-all`, and it is the row three rounds of this unit kept getting wrong.
     ///
-    /// A `close` ends in a `Place` of an offsetting order, and `Place` is excluded from the emergency
-    /// deadline on purpose. `close-all` has <see cref="MaxLegsInFlight"/> of those in the air at
-    /// once, and `TradingGateway._dispatchGate` is a MUTEX held across the dispatch — so the wave's
-    /// placements do not overlap, they queue, and one wave costs L ordinary calls end to end rather
-    /// than one.
+    /// A `close` ends in a `Place` of an offsetting order, which a connector that does not read
+    /// <see cref="PlaceOrderCommand.Intent"/> serves the ordinary bound (see
+    /// <see cref="RiskReducingHandlerPath"/> for why that possibility is what this term covers).
+    /// `close-all` has <see cref="MaxLegsInFlight"/> of those in the air at once, and
+    /// `TradingGateway._dispatchGate` is a MUTEX held across the dispatch — so the wave's placements
+    /// do not overlap, they queue, and one wave costs L ordinary calls end to end rather than one.
     ///
     /// Only ONE wave, and the reason is the deadline rather than the arithmetic: <c>RunLegs</c>
     /// checks the operation deadline before issuing each leg, so once the budget is gone every
@@ -359,11 +368,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// the caches, which at shutdown is exactly the placement most likely to still be in flight.
     ///
     /// WHY NOT SEVEN, which is what a cold `close` issues (a `RequireAccountId` and a positions read,
-    /// and then all five of `PlaceAsync`): `close` is RISK-REDUCING, so six of those seven share one
-    /// <see cref="RiskReducingHandlerPath"/> budget between them and only the trailing `Place` is
-    /// served the ordinary bound. Counting its calls at the ordinary rate would over-cover it by
-    /// minutes. The sweeps are excluded for the same reason and one more: their legs are issued
-    /// concurrently, so their call COUNT is not their serial depth at all.
+    /// and then all five of `PlaceAsync`): `close` is RISK-REDUCING, so all seven share one
+    /// <see cref="RiskReducingHandlerPath"/> budget between them on a connector that reads
+    /// <see cref="PlaceOrderCommand.Intent"/>, and six of the seven on one that does not. Counting
+    /// its calls at the ordinary rate would over-cover it by minutes. The sweeps are excluded for the
+    /// same reason and one more: their legs are issued concurrently, so their call COUNT is not their
+    /// serial depth at all.
     ///
     /// A test counts the cold placement's calls over the real pipe and asserts this number covers
     /// what it counted, so a handler that grows a sixth call fails there instead of silently

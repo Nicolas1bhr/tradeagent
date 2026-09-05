@@ -44,8 +44,46 @@ public sealed record OrderInfo(string ConnectorOrderId, string? ClientOrderId, s
 public sealed record ExecutionInfo(string ExecutionId, string ConnectorOrderId, string? ClientOrderId,
     string AccountId, string Symbol, OrderSide Side, decimal Quantity, decimal Price, DateTimeOffset At);
 
+/// <summary>
+/// WHY A PLACEMENT IS BEING MADE, because the side and the quantity do not say.
+///
+/// A close is implemented as an offsetting order, so at the wire it is a <c>place</c> like any other
+/// and a connector classifying urgency by the operation it is about to send sees an order that could
+/// open exposure. It therefore kept every close off the emergency deadline — the read prefix of an
+/// agent `close` ran inside the two-second budget and the placement it was hurrying to make was
+/// served the ordinary one (Codex F5, deferred from <c>AtasConnector.OpensExposure</c> to whoever
+/// carried the intent through this interface).
+///
+/// The intent is known where the operation is decomposed and needed where the deadline is chosen, and
+/// nothing between the two can derive it: <c>Sell 2 ES</c> flattens a long and opens a short, and the
+/// difference is the position, which the connector is not told about. So it travels with the command.
+///
+/// <see cref="Open"/> is the default, and that is the safe direction: an unmarked placement is served
+/// the ordinary bound, which is what every placement was served before this existed. A connector may
+/// ignore the field entirely — it is then safe and slow, in the same way a connector that ignores the
+/// transport ledger is safe and imprecise.
+/// </summary>
+public enum OrderIntent
+{
+    /// <summary>An order that may increase exposure. Never risk-reducing, whatever it is nested inside.</summary>
+    Open,
+
+    /// <summary>
+    /// An order placed to reduce or flatten an existing position, sized from that position. The
+    /// connector must treat it as risk-reducing: it is one of the things an emergency IS.
+    /// </summary>
+    Close
+}
+
 public sealed record PlaceOrderCommand(string ClientOrderId, string AccountId, string Symbol, OrderSide Side,
-    OrderType Type, decimal Quantity, decimal? LimitPrice, decimal? StopPrice, TimeInForce Tif, string? Comment);
+    OrderType Type, decimal Quantity, decimal? LimitPrice, decimal? StopPrice, TimeInForce Tif, string? Comment)
+{
+    /// <summary>
+    /// Why this order is being placed. See <see cref="OrderIntent"/>; init-only with a default so that
+    /// a caller who does not know cannot accidentally claim the fast path.
+    /// </summary>
+    public OrderIntent Intent { get; init; } = OrderIntent.Open;
+}
 
 public sealed record ModifyOrderCommand(string ConnectorOrderId, decimal? Quantity, decimal? LimitPrice, decimal? StopPrice);
 
@@ -162,6 +200,13 @@ public interface ITradingConnector : IAsyncDisposable
     // THE MUTATIONS. Each one owes the transport ledger an <see cref="TransportLedger.Attempt"/> at
     // its start and a <see cref="TransportLedger.Record"/> wherever it learns where the frame got to.
     // See the obligation on this interface; a connector that skips it is reported fail-closed.
+
+    /// <summary>
+    /// Places an order. <see cref="PlaceOrderCommand.Intent"/> says whether it can OPEN exposure or is
+    /// closing a position, and a connector that gives risk-reducing work a shorter deadline must read
+    /// it: a close is an offsetting placement, so the op alone cannot tell the two apart and every
+    /// close was served the ordinary bound. Ignoring it is safe and slow, never dangerous.
+    /// </summary>
     Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default);
     Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default);
     Task CancelOrderAsync(string connectorOrderId, CancellationToken ct = default);

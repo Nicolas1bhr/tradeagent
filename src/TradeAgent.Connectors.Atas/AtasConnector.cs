@@ -149,11 +149,16 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// The scope exists so the READS a risk-reducing operation has to do first — the orders list a
     /// sweep needs, the resolution of a client id, the position behind a close — stop being served
     /// the ordinary ten seconds while an emergency waits on them (Codex F11). It must not become a
-    /// side door onto the fast path for the one thing round 4 deliberately kept off it. The gateway
-    /// implements close as a PLACE of an offsetting order, so without this line an agent close-all
-    /// would acquire the emergency deadline for its orders by the back door — a change that belongs
-    /// to whoever carries intent through ITradingConnector (F5), decided there and not by accident
-    /// here.
+    /// side door onto the fast path for the one thing round 4 deliberately kept off it: an order that
+    /// OPENS exposure has no claim on an emergency deadline whatever it is nested inside.
+    ///
+    /// THE ANSWER FOR A CLOSE NOW COMES FROM THE COMMAND AND NOT FROM THIS LIST (F5, decided where it
+    /// belongs). The gateway implements a close as a PLACE of an offsetting order, so this list — which
+    /// can only see the op — had to call every close an opening order, and the placement an agent
+    /// `close` is hurrying to make was served the ordinary bound while every read in front of it ran
+    /// inside the emergency budget. <see cref="PlaceOrderCommand.Intent"/> carries the fact the op
+    /// cannot, and <c>Rpc</c>'s <c>reducesRisk</c> is where it lands. This list still decides the
+    /// question for every UNMARKED placement, which is the safe default.
     /// </summary>
     static bool OpensExposure(string op) =>
         op is BridgeOps.Place or BridgeOps.Modify or BridgeOps.PlaceViaAsyncOverload;
@@ -1405,7 +1410,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// connection one tick longer than necessary; missing one disconnects a healthy platform.
     bool PeerAnsweredSince(long since) => Volatile.Read(ref _lastAnswerAt) >= since;
 
-    async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct)
+    /// <param name="reducesRisk">
+    /// The CALLER's knowledge that this operation reduces risk, for the one op where the op itself
+    /// cannot say: a close is an offsetting <c>place</c>. It only ever WIDENS urgency — it cannot make
+    /// a risk-reducing op ordinary — so the worst a wrong one can do is give a placement the emergency
+    /// deadline it would have inherited had it been a cancel.
+    /// </param>
+    async Task<BridgeFrame> Rpc(string op, object? args, CancellationToken ct, bool reducesRisk = false)
     {
         // WHERE THE FRAME GOT TO IS RECORDED WHERE IT IS KNOWN, and only for a MUTATION.
         //
@@ -1440,7 +1451,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // follows — the gate, the write and the reply — has to fit inside one bound, because the
         // person waiting is not waiting for a phase.
         var startedAt = Environment.TickCount64;
-        var emergency = IsRiskReducing(op) || (RiskReducingScope.IsActive && !OpensExposure(op));
+
+        // WHAT THIS CALL CAN DO TO EXPOSURE, WHICH IS NOT ALWAYS WHAT ITS OP SAYS. `place` is the op
+        // a close is made of, so the classification below asked the wrong question of it: the answer
+        // is on the command (`PlaceOrderCommand.Intent`) and arrives here as `reducesRisk`. Nothing
+        // else may narrow this — a cancel is risk-reducing whatever anybody passes.
+        var opensExposure = OpensExposure(op) && !reducesRisk;
+        var emergency = IsRiskReducing(op) || reducesRisk || (RiskReducingScope.IsActive && !opensExposure);
 
         // ONE DEADLINE FOR THE OPERATION, not one per RPC.
         //
@@ -1452,7 +1469,7 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
         // starts a fresh one. `place` and `modify` are excluded from the scope entirely, so this
         // cannot shorten them either.
         var deadlineAt = emergency
-            ? (!OpensExposure(op) && RiskReducingScope.DeadlineAt is { } shared
+            ? (!opensExposure && RiskReducingScope.DeadlineAt is { } shared
                 ? shared
                 : startedAt + (long)EmergencyDeadline.TotalMilliseconds)
             : 0L;
@@ -1633,9 +1650,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     static TimeSpan Left(long deadlineAt) => RiskReducingScope.LeftUntil(deadlineAt);
 
-    async Task<T> Rpc<T>(string op, object? args, CancellationToken ct)
+    async Task<T> Rpc<T>(string op, object? args, CancellationToken ct, bool reducesRisk = false)
     {
-        var f = await Rpc(op, args, ct);
+        var f = await Rpc(op, args, ct, reducesRisk);
         if (!f.Data.HasValue) throw new ConnectorTransportException($"ATAS returned no data for '{op}'");
         return f.Data.Value.Deserialize<T>(Json.Options)
                ?? throw new ConnectorTransportException($"ATAS returned unreadable data for '{op}'");
@@ -1671,8 +1688,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string accountId, DateTimeOffset? since, CancellationToken ct = default) =>
         Rpc<IReadOnlyList<ExecutionInfo>>(BridgeOps.Executions, new { account_id = accountId, since }, ct);
 
+    /// <summary>
+    /// A placement, on the emergency clock when it is CLOSING a position and on the ordinary one when
+    /// it is not — the distinction <see cref="OpensExposure"/> could not make from the op alone.
+    /// </summary>
     public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default) =>
-        Rpc<OrderInfo>(BridgeOps.Place, cmd, ct);
+        Rpc<OrderInfo>(BridgeOps.Place, cmd, ct, reducesRisk: cmd.Intent is OrderIntent.Close);
 
     /// <summary>
     /// MEASUREMENT ONLY, and it places a real order. Asks the bridge to submit through ATAS's

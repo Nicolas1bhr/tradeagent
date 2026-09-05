@@ -35,3 +35,8 @@ trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 war
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; one line per item (RED → GREEN → mutant);
 final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+Baseline at `44fb21f` (rebased): Release `--no-incremental` 0 warnings / 17 projects; Unit 201 + Fault 188 +
+Integration 524 = **913, 0 failed**; 913 test names captured.

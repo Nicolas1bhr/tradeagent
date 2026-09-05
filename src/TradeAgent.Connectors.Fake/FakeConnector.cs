@@ -91,38 +91,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         // exit — a cancelled mutation used to record nothing at all.
         if (mutating) TransportLedger.Attempt();
 
-        // THE SIMULATOR HONOURS THE OPERATION DEADLINE, because a connector that ignored it could not
-        // be used to measure the rule. A real bridge stops waiting and reports UNKNOWN; so does this.
-        // Deliberately NOT applied to PlaceOrderAsync, which has its own latency and is never
-        // risk-reducing — an order that opens exposure has no claim on this clock.
-        if (RiskReducingScope.DeadlineAt is { } deadline)
-        {
-            var left = RiskReducingScope.LeftUntil(deadline);
-            if (left <= TimeSpan.Zero)
-            {
-                // PROVABLY nothing was sent: the deadline was already gone before anything was
-                // attempted. This is the branch the shipped AtasConnector takes when a leg's turn
-                // arrives after the operation is over, and reporting it as an unknown is what sent
-                // an owner to hunt for an order that never existed (verifier round-9 F-1).
-                if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
-                throw new ConnectorTransportException(DeadlineSentence(op, mutating,
-                    "the operation deadline had already passed and nothing was sent to the simulator"));
-            }
-
-            // The SUM, because the two delays below run in series. Taking the max let a profile with
-            // both set pass a precheck for 1200 ms and then spend 2400 — so the instrument the
-            // operation-deadline tests measure with could overrun the very deadline it exists to
-            // demonstrate (Codex round-8 F3).
-            var wait = TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
-            if (wait > left)
-            {
-                await Task.Delay(left, ct);
-                // The call was under way when the deadline passed, so it may have acted. Fail-closed.
-                if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
-                throw new ConnectorTransportException(DeadlineSentence(op, mutating,
-                    "the operation deadline passed before the simulator answered"));
-            }
-        }
+        await HonourTheOperationDeadline(ct, op, mutating);
 
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
@@ -152,6 +121,48 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
             TransportLedger.Record(TransportOutcome.PossiblyWritten);
             throw new ConnectorTransportException(
                 "the request was sent and no answer came back; it is not known whether it acted");
+        }
+    }
+
+    /// <summary>
+    /// THE SIMULATOR HONOURS THE OPERATION DEADLINE, because a connector that ignored it could not be
+    /// used to measure the rule. A real bridge stops waiting and reports UNKNOWN; so does this.
+    ///
+    /// IT IS ITS OWN METHOD BECAUSE <see cref="PlaceOrderAsync"/> NEEDS IT TOO, and only sometimes. A
+    /// placement does not go through <c>Wire</c> — it has its own latency — and it used to be excluded
+    /// from this clock outright, on the reasoning that an order which opens exposure has no claim on
+    /// it. That reasoning holds for an opening order and is wrong for a CLOSE, which is an offsetting
+    /// placement and is the thing an emergency is trying to do. <see cref="PlaceOrderCommand.Intent"/>
+    /// is what tells them apart, and this is what the answer buys.
+    /// </summary>
+    async Task HonourTheOperationDeadline(CancellationToken ct, string op, bool mutating)
+    {
+        if (RiskReducingScope.DeadlineAt is not { } deadline) return;
+
+        var left = RiskReducingScope.LeftUntil(deadline);
+        if (left <= TimeSpan.Zero)
+        {
+            // PROVABLY nothing was sent: the deadline was already gone before anything was
+            // attempted. This is the branch the shipped AtasConnector takes when a leg's turn
+            // arrives after the operation is over, and reporting it as an unknown is what sent
+            // an owner to hunt for an order that never existed (verifier round-9 F-1).
+            if (mutating) TransportLedger.Record(TransportOutcome.NothingWritten);
+            throw new ConnectorTransportException(DeadlineSentence(op, mutating,
+                "the operation deadline had already passed and nothing was sent to the simulator"));
+        }
+
+        // The SUM, because the two delays below run in series. Taking the max let a profile with
+        // both set pass a precheck for 1200 ms and then spend 2400 — so the instrument the
+        // operation-deadline tests measure with could overrun the very deadline it exists to
+        // demonstrate (Codex round-8 F3).
+        var wait = TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
+        if (wait > left)
+        {
+            await Task.Delay(left, ct);
+            // The call was under way when the deadline passed, so it may have acted. Fail-closed.
+            if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
+            throw new ConnectorTransportException(DeadlineSentence(op, mutating,
+                "the operation deadline passed before the simulator answered"));
         }
     }
 
@@ -218,9 +229,15 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
 
     public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
     {
-        // A placement does not go through Wire (it is never risk-reducing and has its own latency),
-        // so it marks its own attempt — including the one a `close` leg ends in.
+        // A placement does not go through Wire (it has its own latency), so it marks its own attempt
+        // — including the one a `close` leg ends in.
         TransportLedger.Attempt();
+
+        // AND A CLOSING PLACEMENT IS ON THE OPERATION'S CLOCK. It is the thing the emergency came to
+        // do, sized from the position it is flattening; only an order that can OPEN exposure is kept
+        // off this clock. `Intent` is what says which this is — the side and the quantity cannot.
+        if (cmd.Intent is OrderIntent.Close) await HonourTheOperationDeadline(ct, "place", mutating: true);
+
         if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected)
@@ -316,7 +333,8 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         if (pos is null || pos.Quantity == 0) return null;
         return await PlaceOrderAsync(new PlaceOrderCommand(clientOrderId, accountId, symbol,
             pos.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy, OrderType.Market,
-            Math.Abs(pos.Quantity), null, null, TimeInForce.Day, "close position"), ct);
+            Math.Abs(pos.Quantity), null, null, TimeInForce.Day, "close position")
+        { Intent = OrderIntent.Close }, ct);
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

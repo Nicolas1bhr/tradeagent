@@ -1328,12 +1328,12 @@ public class ConnectorSendDeadlineTests
         Observe([stuck]);
         await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
 
-        // "place-in-scope" is the guard on the ambient deadline added for F11. That scope exists so
-        // the READS a cancel-all or a close must do first stop being served the ordinary ten
-        // seconds — and the gateway implements close as a PLACE of an offsetting order, so without
-        // an explicit exclusion at the connector an agent close-all would acquire the emergency
-        // deadline for its orders through the back door. Carrying intent that far is F5's decision
-        // and another unit's file; it must not happen here by accident.
+        // "place-in-scope" is the guard on the ambient deadline added for F11, and it is the OTHER
+        // half of the intent decision (F5) rather than a relic of it. A close now says so on its own
+        // command and takes the emergency path — see
+        // `A_closing_placement_takes_the_emergency_path_an_opening_one_is_refused`. An UNMARKED
+        // placement must not, however it got here: an order that can open exposure has no claim on
+        // an emergency deadline, and nesting one inside a risk-reducing operation is not a claim.
         using var scope = kind == "place-in-scope" ? RiskReducingScope.Begin() : null;
 
         var timer = Stopwatch.StartNew();
@@ -1356,6 +1356,154 @@ public class ConnectorSendDeadlineTests
         Assert.True(await connector.IsConnectedAsync(),
             "an ordinary caller expiring on the send gate took the connection down with it");
     }
+
+    /// <summary>
+    /// A CLOSE IS THE THING AN EMERGENCY CAME TO DO, AND IT WAS THE ONE CALL LEFT ON THE SLOW CLOCK
+    /// (Codex F5, deferred here from <c>AtasConnector.OpensExposure</c>).
+    ///
+    /// The gateway implements a close as a PLACE of an offsetting order, so the connector — which
+    /// classifies urgency by the op it is about to send — saw an order that might open exposure and
+    /// kept it off the emergency deadline. Every read a `close` has to do first ran inside the
+    /// two-second budget and then the placement they were hurrying to make was served the ordinary
+    /// ten. <see cref="PlaceOrderCommand.Intent"/> carries the fact the op cannot.
+    ///
+    /// BOTH DIRECTIONS IN ONE FIXTURE, because the value of the marked case is entirely in the
+    /// unmarked one staying where it was: the same peer, the same held gate, the same frame, and the
+    /// only difference is the intent on the command.
+    /// </summary>
+    [Theory]
+    [InlineData(OrderIntent.Close)]
+    [InlineData(OrderIntent.Open)]
+    public async Task A_closing_placement_takes_the_emergency_path_an_opening_one_is_refused(OrderIntent intent)
+    {
+        var pipe = NewPipe();
+        await using var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+
+        // A peer that READS but never catches up, so the send gate stays held by the frame below and
+        // the call under test expires on its own bound rather than on the holder's teardown.
+        await using var peer = await BridgePeer.ReadingSlowly(pipe, Cred().Secret);
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        var stuck = connector.PlaceOrderAsync(new PlaceOrderCommand("TA-intent-hold", "ATAS-READING", "ES",
+            OrderSide.Buy, OrderType.Market, 1m, null, null, TimeInForce.Day, new string('c', 512 * 1024)));
+        Observe([stuck]);
+        await Wait(() => Task.FromResult(peer.BytesRead >= 32 * 1024));
+
+        var timer = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() => connector.PlaceOrderAsync(
+            new PlaceOrderCommand("TA-intent-2", "ATAS-READING", "ES", OrderSide.Sell, OrderType.Market,
+                1m, null, null, TimeInForce.Day, null) { Intent = intent }));
+        timer.Stop();
+
+        Assert.IsType<ConnectorTransportException>(ex);
+        if (intent is OrderIntent.Close)
+        {
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5),
+                $"a CLOSING placement waited {timer.Elapsed.TotalSeconds:0.00}s against a " +
+                $"{connector.EmergencyDeadline.TotalSeconds:0}s emergency deadline — the intent on the " +
+                "command is not reaching the classification, so the last call of a close is still on the " +
+                "ordinary clock while everything in front of it ran inside the budget");
+            // The owner's sentence, not a generic transport failure: this frame really was a mutation
+            // and they need to know where to look.
+            Assert.Contains("NOT confirmed", ex.Message);
+            Assert.Contains("'place'", ex.Message);
+            Assert.Contains("check your positions and orders in ATAS", ex.Message);
+        }
+        else
+        {
+            Assert.True(timer.Elapsed > TimeSpan.FromSeconds(5),
+                $"an OPENING placement gave up after {timer.Elapsed.TotalSeconds:0.00}s — it took an " +
+                "emergency path it is not entitled to, and the intent field has become a way onto it");
+            Assert.DoesNotContain("NOT confirmed", ex.Message);
+        }
+
+        Assert.True(await connector.IsConnectedAsync(),
+            "a caller expiring on the send gate took the connection down with it");
+    }
+
+    /// <summary>
+    /// THE SAME RULE THROUGH THE WHOLE STACK: `trade close ES` over the real pipe, through
+    /// <see cref="GatewayPipeServer"/> and <see cref="TradingGateway"/>, onto a real
+    /// <see cref="AtasConnector"/> whose bridge answers every prerequisite — the account, the
+    /// position, the quote, the instruments — and then says nothing about the order itself.
+    ///
+    /// That shape is the whole point. It is not a dead bridge: everything the close had to read came
+    /// back at once, so the emergency budget is almost untouched when the placement goes out, and the
+    /// only question left is which clock that placement is on. The answer used to be the ordinary
+    /// one — the operation promised two seconds and took ten.
+    /// </summary>
+    [Fact]
+    public async Task An_agent_close_through_the_real_gateway_fails_fast_on_a_bridge_that_stops_answering()
+    {
+        const string account = "ATAS-CLOSING";
+        var bridgePipe = NewPipe();
+        await using var connector = new AtasConnector(bridgePipe, TimeSpan.FromSeconds(10), Cred());   // shipped
+        await connector.ConnectAsync();
+        await using var peer = await BridgePeer.AnsweringAllBut(bridgePipe, Cred().Secret, account,
+            BridgeOps.Place, op => ClosableBook(account, op));
+        await Wait(async () => await connector.IsConnectedAsync());
+
+        using var db = TestEnv.NewDb();
+        var gw = new TradingGateway(db, connector, new HealthRegistry());
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = account;
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+        });
+        await gw.RefreshHealthAsync();
+
+        var ipcPipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), ipcPipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, ipcPipe);
+
+        var timer = Stopwatch.StartNew();
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Close,
+            RequestId = "f5-close",
+            Args = new() { ["symbol"] = System.Text.Json.JsonSerializer.SerializeToElement("ES") }
+        }).WaitAsync(TimeSpan.FromSeconds(40));
+        timer.Stop();
+
+        Assert.True(reply.Ok, reply.Error?.Message);
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(6),
+            $"`close` through the real gateway took {timer.Elapsed.TotalSeconds:0.00}s against a " +
+            $"{connector.EmergencyBudget.TotalSeconds:0}s emergency budget — the prefix ran inside it and the " +
+            "placement it exists to make did not");
+
+        // The order is UNKNOWN and flagged, which is right: the frame went out and nothing came back.
+        var record = gw.GetRequest("f5-close")!;
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation);
+
+        // And the sentence on it is the emergency's own, so the person reading it is told where to
+        // look rather than how long a generic RPC waited.
+        Assert.Contains("NOT confirmed", record.LastError!);
+        Assert.Contains("'place'", record.LastError!);
+        Assert.DoesNotContain("did not answer", record.LastError!);
+    }
+
+    /// <summary>
+    /// Everything a `close` handler asks the bridge for before it can place the offsetting order: the
+    /// chosen account, the position it is sizing from, a fresh quote and the instrument grid. Anything
+    /// else gets an empty array, which is what an `orders` read of an empty book looks like.
+    /// </summary>
+    static object? ClosableBook(string account, string op) => op switch
+    {
+        // There is no `account` op: the connector resolves one by reading the whole list.
+        BridgeOps.Accounts => new[] { new AccountInfo(account, "Closing sim", "USD", 100_000m, 100_000m, 0m, true, true) },
+        BridgeOps.Positions => new[] { new PositionInfo("pos-es", account, "ES", 1m, 4200m, 0m) },
+        BridgeOps.Quote => new QuoteInfo("ES", 4199.75m, 4200.25m, 4200m, 1m, 1m, DateTimeOffset.UtcNow),
+        BridgeOps.Instruments => new[] { new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, 1m) },
+        _ => Array.Empty<object>()
+    };
 
     /// <summary>
     /// THE SAME FAILURE, TWO DIFFERENT THINGS TO TELL THE OWNER.
@@ -1957,6 +2105,20 @@ public class ConnectorSendDeadlineTests
         }
 
         /// <summary>
+        /// The same peer, but it answers each op with something the GATEWAY can use — an account, a
+        /// position, a quote, an instrument list — because a handler that has to get past risk checks
+        /// and a health refresh cannot be fed an empty array for everything. One op is still muted, so
+        /// what is under test is what OUR end does about the one answer that never comes.
+        /// </summary>
+        public static async Task<BridgePeer> AnsweringAllBut(
+            string pipe, string secret, string accountId, string mute, Func<string, object?> data)
+        {
+            var peer = await ConnectAndSayHello(pipe, secret, accountId, null, PaceBytes);
+            peer.Track(Task.Run(() => peer.AnswerEverythingBut(mute, TimeSpan.Zero, data)));
+            return peer;
+        }
+
+        /// <summary>
         /// A BRIDGE THAT IS WORKING ON OUR FRAME AND ANSWERS IT LATE.
         ///
         /// It reads everything and answers everything, just not within two seconds. This is not a
@@ -1971,7 +2133,7 @@ public class ConnectorSendDeadlineTests
             return peer;
         }
 
-        async Task AnswerEverythingBut(string? mute, TimeSpan delay)
+        async Task AnswerEverythingBut(string? mute, TimeSpan delay, Func<string, object?>? data = null)
         {
             var buf = new byte[8192];
             var pending = new MemoryStream();
@@ -2003,7 +2165,11 @@ public class ConnectorSendDeadlineTests
                             Interlocked.Increment(ref _muted);
                             continue;
                         }
-                        var answer = new { v = Versions.BridgeProtocolVersion, id = f.Id, ok = true, data = Array.Empty<object>() };
+                        var answer = new
+                        {
+                            v = Versions.BridgeProtocolVersion, id = f.Id, ok = true,
+                            data = data?.Invoke(f.Op ?? "") ?? Array.Empty<object>()
+                        };
                         if (delay <= TimeSpan.Zero) { await WriteAsync(answer); continue; }
 
                         // Answered on its own schedule, so the read loop is free to carry on — which

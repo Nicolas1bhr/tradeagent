@@ -775,8 +775,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
         lock (_recentDispatches) _recentDispatches.Add(Now);
 
+        // THE INTENT TRAVELS ONTO THE COMMAND. A close is an offsetting placement, so the connector
+        // cannot tell it from an opening order by anything on the wire — and it is the connector that
+        // chooses the deadline. Carried rather than re-derived here: it was decided where the
+        // operation was decomposed, and the position it was sized from is not in scope any more.
         var cmd = new PlaceOrderCommand(stored.ClientOrderId, stored.AccountId, intent.Symbol, intent.Side,
-            intent.Type, intent.Quantity, intent.LimitPrice, intent.StopPrice, intent.Tif, intent.Comment);
+            intent.Type, intent.Quantity, intent.LimitPrice, intent.StopPrice, intent.Tif, intent.Comment)
+        { Intent = intent.Intent };
 
         // ONLY THE WIRE CALL IS INSIDE THE TRY, and that is deliberate. The catch below is a
         // catch-all, so anything left in here would be read as "we do not know what the broker did"
@@ -1210,7 +1215,7 @@ public sealed class TradingGateway : IAsyncDisposable
         if (pos is null) return null;
         return await PlaceAsync(ctx, requestId, new PlaceIntent(symbol,
             pos.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy, OrderType.Market, Math.Abs(pos.Quantity),
-            null, null, TimeInForce.Day, "close position"), ct);
+            null, null, TimeInForce.Day, "close position") { Intent = OrderIntent.Close }, ct);
     }
 
     async Task<string> ResolveConnectorOrderId(string reference, CancellationToken ct)
@@ -1729,7 +1734,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
             var rid = $"{PressPrefix(ClosePress, nonce)}-{symbol}";
             var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
-                OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)");
+                OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
+                { Intent = OrderIntent.Close };
             var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused);
 
             if (unreadable is { } readFailed)

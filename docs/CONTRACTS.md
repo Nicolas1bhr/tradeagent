@@ -72,6 +72,21 @@ already per-order legs. The method stays on `ITradingConnector` because the ATAS
 send-deadline behaviour is measured through it and that is not this unit's to move; nothing calls it
 on the money path, and nothing should start.
 
+**Why a placement carries an INTENT, and it is the same shape of obligation.** `PlaceOrderCommand`
+has an `Intent` — `Open` or `Close` — and a connector that gives risk-reducing work a shorter
+deadline must read it. A close is implemented as an offsetting placement, so the operation the
+connector is about to send is a `place` like any other: classifying urgency by the op alone kept
+every close on the ordinary bound, and an agent `close` ran its whole read prefix inside the
+two-second emergency budget and was then served ten seconds for the order it was hurrying to make.
+The side and the quantity cannot supply the answer — `Sell 2 ES` flattens a long and opens a short,
+and the difference is a position the connector is not told about — so the intent travels with the
+command from where the operation was decomposed. `Open` is the default and is what an unmarked
+placement gets, which is where every placement was before; **a connector that ignores the field is
+safe and slow**, in the same way one that ignores the ledger is safe and imprecise. `place` and
+`modify` are still excluded from an ambient `RiskReducingScope`: an order that can OPEN exposure has
+no claim on an emergency deadline whatever it is nested inside, and only the command may say
+otherwise.
+
 **A connector that ignores this is safe and imprecise, never dangerous**: the gateway does not take
 silence for an assurance — a leg whose own record proves a mutating step was dispatched is
 `sent-not-confirmed` whatever the ledger says. Marking the attempt is what buys the precision back,
@@ -166,6 +181,12 @@ asserts, rather than silently invalidating this section.
 `WorstCaseOrderPath` is `WriteTimeout + FrameTimeout + rpcTimeout` and the shutdown drain is derived
 from it, so a connector built with different deadlines moves the drain with it.
 
+**A `place` gets the emergency deadline when — and only when — the command says it is closing.**
+`PlaceOrderCommand.Intent` is how a close, which is an offsetting placement, is told apart from an
+order that opens exposure; the connector cannot derive it from the op or from the side. The last two
+rows of the handler table keep an ordinary placement's worth of headroom anyway, because the intent
+is an obligation a third-party connector may ignore and a drain that is too short abandons an order.
+
 ## The shutdown drain, and the handler table it is the maximum over
 
 `GatewayPipeServer.DisposeAsync` closes every connection, then WAITS for the handlers already
@@ -193,8 +214,8 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `modify` | **4W** | the account, the orders read that resolves the target, the account again, the modify |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |
 | `cancel-all` | **E** | the orders read and every leg, all inside the one budget |
-| `close` | **E + W** | the prefix inside the budget, then ONE ordinary placement — `Place` is excluded from the emergency deadline on purpose |
-| `close-all` | **E + L·W** | the prefix inside the budget, then one WAVE of placements — every leg ends in a `Place` and `TradingGateway._dispatchGate` is a mutex, so a wave's placements queue rather than overlap |
+| `close` | **E + W** | all of it inside the budget on a connector that reads the close intent, plus ONE ordinary placement for one that does not |
+| `close-all` | **E + L·W** | the same, plus one WAVE of placements — every leg ends in a `Place` and `TradingGateway._dispatchGate` is a mutex, so a wave's placements queue rather than overlap |
 
 ```
 drain = max(that table) + H + S

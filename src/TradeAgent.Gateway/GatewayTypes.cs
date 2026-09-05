@@ -106,8 +106,20 @@ public sealed class AgentContext
     public override string ToString() => IsOperator ? "operator (in-process)" : SessionId;
 }
 
+/// <summary>
+/// What the caller asked for, before it becomes a <see cref="PlaceOrderCommand"/>.
+///
+/// <see cref="Intent"/> is init-only with a default so that adding it did not silently re-parameterise
+/// every construction site, and so that a caller who does not know cannot claim the fast path. It is
+/// PERSISTED in <c>ParametersJson</c> and read back when a parked order is approved, which is what
+/// keeps a close that waited for a person a close when it is finally dispatched.
+/// </summary>
 public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, decimal Quantity,
-    decimal? LimitPrice, decimal? StopPrice, TimeInForce Tif, string? Comment);
+    decimal? LimitPrice, decimal? StopPrice, TimeInForce Tif, string? Comment)
+{
+    /// <summary>Why the order is being placed. See <see cref="OrderIntent"/>.</summary>
+    public OrderIntent Intent { get; init; } = OrderIntent.Open;
+}
 
 public sealed record GatewayStatus(
     string ProtocolVersion, string AppVersion, TradingMode Mode, bool AiTradingStopped, bool LiveActivated,
