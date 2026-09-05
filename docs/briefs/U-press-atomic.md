@@ -36,58 +36,13 @@ path (U-gates). Every item: RED quoted (or refuted, with the probe), GREEN, one 
 mutating; `cp` restore; `touch`). Names vs baseline: nothing removed. Commit per item, no trailers, no push, no other
 worktree. Gate: Release `--no-incremental` → 0 warnings; full suite in Release → 0 failed.
 
-## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED (or refuted) → GREEN →
-mutant; final counts; what you did NOT do. Verified or NOT VERIFIED.
-
 ## Report
 
-**1 — the second-press refusal and the first press row are one step. VERIFIED.**
-RED `PressAtomicityTests.Two_close_all_presses_released_together_send_one_close_and_refuse_the_other`
-(barrier: both presses held inside the capture read, released together) reproduced P10 exactly —
-`press A : ok`, `press B : ok`, `close calls on the wire : 2`, `position after : ES -2`, two press rows.
-GREEN: `press A : EMERGENCY_PRESS_UNRESOLVED — close-all sent at 09:56; resolve it first`,
-`close calls on the wire : 1`, `position after : flat`, one press row. Other direction
-(`A_press_after_the_previous_one_is_resolved_still_reaches_the_wire`) green: `second press : close calls 2`.
-Fix: `ExecutionRequestStore.TryCreateFlagged` — the flag and the `NOT EXISTS(… LIKE $claim AND
-needs_reconciliation=1)` guard are in the INSERT, so the check and the first durable row are one statement and
-hold across the two processes that reach this button. Mutant (exclusion clause → `$claim IS NOT NULL`) → red,
-`Expected: 1 Actual: 2`, `close calls on the wire : 2`. Fault suite in Release: 209 passed, 0 failed.
-
-**2 — a replay is bound to its verb and session, and looked up before any live read. VERIFIED.**
-RED (guard removed, lookup back after the capture; 4 tests, `CompositeReplayBindingTests`):
-`cancel-all with the same id : ACCEPTED — {"op":"close-all","legs":1,"targets":["ES"]}` (an agent told
-its cancellation was done with every order still working); `session b replaying session a's id : ACCEPTED,
-no refusal`; the wrong-verb replay only stopped by the accident that `ES` is not an order id; the offline
-replay threw `ConnectorTransportException : simulator is disconnected`. GREEN: all four —
-`INVALID_REQUEST — request id 'cr-1' already names a 'close-all'; it cannot be reused for a 'cancel-all'`,
-`wire calls during the replay : 0`, `leg records under the replay's nonce : 0`,
-`position reads attempted during the replay : 0`. Over the REAL pipe
-(`CompositeVerbBindingTests`): close-all `cv-1` ok, then cancel-all `cv-1` →
-`ok=False {"code":"INVALID_REQUEST",…}` and `orders at the broker : FB-1 WORKING`. Fix: `ReplayOf` checks
-`op` and `agent_session_id` (already columns — no schema change); `BeginCompositeAsync` takes the capture
-as a delegate and never invokes it on a replay. `docs/CONTRACTS.md` + the `AGENTS.md` template state it.
-Mutants: verb check compares `stored.Op` to itself → 3 red (2 fault + the pipe test); lookup moved back
-after the read → 1 red (`simulator is disconnected`).
-**NOT DONE, and it is the half that is not fixed in production:** `GatewayPipeServer.CancelAll` (~:888)
-and `CloseAll` (~:1399) still read the book/positions BEFORE calling the sync `BeginComposite`, so an
-agent's offline replay still fails on the read. The verb and session binding DOES reach them (proved over
-the pipe above). Adopting `BeginCompositeAsync` is one call-site change each; the file belongs to
-`u-pipe-hello` and this unit was told not to edit it.
-
-**3 — the press mints its own id, and the latch waits for its row. VERIFIED.**
-RED (`PressIdShapeTests`): P2 lifted verbatim →
-`client order id sent : TA-op-close-210936ccdbc24e0c-ES 12-25 [CME Globex Futures]`, `length : 58`,
-`characters outside [A-Za-z0-9-] : ' []'`; and `…-MES 03-26 [CME Globex Futures Micro]`, `length : 65`
-(ceiling 64). Cancel-all had the same defect with a BROKER ORDER ID, not measured by P2:
-`leg : op-cancel-7f93ed9fabf54707-FB-1  coid=TA-op-cancel-7f93ed9fabf54707-FB-1`. UNVERIFIED 5 reproduced:
-with the press row's insert failing, `press rows written : 0`, `unresolved press : none`,
-`reconcile clean : False`, `trading authorized after one reconcile pass : False (you pressed Cancel all
-working orders at 10:07…)` — a pause held by a latch naming a row that does not exist. GREEN:
-`TA-op-close-18f45b889ac34b9e-0`, `length : 30`, `characters outside [A-Za-z0-9-] : ''`,
-`record : op-close-… instrument=ES 12-25 [CME Globex Futures]`; the latch case reconciles clean and
-trading resumes. Fix: `PressLegId(kind, nonce, index)` for both controls, the target stays on the record;
-`TradingGateway.MaxClientOrderIdChars`/`MaxRequestIdChars`/`IsSendableId` are the gateway's own copy of the
-rule and `OpenPressRow` refuses an id that breaks it; a test pins the budget to `GatewayPipeServer`'s
-private one by reflection so the two cannot drift (`61 == 61`). Latch moved after the create.
-Mutants: target back in the leg id → 2 red (`'op-close-…-ES 12-25 [CME Globex Futures]' is not an id this
-gateway may put on a broker order`); latch back before the create → 1 red (`trading authorized … : False`).
+Gate run at `052a249` (the last code commit; this report commit is the tip of `u-press-atomic`). 7 commits, 12 files, +956/-59, rebased onto `main` @ `421b5d8`. Every line below was run.
+**1 (finding 2 / F6) VERIFIED.** RED `PressAtomicityTests` (barrier: both presses held inside the capture read, released together) reproduced P10 — `press A : ok`, `press B : ok`, `close calls on the wire : 2`, `position after : ES -2`, two press rows. GREEN — `press A : EMERGENCY_PRESS_UNRESOLVED — close-all sent at 09:56; resolve it first`, `close calls : 1`, `position after : flat`, one row; the other direction (resolve, press again) sends. Fix: `ExecutionRequestStore.TryCreateFlagged` writes the flag AND `NOT EXISTS(a flagged row of this control)` in one INSERT, so check and first row are one statement and hold across the two processes that reach the button. Mutant (exclusion clause → `$claim IS NOT NULL`) → red, `Expected: 1 Actual: 2`.
+**2 (Codex F7) VERIFIED, one half NOT DONE.** RED (4, `CompositeReplayBindingTests`): `cancel-all with the same id : ACCEPTED — {"op":"close-all","legs":1,"targets":["ES"]}`; `session b replaying session a's id : ACCEPTED, no refusal`; the offline replay threw `ConnectorTransportException : simulator is disconnected`. GREEN: `INVALID_REQUEST — request id 'cr-1' already names a 'close-all'`, `wire calls during the replay : 0`, `leg records under the replay's nonce : 0`, `position reads attempted during the replay : 0`. Over the REAL pipe (`CompositeVerbBindingTests`): close-all `cv-1` ok, cancel-all `cv-1` → `ok=False {"code":"INVALID_REQUEST"…}`, `orders at the broker : FB-1 WORKING`. Fix: `ReplayOf` checks `op` and `agent_session_id` (existing columns, no schema change); `BeginCompositeAsync` takes the capture as a delegate and never runs it on a replay. Mutants: verb check compares `stored.Op` to itself → 3 red; lookup moved back after the read → 1 red.
+**NOT DONE:** `GatewayPipeServer.CancelAll` (~:888) and `CloseAll` (~:1399) still read the book before calling the sync `BeginComposite`, so an agent's OFFLINE replay still fails on the read. The verb/session binding does reach them (proved over the pipe). Adopting `BeginCompositeAsync` is one call-site change each; that file is `u-pipe-hello`'s and I was told not to edit it.
+**3 (finding 4 / P2 + UNVERIFIED 5) VERIFIED.** RED: `TA-op-close-210936ccdbc24e0c-ES 12-25 [CME Globex Futures]`, `length : 58`, `characters outside [A-Za-z0-9-] : ' []'`; MES `length : 65` (ceiling 64); cancel-all had the same defect with a BROKER ORDER ID (`op-cancel-…-FB-1`), not measured by P2. UNVERIFIED 5 reproduced with the press row's insert failing: `press rows written : 0`, `unresolved press : none`, `reconcile clean : False`, `trading authorized after one reconcile pass : False` — a pause held by a latch naming a row that does not exist. GREEN: `TA-op-close-18f45b889ac34b9e-0`, `length : 30`, `characters outside : ''`, `record : op-close-… instrument=ES 12-25 [CME Globex Futures]`; the latch case reconciles clean and trading resumes. Fix: `PressLegId(kind, nonce, index)` both controls, target stays on the record; `TradingGateway.MaxClientOrderIdChars`/`MaxRequestIdChars`/`IsSendableId`, and `OpenPressRow` refuses an id that breaks them; a reflection test pins the budget to `GatewayPipeServer`'s private one (`61 == 61`). Mutants: target back in the leg id → 2 red (`'op-close-…-ES 12-25 [CME Globex Futures]' is not an id this gateway may put on a broker order`); latch back before the create → 1 red.
+**Gate at the tip, Release:** `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings, 0 errors. Full suite → Unit 211 + Fault 218 + Integration 536 = **965, 0 failed**. Test names vs `main`: **0 removed, 11 added**. Secret scan of the whole diff: clean. `docs/CONTRACTS.md` states the atomic claim, the leg-id shape and the replay binding; the `AGENTS.md` template states the binding to the agent.
+**Side effect for `U-press-budget`:** the press row is now ONE insert instead of insert + `MarkNeedsReconciliation`, so `OpenPressRow` makes one fewer database write per leg inside the 2 s emergency budget.
+**NOT DONE / NOT VERIFIED:** no Windows box, no real ATAS, no real money, no UI run (the Dashboard press card compiles and its `IsPressRecord`/`PressKindOf`/`TargetOf` inputs are unchanged, but I did not run the app); whether ATAS accepts the id shape at all is still box-only (CONTRACTS.md keeps the 64-char ceiling marked a guess); no CI run; nothing pushed; no other worktree entered; `GatewayPipeServer.cs`, the updater, the connectors and the authorization path untouched.
