@@ -3511,7 +3511,8 @@ item, an offline replay that never reads the book, was blocked until U-press-ato
 GREEN 4/4, mutant (the clause back in) → 2 RED; item 2 RED `CloseAllAnswersByTheWordTests` 3/4 → GREEN 4/4, mutant
 (both halves back to `ExecutionRequest.State`, `outcome` dropped) → 2 RED. Builder's gate at `8ca805c`, Release: 0
 warnings; 211 + 207 + 577 = 995, 0 failed; names 0 removed, 8 added. Manager's gate at `2e6b1f3` (the merge sha's code tree, docs aside), Release: build →
-0 warnings, 0 errors; suite → 218 + 218 + 578 = 1014, 0 failed; names vs `main` → 0 removed, 8 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+0 warnings, 0 errors; suite → 218 + 218 + 578 = 1014, 0 failed; names vs `main` → 0 removed, 8 added; scan clean; CI run 33959452818 at `bacbc29`: ubuntu, macos and windows all SUCCESS (1014), `package` SUCCESS — the macos
+double-press red of the previous landing did not repeat (one occurrence; `U-press-atomic-mac` queued).
 
 **NOT done, stated:** item 3 — over the pipe, after a completed sweep and `Faults.Disconnected`, the same id answered
 `TRADING_CONNECTION_MISSING` with one connector call during the replay; the fix is one line at each of
