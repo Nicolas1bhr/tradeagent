@@ -1058,9 +1058,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // the database. Handed over as a delegate, the lookup happens first and the capture never
         // runs on a replay, so the stored answer comes back with nothing asked of the platform. The
         // verb/session binding in `ReplayOf` is then the one gate a replay has to pass.
+        //
+        // AND THE ID IS OWNED FOR AS LONG AS THIS HANDLER RUNS IT. A second call on the same id while
+        // this one is still in flight is not a crash to resume from: without the lease it re-ran the
+        // plan, read the legs in the DISPATCHING state they were in at that instant, and wrote that
+        // transient answer down first (Codex F18). Disposed however this ends, including a throw.
         var composite = await gateway.BeginCompositeAsync(ctx, rid, Core.Ops.CancelAll,
             async token => (await gateway.OrdersAsync(false, token)).Select(o => o.ConnectorOrderId).ToList(),
             () => FreshSweepNonce("cancelall"), ct);
+        using var owner = composite.Owner;
         if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
         var nonce = composite.Nonce;
         // AWAITED RATHER THAN HANDED OVER, and that is not a style choice. `RunLegs` takes the WIDER
@@ -1563,9 +1569,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // See CancelAll: the composite is persisted before any effect, a replayed id returns the
         // answer it already gave rather than closing whatever is open now, and the position read is
         // inside the delegate so that answer is still available with the platform unreachable.
+        // The owner lease is CancelAll's too: a duplicate waits for this run's answer instead of
+        // resuming a sweep that never stopped.
         var composite = await gateway.BeginCompositeAsync(ctx, rid, Core.Ops.CloseAll,
             async token => (await gateway.PositionsAsync(token)).Where(p => p.Quantity != 0).Select(p => p.Symbol).ToList(),
             () => FreshSweepNonce("closeall"), ct);
+        using var owner = composite.Owner;
         if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
 
         var legs = await RunLegs(composite.Targets, "closeall", composite.Nonce,

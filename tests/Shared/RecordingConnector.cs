@@ -95,7 +95,12 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     /// gate. The position read moved inside the gate when the open-position cap did (Codex F1), and
     /// the quote read did not, so the quote is now the only such call on the placement path.
     /// </summary>
-    public enum HeldCall { Place, Positions, Modify, Close, Quote }
+    /// <summary>
+    /// <see cref="Cancel"/> is gated for the composite-owner tests: a sweep's FIRST leg has to be
+    /// stoppable so a second caller can arrive on the same request id while the first is still
+    /// running (REVIEW 2026-09-05b, Codex F18). One-shot holds are the seam's job, not this enum's.
+    /// </summary>
+    public enum HeldCall { Place, Positions, Modify, Close, Quote, Cancel }
 
     async Task Gate(HeldCall kind)
     {
@@ -178,10 +183,11 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
         return await Inner.ModifyOrderAsync(c, ct);
     }
 
-    public Task CancelOrderAsync(string id, CancellationToken ct = default)
+    public async Task CancelOrderAsync(string id, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Cancels);
-        return Inner.CancelOrderAsync(id, ct);
+        await Gate(HeldCall.Cancel);
+        await Inner.CancelOrderAsync(id, ct);
     }
 
     public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) =>

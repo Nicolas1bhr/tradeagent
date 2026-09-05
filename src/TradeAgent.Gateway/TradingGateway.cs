@@ -27,6 +27,10 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
     readonly List<DateTimeOffset> _recentDispatches = [];
+
+    /// <summary>Composites a caller in THIS process is running right now. See <see cref="ClaimCompositeOwner"/>.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource> _compositeOwners = new(StringComparer.Ordinal);
+
     IReadOnlyList<InstrumentInfo> _instrumentCache = [];
 
     public ITradingConnector Connector { get; }
@@ -2190,8 +2194,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// The answer the first run gave, or null when it never finished giving one. Non-null means the
     /// caller may return this and do nothing else.
     /// </param>
+    /// <param name="Owner">
+    /// THE CLAIM ON THIS REQUEST ID WHILE THIS CALLER IS RUNNING IT, and the caller must dispose it
+    /// however the run ends — <c>using var owner = plan.Owner;</c> at the call site. Non-null only
+    /// for the caller that CREATED the composite; a replay owns nothing. See
+    /// <see cref="ClaimCompositeOwner"/>.
+    /// </param>
     public sealed record CompositePlan(string RequestId, string Nonce,
-        IReadOnlyList<string> Targets, string? StoredResultJson, bool Replay);
+        IReadOnlyList<string> Targets, string? StoredResultJson, bool Replay, IDisposable? Owner = null);
 
     /// <summary>
     /// PERSISTS THE COMPOSITE BEFORE ANY EFFECT, AND RECOGNISES A REPLAY (Codex C2).
@@ -2255,7 +2265,7 @@ public sealed class TradingGateway : IAsyncDisposable
         Func<CancellationToken, Task<IReadOnlyList<string>>> capture, Func<string> freshNonce,
         CancellationToken ct = default)
     {
-        if (_composites.Get(requestId) is { } known) return ReplayOf(known, requestId, op, ctx);
+        if (_composites.Get(requestId) is { } known) return await ReplayOfAsync(known, requestId, op, ctx, ct);
 
         var targets = await capture(ct);
         var (created, stored) = _composites.TryBegin(new CompositeRequest
@@ -2269,10 +2279,86 @@ public sealed class TradingGateway : IAsyncDisposable
         });
 
         return created
-            ? new CompositePlan(requestId, stored.Nonce, targets, null, false)
+            ? new CompositePlan(requestId, stored.Nonce, targets, null, false, ClaimCompositeOwner(requestId))
             // Lost the insert to a caller that arrived between the lookup and here. The stored row
             // is the one that counts, and it is checked exactly as any other replay is.
-            : ReplayOf(stored, requestId, op, ctx);
+            : await ReplayOfAsync(stored, requestId, op, ctx, ct);
+    }
+
+    /// <summary>
+    /// A REPLAY THAT WAITS FOR A RUN THAT HAS NOT FINISHED (REVIEW 2026-09-05b, Codex F18).
+    ///
+    /// The binding is checked FIRST and is not worth waiting for: a wrong verb or a foreign session
+    /// is a mistake whatever the owner ends up answering, and refusing it immediately is what keeps
+    /// a mis-typed id from parking behind somebody else's sweep.
+    ///
+    /// Then, if a caller in this process is still running this id, this one waits for it and reads
+    /// the row again. What it gets back is the owner's own answer — the only answer this request id
+    /// is entitled to. Without the wait it re-ran the plan against legs that were mid-flight, read
+    /// their write-ahead DISPATCHING rows as the outcome, and wrote that down first; the owner's real
+    /// answer then hit a first-write-wins <c>Complete</c> and was dropped.
+    ///
+    /// The wait is bounded by the CALLER'S OWN token and by nothing else. There is no second deadline
+    /// to invent here: the thing being waited for is a sweep whose own operations are already bounded
+    /// by the connector's deadlines, and a shorter wait would simply reinstate the defect under a
+    /// timer. A caller that will not wait cancels.
+    /// </summary>
+    async Task<CompositePlan> ReplayOfAsync(CompositeRequest stored, string requestId, string op,
+        AgentContext ctx, CancellationToken ct)
+    {
+        CompositeBindingOrThrow(stored, requestId, op, ctx);
+
+        if (_compositeOwners.TryGetValue(requestId, out var running))
+        {
+            _log.Engineering("Gateway", "composite_waiting_for_owner", requestId: requestId,
+                metadataJson: Json.Write(new { op }));
+            await running.Task.WaitAsync(ct);
+            stored = _composites.Get(requestId) ?? stored;
+        }
+
+        return ReplayOf(stored, requestId, op, ctx);
+    }
+
+    /// <summary>
+    /// WHO IS RUNNING THIS COMPOSITE RIGHT NOW — the one fact the store cannot hold.
+    ///
+    /// A <c>composite_request</c> row with a null result means two different things: the run died
+    /// mid-flight, or it is still going. Resuming is right for the first and wrong for the second,
+    /// and until this lease existed the second was read as the first — a duplicate re-ran the stored
+    /// plan while the owner was inside a connector call, saw its legs in the DISPATCHING state their
+    /// write-ahead rows were in at that instant, and wrote THAT down as the answer. <c>Complete</c>
+    /// is first-write-wins, so the transient reading became the permanent one and the owner's real
+    /// answer was dropped (REVIEW 2026-09-05b, Codex F18).
+    ///
+    /// IN MEMORY, DELIBERATELY, exactly like the reconciler's dispatch lease: a claim that outlived
+    /// the process holding it would be a claim nothing could ever release, and the row a crash
+    /// leaves behind must still resume. So "no lease" means "nobody is running this", which after a
+    /// restart is true by construction.
+    ///
+    /// THE OWNER RELEASES IT, HOWEVER THE RUN ENDS. Disposal is the release that covers a throw;
+    /// <see cref="CompleteComposite"/> releases as well, because a caller that has written the answer
+    /// is done whatever it does next, and a waiter must not be held behind a caller that has already
+    /// said everything it is going to say.
+    ///
+    /// Only <see cref="BeginCompositeAsync"/> takes one. The synchronous <see cref="BeginComposite"/>
+    /// is the emergency press's, whose request ids carry a freshly minted nonce and live in the
+    /// <c>op-</c> namespace the pipe refuses outright, so no second caller can name one.
+    /// </summary>
+    IDisposable ClaimCompositeOwner(string requestId)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _compositeOwners[requestId] = done;
+        return new CompositeOwner(this, requestId, done);
+    }
+
+    /// <summary>Releases the claim once, and wakes everything waiting on it. See <see cref="ClaimCompositeOwner"/>.</summary>
+    sealed class CompositeOwner(TradingGateway gw, string requestId, TaskCompletionSource done) : IDisposable
+    {
+        public void Dispose()
+        {
+            gw._compositeOwners.TryRemove(new KeyValuePair<string, TaskCompletionSource>(requestId, done));
+            done.TrySetResult();
+        }
     }
 
     /// <summary>
@@ -2293,6 +2379,18 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     CompositePlan ReplayOf(CompositeRequest stored, string requestId, string op, AgentContext ctx)
     {
+        CompositeBindingOrThrow(stored, requestId, op, ctx);
+
+        _log.Engineering("Gateway", "composite_replayed", requestId: requestId,
+            metadataJson: Json.Write(new { op, finished = stored.ResultJson is not null }));
+
+        return new CompositePlan(requestId, stored.Nonce,
+            Json.Read<List<string>>(stored.PlanJson) ?? [], stored.ResultJson, true);
+    }
+
+    /// <summary>The two things a reused id must match before it may be replayed at all. See <see cref="ReplayOf"/>.</summary>
+    static void CompositeBindingOrThrow(CompositeRequest stored, string requestId, string op, AgentContext ctx)
+    {
         if (!string.Equals(stored.Op, op, StringComparison.Ordinal))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"request id '{requestId}' already names a '{stored.Op}'; it cannot be reused for a " +
@@ -2302,17 +2400,16 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"request id '{requestId}' belongs to another session; it cannot be replayed here. " +
                 "Ask again with a new request id.");
-
-        _log.Engineering("Gateway", "composite_replayed", requestId: requestId,
-            metadataJson: Json.Write(new { op, finished = stored.ResultJson is not null }));
-
-        return new CompositePlan(requestId, stored.Nonce,
-            Json.Read<List<string>>(stored.PlanJson) ?? [], stored.ResultJson, true);
     }
 
     /// <summary>Writes the answer this request id will give from now on. Only the first one sticks.</summary>
-    public void CompleteComposite(string requestId, string resultJson) =>
+    public void CompleteComposite(string requestId, string resultJson)
+    {
         _composites.Complete(requestId, resultJson);
+        // The answer is written, so anything waiting on this id may have it now rather than when the
+        // owner gets round to disposing its lease. See ClaimCompositeOwner.
+        if (_compositeOwners.TryRemove(requestId, out var done)) done.TrySetResult();
+    }
 
     // ---------------------------------------------------------------- emergency controls (operator only)
 

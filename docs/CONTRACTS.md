@@ -670,6 +670,24 @@ positions ahead of the call, so a replay with the connector unreachable answered
 `TRADING_CONNECTION_MISSING` after one connector call rather than returning the reply already in the
 database; both now hand the read over as the delegate.
 
+**And a second caller on a composite that is still RUNNING waits for it, rather than resuming it.**
+A `composite_request` row with a null result means two different things — the run died mid-flight, or
+it has not finished — and the store cannot tell them apart. Read as the first, a duplicate re-ran the
+stored plan while the owner was inside a connector call, saw each leg in the write-ahead `DISPATCHING`
+state it was in at that instant, and wrote THAT down as the answer; `Complete` is first-write-wins, so
+the transient reading became permanent and the owner's real answer was dropped. The agent that asked
+what its `cancel-all` did was then told, for ever, that nothing was cancelled — about a sweep that
+cancelled everything (REVIEW 2026-09-05b, Codex F18). The gateway therefore keeps an **owner lease**
+for as long as one caller in this process is running an id: a second `BeginCompositeAsync` on it
+checks the verb/session binding first (a mistake is refused immediately rather than parked behind
+somebody else's sweep), then waits on the caller's own token and returns the answer the owner stored.
+**The lease is in memory, deliberately** — a claim that outlived the process holding it would be a
+claim nothing could release, and the row a crash leaves behind must still resume, which is exactly
+what "no lease" means after a restart. The owner releases it when it writes the answer and, whatever
+else happens, when it disposes the lease the plan handed it. The emergency press does not take one:
+its ids carry a freshly minted nonce inside the `op-` namespace the pipe refuses outright, so no
+second caller can name one.
+
 **A trading mode this build does not have allows nothing.** `TradingMode` is `OBSERVE`, `PAPER`,
 `LIVE_CONFIRM`, `LIVE_AUTONOMOUS`; it is persisted as a name, and the JSON enum converter also reads
 NUMBERS and casts one it does not recognise straight onto the enum. A settings row saying
