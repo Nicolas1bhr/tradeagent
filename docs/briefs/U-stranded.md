@@ -34,3 +34,31 @@ trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 war
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant; the derived
 bound's formula and its shipped value; final counts; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+Three item commits on `u-stranded`, tip `68b2883` (this report is the commit after it), rebased onto `main` at
+`c98e02c`; no push, no other worktree touched.
+Gate, both run: `dotnet build TradeAgent.sln -c Release --no-incremental` → **0 Warning(s), 0 Error(s)**; `dotnet test
+TradeAgent.sln -c Release --no-build` → **Unit 201 + Fault 195 + Integration 530 = 926, 0 failed** (919 on `main` + 7).
+Test-name diff vs `main`: **7 added, 0 removed**.
+**The bound**: `TradingGateway.DispatchStrandedAfter = Connector.WorstCaseOperationPath + GatewayOptions.DispatchSettleSlack`
+= **50 + 20 = 70 s** shipped; an explicit option may only LENGTHEN it, as `HandlerDrainTimeout` does.
+`ExecutionRequestStore.DefaultDispatchStrandedAfter` (the 30 s constant) is deleted.
+1. `StrandedBoundDerivationTests`, 3 tests. RED: `at 40s unconfirmed : 1`; `unconfirmed work at 40s : True`;
+   `at 75s : resolved=1 inconclusive=0 state=CANCELLED`. GREEN. Mutant `DerivedDispatchStrandedAfter => 30 s` → 3 red,
+   `cp` restored, green again.
+2. `LiveDispatcherOwnsItsRowTests`, 3 tests. RED is UNVERIFIED 4 executed: `resolved=1 … detail: owned-1: never reached
+   the broker … trading resumed: True`, and `record now: RECONCILING, needs_reconciliation=True … engineering:
+   startup_sweep_unknown, already_settled` while that dispatch answered FILLED. GREEN. One mutant per guard: lease check
+   → `if (false)` → 1 red; `LateDefiniteSettle` deleted → 1 red. Both restored, green again.
+3. One test. RED `wire-1: a dispatch is still in progress` → GREEN `wire-1: still on the wire for 90s of a possible 50s`.
+   Mutant (name the bound, not the wire) → red at `possible 70s`. Restored.
+P6b lifted verbatim from `review-probes`, run, then deleted (not committed): it now fails at its own premise —
+`Assert.True(gw.HasUnconfirmedWork())` one second in — because a placement in flight is not stranded. P6a cannot compile
+against this tree: it asserts on the constant that is gone.
+**Did NOT do**: no box, no real ATAS, no money, no UI. Did not touch the press region, the authorization path, the pipe
+server or the updater — `UpdateTradingInterlock` still asks the raw flag (finding 3) and so still sees none of this.
+NOT VERIFIED, as the review also said: that a real bridge really spends 30–50 s in gate + frame. One behaviour change
+beyond the finding: a record this process never dispatched now waits bound + grace before absence settles it, so
+`A_legacy_stranded_cancel_record_is_swept_and_the_absence_path_terminates_it` was given a movable clock to say so.
