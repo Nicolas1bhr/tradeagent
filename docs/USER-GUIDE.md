@@ -281,12 +281,19 @@ rather than act on it.
 
 Set on the **Safety** page.
 
-| Mode | Meaning |
-|---|---|
-| **Watch only** | The AI can look at everything and place nothing. |
-| **Practice** | Orders go to a simulated account. Nothing real. Start here and stay a while. |
-| **Real, ask me first** | The AI proposes each order; nothing happens until you approve it. |
-| **Real, fully automatic** | The AI trades on its own, inside the limits you set. |
+| Mode | Presses | Meaning |
+|---|---|---|
+| **Watch only** | one | The AI can look at everything and place nothing. |
+| **Practice** | one | Orders go to a simulated account. Nothing real. Start here and stay a while. |
+| **Real, ask me first** | two | The AI proposes each order; nothing happens until you approve it. |
+| **Real, fully automatic** | two | The AI trades on its own, inside the limits you set. |
+
+**The two real-money modes take two presses; the other two take one.** The first press turns the
+button red and says what the second one will do — *"Confirm: let the AI propose real orders"*, and
+for the fully automatic mode *"Confirm: let the AI place real orders without asking"*. Watch only and
+Practice are one press because they can only ever take authority away, and a screen that argues with
+someone trying to stop is a screen that gets people hurt. That asymmetry is the rule everywhere in
+TradeAgent: giving the AI room asks twice, taking it away happens at once.
 
 The two real-money modes need you to switch real-money trading on **separately** — choosing the mode
 is not consent on its own. And if you leave a real mode and come back, you have to switch it on again.
@@ -319,14 +326,19 @@ They are separate on purpose.
 | Button | Presses | What it does | What it does *not* do |
 |---|---|---|---|
 | **STOP AI TRADING** | one | Takes away the AI's permission to trade, instantly | Does not touch your existing orders or positions |
+| **RESUME AI TRADING** | two | Gives that permission back | Does not place anything by itself |
 | **Cancel all working orders** | two | Cancels the orders it found, one by one | Does not close positions you already hold |
 | **Close all positions** | two | Sells/buys to flatten everything, at market | — |
 
-**STOP AI TRADING** is one press, in both directions, and it is at the top of the window on every
-page. It is the one control you never have to go looking for. It is instant, it is safe, and it
-changes nothing about your money — it only takes the AI's permission away. It is one press because a
-mis-press costs nothing and hesitating costs money. When it is on, the same button says **RESUME AI
-TRADING**.
+**STOP AI TRADING** is one press, and it is at the top of the window on every page. It is the one
+control you never have to go looking for. It is instant, it is safe, and it changes nothing about
+your money — it only takes the AI's permission away. It is one press because a mis-press in that
+direction costs nothing and hesitating costs money.
+
+**Going back is two.** When the AI is stopped the same button says **RESUME AI TRADING**, and
+pressing it turns it red and says *"Confirm: let the AI trade again"*; only the second press does
+it. That direction is not free — in a real-money mode it hands the permission back to something that
+places orders — so it is the same two presses as everything else here that gives rather than takes.
 
 The other two move money, so they are two presses: the first press changes the button into the
 sentence it is about to carry out — *"Confirm: close all positions with market orders"* — and only
@@ -389,7 +401,15 @@ and nothing went anywhere. Different sentence, different meaning, on purpose.
 
 On the **Safety** page. Change a number, press **Save limits**, and it applies to the next order.
 These are enforced before anything reaches your broker. The AI cannot raise them and has no command
-to ask:
+to ask.
+
+**Lowering one saves in a press. Raising one asks twice** — the button turns red and names the limit
+you widened, *"Confirm: widen “Most orders per minute”"*, or counts them if you changed several. A
+raised cap is the same act as choosing a real-money mode, done with a number instead of a button.
+Note the one field where "wider" is not "larger": **0** in the money box means *not enforced*, so
+setting it to 0 is the widest that limit gets and asks twice, while a smaller number saves at once.
+
+The five:
 
 - the most it can buy or sell in **one order**;
 - the most **money** one order may be worth (off by default — see below);
@@ -418,10 +438,12 @@ all, and puts every limit at zero, and the Dashboard says *"your settings could 
 is stopped until you review them on the Safety page."*
 
 To fix it, open **Safety**. A yellow panel at the top says the same thing. Check every value on that
-page — they are all showing zero, because none of them came from you — and press **Save limits**. The
-panel disappears as soon as you do. The trading mode and your account go the same way, so set the
-mode on that page too, and choose your account again on **Settings**. Nothing here needs a file, a
-folder or a command: if you can see the panel, you can undo it.
+page — they are all showing zero, because none of them came from you — and press **Save limits**.
+Putting your own numbers back raises every limit from zero, so this is a save that asks twice: the
+button names what it is widening and the second press writes it. The panel disappears as soon as you
+do. The trading mode and your account go the same way, so set the mode on that page too — a
+real-money mode is two presses as well — and choose your account again on **Settings**. Nothing here
+needs a file, a folder or a command: if you can see the panel, you can undo it.
 
 ## Two behaviours that will look like faults, but are not
 

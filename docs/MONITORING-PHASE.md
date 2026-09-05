@@ -152,9 +152,11 @@ sentence at protocol 3 has NOT been seen on hardware — the box's bridge is sti
    large.
 4. **Confirm the app has been restarted at least once since the last update**, and that the version in
    `app_version` is the one you deployed.
-5. **Do a two-press drill in Practice mode**: press STOP AI TRADING, confirm the button reads RESUME
-   AI TRADING, press it back. One press each way (`DashboardView.cs:638-642`). Costs nothing and
-   proves the one control that must never be stiff.
+5. **Do the kill-switch drill in Practice mode**: press STOP AI TRADING, confirm the button reads
+   RESUME AI TRADING, then press it TWICE to come back — the first press arms it and it reads
+   "Confirm: let the AI trade again". Stopping is one press and resuming is two
+   (`Ui.KillSwitch`, built by `SafetyPage.BuildKillSwitch` and `MainWindow.BuildKillSwitch`). Costs
+   nothing and proves the one control that must never be stiff on the way down.
 
 ---
 
@@ -193,8 +195,9 @@ the moment for judgment calls at three in the morning.
 
 In this order.
 
-1. **Press STOP AI TRADING.** One press, instantly, from any page (`MainWindow.cs:289-291`). It
-   removes the AI's permission and touches nothing else. If you cannot reach the window, there is no
+1. **Press STOP AI TRADING.** One press, instantly, from any page (`MainWindow.BuildKillSwitch`). It
+   removes the AI's permission and touches nothing else. Only this direction is one press; letting
+   the AI trade again takes two. If you cannot reach the window, there is no
    remote equivalent that is safe to recommend — the operator controls are deliberately in-process
    only and are not reachable from the agent-facing pipe.
 2. **Then go to ATAS and close the positions by hand.** Not through TradeAgent. If you are stopping

@@ -278,8 +278,9 @@ In order. Stop at the first one that does not read as described.
    and then cancel it, and check the book from outside TradeAgent afterwards. That is what U4 did with
    `probe atas` → `ORDERS IN LIVE BOOK : 0`, `orders=0 strategyorders=0 mytrades=0 position=0`.
    *Walked (U4).*
-6. **Press STOP AI TRADING and press it again.** One press each way
-   (`DashboardView.cs:638-642`); the button reads **RESUME AI TRADING** while it is on.
+6. **Press STOP AI TRADING, then press RESUME AI TRADING twice.** Stopping is one press; resuming
+   arms first and reads "Confirm: let the AI trade again" (`SafetyPage.BuildKillSwitch`,
+   `MainWindow.BuildKillSwitch`), and only the second press gives the permission back.
 7. **Create support package** on the Checks page, and open the zip. It should contain
    `activity.txt`, `environment.json`, `engineering.log`, whatever is in the home's `logs\` folder,
    and any `bridge-coid-witness.errors.log*` beside the bridge
