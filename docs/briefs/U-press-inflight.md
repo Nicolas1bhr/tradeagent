@@ -22,9 +22,13 @@ agent's leg — the reverse ordering holds; only the overlap is open.
    bounded wait inside the emergency budget before the refusal is allowed, not required. The check and the wire are
    one statement over one set, no window between them. RED first: lift P6 → GREEN (nothing sent for ES by the press;
    the agent's close fills; position 0); mutant (the open-work check deleted) → RED with P6's `ES -2`; P6b lifted too.
-2. **Cancel All**: say, with a probe, whether a cancel leg can race an agent's modify or cancel of the same order in
+2. **The agent's own `close` is the same class** (Codex F3, `TradingGateway.cs:1855`): its size and side come from a
+   position read BEFORE the awaited account and risk reads, so an intervening fill turns a close into a new or reversing
+   position. Re-read at dispatch, inside the gate, and recompute or refuse when the position moved. RED first
+   (a fill lands between the snapshot and the wire) → GREEN; mutant → RED.
+3. **Cancel All**: say, with a probe, whether a cancel leg can race an agent's modify or cancel of the same order in
    the same way; fix it with the same statement, or record why it cannot happen.
-3. **The words:** `docs/CONTRACTS.md` and `GatewaySchema.cs` say what a waited-on leg reads; the Dashboard renders it.
+4. **The words:** `docs/CONTRACTS.md` and `GatewaySchema.cs` say what a waited-on leg reads; the Dashboard renders it.
 
 Yours: the press code in `TradingGateway.cs`, `GatewayPipeServer.cs`'s close-all/cancel-all answers if a field is added,
 `GatewaySchema.cs`, `docs/CONTRACTS.md`, `DashboardView.cs`'s press-result rendering. Commit per item, no trailers.

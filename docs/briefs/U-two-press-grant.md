@@ -21,8 +21,9 @@ a live mode re-arms the live switch, so the one press bites only between the two
    press: they only reduce. The same wherever else the row is built (Settings, onboarding).
 2. **The emergency toggle arms only in the RESUME direction:** STOP stays one press; RESUME AI TRADING is two, in every
    place the toggle is built (`DashboardView.cs:685`, `MainWindow.cs:659`).
-3. **The sentences:** `docs/USER-GUIDE.md:328` and every guide sentence saying the mode row or resume is one press.
-4. **Proof.** A test per control that it is built two-press, the way `BridgeReinstallTests` judges the reinstall button:
+3. **A risk cap raised is a grant too** (Codex F12): widening any cap on Settings is two-press; lowering stays one.
+4. **The sentences:** `docs/USER-GUIDE.md:328` and every guide sentence saying the mode row or resume is one press.
+5. **Proof.** A test per control that it is built two-press, the way `BridgeReinstallTests` judges the reinstall button:
    RED first against `main`'s widgets → GREEN; mutant (`Ui.Confirm` → `Ui.Secondary` on the autonomous row) → RED. Then
    the running app on the Mac loop: read the armed label for LIVE_AUTONOMOUS and for RESUME off the screen and quote
    it; if the display cannot be woken or Accessibility refuses the press, NOT VERIFIED and what you tried.

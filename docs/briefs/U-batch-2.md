@@ -23,7 +23,10 @@ tables; the no-terminal rule), findings 4, 5 and 6 of `docs/REVIEW-2026-09-05b.m
    (the attestation deleted) → RED. Both directions: a file the owner drops while no agent runs is still `Inbox`.
 3. **A removed row is never un-removed** (`MaterialStore.cs:45/92`): a sighting after `removed_at` is a new version and a
    new row (or the sha is cleared so the next pass re-hashes) — the ledger never states a hash for bytes it did not
-   hash. RED first: lift P5b → GREEN; mutant → RED.
+   hash. RED first: lift P5b → GREEN; mutant → RED. Two Codex claims of the same table, each RED first or refuted:
+   F17 — `ByShaPrefix` (`MaterialStore.cs:106`) feeds an agent-supplied prefix unescaped to `LIKE … LIMIT 1`, so `%`, `_`
+   or a one-character prefix attaches a note to an arbitrary row: refuse non-hex and ambiguous prefixes; F19 — hashing
+   never revalidates `(size, mtime)` at hash time, so an equal-length, mtime-restored swap reuses the old row.
 
 Yours: `Downloader.cs`, `Prerequisites.cs`, `NodeRuntime.cs` and the runtime-archive callers; `MaterialScanner.cs`,
 `MaterialStore.cs`, `Paths.cs`, `CliAgentRuntime.cs`, `InboxView.cs`, `AGENTS.md`, `docs/USER-GUIDE.md`; tests. No
