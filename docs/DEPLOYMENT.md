@@ -141,9 +141,17 @@ equality — not "at least" (`Versioning.cs:48`). So:
 
 > **Redeploy the DLL before you update the app on any machine that already has a bridge.** A
 > protocol-2 bridge against a protocol-3 build is refused by design, with
-> *"bridge 0.1.1 speaks protocol 2, this build speaks 3 — reinstall the add-on from TradeAgent"*
-> (`src/TradeAgent.Connectors.Atas/BridgeProtocol.cs:165-167`). That refusal is permanent until a
-> compatible hello repairs it (`AtasConnector.cs:280-286`).
+> *"bridge 0.1.1 speaks protocol 2, this build speaks 3 — press Reinstall the bridge on the Checks
+> page"* (`src/TradeAgent.Connectors.Atas/BridgeProtocol.cs`, `IncompatibleBridge.ToString`). That
+> refusal is permanent until a compatible hello repairs it (`AtasConnector.cs:280-286`).
+>
+> **The redeploy is a button in the app now.** The owner opens Checks — the card appears there
+> whenever the bridge is refused, missing or the wrong protocol — or Settings, where it is always
+> present, and presses **Reinstall the bridge** twice. It runs the same `AtasInstallation.InstallBridge`
+> the setup step runs and re-derives the bridge row immediately (`src/TradeAgent.App/AppHost.cs`,
+> `ReinstallBridgeAsync`). ATAS holding the DLL open is reported as "close ATAS, then press Reinstall
+> the bridge again" (`ErrorCode.ATAS_BRIDGE_IN_USE`) — **NOT VERIFIED against a real ATAS**; the
+> refused-copy path is covered off Windows by a destination the copy cannot overwrite.
 
 Read the number back before you believe anything:
 
@@ -204,8 +212,11 @@ recognise:
 - **"Order confirmation"** warns whenever there is unconfirmed work, and trading stays paused until a
   person or the reconciler settles it (`Doctor.cs:155-167`).
 
-**The Checks page prints repair text but has no repair buttons** (`DashboardView.cs:910-919`). So
-`"Press Install bridge."` is a sentence with nothing behind it — see §7.
+**The Checks page now has one repair button**: `Reinstall the bridge`, on a card that appears
+whenever the bridge row is refused, missing or the wrong protocol (`DashboardView.cs`, `BridgeRepair`
+and `ChecksPage`). Every sentence that sends the owner there names it by that label — the health row,
+the protocol refusal and `Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING).Repair`, which is the one string
+`Doctor.cs` prints. Nothing else on this page changes anything.
 
 ---
 
@@ -310,10 +321,8 @@ you intended, from a copy whose checksum you have checked by hand.
 - The Inbox drop/picker COPY path (needs a person at the keyboard).
 - Anything with a real broker or real money.
 - `proto=3` read on hardware.
-- **There is no in-app way to reinstall the bridge after setup completes.** The setup surface is only
-  shown while onboarding is incomplete (`src/TradeAgent.App/MainWindow.cs:183`), the only caller of
-  `Onboarding.Clear` is the wizard's own Back (`OnboardingView.cs:349`), and neither Settings nor
-  Checks offers the action. Today the repair is: close ATAS, copy `TradeAgent.*` from the installed
-  app's `bridge\` folder into `%APPDATA%\ATAS\Strategies` by hand, reopen ATAS, refresh the strategy
-  list, Add, Start. **That is a terminal-free product asking a person to move a file, and it is a
-  defect, not a procedure.** It is in the user guide's "Still not finished" list.
+- **The in-app bridge reinstall has never been walked on a machine with ATAS on it.** The control
+  exists — Checks and Settings, `Reinstall the bridge`, two presses — and its install call, its
+  status re-derivation and its refused-copy sentence are covered by tests off Windows. What is NOT
+  verified is the case the button is most needed for: ATAS running, holding the loaded assembly, the
+  copy refused by Windows, the owner closing ATAS and pressing again.

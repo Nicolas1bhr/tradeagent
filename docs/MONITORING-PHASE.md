@@ -124,7 +124,7 @@ One SSH session. Each item has the reading that means fine and the reading that 
 | 1 | `trade status --json` answers at all | any JSON | the token error, or no answer — the app is down, and while it is down nothing is reconciling |
 | 2 | `unreconciled_requests` and `open_requests` | `0` and `0` | anything non-zero that is still non-zero on the next look — see §4 |
 | 3 | the four gating rows in `health[]` | all `READY` | any of them not READY. `execution_blocked_reason` names it |
-| 4 | the `ATAS bridge` row's detail | `connected · bridge <v>, protocol 3` | anything containing `reinstall the add-on` or `could not prove it holds this installation's bridge secret` |
+| 4 | the `ATAS bridge` row's detail | `connected · bridge <v>, protocol 3` | anything containing `press Reinstall the bridge` or `could not prove it holds this installation's bridge secret` |
 | 5 | `ai_trading_stopped` and `mode` | what you last set them to | `ai_trading_stopped true` when you did not set it — it is saved and survives restarts, so somebody pressed it; the reason is in the activity history |
 
 Item 4's two sentences are deliberately different diagnoses with different repairs, and the code goes
@@ -172,8 +172,10 @@ the moment for judgment calls at three in the morning.
    `RECONCILING` until a person answers the card. U4 watched exactly this — the bridge was restarted
    and the record still did not self-resolve over eight samples in 70 seconds, which is the correct
    behaviour.
-2. **The `ATAS bridge` row says `reinstall the add-on`.** The refusal is permanent until a compatible
-   bridge connects. Trading is not happening; deploy the DLL and restart the strategy.
+2. **The `ATAS bridge` row says `press Reinstall the bridge`.** The refusal is permanent until a
+   compatible bridge connects. Trading is not happening. The owner can do this themselves now: the
+   card is on Checks whenever the row calls for it and always on Settings; close ATAS, press the
+   button twice, reopen ATAS and start the strategy on a chart.
 3. **An update was refused.** Read the sentence. `cannot be verified` means the release itself is not
    installable and needs republishing; `will not replace itself while an order's outcome is still
    unconfirmed` means you have an open card — which is rule 1, arriving by another door

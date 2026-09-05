@@ -48,3 +48,8 @@ Branch `u-bridge-reinstall` off `main` `421b5d8`. No push, no other worktree, no
    RED `Not found: "Reinstall the bridge"`. Beyond the brief's two "add-on" spots I found three more live
    sentences (`AtasConnector.cs` `PendingHello`, `Silent`, `PresentedNoProof`) and fixed the text only; and
    two catalogue repairs naming a phantom Retry (`ATAS_NOT_FOUND`, `AI_INSTALL_FAILED`).
+3. **The docs — DONE.** `USER-GUIDE.md`: the "no button for that repair yet" paragraph is replaced by how to
+   press it (owner's words, no paths), the quoted refusal is the new sentence, and the "Still not finished"
+   bullet is gone. `DEPLOYMENT.md`: the redeploy note and §5 point at the button; the "not yet walked" bullet
+   now says what is NOT verified — a real ATAS holding the DLL. `MONITORING-PHASE.md` too, because its row-4
+   grep string was one I had just deleted.

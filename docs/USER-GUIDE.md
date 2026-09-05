@@ -197,14 +197,22 @@ ATAS is not TradeAgent's software, and this is the one part of setup that is not
 **One thing to expect after an update.** The bridge and TradeAgent have to be the same generation. If
 TradeAgent is updated and the piece inside ATAS is an older one, TradeAgent refuses to talk to it
 rather than guess, and says exactly that on the Dashboard and on the Checks page: *"bridge 0.1.1
-speaks protocol 2, this build speaks 3 — reinstall the add-on from TradeAgent."* It is not a fault,
-and it is not a password problem — TradeAgent tells those two apart on purpose, because they look
-identical from the outside and have completely different repairs.
+speaks protocol 2, this build speaks 3 — press Reinstall the bridge on the Checks page."* It is not a
+fault, and it is not a password problem — TradeAgent tells those two apart on purpose, because they
+look identical from the outside and have completely different repairs.
 
-**But there is no button for that repair yet.** Once setup has finished, the screen that puts the
-bridge into ATAS is not reachable again from inside the window, and neither Settings nor Checks
-offers another way to do it. Until that is built, the sentence tells you what is wrong and whoever
-set the machine up has to do the replacing. It is on the list below.
+**Putting the bridge back.** That repair is a button, and it is where the sentence says it is. Open
+**Checks**: whenever the bridge is missing, refused, or an older one than TradeAgent expects, a card
+called **The ATAS bridge** appears there with **Reinstall the bridge** on it. The same card is always
+on the **Settings** page, whether anything is wrong or not, for the times somebody has told you to put
+the bridge back.
+
+Press it once and it turns red and says what the second press will do; press it again and TradeAgent
+replaces the bridge. Trading through ATAS stops until the bridge is started again — so close ATAS
+first if it is open, then start **TradeAgent Bridge** on a chart the way you did during setup.
+TradeAgent notices by itself that it is back; you do not have to tell it. If ATAS is open and holding
+the file, TradeAgent says so and asks you to close ATAS and press the button again. Nothing else is
+asked of you, and nothing is opened outside the TradeAgent window.
 
 ## The window
 
@@ -446,8 +454,6 @@ down" is not a state this can end up in.
   It needs two things proven — that your order reference survives the round trip, and that order
   history reaches far enough back to answer "what happened to this one". Until a platform confirms
   both, **Real, fully automatic** is withheld and the other three modes work normally.
-- **There is no way to reinstall the bridge from inside the window** once setup has finished. See
-  "About ATAS" above.
 - **The blue "Windows protected your PC" screen has not been walked.** Nobody has yet installed this
   from a browser download on a machine that treats it as downloaded.
 - **Rolling an update back has never been tried**, nor has an update interrupted halfway.
