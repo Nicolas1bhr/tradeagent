@@ -148,12 +148,14 @@ public interface IConnectorStatusDetail
 /// live. Measured on a connector written to this interface that really cancelled at the broker:
 /// <c>not-sent</c>, <c>attempted: 0</c> (verifier round-11 F-2).
 ///
-/// The gateway will not take a connector's silence as an assurance — a leg whose own record proves a
-/// mutating step was dispatched is reported <c>sent-not-confirmed</c> whatever the ledger says, which
-/// is the fail-closed direction — so a connector that ignores this is SAFE and IMPRECISE: every
-/// ambiguous leg asks for a reconciliation it may not need. Marking the attempt is what buys the
-/// precision back; <see cref="TransportOutcome.NothingWritten"/>, which only a connector can prove,
-/// is the one report allowed to overrule the record.
+/// The gateway will not take a connector's silence as an assurance, and since 2026-09-05 it does not
+/// have to infer that either: <c>TradingGateway</c> calls <see cref="TransportLedger.MarkDispatch"/>
+/// immediately before every mutating call it makes, so a dispatched mutation cannot leave an empty
+/// record for anything to read as one. A connector that ignores this is therefore SAFE and IMPRECISE
+/// — every ambiguous leg asks for a reconciliation it may not need — and never dangerous. Marking the
+/// attempt is what buys the precision back; <see cref="TransportOutcome.NothingWritten"/>, which only
+/// a connector can prove, is the one report allowed to overrule the record, and it is what lets the
+/// gateway settle a failed mutation without pausing over an order the broker never saw.
 /// </summary>
 public interface ITradingConnector : IAsyncDisposable
 {

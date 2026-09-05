@@ -68,9 +68,12 @@ transport record is what produces it. A connector that mutates and never marks t
 connector written to this interface that really cancelled at the broker: `not-sent`, `attempted: 0`.
 **`CancelAllOrdersAsync` is no longer sent by anything in TradeAgent.** The gateway's emergency
 cancel-all is per-order cancels of the set it captured (see below), and the agent's `cancel-all` was
-already per-order legs. The method stays on `ITradingConnector` because the ATAS connector's own
-send-deadline behaviour is measured through it and that is not this unit's to move; nothing calls it
-on the money path, and nothing should start.
+already per-order legs. **Reviewed 2026-09-05 and it stays**: it is the only call through which the
+ATAS bridge's send-gate, whole-frame and reply deadlines are measured (17 tests), and those
+measurements are about the transport rather than about cancelling everything — removing the method
+would delete the harness, not the risk. Nothing calls it on the money path, nothing should start, and
+the rule that would make a caller safe if one ever did is the same as for every other mutation: the
+dispatcher marks the attempt.
 
 **Why a placement carries an INTENT, and it is the same shape of obligation.** `PlaceOrderCommand`
 has an `Intent` — `Open` or `Close` — and a connector that gives risk-reducing work a shorter
@@ -92,6 +95,20 @@ silence for an assurance — a leg whose own record proves a mutating step was d
 `sent-not-confirmed` whatever the ledger says. Marking the attempt is what buys the precision back,
 and `NothingWritten` — which only a connector can prove — is the one report allowed to overrule the
 record.
+
+**And the gateway marks the attempt itself, at every one of its own dispatch sites**
+(`TransportLedger.MarkDispatch`, called immediately before each mutating connector call in
+`TradingGateway`). The obligation above is a contract, and a contract a third party can get wrong is
+not a guarantee: an empty record is what produces `not-sent`, so a connector that mutates and never
+marks turned an absence of information into an assurance. A dispatched mutation can now never leave
+an empty record, whatever the connector does — an unreported exit is `PossiblyWritten`, and the leg
+carries that as its evidence instead of a null. The marker reuses the record a sweep leg already
+carries rather than attaching a second, which would hide the connector's own reports from the leg
+holding it; where there is no leg — a single `cancel`, a `buy`, an operator's press — it attaches
+one, and that is what lets an ordinary dispatch read a proven `NothingWritten` back at all. **The
+three legs that legitimately answer `not-sent` are unaffected**, because none of them reaches a
+dispatch site: a target resolution that failed before its record existed, a leg parked for approval,
+and a `close-all` symbol with nothing left to close.
 
 ## `IAgentRuntime` — `src/TradeAgent.AgentRuntime/IAgentRuntime.cs`
 

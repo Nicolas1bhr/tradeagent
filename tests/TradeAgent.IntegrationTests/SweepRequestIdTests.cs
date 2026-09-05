@@ -986,6 +986,14 @@ public class SweepRequestIdTests
     /// obligation is now also STATED on `ITradingConnector` and in `docs/CONTRACTS.md`, so a connector
     /// that opts in gets the sharper answer and one that does not is no longer dangerous.
     ///
+    /// AND SINCE 2026-09-05 IT IS CLOSED AT THE SOURCE AS WELL. `TradingGateway` marks the attempt
+    /// ITSELF, immediately before every mutating connector call it makes
+    /// (`TransportLedger.MarkDispatch`), so a dispatched mutation cannot leave an empty record for
+    /// anything to read as an assurance — the word no longer rests on the pipe server inferring it
+    /// from its own record states, and the leg carries real evidence (`PossiblyWritten`) instead of a
+    /// null. The classification arm stays, because it is what covers a record this gateway did not
+    /// write.
+    ///
     /// The connector below is the verifier's: it implements the public interface, cancels the order
     /// at the broker for real, then loses the acknowledgement, and never calls `TransportLedger`.
     /// </summary>
@@ -1035,13 +1043,76 @@ public class SweepRequestIdTests
         Assert.Equal(1, sweep.GetProperty("attempted").GetInt32());
         Assert.Equal(0, sweep.GetProperty("not_sent").GetInt32());
 
-        // THE EVIDENCE IS IN THE ANSWER EVEN WHEN THERE IS NONE. The field used to be omitted by the
-        // serializer exactly when the leg had no transport report, which is exactly when the reader
-        // most needs to know that the word rests on the pipe server's knowledge and not the
-        // connector's.
+        // THE EVIDENCE IS IN THE ANSWER, and it is no longer a null. The dispatcher marked the
+        // attempt, so a call that reported nothing about itself is `PossiblyWritten` — the
+        // fail-closed answer, by that outcome's own definition — rather than an absence that the
+        // reader has to know how to interpret. (The key is asserted separately because the
+        // serializer used to omit it exactly when there was nothing to report.)
         Assert.True(leg.TryGetProperty("transport", out var transport),
             "the leg carries no `transport` key at all, so its claim arrived without its evidence");
-        Assert.Equal(JsonValueKind.Null, transport.ValueKind);
+        Assert.Equal("PossiblyWritten", transport.GetString());
+
+        // AND THE RECORD SAYS THE SAME THING. This is the half the word cannot do anything about: a
+        // cancel that really reached the broker must leave a row somebody will reconcile.
+        var record = gw.GetRequest(leg.GetProperty("request_id").GetString()!)!;
+        Assert.Equal(ExecutionState.UNKNOWN, record.State);
+        Assert.True(record.NeedsReconciliation,
+            "a cancel that reached the broker was settled clean — a connector's silence became an assurance");
+    }
+
+    /// <summary>
+    /// THE SAME PROOF, ON A CALL WITH NO SWEEP AROUND IT — which is where it used to be unreadable.
+    ///
+    /// The transport record is attached PER LEG by the pipe server, so until the dispatcher marked
+    /// its own attempts there was no record at all on an ordinary <c>cancel</c>, <c>buy</c> or
+    /// <c>modify</c>: the connector's calls into <c>TransportLedger</c> went nowhere, and the gateway
+    /// had nothing to read back. A connector that PROVED it never sent a byte was therefore settled
+    /// UNKNOWN and flagged, and the flag refuses every further order with
+    /// TRADING_PAUSED_UNRECONCILED — for an order the broker was never asked about, on the single
+    /// command an agent is most likely to retry.
+    ///
+    /// <c>TransportLedger.MarkDispatch</c> attaches one when there is none, which is what makes the
+    /// proof available to a lone dispatch. It reuses the leg's own record when there is one, because
+    /// attaching a second would hide the connector's reports from the leg that is holding it.
+    /// </summary>
+    [Fact]
+    public async Task A_single_cancel_the_connector_proved_it_never_sent_settles_without_a_pause()
+    {
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        using var _1 = db;
+        var pipe = NewPipe();
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        server.Start();
+        await using var client = new PipeClient();
+        await client.ConnectAsync(10_000, pipe);
+
+        Assert.True((await client.SendAsync(Buy("lone-a", "ES")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var order = (await gw.OrdersAsync(false)).Single();
+
+        // The next MUTATION is refused before anything is sent, and the simulator PROVES it — the
+        // branch the shipped AtasConnector takes when a leg's turn arrives after the operation is
+        // over. Reads do not consume it, so the target resolution in front of the cancel is unaffected.
+        conn.Faults.RefuseBeforeSend = 1;
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Cancel,
+            RequestId = "lone-cancel",
+            Args = new() { ["id"] = JsonSerializer.SerializeToElement(order.ConnectorOrderId) }
+        }).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(reply.Ok, reply.Error?.Message);
+
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("agent-after-lone"), out var refusal),
+            $"trading is paused after a cancel the connector PROVED it never sent: {refusal}");
+        Assert.Empty(gw.Requests.NeedingReconciliation());
+
+        var record = gw.GetRequest("lone-cancel")!;
+        Assert.Equal(ExecutionState.CANCELLED, record.State);
+        Assert.Contains("not sent", record.LastError!);
+
+        // AND THE ORDER IS UNTOUCHED, which is the fact the whole thing rests on: the record says
+        // this request is over, not that the target was cancelled.
+        Assert.Equal(order.ConnectorOrderId, (await gw.OrdersAsync(false)).Single().ConnectorOrderId);
     }
 
     /// <summary>

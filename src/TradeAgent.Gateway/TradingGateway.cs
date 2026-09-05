@@ -829,6 +829,14 @@ public sealed class TradingGateway : IAsyncDisposable
             intent.Type, intent.Quantity, intent.LimitPrice, intent.StopPrice, intent.Tif, intent.Comment)
         { Intent = intent.Intent };
 
+        // THE DISPATCHER MARKS THE ATTEMPT, and it does so before the call rather than trusting the
+        // connector to. See TransportLedger.MarkDispatch: `not-sent` is an assurance produced by an
+        // EMPTY transport record, and a connector that mutates without marking makes "nothing was
+        // recorded" mean "nobody wrote it down". The mark is what keeps the two apart at the source.
+        // It also attaches a record when this call has no sweep leg around it, which is what lets the
+        // catch below read a proven NothingWritten for a single `buy` or `close`.
+        using var dispatch = TransportLedger.MarkDispatch();
+
         // ONLY THE WIRE CALL IS INSIDE THE TRY, and that is deliberate. The catch below is a
         // catch-all, so anything left in here would be read as "we do not know what the broker did"
         // — including a log write against a locked database or a UI subscriber throwing out of
@@ -1034,6 +1042,10 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!created && _opt.IdempotencyEnabled) return stored;
 
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
+
+        // The dispatcher's own attempt mark — see DispatchPlaceAsync for why it is not the
+        // connector's to be trusted with.
+        using var dispatch = TransportLedger.MarkDispatch();
         try
         {
             await Connector.CancelOrderAsync(target, ct);
@@ -1101,6 +1113,7 @@ public sealed class TradingGateway : IAsyncDisposable
         var current = _requests.Transition(stored.RequestId, stored.State, ExecutionState.DISPATCHING);
         var command = new ModifyOrderCommand(target, quantity, limitPrice, stopPrice);
         OrderInfo o;
+        using var dispatch = TransportLedger.MarkDispatch();
         try
         {
             o = await Connector.ModifyOrderAsync(command, ct);
@@ -1667,6 +1680,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 Json.Write(new { order = target, press = nonce }), paused);
             try
             {
+                using var dispatch = TransportLedger.MarkDispatch();
                 await Connector.CancelOrderAsync(target, ct);
             }
             catch (ConnectorRejectedException ex)
@@ -1806,6 +1820,7 @@ public sealed class TradingGateway : IAsyncDisposable
             OrderInfo? order;
             try
             {
+                using var dispatch = TransportLedger.MarkDispatch();
                 order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
             }
             catch (Exception ex)

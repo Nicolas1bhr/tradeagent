@@ -79,6 +79,49 @@ public static class TransportLedger
     /// </summary>
     public static void Attempt() => Current.Value?.Attempt();
 
+    /// <summary>
+    /// THE DISPATCHER'S OWN MARK, AND IT IS WHAT MAKES `not-sent` UNFORGEABLE BY A CONNECTOR.
+    ///
+    /// <see cref="Attempt"/> is the CONNECTOR's obligation, stated on <c>ITradingConnector</c> — and a
+    /// contract a third party can get wrong is not a guarantee. A connector written to the public
+    /// interface that really cancels at the broker and never touches the ledger left the record empty,
+    /// and empty is exactly what produces the one word in the set that is an ASSURANCE (verifier
+    /// round-11 F-2, measured: <c>not-sent</c>, <c>attempted: 0</c>, for an order that had been
+    /// cancelled). The pipe server closed that by reading its own record states instead; this closes
+    /// it at the source. <c>TradingGateway</c> calls this immediately before every mutating connector
+    /// call it makes, so a mutation that was DISPATCHED can never report an empty record, whatever the
+    /// connector does or does not write down. Nothing else can produce that mark, because nothing else
+    /// dispatches.
+    ///
+    /// IT ATTACHES ONE IF THERE IS NONE, and reuses the one that is there. A sweep leg already carries
+    /// a record the pipe server is holding and will read back, and attaching a second would hide the
+    /// connector's own reports inside it — the leg would then see nothing and call a real mutation
+    /// <c>not-sent</c>, which is the defect this exists to prevent, arrived at from the other side. For
+    /// a call with no leg around it — a single <c>cancel</c>, a <c>buy</c>, an operator's press — the
+    /// fresh record is what lets the dispatcher read back a proven <c>NothingWritten</c> at all.
+    ///
+    /// Dispose restores whatever was ambient. Marking is idempotent, so a nested dispatch is harmless.
+    /// </summary>
+    public static IDisposable MarkDispatch()
+    {
+        if (Current.Value is { } existing)
+        {
+            existing.Attempt();
+            return Unattached.Instance;
+        }
+
+        var fresh = new TransportRecord();
+        var handle = Attach(fresh);
+        fresh.Attempt();
+        return handle;
+    }
+
+    sealed class Unattached : IDisposable
+    {
+        public static readonly Unattached Instance = new();
+        public void Dispose() { }
+    }
+
     sealed class Handle(TransportRecord? previous) : IDisposable
     {
         int _done;
