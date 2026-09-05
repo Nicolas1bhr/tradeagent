@@ -1452,6 +1452,11 @@ public class ConnectorSendDeadlineTests
     /// so. The later request is a read, it is never awaited — its answer may be paced or delayed by
     /// the peer, and this is not waiting for one — and it is observed so its eventual outcome cannot
     /// surface as an unobserved task exception.
+    ///
+    /// WHAT IT COSTS THE CALLER: a pending slot, until the peer answers it. A test that reads
+    /// `PendingRequests` after calling this is counting the probe too, and has to wait for it rather
+    /// than assert on the instant — see the first half below, where 200 ms of gap between the two
+    /// frames turns that assertion red.
     /// </summary>
     static async Task OurWriteIsOver(AtasConnector connector, BridgePeer peer)
     {
@@ -1774,6 +1779,16 @@ public class ConnectorSendDeadlineTests
 
             await Wait(() => Task.FromResult(connector.LateAnswers == 1), 10_000, "the late answer is counted");
             Assert.Equal(1, connector.LateAnswers);
+
+            // THE SLOT COUNT IS ABOUT THE CANCELLED EMERGENCY — and this fixture put a SECOND request
+            // on the wire to prove our write was over. That one is answered 1.5 s after the peer read
+            // it, which is 1.5 s after the cancel's answer plus the gap between the two writes, so
+            // reading the count the instant the late answer lands asserts that the gap is under one
+            // 25 ms poll. Measured: 200 ms of gap inside `OurWriteIsOver` fails the line below with
+            // `Expected: 0 / Actual: 1`. Waiting for the probe restores what this line meant before
+            // there was a probe, and asserts nothing less than it did.
+            await Wait(() => Task.FromResult(connector.PendingRequests == 0), 10_000,
+                "the probe request this fixture added is answered too");
             Assert.Equal(0, connector.PendingRequests);
             Assert.Equal(0, connector.AwaitingLateAnswer);
             Assert.True(await connector.IsConnectedAsync(),
