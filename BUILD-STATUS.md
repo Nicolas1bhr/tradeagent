@@ -3484,3 +3484,35 @@ assertion, and U-pipe-hello's mutant (`MayRead → true`) still goes RED at the 
 **NOT done, stated:** `GatewayPipeServer.CancelAll`/`CloseAll` still read the book before `BeginComposite`, so an
 agent's OFFLINE replay fails on the read (the binding reaches them) → `U-pipe-words`. No box, no ATAS, no UI run.
 **Side effect for `U-press-budget`:** the press row is one insert instead of insert + `MarkNeedsReconciliation`.
+
+## 2026-09-05 — U-pipe-words landed: the schema says what the reconciler does, and close-all answers by the leg word
+
+The review's findings 8 and 9 (executed as P8 and P11), by one fresh builder on `docs/briefs/U-pipe-words.md`; its third
+item, an offline replay that never reads the book, was blocked until U-press-atomic's `BeginCompositeAsync` reached
+`main` and goes to a fresh fixer (`U-pipe-replay`). Merge `4305ae6`, 5 commits, 4 files of substance, +457/−7.
+
+- **The runtime schema stops promising deleted rules.** At `AbsenceGrace = 0` the reconciler drove a WORKING target to
+  RECONCILING (inconclusive) twice while `cancel_and_modify_outcomes` promised REJECTED "when it has stayed working and
+  unchanged for a whole grace window". The whole schema was swept against the reconciler: two false sentences, both in
+  that field — the held-still verdict, and "a price within one tick of the request on the instrument's grid counts",
+  which `PriceCarries` replaced with floor/ceil of the request — plus `unknown_state_meaning`, true but naming only the
+  UNKNOWN half of a failed mutation (a proven-unsent one, CANCELLED and unflagged since U2c1c, had no entry). The rest
+  checked, unchanged. One-tick is pinned by text only: no test connector can produce it.
+- **`close-all` answers by the leg word.** A never-sent close leg answered `not_closed` with `"state":"CANCELLED"` and
+  no `outcome` (a `KeyNotFoundException` on the field); now `closed` / `not_closed` read the per-leg word as
+  `cancel-all`'s do, `outcome` is present, and `closed` means the word AND a FILLED record — `confirmed` reads off a
+  CANCELLED or FILLED row, and a cancelled closing order flattened nothing. No `AGENTS.md` sweep paragraph exists to
+  match, so the parity lives in the schema's two op descriptions.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED `SchemaMatchesReconcilerTests` 3/4
+(CANCELLED → CANCELLED, FILLED → REJECTED, WORKING → RECONCILING `resolved=0 inconclusive=1` against the promise) →
+GREEN 4/4, mutant (the clause back in) → 2 RED; item 2 RED `CloseAllAnswersByTheWordTests` 3/4 → GREEN 4/4, mutant
+(both halves back to `ExecutionRequest.State`, `outcome` dropped) → 2 RED. Builder's gate at `8ca805c`, Release: 0
+warnings; 211 + 207 + 577 = 995, 0 failed; names 0 removed, 8 added. Manager's gate at `2e6b1f3` (the merge sha's code tree, docs aside), Release: build →
+0 warnings, 0 errors; suite → 218 + 218 + 578 = 1014, 0 failed; names vs `main` → 0 removed, 8 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done, stated:** item 3 — over the pipe, after a completed sweep and `Faults.Disconnected`, the same id answered
+`TRADING_CONNECTION_MISSING` with one connector call during the replay; the fix is one line at each of
+`GatewayPipeServer.CancelAll` and `CloseAll` (`BeginComposite` → `BeginCompositeAsync`, the book read inside the
+capture delegate) and was left for a fixer rather than bypass the verb/session binding with an early `Composites.Get`;
+the RED test was written and not committed so the gate stayed green. No box, no ATAS, no UI.
