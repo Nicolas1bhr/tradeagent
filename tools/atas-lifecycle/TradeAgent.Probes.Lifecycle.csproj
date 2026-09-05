@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Built only on a box with ATAS installed, and only by hand:
+       dotnet build tools\atas-lifecycle -c Release -p:AtasInstallDir="C:\Program Files (x86)\ATAS Platform"
+       The output assembly is TA.LifecycleProbe.dll — deliberately NOT TradeAgent.*, so that
+       AtasInstallation.InstallBridge (which copies TradeAgent.* only) can never carry it anywhere. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>TA.LifecycleProbe</AssemblyName>
+    <RootNamespace>TradeAgent.Probes</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <AtasInstallDir Condition="'$(AtasInstallDir)'==''">C:\Program Files (x86)\ATAS Platform</AtasInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ATAS.Indicators">
+      <HintPath>$(AtasInstallDir)\ATAS.Indicators.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ATAS.Strategies">
+      <HintPath>$(AtasInstallDir)\ATAS.Strategies.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ATAS.DataFeedsCore">
+      <HintPath>$(AtasInstallDir)\ATAS.DataFeedsCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Utils.Common">
+      <HintPath>$(AtasInstallDir)\Utils.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

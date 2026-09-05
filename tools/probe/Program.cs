@@ -172,6 +172,11 @@ static class AtasProbe
         var restartCheck = false;
         var viaAsync = false;
         string? cancelResting = null;
+        // The deliberate length probe. The generated identifier is ~23 characters, so every reading
+        // ever taken proves the CHARSET and nothing about the LENGTH — and the 64-character ceiling
+        // in docs/CONTRACTS.md is recorded there as a conservative guess, not a measurement. This
+        // hands ATAS an identifier of exactly the length being asked about and reads it back.
+        string? coidOverride = null;
 
         for (var i = 0; i < rest.Length; i++)
         {
@@ -186,6 +191,8 @@ static class AtasProbe
             if (rest[i] == "--via-async-overload") { viaAsync = true; continue; }
             if (rest[i] == "--cancel-resting" && i + 1 < rest.Length && !rest[i + 1].StartsWith("--", StringComparison.Ordinal))
             { cancelResting = rest[i + 1]; i++; continue; }
+            if (rest[i] == "--coid" && i + 1 < rest.Length && !rest[i + 1].StartsWith("--", StringComparison.Ordinal))
+            { coidOverride = rest[i + 1]; i++; continue; }
 
             Usage($"unrecognised argument '{rest[i]}'");
             return 2;
@@ -271,6 +278,20 @@ static class AtasProbe
             Console.WriteLine("  submitted, so there has to be a test order. The full command is:");
             Console.WriteLine();
             Console.WriteLine("      probe atas --place-test-order --yes --via-async-overload");
+            return 2;
+        }
+
+        // Same shape as --via-async-overload: it changes WHAT IS WRITTEN on the order, not what the
+        // order is or what happens to it afterwards, so it needs no second act of its own. It does
+        // need an order to write on.
+        if (coidOverride is not null && !place)
+        {
+            Usage("--coid only means anything with --place-test-order.");
+            Console.WriteLine();
+            Console.WriteLine("  It replaces the identifier the test order carries, so there has to be a");
+            Console.WriteLine("  test order. The full command is:");
+            Console.WriteLine();
+            Console.WriteLine("      probe atas --place-test-order --yes --coid TA-64-CHARACTERS-…");
             return 2;
         }
 
@@ -877,7 +898,7 @@ static class AtasProbe
         // Placed here, between the readings and the conclusion, on purpose. Everything above is the
         // BEFORE picture; autonomy is a conclusion and must be drawn from the newest reading there
         // is, which — if an order has just been placed — is the one taken after it.
-        var test = place ? await PlaceTestOrder(connector, handshake, orders, leaveResting, viaAsync) : (TestOrderOutcome?)null;
+        var test = place ? await PlaceTestOrder(connector, handshake, orders, leaveResting, viaAsync, coidOverride) : (TestOrderOutcome?)null;
 
         // Half 2, and the cleanup. Neither places anything, so neither disturbs the readings above.
         //
@@ -1401,7 +1422,8 @@ static class AtasProbe
     /// </summary>
     static async Task<TestOrderOutcome> PlaceTestOrder(AtasConnector connector, bool handshake,
                                                        IReadOnlyList<OrderInfo>? ordersBefore,
-                                                       bool leaveResting, bool viaAsync)
+                                                       bool leaveResting, bool viaAsync,
+                                                       string? coidOverride = null)
     {
         Section("THE TEST ORDER — THE GUARD");
         if (leaveResting)
@@ -1593,10 +1615,15 @@ static class AtasProbe
         // Unique per run, and unmistakably ours: the read-back must not be satisfiable by somebody
         // else's order that happens to carry a comment. That was a real defect once — see the note
         // on ProveClientOrderId — and this is the harness end of the same discipline.
-        var clientOrderId = $"TA-PROBE-{DateTimeOffset.Now:yyyyMMddHHmmss}";
+        var clientOrderId = coidOverride ?? $"TA-PROBE-{DateTimeOffset.Now:yyyyMMddHHmmss}";
 
         Section("THE TEST ORDER — PLACING IT");
         Line("CLIENT ORDER ID", clientOrderId);
+        // The length is printed because the length is the question --coid exists to answer, and a
+        // read-back that says "the same string came back" means nothing unless the number of
+        // characters that went out is on the record beside it.
+        Line("ITS LENGTH", $"{clientOrderId.Length} characters" +
+                           (coidOverride is null ? " (generated)" : " (--coid, given on the command line)"));
         Line("THE ORDER", $"BUY LIMIT 1 {instrument.Symbol} @ {Num(price)}  TIF=Day  on {account.Id}");
         Cont("TIF=Day is the last line of defence: if every cleanup path below fails,");
         Cont("a Day order still expires with the session instead of resting for weeks.");
@@ -2718,6 +2745,7 @@ static class AtasProbe
         Console.WriteLine("usage: probe atas [--wait <seconds>] [--wait-anyway] [--place-test-order --yes]");
         Console.WriteLine("                  [--leave-resting --yes-leave-it] [--via-async-overload]");
         Console.WriteLine("                  [--coid-restart-check] [--cancel-resting <client-order-id>]");
+        Console.WriteLine("                  [--coid <client-order-id>]");
         Console.WriteLine($"  {problem}");
         Console.WriteLine("  --wait <seconds>      how long to wait for the bridge to dial in (default 60)");
         Console.WriteLine("  --wait-anyway         wait for the pipe even though ATAS was not detected;");
@@ -2729,6 +2757,12 @@ static class AtasProbe
         Console.WriteLine("                        is provably simulated; needs --yes as a second, separate");
         Console.WriteLine("                        act. This is how rule 1 gets measured instead of guessed.");
         Console.WriteLine("  --yes                 authorises --place-test-order. Does nothing on its own.");
+        Console.WriteLine("  --coid <id>           with --place-test-order: send THIS identifier instead of the");
+        Console.WriteLine("                        generated ~23-character one, and read it back. The generated");
+        Console.WriteLine("                        id proves the charset and nothing about the length, so the");
+        Console.WriteLine("                        64-character ceiling in docs/CONTRACTS.md is a guess until a");
+        Console.WriteLine("                        64- and a 65-character id have been handed to ATAS. Changes");
+        Console.WriteLine("                        nothing else: same guard, same read-back, same cancel.");
         Console.WriteLine();
         Console.WriteLine("  THE RESTART EXPERIMENT — the only thing that can settle rule 1, in two halves.");
         Console.WriteLine("  An in-session read-back can only ever show that ATAS carries our identifier on");
