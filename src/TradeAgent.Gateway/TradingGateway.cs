@@ -1693,7 +1693,13 @@ public sealed class TradingGateway : IAsyncDisposable
         var record = new ExecutionRequest
         {
             RequestId = requestId, AgentSessionId = ctx.SessionId, ConnectorId = Connector.Id,
-            AccountId = accountId, Instrument = "-", Intent = RequestIntent.MODIFY,
+            // THE INSTRUMENT THE CHANGE IS AIMED AT, not "-". A modify is a verb that can MOVE a
+            // position — repricing a resting order until it is marketable fills it — and the press's
+            // open-work guard asks this table which instruments have work on the wire. A record that
+            // does not name its instrument is invisible to that question, which would leave the one
+            // in-flight verb the guard was written for outside it. `before` is non-null here: the
+            // risk check above refuses a change whose target could not be read.
+            AccountId = accountId, Instrument = before?.Symbol ?? "-", Intent = RequestIntent.MODIFY,
             ParametersJson = Json.Write(new
             {
                 order = target, quantity, limitPrice, stopPrice,
@@ -2374,13 +2380,40 @@ public sealed class TradingGateway : IAsyncDisposable
     /// within one.
     /// </summary>
     ExecutionRequest OpenPressRow(string requestId, string accountId, RequestIntent intent,
-        string instrument, string parametersJson, string paused, string? claims = null)
+        string instrument, string parametersJson, string paused, string? claims = null) =>
+        OpenPressRow(requestId, accountId, intent, instrument, parametersJson, paused, claims, null, out _)!;
+
+    /// <summary>
+    /// <see cref="OpenPressRow"/> for a leg that may be REFUSED without ending the press.
+    ///
+    /// <paramref name="waitsForWorkOn"/> is the instrument this leg would send an order on, and the
+    /// insert refuses to run while a request that can move a position on it is DISPATCHING — a
+    /// handler is inside the connector call for it right now. See
+    /// <see cref="ExecutionRequestStore.TryCreateFlagged"/>, which also says why UNKNOWN is NOT in
+    /// that set: it is the ordinary state of the emergency the button is being pressed about. The press's own drift
+    /// re-read compares POSITIONS a moment before this, so it catches a fill that has LANDED and is
+    /// blind to the order still inside a connector call; that order is what turned a Close all
+    /// positions into a REVERSAL (REVIEW 2026-09-05b finding 2, probe P6).
+    ///
+    /// PER LEG, and per instrument. A press over two positions must still flatten the one nothing is
+    /// in flight on: an emergency control that gives up on every symbol because one of them is busy
+    /// would be a worse failure than the one this closes. The refusal is returned rather than thrown
+    /// for the same reason — the loop goes on, and the owner is told which instrument was left and
+    /// what it is waiting on.
+    ///
+    /// Returns null with <paramref name="waitingOn"/> set when the leg is refused; nothing was
+    /// written and nothing will be sent under this id.
+    /// </summary>
+    ExecutionRequest? OpenPressRow(string requestId, string accountId, RequestIntent intent,
+        string instrument, string parametersJson, string paused, string? claims,
+        string? waitsForWorkOn, out ExecutionRequest? waitingOn)
     {
+        waitingOn = null;
         if (!IsSendableId(requestId))
             throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
                 $"'{requestId}' is not an id this gateway may put on a broker order; nothing was sent");
 
-        var (created, blocker) = _requests.TryCreateFlagged(new ExecutionRequest
+        var (created, blocker, onTheWire) = _requests.TryCreateFlagged(new ExecutionRequest
         {
             RequestId = requestId,
             AgentSessionId = AgentContext.Operator.SessionId,
@@ -2393,11 +2426,20 @@ public sealed class TradingGateway : IAsyncDisposable
             CreatedAt = Now,
             State = ExecutionState.CREATED,
             Mode = Settings.Mode
-        }, paused, claims is null ? null : PressRowsLike(claims));
+        }, paused, claims is null ? null : PressRowsLike(claims), waitsForWorkOn);
 
         // LOST THE CLAIM. Nothing was written and nothing will be sent under this id.
         if (!created && blocker is not null)
             throw PressAlreadyOpen(PressKindOf(blocker.RequestId), blocker.CreatedAt);
+
+        // THE INSTRUMENT IS BUSY. Same insert, different clause, and the same guarantee: the check
+        // and the wire are one statement, so there is no window in which this leg could pass and the
+        // order it was sized against could then be answered. The leg is refused, not the press.
+        if (!created && onTheWire is not null)
+        {
+            waitingOn = onTheWire;
+            return null;
+        }
 
         // A fresh nonce cannot collide with a row this store already holds, so finding one is not a
         // replay — it is a corrupt id space, and sending over it would be sending twice.
@@ -2589,6 +2631,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
         var drifted = new List<string>();
 
+        // THE OTHER HALF OF DRIFT, AND IT IS NOT THE SAME QUESTION. `drifted` is a position that has
+        // ALREADY changed; this is one that is about to, by an order the gateway itself still has on
+        // the wire. The re-read below cannot see it — a request inside a connector call has moved no
+        // position yet — so it is asked of the store instead, in the same insert that writes the
+        // leg's write-ahead row (REVIEW 2026-09-05b finding 2, probe P6).
+        var waited = new List<string>();
+
         // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
         // position — so the claim rides on the first row this press actually writes, and only that
         // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
@@ -2634,7 +2683,15 @@ public sealed class TradingGateway : IAsyncDisposable
                 OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
                 { Intent = OrderIntent.Close };
             var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
-                claims: claimed ? null : ClosePress);
+                claims: claimed ? null : ClosePress, waitsForWorkOn: symbol, out var waitingOn);
+
+            // REFUSED, AND THE OWNER IS TOLD WHAT IT IS WAITING ON. Nothing was written under this
+            // id and nothing was sent; the claim is still unclaimed, so the next symbol may take it.
+            if (current is null)
+            {
+                waited.Add($"{symbol} is waited on by {waitingOn!.RequestId}, still {waitingOn.State}");
+                continue;
+            }
             claimed = true;
 
             if (unreadable is { } readFailed)
@@ -2687,10 +2744,22 @@ public sealed class TradingGateway : IAsyncDisposable
             : $" Nothing was sent for {drifted.Count} of them, because what is there changed after you " +
               $"pressed: {string.Join("; ", drifted)}. Press again if you still want them closed.";
 
+        // SAID SEPARATELY FROM DRIFT, because it is different news and it prescribes a different
+        // wait. Drift is "what is there changed, decide again"; this is "TradeAgent is still holding
+        // an order for this instrument, so it will not send a second one on top of it".
+        var waiting = waited.Count == 0 ? ""
+            : $" {(waited.Count == 1 ? "1 leg" : $"{waited.Count} legs")} waited on an order still on " +
+              $"the wire, so nothing was sent for {(waited.Count == 1 ? "it" : "them")}: " +
+              $"{string.Join("; ", waited)}. Press again once that order has an answer.";
+
         var outcome = await PressOutcomeAsync(ClosePress, nonce, ct);
-        // A press that wrote no rows at all has only the drift to report; "Nothing was sent." twice
-        // over is not a sentence anybody should have to read.
-        outcome = outcome with { Summary = (outcome.Targets.Count == 0 && drift.Length > 0 ? "" : outcome.Summary) + drift };
+        // A press that wrote no rows at all has only the drift and the waits to report; "Nothing was
+        // sent." twice over is not a sentence anybody should have to read.
+        outcome = outcome with
+        {
+            Summary = ((outcome.Targets.Count == 0 && (drift.Length > 0 || waiting.Length > 0) ? "" : outcome.Summary)
+                      + drift + waiting).Trim()
+        };
         CompleteComposite(PressPrefix(ClosePress, nonce), Json.Write(outcome));
         _log.Activity($"You asked to close {captured.Count} position(s). {outcome.Summary}" +
                       (outcome.Targets.Count > 0

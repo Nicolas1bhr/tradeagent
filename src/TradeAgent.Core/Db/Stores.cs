@@ -79,14 +79,44 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     /// over the same database, and an in-process mutex would have settled neither
     /// (REVIEW 2026-09-05 finding 2, executed as probe P10; Codex F6).
     ///
-    /// Three outcomes, and the caller must tell them apart:
+    /// AND EXCLUSIVE WHILE THIS INSTRUMENT HAS AN ORDER ON THE WIRE.
+    /// <paramref name="blockedWhileWorkIsOpenOn"/> is an instrument: if any request that can MOVE a
+    /// position on it is <c>DISPATCHING</c>, nothing is inserted and that request is handed back. It
+    /// is the same defence as the claim above and it covers the other half of the race. The press's
+    /// drift re-read compares POSITIONS, so it sees a fill that has LANDED and is blind to the one
+    /// still in flight: an agent's own `close` is an ordinary <c>execution_request</c>, and while it
+    /// sat inside the connector call the re-read still showed ES 2, so the press sized a market
+    /// sell 2 beside the agent's sell 2 and a long 2 became SHORT 2 — after the owner pressed the
+    /// control whose whole purpose is to flatten (REVIEW 2026-09-05b finding 2, probe P6). The
+    /// gateway already knows about that order; it is in this table, in the one state that means a
+    /// handler is inside the connector call for it.
+    ///
+    /// DISPATCHING AND NOT ALSO UNKNOWN, and the difference is the whole reason the emergency
+    /// controls exist. DISPATCHING is written immediately before the connector call and left however
+    /// the call ends, so it means "on the wire, an answer is coming" and is bounded by the
+    /// connector's own deadlines — a row a crash leaves behind is turned into UNKNOWN at startup, so
+    /// it cannot outlive its process and make the control unusable. UNKNOWN is the opposite: a
+    /// dispatch that is OVER with no answer, cleared only by the reconciler or by the owner, and it
+    /// is the ordinary state of the very emergency somebody is pressing the button about. Refusing
+    /// then would re-impose on the emergency controls exactly the pause `docs/CONTRACTS.md` says
+    /// they bypass on purpose — measured: `UnconfirmedLatchTests.Confirming_one_outcome_does_not_lift_another_requests_pause`
+    /// presses Close all positions with an UNKNOWN ES row on disk and the press wrote no row at all.
+    /// What UNKNOWN still leaves open is stated in `docs/CONTRACTS.md` rather than hidden.
+    ///
+    /// Cancels are excluded because they are the one verb that cannot move a position: a cancel in
+    /// flight can only stop a resting order, never add to what is there. Every other intent blocks,
+    /// including one added later — the fail-closed direction for a table this is read from.
+    ///
+    /// Four outcomes, and the caller must tell them apart:
     ///   Created                  — the row is in, flagged, and the claim (if any) is held.
-    ///   !Created, Blocker set    — something of this kind is still open. NOTHING was written.
-    ///   !Created, Blocker null   — this id is already in the table. A corrupt id space, not a
+    ///   !Created, OpenPress set  — something of this kind is still open. NOTHING was written.
+    ///   !Created, OpenWork set   — this instrument has a request on the wire. NOTHING was written.
+    ///   !Created, both null      — this id is already in the table. A corrupt id space, not a
     ///                              replay: every caller of this mints a fresh nonce.
     /// </summary>
-    public (bool Created, ExecutionRequest? Blocker) TryCreateFlagged(
-        ExecutionRequest r, string reason, string? blockedWhileOpenLike = null)
+    public (bool Created, ExecutionRequest? OpenPress, ExecutionRequest? OpenWork) TryCreateFlagged(
+        ExecutionRequest r, string reason, string? blockedWhileOpenLike = null,
+        string? blockedWhileWorkIsOpenOn = null)
     {
         var rows = db.Write(_ =>
         {
@@ -98,24 +128,37 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
                   AND ($claim IS NULL OR NOT EXISTS (
                         SELECT 1 FROM execution_request
                         WHERE request_id LIKE $claim AND needs_reconciliation=1))
+                  AND ($wire IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM execution_request
+                        WHERE instrument = $wire
+                          AND intent NOT IN ('CANCEL','CANCEL_ALL')
+                          AND execution_state = 'DISPATCHING'))
                 """,
                 ("$rid", r.RequestId), ("$sess", r.AgentSessionId), ("$conn", r.ConnectorId), ("$acct", r.AccountId),
                 ("$inst", r.Instrument), ("$intent", r.Intent.ToString()), ("$params", r.ParametersJson),
                 ("$coid", r.ClientOrderId), ("$created", Sql.T(r.CreatedAt)), ("$state", r.State.ToString()),
                 ("$why", reason), ("$mode", r.Mode.ToString()), ("$upd", Sql.T(Now)),
-                ("$claim", blockedWhileOpenLike));
+                ("$claim", blockedWhileOpenLike), ("$wire", blockedWhileWorkIsOpenOn));
             return c.ExecuteNonQuery();
         });
 
         if (rows == 1)
             return (true, Get(r.RequestId)
-                ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished after insert"));
+                ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished after insert"), null);
 
-        // Nothing went in. Which of the two reasons it was is a question for the table, not a guess:
-        // the id being taken is the corrupt case and an open claim is the ordinary refusal.
-        if (Get(r.RequestId) is not null) return (false, null);
-        return (false, blockedWhileOpenLike is null ? null
-            : Query("request_id LIKE $p AND needs_reconciliation=1", ("$p", blockedWhileOpenLike)).FirstOrDefault());
+        // Nothing went in. Which of the three reasons it was is a question for the table, not a
+        // guess: the id being taken is the corrupt case, and the two claims are ordinary refusals
+        // the caller says different things about.
+        if (Get(r.RequestId) is not null) return (false, null, null);
+
+        var openPress = blockedWhileOpenLike is null ? null
+            : Query("request_id LIKE $p AND needs_reconciliation=1", ("$p", blockedWhileOpenLike)).FirstOrDefault();
+        if (openPress is not null) return (false, openPress, null);
+
+        return (false, null, blockedWhileWorkIsOpenOn is null ? null
+            : Query("instrument = $i AND intent NOT IN ('CANCEL','CANCEL_ALL') " +
+                    "AND execution_state = 'DISPATCHING'", ("$i", blockedWhileWorkIsOpenOn))
+                .FirstOrDefault());
     }
 
     public ExecutionRequest? Get(string requestId) => db.Read(_ =>
