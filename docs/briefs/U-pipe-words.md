@@ -53,3 +53,16 @@ unflagged, no pause, since U2c1c) had no entry; the clause is added and pinned b
 checked against the code, unchanged. **NOT behaviourally pinned:** the one-tick clause is pinned by text only —
 reaching the band needs a platform that answers with a price it was not asked for, and neither the simulator nor the
 recording connector will (the connectors are not this unit's).
+
+**Item 2 — VERIFIED.** RED (`CloseAllAnswersByTheWordTests`, 4 tests, 3 red): a never-sent close leg answered
+`{"closed":0,...,"not_closed":[{"request_id":"op-…-closeall-0","instrument":"ES","state":"CANCELLED"}]}` —
+`KeyNotFoundException` on `outcome`, and `state: CANCELLED` for a position nothing was sent about. GREEN 4/4;
+integration suite 577/577, 0 failed. Mutant (both halves back to `ExecutionRequest.State`, `outcome` dropped) → 2 RED
+(`KeyNotFoundException`); `cp` restore → 4/4.
+`closed` is the word AND a FILLED record, not the word alone: `Classify` reads `confirmed` off a CANCELLED *or*
+FILLED row, and a closing order that was itself cancelled has flattened nothing — the word alone would over-claim
+from the other side. Recorded in `docs/CONTRACTS.md` beside the `cancel-all` sentence.
+**There is no `AGENTS.md` `cancel-all` paragraph to match** — the workspace file `WorkspaceBuilder.Instructions`
+writes says nothing about either sweep, and tells the agent to read `trade schema --json` instead of trusting it. So
+the parity was done there: both op descriptions now state the answer shape, the count, and the five words, in the
+same sentences, and a test asserts they agree. `AGENTS.md` itself: NOT CHANGED.
