@@ -3358,7 +3358,8 @@ RED → GREEN, mutant (`||` for `&&`) → red. Item 3 four REDs → GREEN; mutan
 `Commit`) SURVIVED, honestly stated: the place path holds `_dispatchGate` across check and commit, so the lock is
 load-bearing only for `modify`. Builder's gate at `0bee79b`, Release: 0 warnings; 201 + 207 + 534 = 942, 0 failed;
 names +16, 0 removed. Manager's gate at `6f1ba77` (rebased clean over U-interlock), Release: build → 0 warnings, 0 errors; suite →
-211 + 207 + 535 = 953, 0 failed; names vs `main` → 0 removed, 16 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+211 + 207 + 535 = 953, 0 failed; names vs `main` → 0 removed, 16 added; scan clean; CI run 33953398616 at `90e1df9`: ubuntu, macos and windows all SUCCESS (953), `package` SUCCESS — the ubuntu
+press-budget red of the previous run did not repeat (one occurrence in seven main runs; `U-press-budget` stays queued).
 
 **NOT done, stated by the builder:** no box, no real ATAS, no UI, no money. The re-check's mode arm is reachable only
 on the approval path (a fresh place re-reads the mode when it builds its record, so it parks instead). Untouched: the
