@@ -35,11 +35,22 @@ what you did NOT do. Verified or NOT VERIFIED.
 
 ## Report
 
-Branch `u-settings-closed` off `main` at `9cc3fb4`. Items are committed in the order 2 → 1 → 3,
-because item 1's "an allowlist that allows NOTHING" is item 2's change.
+Branch `u-settings-closed` off `main` at `9cc3fb4`. Committed 2 → 1 → 3: item 1's "an allowlist that
+allows NOTHING" is item 2's change. Two builders — the first was killed by a usage limit inside item 1.
 
-**Item 2 — an empty allowlist allows nothing.** RED, review probe P1 lifted verbatim onto `main`'s
-source and run (it PASSES, which is the defect): `AiTradingStopped : False (owner set it TRUE)`,
-`InstrumentAllowlist : []   (owner set it MES)`, `InstrumentAllowed(ES): True`, `health row : UNKNOWN
-''`, `activity lines : 0`. GREEN: `InstrumentAllowed` no longer begins `Count == 0 ||`; Release
-`--no-incremental` 0 warnings, suite 219 + 222 + 570 = 1011, 0 failed.
+**Item 2 — an empty allowlist allows nothing.** RED: probe P1 lifted verbatim onto `main` PASSES,
+which is the defect — `AiTradingStopped: False` (owner set TRUE), `InstrumentAllowlist: []` (owner set
+MES), `InstrumentAllowed(ES): True`, health `UNKNOWN ''`, 0 activity lines. GREEN: `InstrumentAllowed`
+no longer begins `Count == 0 ||`. Mutant (that clause put back, run by the second builder because the
+first recorded none): `EmptyAllowlistTests.An_owner_who_clears_the_allowlist_stops_every_order` and
+`RiskPolicyTests.An_empty_allowlist_means_nothing_is_allowed` both red.
+
+**Item 1 — an unreadable row is the most restrictive row.** RED, the new `UnreadableSettingsTests`
+over `main`'s `LoadSettings`: 6 failed / 2 passed — `CouldNotBeRead: False`, `AiTradingStopped: False`
+on a row whose text is `"ai_trading_stopped":true`, `Mode: PAPER` invented from a row saying
+`LIVE_LOCKED`, caps back at 1/2/6. GREEN 12/12: `TradeAgentSettings.Unreadable()` — OBSERVE, stopped,
+live off, no account, caps 0, allowlist [] — the owner's raw row kept as `settings_unreadable`, an
+activity and an engineering line, health PAUSED in the constructor, and `PlaceAsync` denied with 0
+orders at the broker. A second RED → GREEN inside the item: an EMPTY row (not an absent one) was read
+as a fresh install — 3 failed, `MaxOrderQuantity: 1`; only a row that has never been written is one
+now. Mutant (`catch` → `return new TradeAgentSettings()`): 6 of 12 red.
