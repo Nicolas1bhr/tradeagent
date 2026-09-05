@@ -61,6 +61,63 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
         return (rows == 1, stored);
     }
 
+    /// <summary>
+    /// A RECORD THAT IS FLAGGED BY THE INSERT THAT MAKES IT, AND MAY CLAIM EXCLUSIVITY WHILE IT IS.
+    ///
+    /// Two properties, and both of them are about the same one statement.
+    ///
+    /// FLAGGED BY THE INSERT. <see cref="TryCreate"/> writes <c>needs_reconciliation=0</c> and the
+    /// caller sets the flag afterwards, so a write-ahead row exists unflagged for as long as it takes
+    /// a second statement to run — and if that statement never runs, it exists unflagged forever.
+    /// For an emergency press the flag IS the pause, so the two have to be one write.
+    ///
+    /// EXCLUSIVE WHILE ANOTHER IS OPEN. <paramref name="blockedWhileOpenLike"/> is a
+    /// <c>request_id</c> pattern: if any record matching it is still flagged, nothing is inserted and
+    /// the blocker is handed back. The check and the write are ONE statement, so it is not a race
+    /// that a lock has to cover and it holds between PROCESSES — which matters, because
+    /// <c>OperatorCloseAllAsync</c> is reachable from the app and from <c>tradeagent-gateway.exe</c>
+    /// over the same database, and an in-process mutex would have settled neither
+    /// (REVIEW 2026-09-05 finding 2, executed as probe P10; Codex F6).
+    ///
+    /// Three outcomes, and the caller must tell them apart:
+    ///   Created                  — the row is in, flagged, and the claim (if any) is held.
+    ///   !Created, Blocker set    — something of this kind is still open. NOTHING was written.
+    ///   !Created, Blocker null   — this id is already in the table. A corrupt id space, not a
+    ///                              replay: every caller of this mints a fresh nonce.
+    /// </summary>
+    public (bool Created, ExecutionRequest? Blocker) TryCreateFlagged(
+        ExecutionRequest r, string reason, string? blockedWhileOpenLike = null)
+    {
+        var rows = db.Write(_ =>
+        {
+            using var c = db.Cmd($"""
+                INSERT INTO execution_request({Cols}, updated_at)
+                SELECT $rid,$sess,$conn,$acct,$inst,$intent,$params,$coid,$created,NULL,$state,NULL,
+                       '0',NULL,1,NULL,$why,$mode,$upd
+                WHERE NOT EXISTS (SELECT 1 FROM execution_request WHERE request_id=$rid)
+                  AND ($claim IS NULL OR NOT EXISTS (
+                        SELECT 1 FROM execution_request
+                        WHERE request_id LIKE $claim AND needs_reconciliation=1))
+                """,
+                ("$rid", r.RequestId), ("$sess", r.AgentSessionId), ("$conn", r.ConnectorId), ("$acct", r.AccountId),
+                ("$inst", r.Instrument), ("$intent", r.Intent.ToString()), ("$params", r.ParametersJson),
+                ("$coid", r.ClientOrderId), ("$created", Sql.T(r.CreatedAt)), ("$state", r.State.ToString()),
+                ("$why", reason), ("$mode", r.Mode.ToString()), ("$upd", Sql.T(Now)),
+                ("$claim", blockedWhileOpenLike));
+            return c.ExecuteNonQuery();
+        });
+
+        if (rows == 1)
+            return (true, Get(r.RequestId)
+                ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished after insert"));
+
+        // Nothing went in. Which of the two reasons it was is a question for the table, not a guess:
+        // the id being taken is the corrupt case and an open claim is the ordinary refusal.
+        if (Get(r.RequestId) is not null) return (false, null);
+        return (false, blockedWhileOpenLike is null ? null
+            : Query("request_id LIKE $p AND needs_reconciliation=1", ("$p", blockedWhileOpenLike)).FirstOrDefault());
+    }
+
     public ExecutionRequest? Get(string requestId) => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT {Cols} FROM execution_request WHERE request_id=$r", ("$r", requestId));

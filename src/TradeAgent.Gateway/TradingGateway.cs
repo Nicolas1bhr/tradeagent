@@ -2028,10 +2028,22 @@ public sealed class TradingGateway : IAsyncDisposable
     void RefuseWhileAPressIsOpen(string kind)
     {
         if (UnresolvedPressNonce(kind) is not { } nonce) return;
-        var sent = PressRows(kind, nonce).Min(r => r.CreatedAt).ToLocalTime();
-        throw new GatewayDeniedException(ErrorCode.EMERGENCY_PRESS_UNRESOLVED,
-            $"{PressName(kind)} sent at {sent:HH:mm}; resolve it first");
+        throw PressAlreadyOpen(kind, PressRows(kind, nonce).Min(r => r.CreatedAt));
     }
+
+    /// <summary>
+    /// The refusal itself, in the words <c>docs/CONTRACTS.md</c> promises, from either of the two
+    /// places that can decide it: the early read, and the insert that loses the claim.
+    /// </summary>
+    static GatewayDeniedException PressAlreadyOpen(string kind, DateTimeOffset sentAt) =>
+        new(ErrorCode.EMERGENCY_PRESS_UNRESOLVED,
+            $"{PressName(kind)} sent at {sentAt.ToLocalTime():HH:mm}; resolve it first");
+
+    /// <summary>
+    /// Every row of every press of one kind, as a <c>LIKE</c> pattern. What "an open press of this
+    /// kind" means to the durable claim in <see cref="OpenPressRow"/>.
+    /// </summary>
+    static string PressRowsLike(string kind) => $"{kind}-%";
 
     /// <summary>
     /// THE WRITE-AHEAD ROW FOR ONE THING ONE PRESS DOES — AND IT IS WRITTEN FLAGGED. That is the
@@ -2046,12 +2058,23 @@ public sealed class TradingGateway : IAsyncDisposable
     ///
     /// The latch goes in FIRST, in memory, for the same reason <see cref="RecordIndefinite"/> does
     /// it: everything below is a database write and the pause must not depend on one.
+    ///
+    /// AND IT IS THE STEP THAT DECIDES WHETHER THIS PRESS HAPPENS AT ALL. <paramref name="claims"/>
+    /// names the control this row is the FIRST row of; the insert then refuses to run while any row
+    /// of that control is still flagged. <see cref="RefuseWhileAPressIsOpen"/> reads the store and
+    /// this writes it, and until 2026-09-05 that was all there was: two callers arriving together
+    /// both read "no press is open", both captured the same position, both passed the drift re-read
+    /// because neither fill had landed, and both sent a market close — a long 2 became short 2 and
+    /// both presses answered "ok" (REVIEW 2026-09-05 finding 2, probe P10; Codex F6). The early read
+    /// stays, because it gives the person the reason; the INSERT is what makes it true. In one
+    /// statement, so it holds across the two processes that can reach this button rather than only
+    /// within one.
     /// </summary>
     ExecutionRequest OpenPressRow(string requestId, string accountId, RequestIntent intent,
-        string instrument, string parametersJson, string paused)
+        string instrument, string parametersJson, string paused, string? claims = null)
     {
         LatchUnconfirmed(requestId, paused);
-        var (created, stored) = _requests.TryCreate(new ExecutionRequest
+        var (created, blocker) = _requests.TryCreateFlagged(new ExecutionRequest
         {
             RequestId = requestId,
             AgentSessionId = AgentContext.Operator.SessionId,
@@ -2064,7 +2087,15 @@ public sealed class TradingGateway : IAsyncDisposable
             CreatedAt = Now,
             State = ExecutionState.CREATED,
             Mode = Settings.Mode
-        });
+        }, paused, claims is null ? null : PressRowsLike(claims));
+
+        // LOST THE CLAIM. Nothing was written under this id, so nothing may stay latched under it
+        // either — a latch naming a row that does not exist is one nothing can ever release.
+        if (!created && blocker is not null)
+        {
+            ClearLatch(requestId);
+            throw PressAlreadyOpen(PressKindOf(blocker.RequestId), blocker.CreatedAt);
+        }
 
         // A fresh nonce cannot collide with a row this store already holds, so finding one is not a
         // replay — it is a corrupt id space, and sending over it would be sending twice.
@@ -2072,8 +2103,7 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"{requestId} already exists; nothing was sent");
 
-        _requests.MarkNeedsReconciliation(stored.RequestId, paused);
-        return _requests.Transition(stored.RequestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        return _requests.Transition(requestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
     }
 
     /// <summary>
@@ -2123,9 +2153,11 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // THE PRESS ITSELF IS A RECORD, WRITTEN BEFORE ANYTHING IS READ OR SENT. If the process dies
         // between here and the first wire call, the row is on disk, flagged, and the restart refuses
-        // to trade over it — which is the whole point of a write-ahead.
+        // to trade over it — which is the whole point of a write-ahead. It is also this press's
+        // CLAIM on the control: the insert refuses to run while another cancel-all is unresolved,
+        // so the refusal above and this row are one step rather than two (finding 2 / Codex F6).
         OpenPressRow(pressId, accountId, RequestIntent.CANCEL_ALL, "-",
-            Json.Write(new { order = (string?)null, press = nonce }), paused);
+            Json.Write(new { order = (string?)null, press = nonce }), paused, claims: CancelPress);
 
         List<string> captured;
         try
@@ -2252,6 +2284,12 @@ public sealed class TradingGateway : IAsyncDisposable
             captured.Select(p => p.Symbol).ToList(), () => nonce);
 
         var drifted = new List<string>();
+
+        // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
+        // position — so the claim rides on the first row this press actually writes, and only that
+        // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
+        // flagged write-ahead.
+        var claimed = false;
         foreach (var (symbol, quantity) in captured)
         {
             // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
@@ -2290,7 +2328,9 @@ public sealed class TradingGateway : IAsyncDisposable
             var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
                 OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
                 { Intent = OrderIntent.Close };
-            var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused);
+            var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
+                claims: claimed ? null : ClosePress);
+            claimed = true;
 
             if (unreadable is { } readFailed)
             {
