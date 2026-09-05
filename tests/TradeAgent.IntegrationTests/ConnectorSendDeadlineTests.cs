@@ -1625,15 +1625,61 @@ public class ConnectorSendDeadlineTests
         foreach (var t in tasks) _ = t.ContinueWith(x => _ = x.Exception, TaskScheduler.Default);
     }
 
-    static async Task Wait(Func<Task<bool>> condition, int timeoutMs = 10_000)
+    /// <summary>
+    /// THIS END HAS FINISHED WRITING THE REQUEST THAT IS IN FLIGHT — the premise a test needs before
+    /// it cancels a caller, and the one two halves of
+    /// <see cref="A_caller_that_cancels_an_emergency_releases_its_slot_and_still_counts_a_late_answer"/>
+    /// were missing.
+    ///
+    /// A CANCELLED WRITE DROPS THE PEER, on purpose: half a frame on the wire leaves the byte stream
+    /// desynchronised, so `SendFrame`'s cancellation exit calls `DropStalledPeer` and disposes the
+    /// handle. That is correct and is not what those tests are about — but neither
+    /// `PendingRequests == 1` (registered at the top of `Rpc`, before the gate) nor
+    /// `MutedFramesSeen > 0` (a fact about the FAR side: the peer has the whole frame and has parsed
+    /// it, while this end can still be inside `WriteAsync` waiting on an IO completion the thread
+    /// pool has not dispatched) rules it out. On a two-core runner that window is wide enough to
+    /// lose.
+    ///
+    /// MEASURED rather than reasoned about: windows-latest run 33931934317 failed the second half in
+    /// 1.535 s total, of which 1.5 s is the first half's late answer. That leaves ~35 ms, which rules
+    /// out every other way `Drop` is reached — the emergency reply wait is what is left of 30 s,
+    /// `WriteTimeout` is 10 s, the silent-peer bound is 15 s, and a peer that neither closes the pipe
+    /// nor sends a frame reaches neither of the read loop's other exits. A cancelled write is the
+    /// only one that fits.
+    ///
+    /// THE SEND GATE IS A SEMAPHORE HELD ACROSS THE WHOLE FRAME, so bytes of a LATER frame cannot
+    /// reach the peer until the one in flight has released it. Waiting for them is therefore a STATE
+    /// and not a margin: a slower machine takes longer to reach it and does not fail for having done
+    /// so. The later request is a read, it is never awaited — its answer may be paced or delayed by
+    /// the peer, and this is not waiting for one — and it is observed so its eventual outcome cannot
+    /// surface as an unobserved task exception.
+    /// </summary>
+    static async Task OurWriteIsOver(AtasConnector connector, BridgePeer peer)
     {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var readBefore = peer.BytesRead;
+        Observe([connector.GetAccountsAsync()]);
+        await Wait(() => Task.FromResult(peer.BytesRead > readBefore),
+            what: "bytes of a later frame reached the peer, which cannot happen until the frame in flight released the send gate");
+    }
+
+    /// <summary>
+    /// HOW LONG THIS FIXTURE IS PREPARED TO WAIT FOR A STATE — a fixture's patience, so it is scaled
+    /// by <see cref="TestTime"/> and nothing it waits for is. <paramref name="what"/> names the state
+    /// in the timeout, because "condition was not met in time" three levels down a stack tells
+    /// whoever reads the CI log nothing about which premise the machine failed to reach.
+    /// </summary>
+    static async Task Wait(Func<Task<bool>> condition, int timeoutMs = 10_000, string? what = null)
+    {
+        var bound = TestTime.MarginMillis(timeoutMs);
+        var deadline = DateTime.UtcNow.AddMilliseconds(bound);
         while (DateTime.UtcNow < deadline)
         {
             if (await condition()) return;
             await Task.Delay(25);
         }
-        throw new TimeoutException("condition was not met in time");
+        throw new TimeoutException(what is null
+            ? $"condition was not met in {bound} ms"
+            : $"{what} — not reached in {bound} ms");
     }
 
     /// <summary>
@@ -1919,14 +1965,15 @@ public class ConnectorSendDeadlineTests
             using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
                 cancel = connector.CancelOrderAsync("FB-1", caller.Token);
 
-            await Wait(() => Task.FromResult(connector.PendingRequests == 1));
+            await Wait(() => Task.FromResult(connector.PendingRequests == 1), what: "the request is registered");
+            await OurWriteIsOver(connector, peer);
             await caller.CancelAsync();
             await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
 
             // The slot is still held — on purpose, and that is what makes the count below possible.
             Assert.Equal(1, connector.AwaitingLateAnswer);
 
-            await Wait(() => Task.FromResult(connector.LateAnswers == 1), 10_000);
+            await Wait(() => Task.FromResult(connector.LateAnswers == 1), 10_000, "the late answer is counted");
             Assert.Equal(1, connector.LateAnswers);
             Assert.Equal(0, connector.PendingRequests);
             Assert.Equal(0, connector.AwaitingLateAnswer);
@@ -1948,18 +1995,22 @@ public class ConnectorSendDeadlineTests
             using (RiskReducingScope.Begin(TimeSpan.FromSeconds(30)))
                 cancel = connector.CancelOrderAsync("FB-1", caller.Token);
 
-            await Wait(() => Task.FromResult(peer.MutedFramesSeen > 0));
+            await Wait(() => Task.FromResult(peer.MutedFramesSeen > 0), what: "the peer has the whole cancel frame");
+            await OurWriteIsOver(connector, peer);
             await caller.CancelAsync();
-            await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
+            var ended = await Assert.ThrowsAnyAsync<Exception>(() => cancel.WaitAsync(TimeSpan.FromSeconds(10)));
 
-            await Wait(() => Task.FromResult(connector.PendingRequests == 0), 10_000);
+            await Wait(() => Task.FromResult(connector.PendingRequests == 0), 10_000, "the slot is released");
             Assert.Equal(0, connector.PendingRequests);
             Assert.Equal(0, connector.AwaitingLateAnswer);
             Assert.Equal(0, connector.LateAnswers);
 
-            // NO VERDICT. Our own cancellation is not evidence about the bridge.
+            // NO VERDICT. Our own cancellation is not evidence about the bridge. The exception the
+            // call ended with is quoted because it carries the drop's own sentence when a drop is
+            // what ended it — which is the line the last three runs of this class did not have.
             Assert.True(await connector.IsConnectedAsync(),
-                "the connection was judged on a cancellation that came from this side");
+                "the connection was judged on a cancellation that came from this side; the call ended " +
+                $"with {ended.GetType().Name}: {ended.Message}");
         }
     }
 
