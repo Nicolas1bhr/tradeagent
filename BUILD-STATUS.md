@@ -3741,3 +3741,38 @@ test's own server setup while two builders' test hosts ran on this Mac; the clas
 33986072734 at `5b9e2e9`: pending.
 
 **NOT done, NOT VERIFIED:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. `SupportsClientOrderId=false` is the bridge's own report with no broker attached: autonomy is refused there by design.
+
+## 2026-09-05 — U-override-lease landed: the human override obeys the dispatch lease, and a late definite answer re-flags a row a human moved
+
+Review-2 finding 1 (HIGH), by one fresh builder on `docs/briefs/U-override-lease.md`. Merge `d14a2f0`, 6 commits, 7 files,
++492/−28 (`TradingGateway.cs`, `Stores.cs`, `DashboardView.cs`, `CONTRACTS.md`, `USER-GUIDE.md`, one new test file).
+Before it, the Dashboard's unconfirmed card rendered a live DISPATCHING row with its two override buttons, "No order
+exists" wrote CANCELLED onto it, trading resumed, and the dispatcher's FILLED was filed `already_settled` (P3).
+
+- **`ForceResolve` refuses while this process's dispatcher is still inside the connector call:** `INVALID_REQUEST —
+  TradeAgent is still sending this order — still on the wire for 120s of a possible 50s. Wait for it to answer before
+  resolving it…`; the row stays on the card and keeps trading paused; the card asks the new
+  `TradingGateway.StillOnTheWire` every tick and puts that sentence where the buttons were, disarming a half-pressed one.
+- **A broker's definite answer lands on a row a human moved** (the seam: two gateways over one store — the app and
+  `tradeagent-gateway.exe` — the lease in one, the card in the other): the row is flagged again and the platform's answer
+  is recorded beside the owner's claim — `resolved by user: I checked in ATAS and no such order exists — but Simulator
+  (built in) then answered FILLED for order FB-1, 1 filled. That is not CANCELLED, and this record is flagged again until
+  you have looked.` — trading paused in the dispatcher, engineering `late_definite_over_an_override`.
+  `Stores.MarkNeedsReconciliation` takes an optional broker reference, filled in and never overwritten.
+- **Both directions:** an override on a row whose dispatcher is dead (an entry watched END; a DISPATCHING row never
+  dispatched here) resolves exactly as before, trading resumed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED (P3 lifted into `OverrideLeaseTests`)
+`Assert.Throws() Failure: No exception was thrown` → GREEN `record now: FILLED`, `position at the broker: ES 1`; mutant
+(the lease check deleted) → RED with P3's end state verbatim (`CANCELLED … no such order exists`, `FB-1 FILLED`, trading
+resumed, `already_settled`). Item 2 RED `needs_reconciliation=False · broker reference: none · already_settled` → GREEN
+`needs_reconciliation=True · broker reference: FB-1`; mutant (the terminal arm of the `from` set deleted) → RED, back to
+`already_settled`, unflagged. Builder's gate at `8135d17`, Release: 0 warnings; the class 3× → 3/3; 219 + 242 + 582 =
+1043, 0 failed (an earlier full run: 1 failed, `PeerRowTests.A_newly_arrived_silent_peer_is_not_masked_by_the_previous_
+peers_auth_failure`, `TimeoutException` on its 10 s wall-clock wait in pipe code this unit does not touch; that class 3×
+alone green, the whole suite green on the re-run). Manager's gate at `d14a2f0` (rebased onto `d630974`, no overlap),
+Release: build → 0 warnings, 0 errors; suite → 219 + 242 + 582 = 1043, 0 failed; names vs `main` → 0 removed, 3 added
+(sets 837 → 840); scan clean; `rev-list --count u-override-lease..main` → 0; CI at `d14a2f0`: pending.
+
+**NOT VERIFIED:** the card's two visual states on screen — the query they read and the refusal behind them are run; no
+UI run. **NOT done:** no pipe op, no CLI verb; nothing in the press code (`U-press-inflight` owns it); no box, no ATAS.
