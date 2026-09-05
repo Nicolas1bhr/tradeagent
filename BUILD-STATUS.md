@@ -3407,3 +3407,39 @@ relocated build plus the 11 path-dependent tests (26 with their classes) from th
 BROKER's book unrestricted; a non-`op-` id is deliberately not session-scoped, since a restart renames the session.
 Three one-line edits to `GatewaySchema.cs`'s argument descriptions, nominally U-pipe-words' file, far from the string
 that unit owns.
+
+## 2026-09-05 — U-bridge-reinstall landed: the repair the protocol-3 refusal names now exists in the app
+
+U8's finding, closed by one fresh builder on `docs/briefs/U-bridge-reinstall.md`. Before it, the protocol refusal told
+the owner to "reinstall the add-on from TradeAgent" and `Doctor.cs` said "Press Install bridge.", and after setup
+there was no such control: setup rendered only while onboarding was incomplete, and Checks printed repair text with no
+buttons. Merge `b37e4de`, 5 commits, 14 files of substance, +533/−66.
+
+- **The control.** Checks has a card, "The ATAS bridge", in the owner's words ("the small piece TradeAgent puts inside
+  ATAS so the two can talk to each other… putting it back is the repair. Close ATAS first if it is open.") with a
+  `Reinstall the bridge` button, two-press, that runs the same `InstallBridge` the setup step runs and reports success
+  or the reason; `AtasHealthReporter.Forget` makes the bridge row re-derive its status; a copy ATAS refuses because it
+  holds the DLL answers `ATAS_BRIDGE_IN_USE` — "close ATAS and press again", no other instruction. Also on Settings.
+  Seen on the Mac loop: the card and the button on Checks and on Settings (screenshots in the session scratchpad;
+  resting state only — the armed label and the result sentence were not photographed, the shell had no Accessibility
+  permission to press).
+- **The sentences agree.** The protocol refusal, the Checks repair text and `Doctor.cs` name the control by its
+  on-screen label; the unexpected-failure sentence (`UNKNOWN_ERROR`) no longer names a "Diagnostics screen" that does
+  not exist; "add-on" → "bridge" in the two places the brief named and three more live sentences in `AtasConnector`
+  (`PendingHello`, `Silent`, `PresentedNoProof`); two catalogue repairs that named a Retry button no screen ever had
+  (`ATAS_NOT_FOUND`; `AI_INSTALL_FAILED` → "Try again").
+- **The docs.** `USER-GUIDE.md`'s "no button for that repair yet" paragraph became how to press it; `DEPLOYMENT.md`'s
+  redeploy note and §5 point at the button, with its "not yet walked" bullet naming what is NOT verified;
+  `MONITORING-PHASE.md`'s row-4 grep string was a sentence the unit had just deleted, and was corrected.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED = 13 compile errors for the names
+that did not exist → GREEN 6/6 (`BridgeReinstallTests`), mutant `Forget() { }` → RED; item 2 RED 2 (`Not found:
+"Reinstall the bridge"`; `Found: "press Retry"`) → GREEN 218 unit, mutant (old refusal text) → RED. Builder's gate at
+`e658947`, Release: 0 warnings; 218 + 207 + 569 = 994, 0 failed; names 7 added, 0 removed. Manager's gate at `5cb3301` (the merge sha's code tree, docs aside),
+Release: build → 0 warnings, 0 errors; suite → 218 + 207 + 569 = 994, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT VERIFIED:** the real ATAS-holds-the-DLL refusal (no box; the test stands a destination the copy cannot
+overwrite); the armed label and the result sentence on screen. **NOT done:** three "press Retry" sentences in
+`Prerequisites.cs`; two `Versioning.cs` comments quoting the retired refusal. **A trap the builder paid for:** Avalonia
+aborts at startup with `RenderTimer … -6661` when the Mac's display is asleep, which reads like a broken build;
+`caffeinate` first (now in `docs/RESUME-HERE.md`'s traps).

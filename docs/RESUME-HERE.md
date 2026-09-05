@@ -13,7 +13,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `c766ae4`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
+`main` is `b37e4de`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
 four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
 windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
@@ -25,7 +25,7 @@ gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown
 one atomic rate limit). Fix units still queued, in this order: `U-press-atomic` (after U-gates), `U-settings-closed` (after U-press-atomic), `U-press-budget`
 (after U-press-atomic: an ubuntu-only "the press took 3.4s against a 2s emergency budget", once), `U-pipe-hello` LANDED
 (`db638ab`: protocol before session, enumerated fields fail closed, the frame cap counts bytes, status for the caller,
-an agent reads only its own records), `U-pipe-words` (next); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
+an agent reads only its own records), `U-pipe-words` (next); `U-bridge-reinstall` LANDED (`b37e4de`: the `Reinstall the bridge` control on Checks and Settings); then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
 decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
 in `atas.json` and fail closed when the vendor changes the file, or accept TLS as the whole integrity story and say
@@ -608,6 +608,10 @@ one onto a list-row toggle inside a modal dialog.
   1455?** A prompt there lands in front of a user the product promised would click Yes exactly once.
 
 ## Traps already paid for
+
+- **The Mac's display must be awake before `tools/mac-run.sh`, or Avalonia aborts at startup with `RenderTimer …
+  -6661`** — which reads exactly like a broken build. `caffeinate -u -t 5` first, then run, then `tools/mac-shot.sh`.
+  Screenshots are resting state only: this shell has no Accessibility permission to press controls (2026-09-05).
 
 Each of these cost real time. None is obvious from the code.
 
