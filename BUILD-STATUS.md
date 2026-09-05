@@ -3772,7 +3772,11 @@ resumed, `already_settled`). Item 2 RED `needs_reconciliation=False · broker re
 peers_auth_failure`, `TimeoutException` on its 10 s wall-clock wait in pipe code this unit does not touch; that class 3×
 alone green, the whole suite green on the re-run). Manager's gate at `d14a2f0` (rebased onto `d630974`, no overlap),
 Release: build → 0 warnings, 0 errors; suite → 219 + 242 + 582 = 1043, 0 failed; names vs `main` → 0 removed, 3 added
-(sets 837 → 840); scan clean; `rev-list --count u-override-lease..main` → 0; CI at `d14a2f0`: pending.
+(sets 837 → 840); scan clean; `rev-list --count u-override-lease..main` → 0; CI run 33986791747 at `d14a2f0`: windows SUCCESS, macos SUCCESS,
+ubuntu FAILURE 241/242 on `OperatorPressIsAnEmergencyTests.Cancel_all_gives_up_on_a_stalled_platform_inside_the_emergency_budget`
+— `cancel-all returned 1243 ms after the deadline the press itself opened, against 1s of handler overhead` — the press-budget
+stopwatch class (its third ubuntu instance), in a test this sha passed twice on this Mac, from a diff with no wait, lock or
+timeout; judged a hosted-runner red, fixer `U-press-stopwatch` on top of `main`; the same test passed on ubuntu at `145e725`.
 
 **NOT VERIFIED:** the card's two visual states on screen — the query they read and the refusal behind them are run; no
 UI run. **NOT done:** no pipe op, no CLI verb; nothing in the press code (`U-press-inflight` owns it); no box, no ATAS.
@@ -3812,7 +3816,8 @@ Builder's gate at `ef7c4b2`, Release: 0 warnings; the classes 3× → 8/8 Fault 
 0 failed; names 0 removed, 10 added; scan clean. Manager's gate at `a887507` (rebased onto `d14a2f0`; the merge sha's
 code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 219 + 250 + 584 = 1053, 0 failed; names vs
 `main` → 0 removed, 10 added (sets 840 → 850); scan → one hit, the word "secret" in the report's own "secret scan
-clean"; `rev-list --count u-press-inflight..main` → 0; CI at `145e725`: pending.
+clean"; `rev-list --count u-press-inflight..main` → 0; CI run 33987379533 at `145e725`: ubuntu, macos and windows all
+SUCCESS, `package` SUCCESS.
 
 **NOT done:** no box, no real ATAS, no money, no UI run (`DashboardView.PressAsync` renders `PressOutcome.Summary`
 verbatim — read, not run); `AtasStrategyAdapter.Modify:1596` quoted from source, never executed; no new pipe op, no new
