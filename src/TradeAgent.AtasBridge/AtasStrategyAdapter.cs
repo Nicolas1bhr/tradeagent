@@ -150,6 +150,36 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// A shorter deadline would abandon healthy shutdowns; a longer one just holds ATAS's thread.</summary>
     TimeSpan StopTimeout => CallTimeout + AckTimeout + TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// WHAT A RISK-REDUCING CALL GETS, AND IT IS NOT THIS BRIDGE'S NUMBER TO CHOOSE.
+    ///
+    /// <see cref="BridgeBudgets.Emergency"/> is the CALLER's whole budget for `close` — the send
+    /// gate, the write, this handler and the reply together (`docs/CONTRACTS.md`, "Bridge
+    /// deadlines"). Everything this handler does has to fit inside what is left of it after the
+    /// wire, or the answer arrives to nobody: measured on the box on 2026-09-05, a Close All whose
+    /// close FILLED in 341 ms was recorded UNKNOWN, because the handler was still inside
+    /// <c>WaitFor(AckTimeout)</c> — three seconds against a budget of two — when the caller gave up.
+    ///
+    /// THE WIRE ALLOWANCE IS MEASURED, not guessed: app→bridge on that same press was 8.2 ms (the
+    /// press's `dispatched_at` to the bridge's own write-ahead record). 200 ms is twenty-four times
+    /// that, for both directions plus framing and scheduling, and it is deliberately generous — an
+    /// answer that is 100 ms early is worth nothing and one that is 10 ms late is worth nothing.
+    ///
+    /// The rest is split one-third to the ATAS call and two-thirds to the acknowledgement wait,
+    /// because the call is a submission and the wait is what waits for the platform to publish the
+    /// order it built. DERIVED, so a change to the caller's budget moves both.
+    /// </summary>
+    TimeSpan EmergencyWireAllowance => TimeSpan.FromMilliseconds(200);
+
+    /// <inheritdoc cref="EmergencyWireAllowance"/>
+    TimeSpan EmergencyHandlerBudget => BridgeBudgets.Emergency - EmergencyWireAllowance;
+
+    /// <inheritdoc cref="EmergencyWireAllowance"/>
+    TimeSpan EmergencyCallTimeout => EmergencyHandlerBudget / 3;
+
+    /// <inheritdoc cref="EmergencyWireAllowance"/>
+    TimeSpan EmergencyAckTimeout => EmergencyHandlerBudget - EmergencyCallTimeout;
+
     readonly Lock _gate = new();
     readonly ManualResetEventSlim _pulse = new(false);
 
@@ -778,6 +808,13 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                 // reads a token saying another measured something else; check the route before
                 // believing the number.
                 $"place={_lastPlace}",
+                // WHETHER THIS BRIDGE HAS EVER STOPPED WAITING FOR ATAS, which is the other half of
+                // trap 31. A deadline on the four money calls keeps the frame loop alive; it does
+                // nothing about the fact that the loop went on beating READY while a call was gone.
+                // `calls=ok` means no ATAS call has ever outlasted its budget in this session;
+                // `calls=stalled(OpenOrder@5000ms)` names the one that did. It does not clear —
+                // the abandoned call is still inside ATAS.
+                $"calls={StalledToken()}",
                 $"cache={cacheNote}");
         }
         catch (Exception ex)
@@ -785,6 +822,14 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // Never let the diagnostic be the thing that breaks the handshake.
             return $"surface=unreadable({ex.GetType().Name})";
         }
+    }
+
+    /// <inheritdoc cref="_stalledCall"/>
+    string StalledToken()
+    {
+        string? stalled;
+        lock (_gate) stalled = _stalledCall;
+        return stalled is null ? "ok" : $"stalled({Token(stalled)})";
     }
 
     static string Count(object? source)
@@ -1607,7 +1652,16 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             AtasCall.Block(trading.OpenOrderAsync(order, setDefaultQuantity: false, askConfirmation: false,
                                                   checkOrderStates: true), CallTimeout, "OpenOrderAsync");
         else
-            trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false, checkOrderStates: true);
+            // CS0618. ITradingManager.OpenOrder is marked obsolete by ATAS 8.0.14.397 ("Use ITradingManager.OpenOrderAsync instead").
+            // SUPPRESSED HERE RATHER THAN PROJECT-WIDE, deliberately: the day this call site is flipped
+            // to the Async overload, this pragma is the thing that has to be deleted, and a NoWarn in the
+            // csproj would leave nothing to delete. Trap 25 is why it is not flipped yet — the sync/async
+            // completion point is the open question, and AtasCall.Block carries the reasoning and the
+            // instrument that answers it. The unbounded wait it used to imply is closed by BoundedCall.
+            #pragma warning disable CS0618
+            BoundedCall(() => trading.OpenOrder(order, setDefaultQuantity: false, askConfirmation: false,
+                                                checkOrderStates: true), CallTimeout, "OpenOrder");
+            #pragma warning restore CS0618
 
         var placeCallUs = (long)(placeClock.Elapsed.TotalMilliseconds * 1000);
         // Guarded like every other diagnostic in this method: reading an ATAS object the platform is
@@ -1691,7 +1745,16 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // not — and note that routing on "is this a strategy order" would be actively dangerous here,
         // because whether ChartStrategy.Orders and ITradingManager.Orders are the SAME list has never
         // been measured. If they are, every order would take the unflagged path.
-        trading.ModifyOrder(order, replacement, askConfirmation: false, checkOrderStates: true);
+        // CS0618. ITradingManager.ModifyOrder is marked obsolete by ATAS 8.0.14.397 ("Use ITradingManager.ModifyOrderAsync instead").
+        // SUPPRESSED HERE RATHER THAN PROJECT-WIDE, deliberately: the day this call site is flipped
+        // to the Async overload, this pragma is the thing that has to be deleted, and a NoWarn in the
+        // csproj would leave nothing to delete. Trap 25 is why it is not flipped yet — the sync/async
+        // completion point is the open question, and AtasCall.Block carries the reasoning and the
+        // instrument that answers it. The unbounded wait it used to imply is closed by BoundedCall.
+        #pragma warning disable CS0618
+        BoundedCall(() => trading.ModifyOrder(order, replacement, askConfirmation: false,
+                                              checkOrderStates: true), CallTimeout, "ModifyOrder");
+        #pragma warning restore CS0618
 
         // Settles as soon as ATAS refuses OR the live order visibly carries the change, so the
         // ordinary case does not sit on the timeout and stall the command loop behind it.
@@ -1752,7 +1815,18 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // definite broker refusal that had already happened once. Rule 3.
         lock (_gate) ClearFailures(order);
 
-        trading.CancelOrder(order, askConfirmation: false, checkOrderStates: true);
+        // A cancel is risk-reducing, so its budget is the emergency one: the caller waiting on it
+        // is the operator's cancel-all or the gateway's sweep, and both are on BridgeBudgets.Emergency.
+        // CS0618. ITradingManager.CancelOrder is marked obsolete by ATAS 8.0.14.397 ("Use ITradingManager.CancelOrderAsync instead").
+        // SUPPRESSED HERE RATHER THAN PROJECT-WIDE, deliberately: the day this call site is flipped
+        // to the Async overload, this pragma is the thing that has to be deleted, and a NoWarn in the
+        // csproj would leave nothing to delete. Trap 25 is why it is not flipped yet — the sync/async
+        // completion point is the open question, and AtasCall.Block carries the reasoning and the
+        // instrument that answers it. The unbounded wait it used to imply is closed by BoundedCall.
+        #pragma warning disable CS0618
+        BoundedCall(() => trading.CancelOrder(order, askConfirmation: false, checkOrderStates: true),
+                    EmergencyCallTimeout, "CancelOrder");
+        #pragma warning restore CS0618
 
         WaitFor(() => Failure(key, order) is not null || order.State is AtasOrderStates.Done or AtasOrderStates.Failed);
         if (Failure(key, order) is { } refusal) return (CancelResult.Refused, refusal);
@@ -1847,13 +1921,39 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
 
     /// <summary>
     /// Flattens through ITradingManager.ClosePosition, which is deliberate: ATAS decides the side.
-    /// The dump gives no proof of the sign convention on Position.Volume, and a wrong sign here would
-    /// not flatten a position, it would double it. So the side is never inferred.
+    /// The SUBMISSION still never infers it — ATAS builds the order — but the sign convention is no
+    /// longer unknown, and <see cref="ClosingDirection"/> uses it to say which order ATAS built.
     ///
     /// The cost is that the closing order does not carry our client id at submission time, so it is
     /// found afterwards by diffing ATAS's order collection. If it cannot be identified, this throws
     /// an ORDINARY exception rather than returning null: the close was submitted, and reporting "no
     /// position" would be a lie the gateway would act on.
+    ///
+    /// TWO THINGS ABOUT THAT DIFF WERE WRONG, AND THEY ARE THE SAME DEFECT SEEN FROM TWO SIDES
+    /// (review 2026-09-05b finding 11 and Codex F11), both measured on the box on 2026-09-05:
+    ///
+    ///   * IT ANSWERED TOO LATE TO BE HEARD. The wait was <see cref="AckTimeout"/>, three seconds,
+    ///     while `close` is an emergency whose whole caller budget is two — so an operator Close All
+    ///     whose close FILLED in 341 ms was recorded `'close' is NOT confirmed … The bridge is busy`
+    ///     and paused trading. Answering after the caller has gone is the same as not answering. It
+    ///     is now <see cref="EmergencyAckTimeout"/>, which is derived from the caller's own budget.
+    ///   * IT NAMED THE WRONG ORDER. The match was "newly seen AND same symbol", so any order that
+    ///     arrived in the window — somebody else's, on another account, of another size — was
+    ///     returned to the gateway as the close AND had our client order id written onto it. On the
+    ///     one account this box has that is a theoretical harm; on a busy account it is a stranger's
+    ///     order relabelled as ours, in the record that reconciliation reads.
+    ///
+    /// So the order this call caused is identified by everything ATAS lets us check about it, and
+    /// AMBIGUITY IS A REFUSAL rather than a guess: exactly one newly-seen order must match the
+    /// account, the instrument, the closing direction and the size that was asked for. None, or more
+    /// than one, and nothing is labelled and the caller is told to reconcile — the same honest
+    /// outcome the method already produced when no order appeared at all.
+    ///
+    /// THE BEFORE/AFTER DIFF IS THE TIME TERM, and it is a tighter one than any timestamp: an order
+    /// is a candidate only if it was absent from ATAS's collection when this method snapshotted it
+    /// milliseconds ago. <c>Order.Time</c> is deliberately NOT compared — nothing has measured
+    /// whether ATAS stamps it in UTC or local time, and a clock comparison that is wrong by an hour
+    /// would refuse every genuine close.
     /// </summary>
     public OrderInfo? ClosePosition(string accountId, string symbol, string clientOrderId)
     {
@@ -1914,23 +2014,60 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         // entity once by the same identity, so the two agree.
         var before = new HashSet<AtasOrder>(LiveOrders());
 
+        // WHAT ATAS MUST HAVE BUILT, worked out BEFORE the call so the answer cannot be fitted to
+        // whatever turned up. Size is what was asked for; direction is the position's own, reversed.
+        var closingSize = Math.Abs(position.Volume);
+        var closingSide = ClosingDirection(position.Volume);
+        var positionAccount = position.AccountID ?? position.Portfolio?.AccountID;
+
         // Same flags, same reasons. The boolean this returns has no documented meaning in the dump,
         // so it is NOT treated as a definite refusal — a false becomes part of the message below if
         // no order appears, and rule 3 keeps that an ordinary exception so the gateway reconciles.
-        var accepted = trading.ClosePosition(position, askConfirmation: false, checkOrderStates: true);
+        //
+        // BOUNDED, like every other call into ATAS on this path (finding 10). It is the emergency
+        // slice rather than CallTimeout: this method's whole answer has to fit inside the caller's
+        // two seconds, and a call with no deadline at all could spend all of them and more.
+        var accepted = false;
+        // CS0618. ITradingManager.ClosePosition is marked obsolete by ATAS 8.0.14.397 ("Use ITradingManager.ClosePositionAsync instead").
+        // SUPPRESSED HERE RATHER THAN PROJECT-WIDE, deliberately: the day this call site is flipped
+        // to the Async overload, this pragma is the thing that has to be deleted, and a NoWarn in the
+        // csproj would leave nothing to delete. Trap 25 is why it is not flipped yet — the sync/async
+        // completion point is the open question, and AtasCall.Block carries the reasoning and the
+        // instrument that answers it. The unbounded wait it used to imply is closed by BoundedCall.
+        #pragma warning disable CS0618
+        BoundedCall(() => accepted = trading.ClosePosition(position, askConfirmation: false,
+                                                          checkOrderStates: true),
+                    EmergencyCallTimeout, "ClosePosition");
+        #pragma warning restore CS0618
 
-        AtasOrder? created = null;
+        // The order this call caused, or nothing. `before` is the causal window; the four terms are
+        // everything ATAS lets this adapter check about an order it did not build.
+        bool Caused(AtasOrder o) =>
+            SymbolMatches(o.Security, o.SecurityId, symbol)
+            && AccountMatches(o.AccountID ?? o.Portfolio?.AccountID, positionAccount ?? "")
+            && o.Direction == closingSide
+            && o.QuantityToFill == closingSize;
+
+        // EVERY candidate, not the first — because "how many match" is the question that decides
+        // whether this is an identification or a guess.
+        List<AtasOrder> candidates = [];
+        var appeared = 0;
         WaitFor(() =>
         {
-            created = LiveOrders()
-                .FirstOrDefault(o => !before.Contains(o) && SymbolMatches(o.Security, o.SecurityId, symbol));
-            return created is not null;
-        });
+            var fresh = LiveOrders().Where(o => !before.Contains(o)).ToList();
+            appeared = fresh.Count;
+            candidates = [.. fresh.Where(Caused)];
+            return candidates.Count > 0;
+        }, EmergencyAckTimeout);
 
-        if (created is null)
+        if (candidates.Count != 1)
             throw new InvalidOperationException(
                 $"ATAS was asked to close {symbol} (it returned {(accepted ? "true" : "false")}) but the " +
-                "resulting order could not be identified; it must be reconciled, not assumed flat");
+                $"resulting order could not be identified: {candidates.Count} of the {appeared} order(s) " +
+                $"ATAS added match {closingSide} {closingSize} {symbol} on " +
+                $"{(string.IsNullOrEmpty(positionAccount) ? "this account" : positionAccount)}; " +
+                "it must be reconciled, not assumed flat");
+        var created = candidates[0];
 
         // Best effort only, and never counted as proof of a round trip: label the order ATAS created
         // so reconciliation has something of ours to match on.
@@ -2726,10 +2863,27 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         s.LotSize == 0m ? null : s.LotSize);
 
     /// <summary>
-    /// Position carries no Id in the dump, so the natural key (account + symbol) stands in.
+    /// THE SIGN OF Position.Volume, MEASURED — and the claim that used to stand here was false in
+    /// the direction that costs money (review 2026-09-05b finding 4 / Codex F4).
     ///
-    /// The SIGN of Position.Volume is a semantic the dump cannot settle, so nothing that places an
-    /// order reads it — see ClosePosition. It is reported here for display only.
+    /// What it said: "nothing that places an order reads it — it is reported here for display only".
+    /// The first half is true of THIS file and not of the product. <c>TradingGateway.CloseAsync</c>
+    /// and <c>TradingGateway.OperatorCloseAllAsync</c> both side a market order with
+    /// <c>quantity > 0 ? Sell : Buy</c> off exactly this number, so an inverted convention would not
+    /// have flattened a position, it would have doubled it — and the comment said the number was
+    /// decorative.
+    ///
+    /// THE READING, taken on the box on 2026-09-05 against ATAS 8.0.14.397, simulated account
+    /// CRYPTO5EB41: a SHORT opened by ATAS's own chart trader (its confirmation dialog read
+    /// "BTCUSDT Perpetual · Sell/Short · Market · 1 Lots") came back through this mapping as
+    /// <c>quantity: -1, average_price: 79913.8</c>. **A short is NEGATIVE.** So the gateway's
+    /// arithmetic chooses Buy for a short — the flattening side — and the press that followed
+    /// recorded "Buy 1 BTCUSDT at market" and left the position at 0, never at -2.
+    ///
+    /// It is one platform, one instrument and one account, which is what a measurement is; it is
+    /// written down in <c>docs/CONTRACTS.md</c> so the next reader inherits the reading rather than
+    /// the guess. Position carries no Id in the dump, so the natural key (account + symbol) stands
+    /// in.
     /// </summary>
     static PositionInfo ToPosition(AtasPosition p)
     {
@@ -3091,6 +3245,19 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
                            || string.Equals(s.Instrument, symbol, StringComparison.OrdinalIgnoreCase)))
         || string.Equals(securityId, symbol, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Which way ATAS must have sent the order that closes a position of this size.
+    ///
+    /// IT IS USED TO RECOGNISE AN ORDER, NEVER TO SEND ONE. <c>ClosePosition</c> still hands the
+    /// position to <c>ITradingManager.ClosePosition</c> and lets ATAS decide; this is how the
+    /// resulting order is told from an unrelated one that arrived in the same window. The
+    /// convention it rests on is measured — see <see cref="ToPosition"/> — and if the reading were
+    /// somehow wrong on another platform the consequence here is a REFUSAL to identify the close,
+    /// which is the safe direction, rather than an order sent the wrong way.
+    /// </summary>
+    static AtasDirections ClosingDirection(decimal volume) =>
+        volume > 0m ? AtasDirections.Sell : AtasDirections.Buy;
+
     static bool AccountMatches(string? candidate, string wanted) =>
         string.IsNullOrWhiteSpace(wanted) || string.Equals(candidate, wanted, StringComparison.OrdinalIgnoreCase);
 
@@ -3363,10 +3530,58 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
         $"{order.State}/{(string.IsNullOrEmpty(order.Id) ? "noid" : "id")}";
 
     /// <summary>Waits for a definite answer, and treats not getting one as exactly that — no
-    /// exception, no rejection, just the order returned in whatever state it is really in.</summary>
-    void WaitFor(Func<bool> settled)
+    /// exception, no rejection, just the order returned in whatever state it is really in.
+    ///
+    /// <paramref name="budget"/> defaults to <see cref="AckTimeout"/>, which is right for a
+    /// placement, a modify and a cancel and WRONG for a close: a close is an emergency and its
+    /// caller has already stopped listening by then. See <see cref="EmergencyAckTimeout"/>.</summary>
+    /// <summary>
+    /// THE FOUR OBSOLETE SYNCHRONOUS ATAS CALLS, EACH UNDER A DEADLINE (review 2026-09-05b
+    /// UNVERIFIED 3 / Codex F10), and why the deadline is put here rather than by flipping them.
+    ///
+    /// <c>OpenOrder</c>, <c>ModifyOrder</c>, <c>CancelOrder</c> and <c>ClosePosition</c> return
+    /// <c>void</c>/<c>bool</c> on the calling thread, so <see cref="AtasCall.Block"/> — which needs
+    /// a Task — could not reach them, and they were the only unbounded waits left on the money path.
+    /// <c>BridgeServer.RunAsync</c> awaits <c>HandleFrame</c> before reading the next frame, so one
+    /// call that never returns means no further frame is ever read — including the operator's
+    /// cancel-all and close-all — while the heartbeat, a separate <c>Task.Run</c>, goes on reporting
+    /// READY. That is trap 31 with a money call inside it.
+    ///
+    /// WHAT THIS CHANGES AND WHAT IT DELIBERATELY DOES NOT. The SDK call is unchanged: same
+    /// overload, same flags, same arguments, so nothing about what ATAS is asked to do moves. What
+    /// moves is WHICH THREAD WAITS. It runs on a thread-pool thread and the frame loop waits on it
+    /// with a deadline, so an expiry frees the loop and leaves the call where it is. That is not a
+    /// new thread-affinity risk (trap 25's open question): the frame loop is not ATAS's GUI thread
+    /// either, so a call that marshals itself to the GUI thread was already being waited on from off
+    /// it — this changes one non-GUI thread for another.
+    ///
+    /// IT IS NOT A REJECTION, and that is rule 3. Expiry raises
+    /// <see cref="AtasCallTimeoutException"/>, which the wire reads as indefinite; the order may be
+    /// live and the gateway reconciles. Turning it into <see cref="AtasRejectedException"/> would be
+    /// rule 3 broken in the direction that loses money.
+    ///
+    /// AND IT SAYS SO. An expiry is recorded in <see cref="_stalledCall"/> and rides out on every
+    /// heartbeat in <c>BridgeHello.TradingSurface</c>, because a bridge that has abandoned a money
+    /// call and still reports a clean surface is the half of trap 31 a deadline alone does not fix.
+    /// </summary>
+    void BoundedCall(Action call, TimeSpan budget, string operation)
     {
-        var deadline = DateTime.UtcNow + AckTimeout;
+        try { AtasCall.Block(Task.Run(call), budget, operation); }
+        catch (AtasCallTimeoutException)
+        {
+            lock (_gate) _stalledCall = $"{operation}@{budget.TotalMilliseconds:0}ms";
+            throw;
+        }
+    }
+
+    /// <summary>The last ATAS call this bridge stopped waiting for, or null. Diagnostic, and it does
+    /// NOT clear: the abandoned call is still inside ATAS, and a later success says nothing about
+    /// it.</summary>
+    string? _stalledCall;
+
+    void WaitFor(Func<bool> settled, TimeSpan? budget = null)
+    {
+        var deadline = DateTime.UtcNow + (budget ?? AckTimeout);
         while (true)
         {
             if (settled()) return;

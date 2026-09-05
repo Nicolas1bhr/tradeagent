@@ -19,6 +19,27 @@
     <RootNamespace>TradeAgent.AtasBridge</RootNamespace>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <DefineConstants Condition="'$(AtasBridgeBuild)'=='true'">$(DefineConstants);ATAS_SDK</DefineConstants>
+
+    <!-- A WARNING IN THIS PROJECT IS A BUILD FAILURE (U9).
+         This is the one assembly that is compiled only on a machine nobody watches while it builds —
+         the Windows box, at a release cut — so a warning here is a warning nobody reads. The five it
+         used to emit are dispositioned rather than tolerated: MSB3277 below, and CS0618 four times at
+         the call sites themselves, each with the trap-25 reason beside it. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- MSB3277: WindowsBase 4.0.0.0 vs 10.0.0.0, and the vendor is ATAS.
+         `ATAS.Indicators.dll` and `ATAS.Indicators.Technical.dll` in ATAS 8.0.14.397 are built
+         against WindowsBase 10.0.0.0 while the net10.0 reference pack supplies 4.0.0.0, so
+         ResolveAssemblyReference reports a conflict it cannot settle. It does not need to: every ATAS
+         reference in this project is `Private=false` BECAUSE the platform loads this assembly and
+         supplies its own — copying them beside a strategy is what breaks its loading — so the binding
+         at runtime is ATAS's, not this build's, whichever version this build chose to reference.
+         Nothing here can fix it and the vendor's next release may.
+         Both properties, because the two are read by different halves of MSBuild: NoWarn is the
+         compiler's list, MSBuildWarningsAsMessages is what a TASK warning like MSB3277 is filtered
+         by, and TreatWarningsAsErrors above turns anything left into a failure. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>

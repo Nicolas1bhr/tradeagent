@@ -206,6 +206,37 @@ whether or not the `coid-witness.json` rewrite reached the disk, and omits `witn
 hello, so its silence cannot be read as "no trouble"; the mismatch routes it to `IncompatibleBridge`,
 which names the version and the repair.
 
+## What ATAS's own objects mean — the readings, not the guesses
+
+**`Position.Volume` is NEGATIVE for a short.** Measured 2026-09-05 on ATAS 8.0.14.397, simulated
+account `CRYPTO5EB41`, instrument BTCUSDT: a position opened by ATAS's own chart trader — its
+confirmation dialog read `BTCUSDT Perpetual · Sell/Short · Market · 1 Lots` — came back through
+`AtasStrategyAdapter.ToPosition` as `quantity: -1, average_price: 79913.8`. The operator Close All
+that followed recorded `Buy 1 BTCUSDT at market`, ATAS filled a Buy of 1 at 79913.9, and the position
+went to `0` — flattened, never doubled.
+
+It is load-bearing, and the adapter used to say it was decorative. `TradingGateway.CloseAsync` and
+`TradingGateway.OperatorCloseAllAsync` both size and SIDE a market order with
+`quantity > 0 ? Sell : Buy` off exactly this number, so an inverted convention would have doubled a
+position rather than closed it. The adapter's comment said "reported here for display only", which
+was true of that file and false of the product (review 2026-09-05b finding 4 / Codex F4).
+
+**What the reading licenses:** one platform, one instrument, one simulated account. The SIGN is a
+fact about ATAS's data model and travels; nothing about latency or fills does. The adapter uses it
+only to RECOGNISE the order ATAS built for a close (`ClosingDirection`), never to send one — a wrong
+reading there costs a refusal to identify the close, which is the safe direction.
+
+**`Order.Comment` on a close is ATAS's, not ours.** `ITradingManager.ClosePosition` builds the order
+itself and writes `Close position` into the comment, so a close carries nothing of ours at submission
+time; `ClosePosition` identifies it afterwards by (account, instrument, closing direction, size) over
+the orders that appeared during the call, and refuses to name one unless exactly one matches.
+Measured 2026-09-05: the press minted `TA-op-close-31d4779568274e53-0` and ATAS's own order read back
+`client_order_id: "Close position"`.
+
+**`Order.Comment` carries at least 65 characters.** `TA-COID64-…` and `TA-COID65-…` were both accepted
+verbatim and read back byte-identical (2026-09-05, ATAS's own collection, no broker attached). The
+64-character ceiling on a client order id is ours, not ATAS's.
+
 ## Bridge deadlines, and what a slow bridge is told
 
 Four bounds, and they answer different questions. Changing any of them changes a number a test
@@ -224,10 +255,20 @@ asserts, rather than silently invalidating this section.
   from a dead one.
 - **`AtasConnector.FrameTimeout` (30 s) — the whole-frame ceiling**, so one frame is bounded in total
   and not merely per chunk. Against the 1 MiB frame cap it is a floor of about 34 KiB/s.
-- **`AtasConnector.EmergencyDeadline` (2 s) — the CALLER's total** for `cancel`, `cancel-all` and
-  `close`, covering the send gate, the write and the reply together. On expiry the caller is told the
+- **Inside the bridge, every ATAS money call has a deadline too**, and a bridge that stops waiting for
+  one says so: `BridgeHello.TradingSurface` carries `calls=ok` or `calls=stalled(<op>@<budget>)` from
+  the expiry onwards. Without it a wedged call took the frame loop with it — including the operator's
+  cancel-all — while the heartbeat went on reporting READY.
+- **`BridgeBudgets.Emergency` (2 s) — the CALLER's total** for `cancel`, `cancel-all` and `close`,
+  covering the send gate, the write and the reply together. On expiry the caller is told the
   operation is NOT confirmed and to check ATAS, and the record is UNKNOWN. `place` and `modify` never
-  get it.
+  get it. `AtasConnector.EmergencyDeadline` defaults from it — and so does the BRIDGE, which is the
+  half that was missing. The bridge answered a close on its own clock (`WaitFor(AckTimeout)`, three
+  seconds), which cannot fit inside two: measured 2026-09-05, a Close All whose close FILLED in
+  341 ms was recorded `'close' is NOT confirmed … The bridge is busy`, because the caller gave up at
+  2.0 s. The bridge now spends `Emergency` minus a 200 ms wire allowance (measured app→bridge:
+  8.2 ms), split one-third to the ATAS call and two-thirds to the acknowledgement wait. Both ends
+  read the one constant, out of a file compiled into both.
 - **Whether the CONNECTION is dropped is a different question on a different clock.** The bridge is
   dropped only when it has answered nothing within the ordinary RPC deadline (10 s) — not when one
   emergency went unanswered for two. A bridge handles frames one at a time, so silence while it works
@@ -256,7 +297,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | term | what it is |
 |---|---|
 | **W** | `ITradingConnector.WorstCaseOperationPath` — ONE ordinary call, every bounded wait in it added up. `50 s` at shipped ATAS values (`10 + 30 + 10`). |
-| **E** | `ITradingConnector.EmergencyBudget` — the WHOLE risk-reducing part of one operation, however many calls it decomposes into. `2 s` at shipped values. |
+| **E** | `ITradingConnector.EmergencyBudget` — the WHOLE risk-reducing part of one operation, however many calls it decomposes into. `2 s` at shipped values (`BridgeBudgets.Emergency`). |
 | **L** | `GatewayPipeServer.MaxLegsInFlight` — how many legs of a sweep are in the air at once. `4`. |
 | **S** | `GatewayPipeServer.SettleAfterCancelTimeout` — the write-back margin, added ONCE on top of the maximum. `5 s`. |
 | **H** | `GatewayPipeServer.HandlerOverhead` — what a HANDLER costs beyond its connector calls, added ONCE. `1 s`. |
