@@ -42,9 +42,17 @@ public static class UpdateTradingInterlock
         ArgumentNullException.ThrowIfNull(gateway);
         ArgumentNullException.ThrowIfNull(updates);
 
-        // The updater's view of trading: how many of the owner's orders have an outcome nobody has
-        // established. Not the gateway, not the orders — a number.
-        updates.UnconfirmedWork = () => gateway.Requests.NeedingReconciliation().Count;
+        // The updater's view of trading: how many of the owner's orders the wire may still be holding.
+        // Not the gateway, not the orders — a number.
+        //
+        // It is the GATEWAY'S question (WireTouched: flagged, DISPATCHING at any age, UNKNOWN,
+        // RECONCILING, and the in-memory latch), asked once, never a count assembled here. It used to
+        // be `Requests.NeedingReconciliation()` with no argument — the raw needs_reconciliation flag —
+        // which is a narrower set than the gateway's own, and the milestone review of 2026-09-05
+        // (finding 3, probes P4 and P5) walked an install straight over an order the gateway was at
+        // that moment refusing to trade over. An updater that reads a smaller number than the gate is
+        // not a second opinion, it is a hole.
+        updates.UnconfirmedWork = () => gateway.WireTouched().Count;
 
         // Somewhere the owner can find a refusal afterwards. A refusal nobody can find later is
         // indistinguishable from a button that did nothing.

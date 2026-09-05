@@ -462,6 +462,43 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public bool HasUnconfirmedWork() => !_unconfirmed.IsEmpty || Unreconciled().Count > 0;
 
+    /// <summary>
+    /// Every record the wire may still be holding — the question the UPDATER asks, which is a
+    /// strictly wider one than <see cref="Unreconciled"/>, and deliberately so.
+    ///
+    /// <b>Why it is wider.</b> <see cref="Unreconciled"/> answers "may I start another order?", and a
+    /// placement that has been on the wire for two seconds is a perfectly ordinary thing to trade
+    /// around: this process is inside the call, it will get the answer, and it will write it down.
+    /// Replacing the program is the one act that makes that false. Kill this process and a DISPATCHING
+    /// row of any age becomes an order handed to a broker whose answer nobody is left to receive. So
+    /// the update stop counts DISPATCHING at every age, not only past
+    /// <see cref="DispatchStrandedAfter"/>, and it counts UNKNOWN and RECONCILING for the same reason:
+    /// those are records mid-question, and the questioner is the process about to be overwritten.
+    ///
+    /// It is a SUPERSET of <see cref="Unreconciled"/>, never a second opinion about it — the flagged
+    /// rows, the stranded dispatches and the in-memory latch are all in here too, so this can never
+    /// come back smaller than the number the gate, the Dashboard, the doctor and the status field are
+    /// reporting. That direction is what matters: a machine that refuses to trade must never tell its
+    /// owner it is safe to replace.
+    ///
+    /// The flag appears in the SQL here as ONE arm of the union rather than as the question, which is
+    /// the distinction the note on <see cref="Unreconciled"/> is drawing; nothing outside this class
+    /// reads the raw flag as an answer.
+    /// </summary>
+    public List<ExecutionRequest> WireTouched()
+    {
+        var rows = _requests.Query(
+            "needs_reconciliation=1 OR execution_state IN ('DISPATCHING','UNKNOWN','RECONCILING')");
+        if (_unconfirmed.IsEmpty) return rows;
+
+        // An outcome that arrived and could not be written down is the one kind of unconfirmed work
+        // no query of the store can find, because by definition the store did not take it.
+        var seen = rows.Select(r => r.RequestId).ToHashSet();
+        foreach (var id in _unconfirmed.Keys)
+            if (seen.Add(id) && _requests.Get(id) is { } row) rows.Add(row);
+        return rows;
+    }
+
     async Task<string> RequireAccountId(CancellationToken ct)
     {
         if (Settings.SelectedAccountId is { } id) return id;

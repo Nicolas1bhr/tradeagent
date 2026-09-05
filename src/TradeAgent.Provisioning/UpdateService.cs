@@ -275,9 +275,16 @@ public sealed class UpdateService
     public bool ShouldPrompt => Available is not null && !Dismissed;
 
     /// <summary>
-    /// How many of the owner's orders have an outcome TradeAgent has not established — the gateway's
-    /// <c>NeedingReconciliation()</c> count, handed over as a number rather than as the gateway,
-    /// because this object has no business reading anything else about trading.
+    /// How many of the owner's orders the wire may still be holding — the gateway's own
+    /// <c>WireTouched()</c> count, handed over as a number rather than as the gateway, because this
+    /// object has no business reading anything else about trading.
+    ///
+    /// That set is flagged OR DISPATCHING at any age OR UNKNOWN OR RECONCILING OR latched in memory
+    /// because the store would not take the outcome, and it is a superset of what the trading gate
+    /// refuses over: this number can never come back smaller than the one the Dashboard, the doctor
+    /// and the status field are showing the owner. It was <c>NeedingReconciliation()</c> — the raw
+    /// flag — until the milestone review of 2026-09-05 pressed Install over a live order and watched
+    /// Setup start (finding 3, probes P4 and P5).
     ///
     /// Null is NOT zero. Null means nobody wired this up, and an updater that cannot see the order
     /// book has no basis for deciding it is safe to replace the program holding it — so it refuses,
