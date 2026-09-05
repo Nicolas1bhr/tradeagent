@@ -14,7 +14,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `145e725` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
+2. **`main` is `303a7ad` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
@@ -29,15 +29,15 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    uncommitted files); at 00:40 on 2026-09-06 each was re-briefed FRESH from its file with "read your branch first" —
    this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. The kill left the box's app
    STOPPED (`trade status` → `IPC_UNAVAILABLE`, ATAS running); the bridge leg was told to assess and restore it first.
-   Landed: `U-override-lease` (HIGH 1) at `d14a2f0` and
-   `U-press-inflight` (HIGH 2 + Codex F3) at `145e725` — its builder's stated deviation: the press refuses a leg against
-   DISPATCHING work only, not UNKNOWN (an UNKNOWN record is the very state the emergency is pressed about), so an
-   UNKNOWN close on the same instrument can still fill after the press's close and reverse it — in `docs/CONTRACTS.md`,
-   NOT fixed, not yet briefed. In flight: `U-bridge-2` (the box, granted to it alone), `U-two-press-grant` (HIGH 3 +
-   F12), `U-codex-2a` (F1, F2, F5, F18), and the fixer `U-press-stopwatch` (the ubuntu red at `d14a2f0`, run
+   Landed: `U-override-lease` (HIGH 1) at `d14a2f0`, `U-press-inflight` (HIGH 2 + Codex F3) at `145e725` — its
+   builder's stated deviation: the press refuses a leg against DISPATCHING work only, not UNKNOWN, so an UNKNOWN close
+   on the same instrument can still fill after the press's close and reverse it (in `docs/CONTRACTS.md`, NOT fixed, not
+   yet briefed) — and `U-two-press-grant` (HIGH 3 + F12) at `303a7ad`. Built and landing: `U-bridge-2` (rebased onto
+   `303a7ad` at `c901633`, manager's gate running; the box runs its tip build, bridge READY at protocol 3, the store at 0
+   unconfirmed — the 2 the box-precut record expected were not there, unexplained). In flight: `U-codex-2a` (F1, F2,
+   F5, F18), `U-codex-2b` (F6, F7, F13), and the fixer `U-press-stopwatch` (the ubuntu red at `d14a2f0`, run
    33986791747: the press-budget stopwatch 1243 ms over; measured first, then the product step or the `Timing` class).
-   Queued, two Mac legs at a time, in this order: `U-codex-2b` (F6, F7, F13), `U-batch-2` (MED 4–5, LOW 6, F15, F17,
-   F19), `U-batch-2b` (F16, F20, UNVERIFIED 4). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
+   Queued, two Mac legs at a time: `U-batch-2` (MED 4–5, LOW 6, F15, F17, F19), `U-batch-2b` (F16, F20, UNVERIFIED 4). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
    first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
    section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known

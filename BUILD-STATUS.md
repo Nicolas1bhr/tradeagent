@@ -3821,3 +3821,38 @@ clean"; `rev-list --count` → 0; CI run 33987379533 at `145e725`: all three pla
 **NOT done:** no box, no real ATAS, no money, no UI run (`DashboardView.PressAsync` renders `PressOutcome.Summary`
 verbatim — read, not run); `AtasStrategyAdapter.Modify:1596` quoted from source, never executed; no new pipe op, no new
 operator authority; `ForceResolve`/`Settle`/`LateDefiniteSettle` untouched.
+
+## 2026-09-06 — U-two-press-grant landed: every control that grants authority is two-press, and the armed sentence can be read
+
+Review-2 finding 3 (HIGH) and Codex F12, by two builders on `docs/briefs/U-two-press-grant.md` (the first killed by a
+usage limit after four commits; the second kept all four, re-verified them, and found two more defects on the running
+app). Merge `303a7ad`, 6 commits, 13 files, +818/−77 (`DashboardView.cs`, `MainWindow.cs`, `Ui.cs`, `Theme.cs`,
+`Errors.cs`, `Trading.cs`, three guides, one new test file; the App now exposes internals to the unit tests, which press
+the real widget factories). Before it, one press on the Safety page's mode row moved a live-activated installation from
+LIVE_CONFIRM to LIVE_AUTONOMOUS and the AI's next order FILLED on a non-simulated account (P1); RESUME AI TRADING was one
+press too, and a save that widened a risk cap asked once.
+
+- **The two real-money modes and the RESUME direction of the kill switch are `Ui.Confirm`** (`Ui.ConfirmIf`,
+  `KillSwitch`, `ModeButton`): OBSERVE, PAPER and STOP stay one press — they only remove authority. The armed sentences,
+  in the owner's words: mode row `Confirm: let the AI place real orders without asking`; the kill switch, chrome and
+  Safety page alike, `Confirm: let the AI trade again`.
+- **A save that raises any safety limit asks twice** (`RiskPolicy.Widenings`, "zero is the widest value the money cap
+  has"); a save that only lowers them asks once. The three guides say two presses where they promised one.
+- **Two defects only the running app showed, fixed red-first:** the armed sentence ran past its card and read
+  `Confirm: let the AI place real or` — the one control whose purpose is to say what the second press does was
+  unreadable (a `WrapPanel` row now); and the Safety page's armed kill switch was a blank red block, class `danger`'s
+  red foreground on its own red fill (`Theme.TextOnEmergency`, a new token the `emergency` style shares).
+
+**Verified by running (the builders, quoted; then the manager's gate):** RED against `main`'s widgets (the three
+factories rebuilt one-press) `Failed: 9, Passed: 6` including `A_real_money_mode…(LIVE_AUTONOMOUS)` → `Expected: null /
+Actual: LIVE_AUTONOMOUS` → GREEN 17/17 3×; mutant (`Ui.Confirm` → `Ui.Secondary` on the autonomous row) → `Failed: 2`.
+The two app defects RED `Expected typeof(WrapPanel) / Actual typeof(StackPanel)` and `Expected: White / Actual: Black`
+→ GREEN. Labels read on the running app (`caffeinate -u`, `tools/mac-run.sh`, `tools/mac-shot.sh`) as quoted above;
+the presses were made by a temporary in-app probe raising the same `Click` routed event a mouse raises — this shell has
+no Accessibility grant — then deleted; weaker than a mouse, stated. Builder's gate at `8d34072`, Release: 0 warnings;
+236 + 250 + 584 = 1070, 0 failed; names 0 removed, 15 added. Manager's gate at `303a7ad`, Release: build → 0 warnings, 0
+errors; suite → 236 + 250 + 584 = 1070, 0 failed (with three other test hosts running); names vs `main` → 0 removed,
+15 added (sets 850 → 865); scan → one hit, the phrase "Secret scan clean" in the report; `rev-list --count` → 0; CI at
+`303a7ad`: pending.
+
+**NOT VERIFIED:** a mouse-driven press; Windows pixels. **NOT done:** no gateway change, no box.
