@@ -70,8 +70,12 @@ public class ModifyGateTests(ITestOutputHelper log)
     /// THE FINDING, RUN. LIVE_CONFIRM, the owner's quantity cap is 1, and an agent asks over the
     /// authenticated pipe for the working quantity-1 order to become a quantity-1000 order.
     ///
-    /// Both gates the change has to pass are missing at once, so either one refusing is enough for
-    /// the assertion that matters: nothing reached the wire.
+    /// BOTH missing gates would stop this one, and the refusal is asserted to be the RISK one on
+    /// purpose. "Nothing reached the wire" alone is satisfied by the parking gate, so it cannot tell
+    /// a risk check on the RESULTING size from one on the size the order already has — which is a
+    /// check that looks right, passes here, and lets the same request through the moment a person
+    /// presses Approve. A mutant that reads `before.Quantity` instead of the requested quantity
+    /// survives this test without the assertion below.
     /// </summary>
     [Fact]
     public async Task A_modify_that_breaks_the_quantity_limit_never_reaches_the_wire()
@@ -105,8 +109,9 @@ public class ModifyGateTests(ITestOutputHelper log)
 
         Assert.False(reply.Ok,
             $"an agent grew a working order from 1 to 1000 past a quantity cap of 1: {Json.Write(reply.Data)}");
+        Assert.Equal(ErrorCode.RISK_LIMIT_EXCEEDED.ToString(), reply.Error?.Code);
         Assert.Equal(before, conn.Modifies);
-        Assert.NotEqual(ExecutionState.ACKNOWLEDGED, gw.GetRequest("mg-1")?.State ?? ExecutionState.CREATED);
+        Assert.Null(gw.GetRequest("mg-1"));   // refused before a record existed, exactly as a place is
     }
 
     /// <summary>
