@@ -102,7 +102,9 @@ public static class WorkspaceBuilder
     id is printed on stderr as `request-id: <id>` *before* the order is sent, and it is in the
     `--json` object as `request_id`, precisely so you still have it when the reply is what went
     missing. Re-run with the SAME `--request-id`, or read `trade orders` first. **Never retry a lost
-    reply with a new id** — that is not a retry, it is a second order.
+    reply with a new id** — that is not a retry, it is a second order. Replaying a `cancel-all` or a
+    `close-all` reads nothing from the platform, so the answer comes back even while the connection
+    is down.
 
     **Spell an argument's value exactly, because nothing is guessed for you.** `--tif` is one of
     `Day`, `GoodTillCancel`, `ImmediateOrCancel`, `FillOrKill`. A value that is none of them is

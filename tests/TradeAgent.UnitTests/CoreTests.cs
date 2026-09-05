@@ -220,6 +220,9 @@ public class WorkspaceTests
         Assert.Contains("request id", text, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("does **not** mean the order failed", text);
         Assert.Contains("Broker credentials are not here", text);
+        // The lost-reply instruction is only actionable if the agent knows the replay does not need
+        // the platform: an agent told to re-send while the connection is down has to know that works.
+        Assert.Contains("reads nothing from the platform", text);
         foreach (var d in WorkspaceBuilder.SubDirs)
             Assert.True(Directory.Exists(Path.Combine(root, d)), $"{d} was not created");
     }

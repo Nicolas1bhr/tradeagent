@@ -563,7 +563,12 @@ a new request id, never a guess about which operation was meant. And the lookup 
 before the book or position read that builds the plan (`TradingGateway.BeginCompositeAsync` takes the
 capture as a delegate and does not invoke it on a replay), so the case a request id exists for — a
 lost reply, re-sent — is answerable with the platform exactly as unreachable as it was when the reply
-went missing (REVIEW 2026-09-05, Codex F7).
+went missing (REVIEW 2026-09-05, Codex F7). **A replayed sweep therefore performs NO read at all**:
+zero connector calls, the stored answer, and the verb/session binding as the one gate it passes. The
+gateway alone was not enough — `cancel-all` and `close-all` over the pipe still read the book and the
+positions ahead of the call, so a replay with the connector unreachable answered
+`TRADING_CONNECTION_MISSING` after one connector call rather than returning the reply already in the
+database; both now hand the read over as the delegate.
 
 **A trading mode this build does not have allows nothing.** `TradingMode` is `OBSERVE`, `PAPER`,
 `LIVE_CONFIRM`, `LIVE_AUTONOMOUS`; it is persisted as a name, and the JSON enum converter also reads
