@@ -73,3 +73,21 @@ and `CloseAll` (~:1399) still read the book/positions BEFORE calling the sync `B
 agent's offline replay still fails on the read. The verb and session binding DOES reach them (proved over
 the pipe above). Adopting `BeginCompositeAsync` is one call-site change each; the file belongs to
 `u-pipe-hello` and this unit was told not to edit it.
+
+**3 — the press mints its own id, and the latch waits for its row. VERIFIED.**
+RED (`PressIdShapeTests`): P2 lifted verbatim →
+`client order id sent : TA-op-close-210936ccdbc24e0c-ES 12-25 [CME Globex Futures]`, `length : 58`,
+`characters outside [A-Za-z0-9-] : ' []'`; and `…-MES 03-26 [CME Globex Futures Micro]`, `length : 65`
+(ceiling 64). Cancel-all had the same defect with a BROKER ORDER ID, not measured by P2:
+`leg : op-cancel-7f93ed9fabf54707-FB-1  coid=TA-op-cancel-7f93ed9fabf54707-FB-1`. UNVERIFIED 5 reproduced:
+with the press row's insert failing, `press rows written : 0`, `unresolved press : none`,
+`reconcile clean : False`, `trading authorized after one reconcile pass : False (you pressed Cancel all
+working orders at 10:07…)` — a pause held by a latch naming a row that does not exist. GREEN:
+`TA-op-close-18f45b889ac34b9e-0`, `length : 30`, `characters outside [A-Za-z0-9-] : ''`,
+`record : op-close-… instrument=ES 12-25 [CME Globex Futures]`; the latch case reconciles clean and
+trading resumes. Fix: `PressLegId(kind, nonce, index)` for both controls, the target stays on the record;
+`TradingGateway.MaxClientOrderIdChars`/`MaxRequestIdChars`/`IsSendableId` are the gateway's own copy of the
+rule and `OpenPressRow` refuses an id that breaks it; a test pins the budget to `GatewayPipeServer`'s
+private one by reflection so the two cannot drift (`61 == 61`). Latch moved after the create.
+Mutants: target back in the leg id → 2 red (`'op-close-…-ES 12-25 [CME Globex Futures]' is not an id this
+gateway may put on a broker order`); latch back before the create → 1 red (`trading authorized … : False`).
