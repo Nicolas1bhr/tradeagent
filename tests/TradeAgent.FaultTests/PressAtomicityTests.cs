@@ -39,8 +39,8 @@ namespace TradeAgent.Tests.Fault;
 /// first, and CI run 33958941039 failed <c>Assert.Single()</c> ON THE REFUSAL WHILE ITS OWN LOG
 /// SHOWED THE PRODUCT RIGHT — one close on the wire, the account flat, one press row. So the race
 /// test now asserts the invariants and names both refusals, which is true on any scheduler, and the
-/// schedule that broke it gets a deterministic test of its own, where the connector seam decides the
-/// order rather than the machine.
+/// two guards get a deterministic test each, where the connector seam decides the order rather than
+/// the machine.
 /// </summary>
 public class PressAtomicityTests(ITestOutputHelper log)
 {
@@ -231,6 +231,61 @@ public class PressAtomicityTests(ITestOutputHelper log)
         log.WriteLine($"refused by      : {(RefusedByTheClaim(refused) ? "the atomic claim"
                                           : RefusedByTheDriftReRead(refused) ? "the drift re-read"
                                           : "its own capture read, which found nothing open")}");
+        Assert.Single(outcomes, Sent);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// THE ATOMIC CLAIM ON ITS OWN, with the schedule taken away from the machine.
+    ///
+    /// The first press's fill is held at the connector until the other press has answered, so the
+    /// second press's drift re-read cannot see anything but the position it captured — the drift
+    /// guard has nothing to refuse on, and the only thing left that can refuse it is the insert
+    /// losing its <c>NOT EXISTS</c>. That is the sentence this test may safely assert, and it is the
+    /// one the double-press race test may not.
+    /// </summary>
+    [Fact]
+    public async Task Only_the_atomic_claim_can_refuse_a_press_whose_drift_re_read_saw_no_change()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        await gw.PlaceAsync(new AgentContext("a"), "pa-open", TestEnv.Buy("ES", 2m));
+        log.WriteLine($"position before : {conn.Broker.Positions.Single().Quantity}");
+
+        var (a, b) = TwoPresses();
+        var barrier = new CaptureBarrier();
+        var closes = 0;
+        conn.Seam = async kind =>
+        {
+            if (Pressing.Value is not { } p) return;
+            if (kind == RecordingConnector.HeldCall.Positions && ++p.Reads == 1)
+            {
+                await barrier.ArriveAsync();
+                return;
+            }
+
+            // THE FILL WAITS FOR THE OTHER PRESS TO BE OVER. Only one press can get here — the close
+            // is downstream of the claim — so this is the press that won, and holding its close
+            // holds the BOOK still for as long as the other press is still deciding anything.
+            if (kind == RecordingConnector.HeldCall.Close && Interlocked.Increment(ref closes) == 1)
+            {
+                log.WriteLine($"press {p.Name} holds its close until press {p.Other.Name} has answered");
+                await p.Other.Done.Task.WaitAsync(Guard);
+            }
+        };
+
+        var outcomes = await Task.WhenAll(Task.Run(() => PressAsync(gw, a)), Task.Run(() => PressAsync(gw, b)));
+        var rows = WhatHappened(gw, conn, outcomes);
+
+        Assert.True(barrier.BothArrived, "the presses were not both inside the capture read");
+        AssertTheInvariants(conn, rows);
+
+        // The refusal is the claim's, in the contract's own words, and the drift guard never spoke:
+        // if this line ever fails, the seam above stopped holding the book still.
+        Assert.Single(outcomes, RefusedByTheClaim);
+        Assert.DoesNotContain(outcomes, RefusedByTheDriftReRead);
         Assert.Single(outcomes, Sent);
 
         await gw.DisposeAsync();
