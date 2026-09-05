@@ -160,7 +160,17 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   the op and the type is read off which prices are present (neither = Market, `limit` = Limit, `stop`
   = Stop, both = StopLimit). They were accepted and discarded, so `{"op":"buy","side":"sell"}` bought
   — the same failure as an unrecognised enum value, by the other door.
-- Reads and order operations only. Operator authority is not on this channel.
+- Reads and order operations only. Operator authority is not on this channel — **and neither is the
+  operator's record of using it.** `order <id>` resolves a request record only when the caller wrote
+  it: a row whose session is `operator` never resolves here, and a gateway-minted `op-` id resolves
+  only for the session whose own sweep minted it (the agent is handed those ids in its own
+  `cancel-all` / `close-all` replies, so it must be able to ask about them). It is answered as an id
+  nobody ever minted is answered, identically, because a refusal that looks different from a miss is
+  an existence oracle. Until 2026-09-05 `trade order op-close-<nonce>-ES` returned the operator's
+  press record whole — session, parameters, state, broker order id and the sentence written for the
+  owner's screen (UNVERIFIED 6). The BROKER's book is unrestricted and stays so: `orders --all`
+  already shows every order on the account, and it carries the platform's view rather than
+  TradeAgent's record of who asked for it.
 - `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose

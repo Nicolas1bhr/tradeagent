@@ -42,7 +42,7 @@ public static class GatewaySchema
             [new("symbol", "string", true, "Instrument symbol")]),
         new(Core.Ops.Orders,      "trade orders",              false, "Working orders. Pass --all to include finished ones.",
             [new("all", "bool", false, "Include inactive/finished orders. true or false only; anything else is refused rather than read as false. Omit it for working orders.")]),
-        new(Core.Ops.Order,       "trade order <id>",          false, "One order, by request id or by broker order id.",
+        new(Core.Ops.Order,       "trade order <id>",          false, "One order, by request id or by broker order id. Request records answer for your own requests only — the account owner's emergency presses are not on this channel, and an id belonging to one reads as though nothing by that name exists. Use 'trade orders --all' for the platform's own book, which shows every order on the account.",
             [new("id", "string", true, "Request id or connector order id")]),
         new(Core.Ops.Executions,  "trade executions",          false, "Fills on the account.", []),
 

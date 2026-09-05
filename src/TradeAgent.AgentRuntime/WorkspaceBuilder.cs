@@ -99,6 +99,17 @@ public static class WorkspaceBuilder
     missing. Re-run with the SAME `--request-id`, or read `trade orders` first. **Never retry a lost
     reply with a new id** — that is not a retry, it is a second order.
 
+    **Spell an argument's value exactly, because nothing is guessed for you.** `--tif` is one of
+    `Day`, `GoodTillCancel`, `ImmediateOrCancel`, `FillOrKill`. A value that is none of them is
+    refused with the list, rather than quietly treated as `Day` — a misspelled `ImmediateOrCancel`
+    would otherwise leave a resting order you did not ask for. The same goes for every other
+    argument with a fixed set of words; `trade schema --json` lists them.
+
+    **`trade order <id>` answers about YOUR requests.** The account owner's own emergency presses
+    write records too, and those are not on this channel — an id belonging to one reads as though
+    nothing by that name exists. `trade orders --all` shows the platform's book, which includes
+    every order on the account whoever placed it.
+
     **If a command fails, do not retry it blindly.** Read the error. `ORDER_STATE_UNKNOWN` means
     TradeAgent cannot yet confirm what happened — it does **not** mean the order failed. Trading is
     paused while it checks with the broker. Wait, then run `trade status --json` again. Re-sending in

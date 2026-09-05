@@ -542,6 +542,127 @@ public class PipeContractTests(ITestOutputHelper log)
         return op == Ops.Schema ? data.GetProperty("current") : data;
     }
 
+    // ── 5. An agent reads only its own records ─────────────────────────────────────────────────
+    // UNVERIFIED 6: "`Ops.Order` discloses operator press records to the agent. `FindOrder` →
+    // `gateway.GetRequest(id)` has no prefix restriction, so `trade order op-close-<nonce>-ES`
+    // returns the operator's own press record." The pipe is meant to carry no operator authority;
+    // the operator's RECORD of using it was on the channel anyway, with the session that wrote it,
+    // its parameters, its state and its error text.
+
+    /// <summary>
+    /// The operator presses Close All; the agent asks for the press record by its id. It is answered
+    /// exactly as an id that was never minted is answered — the SAME reply, so nothing about the
+    /// press can be inferred from the difference either.
+    /// </summary>
+    [Fact]
+    public async Task An_operator_press_record_is_not_readable_over_the_agent_channel()
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        // A position for the press to close, then the press itself.
+        Assert.True((await client.SendAsync(Buy()).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+        var press = await gw.OperatorCloseAllAsync();
+        var pressIds = gw.Unreconciled().Select(r => r.RequestId)
+            .Where(r => r.StartsWith(TradingGateway.ClosePress, StringComparison.Ordinal)).ToList();
+        log.WriteLine($"press rows : {string.Join(", ", pressIds)}   ({press.Summary})");
+        Assert.NotEmpty(pressIds);
+
+        var leg = pressIds.First(r => r.EndsWith("-ES", StringComparison.Ordinal));
+        var asked = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Order, Session = "agent-1", Args = new() { ["id"] = JsonSerializer.SerializeToElement(leg) }
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"trade order {leg} -> ok={asked.Ok} data={Json.Write(asked.Data)}");
+
+        // The reply for an id nobody ever minted, for comparison.
+        var absent = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Order, Session = "agent-1",
+            Args = new() { ["id"] = JsonSerializer.SerializeToElement("op-close-deadbeefdeadbeef-ES") }
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+        log.WriteLine($"an id nobody minted   -> ok={absent.Ok} data={Json.Write(absent.Data)}");
+
+        Assert.Equal(Json.Write(absent.Data), Json.Write(asked.Data));
+        Assert.DoesNotContain(AgentContext.OperatorSessionId, Json.Write(asked.Data) ?? "");
+    }
+
+    /// <summary>
+    /// Both directions, and this is the half that a fix by blanket prefix would break: the agent's
+    /// OWN records still resolve — the buy it placed, and the sweep leg the gateway minted for it,
+    /// whose id the agent was handed in the sweep's own reply and which also begins <c>op-</c>.
+    /// </summary>
+    [Fact]
+    public async Task An_agents_own_records_still_resolve_including_the_legs_of_its_own_sweep()
+    {
+        var (gw, conn, db, server, client) = await Counted(s => s.Risk.MaxOrderQuantity = 5m);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        conn.Faults.Fill = Connectors.Fake.FillBehaviour.LeaveWorking;
+        var buy = Buy(extra: new() { ["limit"] = JsonSerializer.SerializeToElement("1") });
+        Assert.True((await client.SendAsync(buy).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        var sweep = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.CancelAll, Session = "agent-1", RequestId = "pipec-" + Guid.NewGuid().ToString("n")[..8]
+        }).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(sweep.Ok, sweep.Error?.Message);
+
+        var legId = JsonSerializer.SerializeToElement(sweep.Data)
+            .GetProperty("outcomes")[0].GetProperty("request_id").GetString()!;
+        log.WriteLine($"the agent's own sweep leg : {legId}");
+        Assert.StartsWith("op-", legId);
+
+        foreach (var id in new[] { buy.RequestId!, legId })
+        {
+            var reply = await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Order, Session = "agent-1", Args = new() { ["id"] = JsonSerializer.SerializeToElement(id) }
+            }).WaitAsync(TimeSpan.FromSeconds(10));
+            var data = JsonSerializer.SerializeToElement(reply.Data);
+            log.WriteLine($"trade order {id} -> ok={reply.Ok} request_id={(data.ValueKind == JsonValueKind.Object && data.TryGetProperty("request_id", out var q) ? q.GetString() : "<none>")}");
+            Assert.True(reply.Ok, reply.Error?.Message);
+            Assert.Equal(id, data.GetProperty("request_id").GetString());
+        }
+    }
+
+    /// <summary>
+    /// A different agent session cannot read a gateway-minted leg belonging to another one, so the
+    /// rule is about whose record it is and not only about the operator.
+    /// </summary>
+    [Fact]
+    public async Task Another_sessions_minted_leg_does_not_resolve()
+    {
+        var (gw, conn, db, server, client) = await Counted(s => s.Risk.MaxOrderQuantity = 5m);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        conn.Faults.Fill = Connectors.Fake.FillBehaviour.LeaveWorking;
+        Assert.True((await client.SendAsync(Buy(extra: new() { ["limit"] = JsonSerializer.SerializeToElement("1") }))
+            .WaitAsync(TimeSpan.FromSeconds(10))).Ok);
+
+        var sweep = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.CancelAll, Session = "agent-1", RequestId = "pipec-" + Guid.NewGuid().ToString("n")[..8]
+        }).WaitAsync(TimeSpan.FromSeconds(20));
+        var legId = JsonSerializer.SerializeToElement(sweep.Data)
+            .GetProperty("outcomes")[0].GetProperty("request_id").GetString()!;
+
+        var otherSession = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Order, Session = "agent-2", Args = new() { ["id"] = JsonSerializer.SerializeToElement(legId) }
+        }).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"agent-2 asking for agent-1's leg {legId} -> {Json.Write(otherSession.Data) ?? "<nothing>"}");
+        Assert.Null(otherSession.Data);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>

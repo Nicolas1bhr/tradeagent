@@ -881,7 +881,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Positions   => await gateway.PositionsAsync(ct),
                 Core.Ops.Position    => (await gateway.PositionsAsync(ct)).FirstOrDefault(p => p.Symbol == Require(req, "symbol")),
                 Core.Ops.Orders      => await gateway.OrdersAsync(NamedFlag(req, "all", whenAbsent: false), ct),
-                Core.Ops.Order       => await FindOrder(Require(req, "id"), ct),
+                Core.Ops.Order       => await FindOrder(ctx, Require(req, "id"), ct),
                 Core.Ops.Executions  => await gateway.ExecutionsAsync(ct),
                 Core.Ops.MaterialList => MaterialList(req),
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
@@ -939,11 +939,54 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return status with { ExecutionAvailable = available, ExecutionBlockedReason = reason };
     }
 
-    async Task<object?> FindOrder(string id, CancellationToken ct)
+    /// <summary>
+    /// One order, by request id or by broker order id — and the request records this caller may see
+    /// are its OWN.
+    ///
+    /// <c>GetRequest</c> had no restriction at all, so <c>trade order op-close-&lt;nonce&gt;-ES</c>
+    /// handed the agent the OPERATOR's press record: the session that wrote it, the parameters, the
+    /// state, the broker order id and the owner-facing sentence "you pressed Close all positions at
+    /// 10:15" (UNVERIFIED 6, measured over the pipe). Operator authority is deliberately absent from
+    /// this channel; the operator's record of exercising it was on it anyway.
+    ///
+    /// A REFUSAL THAT LOOKS DIFFERENT FROM A MISS IS AN EXISTENCE ORACLE, so there is no refusal:
+    /// the record is simply not this caller's, the lookup falls through, and the answer is the same
+    /// "nothing by that name" an id nobody ever minted gets. The ids are not guessable, and this
+    /// keeps them uninformative even if one were.
+    ///
+    /// The BROKER's book is untouched by this and deliberately so. Every order on the account,
+    /// including the ones a press placed, is already visible through <c>orders --all</c>; what it
+    /// carries is the platform's own view, not TradeAgent's record of who asked for it and why.
+    /// </summary>
+    async Task<object?> FindOrder(AgentContext ctx, string id, CancellationToken ct)
     {
-        if (gateway.GetRequest(id) is { } r) return r;
+        if (gateway.GetRequest(id) is { } r && MayRead(ctx, r)) return r;
         var orders = await gateway.OrdersAsync(true, ct);
         return orders.FirstOrDefault(o => o.ConnectorOrderId == id || o.ClientOrderId == id);
+    }
+
+    /// <summary>
+    /// Whether this caller wrote this record. Two clauses, and they answer different questions.
+    ///
+    /// The OPERATOR's rows are never on this channel, whatever they are called: the session that
+    /// wrote them is <see cref="AgentContext.OperatorSessionId"/>, which the pipe refuses as a name
+    /// before a hello can adopt it, so no caller here can ever match it.
+    ///
+    /// A GATEWAY-MINTED id resolves only for the session whose sweep minted it. The agent is handed
+    /// these ids in its own <c>cancel-all</c> and <c>close-all</c> replies and must be able to ask
+    /// about them, which is why the answer is not "no <c>op-</c> id, ever" — but they are the one
+    /// family of ids an agent did not choose and therefore the one family it could name without
+    /// having been told. An id the agent chose is left alone: it is unique per record, it cannot
+    /// begin <c>op-</c>, and restricting those by session as well would take away the ability to
+    /// look up work from before a restart, which changes the session name and nothing else.
+    /// </summary>
+    static bool MayRead(AgentContext ctx, ExecutionRequest r)
+    {
+        if (string.Equals(r.AgentSessionId, AgentContext.OperatorSessionId, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return !r.RequestId.StartsWith(MintedIdPrefix, StringComparison.OrdinalIgnoreCase)
+               || string.Equals(r.AgentSessionId, ctx.SessionId, StringComparison.Ordinal);
     }
 
     /// <summary>
