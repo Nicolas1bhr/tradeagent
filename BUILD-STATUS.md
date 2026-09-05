@@ -3622,3 +3622,39 @@ evidence is the running app's own reported state, not a picture; one fault test 
 suites in a row were green. **Open, not this unit's (U-gates' string):** an order refused while the row is unreadable
 says "TradeAgent's current mode does not allow this order" — a mode this build invented a moment earlier; fails closed,
 the health row and activity log tell the truth, the sentence should name the unreadable settings.
+
+## 2026-09-05 — U-press-budget landed: the press's two-second promise is asserted on its own clock, and the simulator clips like the shipped connector
+
+The ubuntu one-off "the press took 3.4s against a 2s emergency budget" (run 33952871991), by one fresh fixer on
+`docs/briefs/U-press-budget.md`. Merge `4221d89`, 6 commits, 3 files of substance, +189/−21 with the brief (`FakeConnector.cs`, `FakeBroker.cs`, `EmergencyPressTests.cs`).
+
+- **It was the runner's, measured on all three hosted runners.** A throwaway harness pushed to CI (`d734e42`, run
+  33969167809, taken back out) timed `OperatorCancelAllAsync` against the same stalled platform per call: ubuntu the
+  press = 2005–2012 ms (orders 1 → 1200 full length inside the budget, cancel 1202 → 2000 cut exactly at the deadline,
+  positions 2004 → 2004 refused with zero left); macos 2013–2135; windows 2030–2038. The press's OWN cost with the
+  latency knob at 0 — write-ahead rows, latch, composite rows, settles, activity line, every SQLite write at
+  `synchronous=FULL` — is 5–7 ms on ubuntu, 6–11 ms on macos, 34–40 ms on windows. Nothing in the press is off the
+  emergency clock.
+- **The one thing a late timer could still reach was the instrument.** `FakeConnector` PREDICTED ("1.2 s fits in the
+  2.0 s left, so run it") and then slept its full nominal latency unclipped; the shipped `AtasConnector` clips
+  (`Left(deadlineAt)` on the write, `CancelAfter` on the reply) and never predicted. `TheCancellableWait` makes the
+  simulator clip too, onto the same branch, sentence and `PossiblyWritten`; `UncancellableLatencyMs` and opening
+  placements untouched.
+- **The two timing tests assert the promise, not a stopwatch:** the deadline the press itself opened, read back out of
+  the scope; overrun below `GatewayPipeServer.HandlerOverhead` (the contract's H, exactly these local writes); the press
+  RETURNED "not confirmed — check ATAS"; cancel-all's cut leg never reached the book. The 3 s and 4 s wall clocks are
+  gone, not raised; the shipped 2 s is untouched.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** RED (new test; seam `FaultProfile.Wait`, 1.2 s
+declared delivered 2.2 s late) "a press whose simulator ran late returned 1409 ms after the deadline the press itself
+opened" — a 3.4 s press, CI's own number → GREEN at ~10 ms; mutant `CancelAfter(InfiniteTimeSpan)` → RED 1407 ms;
+second mutant `RiskReducingScope.Begin()` (no budget) → 4 RED. Fixer's gate at `e1cb46a`, Release: 0 warnings; the
+named test 5×; Unit 218 + Fault 221 + Integration 582 = 1021, 0 failed; names 0 removed, 1 added. CI run 33970406089
+on draft PR #6: ubuntu SUCCESS; windows and macos red on the first attempt on tests outside this change (windows the
+sweep-outcomes test, its second occurrence → `U-sweep-words-win`; macos a `Timing` shutdown test), both SUCCESS on
+re-run, `package` SUCCESS. Manager's gate at `08796d0` (the merge sha's code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 219 + 239 + 582 = 1040, 0 failed; names vs
+`main` → 0 removed, 1 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT VERIFIED:** which runner-side stall produced the 1.4 s at `88617a0` — a late timer or a slow fsync; it did not
+recur, and that message carried only the total; the new one names the step and measures the press's own clock. No
+box, no ATAS, no UI; `TradingGateway.cs` untouched.
