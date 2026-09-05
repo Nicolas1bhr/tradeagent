@@ -3543,6 +3543,9 @@ Merge `11248b6`, 5 commits, 4 files of substance, +272/−14.
 `Not found: "reads nothing from the platform"`. Fixer's gate, Release: 0 warnings, 17 projects; 218 + 218 + 582 = 1018,
 0 failed pre-rebase; at the rebased tip 581/582 with one `Category=Timing` test thrown by its own setup while another
 builder's suite ran on this Mac, the class then 3× → 34/34; names 0 removed, 4 added. Manager's gate at `11248b6`, Release:
-build → 0 warnings, 0 errors; suite → 218 + 218 + 582 = 1018, 0 failed; names vs `main` → 0 removed, 4 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+build → 0 warnings, 0 errors; suite → 218 + 218 + 582 = 1018, 0 failed; names vs `main` → 0 removed, 4 added; scan clean; CI run 33966343677 at `a8fc709`: ubuntu SUCCESS, windows SUCCESS, macos FAILURE 217/218 on
+`PressAtomicityTests.Two_close_all_presses_released_together_send_one_close_and_refuse_the_other` again — the second time
+in three macos runs; the product is right in that test's own log, the assertion names the wrong guard (`U-press-atomic-mac`,
+in flight).
 
 **NOT done, stated:** `TradingGateway.cs`, `GatewaySchema.cs` and the connectors untouched; no box, no ATAS, no UI.
