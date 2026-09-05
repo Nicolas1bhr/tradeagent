@@ -311,7 +311,10 @@ public sealed class AppHost : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            var info = ex is TradeAgentException t ? t.Info : Errors.Get(ErrorCode.ATAS_BRIDGE_MISSING, ex.Message);
+            // UNKNOWN_ERROR, not ATAS_BRIDGE_MISSING: an unexpected failure of the copy is not
+            // evidence that the bridge is absent, and telling the owner it is would send them round
+            // this same button again for a reason that is not the one they have.
+            var info = ex is TradeAgentException t ? t.Info : Errors.Get(ErrorCode.UNKNOWN_ERROR, ex.Message);
             Gateway.Log.Engineering("Atas", "bridge_reinstall_failed", "warn", ex: ex);
             return new BridgeReinstall(false, $"{info.UserMessage} {info.Repair}".Trim());
         }

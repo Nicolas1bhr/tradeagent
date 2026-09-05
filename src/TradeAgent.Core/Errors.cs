@@ -43,7 +43,10 @@ public static class Errors
 {
     static readonly Dictionary<ErrorCode, (string User, string Repair, bool Auto)> Catalogue = new()
     {
-        [ErrorCode.UNKNOWN_ERROR]                  = ("Something unexpected went wrong.", "Run Check everything from the Diagnostics screen.", false),
+        // There is no Diagnostics screen. The page is called Checks and the button on it is called
+        // Check everything, and this is the sentence an owner gets when the bridge repair fails for
+        // a reason nothing else in this catalogue names.
+        [ErrorCode.UNKNOWN_ERROR]                  = ("Something unexpected went wrong.", "Press Check everything on the Checks page.", false),
         [ErrorCode.AI_RUNTIME_NOT_FOUND]           = ("The AI assistant program is not installed yet.", "TradeAgent can install it for you.", true),
         // The other sentence that named Retry. The control it means is the setup step's "Try again"
         // (OnboardingView.cs:597), which is what an owner is actually looking at when they read this.
