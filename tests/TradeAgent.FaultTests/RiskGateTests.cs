@@ -150,4 +150,82 @@ public class RiskGateTests(ITestOutputHelper log)
         Assert.Equal(0m, conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "ES")?.Quantity ?? 0m);
         await gw.DisposeAsync();
     }
+
+    /// <summary>
+    /// THE NOTIONAL CAP CANNOT BE CHECKED WITHOUT THE MULTIPLIER, SO WITHOUT IT NOTHING IS SENT
+    /// (Codex F2).
+    ///
+    /// Two ways the multiplier goes missing, and until this unit both ended at the same silent
+    /// substitution — <c>?? 1m</c>, a guess that an ES order's exposure is its price rather than
+    /// fifty times it:
+    ///
+    ///   * the instrument read FAILS, and the failure was caught and discarded;
+    ///   * the read SUCCEEDS with metadata carrying no <c>ContractSize</c> — what the ATAS mapping
+    ///     produces from a security whose <c>LotSize</c> is zero, which is the unproved field Codex
+    ///     names.
+    ///
+    /// A third, and it is the one that made the guess invisible: a size of ZERO multiplies every
+    /// order's value down to nothing, so a cap of any size passes.
+    ///
+    /// THE CAP SITS BETWEEN THE RAW AND THE MULTIPLIED NOTIONAL — ten times the price against a real
+    /// ES multiplier of fifty — which is what makes this a measurement of the harm rather than of
+    /// the error code. With the multiplier the order breaches the cap; with the substituted 1 it
+    /// does not, and until this unit it went out. What is asserted is the wire, and that the refusal
+    /// is not RISK_LIMIT_EXCEEDED: no limit was broken — the gateway could not work out whether one
+    /// would be.
+    /// </summary>
+    [Theory]
+    [InlineData("read-fails")]
+    [InlineData("no-contract-size")]
+    [InlineData("zero-contract-size")]
+    public async Task A_notional_cap_that_cannot_be_multiplied_refuses_before_the_wire(string how)
+    {
+        // 1 < 10 < 50: breached only if the ES multiplier is applied, which is precisely what a
+        // missing multiplier hides.
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = FakeBroker.BasePrice("ES") * 10m);
+        using var _1 = db;
+
+        // Set AFTER Ready: the health refresh reads a quote, not the instrument list, so the cache
+        // this order will find is cold — which is the state a configured install is always in.
+        if (how == "read-fails") conn.InstrumentsThrow = new ConnectorTransportException("the platform did not answer");
+        else conn.InstrumentsAnswer =
+            [new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, how == "zero-contract-size" ? 0m : null)];
+
+        var before = conn.Calls;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), $"notional-{how}", TestEnv.Buy("ES")));
+
+        log.WriteLine($"how                  : {how}");
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+        log.WriteLine($"connector place calls: {conn.Places}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.Equal(ErrorCode.RISK_CHECK_UNAVAILABLE, denied.Code);
+        Assert.Equal(0, conn.Places);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Empty(new ExecutionRequestStore(db).Query());
+        Assert.True(conn.Calls > before, "the refusal must be reached, not short-circuited before any read");
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND THE MULTIPLIER IS ONLY REQUIRED BY THE GATE THAT USES IT. <c>MaxNotionalPerOrder</c> is
+    /// zero by default and that means "not enforced" (see <c>RiskPolicy</c>): an installation that
+    /// never set a value cap must not be stopped from trading by metadata no gate is asking for.
+    /// </summary>
+    [Fact]
+    public async Task No_notional_cap_means_the_missing_contract_size_is_not_asked_for()
+    {
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        using var _1 = db;
+        conn.InstrumentsThrow = new ConnectorTransportException("the platform did not answer");
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "no-cap", TestEnv.Buy("ES"));
+        log.WriteLine($"placed               : {placed.State}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.Equal(ExecutionState.FILLED, placed.State);
+        Assert.Single(conn.Broker.Orders);
+        await gw.DisposeAsync();
+    }
 }

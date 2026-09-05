@@ -118,7 +118,29 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Read(Inner.IsConnectedAsync(ct));
     public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Read(Inner.GetAccountsAsync(ct));
     public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Read(Inner.GetAccountAsync(a, ct));
-    public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => Read(Inner.GetInstrumentsAsync(ct));
+    /// <summary>
+    /// WHAT THE INSTRUMENT READ ANSWERS, when a test needs it to answer something the simulator
+    /// never would. Both knobs are inert until set, and both are about ONE thing: the notional cap
+    /// multiplies by a contract size that comes from here, so "the platform could not tell us the
+    /// contract size" has to be expressible (REVIEW 2026-09-05b, Codex F2).
+    ///
+    /// <see cref="InstrumentsThrow"/> is the read FAILING — a platform that is there and will not
+    /// answer. <see cref="InstrumentsAnswer"/> is the read SUCCEEDING with metadata that carries no
+    /// multiplier: a null <c>ContractSize</c>, which is exactly what the ATAS mapping produces from
+    /// a security whose <c>LotSize</c> is zero. The two are different failures and the gate has to
+    /// refuse both.
+    /// </summary>
+    public Exception? InstrumentsThrow;
+
+    /// <summary>The list the instrument read returns instead of the simulator's. See <see cref="InstrumentsThrow"/>.</summary>
+    public IReadOnlyList<InstrumentInfo>? InstrumentsAnswer;
+
+    public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref Reads);
+        if (InstrumentsThrow is { } boom) return Task.FromException<IReadOnlyList<InstrumentInfo>>(boom);
+        return InstrumentsAnswer is { } answer ? Task.FromResult(answer) : Inner.GetInstrumentsAsync(ct);
+    }
     /// <summary>Gated, and still counted as the read it is. See <see cref="HeldCall.Quote"/>.</summary>
     public async Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default)
     {

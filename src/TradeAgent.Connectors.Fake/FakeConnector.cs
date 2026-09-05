@@ -243,6 +243,21 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public async Task<AccountInfo?> GetAccountAsync(string accountId, CancellationToken ct = default)
     { await Wire(ct, "account"); return accountId == Broker.AccountId ? Broker.Account() : null; }
 
+    /// <summary>
+    /// WHAT THIS SIMULATOR CAN DESCRIBE — and it now describes every instrument it also QUOTES and
+    /// TRADES, bar one.
+    ///
+    /// It used to list three while the book happily took orders in <c>YM</c> as well, which was a
+    /// platform saying "I will trade this and I cannot tell you what it is". Harmless while the
+    /// notional cap quietly substituted a contract size of 1; not harmless once the cap refuses an
+    /// order whose exposure it cannot compute (REVIEW 2026-09-05b, Codex F2), because the incoherence
+    /// then shows up as ten tests that never meant to be about instrument metadata at all.
+    ///
+    /// <c>XYZ</c> stays absent DELIBERATELY: it is the symbol the harness trades to exercise "the
+    /// platform lists no instrument for this", which is a real state and needs a real example — see
+    /// <c>TickNormalizedModifyTests.An_unknown_tick_grid_leaves_a_changed_price_for_a_person_to_judge</c>.
+    /// A test that trades it therefore sets no value cap, exactly as an owner with no cap has none.
+    /// </summary>
     public async Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default)
     {
         await Wire(ct, "instruments");
@@ -251,6 +266,7 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
             new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, 50m),
             new InstrumentInfo("NQ", "E-mini Nasdaq 100", "CME", 0.25m, 5.00m, 20m),
             new InstrumentInfo("MES", "Micro E-mini S&P 500", "CME", 0.25m, 1.25m, 5m),
+            new InstrumentInfo("YM", "E-mini Dow", "CBOT", 1m, 5.00m, 5m),
         ];
     }
 

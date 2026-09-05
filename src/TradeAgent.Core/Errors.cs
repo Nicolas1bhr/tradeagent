@@ -190,9 +190,10 @@ public static class Errors
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
         // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
         // broken — TradeAgent could not work out whether one would be. A change to an order it
-        // cannot read is a change whose effect on your exposure is unknown, and an unknown is
-        // refused rather than waved through.
-        [ErrorCode.RISK_CHECK_UNAVAILABLE]         = ("TradeAgent could not read the order it was asked to change, so it could not check the change against your safety limits.", "Nothing was sent. Check the order on the trading platform, then ask again.", false),
+        // cannot read is a change whose effect on your exposure is unknown; so is an order in an
+        // instrument whose contract size the platform will not report, since the value limit is that
+        // size times the price. Either way the unknown is refused rather than waved through.
+        [ErrorCode.RISK_CHECK_UNAVAILABLE]         = ("TradeAgent could not read something it needed from the trading platform, so it could not check this order against your safety limits.", "Nothing was sent. Check the platform is connected and showing the instrument, then ask again.", false),
         [ErrorCode.AUTONOMY_REQUIRES_PROVABLE_STATE] = ("Fully automatic real-money trading is refused because this platform cannot confirm what happened to an order after a disconnection.", "Use confirm-each-order mode instead, or paper mode.", false),
         [ErrorCode.TRADING_PAUSED_UNRECONCILED]    = ("Trading is paused because an earlier order is unconfirmed.", "TradeAgent is checking with the broker. It resumes on its own.", true),
         [ErrorCode.INVALID_REQUEST]                = ("The AI sent a request TradeAgent did not understand.", "No action needed.", false),

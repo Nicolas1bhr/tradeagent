@@ -1517,7 +1517,13 @@ public class TickNormalizedModifyTests
     [Fact]
     public async Task An_unknown_tick_grid_leaves_a_changed_price_for_a_person_to_judge()
     {
+        // NO VALUE CAP, and for the same reason this test exists: XYZ is the symbol the simulator
+        // lists no instrument for. Since Codex F2 the notional gate refuses an order whose contract
+        // size it cannot establish rather than multiplying by a substituted 1, so a cap left on
+        // would refuse the placement this test needs to get onto the book. Zero is the shipped
+        // default and means the cap is not enforced.
         var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking },
+            settings: s => s.Risk.MaxNotionalPerOrder = 0m,
             options: new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
         using var dbh = db;
         var placed = await gw.PlaceAsync(new AgentContext("a"), "grid-place",

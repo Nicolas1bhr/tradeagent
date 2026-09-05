@@ -777,15 +777,70 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
                 $"no price newer than {_opt.MaxQuoteAge.TotalSeconds:0}s for {intent.Symbol}, so the order value cannot be checked");
 
-        if (_instrumentCache.Count == 0) { try { await InstrumentsAsync(ct); } catch (Exception) { } }
-        var contract = _instrumentCache.FirstOrDefault(i => i.Symbol == intent.Symbol)?.ContractSize ?? 1m;
+        // ASKED FOR ONLY BY THE GATE THAT USES IT. MaxNotionalPerOrder is zero by default and that
+        // means "not enforced" (see RiskPolicy), so an installation that set no value cap must not
+        // be stopped from trading by metadata nothing is going to multiply.
         if (r.MaxNotionalPerOrder > 0)
         {
-            var notional = intent.Quantity * reference.Value * contract;
+            var notional = intent.Quantity * reference.Value * await ContractSizeOrThrow(intent.Symbol, ct);
             if (notional > r.MaxNotionalPerOrder)
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                     $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
         }
+    }
+
+    /// <summary>
+    /// WHAT ONE CONTRACT IS WORTH PER UNIT OF PRICE — REQUIRED, NOT GUESSED (REVIEW 2026-09-05b,
+    /// Codex F2).
+    ///
+    /// The notional cap is a statement about EXPOSURE, and on a futures account the exposure of one
+    /// order is its price times its quantity times this number. It used to read:
+    ///
+    /// <code>
+    ///   if (_instrumentCache.Count == 0) { try { await InstrumentsAsync(ct); } catch (Exception) { } }
+    ///   var contract = _instrumentCache.FirstOrDefault(i =&gt; i.Symbol == intent.Symbol)?.ContractSize ?? 1m;
+    /// </code>
+    ///
+    /// — three ways to end up multiplying by ONE, none of which the caller could see. The instrument
+    /// read failed and the failure was swallowed; the read succeeded and did not carry the symbol;
+    /// the symbol was there with no <c>ContractSize</c> at all, which is exactly what the ATAS
+    /// mapping emits for a security whose <c>LotSize</c> is zero (<c>AtasStrategyAdapter</c>,
+    /// <c>ToInstrument</c>). On ES that is the difference between a cap on $5,450 of exposure and a
+    /// cap on $109 of it: the owner's number, off by the contract size, in the permissive direction.
+    ///
+    /// A size of ZERO is refused for the same reason and is the worst of the three, because it does
+    /// not understate the exposure — it erases it. Every order's value multiplies down to nothing
+    /// and a cap of any size is passed.
+    ///
+    /// SO IT FAILS CLOSED, with the sentence saying which of the two it was: the platform would not
+    /// answer, or it answered and did not know. RISK_CHECK_UNAVAILABLE rather than
+    /// RISK_LIMIT_EXCEEDED, and the difference is the whole of it — no limit was broken, TradeAgent
+    /// could not work out whether one would be, and an unknown on the money path is refused rather
+    /// than waved through. Cancellation is not an answer about the instrument and propagates as
+    /// itself.
+    ///
+    /// WHERE THE NUMBER COMES FROM is stated in docs/CONTRACTS.md, because it arrives from a vendor
+    /// field this project has never measured against a live futures account.
+    /// </summary>
+    async Task<decimal> ContractSizeOrThrow(string symbol, CancellationToken ct)
+    {
+        if (_instrumentCache.Count == 0)
+        {
+            try { await InstrumentsAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                    $"the instrument list could not be read ({ex.Message}), so the contract size for " +
+                    $"{symbol} is unknown and the order's value cannot be checked against your limit");
+            }
+        }
+
+        if (_instrumentCache.FirstOrDefault(i => i.Symbol == symbol)?.ContractSize is not { } size || size <= 0)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"the platform does not report a contract size for {symbol}, so the order's value " +
+                "cannot be checked against your limit");
+
+        return size;
     }
 
     /// <summary>

@@ -56,9 +56,16 @@ public class PressIdShapeTests(ITestOutputHelper log)
     public async Task The_operator_close_all_sends_a_client_order_id_the_agent_pipe_would_accept(string symbol)
     {
         // The full ATAS name IS the instrument here, so it is what the owner's allowlist names.
+        //
+        // AND NO VALUE CAP, because the simulator does not describe this instrument. Since Codex F2
+        // the notional gate refuses an order whose contract size it cannot establish rather than
+        // multiplying by a substituted 1, and a cap left on here would refuse this placement for a
+        // reason that has nothing to do with what the test measures — the shape of the id the press
+        // sends. Zero is the shipped default and means the cap is not enforced.
         var (gw, conn, db) = await TestEnv.Ready(s =>
         {
             s.Risk.MaxOrderQuantity = 5m;
+            s.Risk.MaxNotionalPerOrder = 0m;
             s.Risk.InstrumentAllowlist = [symbol];
         });
         using var dbh = db;

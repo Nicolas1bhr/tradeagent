@@ -733,6 +733,39 @@ count and all took it: `MaxOrdersPerMinute = 1` admitted as many orders as there
 check in the risk pass remains, as an early refusal that costs nothing — it is advisory, and the
 reservation is what bounds the minute.
 
+**The notional cap's multiplier is REQUIRED, and where it comes from has never been measured.**
+`MaxNotionalPerOrder` is compared against quantity × price × **contract size**, and on a futures
+account that last term is the whole of the number: one ES at 109 is $5,450 of exposure, not $109. The
+contract size arrives from `InstrumentInfo.ContractSize`, which the ATAS adapter maps straight from
+the SDK's `Security.LotSize` (`AtasStrategyAdapter.ToInstrument`, zero mapped to null). **That
+mapping is NOT VERIFIED**: no live futures account has been attached to this build, so nobody has
+confirmed that ATAS's `LotSize` is the contract multiplier rather than a minimum order increment or a
+board-lot size. It is the only field in the dump that could be it, and it is a guess until a broker is
+attached. What the code no longer does is guess the VALUE: the cap used to swallow a failed
+instrument read, a symbol the read did not carry and a null or zero `ContractSize` alike, and
+substitute `1` — the owner's limit off by the contract size, in the permissive direction, invisibly
+(REVIEW 2026-09-05b, Codex F2). When a value cap is set and the multiplier cannot be established, the
+order is refused with `RISK_CHECK_UNAVAILABLE` and nothing is sent; the sentence says whether the
+platform would not answer or answered without the number. A zero is refused too, because it does not
+understate the exposure, it erases it. The multiplier is asked for **only when a cap is set** —
+`MaxNotionalPerOrder` is zero by default and that means not enforced, so an installation that set no
+value cap is not stopped by metadata nothing is going to multiply.
+
+**The open-position cap counts what is on its way to being a position, and is decided inside the
+dispatch gate.** `MaxOpenPositions` used to count the positions the platform had already FILLED, read
+before the gate. Both halves were permissive in the same direction: two placements arriving together
+each read the same empty account, each passed a cap of one and each sent — the cap admitted as many
+orders as there were callers — and a resting opening order read as a free account for exactly as long
+as it sat on the book (REVIEW 2026-09-05b, Codex F1). The position read therefore moved into the gate
+together with the decision, where the dispatch before it has finished, and what counts as one open
+instrument is a non-zero position **or** an opening request the store still calls open (`DISPATCHING`,
+`ACKNOWLEDGED`, `WORKING`, `PARTIALLY_FILLED`, `CANCEL_PENDING`, `UNKNOWN`, `RECONCILING`). A CLOSING
+request is excluded — it reduces exposure and is aimed at an instrument already counted, and counting
+it would turn the cap into a trap an account at its limit could not be flattened out of — but a
+request whose parameters cannot be read is counted, because an unreadable intent is not evidence that
+it was a close. A MODIFICATION is not asked: the cap counts instruments, and an order that already
+exists is already in one.
+
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent's order — or its modification — is parked as `AWAITING_APPROVAL` after passing every gate and
 refused to the agent with `APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the
