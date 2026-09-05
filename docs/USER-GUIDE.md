@@ -80,6 +80,10 @@ that was published, TradeAgent closes, the update installs itself without asking
 new version opens on its own. You will see a small progress window from the installer. There is no
 black terminal at any point.
 
+While an order's outcome is unconfirmed, **Install update** on the strip is simply switched off, and
+the strip says *"TradeAgent 0.2.0 is available. It can be installed once the unconfirmed order is
+settled."* rather than inviting a press it already knows will be refused.
+
 **Later** puts the strip away until the next time you open TradeAgent. The offer does not disappear:
 the **Settings** page always shows which version you are running, which is the newest published one,
 and the same **Install update** button. If you would rather TradeAgent never went looking, **Turn off
@@ -111,7 +115,10 @@ megabytes, and once again just before the installer runs, so the answer is true 
 acted on. And from the moment the download starts until the installer takes over, **TradeAgent stops
 accepting new orders** — the other half of the same rule.
 
-Every refusal is written into your **Activity** history as well, so you can find it later.
+**Every press you make is written into your Activity history**, refusal and all, so you can find it
+later — and so "did I press that again?" is a question with an answer. The automatic six-hourly check
+is the one thing that does not repeat itself in the log: the same refusal, over and over, would fill
+the page four times a day, so it is recorded the first time and again whenever the reason changes.
 
 Three more things worth knowing:
 
