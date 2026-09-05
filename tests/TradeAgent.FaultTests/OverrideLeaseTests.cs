@@ -159,6 +159,60 @@ public class OverrideLeaseTests(ITestOutputHelper Out)
         await theCard.DisposeAsync();
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Item 3 — the other direction, so item 1 is bounded rather than overstated. A guard that also
+    // refused the ordinary case would be worse than the hole it closed: the override is the one
+    // route out of a record no machine can settle, and every record it exists for has a dead
+    // dispatcher. Both shapes of "dead" are here — an entry this process watched END, and no entry
+    // at all, which is what a crash, a restart or another process leaves behind.
+    // ---------------------------------------------------------------------------------------------
+    [Fact]
+    public async Task An_override_on_a_row_whose_dispatcher_is_dead_works_exactly_as_before()
+    {
+        var (gw, c, db, clock) = await Stranded.Ready();
+        using var dbh = db;
+
+        // Shape one: this process dispatched, the connector failed indefinitely, and the dispatch
+        // ended. The lease entry still exists — the row is UNKNOWN, so the reconciler may still be
+        // asked about it — and it is no longer LIVE.
+        c.ThrowInsteadOfPlacing = new TimeoutException("the bridge never answered");
+        var failed = await gw.PlaceAsync(new AgentContext("a"), "dead-1", TestEnv.Buy());
+        Out.WriteLine($"after the failure       : {failed.State}, needs_reconciliation={failed.NeedsReconciliation}");
+        Out.WriteLine($"the card asks the lease : {gw.StillOnTheWire("dead-1") ?? "(nothing — the dispatch ended)"}");
+        Out.WriteLine($"trading                 : {(gw.TryAuthorizeExecution(new AgentContext("a"), out var why1, out _) ? "resumed" : $"paused — {why1}")}");
+
+        var resolved = gw.ForceResolve("dead-1", ExecutionState.CANCELLED, "I checked in ATAS and no such order exists");
+        await gw.RefreshHealthAsync();
+        Out.WriteLine($"after the override      : {resolved.State}, needs_reconciliation={resolved.NeedsReconciliation}, last_error={resolved.LastError}");
+        Out.WriteLine($"trading                 : {(gw.TryAuthorizeExecution(new AgentContext("a"), out var why2, out _) ? "resumed" : $"paused — {why2}")}");
+
+        Assert.Equal(ExecutionState.UNKNOWN, failed.State);
+        Assert.Equal(ExecutionState.CANCELLED, resolved.State);
+        Assert.False(resolved.NeedsReconciliation);
+        Assert.StartsWith("resolved by user: ", resolved.LastError);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+
+        // Shape two: a DISPATCHING row this process never dispatched — a crash, a restart, another
+        // process over the same store. There is no lease entry at all, and the age alone is what the
+        // card had to go on before the lease existed and still is here.
+        Stranded.StrandedRow(gw, "dead-2");
+        clock.Advance(TimeSpan.FromSeconds(120));
+        Out.WriteLine($"the crash-shaped row    : {string.Join(", ", gw.Unreconciled().Select(r => $"{r.RequestId}/{r.State}"))}");
+        Out.WriteLine($"the card asks the lease : {gw.StillOnTheWire("dead-2") ?? "(nothing — nobody is flying it)"}");
+
+        var second = gw.ForceResolve("dead-2", ExecutionState.FILLED, "ATAS shows 1 ES filled");
+        await gw.RefreshHealthAsync();
+        Out.WriteLine($"after the override      : {second.State}, needs_reconciliation={second.NeedsReconciliation}");
+        Out.WriteLine($"trading                 : {(gw.TryAuthorizeExecution(new AgentContext("a"), out var why3, out _) ? "resumed" : $"paused — {why3}")}");
+
+        Assert.Null(gw.StillOnTheWire("dead-1"));
+        Assert.Null(gw.StillOnTheWire("dead-2"));
+        Assert.Equal(ExecutionState.FILLED, second.State);
+        Assert.False(second.NeedsReconciliation);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("a"), out _, out _));
+        await gw.DisposeAsync();
+    }
+
     static string Describe(ReconcileResult r) =>
         $"resolved={r.Resolved} inconclusive={r.Inconclusive} {string.Join("; ", r.Details)}";
 }
