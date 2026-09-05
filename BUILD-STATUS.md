@@ -3546,6 +3546,9 @@ builder's suite ran on this Mac, the class then 3× → 34/34; names 0 removed, 
 build → 0 warnings, 0 errors; suite → 218 + 218 + 582 = 1018, 0 failed; names vs `main` → 0 removed, 4 added; scan clean; CI run 33966343677 at `a8fc709`: ubuntu SUCCESS, windows SUCCESS, macos FAILURE 217/218 on
 `PressAtomicityTests.Two_close_all_presses_released_together_send_one_close_and_refuse_the_other` again — the second time
 in three macos runs; the product is right in that test's own log, the assertion names the wrong guard (`U-press-atomic-mac`,
-in flight).
+landing: its PR run 33967839971 was green on all three platforms). The docs commit `572c2be` after it drew a NEW
+one-off windows red, run 33966990967: `SweepRequestIdTests.A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`
+— `Not found: "confirmed"` in `[sent-not-confirmed, rejected, not-sent, not-sent, not-sent]`; not in the `Timing`
+category, did not recur on the next windows run; recorded, briefed if it recurs.
 
 **NOT done, stated:** `TradingGateway.cs`, `GatewaySchema.cs` and the connectors untouched; no box, no ATAS, no UI.
