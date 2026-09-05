@@ -52,3 +52,24 @@ Fix: `ExecutionRequestStore.TryCreateFlagged` — the flag and the `NOT EXISTS(�
 needs_reconciliation=1)` guard are in the INSERT, so the check and the first durable row are one statement and
 hold across the two processes that reach this button. Mutant (exclusion clause → `$claim IS NOT NULL`) → red,
 `Expected: 1 Actual: 2`, `close calls on the wire : 2`. Fault suite in Release: 209 passed, 0 failed.
+
+**2 — a replay is bound to its verb and session, and looked up before any live read. VERIFIED.**
+RED (guard removed, lookup back after the capture; 4 tests, `CompositeReplayBindingTests`):
+`cancel-all with the same id : ACCEPTED — {"op":"close-all","legs":1,"targets":["ES"]}` (an agent told
+its cancellation was done with every order still working); `session b replaying session a's id : ACCEPTED,
+no refusal`; the wrong-verb replay only stopped by the accident that `ES` is not an order id; the offline
+replay threw `ConnectorTransportException : simulator is disconnected`. GREEN: all four —
+`INVALID_REQUEST — request id 'cr-1' already names a 'close-all'; it cannot be reused for a 'cancel-all'`,
+`wire calls during the replay : 0`, `leg records under the replay's nonce : 0`,
+`position reads attempted during the replay : 0`. Over the REAL pipe
+(`CompositeVerbBindingTests`): close-all `cv-1` ok, then cancel-all `cv-1` →
+`ok=False {"code":"INVALID_REQUEST",…}` and `orders at the broker : FB-1 WORKING`. Fix: `ReplayOf` checks
+`op` and `agent_session_id` (already columns — no schema change); `BeginCompositeAsync` takes the capture
+as a delegate and never invokes it on a replay. `docs/CONTRACTS.md` + the `AGENTS.md` template state it.
+Mutants: verb check compares `stored.Op` to itself → 3 red (2 fault + the pipe test); lookup moved back
+after the read → 1 red (`simulator is disconnected`).
+**NOT DONE, and it is the half that is not fixed in production:** `GatewayPipeServer.CancelAll` (~:888)
+and `CloseAll` (~:1399) still read the book/positions BEFORE calling the sync `BeginComposite`, so an
+agent's offline replay still fails on the read. The verb and session binding DOES reach them (proved over
+the pipe above). Adopting `BeginCompositeAsync` is one call-site change each; the file belongs to
+`u-pipe-hello` and this unit was told not to edit it.
