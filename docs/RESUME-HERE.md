@@ -24,7 +24,12 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    own answer. The installed 0.1.1 there is stale until v0.1.2 is cut.
 3. **The second milestone review is DONE and triaged** (`docs/REVIEW-2026-09-05b.md`: reviewer HIGH 3 · MED 2 · LOW 1 ·
    UNVERIFIED 7 with eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in
-   with the triage). **`docs/briefs/` is the queue, seven files.** Landed: `U-override-lease` (HIGH 1) at `d14a2f0` and
+   with the triage). **`docs/briefs/` is the queue, seven files.** A usage-limit kill at ~23:40 on 2026-09-05 took all four running
+   legs (`U-two-press-grant` 4 commits, `U-bridge-2` 5 commits, `U-press-stopwatch` 1 commit, `U-codex-2a` four
+   uncommitted files); at 00:40 on 2026-09-06 each was re-briefed FRESH from its file with "read your branch first" —
+   this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. The kill left the box's app
+   STOPPED (`trade status` → `IPC_UNAVAILABLE`, ATAS running); the bridge leg was told to assess and restore it first.
+   Landed: `U-override-lease` (HIGH 1) at `d14a2f0` and
    `U-press-inflight` (HIGH 2 + Codex F3) at `145e725` — its builder's stated deviation: the press refuses a leg against
    DISPATCHING work only, not UNKNOWN (an UNKNOWN record is the very state the emergency is pressed about), so an
    UNKNOWN close on the same instrument can still fill after the press's close and reverse it — in `docs/CONTRACTS.md`,
