@@ -66,10 +66,27 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     /// <summary>Completed the moment the held call has been entered, so a test knows it is inside.</summary>
     public readonly TaskCompletionSource Reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public enum HeldCall { Place, Positions, Modify }
+    /// <summary>
+    /// A test-supplied wait in front of every gated call, whoever makes it and however many times.
+    ///
+    /// <see cref="Hold"/> parks ONE kind of call on ONE task. That is enough to open a window and not
+    /// enough to ORDER two callers inside it, and "the second press re-reads the position only after
+    /// the first press's fill has landed" is a statement about two flows rather than one call. The
+    /// connector is the single place both flows pass through, so it is where that ordering can be
+    /// stated at all: the seam is told which kind of call is being made, and may await anything
+    /// before letting it through — a condition on this connector's counters, on the broker's book,
+    /// or on the other flow finishing. A test that needs to know WHICH flow it is looking at carries
+    /// its own <see cref="AsyncLocal{T}"/> tag; the connector deliberately holds no idea of one.
+    ///
+    /// Null, and therefore inert, unless a test sets it.
+    /// </summary>
+    public Func<HeldCall, Task>? Seam;
+
+    public enum HeldCall { Place, Positions, Modify, Close }
 
     async Task Gate(HeldCall kind)
     {
+        if (Seam is { } seam) await seam(kind);
         if (Holds != kind || Hold is null) return;
         Reached.TrySetResult();
         await Hold;
@@ -128,10 +145,16 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) =>
         Inner.CancelAllOrdersAsync(a, ct);
 
-    public Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)
+    /// <summary>
+    /// Counted before the gate, so <see cref="Closes"/> is "close calls that REACHED the connector"
+    /// and stays true of one that is being held. A test that means "the fill has landed" asks the
+    /// broker's book, not this number.
+    /// </summary>
+    public async Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)
     {
         Interlocked.Increment(ref Closes);
-        return Inner.ClosePositionAsync(a, s, coid, ct);
+        await Gate(HeldCall.Close);
+        return await Inner.ClosePositionAsync(a, s, coid, ct);
     }
 
     public event Action<HealthState>? ConnectionChanged { add => Inner.ConnectionChanged += value; remove => Inner.ConnectionChanged -= value; }
