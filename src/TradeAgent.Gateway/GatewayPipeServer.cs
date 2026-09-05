@@ -1042,17 +1042,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     async Task<object> CancelAll(AgentContext ctx, string rid, CancellationToken ct)
     {
-        var working = await gateway.OrdersAsync(false, ct);
-
         // THE COMPOSITE IS WRITTEN BEFORE ANY EFFECT, AND A REPLAY SENDS NOTHING (Codex C2).
         //
         // The nonce used to be minted here, fresh, per CALL — so an agent whose reply was lost and
         // who re-sent the same request id got a whole new sweep over whatever was on the book by
-        // then, including orders it had placed since. `BeginComposite` claims the id, stores the
-        // plan and the nonce, and hands back the stored ones on a second call; the legs are then
+        // then, including orders it had placed since. `BeginCompositeAsync` claims the id, stores
+        // the plan and the nonce, and hands back the stored ones on a second call; the legs are then
         // named the same and every leg's own record refuses to dispatch twice.
-        var composite = gateway.BeginComposite(ctx, rid, Core.Ops.CancelAll,
-            working.Select(o => o.ConnectorOrderId).ToList(), () => FreshSweepNonce("cancelall"));
+        //
+        // THE BOOK READ IS THE DELEGATE, NOT A LINE ABOVE THIS ONE, and the difference is the whole
+        // of the offline case. Read first, ask second, and the lost reply this request id exists to
+        // return cannot be returned at the one moment it is wanted: the platform is unreachable —
+        // exactly as unreachable as it was when the reply went missing — so the read throws and the
+        // agent is told TRADING_CONNECTION_MISSING about a sweep that is finished and answered in
+        // the database. Handed over as a delegate, the lookup happens first and the capture never
+        // runs on a replay, so the stored answer comes back with nothing asked of the platform. The
+        // verb/session binding in `ReplayOf` is then the one gate a replay has to pass.
+        var composite = await gateway.BeginCompositeAsync(ctx, rid, Core.Ops.CancelAll,
+            async token => (await gateway.OrdersAsync(false, token)).Select(o => o.ConnectorOrderId).ToList(),
+            () => FreshSweepNonce("cancelall"), ct);
         if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
         var nonce = composite.Nonce;
         // AWAITED RATHER THAN HANDED OVER, and that is not a style choice. `RunLegs` takes the WIDER
@@ -1552,12 +1560,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <summary>Same two corrections as <see cref="CancelAll"/>: uncollidable ids, and a count of what landed.</summary>
     async Task<object> CloseAll(AgentContext ctx, string rid, CancellationToken ct)
     {
-        var positions = await gateway.PositionsAsync(ct);
-
-        // See CancelAll: the composite is persisted before any effect, and a replayed id returns the
-        // answer it already gave rather than closing whatever is open now.
-        var composite = gateway.BeginComposite(ctx, rid, Core.Ops.CloseAll,
-            positions.Where(p => p.Quantity != 0).Select(p => p.Symbol).ToList(), () => FreshSweepNonce("closeall"));
+        // See CancelAll: the composite is persisted before any effect, a replayed id returns the
+        // answer it already gave rather than closing whatever is open now, and the position read is
+        // inside the delegate so that answer is still available with the platform unreachable.
+        var composite = await gateway.BeginCompositeAsync(ctx, rid, Core.Ops.CloseAll,
+            async token => (await gateway.PositionsAsync(token)).Where(p => p.Quantity != 0).Select(p => p.Symbol).ToList(),
+            () => FreshSweepNonce("closeall"), ct);
         if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
 
         var legs = await RunLegs(composite.Targets, "closeall", composite.Nonce,
