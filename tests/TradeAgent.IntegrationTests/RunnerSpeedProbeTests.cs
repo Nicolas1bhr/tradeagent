@@ -43,16 +43,21 @@ namespace TradeAgent.Tests.Integration;
 /// at all but a missing premise (a caller cancelled while this end was still inside its write). No
 /// scale, at any value, turns that into a pass.
 ///
-/// WHAT WAS DONE INSTEAD. The two classes with a measured history of windows-only reds carry
+/// WHAT WAS DONE INSTEAD. The tests whose verdict needs the runner to keep a wall clock carry
 /// `Trait("Category","Timing")`, `.github/workflows/build.yml` runs the rest of the suite with no
-/// retry on every platform, and re-runs THAT CATEGORY ONCE, on windows-latest only, when it fails.
-/// A rescued run is annotated and both attempts' trx are uploaded, so a green that needed a second
-/// attempt cannot be read as a green that did not. What this cannot do is tell a slow runner from a
-/// regression inside those two classes on Windows — the price of the category, paid on purpose,
-/// against three fix units that each cost a day and fixed one test.
+/// retry on every platform, and re-runs THAT CATEGORY ONCE when it fails. A rescued run is
+/// annotated and both attempts' trx are uploaded, so a green that needed a second attempt cannot be
+/// read as a green that did not. What this cannot do is tell a slow runner from a regression inside
+/// the category — the price of it, paid on purpose, against three fix units that each cost a day
+/// and fixed one test. `build.yml` carries the category's full meaning; this comment does not
+/// restate it.
 ///
-/// macOS is worth a look before it costs a day too: its short-timer floor is 3.3x-4.6x this Mac's,
-/// which is where a macOS-only timing red would come from.
+/// THE SECOND ATTEMPT WAS WINDOWS-ONLY UNTIL U-press-stopwatch, on the reading that the spread was
+/// Windows's alone. It is not. Measured per step on all three runners: one emergency press's single
+/// post-deadline SQLite settle cost 3 ms on ubuntu in two runs and 547/593 ms in a third, off the
+/// same code — and the note below about macOS stopped being a prediction in the same measurement,
+/// where a 1200 ms timer was delivered at 1204-1337 ms and put 21-122 ms of a press's overrun into
+/// the connector call rather than into any local step.
 /// </summary>
 public class RunnerSpeedProbeTests(ITestOutputHelper output)
 {

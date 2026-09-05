@@ -85,7 +85,10 @@ allocation. The combination verify. The integration scribe. A box run per round.
    --hard` to the pre-merge sha, `--force-with-lease`, then a fixer on the branch. Red CI only on a hosted runner, in a
    test the Windows target passes, or a failure thrown by a test's own setup (a harness writer hitting a sharing
    violation): a fresh fixer on top of `main`, and the sha is recorded red until it lands. If a running builder owns
-   the failing files, the fixer starts the moment that unit lands.
+   the failing files, the fixer starts the moment that unit lands. **The `Timing` category is the one place a second
+   attempt exists**, on every platform: a test joins it when its verdict needs the RUNNER to keep a wall clock as well
+   as the product to be right, membership is argued at the test with measured numbers rather than granted to whatever
+   went red, and an assertion is never loosened to get in. A red twice in a row is still a red run.
 7. `BUILD-STATUS.md` section; brief deleted; worktree removed; memory updated.
 
 ## Sizes, so that this stays true

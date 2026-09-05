@@ -30,22 +30,40 @@ jobs:
       - name: Test everything outside the timing category
         run: dotnet test TradeAgent.sln -c Release --no-build --filter "Category!=Timing" --logger "trx;LogFileName=results.trx"
 
-      # THE TIMING CATEGORY — run everywhere, RE-RUN ONCE ON WINDOWS AND NOWHERE ELSE.
+      # THE TIMING CATEGORY — run everywhere, RE-RUN ONCE ON EVERY RUNNER.
       #
-      # WHY. `RunnerSpeedProbeTests` measures, on every run and every platform, how much slower the
-      # runner is than the machine these fixtures were tuned on. Over three runs of PR #4 the
-      # windows-latest figures were: arithmetic 1.20/1.22/1.06, timers 1.02/1.18/1.08, pipes
-      # 2.24/2.54/3.31 — and file IO 3.79/39.52/4.89. File IO is what the failures are made of and
-      # it is the one that will not hold still, so there is no factor to scale the fixtures by:
-      # covering the worst of those three needs more than 40x, applied to fixtures whose real
-      # bottleneck is 1.08x. Six windows-only reds across three fix units, one per run, each fixed
-      # by hand. This is the net under them.
+      # WHAT THE CATEGORY MEANS, ONCE, SO NOTHING ELSE DRIFTS INTO IT: a test belongs here when its
+      # verdict needs the RUNNER to keep a wall clock as well as the product to be right — it either
+      # measures a duration and asserts a ceiling on it, or asserts an outcome that the product only
+      # reaches while a deadline of its own is still open. Every other test in this repository
+      # decides on what the product DID, and a red there is a red run on the first attempt, on all
+      # three platforms, with no rescue. Membership is not a place to send a test that fails; it is
+      # a statement about what the test measures, and it is argued at the test with numbers.
       #
-      # WHAT IT COSTS, SAID PLAINLY: inside these two classes, on Windows, a genuine regression that
-      # fails intermittently can be rescued by the second attempt. That is why the category is two
-      # classes and not a convenience anyone can reach for, why the first failure is printed, named
-      # in the job summary, annotated on the run and uploaded as its own trx, and why ubuntu and
-      # macos do not get a second attempt at all.
+      # WHY A SECOND ATTEMPT AT ALL. `RunnerSpeedProbeTests` measures, on every run and every
+      # platform, how much slower the runner is than the machine these fixtures were tuned on. Over
+      # three runs of PR #4 the windows-latest figures were: arithmetic 1.20/1.22/1.06, timers
+      # 1.02/1.18/1.08, pipes 2.24/2.54/3.31 — and file IO 3.79/39.52/4.89. File IO is what the
+      # failures are made of and it is the one that will not hold still, so there is no factor to
+      # scale the fixtures by: covering the worst of those three needs more than 40x, applied to
+      # fixtures whose real bottleneck is 1.08x. Six windows-only reds across three fix units, one
+      # per run, each fixed by hand. This is the net under them.
+      #
+      # WHY IT IS NO LONGER WINDOWS-ONLY. That rule rested on the spread being Windows's alone, and
+      # U-press-stopwatch measured otherwise. A throwaway harness timed one emergency press per step
+      # on all three runners: the single SQLite settle it makes after its deadline —
+      # `SafelyRecordIndefinite`, at `synchronous=FULL` — cost 3 ms on ubuntu in two runs and 547 ms
+      # and 593 ms in a third, off the same code and the same fixture, which is the same 200x spread
+      # by a different name. A 20 ms tick on a dedicated thread and on the pool kept arriving at
+      # 21 ms through all of it and GC pause was 0, so the process was running: it is the runner's
+      # disk. Ubuntu had already spent one red on it (run 33986791747, 1243 ms over) and windows one
+      # more (33973192760). A rule that reads "windows is the flaky one" is now simply wrong.
+      #
+      # WHAT IT COSTS, SAID PLAINLY: inside this category a genuine regression that fails
+      # intermittently can be rescued by the second attempt. That is why membership is argued rather
+      # than granted, why the first failure is printed, named in the job summary, annotated on the
+      # run and uploaded as its own trx — and why a red twice in a row is still a red run, on every
+      # platform, with nothing left to try.
       - name: Test the timing category
         shell: bash
         run: |
@@ -70,11 +88,6 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::warning title=Timing category failed on its first attempt::${failed//$'\n'/, }"
-
-          if [ "$RUNNER_OS" != "Windows" ]; then
-            echo "Not windows-latest, so there is no second attempt: this run is red."
-            exit 1
-          fi
 
           echo "Re-running the timing category once; the failure above stands in the record either way."
           dotnet test TradeAgent.sln -c Release --no-build \
