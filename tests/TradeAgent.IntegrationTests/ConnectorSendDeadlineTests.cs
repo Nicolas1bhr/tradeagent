@@ -32,7 +32,14 @@ namespace TradeAgent.Tests.Integration;
 /// less. Enough ordinary RPCs to overrun the buffer is the shape that shows it on both, and it is
 /// not a contrived one: a gateway reconciling against a bridge that has stopped reading does this
 /// by itself.
+///
+/// CATEGORY "Timing", because four of this class's tests have gone red on `windows-latest` and
+/// nowhere else — three in U2a-fix, one in U-win-timing — and every one of them paced a peer or
+/// waited a margin against a shipped deadline. <see cref="RunnerSpeedProbeTests"/> says what that
+/// category buys and what it costs; the short version is that this class is re-run once on
+/// windows-latest and only there, and the first failure is still logged and still uploaded.
 /// </summary>
+[Trait("Category", "Timing")]
 public class ConnectorSendDeadlineTests
 {
     static string NewPipe() => "ta-csd-" + Guid.NewGuid().ToString("n")[..12];

@@ -22,6 +22,37 @@ namespace TradeAgent.Tests.Integration;
 ///
 /// The four workloads are the four things the fixtures actually spend their margins on:
 /// arithmetic, file IO, a named-pipe round trip, and the floor of a short timer.
+///
+/// WHAT IT MEASURED. Three runs of the unit's PR — 33934109894, then 33935367698 whose windows job
+/// was re-run once on the same sha — as ratios against the reference machine below:
+///
+///     windows-latest   cpu 1.20 1.22 1.06   file-io 3.79 39.52 4.89   pipe 2.24 2.54 3.31   timer 1.02 1.18 1.08
+///     ubuntu-latest    cpu 0.97 1.20        file-io 0.74  0.13        pipe 1.50 1.54        timer 0.95 0.95
+///     macos-latest     cpu 1.28 1.07        file-io 0.56  0.35        pipe 1.55 0.85        timer 4.58 3.26
+///
+/// WHY THERE IS NO SINGLE FACTOR TO SET. On windows-latest arithmetic, pipes and short timers are
+/// within a small constant of this Mac — near 1.2x, 2.7x and 1.1x. FILE IO IS NOT: the same sixty
+/// write-through-and-read-back cycles took 570 ms, 5944 ms and 735 ms on three runs of one commit,
+/// a spread of ten, and file IO is what the failures are made of (a witness row is SQLite, and
+/// SQLite is file IO). A single `TA_TEST_TIME_SCALE` would have to exceed 40 to cover the worst of
+/// the three — past the ceiling <see cref="TestTime"/> itself refuses — and it would multiply every
+/// fixture's patience in the suite, including fixtures bounded by a timer that is 1.08x. So it is
+/// NOT set in CI, and the line below says so on every run: `TA_TEST_TIME_SCALE-in-effect=1.00`.
+///
+/// The second reason, from the same unit: of the two failures it started from, one was not a margin
+/// at all but a missing premise (a caller cancelled while this end was still inside its write). No
+/// scale, at any value, turns that into a pass.
+///
+/// WHAT WAS DONE INSTEAD. The two classes with a measured history of windows-only reds carry
+/// `Trait("Category","Timing")`, `.github/workflows/build.yml` runs the rest of the suite with no
+/// retry on every platform, and re-runs THAT CATEGORY ONCE, on windows-latest only, when it fails.
+/// A rescued run is annotated and both attempts' trx are uploaded, so a green that needed a second
+/// attempt cannot be read as a green that did not. What this cannot do is tell a slow runner from a
+/// regression inside those two classes on Windows — the price of the category, paid on purpose,
+/// against three fix units that each cost a day and fixed one test.
+///
+/// macOS is worth a look before it costs a day too: its short-timer floor is 3.3x-4.6x this Mac's,
+/// which is where a macOS-only timing red would come from.
 /// </summary>
 public class RunnerSpeedProbeTests(ITestOutputHelper output)
 {
