@@ -307,8 +307,35 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var json = _db.GetKv("settings");
         if (string.IsNullOrWhiteSpace(json)) return new TradeAgentSettings();
-        try { return Json.Read<TradeAgentSettings>(json) ?? new TradeAgentSettings(); }
+        TradeAgentSettings settings;
+        try { settings = Json.Read<TradeAgentSettings>(json) ?? new TradeAgentSettings(); }
         catch (Exception) { return new TradeAgentSettings(); }
+
+        // A MODE THIS BUILD DOES NOT HAVE ALLOWS NOTHING, AND THE OWNER IS TOLD SO.
+        //
+        // TradeAgentSettings.ModeIsRecognised is what makes the refusal happen — the gates ask it,
+        // and nothing this method does is load-bearing for safety. What is load-bearing for the
+        // PERSON is this line: the failure is a setting they believe they set, so a refusal that
+        // only an agent ever reads over a pipe is not news anyone at the keyboard receives.
+        //
+        // The value is NOT rewritten to OBSERVE. Substituting a control the owner never chose is
+        // the shape of REVIEW 2026-09-05 finding 5, and rewriting it here would also destroy the
+        // evidence: a mode a NEWER build wrote is exactly what a rollback should hand back intact
+        // when the owner upgrades again.
+        if (!settings.ModeIsRecognised)
+        {
+            try
+            {
+                _log.Activity($"The trading mode saved in your settings ({(int)settings.Mode}) is not one this version " +
+                              "of TradeAgent knows, so nothing will be sent to your broker. Choose a mode on the " +
+                              "Settings page.", "warn");
+                _log.Engineering("Gateway", "unrecognised_mode", "error",
+                    metadataJson: Json.Write(new { mode = (int)settings.Mode }));
+            }
+            catch (Exception) { /* the gate is the guarantee; the sentence about it is the nicety */ }
+            _health.Set(Components.ExecutionCapability, HealthState.PAUSED, "the saved trading mode is not one this version knows");
+        }
+        return settings;
     }
 
     void SaveSettings()
@@ -339,6 +366,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
     public void SetMode(TradingMode mode)
     {
+        // A C# enum is a number with names on some of it, and `(TradingMode)999` is a legal value of
+        // the parameter type. Nothing in the app passes one — the Settings page offers the four —
+        // but this is the only writer of the setting the whole gateway reads, and a value that gets
+        // in HERE is one no later reader can tell from a mode the owner chose.
+        if (!Enum.IsDefined(mode))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"{(int)mode} is not a trading mode");
+
         Settings.Mode = mode;
         if (!Settings.ModeIsLive) Settings.LiveActivated = false; // leaving live re-arms the safety
         SaveSettings();
@@ -543,7 +577,10 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (!Settings.ModeAllowsExecution)
         {
-            (reason, code) = ($"mode is {Settings.Mode}", ErrorCode.MODE_FORBIDS_EXECUTION);
+            (reason, code) = (Settings.ModeIsRecognised
+                    ? $"mode is {Settings.Mode}"
+                    : $"the saved trading mode ({(int)Settings.Mode}) is not one this version of TradeAgent knows",
+                ErrorCode.MODE_FORBIDS_EXECUTION);
             return false;
         }
         if (Settings.AiTradingStopped && !ctx.IsOperator)
@@ -2878,12 +2915,18 @@ public sealed class TradingGateway : IAsyncDisposable
                     q is null ? "no quote" : q.IsStale(_opt.MaxQuoteAge) ? $"last price is older than {_opt.MaxQuoteAge.TotalSeconds:0}s" : "");
             }
 
+            // An unrecognised mode is in here rather than only in LoadSettings, because this method
+            // RECOMPUTES the row from scratch on every five-second pass: a state set once at startup
+            // and overwritten a moment later is a claim that does not hold, and the gate and the
+            // screen would then disagree about whether this installation can trade at all.
             var unreconciled = Unreconciled().Count;
             var latched = _unconfirmed.Values.FirstOrDefault();
+            var unknownMode = !Settings.ModeIsRecognised;
             _health.Set(Components.ExecutionCapability,
-                unreconciled > 0 || latched is not null ? HealthState.PAUSED
+                unknownMode || unreconciled > 0 || latched is not null ? HealthState.PAUSED
                 : account?.TradingEnabled == true ? HealthState.READY : HealthState.DEGRADED,
-                unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
+                unknownMode ? $"the saved trading mode ({(int)Settings.Mode}) is not one this version knows"
+                : unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
         }
         catch (Exception ex)
         {

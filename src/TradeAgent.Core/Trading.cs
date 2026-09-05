@@ -51,7 +51,24 @@ public sealed class TradeAgentSettings
     public string? SelectedAccountId { get; set; }
     public RiskPolicy Risk { get; set; } = new();
 
-    [JsonIgnore] public bool ModeAllowsExecution => Mode != TradingMode.OBSERVE;
+    /// <summary>
+    /// IS THE SAVED MODE ONE THIS BUILD ACTUALLY HAS?
+    ///
+    /// <see cref="TradingMode"/> is persisted as a name, and <c>System.Text.Json</c>'s enum converter
+    /// reads NUMBERS as well — and casts a number it does not recognise straight onto the enum. A
+    /// settings row saying <c>"mode": 999</c> therefore produced a mode of 999, and every gate below
+    /// is a comparison against the named values: 999 is not OBSERVE so it executed, it is not
+    /// LIVE_CONFIRM or LIVE_AUTONOMOUS so the real-money activation switch was never consulted, and
+    /// it is not PAPER so a real-money account was not refused either. A mode nobody chose, trading
+    /// real money with the safety off (REVIEW 2026-09-05, Codex F3).
+    ///
+    /// It is not a hypothetical row: a newer build writes a mode this one has never heard of, and a
+    /// rollback reads it. So the classification fails closed — an unrecognised mode allows nothing —
+    /// and <c>TradingGateway.LoadSettings</c> says so in the owner's words.
+    /// </summary>
+    [JsonIgnore] public bool ModeIsRecognised => Enum.IsDefined(Mode);
+
+    [JsonIgnore] public bool ModeAllowsExecution => ModeIsRecognised && Mode != TradingMode.OBSERVE;
     [JsonIgnore] public bool ModeIsLive => Mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS;
 }
 

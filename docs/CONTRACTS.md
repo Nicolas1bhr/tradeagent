@@ -485,6 +485,20 @@ go. Before this, a sweep minted its nonce per CALL: an agent that lost the reply
 request id got a second sweep over whatever was on the book by then, including orders it had placed
 since.
 
+**A trading mode this build does not have allows nothing.** `TradingMode` is `OBSERVE`, `PAPER`,
+`LIVE_CONFIRM`, `LIVE_AUTONOMOUS`; it is persisted as a name, and the JSON enum converter also reads
+NUMBERS and casts one it does not recognise straight onto the enum. A settings row saying
+`"mode": 999` therefore produced a mode of 999, and every gate is a comparison against the named
+values: 999 is not `OBSERVE` so it executed, not `LIVE_CONFIRM` or `LIVE_AUTONOMOUS` so the
+real-money activation switch was never consulted, and not `PAPER` so a real-money account was not
+refused either — a mode nobody chose, trading real money with the safety off (REVIEW 2026-09-05,
+Codex F3). It is not hypothetical: a newer build writes a mode this one has never heard of, and a
+rollback reads it. So `TradeAgentSettings.ModeIsRecognised` gates execution, the health row is
+`PAUSED` with that reason on every refresh, and the owner is told in the app's own words that the
+saved mode is not one this version knows. **The value is not rewritten** — substituting a control the
+owner never chose is its own defect class, and a mode a newer build wrote should survive intact until
+they upgrade again.
+
 **Every mutating verb passes the same gates, and a modification is checked on the order as it will
 stand.** `place`, `modify` and `cancel` all run the authorization chain; `place` and `modify` also run
 every risk limit and both park in `LIVE_CONFIRM`. A `modify` used to run the authorization and
