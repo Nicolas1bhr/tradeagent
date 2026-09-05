@@ -31,3 +31,16 @@ run ends with exit 1 and NO summary line, re-run it).
 
 ## Report — append as you go, commit it, ≤10 lines: tip sha; RED → GREEN; where the allowlist was set and whether a
 shared helper changed; the counts; what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+Rebased onto `main` `f0cb7eb`; code tip `c05992d`, this report the tip. Nothing in `src/`: +5 lines, one test file.
+RED (Release, class): `Failed: 2, Passed: 2` — close-all `{"code":"RISK_LIMIT_EXCEEDED","message":"ES is not on the
+allowed instrument list",…}` line 132; cancel-all `Assert.True() Failure` line 89. GREEN: `Passed: 4` of 4, three runs.
+WHERE: this file's own `Counted` helper — `s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];`, the line
+`SweepRequestIdTests.ReadyWithBudget` and `ConnectorSendDeadlineTests` already use. NO shared helper changed:
+`TestEnv.Ready` carries it, but `Counted` builds its own gateway around `RecordingConnector` and never went through
+`Ready` — which is why these two alone were left. They still prove it: real sweeps (`"cancelled":1`, `"closed":1`, not
+`nothing_to_do`), byte-identical replay body, `connector calls during the replay : 0` all three runs, and
+`Calls => Reads + Positions + Mutations`, so reads count. Gate: Release `--no-incremental` 0 warnings; 219 + 236 + 582
+= 1037, 0 failed. Verified. NOT done: no `src/` change, no other test's assertions, no push, no box, no worktree.
