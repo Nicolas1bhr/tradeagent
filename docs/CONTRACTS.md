@@ -377,6 +377,19 @@ than an unflagged `UNKNOWN`, which nothing would ever move. `cancel-all`'s `canc
 `not_cancelled` list read the per-leg WORD, so a terminal row that was never sent is not counted as a
 cancellation that landed.
 
+**`close-all` answers in the same shape, and the count is where the two sweeps legitimately differ.**
+`closed` and `not_closed` read the word too, and `not_closed` carries it in the same `outcome` field
+`not_cancelled` has: they read the RECORD alone until 2026-09-05, so a leg the connector proved it
+never sent came back as `state: CANCELLED` and nothing else — which reads as the platform having
+cancelled the closing order rather than as a position still open that nothing was sent about. But
+`closed` is **not** the word alone: `confirmed` is "this leg's own intent is done" and is read off a
+`CANCELLED` *or* `FILLED` record, which for a cancel leg both mean the order is not working any more,
+while a CLOSE leg's intent is a FILLED offsetting order and a closing order that was itself cancelled
+has flattened nothing. So `closed` requires the word **and** a `FILLED` record — the transport has to
+agree and the position has to have actually closed — and the reading cannot over-claim from either
+side. The one over-claim reachable today is the record-only one; the other is a shape no shipped
+connector produces, and it is closed here rather than left to be found.
+
 ## Order state machine — `src/TradeAgent.Core/OrderStateMachine.cs`
 
 ```

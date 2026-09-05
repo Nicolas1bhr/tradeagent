@@ -1568,7 +1568,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var nothingToDo = legs.Where(l => l.NoTargetFound).Select(l => l.Target).ToList();
         var results = legs.Where(l => l.Record is not null).Select(l => l.Record!).ToList();
 
-        var landed = results.Count(r => r.State is ExecutionState.FILLED);
+        // COUNTED FROM THE WORD AS WELL AS THE RECORD, which `cancelled` has done since U2c1c and
+        // this had not (REVIEW 2026-09-05, finding 9). A leg the connector PROVED it never sent is
+        // settled CANCELLED rather than stranded UNKNOWN, so the record alone reported a closing
+        // order the platform had cancelled — for a position that is still open and that nothing was
+        // ever sent about.
+        //
+        // AND NOT FROM THE WORD ALONE, because the two sweeps are not symmetrical. `confirmed` is
+        // "this leg's own intent is done", and `Classify` reads that off a CANCELLED *or* FILLED
+        // record: for a cancel leg both mean the order is not working any more, but a CLOSE leg's
+        // intent is a filled offsetting order, and a closing order that was itself cancelled has
+        // flattened nothing. Requiring both is the reading that cannot over-claim in either
+        // direction — the transport has to agree, and the position has to have actually closed.
+        bool Landed(Leg l) => l.Outcome is LegOutcome.Confirmed && l.Record?.State is ExecutionState.FILLED;
+
+        var landed = legs.Count(Landed);
         return Answer(rid, new
         {
             closed = landed,
@@ -1579,8 +1593,17 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             // from `cancelled`, one field over.
             attempted = legs.Count(l => l.Attempted),
             nothing_to_close = nothingToDo,
-            not_closed = results.Where(r => r.State is not ExecutionState.FILLED)
-                .Select(r => new { request_id = r.RequestId, instrument = r.Instrument, state = r.State.ToString() }),
+            // THE SAME SHAPE `not_cancelled` HAS, word included. It carried a state and nothing
+            // else, so the one entry an agent most needs to read — a leg that never reached the
+            // wire — arrived as `state: CANCELLED`, which reads as the platform having cancelled
+            // the closing order. The word is what says which of those two it was, and the reader
+            // should not have to cross-reference `outcomes` by request id to find it.
+            not_closed = legs.Where(l => l.Record is not null && !Landed(l))
+                .Select(l => new
+                {
+                    request_id = l.Record!.RequestId, instrument = l.Record.Instrument,
+                    state = l.Record.State.ToString(), outcome = Word(l.Outcome)
+                }),
             not_sent = legs.Count(l => l.Outcome == LegOutcome.NotSent),
             outcomes = legs.Select(l => l.Describe()),
             requests = results

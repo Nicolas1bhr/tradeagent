@@ -94,10 +94,17 @@ public static class GatewaySchema
         ]),
         new(Core.Ops.Cancel,    "trade cancel <id>", true, "Cancel one working order.",
             [new("id", "string", true, "Request id or connector order id")]),
-        new(Core.Ops.CancelAll, "trade cancel-all",  true, "Cancel every working order on the account.", []),
+        // THE TWO SWEEPS ARE DESCRIBED IN THE SAME TERMS, because they answer in the same shape and
+        // an agent that learns one has learnt the other. `close-all` used to read its count and its
+        // failure list off the request records while `cancel-all` read the per-leg word, so the same
+        // situation was reported two different ways by two commands a page apart (REVIEW 2026-09-05,
+        // finding 9). The sentences differ only where the operations do: what "landed" means.
+        new(Core.Ops.CancelAll, "trade cancel-all",  true,
+            "Cancel every working order on the account, one cancellation per order, with one entry per leg in `outcomes`. `cancelled` counts only what landed — an order the broker confirmed is not working any more — and not what was attempted; `attempted` is that. Anything else is listed by name in `not_cancelled`, which carries the same word as the leg in `outcomes`: `confirmed`, `rejected`, `sent-still-working`, `sent-not-confirmed` or `not-sent`. `not-sent` means nothing reached the broker from that leg and the order is still working; `sent-not-confirmed` means it may have, and trading is paused until it is reconciled.", []),
         new(Core.Ops.Close,     "trade close <symbol>", true, "Flatten one position with a market order.",
             [new("symbol", "string", true, "Instrument symbol")]),
-        new(Core.Ops.CloseAll,  "trade close-all", true, "Flatten every position.", []),
+        new(Core.Ops.CloseAll,  "trade close-all", true,
+            "Flatten every position, one offsetting order per symbol, with one entry per leg in `outcomes`. `closed` counts only what landed — a position whose closing order actually filled — and not what was attempted; `attempted` is that. Anything else is listed by name in `not_closed`, which carries the same word as the leg in `outcomes`: `confirmed`, `rejected`, `sent-still-working`, `sent-not-confirmed` or `not-sent`. `not-sent` means nothing reached the broker from that leg and the position is untouched; `sent-not-confirmed` means it may have, and trading is paused until it is reconciled. A symbol that had nothing left to close is named in `nothing_to_close` and is not counted anywhere.", []),
         new(Core.Ops.Schema,    "trade schema", false, "This description.", []),
     ];
 }
