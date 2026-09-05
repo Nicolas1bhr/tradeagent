@@ -102,16 +102,14 @@ public sealed class AdapterTeardown
     ///
     /// Refused rather than thrown: this is called from ATAS's own callback, and a teardown path that
     /// throws is worse than one that says no.
+    ///
+    /// NOTHING IN THE PRODUCT CALLS THIS ANY MORE — <c>StartBridge</c> goes through
+    /// <see cref="Start"/>, because a boolean is a thing a caller can ignore and this one was
+    /// (F14). It stays as the transition with no effect attached, which is what the tests that
+    /// drive the state machine directly are written against, and it is <see cref="Start"/> so that
+    /// the two can never come to disagree about which states a start is legal from.
     /// </summary>
-    public bool Started()
-    {
-        lock (_gate)
-        {
-            if (_state == State.Stopping) return false;
-            _state = State.Running;
-            return true;
-        }
-    }
+    public bool Started() => Start(static () => { });
 
     /// <summary>
     /// THE START AND THE DECISION ARE ONE ACT, for the same reason <see cref="Record"/> exists

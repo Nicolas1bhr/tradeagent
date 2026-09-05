@@ -3529,12 +3529,6 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     static string OrderShape(AtasOrder order) =>
         $"{order.State}/{(string.IsNullOrEmpty(order.Id) ? "noid" : "id")}";
 
-    /// <summary>Waits for a definite answer, and treats not getting one as exactly that — no
-    /// exception, no rejection, just the order returned in whatever state it is really in.
-    ///
-    /// <paramref name="budget"/> defaults to <see cref="AckTimeout"/>, which is right for a
-    /// placement, a modify and a cancel and WRONG for a close: a close is an emergency and its
-    /// caller has already stopped listening by then. See <see cref="EmergencyAckTimeout"/>.</summary>
     /// <summary>
     /// THE FOUR OBSOLETE SYNCHRONOUS ATAS CALLS, EACH UNDER A DEADLINE (review 2026-09-05b
     /// UNVERIFIED 3 / Codex F10), and why the deadline is put here rather than by flipping them.
@@ -3579,6 +3573,12 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// it.</summary>
     string? _stalledCall;
 
+    /// <summary>Waits for a definite answer, and treats not getting one as exactly that — no
+    /// exception, no rejection, just the order returned in whatever state it is really in.
+    ///
+    /// <paramref name="budget"/> defaults to <see cref="AckTimeout"/>, which is right for a
+    /// placement, a modify and a cancel and WRONG for a close: a close is an emergency and its
+    /// caller has already stopped listening by then. See <see cref="EmergencyAckTimeout"/>.</summary>
     void WaitFor(Func<bool> settled, TimeSpan? budget = null)
     {
         var deadline = DateTime.UtcNow + (budget ?? AckTimeout);
