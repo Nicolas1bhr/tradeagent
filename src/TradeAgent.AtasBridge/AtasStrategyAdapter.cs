@@ -1925,9 +1925,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
     /// longer unknown, and <see cref="ClosingDirection"/> uses it to say which order ATAS built.
     ///
     /// The cost is that the closing order does not carry our client id at submission time, so it is
-    /// found afterwards by diffing ATAS's order collection. If it cannot be identified, this throws
-    /// an ORDINARY exception rather than returning null: the close was submitted, and reporting "no
-    /// position" would be a lie the gateway would act on.
+    /// found afterwards by diffing what ATAS added during the call — its order collections AND its
+    /// fills, because on this platform a filled market close is in none of the former and only on
+    /// the latter (measured; see below). If it cannot be identified, this throws an ORDINARY
+    /// exception rather than returning null: the close was submitted, and reporting "no position"
+    /// would be a lie the gateway would act on.
     ///
     /// TWO THINGS ABOUT THAT DIFF WERE WRONG, AND THEY ARE THE SAME DEFECT SEEN FROM TWO SIDES
     /// (review 2026-09-05b finding 11 and Codex F11), both measured on the box on 2026-09-05:
@@ -2084,7 +2086,11 @@ public sealed class AtasStrategyAdapter : ChartStrategy, IAtasAdapter
             // operator — and the next reader of this file — with no way to tell an unrelated order
             // from a term this adapter reads wrongly off ATAS's object. Guarded like every other
             // diagnostic here: describing a candidate must never be what fails the close.
-            saw = Clip(string.Join(", ", fresh.Take(3).Select(Terms)), 200);
+            // Plain text, not Clip: this lands in the operator's "Last check" line on the
+            // Dashboard, where words are the point — Clip exists for the whitespace-free
+            // surface token and would hyphenate it into one run.
+            saw = string.Join("; ", fresh.Take(3).Select(Terms));
+            if (saw.Length > 200) saw = saw[..200] + "…";
             return candidates.Count > 0;
         }, EmergencyAckTimeout);
 
