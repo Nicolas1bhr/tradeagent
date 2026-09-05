@@ -132,7 +132,9 @@ folder — `%APPDATA%\ATAS\Strategies` — overwriting what is there
 `TradeAgent.AtasBridge.dll`; its presence is what `Detect().BridgeInstalled` answers on
 (`AtasInstallation.cs:115`).
 
-**ATAS must be closed for the copy**, and **ATAS does not watch that folder** — after the copy the
+**Close ATAS for the copy** (measured 2026-09-05 at ATAS 8.0.14.397: the in-app copy also succeeded with ATAS
+running, all 14 files hashed equal, so this is the safe instruction rather than a hard requirement of that version), and
+**ATAS does not watch that folder** — after the copy the
 owner opens a chart, opens Strategies, presses the refresh button at the top of the list, chooses
 **TradeAgent Bridge**, then **Add**, then **Start** (`OnboardingView.cs:939,948-967`).
 
@@ -150,8 +152,10 @@ equality — not "at least" (`Versioning.cs:48`). So:
 > present, and presses **Reinstall the bridge** twice. It runs the same `AtasInstallation.InstallBridge`
 > the setup step runs and re-derives the bridge row immediately (`src/TradeAgent.App/AppHost.cs`,
 > `ReinstallBridgeAsync`). ATAS holding the DLL open is reported as "close ATAS, then press Reinstall
-> the bridge again" (`ErrorCode.ATAS_BRIDGE_IN_USE`) — **NOT VERIFIED against a real ATAS**; the
-> refused-copy path is covered off Windows by a destination the copy cannot overwrite.
+> the bridge again" (`ErrorCode.ATAS_BRIDGE_IN_USE`). Walked 2026-09-05 at ATAS 8.0.14.397: the button, two
+> presses, replaced all 14 files while ATAS was RUNNING and that refusal never fired; whether a version that holds
+> the DLL open answers `ATAS_BRIDGE_IN_USE` is still **NOT VERIFIED against a real ATAS** — the refused-copy path is
+> covered off Windows by a destination the copy cannot overwrite.
 
 Read the number back before you believe anything:
 

@@ -3700,3 +3700,44 @@ matched`, a WORKING order still in the fake book after a 2 s press on a runner w
 five runs since. NOT VERIFIED that any of the three is a fixture asserting a schedule rather than the product.
 
 **NOT done:** no product file, no box, no ATAS, no UI. The remote branch `u-sweep-words-win` is left for the owner to delete.
+
+## 2026-09-05 — U-box-precut landed: the v0.1.2 box session minus the cut — protocol 3 walked, the gate green, two findings the fake could never show
+
+One fresh builder with the box, on `docs/briefs/U-box-precut.md`; merge `5b9e2e9`, 2 commits: two harness instruments
+(`tools/atas-lifecycle`, a probe strategy logging which ATAS callback fires; `--coid` on `probe atas`) and the report. No
+product file. The box's tree was proven by hash twice (280 files, then 282 with the instruments).
+
+- **The protocol-3 refusal and its repair, walked the way the owner would.** The new build against the box's v2 bridge:
+  `ATAS bridge FAILED "bridge 8.0.14 speaks protocol 2, this build speaks 3 — press Reinstall the bridge on the Checks
+  page"`, `Execution capability PAUSED "no trading connection"`. `Reinstall the bridge` on Checks, two-press through the
+  UI agent: armed `Confirm: replace the bridge — trading through ATAS stops until it is started again`; result `The
+  bridge is in place. Open ATAS, open a chart, and start the TradeAgent Bridge strategy on it.` The copy SUCCEEDED WITH
+  ATAS RUNNING (all 14 files' sha256 equal the staged ones; `ATAS_BRIDGE_IN_USE` never fired at 8.0.14.397). ATAS closed
+  and relaunched, the strategy restored STOPPED (trap 24) and activated: `ATAS bridge READY "connected · bridge 8.0.14,
+  protocol 3"`; `probe atas` exit 0, `proto=3 | SupportsClientOrderId=false SupportsOrderHistory=false IsSimulated=true
+  | ReconciliationProvable=false | autonomy=refused`. **`tools/atas-gate` exit 0, GATE PASSED**, both directions.
+- **The press id is never offered to ATAS at all** (review-1's box item, moot): the press minted
+  `TA-op-close-31d4779568274e53-0` and the bridge's write-ahead record carries it, but ATAS builds the close order itself
+  (`Comment` = "Close position"; the adapter writes ours only into an EMPTY comment), so a close carries nothing of ours
+  to reconcile on — not accepted, not truncated, not refused.
+- **A real Close All settles UNKNOWN by construction:** app→bridge 8.2 ms (send gate + frame, ~4,900× below the 40 s
+  those stages are budgeted — the 30–50 s premise behind review-1's finding 1 is false on this box), the close FILLED at
+  341 ms, and the app gave up at 2.0 s (`EmergencyDeadline`) with `'close' is NOT confirmed … The bridge is busy`,
+  because the bridge's `WaitFor(AckTimeout = 3 s)` outlasts the connector's 2 s budget. Both → `U-bridge-2` item 3.
+- **Backlog readings.** Teardown: stopping the strategy fires `OnStopping` only; closing ATAS fires both, 1 ms apart;
+  `Add` creates a throwaway instance that gets `OnDispose` with no start. Client order ids of 64 AND 65 chars are
+  accepted verbatim and read back byte-identical off ATAS's own collection: the 64 ceiling in `CONTRACTS.md` is ours.
+  Mutant B4 (`Buffer = 8192` → `0`) run once on the box: the idle-stalled-bridge emergency test RED `dropped … at 2.02s`,
+  reverted → GREEN. The five adapter warnings: `MSB3277` (WindowsBase via the ATAS assemblies) → `NoWarn` naming the
+  vendor; `CS0618` ×4 at the obsolete calls → a pragma per call site with the trap-25 reason (→ `U-bridge-2` item 6).
+
+**Verified by running (the builder, quoted; then the manager's gate):** everything above is the box's own output, quoted
+in the report. Box left with the repo Release build running at protocol 3, ATAS up, the book flat, the Strategies
+folder restored, PAUSED with 2 unconfirmed requests (one older than the session, one the press). Manager's gate at
+`92fd2bb` (the merge sha's code tree, docs aside), Release: build → 0 warnings, 0 errors; suite → 1039 passed, 1 failed:
+`UpdateTrustTests.A_manifest_whose_declared_length_is_too_big…`, `HttpListenerException: Address already in use` in the
+test's own server setup while two builders' test hosts ran on this Mac; the class alone 3× → 89/89 each; names vs `main`
+→ 0 removed, 0 added; scan → four hits, all dotted version numbers; `rev-list --count u-box-precut..main` → 0; CI run
+33986072734 at `5b9e2e9`: pending.
+
+**NOT done, NOT VERIFIED:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. `SupportsClientOrderId=false` is the bridge's own report with no broker attached: autonomy is refused there by design.

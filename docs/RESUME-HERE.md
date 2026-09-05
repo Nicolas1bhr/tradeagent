@@ -14,21 +14,22 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `d92a61b` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
+2. **`main` is `5b9e2e9` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
-   at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner). The bridge protocol is 3: the box's bridge
-   DLL must be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now
-   press `Reinstall the bridge` on Checks).
+   at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner), and `U-box-precut` at `5b9e2e9`: the
+   box now runs the repo's Release build with the bridge at protocol 3 (the refusal and `Reinstall the bridge` walked
+   for real; `tools/atas-gate` green), PAUSED with 2 unconfirmed requests the bridge unit settles from the platform's
+   own answer. The installed 0.1.1 there is stale until v0.1.2 is cut.
 3. **The second milestone review is DONE and triaged** (`docs/REVIEW-2026-09-05b.md`: reviewer HIGH 3 · MED 2 · LOW 1 ·
    UNVERIFIED 7 with eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in
-   with the triage). **`docs/briefs/` is the queue, nine files:** in flight — `U-box-precut` (the box, granted to it
-   alone), `U-override-lease` (HIGH 1) and `U-press-inflight` (HIGH 2 + Codex F3), both in `TradingGateway.cs` on
-   disjoint code; queued, two Mac legs at a time, in this order — `U-two-press-grant` (HIGH 3 + F12), `U-codex-2a` (F1,
-   F2, F5, F18), `U-codex-2b` (F6, F7, F13), `U-batch-2` (MED 4–5, LOW 6, F15, F17, F19), `U-batch-2b` (F16, F20,
-   UNVERIFIED 4), `U-bridge-2` (F4, F8, F9, F10, F11, F14; items 3–6 need the box, so it starts after `U-box-precut`
-   reports). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
+   with the triage). **`docs/briefs/` is the queue, eight files:** in flight — `U-bridge-2` (the box, granted to it
+   alone: the press's 3 s ack wait against the 2 s budget and the close order it cannot name, plus F4, F8, F9, F10,
+   F14 and the five warnings), `U-override-lease` (HIGH 1) and `U-press-inflight` (HIGH 2 + Codex F3), both in
+   `TradingGateway.cs` on disjoint code; queued, two Mac legs at a time, in this order — `U-two-press-grant` (HIGH 3 +
+   F12), `U-codex-2a` (F1, F2, F5, F18), `U-codex-2b` (F6, F7, F13), `U-batch-2` (MED 4–5, LOW 6, F15, F17, F19),
+   `U-batch-2b` (F16, F20, UNVERIFIED 4). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
    first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
    section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
