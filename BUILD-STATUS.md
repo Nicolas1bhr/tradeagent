@@ -3895,6 +3895,5 @@ build → 0 warnings, 0 errors; suite → 236 + 250 + 587 = 1073, 0 failed (thre
 → 0 removed, 3 added (sets 850 → 853); scan → hits all ATAS version numbers; `rev-list --count` → 0; CI at `110f67c`:
 pending.
 
-**NOT done:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. With no broker
-`ReconciliationProvable` is false and every emergency press is flagged for a human by design — the "1 of 1 record(s)
-waiting for you" banner is that, not an unidentified close.
+**NOT done:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. With no broker,
+`ReconciliationProvable` is false and every press is flagged for a human by design: the "waiting for you" banner is that.
