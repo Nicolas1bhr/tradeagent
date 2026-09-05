@@ -24,7 +24,7 @@ owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's o
 gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown mode fails closed, gates decided at dispatch,
 one atomic rate limit). `U-press-atomic` LANDED (`a53378b`: one press at a time, replay bound to verb and session, ids the gateway may send).
 Fix units still queued, in this order: `U-settings-closed` (building), `U-pipe-replay` (the offline-replay call sites; `U-pipe-words`
-LANDED at `4305ae6`: the schema matches the reconciler, close-all answers by the leg word), `U-press-budget`
+LANDED at `4305ae6`: the schema matches the reconciler, close-all answers by the leg word), `U-press-atomic-mac` (a test that asserted which of two correct guards refused; macos once), `U-press-budget`
 (after U-press-atomic: an ubuntu-only "the press took 3.4s against a 2s emergency budget", once), `U-pipe-hello` LANDED
 (`db638ab`: protocol before session, enumerated fields fail closed, the frame cap counts bytes, status for the caller,
 an agent reads only its own records), `U-pipe-words` (next); `U-bridge-reinstall` LANDED (`b37e4de`: the `Reinstall the bridge` control on Checks and Settings); then the v0.1.2 cut on the box (bridge redeploy at
