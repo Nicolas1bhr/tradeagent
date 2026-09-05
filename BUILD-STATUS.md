@@ -3251,7 +3251,7 @@ True … already_settled" while the dispatch answered FILLED) → GREEN, one mut
 70s". P6b lifted verbatim, run, then deleted: it now fails at its own premise one second in, because a placement in
 flight is not stranded; P6a cannot compile, the constant it asserted on is gone. Builder's gate at `68b2883`, Release: 0
 warnings; Unit 201 + Fault 195 + Integration 530 = 926, 0 failed; names 7 added, 0 removed. Manager's gate at `69c2545`,
-Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 530 = 926, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 530 = 926, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI run 33944625461 at `798ed4b`: ubuntu, macos and windows all SUCCESS (926), `package` SUCCESS.
 
 **NOT VERIFIED:** that a real bridge really spends 30–50 s in gate + frame (the review said the same); nothing on the
 box, no real ATAS, no UI. **Still open, by design of the cut:** `UpdateTradingInterlock` asks the raw flag and sees none
