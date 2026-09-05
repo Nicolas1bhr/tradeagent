@@ -10,34 +10,41 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
-program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
-Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `4221d89`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
-`BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
-four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
-windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
-money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / MED 4 / LOW 2 / UNVERIFIED 6, twelve
-executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
-section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher
-owns its row). `U-interlock` LANDED (`7ef6b1e`: the updater asks the gateway's own `WireTouched()` question on whichever
-gateway is live). `U-gates` LANDED (`6f1ba77`: Modify through the gates, unknown mode fails closed, gates decided at dispatch,
-one atomic rate limit). `U-press-atomic` LANDED (`a53378b`: one press at a time, replay bound to verb and session, ids the gateway may send).
-`U-settings-closed` LANDED (`bcffac0`: an unreadable row is the most restrictive row, an empty allowlist
-allows nothing, an empty row is no longer a fresh install). Fix units still queued: `U-pipe-replay` LANDED (`11248b6`: a replayed sweep reads nothing; `U-pipe-words` landed at `4305ae6`
-before it), `U-press-atomic-mac` LANDED (`3224183`: the double-press test asserts the invariants, not the schedule), `U-press-budget` LANDED (`4221d89`: the press's two-second promise asserted on its own clock; the simulator clips its
-latency like the shipped connector); `U-sweep-words-win` (building: a windows-only `confirmed` vs `sent-not-confirmed`
-multiset, twice)
-(after U-press-atomic: an ubuntu-only "the press took 3.4s against a 2s emergency budget", once), `U-pipe-hello` LANDED
-(`db638ab`: protocol before session, enumerated fields fail closed, the frame cap counts bytes, status for the caller,
-an agent reads only its own records), `U-pipe-words` (next); `U-bridge-reinstall` LANDED (`b37e4de`: the `Reinstall the bridge` control on Checks and Settings); then the v0.1.2 cut on the box (bridge redeploy at
-protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
-decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash
-in `atas.json` and fail closed when the vendor changes the file, or accept TLS as the whole integrity story and say
-so in the guide; (2) the U12 containment direction — the AI runs unsandboxed as the owner (Codex F1), so same-user
-credentials and the in-process gateway are not security boundaries. The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
-the app there is updated, or it refuses the old bridge by design. The text below is the
-2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
+**Session closed 2026-09-05 (afternoon). Restart in this order, and you are working within ten minutes:**
+
+1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
+   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 22 landings since the pivot, every claim with its run).
+2. **`main` is `6620d3d`, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8 (deployment and
+   monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix units (`U-stranded`,
+   `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`, `U-settings-closed`,
+   `U-press-budget`), `U-bridge-reinstall`, and six test-only fixes. The bridge protocol is 3: the box's bridge DLL must
+   be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now press
+   `Reinstall the bridge` on Checks).
+3. **`docs/briefs/` is the queue and holds ONE file, `U-sweep-words-win.md`** — a Windows-only test-expectation flake
+   (`SweepRequestIdTests.A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer`, twice). A fixer was working on
+   branch `u-sweep-words-win` in worktree `~/Projects/ai-trading-software-for-mihael-worktrees/u-sweep-words-win` when the
+   session closed, with no commit yet. Read the branch first (`git log main..u-sweep-words-win`, the brief's `## Report`
+   in that worktree): if a report is committed, run the landing checklist; if not, dispatch a fresh fixer on the brief.
+4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
+   class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
+   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `6620d3d` was still in progress at close.
+   A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset; runner or harness red → a fixer on top.
+5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
+   downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
+   when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
+   containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
+   the in-process gateway are not security boundaries.
+6. **Then, in order:** the v0.1.2 cut on the box (needs Nicolas's box credentials: redeploy the bridge at protocol 3,
+   `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real bridge
+   spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`); the NEXT milestone review
+   starts from `docs/REVIEW-2026-09-05.md`'s UNVERIFIED list and "What I did NOT do" (the witness, teardown, adapter and
+   health code; the approval chain; the material ledger; `ForceResolve`; `BridgePipeAuth`).
+7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
+   one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
+   before the Mac UI loop; the box has no credentials in these sessions; four usage-limit kills were survived by
+   re-briefing from disk, the branch keeps everything.
+
+The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 
 **Tasks 1, 2, 3 and 7 are done and verified; task 4 is done bar two things nobody can look at without
 setting them up first. The machine is working, CI is green on all three platforms, and nothing is
