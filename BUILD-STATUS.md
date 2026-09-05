@@ -3519,3 +3519,30 @@ double-press red of the previous landing did not repeat (one occurrence; `U-pres
 `GatewayPipeServer.CancelAll` and `CloseAll` (`BeginComposite` → `BeginCompositeAsync`, the book read inside the
 capture delegate) and was left for a fixer rather than bypass the verb/session binding with an early `Composites.Get`;
 the RED test was written and not committed so the gate stayed green. No box, no ATAS, no UI.
+
+## 2026-09-05 — U-pipe-replay landed: an agent's offline replay of a sweep never reads the book
+
+The gap two units measured and neither could fix in its own files (U-press-atomic owned the gateway, U-pipe-words the
+pipe server before the async entry point had landed), closed by one fresh fixer on `docs/briefs/U-pipe-replay.md`.
+Merge `11248b6`, 5 commits, 4 files of substance, +272/−14.
+
+- **One change at each call site.** `GatewayPipeServer.CancelAll` and `CloseAll` read the book before calling the
+  synchronous `BeginComposite`, so a replay with the connector unreachable failed on the read. Both now `await
+  BeginCompositeAsync` with the book or position read inside the capture delegate: a replayed sweep returns its first
+  answer byte for byte and makes zero connector calls; a NEW id with the connector unreachable still answers
+  `TRADING_CONNECTION_MISSING` and claims no `composite_request` row; a fresh sweep reads exactly once. The synchronous
+  `BeginComposite` stays for the two operator press paths.
+- **The contract says so.** `docs/CONTRACTS.md`'s replay paragraph states that a replayed sweep performs no read; the
+  `AGENTS.md` template says it in one sentence, pinned by an assertion in the existing
+  `The_agent_is_told_the_things_it_must_not_get_wrong`.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** RED over the real pipe, `OfflineSweepReplayTests`
+2 of 4 — completed sweep, `Faults.Disconnected`, same id → `ok=False {"code":"TRADING_CONNECTION_MISSING"}` and
+"connector calls during the replay: 1", both sweeps → GREEN `ok=True`, the first answer byte for byte, 0 calls; mutant
+(the read hoisted back above the call at both sites) → the same 2 RED; second mutant (the sentence deleted) → RED
+`Not found: "reads nothing from the platform"`. Fixer's gate, Release: 0 warnings, 17 projects; 218 + 218 + 582 = 1018,
+0 failed pre-rebase; at the rebased tip 581/582 with one `Category=Timing` test thrown by its own setup while another
+builder's suite ran on this Mac, the class then 3× → 34/34; names 0 removed, 4 added. Manager's gate at `11248b6`, Release:
+build → 0 warnings, 0 errors; suite → 218 + 218 + 582 = 1018, 0 failed; names vs `main` → 0 removed, 4 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT done, stated:** `TradingGateway.cs`, `GatewaySchema.cs` and the connectors untouched; no box, no ATAS, no UI.
