@@ -36,6 +36,21 @@ sealed class HangingReadConnector(FakeConnector inner) : ITradingConnector
     /// <summary>Completed the moment a caller is inside the quote read.</summary>
     public readonly TaskCompletionSource QuoteReached = new();
 
+    /// <summary>Set to hold a modify INSIDE the connector call — the shape probe P6 uses for a close.</summary>
+    public TaskCompletionSource? HangModify;
+
+    /// <summary>Completed the moment a caller is inside the modify.</summary>
+    public readonly TaskCompletionSource ModifyReached = new();
+
+    /// <summary>
+    /// Holds the FIRST cancel only. One-shot on purpose: the press's own cancel leg goes through the
+    /// same method, and a hang that caught it too would deadlock the thing being measured.
+    /// </summary>
+    public TaskCompletionSource? HangFirstCancel;
+
+    /// <summary>Completed the moment a caller is inside the first cancel.</summary>
+    public readonly TaskCompletionSource CancelReached = new();
+
     public string Id => inner.Id;
     public string DisplayName => inner.DisplayName;
     public ConnectorCapabilities Capabilities => inner.Capabilities;
@@ -61,8 +76,22 @@ sealed class HangingReadConnector(FakeConnector inner) : ITradingConnector
     public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
         inner.GetExecutionsAsync(a, since, ct);
     public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default) => inner.PlaceOrderAsync(cmd, ct);
-    public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default) => inner.ModifyOrderAsync(c, ct);
-    public Task CancelOrderAsync(string id, CancellationToken ct = default) => inner.CancelOrderAsync(id, ct);
+    public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default)
+    {
+        ModifyReached.TrySetResult();
+        if (HangModify is { } hang) await hang.Task;
+        return await inner.ModifyOrderAsync(c, ct);
+    }
+
+    public async Task CancelOrderAsync(string id, CancellationToken ct = default)
+    {
+        if (Interlocked.Exchange(ref HangFirstCancel, null) is { } hang)
+        {
+            CancelReached.TrySetResult();
+            await hang.Task;
+        }
+        await inner.CancelOrderAsync(id, ct);
+    }
     public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) => inner.CancelAllOrdersAsync(a, ct);
     public Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default) =>
         inner.ClosePositionAsync(a, s, coid, ct);

@@ -135,3 +135,97 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
         await gw.DisposeAsync();
     }
 }
+
+// =================================================================================================
+// Item 3 — the same question asked of CANCEL ALL, and the answer, with the probes that settle it
+//
+// A close leg computes something from a reading: it turns a position into a side and a size and
+// sends a MARKET order for them, so a reading that is stale by one in-flight fill makes the press
+// itself add exposure — long 2 to short 2 (finding 2). A CANCEL leg computes nothing. It names an
+// order the press captured and asks the platform to stop it, and there is no quantity, no side and
+// no derived number anywhere in it, so there is no reading for an in-flight request to make stale.
+// The two probes below run the two verbs that could race one — an agent's modify and an agent's
+// cancel of the same order, each held INSIDE the connector call, which is the shape finding 2 needs
+// — and neither leaves an order working, neither sends anything the owner did not ask for, and in
+// both the agent's own record ends in a state that does not claim its change took effect.
+//
+// What is READ rather than run, and stated as read: on the shipped ATAS bridge a modify that arrives
+// after the cancel is refused outright — `AtasStrategyAdapter.Modify` throws
+// `AtasRejectedException("order has already finished and cannot be modified; nothing was submitted")`
+// for an order in `Done` or `Failed` (`:1596`) — so it does not put a replacement order on a book the
+// press has already swept. That file compiles only on Windows and nothing here executed it.
+// =================================================================================================
+
+public class CancelAllAgainstOpenWorkTests(ITestOutputHelper Out)
+{
+    static async Task<(TradingGateway Gw, HangingReadConnector C, Database Db, ExecutionRequest Resting)> Resting(string id)
+    {
+        var (gw, c, db) = await SlowRead.Ready();
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        var resting = await gw.PlaceAsync(new AgentContext("ai"), id,
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 2m, 100m, null, TimeInForce.Day, null));
+        return (gw, c, db, resting);
+    }
+
+    [Fact]
+    public async Task An_agent_modify_inside_the_connector_call_does_not_survive_the_cancel_all_press()
+    {
+        var (gw, c, db, resting) = await Resting("c3a-open");
+        using var dbh = db;
+
+        var release = new TaskCompletionSource();
+        c.HangModify = release;
+        var modify = gw.ModifyAsync(new AgentContext("ai"), "c3a-modify", resting.ConnectorOrderId!, null, 101m, null);
+        await c.ModifyReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Out.WriteLine($"agent modify            : on the wire, record {gw.GetRequest("c3a-modify")?.State.ToString() ?? "none"}");
+
+        var press = await gw.OperatorCancelAllAsync();
+        Out.WriteLine($"press                   : {press.Summary}");
+
+        release.SetResult();
+        try { Out.WriteLine($"agent modify answered   : {(await modify).State}"); }
+        catch (Exception ex) { Out.WriteLine($"agent modify answered   : {ex.GetType().Name}: {ex.Message}"); }
+
+        Out.WriteLine($"orders at the broker    : " +
+                      string.Join(" ", c.Inner.Broker.Orders.Select(o => $"{o.ConnectorOrderId} {o.Side} {o.Quantity} {o.State}")));
+        var working = await c.GetOrdersAsync(c.Inner.Broker.AccountId, false, null);
+        Out.WriteLine($"working at the end      : {working.Count}");
+        Out.WriteLine($"the modify's record     : {gw.GetRequest("c3a-modify")!.State}, flagged={gw.GetRequest("c3a-modify")!.NeedsReconciliation}");
+
+        // The press did what it was pressed for, and the modify claims nothing.
+        Assert.Empty(working);
+        Assert.Single(c.Inner.Broker.Orders);
+        Assert.Equal(ExecutionState.CANCELLED, c.Inner.Broker.Orders[0].State);
+        Assert.NotEqual(ExecutionState.WORKING, gw.GetRequest("c3a-modify")!.State);
+        await gw.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task An_agent_cancel_inside_the_connector_call_does_not_leave_the_order_working()
+    {
+        var (gw, c, db, resting) = await Resting("c3b-open");
+        using var dbh = db;
+
+        var release = new TaskCompletionSource();
+        c.HangFirstCancel = release;
+        var cancel = gw.CancelAsync(new AgentContext("ai"), "c3b-cancel", resting.ConnectorOrderId!);
+        await c.CancelReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Out.WriteLine($"agent cancel            : on the wire, record {gw.GetRequest("c3b-cancel")?.State.ToString() ?? "none"}");
+
+        var press = await gw.OperatorCancelAllAsync();
+        Out.WriteLine($"press                   : {press.Summary}");
+
+        release.SetResult();
+        try { Out.WriteLine($"agent cancel answered   : {(await cancel).State}"); }
+        catch (Exception ex) { Out.WriteLine($"agent cancel answered   : {ex.GetType().Name}: {ex.Message}"); }
+
+        Out.WriteLine($"orders at the broker    : " +
+                      string.Join(" ", c.Inner.Broker.Orders.Select(o => $"{o.ConnectorOrderId} {o.Side} {o.Quantity} {o.State}")));
+        var working = await c.GetOrdersAsync(c.Inner.Broker.AccountId, false, null);
+        Out.WriteLine($"working at the end      : {working.Count}");
+
+        Assert.Empty(working);
+        Assert.Single(c.Inner.Broker.Orders);
+        await gw.DisposeAsync();
+    }
+}
