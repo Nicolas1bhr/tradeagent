@@ -305,6 +305,41 @@ public class OperatorPressIsAnEmergencyTests
     /// <summary>Comfortably longer than the 2 s emergency budget, so an unbounded press is obvious.</summary>
     const int StalledMs = 1200;
 
+    /// <summary>
+    /// THE PRESS IS MEASURED AGAINST ITS OWN CLOCK, NOT AGAINST THE TEST'S — and that correction is
+    /// what U-press-budget is.
+    ///
+    /// These two tests used to assert a wall-clock ceiling on the whole call: "under 3 s", "under
+    /// 4 s". A wall clock measures the fixture's injected latency and the runner's scheduling as
+    /// well as the promise, and on 2026-09-05 it charged the product for both — CI run 33952871991,
+    /// ubuntu-latest: "the press took 3.4s against a 2s emergency budget", green on windows and
+    /// macos at the same sha and unrepeated in the ten runs since. Measured afterwards on all three
+    /// hosted runners: the press's own cost, every write-ahead row and the activity line included,
+    /// is 5-7 ms on ubuntu, 6-11 ms on macos, 34-40 ms on windows, and all three connector calls are
+    /// on the emergency clock. There is no step of this press to make faster.
+    ///
+    /// So the promise is asserted instead of the stopwatch. The press opens ONE absolute deadline
+    /// and hands it to every call it makes; this reads that deadline back out of the scope, from
+    /// inside the press, and asserts what the press did about it: it RETURNED, it returned within a
+    /// handler's own overhead of its deadline rather than of the test's start, it told the owner the
+    /// outcome is NOT confirmed, and nothing it sent after the deadline reached the book. The
+    /// shipped 2 s is untouched — this widens nothing, it stops measuring the wrong clock.
+    /// </summary>
+    static void TheStalledPressGaveUpOnItsOwnDeadline(long returnedAt, long? deadlineAt, string what)
+    {
+        // Non-null is itself the assertion that the read was inside the scope: a step that opened
+        // its own budget, or none, is what the scope exists to prevent.
+        Assert.NotNull(deadlineAt);
+        var overrun = returnedAt - deadlineAt.Value;
+
+        // What a press costs BEYOND its connector calls is a handler's overhead — local SQLite
+        // writes, in `docs/CONTRACTS.md`'s own term H — and never the connector budget E, which
+        // bounds the calls. Worst seen on a hosted runner: 40 ms.
+        Assert.True(overrun < GatewayPipeServer.HandlerOverhead.TotalMilliseconds,
+            $"{what} returned {overrun} ms after the deadline the press itself opened, against " +
+            $"{GatewayPipeServer.HandlerOverhead.TotalSeconds:0}s of handler overhead; the emergency budget was not the thing that ran out");
+    }
+
     [Fact]
     public async Task Close_all_gives_up_on_a_stalled_platform_inside_the_emergency_budget()
     {
@@ -315,13 +350,11 @@ public class OperatorPressIsAnEmergencyTests
         // The bridge stalls only now, so the setup above is not the thing being measured.
         c.Inner.Faults.LatencyMs = StalledMs;
 
-        var started = System.Diagnostics.Stopwatch.StartNew();
-        var press = await gw.OperatorCloseAllAsync();
-        started.Stop();
+        long? deadlineAt = null;
+        c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
 
-        // Four round trips at 1.2 s each is what this costs without the scope; 2 s is the budget.
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(4),
-            $"the press took {started.Elapsed.TotalSeconds:0.0}s against a {c.EmergencyBudget.TotalSeconds:0}s emergency budget");
+        var press = await gw.OperatorCloseAllAsync();
+        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "close-all");
 
         // ...and the owner is told, in the words the card uses, rather than being told it worked.
         var row = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
@@ -381,15 +414,69 @@ public class OperatorPressIsAnEmergencyTests
         await gw.PlaceAsync(AgentContext.Operator, "st-4", TestEnv.Buy());
         c.Inner.Faults.LatencyMs = StalledMs;
 
-        var started = System.Diagnostics.Stopwatch.StartNew();
-        await gw.OperatorCancelAllAsync();
-        started.Stop();
+        long? deadlineAt = null;
+        c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
 
-        // Three round trips at 1.2 s is what cancel-all costs without the scope — the book, the one
-        // cancel, and the position read the outcome does. The bound is under that and over the 2 s
-        // budget, so it is the scope this measures rather than the fixture.
-        Assert.True(started.Elapsed < TimeSpan.FromSeconds(3),
-            $"the press took {started.Elapsed.TotalSeconds:0.0}s against a {c.EmergencyBudget.TotalSeconds:0}s emergency budget");
+        var press = await gw.OperatorCancelAllAsync();
+        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "cancel-all");
+
+        // AND IT SENT NOTHING AFTER THE BUDGET. The cancel's turn came with less than its latency
+        // left, so it was stopped mid-call and never reached the book: the order is still working,
+        // the owner is told the outcome is not confirmed, and trading stays paused over it. Without
+        // this, a press that cancelled everything a second past the promise would pass a test named
+        // for giving up inside it.
+        Assert.Contains(c.Inner.Broker.Orders, o => !OrderStateMachine.IsTerminal(o.State));
+        Assert.Contains(press.Targets, t => t.Outcome == "not confirmed — check ATAS");
         Assert.False(gw.TryAuthorizeExecution(new AgentContext("a"), out _));
+    }
+
+    /// <summary>
+    /// THE ONE THING THAT CAN STILL TURN A RUNNER'S LATENESS INTO A PRODUCT OVERRUN, and it was the
+    /// instrument rather than the press.
+    ///
+    /// `FakeConnector` decided whether its injected latency fitted in what was left of the budget
+    /// and then slept the whole of it — a PREDICTION, correct only while the machine delivers a
+    /// timer on time. Under a runner that delivers it late the prediction is wrong and nothing
+    /// re-checks: the simulator answers past the deadline it had just promised to honour, having
+    /// never taken the expired branch, and the press it is measuring is charged for the lateness.
+    /// The shipped `AtasConnector` clips instead — `Left(deadlineAt)` on the write, `CancelAfter` on
+    /// the reply — so this is the simulator being held to what the real one does.
+    ///
+    /// Both directions: the late wait is stopped at the deadline AND a wait that runs late but still
+    /// finishes inside the budget is not disturbed.
+    /// </summary>
+    [Fact]
+    public async Task A_wait_the_simulator_predicted_would_fit_is_still_stopped_by_the_deadline()
+    {
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        using var dbh = db;
+        await gw.PlaceAsync(AgentContext.Operator, "st-5", TestEnv.Buy());
+
+        // 1.2 s of declared latency delivered 2.2 s late, which is what it takes to reproduce the
+        // number ubuntu measured at 88617a0: the orders read answers at 3.4 s against a 2 s budget
+        // the simulator had already decided 1.2 s would fit inside. The substitute still honours the
+        // token — this is a LATE wait, not an uninterruptible one.
+        c.Inner.Faults.LatencyMs = StalledMs;
+        c.Inner.Faults.Wait = (d, ct) => Task.Delay(d + TimeSpan.FromMilliseconds(2200), ct);
+
+        long? deadlineAt = null;
+        c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
+
+        var press = await gw.OperatorCancelAllAsync();
+        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "a press whose simulator ran late");
+        Assert.Contains(press.Targets, t => t.Outcome == "not confirmed — check ATAS");
+
+        // THE OTHER DIRECTION. A wait that runs late and still lands inside the budget is left
+        // alone — the deadline only ever stops a wait, it never shortens a healthy one.
+        var (gw2, c2, db2) = await Recovery.Ready();
+        using var dbh2 = db2;
+        await gw2.PlaceAsync(AgentContext.Operator, "st-6", TestEnv.Buy("ES", 2m));
+        c2.Inner.Faults.LatencyMs = 100;
+        c2.Inner.Faults.Wait = (d, ct) => Task.Delay(d + TimeSpan.FromMilliseconds(150), ct);
+
+        var healthy = await gw2.OperatorCloseAllAsync();
+        Assert.Single(healthy.Targets);
+        Assert.Equal(ExecutionState.FILLED, healthy.Targets[0].State);
+        Assert.Empty(c2.Inner.Broker.Positions);
     }
 }

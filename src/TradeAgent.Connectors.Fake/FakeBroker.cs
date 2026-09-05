@@ -208,6 +208,22 @@ public sealed class FaultProfile
     public int UncancellableLatencyMs { get; set; }
 
     /// <summary>
+    /// HOW THE SIMULATOR WAITS — the seam a test uses to make a wait run LATE, which is the one
+    /// thing no latency knob can express.
+    ///
+    /// <see cref="LatencyMs"/> says how long the wire takes; this says how faithfully the machine
+    /// delivers that. A loaded runner delivers a timer late, and lateness is not the same fault as
+    /// slowness: a connector can predict slowness from its own numbers and cannot predict lateness
+    /// at all. That difference is what CI run 33952871991 turned into a red — a wait the simulator
+    /// had already decided would fit inside the emergency budget, delivered after it.
+    ///
+    /// The substitute a test provides must still honour the token, because the point is to model a
+    /// LATE wait rather than an uninterruptible one — <see cref="UncancellableLatencyMs"/> is what
+    /// models the latter, and the two faults must not be confused. Null is the product: `Task.Delay`.
+    /// </summary>
+    public Func<TimeSpan, CancellationToken, Task>? Wait { get; set; }
+
+    /// <summary>
     /// Consumes one use of a one-shot fault. LOCKED, because a sweep issues its legs concurrently:
     /// read-then-decrement across four legs in flight can hand the same single use to two of them
     /// and leave a third fault unconsumed, which shows up as a test that mostly passes.
