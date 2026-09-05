@@ -3150,3 +3150,41 @@ real money, the strip's refusal.
 
 **Verified by running:** nothing to build; the diff is `docs/` only (checked); scan clean. **NOT VERIFIED:** every
 sentence the report marks "not yet walked"; no app run, no screenshot, no box.
+
+## 2026-09-05 — U2c1c landed: intent survives the connector layer, a cancelled handler settles, the gateway marks every attempt
+
+Seventh product unit under `docs/HOW-WE-BUILD.md`, the last of the three cut from the old U2c-1 round 4: one fresh
+builder on `docs/briefs/U2c1c.md`, the manager's checklist. Merge `8591de8`, 5 commits, 13 files, +858/−121. With it, every
+class the U2a reviews routed to U2c-1 (C1–C5) is closed on `main`.
+
+- **Intent through the connector (C1).** `OrderIntent` on `PlaceOrderCommand` / `PlaceIntent`; both connectors honour
+  it (`Rpc(…, reducesRisk)`; the Fake puts a closing placement on the operation deadline). Before: `trade close ES` over
+  the real pipe against a bridge that answered the position lookup and then went mute took 10.05 s against a 2 s
+  emergency budget; now under 6 s with "NOT confirmed". The other direction holds: an opening placement and every
+  ordinary op behind a stalled write still wait their full term. A close takes what is LEFT of the operation deadline,
+  not a fresh one. Drain rows keep their ordinary term on purpose: the intent is an obligation a third-party connector
+  may ignore, and `docs/CONTRACTS.md` says so.
+- **A cancelled handler settles (C4).** U2c1a's catch-all settled UNKNOWN + flagged only if disposal waited; at
+  `SettleAfterCancelTimeout = 0` the row was still DISPATCHING when disposal returned. The post-cancel wait is now floored
+  (`WriteBackAfterCancel = max(setting, HandlerOverhead)`); the drain still reads the raw setting.
+- **A proven not-sent no longer pauses.** `ConnectorTransportException` + `NothingWritten` → CANCELLED, unflagged;
+  `PossiblyWritten`, `ReplyReceived` and silence stay UNKNOWN. `cancel-all`'s `cancelled` / `not_cancelled` read the
+  per-leg WORD, so a never-sent leg is never counted as a cancellation that landed.
+- **The gateway marks the attempt (C5).** `TransportLedger.MarkDispatch()` at all five mutating dispatch sites, reusing a
+  leg's record and attaching one where there is none; a ledger-blind connector that really performed a cancel now yields
+  UNKNOWN + reconciliation at the record, never a clean `not-sent`; the three never-dispatched legs still read `not-sent`.
+  The operator press paths mark their attempts but deliberately do NOT get the not-sent settle: a press record is written
+  flagged before the wire and only the owner's card clears it.
+- **Decision recorded:** `ITradingConnector.CancelAllOrdersAsync` stays — the only harness for the bridge's 17
+  send-deadline measurements, which are about transport, not sweeping (`docs/CONTRACTS.md`).
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED "took 10.05s against a 2s emergency
+budget" and "(intent: Close) waited 10.00s" → GREEN, mutant `opensExposure = OpensExposure(op)` → RED `Not found:
+"not sent"`; item 2a RED `Expected: UNKNOWN / Actual: DISPATCHING` → GREEN; item 2b RED "trading is still paused after
+a leg the connector PROVED it never sent" → GREEN, mutant (`is ReplyReceived`) → 3 RED; item 3 RED `Expected
+"PossiblyWritten" / Actual null` → GREEN, mutant (drop `existing.Attempt()`) → RED. Builder's gate at `b53b29a`,
+Release: 0 warnings, 17 projects; Unit 201 + Fault 188 + Integration 530 = 919, 0 failed; names 1 removed (a rename:
+`…even_though_its_record_is_unknown` → `…and_leaves_nothing_to_reconcile`), 7 added. Manager's gate at `8591de8`, Release:
+build → 0 warnings, 0 errors; suite → 201 + 188 + 530 = 919, 0 failed; names vs `main` → 1 removed (the rename above), 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the milestone review.
+
+**NOT VERIFIED:** nothing on Windows, nothing against real ATAS, no UI run (Dashboard build-verified only).

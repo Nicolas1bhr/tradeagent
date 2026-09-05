@@ -13,13 +13,15 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `73f3542`: **U2a, U2d, U14 (a+b), U2c1a, U2c1b and three test-only fixes landed** — all in
-`BUILD-STATUS.md` under 2026-09-04/05. CI on `main` is green on all three platforms at the last fixes' PR runs; one
-Windows pipe-disposal test has flaked once, measured, not fixed. U8 landed (`docs/DEPLOYMENT.md`, `docs/MONITORING-PHASE.md`,
-the user guide corrected). The queue, in order: U2c1c (C1/C4/C5, `docs/briefs/U2c1c.md`) and U-win-timing (the Windows
-timing class, `docs/briefs/U-win-timing.md`) are building; then U-bridge-reinstall (the repair path the protocol-3
-refusal names but the app lacks); then the milestone review of the money path on `main` (brief drafted); then the v0.1.2 cut on the box (bridge redeploy at
-protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
+`main` is `8591de8`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8 and three test-only fixes landed** — all in
+`BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: green at the
+U2c1b landing; windows-latest otherwise draws one different timing-sensitive test per run — class fixer
+`docs/briefs/U-win-timing.md` in flight (branch `u-win-timing`, PR #4, continued after a usage-limit kill). The queue,
+in order: the milestone review of the money path on `main` at `8591de8` (`docs/briefs/REVIEW.md`; a fresh Opus reviewer
+and Codex read-only in parallel; findings → `docs/REVIEW-2026-09-05.md`); U-bridge-reinstall
+(`docs/briefs/U-bridge-reinstall.md`, the repair the protocol-3 refusal names but the app lacks); the review's fix
+units; then the v0.1.2 cut on the box (bridge redeploy at protocol 3; the items in
+`docs/hardening/briefs/U6-U9-backlog.md`). The bridge protocol IS 3 now: the box's bridge DLL must be redeployed before
 the app there is updated, or it refuses the old bridge by design. The text below is the
 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done or superseded.
 
