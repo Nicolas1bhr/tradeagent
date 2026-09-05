@@ -3436,7 +3436,7 @@ buttons. Merge `b37e4de`, 5 commits, 14 files of substance, +533/−66.
 that did not exist → GREEN 6/6 (`BridgeReinstallTests`), mutant `Forget() { }` → RED; item 2 RED 2 (`Not found:
 "Reinstall the bridge"`; `Found: "press Retry"`) → GREEN 218 unit, mutant (old refusal text) → RED. Builder's gate at
 `e658947`, Release: 0 warnings; 218 + 207 + 569 = 994, 0 failed; names 7 added, 0 removed. Manager's gate at `5cb3301` (the merge sha's code tree, docs aside),
-Release: build → 0 warnings, 0 errors; suite → 218 + 207 + 569 = 994, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+Release: build → 0 warnings, 0 errors; suite → 218 + 207 + 569 = 994, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI run 33958409134 at `5392dd0`: ubuntu, macos and windows all SUCCESS (994), `package` SUCCESS.
 
 **NOT VERIFIED:** the real ATAS-holds-the-DLL refusal (no box; the test stands a destination the copy cannot
 overwrite); the armed label and the result sentence on screen. **NOT done:** three "press Retry" sentences in
