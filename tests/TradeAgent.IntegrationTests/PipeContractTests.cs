@@ -570,9 +570,16 @@ public class PipeContractTests(ITestOutputHelper log)
         var pressIds = gw.Unreconciled().Select(r => r.RequestId)
             .Where(r => r.StartsWith(TradingGateway.ClosePress, StringComparison.Ordinal)).ToList();
         log.WriteLine($"press rows : {string.Join(", ", pressIds)}   ({press.Summary})");
+        log.WriteLine($"press targets : {string.Join(", ", press.Targets.Select(t => $"{t.RequestId} -> {t.Target}"))}");
         Assert.NotEmpty(pressIds);
 
-        var leg = pressIds.First(r => r.EndsWith("-ES", StringComparison.Ordinal));
+        // THE ID COMES OFF THE RECORD THE PRESS WROTE, never off a shape spelled out here. It was
+        // `{kind}-{nonce}-ES` when this test was written and is `{kind}-{nonce}-{index}` since the
+        // target moved off the id and onto the row (`PressLegId`); a test that spells out either one
+        // stops finding the record the day the gateway is right, and then reports a leak it did not
+        // measure. The press hands back the rows it made, so the leg is the one about this position.
+        var leg = press.Targets.First(t => t.Target == "ES").RequestId;
+        Assert.Contains(leg, pressIds);
         var asked = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Order, Session = "agent-1", Args = new() { ["id"] = JsonSerializer.SerializeToElement(leg) }
@@ -584,7 +591,9 @@ public class PipeContractTests(ITestOutputHelper log)
         var absent = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Order, Session = "agent-1",
-            Args = new() { ["id"] = JsonSerializer.SerializeToElement("op-close-deadbeefdeadbeef-ES") }
+            // Shaped exactly like the leg above, nonce and all, so the two replies differ in nothing
+            // but whether the row is there.
+            Args = new() { ["id"] = JsonSerializer.SerializeToElement("op-close-deadbeefdeadbeef-0") }
         }).WaitAsync(TimeSpan.FromSeconds(10));
         log.WriteLine($"an id nobody minted   -> ok={absent.Ok} data={Json.Write(absent.Data)}");
 
