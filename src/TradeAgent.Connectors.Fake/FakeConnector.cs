@@ -87,13 +87,13 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     {
         // Marked before anything can go wrong, for the reason the shipped connector marks it: an
         // exit nobody enumerated must not leave the record empty, because empty means "no mutation
-        // was ever started" and reads as `not-sent`. `Task.Delay(LatencyMs, ct)` below is such an
-        // exit — a cancelled mutation used to record nothing at all.
+        // was ever started" and reads as `not-sent`. The injected latency below is such an exit — a
+        // cancelled mutation used to record nothing at all.
         if (mutating) TransportLedger.Attempt();
 
         await HonourTheOperationDeadline(ct, op, mutating);
 
-        if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
+        await TheCancellableWait(Faults.LatencyMs, ct, op, mutating);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected)
         {
@@ -158,13 +158,65 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         var wait = TimeSpan.FromMilliseconds(Faults.LatencyMs + Faults.UncancellableLatencyMs);
         if (wait > left)
         {
-            await Task.Delay(left, ct);
+            await Sleep(left, ct);
             // The call was under way when the deadline passed, so it may have acted. Fail-closed.
             if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
             throw new ConnectorTransportException(DeadlineSentence(op, mutating,
                 "the operation deadline passed before the simulator answered"));
         }
     }
+
+    /// <summary>
+    /// THE DEADLINE STOPS THE WAIT; IT DOES NOT MERELY PREDICT IT — and that is the difference
+    /// between an instrument and an assumption.
+    ///
+    /// The check above is arithmetic over the numbers this profile declares: "1.2 s of latency fits
+    /// in the 2.0 s that are left, so run it". A machine that delivers that timer late makes the
+    /// prediction wrong, and nothing re-checked it — the simulator slept out its full nominal
+    /// latency and answered past the deadline it had just promised to honour, without ever taking
+    /// the branch that reports an expired operation. Measured with a wait 2.2 s late: an emergency
+    /// press returned 1.4 s past its own budget. The shipped <c>AtasConnector</c> has
+    /// never worked this way: it clips, with <c>Left(deadlineAt)</c> on the write and
+    /// <c>CancelAfter(Left(deadlineAt))</c> on the reply, so lateness costs it one timer and not one
+    /// whole call. This is the simulator doing the same, so that the two agree about what the
+    /// deadline means and a runner's lateness cannot be read as a product overrun (CI run
+    /// 33952871991, ubuntu: "the press took 3.4s against a 2s emergency budget").
+    ///
+    /// It changes nothing when the clock behaves: the wait finishes first and the token is never
+    /// cancelled. When it does fire, it lands on the SAME branch the prediction would have taken —
+    /// same sentence, same <see cref="TransportOutcome.PossiblyWritten"/> — because it is the same
+    /// fact: the call was under way when the operation ran out of time.
+    ///
+    /// Only the cancellable half. <see cref="FaultProfile.UncancellableLatencyMs"/> is the fault of
+    /// a call that will not let go when asked to, and clipping it would delete the one fixture that
+    /// can produce an abandoned handler.
+    /// </summary>
+    async Task TheCancellableWait(int ms, CancellationToken ct, string op, bool mutating)
+    {
+        if (ms <= 0) return;
+        if (RiskReducingScope.DeadlineAt is not { } deadline)
+        {
+            await Sleep(TimeSpan.FromMilliseconds(ms), ct);
+            return;
+        }
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stop.CancelAfter(RiskReducingScope.LeftUntil(deadline));
+        try { await Sleep(TimeSpan.FromMilliseconds(ms), stop.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            if (mutating) TransportLedger.Record(TransportOutcome.PossiblyWritten);
+            throw new ConnectorTransportException(DeadlineSentence(op, mutating,
+                "the operation deadline passed before the simulator answered"));
+        }
+    }
+
+    /// <summary>
+    /// Every wait the simulated wire makes, in one place, so a test can substitute a clock that runs
+    /// late (<see cref="FaultProfile.Wait"/>). Null is the product.
+    /// </summary>
+    Task Sleep(TimeSpan d, CancellationToken ct) =>
+        Faults.Wait is { } wait ? wait(d, ct) : Task.Delay(d, ct);
 
     /// <summary>
     /// THE SENTENCE AGREES WITH THE WORD THE LEG WILL CARRY, and that is what this exists for.
@@ -236,9 +288,14 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
         // AND A CLOSING PLACEMENT IS ON THE OPERATION'S CLOCK. It is the thing the emergency came to
         // do, sized from the position it is flattening; only an order that can OPEN exposure is kept
         // off this clock. `Intent` is what says which this is — the side and the quantity cannot.
-        if (cmd.Intent is OrderIntent.Close) await HonourTheOperationDeadline(ct, "place", mutating: true);
-
-        if (Faults.LatencyMs > 0) await Task.Delay(Faults.LatencyMs, ct);
+        // ...and only a CLOSING placement's wait is clipped by it, for the same reason: an order that
+        // can open exposure has no claim on the emergency clock whatever it is nested inside.
+        if (cmd.Intent is OrderIntent.Close)
+        {
+            await HonourTheOperationDeadline(ct, "place", mutating: true);
+            await TheCancellableWait(Faults.LatencyMs, ct, "place", mutating: true);
+        }
+        else if (Faults.LatencyMs > 0) await Sleep(TimeSpan.FromMilliseconds(Faults.LatencyMs), ct);
         if (Faults.UncancellableLatencyMs > 0) await Task.Delay(Faults.UncancellableLatencyMs);
         if (Faults.Disconnected)
         {
