@@ -545,6 +545,37 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
                 if (req.Op == Core.Ops.Hello)
                 {
+                    // THE PROTOCOL IS SETTLED BEFORE THE CREDENTIAL IS READ, and the order is the
+                    // whole of it (Codex F8).
+                    //
+                    // The version used to be REPORTED — the reply carried `compatible: false` and
+                    // the connection was authenticated anyway — so a peer built against a protocol
+                    // this build does not speak went straight on to trade over it, on the strength
+                    // of a field nothing was obliged to read. That is the one direction a version
+                    // number must never fail in: the bridge half of this program refuses a
+                    // mismatched hello outright rather than half-trusting it, and this half quietly
+                    // did the opposite on the channel that places orders.
+                    //
+                    // Before the token, because a token is a credential and a credential is a value
+                    // read out of a frame whose shape both ends have agreed. With the checks the
+                    // other way round, a peer one version out is told its permission is wrong,
+                    // which sends whoever owns it hunting a secret problem that does not exist.
+                    //
+                    // The connection is left open rather than dropped: a peer that guessed the
+                    // version can say hello again with the right one, and until it does the channel
+                    // is exactly as unauthenticated as it was before the frame arrived.
+                    if (req.V != Versions.ProtocolVersion)
+                    {
+                        gateway.Log.Engineering("Ipc", "protocol_rejected", "warn",
+                            session: req.Session, requestId: req.RequestId ?? req.Id,
+                            metadataJson: Json.Write(new { said = req.V, speaks = Versions.ProtocolVersion }));
+                        if (!await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.INCOMPATIBLE_PROTOCOL,
+                            $"this frame says protocol version {req.V}; TradeAgent speaks {Versions.ProtocolVersion}. " +
+                            "One of the two halves is out of date — update it rather than working around this."),
+                            req.Op, req.Session, req.RequestId)) return;
+                        continue;
+                    }
+
                     if (!Security.IpcToken.Matches(req.Token, token))
                     {
                         gateway.Log.Engineering("Ipc", "auth_rejected", "warn");
@@ -564,7 +595,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     {
                         protocol_version = Versions.ProtocolVersion,
                         app_version = Versions.App,
-                        compatible = req.V == Versions.ProtocolVersion
+                        // Kept on the wire, and now always true by construction: a hello that
+                        // reaches this line agreed the version above. It used to be the ONLY
+                        // report of a mismatch, which made compatibility something the peer was
+                        // trusted to check about itself.
+                        compatible = true
                     }), req.Op, req.Session, req.RequestId)) return;
                     continue;
                 }

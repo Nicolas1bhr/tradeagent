@@ -10,7 +10,7 @@ public enum ErrorCode
     TRADING_CONNECTION_MISSING, ACCOUNT_NOT_FOUND, MARKET_DATA_UNAVAILABLE,
     TRADING_PERMISSION_UNAVAILABLE,
     ORDER_REJECTED, ORDER_STATE_UNKNOWN, RECONCILIATION_FAILED,
-    IPC_UNAVAILABLE, IPC_UNAUTHENTICATED, WORKSPACE_CORRUPT, STATE_DATABASE_CORRUPT,
+    IPC_UNAVAILABLE, IPC_UNAUTHENTICATED, INCOMPATIBLE_PROTOCOL, WORKSPACE_CORRUPT, STATE_DATABASE_CORRUPT,
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, RISK_CHECK_UNAVAILABLE, TRADING_PAUSED_UNRECONCILED,
@@ -49,6 +49,12 @@ public static class Errors
         [ErrorCode.RECONCILIATION_FAILED]          = ("TradeAgent could not confirm the true state of your orders.", "Open ATAS and check your orders, then press Resume.", false),
         [ErrorCode.IPC_UNAVAILABLE]                = ("The AI cannot reach the trading service.", "Restart TradeAgent.", true),
         [ErrorCode.IPC_UNAUTHENTICATED]            = ("A program tried to use trading without permission.", "No action needed. The request was refused.", false),
+        // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
+        // what it does not share is the shape of the conversation, and telling its owner to go
+        // looking for a permission problem sends them after a fault that is not there. It is the
+        // agent-pipe twin of the bridge's version mismatch, and it says the same thing: the two
+        // halves were built against different protocols, so update the half that is behind.
+        [ErrorCode.INCOMPATIBLE_PROTOCOL]          = ("A program tried to talk to TradeAgent using a version of its trading protocol this build does not speak.", "Update TradeAgent, or the program that is talking to it, so both are the same version.", false),
         [ErrorCode.WORKSPACE_CORRUPT]              = ("The AI's working folder is damaged.", "Press Repair workspace.", true),
         [ErrorCode.STATE_DATABASE_CORRUPT]         = ("TradeAgent's records are damaged.", "Press Repair. Your broker account is not affected.", true),
         [ErrorCode.AI_TRADING_STOPPED]             = ("AI trading is stopped.", "Press Enable AI trading when you want it to resume.", false),
