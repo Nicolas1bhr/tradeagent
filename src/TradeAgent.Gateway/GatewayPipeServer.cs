@@ -871,8 +871,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         {
             object? data = req.Op switch
             {
-                Core.Ops.Status      => await gateway.StatusAsync(ct),
-                Core.Ops.Schema      => GatewaySchema.Describe(await gateway.StatusAsync(ct)),
+                Core.Ops.Status      => ForCaller(await gateway.StatusAsync(ct), ctx),
+                Core.Ops.Schema      => GatewaySchema.Describe(ForCaller(await gateway.StatusAsync(ct), ctx)),
                 Core.Ops.Connectors  => new[] { new { id = gateway.Connector.Id, name = gateway.Connector.DisplayName, capabilities = gateway.Connector.Capabilities } },
                 Core.Ops.Accounts    => await gateway.AccountsAsync(ct),
                 Core.Ops.Account     => await gateway.AccountAsync(ct),
@@ -912,6 +912,31 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             gateway.Log.Engineering("Ipc", "op_failed", "error", requestId: rid, ex: ex);
             return IpcResponse.Fail(req.Id, ErrorCode.UNKNOWN_ERROR, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// THE STATUS THIS CALLER IS SERVED IS COMPUTED WITH THIS CALLER'S AUTHORITY.
+    ///
+    /// <c>TradingGateway.StatusAsync</c> answers the authorization question as
+    /// <c>AgentContext.Operator</c>, which is right for the Dashboard — the owner at the keyboard is
+    /// who it is describing — and wrong for everyone on this pipe. The kill-switch arm of that chain
+    /// is <c>AiTradingStopped &amp;&amp; !ctx.IsOperator</c>, so it was SKIPPED for the agent's own
+    /// status: with the switch down, `status` said `execution_available: true` and gave no reason,
+    /// while every order from that same session came back AI_TRADING_STOPPED (finding 7). `schema`
+    /// embeds the same object, so it said it twice.
+    ///
+    /// Two fields, recomputed here rather than in the gateway, because the gateway serves both
+    /// audiences from one method and only the pipe server knows whose question it is holding. The
+    /// answer is fresher than the one it replaces, not staler: the account read inside StatusAsync
+    /// happens between the two.
+    ///
+    /// The gates themselves are untouched — this is what the caller is TOLD, and the point is that
+    /// it now matches what the caller is ALLOWED, which is decided in one place as before.
+    /// </summary>
+    GatewayStatus ForCaller(GatewayStatus status, AgentContext ctx)
+    {
+        var available = gateway.TryAuthorizeExecution(ctx, out var reason);
+        return status with { ExecutionAvailable = available, ExecutionBlockedReason = reason };
     }
 
     async Task<object?> FindOrder(string id, CancellationToken ct)

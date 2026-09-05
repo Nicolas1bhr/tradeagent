@@ -435,6 +435,113 @@ public class PipeContractTests(ITestOutputHelper log)
         Assert.Null(await raw.TrySendLine($$"""{"v":1,"id":"after","op":"hello","token":"{{token}}"}"""));
     }
 
+    // ── 4. Status answers for the caller ───────────────────────────────────────────────────────
+    // Finding 7, probe P7. `StatusAsync` asks `TryAuthorizeExecution(AgentContext.Operator, …)`, and
+    // the kill-switch arm is `AiTradingStopped && !ctx.IsOperator` — so it is skipped, and the agent
+    // reads `execution_available: true` with no reason while its own buy is refused
+    // AI_TRADING_STOPPED. `schema` embeds the same status.
+
+    /// <summary>
+    /// The kill switch is down. What the agent is TOLD and what the agent is ALLOWED must be the
+    /// same answer, in `status` and in the `schema` that embeds it.
+    /// </summary>
+    [Theory]
+    [InlineData(Ops.Status)]
+    [InlineData(Ops.Schema)]
+    public async Task The_status_an_agent_reads_is_computed_with_the_agents_own_authority(string op)
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        gw.StopAiTrading("the owner pressed Stop AI trading");
+
+        var answer = await client.SendAsync(new IpcRequest { Op = op, Session = "agent-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var s = Status(answer, op);
+
+        var buy = await client.SendAsync(Buy()).WaitAsync(TimeSpan.FromSeconds(10));
+
+        log.WriteLine($"{op}.ai_trading_stopped        : {s.GetProperty("ai_trading_stopped")}");
+        log.WriteLine($"{op}.execution_available       : {s.GetProperty("execution_available")}");
+        log.WriteLine($"{op}.execution_blocked_reason  : " +
+                      $"{(s.TryGetProperty("execution_blocked_reason", out var r) ? r.ToString() : "<absent>")}");
+        log.WriteLine($"the same session's buy      : ok={buy.Ok} code={buy.Error?.Code}");
+
+        Assert.False(s.GetProperty("execution_available").GetBoolean(),
+            "the agent was told execution is available while every order from that session is refused");
+        Assert.True(s.TryGetProperty("execution_blocked_reason", out var reason),
+            "execution is not available and no reason was given");
+        Assert.False(string.IsNullOrWhiteSpace(reason.GetString()));
+
+        Assert.False(buy.Ok);
+        Assert.Equal(nameof(ErrorCode.AI_TRADING_STOPPED), buy.Error!.Code);
+        Assert.Empty(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The other direction, and the one a fix that simply reported `false` would fail: with the kill
+    /// switch up the agent is told execution IS available, with no reason, and its buy goes through.
+    /// </summary>
+    [Theory]
+    [InlineData(Ops.Status)]
+    [InlineData(Ops.Schema)]
+    public async Task With_nothing_blocking_it_the_agent_is_told_execution_is_available(string op)
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var answer = await client.SendAsync(new IpcRequest { Op = op, Session = "agent-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var s = Status(answer, op);
+
+        log.WriteLine($"{op}.execution_available : {s.GetProperty("execution_available")}  " +
+                      $"reason present: {s.TryGetProperty("execution_blocked_reason", out _)}");
+        Assert.True(s.GetProperty("execution_available").GetBoolean(), "an unblocked agent was told it may not trade");
+        Assert.False(s.TryGetProperty("execution_blocked_reason", out _), "a reason was given for a block that is not there");
+
+        var buy = await client.SendAsync(Buy()).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(buy.Ok, buy.Error?.Message);
+        Assert.Single(conn.Broker.Orders);
+    }
+
+    /// <summary>
+    /// The Dashboard keeps the OPERATOR's answer, which is a different answer to the same question
+    /// and the reason this could not be fixed by changing what the kill switch means. In process,
+    /// with the switch down, the operator may still act.
+    /// </summary>
+    [Fact]
+    public async Task The_operators_own_status_still_reports_the_operators_authority()
+    {
+        var (gw, _, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        gw.StopAiTrading("the owner pressed Stop AI trading");
+
+        var inProcess = await gw.StatusAsync();
+        var overThePipe = Status(await client.SendAsync(new IpcRequest { Op = Ops.Status, Session = "agent-1" })
+            .WaitAsync(TimeSpan.FromSeconds(10)), Ops.Status);
+
+        log.WriteLine($"operator (in process) : available={inProcess.ExecutionAvailable} reason={inProcess.ExecutionBlockedReason ?? "<none>"}");
+        log.WriteLine($"agent (over the pipe) : available={overThePipe.GetProperty("execution_available")}");
+
+        Assert.True(inProcess.ExecutionAvailable, "the kill switch stopped the OWNER trading");
+        Assert.Null(inProcess.ExecutionBlockedReason);
+        Assert.False(overThePipe.GetProperty("execution_available").GetBoolean());
+    }
+
+    /// <summary>The status object out of a `status` reply, or out of the `schema` that embeds it.</summary>
+    static JsonElement Status(IpcResponse reply, string op)
+    {
+        var data = JsonSerializer.SerializeToElement(reply.Data);
+        return op == Ops.Schema ? data.GetProperty("current") : data;
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>
