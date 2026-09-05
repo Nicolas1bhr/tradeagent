@@ -3856,3 +3856,45 @@ errors; suite → 236 + 250 + 584 = 1070, 0 failed (with three other test hosts 
 `303a7ad`: pending.
 
 **NOT VERIFIED:** a mouse-driven press; Windows pixels. **NOT done:** no gateway change, no box.
+
+## 2026-09-06 — U-bridge-2 landed: the emergency close answers inside its budget and names the order it caused; four bridge claims settled on the box
+
+Codex F4, F8, F9, F10, F11, F14 and the box session's two findings, by two builders on `docs/briefs/U-bridge-2.md` (the
+first killed by a usage limit after five commits, between a push and the rebuild, so the box's app was found STOPPED;
+the second kept all five, corrected two, and found the fill). Merge `110f67c`, 9 commits, 12 files, +1066/−67
+(`AtasStrategyAdapter.cs` +424, `CoidWitness.cs`, `AdapterTeardown.cs`, `BridgeProtocol.cs`, `AtasConnector.cs`, the
+bridge csproj, `tools/atas-gate`, `CONTRACTS.md`, two test files). The pushed tree proven by hash both sides: 162 files.
+
+- **The emergency close is answered inside its budget, on the order it caused.** RED on the box (`U-box-precut`):
+  `'close' is NOT confirmed … The bridge is busy` for a close that filled in 341 ms. A filled market close is in NONE of
+  ATAS's three order collections — its fill is in `MyTrades`, carrying `MyTrade.Order` — so the causal window now covers
+  fills, on the same terms (account, symbol, side, quantity, time; never a bare symbol). GREEN: `the platform filled it;
+  BTCUSDT is now flat`, `TradeAgent thinks: filled`, `Broker reference: 12063701`, matching `trade executions`' `Buy 1
+  BTCUSDT @ 79747.7`, position 0. Mutant A (a bare same-symbol match) → gate RED: a stranger's `Buy 7 ES on
+  SOMEBODY-ELSE` returned as the close and labelled (Codex F11, the same defect).
+- **`Position.Volume` is NEGATIVE for a short** (F4), re-measured: ATAS's `Sell/Short · Market · 1 Lots` → `quantity: -1`,
+  the press flattened it to 0; in `CONTRACTS.md` with the fill reading. **Order history is claimed only where ATAS says
+  how far back it keeps it** (F8 = review-2 UNVERIFIED 1): mutant B (the faithful pre-fix shape) → gate RED
+  `SupportsOrderHistory=True, GetOrders → 0 order(s)`; with retention zero the other branch refuses anyway.
+- **The four obsolete synchronous ATAS money calls are bounded** (F10 = UNVERIFIED 3): mutant C → RED `still running
+  after 12005 ms`; GREEN `5021 ms → AtasCallTimeoutException`, `calls=stalled(OpenOrder@5000ms)`, health degraded. The
+  gate hosts no real `BridgeServer`: it proves the deadline and the degraded surface, not the frame loop's serialisation.
+- **The witness flushes to the device before the rename that declares it written** (F9): mutant (flush deleted) → RED
+  `Actual ["write","rename","Submitting returned true"]` → 167/167. **A start mid-teardown is refused** (F14): mutant →
+  RED `a start mid-teardown was allowed`. **U9:** `NoWarn` MSB3277 naming the vendor, a pragma per obsolete call site,
+  `TreatWarningsAsErrors` on for the bridge — mutant D (the four pragmas deleted) → 4 × `error CS0618`.
+
+**Verified by running (the builders, quoted; then the manager's gate):** box found with TradeAgent STOPPED (`trade
+status` → `IPC_UNAVAILABLE`), `C:\ta\repo\src` pushed and its Release exe missing; left with the tip build running, ATAS
+up, bridge `connected · bridge 8.0.14, protocol 3`, every health row READY, book flat, 0 open, 0 unreconciled — the
+three press records the leg created settled from ATAS's own `executions`. The store held 0 unconfirmed requests, not the
+2 the U-box-precut record expects: NOT explained. Bridge Release build on the box, `AtasBridgeBuild=true`: 0 warnings, 0
+errors; `tools/atas-gate` 23 checks, GATE PASSED. Builder's gate at `7e62b73`, Release: 0 warnings; 219 + 250 + 587 =
+1056, 0 failed; names 0 removed, 3 added. Manager's gate at `c901633` (the merge sha's code tree, docs aside), Release:
+build → 0 warnings, 0 errors; suite → 236 + 250 + 587 = 1073, 0 failed (three other test hosts running); names vs `main`
+→ 0 removed, 3 added (sets 850 → 853); scan → hits all ATAS version numbers; `rev-list --count` → 0; CI at `110f67c`:
+pending.
+
+**NOT done:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. With no broker
+`ReconciliationProvable` is false and every emergency press is flagged for a human by design — the "1 of 1 record(s)
+waiting for you" banner is that, not an unidentified close.
