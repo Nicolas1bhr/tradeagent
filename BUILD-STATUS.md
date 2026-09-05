@@ -3081,3 +3081,43 @@ runs, the acceptance. Manager's gate at `ff3ab4e`, Release: build → 0 warnings
 is untouched: measured over five runs its handler settles in ~30 ms against a 300 ms margin, not the 6 % shape of the
 other two; it passed both acceptance runs; U2c1a's item 0 as its cause is NOT INVESTIGATED. If it reds again, it gets
 its own brief with that measurement. No deadline shortened, no `Skip`, no premise assertion removed.
+
+## 2026-09-05 — U2c1b landed: the emergency controls are one-shot + pause + human, and a replayed sweep sends nothing
+
+Sixth product unit under `docs/HOW-WE-BUILD.md`: one fresh builder on `docs/briefs/U2c1b.md`, five items, the manager's
+checklist. Merge `73f3542`, 4 commits, 15 files, +1569/−896. Before it, the emergency-press subsystem had outgrown its evidence
+(Codex round 3, F9–F14): cancel-all captured ids but swept the account; close-all captured a quantity but closed whatever
+existed; a definitely failed close held the press forever; a restart dropped a terminal press with a non-flat position.
+
+- **A press is its records.** Cancel-all / close-all write per-target write-ahead records, send the wire calls, and from
+  that moment trading is paused: the records count as unconfirmed work until the owner resolves them through the card.
+  Nothing in memory survives a restart; the durable records ARE the press.
+- **A second press while unresolved is refused** ("close-all sent at HH:MM; resolve it first"); there is no same-nonce
+  retry and no press that a failed close can hold forever.
+- **Cancel-all is per-order cancels of the captured set**; the account-wide sweep is gone from the gateway. Close-all
+  re-reads the position immediately before the wire call and refuses (fresh two-press) if it drifted from the captured
+  one. Completion and outcome read the account stored on the records.
+- **Replay sends nothing.** Schema v3 adds `composite_request`: outer request id → captured child plan → per-child
+  results, persisted BEFORE effects for the agent's sweep and the operator's press alike; a replayed outer id returns the
+  stored outcome — order B created after the lost reply stays WORKING, position B stays open.
+- **The operator's own press gets the fast path.** `RiskReducingScope` opens at the gateway inside the operator emergency
+  methods, so button, CLI and agent inherit the 2 s emergency bound and the sentence; the pre-close position read too.
+- **Deleted:** `OperatorPress`, `OutstandingPressNonce`, the `pressNonce` parameters, `NewOperatorPressNonce`, both
+  press-replay `IdempotencyEnabled` checks, the gateway's `CancelAllOrdersAsync` call and the reconciler's CANCEL_ALL
+  captured-set arm, three sweep hooks on the test connector. `ITradingConnector.CancelAllOrdersAsync` stays (17 ATAS
+  send-deadline tests measure the bridge through it; nothing calls it; CONTRACTS.md says so) — U2c1c's to decide.
+
+**Verified by running (the builder, quoted; then the manager's gate):** items 1–3 are one rewrite of two methods: RED
+`op-close-…-ES is WORKING and unflagged` (3) → GREEN → mutant (drop `MarkNeedsReconciliation` from the write-ahead) → 3
+red; RED `No exception was thrown` → GREEN → mutant (refusal returns early) → 2 red; mutant (ignore the drift + restore
+the sweep) → 2 red (`Expected: 0 Actual: 1` closes, `0 vs 2` sweeps). Item 4 RED (order B swept by the replay; position
+B closed) → GREEN → mutant (ignore the stored answer) → 2 red. Item 5 RED "the press took 6.0s against a 2s emergency
+budget" → GREEN → mutant (`Begin()`, no budget) → 3 red. Builder's gate at `4e18a5f`, Release: 0 warnings; Unit 201 /
+Fault 188 / Integration 524 = 913, 0 failed; names −20 / +21, all 20 pinning a retired path (3 retry, 3 `OperatorPress`,
+5 press-set-and-restart, 4 press reconciliation, 4 F2-through-a-press, 1 partial-sweep answer), the F2 rule and "a
+press is judged by its own records" re-homed onto surviving paths. Manager's gate at `73f3542`, Release: build →
+0 warnings, 0 errors; suite → 201 + 188 + 524 = 913, 0 failed; names vs `main` → 20 removed (the six categories above, checked name by name), 21 added; scan clean; CI at the merge was in progress when this was written; recorded with U2c1c.
+
+**NOT VERIFIED:** the Dashboard card (compiles; no UI run — see it on the Mac loop or the box); nothing on the box or
+against real ATAS. **Outside its brief, declared:** ~12 lines in `GatewayPipeServer.CancelAll`/`CloseAll`, without
+which item 4 was unreachable. **Deferred with an owner:** C1, C4, C5 → U2c1c (`docs/briefs/U2c1c.md`).
