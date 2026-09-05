@@ -42,8 +42,11 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
     /// A refusal that claims to make no connector call cannot be settled by <see cref="Mutations"/>
     /// or by the broker's book: a frame refused three reads into the risk check places no order
     /// either, and looks identical. This is the number that tells the two apart.
+    ///
+    /// <see cref="Positions"/> is added separately because it has its own counter — it is a read,
+    /// but it is counted where the barrier is, not in <see cref="Read"/>.
     /// </summary>
-    public int Calls => Reads + Mutations;
+    public int Calls => Reads + Positions + Mutations;
 
     /// <summary>
     /// Every placement, whole, in the order it arrived.
