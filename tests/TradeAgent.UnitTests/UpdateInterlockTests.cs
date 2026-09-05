@@ -405,11 +405,13 @@ public class UpdateInterlockTests(ITestOutputHelper log)
     [Fact]
     public async Task The_refusal_names_the_count_and_reaches_the_owners_surfaces()
     {
+        // One, not two: `_dispatchGate` makes placements one-at-a-time, so one order is all that can
+        // be on the wire at once. The plural sentence is pinned separately, below.
+        const string named = "an order's outcome is";
         using var db = TestEnv.NewDb();
         var inner = new FakeConnector(new FakeBroker());
         var release = new TaskCompletionSource();
-        var reached = new TaskCompletionSource();
-        var conn = new AtTheWire(inner) { Park = release.Task, Reached = reached };
+        var conn = new AtTheWire(inner) { Park = release.Task };
         var gw = await Ready(db, conn, inner.Broker.AccountId);
 
         var f = new Fake();
@@ -418,25 +420,75 @@ public class UpdateInterlockTests(ITestOutputHelper log)
         await updates.CheckAsync();
 
         var inFlight = gw.PlaceAsync(new AgentContext("a"), "surfaced-1", TestEnv.Buy());
-        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntil(() => conn.Entered == 1);
 
         Assert.False(await updates.InstallAsync());
 
-        log.WriteLine($"Message : {updates.Message}");
-        log.WriteLine($"Refused : {updates.Refused} / pending work: {updates.RefusedPendingWork}");
+        log.WriteLine($"on the wire : {updates.UnconfirmedWork!()}");
+        log.WriteLine($"Message     : {updates.Message}");
+        log.WriteLine($"Refused     : {updates.Refused} / pending work: {updates.RefusedPendingWork}");
 
+        Assert.Equal(1, updates.UnconfirmedWork!());
         Assert.True(updates.Refused);                             // the strip renders refusals only
         Assert.True(updates.RefusedPendingWork);                  // and expires this one
         Assert.Equal(UpdateStage.Failed, updates.Stage);
-        Assert.Contains("an order's outcome is", updates.Message);
+        Assert.Contains(named, updates.Message);                  // the count, in the app's words
         Assert.Contains("still unconfirmed", updates.Message);
+        Assert.Equal(0, f.Launches);
 
-        var written = gw.Log.RecentActivity().Where(r => r.Text.Contains("still unconfirmed")).ToList();
+        // The strip and the Settings card both render UpdateService.Message when Refused is up, and
+        // the activity history is where the owner finds the refusal afterwards.
+        var written = gw.Log.RecentActivity().Where(r => r.Text.Contains(named)).ToList();
         Assert.Single(written);
 
         release.SetResult();
         await inFlight;
         await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The plural, because "1 order" and "2 orders" are different sentences and only one of them can
+    /// be got right by accident. Two flagged rows rather than two placements: <c>_dispatchGate</c>
+    /// makes it one at a time on the wire, which is the gateway working as designed.
+    /// </summary>
+    [Fact]
+    public async Task The_refusal_counts_every_order_it_is_about()
+    {
+        using var db = TestEnv.NewDb();
+        var conn = new FakeConnector(new FakeBroker());
+        var gw = await Ready(db, conn, conn.Broker.AccountId);
+
+        var f = new Fake();
+        var updates = Offered(f);
+        UpdateTradingInterlock.Attach(gw, updates);
+        await updates.CheckAsync();
+
+        // Placed first, flagged second: the gate refuses to place over an order it has already
+        // flagged, which is the gate doing its job.
+        var placed = new List<string>();
+        foreach (var id in new[] { "plural-1", "plural-2" })
+            placed.Add((await gw.PlaceAsync(new AgentContext("a"), id, TestEnv.Buy())).RequestId);
+        foreach (var id in placed)
+            gw.Requests.MarkNeedsReconciliation(id, "the broker never answered");
+
+        Assert.False(await updates.InstallAsync());
+        log.WriteLine($"Message : {updates.Message}");
+
+        Assert.Equal(2, updates.UnconfirmedWork!());
+        Assert.Contains("2 orders' outcomes are", updates.Message);
+        Assert.Equal(0, f.Launches);
+
+        await gw.DisposeAsync();
+    }
+
+    static async Task WaitUntil(Func<bool> done)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!done())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the placements never reached the wire");
+            await Task.Delay(5);
+        }
     }
 
     // ---- harness -----------------------------------------------------------------------------------
@@ -459,8 +511,13 @@ public class UpdateInterlockTests(ITestOutputHelper log)
         public TaskCompletionSource? Reached;
         public Action? AfterPlace;
 
+        /// <summary>How many placements have reached the wire and not yet come back.</summary>
+        int _entered;
+        public int Entered => Volatile.Read(ref _entered);
+
         public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
         {
+            Interlocked.Increment(ref _entered);
             Reached?.TrySetResult();
             if (Park is not null) await Park;
             var order = await inner.PlaceOrderAsync(cmd, ct);
