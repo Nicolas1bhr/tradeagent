@@ -22,7 +22,6 @@ U-gates has landed (both touch `TradingGateway.cs`; rebase onto that `main`).
    unreachable → expect the stored outcome with no read attempted. Fix: the composite row carries verb and session;
    the lookup is the first step of every mutating op; a mismatch refuses with INVALID_REQUEST in the replay contract's
    words; `docs/CONTRACTS.md` and `AGENTS.md` state the binding.
-
 3. **The press mints its own id (finding 4, P2).** `rid = $"op-close-{nonce}-{symbol}"` puts a broker symbol into the
    rule-1 client order id: `TA-op-close-…-ES 12-25 [CME Globex Futures]` (58 chars, ' []' outside `[A-Za-z0-9-]`) and a
    65-char id for MES. Fix: the id is minted from the nonce and an index as the agent path's `op-{nonce}-{intent}-{index}`
