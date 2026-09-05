@@ -513,6 +513,27 @@ nothing sent — because the resulting size of a price-only change is the size t
 the instrument each limit is applied per is the one the order is on, and guessing either makes a cap
 decorative. A `cancel` reduces risk and is never refused for a limit.
 
+**Every gate is evaluated at the moment of dispatch, after the awaited reads.** Authorizing at the
+top of a mutating method is a verdict about a moment that has passed: `PlaceAsync` authorized once
+and then made four connector reads before touching the wire, so Stop AI trading pressed inside that
+window did not stop the order it was pressed to stop — measured, with the switch down and the order
+`FILLED` (REVIEW 2026-09-05 finding 6, probe P3; Codex F4). The window is bounded by four
+`WorstCaseOperationPath`s, 200 s at shipped ATAS values, and it swallows the kill switch, the
+real-money activation switch and an install that started while the reads were in flight. So the whole
+chain runs again immediately before the wire, on the place, modify, cancel and approval paths alike —
+and **the mode is checked against the record rather than against a list**: a placement authorized in
+`PAPER` with the mode moved to `LIVE_CONFIRM` while it read is a record already built as `CREATED`,
+past the question of whether a person should see it, and only the mode a record was decided under may
+send it.
+
+**The rate limit is an atomic reservation, not a count that is read and spent later.** The place is
+taken under one lock immediately before the write-ahead and given back if nothing is sent; committing
+it is the last step before the wire. It used to be a count READ in the risk check and an unrelated
+add two awaited reads later in the dispatcher, so N callers arriving together all read the same free
+count and all took it: `MaxOrdersPerMinute = 1` admitted as many orders as there were callers. The
+check in the risk pass remains, as an early refusal that costs nothing — it is advisory, and the
+reservation is what bounds the minute.
+
 **An approval is a dispatch decision, authorized at the moment it is made.** In `LIVE_CONFIRM` an
 agent's order — or its modification — is parked as `AWAITING_APPROVAL` after passing every gate and
 refused to the agent with `APPROVAL_REQUIRED`. When a person presses Approve, the gateway makes the
