@@ -29,24 +29,23 @@ Yours: `tests/TradeAgent.IntegrationTests/SweepRequestIdTests.cs` and its fixtur
 if item 2 applies. Commit per item, no trailers, no other worktree. Gate: Release `--no-incremental` → 0 warnings; the
 class 3×; full suite once; push, draft PR; the windows job green twice in a row.
 
-## Report — append as you go, commit it, ≤12 lines: tip sha; which of (1)/(2); RED → GREEN → mutant; counts; the two
-windows runs; what you did NOT do. Verified or NOT VERIFIED.
-
 ## Report
 
-- Item **(1)**, and the brief's mechanism is wrong: it is not the deadline. Verified: the failing CI test ran in
-  `[1 s]` against a 5 s budget, so no deadline passed; the `not-sent` legs carry `1 earlier request(s) are unconfirmed`.
-  The lost answer settles UNKNOWN and flags the store while later legs of the SAME wave are still short of
-  `ReauthorizeAtDispatchOrThrow` — which runs after the awaited target resolution, on purpose. No (2): a leg refused
-  before dispatch, record CREATED, no transport, is `not-sent` by the `docs/CONTRACTS.md` table. No product change.
-- RED, verified: the same sweep at `LatencyMs=1` lost a `confirmed` in 61 of 150 runs and one run produced exactly the
-  CI multiset `{sent-not-confirmed, rejected, not-sent x3}`; at 2 ms, 100 legs clean. So the wave's issue spread here is
-  under 2 ms, and 2 x 39.52 (the worst windows file-IO factor the workflow records) is 79 ms > the 50 ms it was given.
-- GREEN, verified: latency 750 ms, budget 20 s, the multiset asserted exactly, and both fixture bounds asserted by name.
+- Item **(1)**; no product file touched; rebased onto `main` cda7088, which landed U-press-budget under me.
+- The brief's mechanism is wrong, verified: the failing CI test ran in `[1 s]` against a 5 s budget, so no deadline passed, and
+  the `not-sent` legs carry `1 earlier request(s) are unconfirmed`. The lost answer flags the store while later legs of the SAME
+  wave are still short of `ReauthorizeAtDispatchOrThrow`, which runs AFTER the awaited resolution. Not (2): such a leg (record
+  CREATED, no transport) IS `not-sent` by the `docs/CONTRACTS.md` table, so the product misreports nothing.
+- RED, verified: the same sweep at `LatencyMs=1` lost a `confirmed` in 61 of 150 runs, one of them giving exactly the CI multiset
+  `{sent-not-confirmed, rejected, not-sent x3}`; clean over 100 legs at 2 ms. So the wave's issue spread here is under 2 ms, and
+  2 x 39.52 (the worst windows file-IO factor the workflow records) is 79 ms, against the 50 ms it was given.
+- GREEN: 750 ms of room inside a 20 s budget, the multiset asserted exactly, both fixture bounds asserted by name. Verified:
   Release `--no-incremental` 0 warnings; the class 3x = 44/44, 44/44, 44/44; full suite 219+238+582 = 1039 passed, 0 failed.
-- Mutant, verified: `Dispatched(t) => TheAnswer(LegOutcome.Confirmed, t)` -> RED, `Expected: ["confirmed","confirmed",
-  "not-sent","rejected","sent-not-confirmed"] Actual: ["confirmed","confirmed","confirmed","not-sent","rejected"]`. Reverted.
-- U-press-budget's `TheCancellableWait` clips only when the wait exceeds what is left; this sweep spends 3 x 750 ms inside
-  20 s, so it cannot fire. Verified by READING `git show u-press-budget -- .../FakeConnector.cs`; NOT VERIFIED merged.
-- Windows job: NOT VERIFIED YET — pushed, draft PR opened, awaiting two consecutive greens.
-- NOT done: no product file touched, no other worktree, no merge, no push to `main`.
+- Mutant, verified: `Dispatched(t) => TheAnswer(LegOutcome.Confirmed, t)` -> RED, `Actual: ["confirmed","confirmed","confirmed",
+  "not-sent","rejected"]` against the expected multiset. Reverted.
+- U-press-budget's clip does not reach this fixture — it fires only when the wait exceeds what is left, and this sweep spends
+  3 x 750 ms inside 20 s. Verified by running the class rebased ON that code, not by reading it.
+- Windows job green on 33973434576, which already merged the clip. The two consecutive greens counted are on the final tip.
+- NOT done, and a NEW red that is not mine: macos-latest on 33973434576 failed `A_sweep_pays_the_emergency_budget_once_not_once_per_rpc`
+  with `NullReferenceException` at `(JsonElement)reply.Data!` — its own fixture leaves 100 ms between the scope and a 1900 ms read.
+  Green on macos in all 15 prior runs checked; first seen on the first run after the clip landed. Left alone and briefed separately.
