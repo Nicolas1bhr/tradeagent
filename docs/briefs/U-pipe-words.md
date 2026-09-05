@@ -20,7 +20,16 @@ from `main` — after U-pipe-hello has landed (both touch `GatewayPipeServer.cs`
    never-sent close leg → expect `not_closed` with `outcome: not-sent` and `closed: 0`; GREEN; mutant (back to the
    state) → RED. `AGENTS.md`'s `close-all` paragraph matches `cancel-all`'s, word for word where the shapes agree.
 
-Yours: `src/TradeAgent.Gateway/GatewaySchema.cs`, `GatewayPipeServer.cs` (the two answer shapes only), `AGENTS.md`,
+3. **An offline replay never reads the book (U-press-atomic's declared gap).** `GatewayPipeServer.CancelAll` (~:888)
+   and `CloseAll` (~:1399) still read the book before calling the synchronous `BeginComposite`, so an agent's replay
+   with the connector unreachable fails on the read even though the gateway's `BeginCompositeAsync` takes the capture
+   as a delegate and never runs it on a replay. RED first: replay a known composite id over the real pipe with the
+   simulator disconnected → expect the stored outcome, zero reads; GREEN: both call sites adopt `BeginCompositeAsync`
+   (one call-site change each); mutant (back to the read-first order) → RED. U-pipe-hello also touched three argument
+   descriptions in `GatewaySchema.cs` — leave them.
+
+Yours: `src/TradeAgent.Gateway/GatewaySchema.cs`, `GatewayPipeServer.cs` (the two answer shapes and the two composite
+call sites), `AGENTS.md`,
 `docs/CONTRACTS.md`, tests. Not yours: `TradingGateway.cs`, the hello/frame/status paths (U-pipe-hello), the
 connectors. Every item: RED quoted, GREEN, one mutant watched red (commit before mutating; `cp` restore; `touch`).
 Test-name diff vs baseline: nothing removed. Commit per item, no trailers, no push, no other worktree. Gate: Release
