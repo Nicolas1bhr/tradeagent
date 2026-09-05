@@ -14,6 +14,9 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../TradeAgent.Gateway/TradeAgent.Gateway.csproj" />
     <ProjectReference Include="../TradeAgent.Connectors.Fake/TradeAgent.Connectors.Fake.csproj" />
     <ProjectReference Include="../TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />

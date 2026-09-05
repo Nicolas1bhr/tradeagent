@@ -5,5 +5,6 @@
     <ProjectReference Include="../../src/TradeAgent.Connectors.Atas/TradeAgent.Connectors.Atas.csproj" />
     <ProjectReference Include="../../src/TradeAgent.AgentRuntime/TradeAgent.AgentRuntime.csproj" />
     <ProjectReference Include="../../src/TradeAgent.Diagnostics/TradeAgent.Diagnostics.csproj" />
+    <ProjectReference Include="../../src/TradeAgent.App/TradeAgent.App.csproj" />
   </ItemGroup>
 </Project>
