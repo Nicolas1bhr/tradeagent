@@ -317,6 +317,8 @@ public class PipeContractTests(ITestOutputHelper log)
     [Theory]
     [InlineData(Ops.MaterialList, "origin", "inbox-ish")]
     [InlineData(Ops.MaterialNote, "kind", "wrote")]
+    [InlineData(Ops.MaterialNote, "kind", "1")]      // TryParse took the integer: a 'used' note nobody said
+    [InlineData(Ops.MaterialNote, "kind", "99")]     // ...and an undefined one, stored in the ledger as itself
     public async Task The_ledger_vocabularies_are_refused_by_name_too(string op, string field, string value)
     {
         var (gw, conn, db, server, client) = await Counted();

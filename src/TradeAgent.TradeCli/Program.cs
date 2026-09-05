@@ -219,12 +219,6 @@ static void Usage()
 
       trade buy  <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
       trade sell <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
-
-      --tif is one of Day, GoodTillCancel, ImmediateOrCancel, FillOrKill. Spell it exactly (case
-      does not matter). Anything else is refused rather than treated as Day, because a misspelled
-      ImmediateOrCancel that quietly became Day would leave a resting order you did not ask for.
-      Leave it out for Day. The order type is not a flag: no price is a market order, --limit is a
-      limit order, --stop is a stop, both is a stop-limit.
       trade modify <id> [--quantity Q] [--limit P] [--stop P]
       trade cancel <id> | trade cancel-all
       trade close <symbol> | trade close-all
@@ -234,6 +228,12 @@ static void Usage()
       trade material used <sha> <how you used it>    you read or worked from it
       trade material derived <sha> --from <sha> <how>  this file came from that one
       trade material note [<sha>] <anything>         anything else worth recording
+
+    --tif is one of Day, GoodTillCancel, ImmediateOrCancel, FillOrKill. Spell it exactly; case does
+    not matter, and anything else is refused rather than treated as Day, because a misspelled
+    ImmediateOrCancel that quietly became Day would leave a resting order you did not ask for. Leave
+    it out for Day. The order type is not a flag: no price is a market order, --limit is a limit
+    order, --stop is a stop, both is a stop-limit.
 
     Add --json to any command for machine-readable output. That is the canonical interface.
 

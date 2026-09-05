@@ -1634,10 +1634,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// </summary>
     object MaterialNote(AgentContext ctx, IpcRequest req)
     {
-        var kindText = req.Str("kind") ?? "note";
-        if (!Enum.TryParse<MaterialNoteKind>(kindText, true, out var kind))
-            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"note kind '{kindText}' is not one of: {string.Join(", ", Enum.GetNames<MaterialNoteKind>()).ToLowerInvariant()}");
+        // Through the same reader as `tif`, so the rule is one rule. It was `Enum.TryParse`, which
+        // refuses a misspelling and ACCEPTS A NUMBER: `kind: "1"` was a `used` note nobody wrote the
+        // word for, and `kind: "99"` an undefined value stored in the ledger as itself.
+        var kind = NamedValue<MaterialNoteKind>(req, "kind") ?? MaterialNoteKind.Note;
 
         var text = Require(req, "text");
         var subject = ResolveSha(req.Str("sha"), "sha");
