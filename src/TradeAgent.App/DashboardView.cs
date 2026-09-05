@@ -709,7 +709,9 @@ sealed class SafetyPage
         _maxNotional = Ui.NumberField(r.MaxNotionalPerOrder, 0m, 1000m);
         _maxPositions = Ui.NumberField(r.MaxOpenPositions);
         _maxPerMinute = Ui.NumberField(r.MaxOrdersPerMinute);
-        _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "any");
+        // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
+        // rather than everything is. It said "any".
+        _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
             Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point."),
@@ -720,9 +722,9 @@ sealed class SafetyPage
             Ui.FieldRow("Most positions it may hold at once", _maxPositions),
             Ui.FieldRow("Most orders per minute", _maxPerMinute),
             Ui.FieldRow("Instruments it may touch", _allowlist,
-                "Comma separated. Leave empty to allow any the platform offers."),
+                "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
-            Ui.With(Ui.Primary("Save limits", SaveLimits), b => b.HorizontalAlignment = HorizontalAlignment.Left),
+            Ui.With(Ui.Primary(Labels.SaveLimits, SaveLimits), b => b.HorizontalAlignment = HorizontalAlignment.Left),
             _limitsNote));
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
@@ -779,8 +781,15 @@ sealed class SafetyPage
                 .ToList();
         });
         _host.Gateway.Log.Activity("You changed the safety limits");
-        _limitsNote.Text = "Saved. New orders are checked against these immediately.";
-        _limitsNote.Foreground = Theme.Positive;
+
+        // AN EMPTY BOX IS A DECISION AND IT IS SAID BACK. Clearing the list used to widen the AI's
+        // authority to every instrument the platform offers, silently; it now removes all of it,
+        // just as silently, unless this sentence says which one happened.
+        var nothingAllowed = _host.Gateway.Settings.Risk.InstrumentAllowlist.Count == 0;
+        _limitsNote.Text = nothingAllowed
+            ? $"Saved. {Labels.NoInstrumentAllowed}"
+            : "Saved. New orders are checked against these immediately.";
+        _limitsNote.Foreground = nothingAllowed ? Theme.Caution : Theme.Positive;
     }
 }
 

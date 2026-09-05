@@ -55,7 +55,12 @@ public class PressIdShapeTests(ITestOutputHelper log)
     [InlineData("MES 03-26 [CME Globex Futures Micro]")]
     public async Task The_operator_close_all_sends_a_client_order_id_the_agent_pipe_would_accept(string symbol)
     {
-        var (gw, conn, db) = await TestEnv.Ready(s => s.Risk.MaxOrderQuantity = 5m);
+        // The full ATAS name IS the instrument here, so it is what the owner's allowlist names.
+        var (gw, conn, db) = await TestEnv.Ready(s =>
+        {
+            s.Risk.MaxOrderQuantity = 5m;
+            s.Risk.InstrumentAllowlist = [symbol];
+        });
         using var dbh = db;
 
         await gw.PlaceAsync(new AgentContext("a"), "open-1",
@@ -146,6 +151,7 @@ public class PressIdShapeTests(ITestOutputHelper log)
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;

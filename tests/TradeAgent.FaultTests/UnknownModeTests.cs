@@ -37,7 +37,7 @@ public class UnknownModeTests(ITestOutputHelper log)
         """
         {"mode":999,"live_activated":false,"ai_trading_stopped":false,"selected_account_id":"REAL-001",
          "risk":{"max_order_quantity":10,"max_notional_per_order":0,"max_open_positions":10,
-         "max_orders_per_minute":100,"instrument_allowlist":[]}}
+         "max_orders_per_minute":100,"instrument_allowlist":["ES"]}}
         """;
 
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> RestartOver(string settingsRow)

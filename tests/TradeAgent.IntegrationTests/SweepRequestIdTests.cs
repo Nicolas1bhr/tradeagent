@@ -227,6 +227,7 @@ public class SweepRequestIdTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 20;
@@ -1012,6 +1013,7 @@ public class SweepRequestIdTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = fake.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;

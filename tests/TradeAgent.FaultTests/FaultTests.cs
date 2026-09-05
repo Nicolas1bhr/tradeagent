@@ -219,7 +219,7 @@ public class RestartTests
         {
             var conn = new FakeConnector(broker, new FaultProfile { DropAfterBrokerAccept = 1 });
             var gw = new TradingGateway(db, conn, new HealthRegistry());
-            gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+            gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
             await conn.ConnectAsync();
             await gw.RefreshHealthAsync();
             await gw.PlaceAsync(new AgentContext("a"), "crash-1", TestEnv.Buy());
@@ -484,7 +484,7 @@ public class PolicyGateTests
         using var dbh = db;
         var conn = new FakeConnector(new FakeBroker { IsSimulated = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = conn.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = conn.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 
@@ -647,7 +647,10 @@ public class PolicyGateTests
             case "notional": gw.Update(s => s.Risk.MaxNotionalPerOrder = 10m); break;
             case "positions": gw.Update(s => s.Risk.MaxOpenPositions = 0); break;
             case "rate": gw.Update(s => s.Risk.MaxOrdersPerMinute = 0); break;
-            case "instrument": gw.Update(s => s.Risk.InstrumentAllowlist.Add("MES")); break;
+            // REPLACES the list rather than adding to it: TestEnv.Ready now names the instruments a
+            // configured installation trades, and "ES is not on the owner's list" is what this case
+            // is about.
+            case "instrument": gw.Update(s => s.Risk.InstrumentAllowlist = ["MES"]); break;
         }
 
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>

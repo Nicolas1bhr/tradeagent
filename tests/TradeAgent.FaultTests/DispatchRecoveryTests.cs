@@ -188,6 +188,7 @@ static class Recovery
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = c.Inner.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -284,7 +285,7 @@ public class StartupSweepTests
         {
             var conn = new FakeConnector(broker);
             var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { AbsenceGrace = TimeSpan.Zero });
-            gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; });
+            gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; s.Risk.MaxOpenPositions = 10; });
 
             // Swept at construction, before anything else can read the store or place an order.
             var swept = gw.GetRequest("mid-flight")!;

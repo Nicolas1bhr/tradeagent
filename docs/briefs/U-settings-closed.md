@@ -32,3 +32,14 @@ trailers, no push, no other worktree. Gate: Release `--no-incremental` → 0 war
 
 ## Report — append as you go, commit with each item, ≤20 lines: tip sha; per item RED → GREEN → mutant; final counts;
 what you did NOT do. Verified or NOT VERIFIED.
+
+## Report
+
+Branch `u-settings-closed` off `main` at `9cc3fb4`. Items are committed in the order 2 → 1 → 3,
+because item 1's "an allowlist that allows NOTHING" is item 2's change.
+
+**Item 2 — an empty allowlist allows nothing.** RED, review probe P1 lifted verbatim onto `main`'s
+source and run (it PASSES, which is the defect): `AiTradingStopped : False (owner set it TRUE)`,
+`InstrumentAllowlist : []   (owner set it MES)`, `InstrumentAllowed(ES): True`, `health row : UNKNOWN
+''`, `activity lines : 0`. GREEN: `InstrumentAllowed` no longer begins `Count == 0 ||`; Release
+`--no-incremental` 0 warnings, suite 219 + 222 + 570 = 1011, 0 failed.

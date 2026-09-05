@@ -52,6 +52,7 @@ static class Stranded
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = c.Inner.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;

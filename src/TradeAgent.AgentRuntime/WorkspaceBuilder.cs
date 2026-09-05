@@ -79,7 +79,7 @@ public static class WorkspaceBuilder
     - {(c.Risk.MaxNotionalPerOrder > 0 ? $"at most **{c.Risk.MaxNotionalPerOrder:N0}** order value" : "order value is not capped — the quantity limit above is the binding one")}
     - at most **{c.Risk.MaxOpenPositions}** open positions
     - at most **{c.Risk.MaxOrdersPerMinute}** orders per minute
-    - instruments: {(c.Risk.InstrumentAllowlist.Count == 0 ? "any the platform offers" : string.Join(", ", c.Risk.InstrumentAllowlist))}
+    - instruments: {(c.Risk.InstrumentAllowlist.Count == 0 ? "**none** — the owner has not named any, so every order will be refused" : string.Join(", ", c.Risk.InstrumentAllowlist))}
 
     These are not suggestions you can negotiate. There is no command that raises them — only the
     account owner can, in the TradeAgent window.

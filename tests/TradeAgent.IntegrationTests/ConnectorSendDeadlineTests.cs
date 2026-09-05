@@ -1517,6 +1517,7 @@ public class ConnectorSendDeadlineTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = account;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;

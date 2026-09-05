@@ -404,6 +404,10 @@ very large amount on paper while needing much less to actually trade. A value li
 would block every ordinary order. The number of contracts is the limit that means something for
 futures.
 
+*Note on instruments:* an empty box allows **nothing**, not everything. Until you name at least one
+instrument, every order is refused, and the box says so. That is on purpose: "I have not said which
+ones yet" and "any of them" are different sentences, and only one of them is a decision you made.
+
 ## Two behaviours that will look like faults, but are not
 
 **"AI trading paused — an earlier order is unconfirmed."**

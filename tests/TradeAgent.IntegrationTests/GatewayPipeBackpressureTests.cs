@@ -356,8 +356,12 @@ public class GatewayPipeBackpressureTests
             }
         });
 
-        // Wait until the order is genuinely in flight, then pull the server out from under it.
-        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(5));
+        // Wait until the order is genuinely in flight, then pull the server out from under it. The
+        // bound covers FOUR connector reads at the injected 1500 ms, not three: a configured
+        // installation names its instruments, so health no longer reads the instrument list and the
+        // first placement pays for it (see RiskCheckOrThrow). It returns the moment the record
+        // exists, so a bound with room in it costs a passing run nothing.
+        await WaitFor(() => gw.GetRequest(rid) is not null, TimeSpan.FromSeconds(20));
         var timer = Stopwatch.StartNew();
         await server.DisposeAsync();
         timer.Stop();
@@ -613,6 +617,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOrdersPerMinute = 100;
@@ -682,6 +687,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = inner.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOrdersPerMinute = 100;
@@ -1309,6 +1315,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -1475,6 +1482,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -1482,6 +1490,14 @@ public class GatewayPipeBackpressureTests
         });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
+        // WARM THE INSTRUMENT CACHE IN THE FIXTURE, where the setup is free. RefreshHealthAsync used
+        // to do this by accident — it reads the instrument list only when nothing is allowlisted, and
+        // nothing was, because an empty allowlist meant "everything". Now that an empty allowlist
+        // allows nothing, this fixture names its instruments and that read moved into the FIRST
+        // handler under test, adding one W to a chain the drain table in GatewayPipeServer prices.
+        // The table is not this unit's to change, and the measurement is meant to price the handler,
+        // not its fixture.
+        await gw.InstrumentsAsync();
         var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe)
         {
             SettleAfterCancelTimeout = TimeSpan.FromMilliseconds(100)
@@ -1754,6 +1770,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -1941,6 +1958,7 @@ public class GatewayPipeBackpressureTests
         {
             s.Mode = TradingMode.PAPER;
             s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;

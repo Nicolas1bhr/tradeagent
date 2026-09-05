@@ -55,6 +55,7 @@ public class ApprovalReauthorizationTests
         {
             s.Mode = TradingMode.LIVE_CONFIRM;
             s.SelectedAccountId = accountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
             s.Risk.MaxOrderQuantity = 10m;
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
@@ -397,7 +398,7 @@ public class ApprovalReauthorizationTests
     {
         var (gw, conn, db) = await Parked("allow-1");
         using var dbh = db;
-        Assert.Empty(new RiskPolicy().InstrumentAllowlist);   // empty means "everything", the default
+        Assert.Empty(new RiskPolicy().InstrumentAllowlist);   // the default names nothing, so it allows nothing
 
         gw.Update(s => s.Risk.InstrumentAllowlist = ["NQ"]);   // ES is now off the list
 
@@ -700,7 +701,7 @@ public class ApprovalReauthorizationTests
         var inner = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking });
         var conn = new ConnectorFacade(inner, inner.Capabilities with { SupportsModify = false });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
-        gw.Update(s => { s.Mode = TradingMode.PAPER; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
+        gw.Update(s => { s.Mode = TradingMode.PAPER; s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments]; s.SelectedAccountId = inner.Broker.AccountId; s.Risk.MaxNotionalPerOrder = 10_000_000m; });
         await conn.ConnectAsync();
         await gw.RefreshHealthAsync();
 

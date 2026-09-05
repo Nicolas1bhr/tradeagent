@@ -34,10 +34,24 @@ public sealed class RiskPolicy
     public decimal MaxNotionalPerOrder { get; set; }
     public int MaxOpenPositions { get; set; } = 2;
     public int MaxOrdersPerMinute { get; set; } = 6;
+    /// <summary>
+    /// THE INSTRUMENTS THE AI MAY TOUCH. AN EMPTY LIST IS NOT A WILDCARD.
+    ///
+    /// It used to be: <c>InstrumentAllowed</c> began <c>Count == 0 ||</c>, so "the owner has named
+    /// nothing" and "the owner has permitted everything" were the same value. Three different things
+    /// arrive at that value, and only one of them is a decision:
+    ///
+    ///   * a fresh install, where nobody has said anything yet;
+    ///   * a settings row this build could not read, where the owner's list was replaced by a
+    ///     default (REVIEW 2026-09-05 finding 5);
+    ///   * an owner who cleared the box meaning "stop trading these".
+    ///
+    /// Reading any of those as "every instrument the platform offers" is the software inventing a
+    /// permission. So the empty list allows NOTHING, and every screen that shows the list says so.
+    /// </summary>
     public List<string> InstrumentAllowlist { get; set; } = new();
 
     public bool InstrumentAllowed(string instrument) =>
-        InstrumentAllowlist.Count == 0 ||
         InstrumentAllowlist.Any(i => string.Equals(i, instrument, StringComparison.OrdinalIgnoreCase));
 }
 

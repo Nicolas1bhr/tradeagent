@@ -34,6 +34,16 @@ public static class Labels
 {
     /// <summary>On the Checks page when the bridge needs it, and on Settings always.</summary>
     public const string ReinstallBridge = "Reinstall the bridge";
+
+    /// <summary>The button on the Safety page that writes the limits back.</summary>
+    public const string SaveLimits = "Save limits";
+
+    /// <summary>
+    /// What an empty instrument allowlist means, said wherever the list is shown. An empty list is
+    /// not a wildcard (see <see cref="RiskPolicy.InstrumentAllowlist"/>), and the box the owner
+    /// clears has to say which of the two it did.
+    /// </summary>
+    public const string NoInstrumentAllowed = "No instrument is allowed until you add one.";
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>

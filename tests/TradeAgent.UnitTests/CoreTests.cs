@@ -268,14 +268,45 @@ public class WorkspaceTests
 
 public class RiskPolicyTests
 {
+    /// <summary>
+    /// RENAMED FROM <c>An_empty_allowlist_means_everything_is_allowed</c>, which asserted the
+    /// opposite and was the fact REVIEW 2026-09-05 finding 5 turned into a re-armed AI: a settings
+    /// row this build could not read produced an empty list, and an empty list meant everything.
+    /// "Nobody has said anything yet" is not a permission, so it now grants none.
+    /// </summary>
     [Fact]
-    public void An_empty_allowlist_means_everything_is_allowed()
+    public void An_empty_allowlist_means_nothing_is_allowed()
     {
         var p = new RiskPolicy();
-        Assert.True(p.InstrumentAllowed("ES"));
+        Assert.Empty(p.InstrumentAllowlist);
+        Assert.False(p.InstrumentAllowed("ES"));
+        Assert.False(p.InstrumentAllowed(""));
+
+        // ...and the other direction, so that this is not simply a policy that refuses everything.
         p.InstrumentAllowlist.Add("MES");
         Assert.False(p.InstrumentAllowed("ES"));
-        Assert.True(p.InstrumentAllowed("mes"));
+        Assert.True(p.InstrumentAllowed("MES"));
+        Assert.True(p.InstrumentAllowed("mes"));      // the list is the owner's, not the platform's casing
+
+        // Clearing it again takes the permission back with it.
+        p.InstrumentAllowlist.Clear();
+        Assert.False(p.InstrumentAllowed("MES"));
+    }
+
+    /// <summary>
+    /// A populated list allows EXACTLY its members. Worth its own case because the refusal above is
+    /// satisfied by a method that returns false unconditionally, and that method would ship.
+    /// </summary>
+    [Fact]
+    public void A_populated_allowlist_allows_exactly_its_members()
+    {
+        var p = new RiskPolicy { InstrumentAllowlist = ["ES", "NQ"] };
+        Assert.True(p.InstrumentAllowed("ES"));
+        Assert.True(p.InstrumentAllowed("NQ"));
+        Assert.True(p.InstrumentAllowed("nq"));
+        Assert.False(p.InstrumentAllowed("MES"));     // a longer name that CONTAINS one of them
+        Assert.False(p.InstrumentAllowed("E"));       // and a shorter one that is a prefix of one
+        Assert.False(p.InstrumentAllowed("ES 12-25"));
     }
 
     [Fact]
