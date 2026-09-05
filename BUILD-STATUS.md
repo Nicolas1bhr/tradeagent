@@ -3443,3 +3443,44 @@ overwrite); the armed label and the result sentence on screen. **NOT done:** thr
 `Prerequisites.cs`; two `Versioning.cs` comments quoting the retired refusal. **A trap the builder paid for:** Avalonia
 aborts at startup with `RenderTimer … -6661` when the Mac's display is asleep, which reads like a broken build;
 `caffeinate` first (now in `docs/RESUME-HERE.md`'s traps).
+
+## 2026-09-05 — U-press-atomic landed: one emergency press at a time, a replay bound to its verb, ids the gateway may send
+
+The review's findings 2 and 4 and UNVERIFIED 5 (executed as P10 and P2) and Codex's F6 and F7, by one fresh builder on
+`docs/briefs/U-press-atomic.md`. Merge `a53378b`, 9 commits, 11 files, +930/−25.
+
+- **Check and first row are one statement.** P10 reproduced under a barrier: two presses released together inside the
+  capture read → "press A: ok, press B: ok, close calls on the wire: 2, position after: ES −2", two press rows. Now
+  `ExecutionRequestStore.TryCreateFlagged` writes the flag AND `NOT EXISTS (a flagged row of this control)` in one
+  INSERT, so the check and the first row hold across the two processes that reach the button: "press A:
+  EMERGENCY_PRESS_UNRESOLVED — close-all sent at 09:56; resolve it first", one close call, position flat, one row; the
+  other direction (resolve, press again) sends.
+- **A replay is bound to its verb and session, and looked up before any live read.** Before: cancel-all with a
+  close-all's id was ACCEPTED as a close-all; session B replaying session A's id was accepted; an offline replay threw
+  the connector's disconnect. Now `ReplayOf` checks `op` and `agent_session_id` (existing columns, no schema change):
+  "INVALID_REQUEST — request id 'cr-1' already names a 'close-all'", zero wire calls, zero leg records, zero position
+  reads during the replay; proven over the real pipe too. `BeginCompositeAsync` takes the capture as a delegate and
+  never runs it on a replay.
+- **The press mints ids the gateway may send.** Before: `TA-op-close-…-ES 12-25 [CME Globex Futures]` (58 chars,
+  `' []'` outside the charset), 65 chars for MES, and cancel-all carried a BROKER order id in its leg id. Now
+  `PressLegId(kind, nonce, index)` for both controls (`TA-op-close-…-0`, 30 chars), the target stays on the record;
+  `MaxClientOrderIdChars` / `MaxRequestIdChars` / `IsSendableId` on the gateway, `OpenPressRow` refuses an id that breaks
+  them, and a reflection test pins the gateway's budget to the pipe server's private one (61 == 61). UNVERIFIED 5
+  reproduced (a latch naming a row whose insert failed held trading paused with nothing to resolve) and closed: the
+  latch follows the create.
+
+**Verified by running (the builder, quoted; then the manager's gate):** item 1 RED → GREEN, mutant (the exclusion
+clause neutralised) → red `Expected: 1 Actual: 2`; item 2 four REDs → GREEN, mutants (verb check compares the stored
+op to itself → 3 red; lookup after the read → 1 red); item 3 RED → GREEN, mutants (target back in the leg id → 2 red;
+latch before the create → 1 red). Builder's gate at `052a249`, Release: 0 warnings; Unit 211 + Fault 218 + Integration
+536 = 965, 0 failed; names 0 removed, 11 added; `docs/CONTRACTS.md` states the atomic claim, the leg-id shape and the
+binding; the `AGENTS.md` template states the binding. Manager's gate at `a53378b`, Release: build → 0 warnings, 0 errors; suite →
+218 + 218 + 570 = 1006, 0 failed; names vs `main` → 0 removed, 12 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**A combination fix rode along (`U-press-pipe-fix`, one test file):** at the rebased tip U-pipe-hello's new
+`An_operator_press_record_is_not_readable_over_the_agent_channel` failed ("Sequence contains no matching element") — its
+lookup spelled out the id shape this unit changed; a fresh fixer made it read the leg id off the press record, kept the
+assertion, and U-pipe-hello's mutant (`MayRead → true`) still goes RED at the new shape. `GatewayPipeServer.cs` untouched.
+**NOT done, stated:** `GatewayPipeServer.CancelAll`/`CloseAll` still read the book before `BeginComposite`, so an
+agent's OFFLINE replay fails on the read (the binding reaches them) → `U-pipe-words`. No box, no ATAS, no UI run.
+**Side effect for `U-press-budget`:** the press row is one insert instead of insert + `MarkNeedsReconciliation`.
