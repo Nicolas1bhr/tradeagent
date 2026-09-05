@@ -13,14 +13,14 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `8591de8`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8 and three test-only fixes landed** — all in
+`main` is `69c2545`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded and three test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: green at the
 U2c1b landing; windows-latest otherwise draws one different timing-sensitive test per run — class fixer
 `docs/briefs/U-win-timing.md` in flight (branch `u-win-timing`, PR #4, continued after a usage-limit kill). The milestone review of the
 money path at `8591de8` is DONE: `docs/REVIEW-2026-09-05.md` (reviewer HIGH 4 / MED 4 / LOW 2 / UNVERIFIED 6, twelve
 executed probes on `review-probes`; Codex HIGH 6 / MED 2 read-only, merged into the same file); the BUILD-STATUS
-section of 2026-09-05 summarises it. Fix units, dispatched in this order as slots free: `U-stranded` (money is wrong
-today), `U-interlock`, `U-gates`, `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
+section of 2026-09-05 summarises it. `U-stranded` LANDED (`69c2545`: the bound is derived, 70 s shipped; a live dispatcher
+owns its row). Fix units still queued, in this order: `U-gates` (building), `U-interlock`, `U-press-atomic` (after U-gates), `U-settings-closed` (after U-gates), `U-pipe-hello`,
 `U-pipe-words` (after U-pipe-hello); then `U-bridge-reinstall`; then the v0.1.2 cut on the box (bridge redeploy at
 protocol 3; the items in `docs/hardening/briefs/U6-U9-backlog.md`; the two box items the review names). **Two
 decisions Nicolas owes:** (1) the ATAS platform installer is downloaded with no checksum and run elevated — pin a hash

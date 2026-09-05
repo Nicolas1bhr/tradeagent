@@ -3223,3 +3223,36 @@ round-trips the malformed press id; whether a real bridge spends 30–50 s in ga
 **NOT VERIFIED by either reviewer:** the witness, teardown, adapter and health code (barely touched), most of the App,
 the approval chain, the material ledger, `ForceResolve`, `BridgePipeAuth`; nothing on Windows or real ATAS. The next
 milestone's review starts there.
+
+## 2026-09-05 — U-stranded landed: the reconciler never writes off an order whose dispatcher is still alive
+
+The first fix unit from the milestone review, its finding 1 (executed as P6b): `DispatchStrandedAfter` was a 30 s
+constant whose comment claimed "the connector's 10 s RPC deadline plus 20 s of slack", while `AtasConnector`'s worst
+order path is 50 s, so a placement legitimately in flight for 30–50 s was written off CANCELLED "never reached the
+broker", trading resumed, the order filled, and the real answer was discarded as `already_settled`. Merge `69c2545`,
+4 commits, 7 files, +767/−34.
+
+- **The bound derives from the connector.** `TradingGateway.DispatchStrandedAfter = Connector.WorstCaseOperationPath +
+  GatewayOptions.DispatchSettleSlack` — 50 + 20 = 70 s shipped; an explicit option may only LENGTHEN it, as
+  `HandlerDrainTimeout` does; the 30 s constant is deleted. Absence is judged from the later of dispatch time and the
+  bound. A record this process never dispatched (a legacy stranded row) now waits bound + grace before absence
+  settles it — a behaviour change beyond the finding, pinned by a test with a movable clock.
+- **A live dispatcher owns its row.** While a handler is inside the connector call the reconciler does not move its
+  row (a dispatch lease), and a `Settle` that arrives after the reconciler moved the row WINS when it carries the
+  broker's definite answer (`LateDefiniteSettle`); `already_settled` is no longer the fate of a real FILLED or REJECTED.
+  A genuinely stranded row, its dispatcher gone, still reconciles at the bound.
+- **The row says what the owner needs:** "still on the wire for 90s of a possible 50s", naming the wire, not the bound.
+
+**Verified by running (the builder, quoted; then the manager's gate):** `StrandedBoundDerivationTests` (3) RED "at 40s
+unconfirmed: 1 … at 75s: resolved=1 … CANCELLED" → GREEN, mutant `DerivedDispatchStrandedAfter => 30 s` → 3 red;
+`LiveDispatcherOwnsItsRowTests` (3) RED = UNVERIFIED 4 executed ("owned-1: never reached the broker … trading resumed:
+True … already_settled" while the dispatch answered FILLED) → GREEN, one mutant per guard (lease check `if (false)` →
+1 red; `LateDefiniteSettle` deleted → 1 red); the wording test RED → GREEN, mutant (name the bound) → red at "possible
+70s". P6b lifted verbatim, run, then deleted: it now fails at its own premise one second in, because a placement in
+flight is not stranded; P6a cannot compile, the constant it asserted on is gone. Builder's gate at `68b2883`, Release: 0
+warnings; Unit 201 + Fault 195 + Integration 530 = 926, 0 failed; names 7 added, 0 removed. Manager's gate at `69c2545`,
+Release: build → 0 warnings, 0 errors; suite → 201 + 195 + 530 = 926, 0 failed; names vs `main` → 0 removed, 7 added; scan clean; CI at the merge was in progress when this was written; recorded with the next landing.
+
+**NOT VERIFIED:** that a real bridge really spends 30–50 s in gate + frame (the review said the same); nothing on the
+box, no real ATAS, no UI. **Still open, by design of the cut:** `UpdateTradingInterlock` asks the raw flag and sees none
+of this (finding 3 → `U-interlock`).
