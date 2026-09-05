@@ -496,7 +496,23 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
 
 - **A second press of the same control is refused while the last one is unresolved**, with the time
   it was sent: *"close-all sent at 14:32; resolve it first"*. Per control, not globally — an
-  unresolved cancel-all must never be able to stop somebody flattening a position.
+  unresolved cancel-all must never be able to stop somebody flattening a position. **The refusal and
+  the first durable row are ONE STATEMENT** — the press's first `execution_request` is inserted
+  flagged, guarded by `NOT EXISTS(a flagged row of this control)` — so it holds between the two
+  processes that reach these controls (the app and `tradeagent-gateway.exe`, over one database) and
+  not merely within one. It was a store read followed by a store write with a connector round trip
+  between them: two presses released together both passed, both captured the same position, both
+  passed the drift re-read because neither fill had landed, and a long 2 became **short 2** with both
+  presses answering "ok" (REVIEW 2026-09-05 finding 2, probe P10; Codex F6).
+- **A press names its own legs**: `op-close-{nonce}-{index}` and `op-cancel-{nonce}-{index}`, the
+  same shape as the agent path's `op-{nonce}-{intent}-{index}` and for the same reason — the id is
+  carried onto the order as `TA-{id}` and safety rule 1 requires the broker to hand it back
+  unchanged. It used to end in the target: an instrument name for a close, a broker order id for a
+  cancel. `TA-op-close-…-ES 12-25 [CME Globex Futures]` is 58 characters with `' []'` outside
+  `[A-Za-z0-9-]`, and the MES contract's name makes 65 against the 64-character ceiling (REVIEW
+  2026-09-05 finding 4, probe P2). The target itself is on the record — the instrument in
+  `instrument`, the order id in `parameters` — which is where the card already read it from. Every id
+  the gateway mints is checked against that charset and budget before it can become a client order id.
 - **There is no retry and no press object.** A press's nonce is minted once, inside the gateway, and
   never handed back; nothing in the UI holds it and nothing is reconstructed at startup. A restart
   reads the same flagged rows and refuses to trade over them, which is what "the durable records ARE

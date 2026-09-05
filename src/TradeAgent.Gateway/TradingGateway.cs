@@ -850,6 +850,37 @@ public sealed class TradingGateway : IAsyncDisposable
     public static string ClientOrderIdFor(string requestId) => $"TA-{requestId}";
 
     /// <summary>
+    /// The most characters a CLIENT ORDER ID may run to in total. 64, and it is a CONSERVATIVE GUESS
+    /// — ATAS's real limit is NOT VERIFIED and is settleable only on the box. `docs/CONTRACTS.md`
+    /// says so in the same words. What is certain is that some limit exists and that safety rule 1
+    /// needs this field to come back unchanged, so an unbounded id is a bet rather than a value.
+    /// </summary>
+    public const int MaxClientOrderIdChars = 64;
+
+    /// <summary>
+    /// The most characters a request id may run to, so the id built FROM it still fits: the ceiling
+    /// minus the <c>TA-</c> prefix, 61 today. Derived rather than typed, so a change to
+    /// <see cref="ClientOrderIdFor"/> moves it instead of silently breaking it.
+    /// </summary>
+    public static readonly int MaxRequestIdChars = MaxClientOrderIdChars - ClientOrderIdFor("").Length;
+
+    /// <summary>
+    /// WHETHER THIS ID MAY LEAVE THE PROCESS ON A BROKER ORDER: <c>[A-Za-z0-9-]</c>, 1 to
+    /// <see cref="MaxRequestIdChars"/> characters.
+    ///
+    /// <c>GatewayPipeServer</c> has enforced this on ids the AGENT chooses since 2026-09-03, for the
+    /// one reason that matters: the string is carried onto the order as <c>TA-{id}</c> and safety
+    /// rule 1 requires the broker to hand it back unchanged. The rule belongs to the gateway, not to
+    /// the pipe, because the gateway also MINTS ids — and the operator's emergency press minted one
+    /// out of a broker-supplied instrument name, so the one order that flattens a position in an
+    /// emergency carried <c>TA-op-close-…-ES 12-25 [CME Globex Futures]</c> (REVIEW 2026-09-05
+    /// finding 4, probe P2). A test pins this budget to the pipe's, so the two cannot drift.
+    /// </summary>
+    public static bool IsSendableId(string requestId) =>
+        requestId.Length > 0 && requestId.Length <= MaxRequestIdChars
+        && requestId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+
+    /// <summary>
     /// Records a definite dispatch outcome. If something else already settled the record (a stream
     /// event that arrived on another thread), the stored state wins and we simply report it.
     /// </summary>
@@ -1965,8 +1996,27 @@ public sealed class TradingGateway : IAsyncDisposable
         requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ? ClosePress : CancelPress;
 
     /// <summary>
-    /// The nonce out of <c>{kind}-{nonce}</c> or <c>{kind}-{nonce}-{target}</c>. A nonce is hex, so
-    /// the first segment after the kind is all of it however many dashes a broker's order id has.
+    /// ONE LEG OF ONE PRESS: <c>{kind}-{nonce}-{index}</c>, and every part of it is a string this
+    /// gateway chose.
+    ///
+    /// It was <c>{kind}-{nonce}-{target}</c>, with the target taken off the CONNECTOR — an
+    /// instrument name for a close, a broker order id for a cancel — and carried onto the order as
+    /// <c>TA-{id}</c>, the field safety rule 1 requires the broker to hand back unchanged. Two
+    /// ordinary CME names break it: <c>TA-op-close-…-ES 12-25 [CME Globex Futures]</c> is 58
+    /// characters with <c>' []'</c> outside <c>[A-Za-z0-9-]</c>, and the MES equivalent is 65
+    /// against a 64-character ceiling (REVIEW 2026-09-05 finding 4, probe P2). The agent's own sweep
+    /// legs have been <c>op-{nonce}-{intent}-{index}</c> for exactly this reason since 2026-09-03;
+    /// this is the operator path catching up.
+    ///
+    /// The target is not lost: a close keeps its instrument in <c>Instrument</c> and a cancel keeps
+    /// its order id in <c>ParametersJson</c>, which is where <see cref="TargetOf"/> already read
+    /// them from.
+    /// </summary>
+    static string PressLegId(string kind, string nonce, int index) => $"{PressPrefix(kind, nonce)}-{index}";
+
+    /// <summary>
+    /// The nonce out of <c>{kind}-{nonce}</c> or <c>{kind}-{nonce}-{index}</c>. A nonce is hex and
+    /// contains no dash, so the first segment after the kind is all of it.
     /// </summary>
     static string NonceIn(string requestId) =>
         requestId[(PressKindOf(requestId).Length + 1)..].Split('-')[0];
@@ -2130,8 +2180,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// write-ahead time is what makes "from that moment trading is paused" true of every outcome
     /// including the good ones, and it is the reconciler's cue to leave these rows alone.
     ///
-    /// The latch goes in FIRST, in memory, for the same reason <see cref="RecordIndefinite"/> does
-    /// it: everything below is a database write and the pause must not depend on one.
+    /// THE LATCH GOES IN AFTER THE ROW, and that is a correction. It used to go first, in memory,
+    /// for the same reason <see cref="RecordIndefinite"/> does it — a pause that does not depend on
+    /// a database write. But this method writes BEFORE the wire, not after it: when the insert
+    /// fails, nothing was sent and there is nothing to pause over, while the latch it had already
+    /// set named a request id with no row — and <see cref="ReleaseLatchesTheStoreCanVouchFor"/>
+    /// skips ids whose row is missing, so that pause survived every reconcile pass and every
+    /// confirmation the owner could make, because there was nothing on the card to confirm. Only a
+    /// restart cleared it (REVIEW 2026-09-05, UNVERIFIED 5). Once the row IS in, it is already
+    /// flagged by the same insert, so the durable pause exists before the latch is asked for
+    /// anything.
     ///
     /// AND IT IS THE STEP THAT DECIDES WHETHER THIS PRESS HAPPENS AT ALL. <paramref name="claims"/>
     /// names the control this row is the FIRST row of; the insert then refuses to run while any row
@@ -2147,7 +2205,10 @@ public sealed class TradingGateway : IAsyncDisposable
     ExecutionRequest OpenPressRow(string requestId, string accountId, RequestIntent intent,
         string instrument, string parametersJson, string paused, string? claims = null)
     {
-        LatchUnconfirmed(requestId, paused);
+        if (!IsSendableId(requestId))
+            throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+                $"'{requestId}' is not an id this gateway may put on a broker order; nothing was sent");
+
         var (created, blocker) = _requests.TryCreateFlagged(new ExecutionRequest
         {
             RequestId = requestId,
@@ -2163,13 +2224,9 @@ public sealed class TradingGateway : IAsyncDisposable
             Mode = Settings.Mode
         }, paused, claims is null ? null : PressRowsLike(claims));
 
-        // LOST THE CLAIM. Nothing was written under this id, so nothing may stay latched under it
-        // either — a latch naming a row that does not exist is one nothing can ever release.
+        // LOST THE CLAIM. Nothing was written and nothing will be sent under this id.
         if (!created && blocker is not null)
-        {
-            ClearLatch(requestId);
             throw PressAlreadyOpen(PressKindOf(blocker.RequestId), blocker.CreatedAt);
-        }
 
         // A fresh nonce cannot collide with a row this store already holds, so finding one is not a
         // replay — it is a corrupt id space, and sending over it would be sending twice.
@@ -2177,6 +2234,7 @@ public sealed class TradingGateway : IAsyncDisposable
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
                 $"{requestId} already exists; nothing was sent");
 
+        LatchUnconfirmed(requestId, paused);
         return _requests.Transition(requestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
     }
 
@@ -2262,9 +2320,10 @@ public sealed class TradingGateway : IAsyncDisposable
         BeginComposite(AgentContext.Operator, pressId, Ops.CancelAll, captured, () => nonce);
 
         var cancelled = new List<string>();
-        foreach (var target in captured)
+        for (var i = 0; i < captured.Count; i++)
         {
-            var rid = $"{pressId}-{target}";
+            var target = captured[i];
+            var rid = PressLegId(CancelPress, nonce, i);
             OpenPressRow(rid, accountId, RequestIntent.CANCEL, "-",
                 Json.Write(new { order = target, press = nonce }), paused);
             try
@@ -2364,8 +2423,9 @@ public sealed class TradingGateway : IAsyncDisposable
         // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
         // flagged write-ahead.
         var claimed = false;
-        foreach (var (symbol, quantity) in captured)
+        for (var i = 0; i < captured.Count; i++)
         {
+            var (symbol, quantity) = captured[i];
             // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
             // changed sends nothing for that instrument (Codex round-3 F10).
             //
@@ -2398,7 +2458,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 continue;
             }
 
-            var rid = $"{PressPrefix(ClosePress, nonce)}-{symbol}";
+            var rid = PressLegId(ClosePress, nonce, i);
             var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
                 OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
                 { Intent = OrderIntent.Close };
