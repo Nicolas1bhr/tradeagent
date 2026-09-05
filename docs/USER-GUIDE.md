@@ -29,10 +29,15 @@ answer.
 
 Two things you will see, and neither is a fault:
 
-- **"Windows protected your PC."** TradeAgent is not signed with a paid publisher certificate yet, so
-  Windows shows a blue warning the first few times anyone runs the installer. Click **More info**,
-  then **Run anyway**. If you would rather be certain first, check the file against the published
-  `SHA256SUMS.txt` before running it, or ask whoever gave you the file to confirm the number.
+- **"Windows protected your PC."** TradeAgent is not signed with a publisher certificate — that was
+  a deliberate decision to leave for later — so Windows may show a blue warning the first time
+  anyone runs the installer it has just downloaded. The **Run anyway** button is hidden until you
+  click **More info** first. So: **More info**, then **Run anyway**. Expect it; an unsigned
+  installer is exactly what that warning is for. If you would rather be certain first, ask whoever
+  gave you the file to confirm the checksum published beside it.
+  *This particular screen has not been walked yet.* The one installation done from the internet on
+  the test machine arrived without the mark Windows uses to decide, so no warning appeared and
+  nobody has seen it in this product's own case.
 - **If TradeAgent is already open**, setup will say so and offer to close it. Let it. Windows cannot
   replace a program while it is running.
 
@@ -42,6 +47,22 @@ opens the app.
 
 Windows 11 is required. Nothing else is — no .NET, no Node, no developer tools. TradeAgent brings
 what it needs.
+
+### What you will be asked to do
+
+Once, at most: **click Yes on a Windows permission prompt.** That is the whole of it.
+
+TradeAgent installs into your own account only, so its own installer never asks for an
+administrator password and there is no all-users-or-just-me question to answer. The one place a
+prompt can appear is when TradeAgent installs **ATAS** for you, because ATAS is somebody else's
+program and installs itself for the whole machine. Windows asks; you click Yes.
+
+If you click No, nothing is installed and nothing is changed, and TradeAgent says so in those
+words. You can try again whenever you like.
+
+Nothing in TradeAgent will ever ask you to type a command, open a black window, or copy an
+instruction into one. If a screen ever does, that is a fault worth reporting, not something to work
+around.
 
 ## Keeping it up to date
 
@@ -65,7 +86,34 @@ and the same **Install update** button. If you would rather TradeAgent never wen
 automatic checks** on that page stops it — you can still press **Check for updates** yourself whenever
 you like.
 
-Three things worth knowing:
+### When it refuses
+
+TradeAgent would rather not update than update to something it cannot vouch for, and it says which
+in a sentence you can read.
+
+- **It cannot prove the file is the one that was published.** Every release is published with a
+  checksum — a number computed from the file's exact contents. If that number is missing, cannot be
+  fetched, or does not name the file being offered, **nothing is downloaded and nothing is
+  installed**, and the reason appears on the blue strip and on the Settings page: *"TradeAgent 0.2.0
+  cannot be verified… Nothing was installed."* The version you are running is untouched. There is no
+  press that gets past this, and there should not be: the checksum is the whole of the proof.
+- **The file changed between the download and the moment of installing.** Checked again immediately
+  before the installer is started, and a mismatch stops it there.
+- **An order's outcome is unconfirmed.** TradeAgent will not replace itself while it cannot account
+  for one of your orders — that is the one moment an update could lose track of real money. It says
+  so: *"TradeAgent will not replace itself while an order's outcome is still unconfirmed… Settle or
+  reconcile it on the Dashboard, then install."* Settle it on the Dashboard, then press again.
+  If TradeAgent cannot even tell whether anything is unconfirmed, it refuses for that reason too,
+  and asks you to close and reopen it.
+
+The refusal is asked twice: once before the download, so a refusal does not cost you a hundred
+megabytes, and once again just before the installer runs, so the answer is true at the moment it is
+acted on. And from the moment the download starts until the installer takes over, **TradeAgent stops
+accepting new orders** — the other half of the same rule.
+
+Every refusal is written into your **Activity** history as well, so you can find it later.
+
+Three more things worth knowing:
 
 - **An update never touches your records, your settings or ATAS.** It replaces the program only.
 - **Your AI cannot update TradeAgent.** It cannot check, download or install anything — the same rule
@@ -75,31 +123,53 @@ Three things worth knowing:
 
 ## Setting it up
 
-The app walks you through it. Each screen explains itself, and the ones that can check their own work
-move on by themselves.
+The app walks you through it. **There are sixteen screens, and the counter at the top of each one says so —
+STEP 4 OF 16.** Most of them you will never see. A screen that can check its own work does not ask
+you to confirm you did it; it checks every two seconds and moves on the moment the answer is yes, so
+it goes past in a blink. On the one full walk done so far, on Windows with ATAS, **eight of the
+sixteen were shown and eight went past by themselves.** Which eight depends on your machine — a
+screen appears only if it is waiting for something.
+
+These are all sixteen, by the name each one shows at the top.
 
 1. **Welcome** — what is about to happen.
-2. **Checking your computer** — makes sure the machine can run everything.
+2. **Checking your computer** — the machine can run everything. Passes by itself.
 3. **Choose your AI assistant** — two to pick from. You can change it later.
-4. **Installing the AI assistant** — TradeAgent downloads it and puts it in its own private folder.
-   There is nothing to do here and nothing is added to the rest of your computer.
+4. **Installing the AI assistant** — TradeAgent downloads it into its own private folder. Nothing to
+   do, and nothing is added to the rest of your computer. Passes by itself once it is there.
 5. **Sign in to your AI account** — press **Sign in** and your web browser opens on the right page.
    TradeAgent notices when you are done. If the browser does not open, the screen gives you the link
-   to copy.
+   to copy. Passes by itself once you are signed in.
 6. **Choose your trading platform** — the built-in **practice simulator** (recommended, and the place
    to start) or **ATAS**.
-7. **Finding ATAS** — only if you chose ATAS. See the next section.
-8. **Installing the ATAS add-on** — TradeAgent puts a small add-on inside ATAS so the two can talk.
-   Close ATAS first if it is open; a program cannot be changed while it is running.
-9. **Connecting to ATAS** — you start the add-on inside ATAS once, and TradeAgent notices by itself.
-10. **Your account, prices, and trading access** — three checks that your account is reachable, that
-    live prices are arriving, and that orders would be allowed.
-11. **The AI's workspace** — the folder the AI works in.
-12. **Starting the AI** — and you are on the Chat page.
+7. **Finding ATAS** — only if you chose ATAS. Passes by itself once ATAS is on the machine. See the
+   next section.
+8. **Installing the ATAS bridge** — TradeAgent puts a small piece of itself inside ATAS so the two
+   can talk. Close ATAS first if it is open; the file cannot be placed while ATAS is using the
+   folder. The button says **Install the add-on**.
+9. **Connecting to ATAS** — five numbered steps to do inside ATAS once: open ATAS, open a chart, open
+   **Strategies** for that chart, choose **TradeAgent Bridge**, press **Add**, then press **Start**.
+   If it is not in the list, press the refresh button at the top of the strategy list — ATAS only
+   rereads the folder when asked. You do not tell TradeAgent when you are done; it notices.
+10. **Finding your trading connection** — passes by itself.
+11. **Choose your account** — the one account the AI is allowed to see and trade. It will never touch
+    another.
+12. **Checking live prices** — passes by itself.
+13. **Checking trading access** — passes by itself.
+14. **Creating the AI's workspace** — the folder the AI works in.
+15. **Starting the AI**.
+16. **Setup complete** — and you are on the Chat page.
 
-If you close TradeAgent, restart Windows, or something fails halfway, it picks up where it stopped.
-It will not make you start again. Every screen after the first has a **Back** button that returns you
-to the last choice you made.
+**It resumes.** Progress is written down as each screen is finished, so closing TradeAgent, restarting
+Windows, or a failure halfway leaves you exactly where you stopped — nothing already done is walked
+again. That was tried: closed at step 9 of 16, reopened, and it came back on step 9 with nothing
+repeated.
+
+**Back does not go back one screen; it goes back to your last real choice.** There are four of those
+— **Welcome**, **Choose your AI assistant**, **Choose your trading platform** and **Starting the AI**
+— and the button names the one it will take you to, so you can always read where you are about to
+land. Going back re-walks everything after it. *Known rough edge:* **Choose your account** is a real
+decision but is not one of the places Back can return you to.
 
 **You should never need to type a command.** If a screen ever asks you to, that is a fault worth
 reporting, not something to work around.
@@ -112,12 +182,26 @@ ATAS is not TradeAgent's software, and this is the one part of setup that is not
   normal Windows program, so its installer will ask for permission and ask you a few questions of its
   own. TradeAgent's "Finding ATAS" screen waits, and moves on the moment ATAS appears.
 - **Log in to your broker inside ATAS.** TradeAgent never sees those details and never asks for them.
-- **Then TradeAgent installs its own add-on** into your ATAS folder, and only that. It does not change
+- **Then TradeAgent installs its own bridge** into your ATAS folder, and only that. It does not change
   your charts, your layouts or your settings.
+- **You start the bridge inside ATAS once**, on a chart, the way you would start any ATAS strategy.
+  After that it comes back by itself whenever ATAS runs it.
+
+**One thing to expect after an update.** The bridge and TradeAgent have to be the same generation. If
+TradeAgent is updated and the piece inside ATAS is an older one, TradeAgent refuses to talk to it
+rather than guess, and says exactly that on the Dashboard and on the Checks page: *"bridge 0.1.1
+speaks protocol 2, this build speaks 3 — reinstall the add-on from TradeAgent."* It is not a fault,
+and it is not a password problem — TradeAgent tells those two apart on purpose, because they look
+identical from the outside and have completely different repairs.
+
+**But there is no button for that repair yet.** Once setup has finished, the screen that puts the
+bridge into ATAS is not reachable again from inside the window, and neither Settings nor Checks
+offers another way to do it. Until that is built, the sentence tells you what is wrong and whoever
+set the machine up has to do the replacing. It is on the list below.
 
 ## The window
 
-Six pages, down the left-hand side.
+Seven pages, down the left-hand side.
 
 **Chat** — the conversation with the AI. Type in the box at the bottom and press send. Its answers
 appear as they are written. When it reads a price, looks at your account or places an order, that
@@ -135,6 +219,11 @@ automatically. There is a section on this page below.
 
 **Safety** — the trading mode, the five limits, and the three emergency buttons. Everything on this
 page belongs to you; the AI cannot reach any of it and has no way to ask.
+
+**Settings** — which trading platform is in use, which account the AI may trade, and which version of
+TradeAgent you are running. You can change the platform and the account here after setup. Changing
+the platform closes the current connection and clears your account choice, because an account on one
+platform does not exist on the other; it moves no money and cancels nothing.
 
 **Activity** — a plain-language history of what happened, most recent last. Every order, every
 refusal, every reason.
@@ -201,17 +290,72 @@ The AI decides it wants to buy or sell. Nothing is sent. Instead:
 
 ## The three emergency buttons
 
-They are separate on purpose, and each needs two presses.
+They are separate on purpose.
 
-| Button | What it does | What it does *not* do |
-|---|---|---|
-| **STOP AI TRADING** | Takes away the AI's permission to trade, instantly | Does not touch your existing orders or positions |
-| **Cancel all working orders** | Removes orders that have not filled yet | Does not close positions you already hold |
-| **Close all positions** | Sells/buys to flatten everything, at market | — |
+| Button | Presses | What it does | What it does *not* do |
+|---|---|---|---|
+| **STOP AI TRADING** | one | Takes away the AI's permission to trade, instantly | Does not touch your existing orders or positions |
+| **Cancel all working orders** | two | Cancels the orders it found, one by one | Does not close positions you already hold |
+| **Close all positions** | two | Sells/buys to flatten everything, at market | — |
 
-**STOP AI TRADING** is also at the top of the window, on every page. It is the one control you never
-have to go looking for. It is instant, it is safe, and it changes nothing about your money — it only
-takes the AI's permission away.
+**STOP AI TRADING** is one press, in both directions, and it is at the top of the window on every
+page. It is the one control you never have to go looking for. It is instant, it is safe, and it
+changes nothing about your money — it only takes the AI's permission away. It is one press because a
+mis-press costs nothing and hesitating costs money. When it is on, the same button says **RESUME AI
+TRADING**.
+
+The other two move money, so they are two presses: the first press changes the button into the
+sentence it is about to carry out — *"Confirm: close all positions with market orders"* — and only
+the second does it.
+
+### What the other two do afterwards, and why it looks like an alarm
+
+**Both of them stop the AI from trading until you have read the result.** That is deliberate, and it
+is the most surprising thing on this page, so it is worth understanding once.
+
+Before either one touches your broker, TradeAgent writes down every order or position it is about to
+act on — one line each. Then it sends the instructions. From that moment those lines count as work
+whose outcome is unconfirmed, so trading pauses and each line appears on the Dashboard for you to
+confirm. Each line says what TradeAgent asked for, what the platform answered, and — read fresh from
+your account a moment later — what your position on that instrument is *now*. Those are two different
+facts, and a close that reported "filled" over a position that is still open is exactly the case this
+exists to show you.
+
+You clear each line the same way you clear any unconfirmed order: type what you saw in ATAS, then
+press one of the two-press buttons. Trading resumes when the last one is cleared.
+
+**A second press while lines are still open is refused**, with the time of the first one: *"close-all
+sent at 14:32; resolve it first."* There is no retry button, and there is no press that a failure can
+leave stuck forever — the record is the press, and a person ends it.
+
+**Close all positions re-reads your position immediately before it sends anything.** If it has moved
+since you pressed, it stops and asks you again rather than closing a number that is no longer true.
+
+**None of this survives in the app's memory.** Close TradeAgent in the middle of an emergency and
+reopen it: the lines are still there, and trading is still paused. That is the point of writing them
+down first.
+
+### When an emergency cannot get an answer
+
+An emergency press waits **two seconds** for ATAS, and no longer. Two seconds is not generous and is
+not meant to be: someone pressing this button is trying to stop, and a button that sits there for
+thirty seconds is a button that has failed them.
+
+If the two seconds run out, you get this, and it is worth reading slowly:
+
+> **'close-all' is NOT confirmed — check your positions and orders in ATAS.** The bridge is …; ….
+
+**What it is telling you.** TradeAgent asked ATAS to close everything and did not hear back in time.
+It does **not** mean nothing was sent. It does not mean everything was sent. It means nobody knows
+yet, and the only place the truth exists right now is ATAS itself.
+
+**What it is asking you to do.** Open ATAS and look — at your positions, and at your working orders.
+Whatever is on that screen is what is true. Then come back to the Dashboard and clear the lines with
+what you saw. Do not press the emergency button again first; it will refuse, and it is right to.
+
+If instead you see *"could not be read, so the operation was not started. Nothing was placed or
+cancelled"*, that is the other kind: TradeAgent could not even read what it needed before starting,
+and nothing went anywhere. Different sentence, different meaning, on purpose.
 
 ## The five safety limits
 
@@ -240,18 +384,53 @@ broker, or might not. Rather than guess — or worse, send it again and risk two
 asks your broker what actually happened, and continues once it knows. This is the single most
 important thing this software does. Let it finish.
 
+**It also does this after a crash or a power cut.** When TradeAgent starts, any order that was still
+being sent when it last stopped is marked as unknown, trading is paused, and the Activity page says
+so: *"1 order(s) were still being sent when TradeAgent last stopped. Trading is paused until you or
+the platform confirm what happened to them."* That pause happens before anything else can trade, and
+it is not skippable.
+
 **An order refused for breaking a limit, or because prices went stale.**
 Working as intended. TradeAgent will not size an order from an out-of-date price, and it will not
 exceed a limit you set. The reason appears in Activity.
 
-## What is not finished
+## What works, and what is not finished
 
 Told plainly, because you are the one who would find out the hard way.
 
-- **Trading through ATAS does not work yet.** The piece that actually sends an order into ATAS has not
-  been written. Everything around it is built and tested, and the practice simulator works end to end,
-  but until that piece exists TradeAgent cannot place a real order through ATAS. Use practice mode.
-- **Nothing has ever been tried with real money**, by anyone, on purpose.
+### Trading through ATAS works
+
+It was walked, once, on a real Windows machine on 31 August, on a simulated account inside ATAS, with
+no black window at any point:
+
+1. The AI asked to buy. Nothing was sent — the mode was **Real, ask me first**, so TradeAgent held
+   the order and told the AI *"The AI is asking permission to place an order."*
+2. The window raised its amber bar — *"The AI is asking permission — 1 order waiting"*, with
+   **Review the request** — and the Dashboard showed the order: buy 1, the instrument, the price,
+   the time it was asked, and **Approve** and **Decline**.
+3. **Approve** was pressed twice ("Confirm: place this order").
+4. It reached ATAS and came back with ATAS's own order number. ATAS's own Trading Activity panel
+   showed the position, independently of TradeAgent's record.
+5. It was cancelled, and the book was checked afterwards from outside TradeAgent: no orders, no
+   position.
+
+Since then, the piece inside ATAS refuses to place an order at all unless it has first written down
+the order's own reference where a crash cannot lose it. So "the order was sent but nobody wrote it
+down" is not a state this can end up in.
+
+### Still not finished
+
+- **Nothing has ever been tried with real money**, by anyone, on purpose. Everything above was on a
+  simulated account.
+- **Fully automatic trading is not available on ATAS**, and the Checks page says so in those words.
+  It needs two things proven — that your order reference survives the round trip, and that order
+  history reaches far enough back to answer "what happened to this one". Until a platform confirms
+  both, **Real, fully automatic** is withheld and the other three modes work normally.
+- **There is no way to reinstall the bridge from inside the window** once setup has finished. See
+  "About ATAS" above.
+- **The blue "Windows protected your PC" screen has not been walked.** Nobody has yet installed this
+  from a browser download on a machine that treats it as downloaded.
+- **Rolling an update back has never been tried**, nor has an update interrupted halfway.
 - **The installer has not been tried on a brand-new computer** — only on machines that already had
   developer tools on them.
 - One of the two AI assistants has never been tested at all; only the other one has.
@@ -273,10 +452,17 @@ Activity page.
 
 ## If something goes wrong
 
-1. Go to **Checks** and press **Check everything**. It usually names the problem and what to do.
-2. Read **Activity** — it is a plain-language history of what happened.
-3. Press **STOP AI TRADING** if you are unsure. It is instant and it is safe.
-4. Press **Create support package** on the Checks page and send the file to whoever helps you.
+1. Press **STOP AI TRADING** if you are unsure. It is one press, it is instant, and it is safe. Do
+   this first; everything else can wait.
+2. Go to **Checks** and press **Check everything**. It tests each part in turn and names any problem
+   in plain words. These checks never change anything.
+3. Read **Activity** — it is a plain-language history of what happened, including every refusal and
+   its reason.
+4. Press **Create support package** on the Checks page and send the file to whoever helps you. It
+   contains logs only — no passwords, no keys — and **Show the file** opens the folder it went to.
+
+If it is your *positions* you are unsure about rather than the software, ATAS is the answer, not
+this window. Whatever ATAS shows is what is true.
 
 ## Your records, and uninstalling
 
