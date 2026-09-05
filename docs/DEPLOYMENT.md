@@ -35,7 +35,7 @@ deploy the bridge in the same sitting — see §4.
 
 Two assets per release: `TradeAgent-Setup-x64.exe` and `SHA256SUMS.txt`. Both are produced by
 `packaging/build.ps1` and the checksum file is not optional — the app refuses an update it cannot
-verify against it (§6 of the user guide; `src/TradeAgent.Provisioning/UpdateService.cs:543-571`).
+verify against it (`docs/USER-GUIDE.md` § "When it refuses"; `src/TradeAgent.Provisioning/UpdateService.cs:543-571`).
 
 Cut a release the way U3 did:
 
