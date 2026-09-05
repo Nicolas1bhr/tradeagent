@@ -1339,6 +1339,46 @@ public sealed class TradingGateway : IAsyncDisposable
         _                               => (ExecutionState.UNKNOWN, true)
     };
 
+    /// <summary>
+    /// A CLOSE IS THE ONE PLACEMENT WHOSE SIZE AND SIDE ARE A CLAIM ABOUT SOMETHING THAT MOVES, so
+    /// the claim is checked where the order is sent rather than where it was decided.
+    ///
+    /// <see cref="CloseAsync"/> reads the position, turns it into "sell 2 ES", and hands that to
+    /// <see cref="PlaceAsync"/> — which then makes four awaited connector reads (the account, the
+    /// open positions, a quote, the instrument list) before anything reaches the wire. A fill landing
+    /// in that window turns the close into a NEW position: closing 2 of a position that is now 1
+    /// opens a short, and closing a long that has already flipped doubles it (Codex F3; the same
+    /// class as REVIEW 2026-09-05b finding 2, reached from the agent's side instead of the press's).
+    ///
+    /// REFUSED RATHER THAN RECOMPUTED, in the words <c>OperatorCloseAllAsync</c> has used since
+    /// `U-press-atomic`: a different position is a different decision, and recomputing would send an
+    /// order that no risk check ever saw — the position can have GROWN, and `MaxOrderQuantity` and
+    /// the notional cap were both evaluated against the size the caller asked for. Nothing is sent,
+    /// the record stays CREATED (which is what makes a sweep leg read `not-sent` rather than
+    /// `sent-not-confirmed`), and the caller asks again under a new request id against what is
+    /// actually there.
+    ///
+    /// THE POSITION IT WAS SIZED FROM IS READ OFF THE INTENT, not carried in a second field: an
+    /// offsetting order for a long is a SELL of exactly that many, so side and quantity say what the
+    /// position was. A read that fails is not caught — the connector's own exception is the honest
+    /// news, and nothing was sent under a record that never left CREATED.
+    ///
+    /// Only closes. An opening order asserts nothing about a position and pays no extra read.
+    /// </summary>
+    async Task RefuseAStaleCloseOrThrow(ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
+    {
+        if (intent.Intent is not OrderIntent.Close) return;
+
+        var sizedFrom = intent.Side == OrderSide.Sell ? intent.Quantity : -intent.Quantity;
+        var live = (await Connector.GetPositionsAsync(stored.AccountId, ct))
+            .FirstOrDefault(p => p.Symbol == intent.Symbol)?.Quantity ?? 0m;
+        if (live == sizedFrom) return;
+
+        throw new GatewayDeniedException(ErrorCode.POSITION_MOVED,
+            $"{intent.Symbol} was {sizedFrom} when this close was sized and is {live} now, so " +
+            $"{intent.Side} {intent.Quantity} would not flatten it; nothing was sent. Ask again with a new request id.");
+    }
+
     async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
         // EVERY GATE IS EVALUATED HERE, at the last point where refusing still means nothing was
@@ -1346,6 +1386,12 @@ public sealed class TradingGateway : IAsyncDisposable
         // window between the authorization and the wire, the second makes the minute's budget an
         // atomic take rather than a count that several callers all read as free.
         ReauthorizeAtDispatchOrThrow(ctx, stored);
+
+        // AND A CLOSE IS SIZED HERE TOO, not where it was decided. See RefuseAStaleCloseOrThrow: an
+        // offsetting order is the one placement whose size and side are a statement about something
+        // that moves, and everything above this line was an awaited read.
+        await RefuseAStaleCloseOrThrow(stored, intent, ct);
+
         using var slot = ReserveDispatchOrThrow();
 
         // Write-ahead: DISPATCHING is durable before the wire is touched, so a crash mid-flight is

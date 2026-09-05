@@ -14,7 +14,7 @@ public enum ErrorCode
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, RISK_CHECK_UNAVAILABLE, TRADING_PAUSED_UNRECONCILED,
-    EMERGENCY_PRESS_UNRESOLVED,
+    EMERGENCY_PRESS_UNRESOLVED, POSITION_MOVED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS
@@ -139,6 +139,12 @@ public static class Errors
         [ErrorCode.MODE_ACCOUNT_MISMATCH]          = ("Paper mode refused to send an order to a real-money account.", "Select a simulation account, or switch mode deliberately.", false),
         [ErrorCode.APPROVAL_REQUIRED]              = ("The AI is asking permission to place an order.", "Approve or decline it in TradeAgent.", false),
         [ErrorCode.EMERGENCY_PRESS_UNRESOLVED]     = ("The last press of this emergency control has not been resolved yet.", "Open the Dashboard, read what it did, and confirm each line. Then you can press it again.", false),
+        // A CLOSING ORDER IS SIZED FROM A POSITION, and the position it was sized from is not the one
+        // that is there now. Sending it anyway is the failure this code exists to prevent: closing 2
+        // of a position that is now 1 opens a short, and closing a long that has already flipped
+        // doubles it. Nothing was sent, and it is a changed decision rather than a broken machine —
+        // which is why the repair is "ask again", not "check something".
+        [ErrorCode.POSITION_MOVED]                 = ("The position moved while TradeAgent was preparing to close it, so the closing order no longer matched it.", "Nothing was sent and your position is untouched. Ask again and it will be sized against the position as it is now.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
         // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
