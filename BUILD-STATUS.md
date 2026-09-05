@@ -3738,7 +3738,7 @@ folder restored, PAUSED with 2 unconfirmed requests (one older than the session,
 `UpdateTrustTests.A_manifest_whose_declared_length_is_too_big…`, `HttpListenerException: Address already in use` in the
 test's own server setup while two builders' test hosts ran on this Mac; the class alone 3× → 89/89 each; names vs `main`
 → 0 removed, 0 added; scan → four hits, all dotted version numbers; `rev-list --count u-box-precut..main` → 0; CI run
-33986072734 at `5b9e2e9`: pending.
+33986072734 at `5b9e2e9`: ubuntu, macos and windows all SUCCESS, `package` SUCCESS.
 
 **NOT done, NOT VERIFIED:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. `SupportsClientOrderId=false` is the bridge's own report with no broker attached: autonomy is refused there by design.
 
