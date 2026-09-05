@@ -737,6 +737,23 @@ sealed class SafetyPage
         return b;
     }
 
+    /// <summary>
+    /// The limits save. A cap RAISED is a grant — the same act as choosing a real-money mode, done
+    /// with a number — so a save that widens anything asks twice and names what it widens, while a
+    /// save that only narrows stays one press (Codex F12). The comparison itself is
+    /// <see cref="RiskPolicy.Widenings"/>, in Core, where "wider" is not "larger" on every field.
+    /// </summary>
+    internal static Button BuildSaveLimits(Func<RiskPolicy> current, Func<RiskPolicy> pending, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveLimits, () =>
+        {
+            var wider = RiskPolicy.Widenings(current(), pending());
+            return wider.Count == 0 ? null : Labels.WidenLimitsArmed(wider);
+        }, save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
     public SafetyPage(AppHost host)
     {
         _host = host;
@@ -790,17 +807,18 @@ sealed class SafetyPage
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
-            Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point."),
+            Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point. "
+                + "Lowering one saves in a press; raising one is a grant, so it asks again first."),
             Ui.Spacer(Theme.S2),
-            Ui.FieldRow("Most it may buy or sell in one order", _maxQty),
-            Ui.FieldRow("Most money one order may be worth", _maxNotional,
+            Ui.FieldRow(Labels.MaxOrderQuantity, _maxQty),
+            Ui.FieldRow(Labels.MaxNotionalPerOrder, _maxNotional,
                 "0 means not enforced. For futures this is the right default — one contract is worth far more on paper than it costs to trade."),
-            Ui.FieldRow("Most positions it may hold at once", _maxPositions),
-            Ui.FieldRow("Most orders per minute", _maxPerMinute),
-            Ui.FieldRow("Instruments it may touch", _allowlist,
+            Ui.FieldRow(Labels.MaxOpenPositions, _maxPositions),
+            Ui.FieldRow(Labels.MaxOrdersPerMinute, _maxPerMinute),
+            Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
-            Ui.With(Ui.Primary(Labels.SaveLimits, SaveLimits), b => b.HorizontalAlignment = HorizontalAlignment.Left),
+            BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits),
             _limitsNote));
 
         // THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.
@@ -871,17 +889,36 @@ sealed class SafetyPage
     /// The user guide and the agent's own AGENTS.md both said these were set in this window; until
     /// they were editable here they could only be changed by editing the database by hand.
     /// </summary>
+    /// <summary>
+    /// What the boxes on this page currently say, as the policy they would be saved as. The button
+    /// asks this to decide whether the press is a grant, and <see cref="SaveLimits"/> writes it, so
+    /// the values compared and the values written cannot be two different readings of the boxes.
+    /// </summary>
+    RiskPolicy PendingLimits()
+    {
+        var now = _host.Gateway.Settings.Risk;
+        return new RiskPolicy
+        {
+            MaxOrderQuantity = _maxQty.Value ?? now.MaxOrderQuantity,
+            MaxNotionalPerOrder = _maxNotional.Value ?? now.MaxNotionalPerOrder,
+            MaxOpenPositions = (int)(_maxPositions.Value ?? now.MaxOpenPositions),
+            MaxOrdersPerMinute = (int)(_maxPerMinute.Value ?? now.MaxOrdersPerMinute),
+            InstrumentAllowlist = (_allowlist.Text ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList()
+        };
+    }
+
     void SaveLimits()
     {
+        var pending = PendingLimits();
         _host.Gateway.Update(s =>
         {
-            s.Risk.MaxOrderQuantity = _maxQty.Value ?? s.Risk.MaxOrderQuantity;
-            s.Risk.MaxNotionalPerOrder = _maxNotional.Value ?? s.Risk.MaxNotionalPerOrder;
-            s.Risk.MaxOpenPositions = (int)(_maxPositions.Value ?? s.Risk.MaxOpenPositions);
-            s.Risk.MaxOrdersPerMinute = (int)(_maxPerMinute.Value ?? s.Risk.MaxOrdersPerMinute);
-            s.Risk.InstrumentAllowlist = (_allowlist.Text ?? "")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList();
+            s.Risk.MaxOrderQuantity = pending.MaxOrderQuantity;
+            s.Risk.MaxNotionalPerOrder = pending.MaxNotionalPerOrder;
+            s.Risk.MaxOpenPositions = pending.MaxOpenPositions;
+            s.Risk.MaxOrdersPerMinute = pending.MaxOrdersPerMinute;
+            s.Risk.InstrumentAllowlist = pending.InstrumentAllowlist;
         });
         _host.Gateway.Log.Activity("You changed the safety limits");
 

@@ -53,6 +53,40 @@ public sealed class RiskPolicy
 
     public bool InstrumentAllowed(string instrument) =>
         InstrumentAllowlist.Any(i => string.Equals(i, instrument, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// WHICH OF THESE CAPS <paramref name="to"/> WIDENS, in the owner's words, in the order the
+    /// Safety page shows them. Empty means the proposal takes authority away or leaves it alone.
+    ///
+    /// A raised cap is a grant: it is the same act as choosing a real-money mode, done with a
+    /// number instead of a button (REVIEW 2026-09-05b, Codex F12). So the screen asks twice for a
+    /// save that widens and once for a save that narrows, and this is the comparison that decides
+    /// which — here rather than at the widget, because "wider" is not "larger" on every field:
+    ///
+    ///   * <see cref="MaxNotionalPerOrder"/> alone reads ZERO as "not enforced", so zero is the
+    ///     WIDEST value it has, and nothing can widen a cap that is already zero.
+    ///   * zero on the other three refuses everything, so there larger is wider, always.
+    ///   * an allowlist is wider when it names an instrument the current one does not; dropping
+    ///     names, including clearing the box, only ever narrows.
+    /// </summary>
+    public static IReadOnlyList<string> Widenings(RiskPolicy from, RiskPolicy to)
+    {
+        var wider = new List<string>();
+
+        if (to.MaxOrderQuantity > from.MaxOrderQuantity) wider.Add(Labels.MaxOrderQuantity);
+
+        // Unenforced is the widest there is, so it widens anything bounded and nothing widens it.
+        var wasUnenforced = from.MaxNotionalPerOrder <= 0m;
+        var isUnenforced = to.MaxNotionalPerOrder <= 0m;
+        if (!wasUnenforced && (isUnenforced || to.MaxNotionalPerOrder > from.MaxNotionalPerOrder))
+            wider.Add(Labels.MaxNotionalPerOrder);
+
+        if (to.MaxOpenPositions > from.MaxOpenPositions) wider.Add(Labels.MaxOpenPositions);
+        if (to.MaxOrdersPerMinute > from.MaxOrdersPerMinute) wider.Add(Labels.MaxOrdersPerMinute);
+        if (to.InstrumentAllowlist.Any(i => !from.InstrumentAllowed(i))) wider.Add(Labels.InstrumentAllowlist);
+
+        return wider;
+    }
 }
 
 public sealed class TradeAgentSettings

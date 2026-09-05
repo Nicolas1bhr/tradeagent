@@ -98,6 +98,25 @@ public static class Labels
 
     /// <summary>The mode that proposes real orders. Still real money, still a grant, still two.</summary>
     public const string ModeAskFirstArmed = "Confirm: let the AI propose real orders";
+
+    // The five safety limits, named once. The Safety page labels its fields with these and the
+    // armed save sentence names the one that widened, so the two cannot drift apart.
+    public const string MaxOrderQuantity = "Most it may buy or sell in one order";
+    public const string MaxNotionalPerOrder = "Most money one order may be worth";
+    public const string MaxOpenPositions = "Most positions it may hold at once";
+    public const string MaxOrdersPerMinute = "Most orders per minute";
+    public const string InstrumentAllowlist = "Instruments it may touch";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveLimits"/> will do, when the values in the boxes give
+    /// the AI more room than the ones it is working under. A save that only narrows is one press.
+    /// One widened cap is named; several are counted, because five of these names on one button is
+    /// a sentence nobody reads.
+    /// </summary>
+    public static string WidenLimitsArmed(IReadOnlyList<string> wider) =>
+        wider.Count == 1
+            ? $"Confirm: widen “{wider[0]}”"
+            : $"Confirm: widen {wider.Count} of your safety limits";
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>
