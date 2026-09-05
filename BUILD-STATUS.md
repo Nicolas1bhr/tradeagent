@@ -3368,7 +3368,10 @@ press and composite regions, the pipe protocol, the updater, the connectors.
 ## 2026-09-05 — U-pipe-hello landed: the pipe refuses what it cannot name, counts what it says it counts, answers for the caller
 
 The review's findings 7 and 10, UNVERIFIED 6 and Codex F8, all CONFIRMED red-first by one fresh builder on
-`docs/briefs/U-pipe-hello.md` (a first builder was killed before its first commit). Merge `db638ab`, 8 commits,
+`docs/briefs/U-pipe-hello.md` (a first builder was killed before its first commit). Merge `c766ae4` — the first
+attempt at `db638ab` was REFUSED ("Not possible to fast-forward": `main` had moved) and this section was written and
+pushed before that was noticed, because the merge's exit status was masked by a pipe; the branch was rebased in a
+throwaway worktree, its code tree proven identical to the gated `db638ab` over `src` and `tests`, and merged. 8 commits,
 7 files of substance, +1136/−38.
 
 - **Protocol before session.** A hello naming protocol 2 was accepted (`"compatible": false`) and with a bad token

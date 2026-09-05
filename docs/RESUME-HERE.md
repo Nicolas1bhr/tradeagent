@@ -13,7 +13,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **2026-09-04 (evening) — the build process changed; read `docs/HOW-WE-BUILD.md` first.** The round-based hardening
 program in `docs/hardening/` is frozen history: its unit table (`PROGRAM.md`) is still the backlog, its passes are not.
 Work in flight is whatever is in `docs/briefs/` — one file per unit, the builder's report appended at the bottom.
-`main` is `db638ab`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
+`main` is `c766ae4`: **U2a, U2d, U14 (a+b), U2c-1 (a+b+c), U8, U-stranded, U-interlock, U-gates, U-pipe-hello and four test-only fixes landed** — all in
 `BUILD-STATUS.md` under 2026-09-04/05. Every class the reviews routed to U2c-1 is closed. CI on `main`: fully green at the last
 four landings; `U-win-timing` landed the class fix for the Windows timing flakes (a `Timing` category retried once on
 windows-latest only, the first failure always recorded; the runner-speed probe runs every build). The milestone review of the
