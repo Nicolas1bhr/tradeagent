@@ -563,6 +563,30 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   instrument that changed.** The press captured a size and turned it into a market order for that
   size; if a fill landed in between, that order opens exposure rather than closing it. A changed
   position is a different decision, so it is refused and named, and the owner presses again.
+- **And it sends nothing for an instrument this gateway still has an order ON THE WIRE for.** The
+  re-read above compares POSITIONS, so it sees a fill that has landed and is blind to the one that
+  has not: an agent's own `close` is an ordinary `execution_request`, and while it sat inside the
+  connector call the re-read still showed ES 2, so the press sized a market sell 2 beside the agent's
+  sell 2 and a long 2 became **short 2** — after the owner pressed the control whose whole purpose is
+  to flatten (REVIEW 2026-09-05b finding 2, probe P6). **The check and the wire are one statement**:
+  the leg's write-ahead insert itself refuses to run while a request that can move a position on that
+  instrument is `DISPATCHING`, so there is no window between asking and sending, and it holds between
+  the two processes that reach these controls. The answer says so — *"1 leg waited on an order still
+  on the wire, so nothing was sent for it: ES is waited on by <request>, still DISPATCHING"* — and it
+  is **per leg**: the other instruments of the same press are still closed. `DISPATCHING` and not
+  also `UNKNOWN`, deliberately: an UNKNOWN record is a dispatch that is over with no answer and is
+  the ordinary state of the emergency somebody is pressing the button about, so refusing on it would
+  re-impose exactly the pause these controls bypass on purpose. **What that leaves open, stated:** an
+  UNKNOWN closing order on the same instrument can still fill after the press's close and reverse the
+  position. The press's records are flagged, trading is paused and the card names both, which is the
+  same footing every other UNKNOWN record is on.
+- **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
+  computes a side and a size from a reading and sends a market order for them, so a reading that is
+  stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it
+  names an order the press captured and asks the platform to stop it. An agent's modify or cancel of
+  that same order held inside the connector call leaves no order working, sends nothing the owner did
+  not ask for, and ends in a record that does not claim its own change took effect (the modify
+  UNKNOWN and flagged, the cancel REJECTED).
 - **Completion and outcome read the ACCOUNT stored on the records**, never whichever account is
   selected now — the owner can change that between the press and the card.
 
@@ -634,6 +658,20 @@ and **the mode is checked against the record rather than against a list**: a pla
 `PAPER` with the mode moved to `LIVE_CONFIRM` while it read is a record already built as `CREATED`,
 past the question of whether a person should see it, and only the mode a record was decided under may
 send it.
+
+**And a `close` is SIZED at the moment of dispatch too, for the same reason and one more.** A close
+is the only placement whose side and quantity are a claim about something that moves: `close` reads
+the position, turns it into "sell 2 ES", and then makes those same four awaited reads. A fill landing
+in that window turns the close into a new position — closing 2 of a position that is now 1 opens a
+short, and closing a long that has already flipped doubles it (Codex F3; the same class as the
+emergency press's own drift re-read, reached from the agent's side). So the position is read again
+inside the dispatch gate and a close that no longer offsets it is refused with `POSITION_MOVED`:
+nothing is sent, the record never leaves `CREATED` — which is what makes a `close-all` leg read
+`not-sent` rather than `sent-not-confirmed` — and the caller asks again under a new `request_id`
+against what is actually there. **Refused rather than recomputed**, in the words the press has used
+since `U-press-atomic`: a different position is a different decision, and recomputing would send a
+size no risk check ever saw, because the position can have grown. Only closes pay the extra read; an
+opening order asserts nothing about a position.
 
 **The rate limit is an atomic reservation, not a count that is read and spent later.** The place is
 taken under one lock immediately before the write-ahead and given back if nothing is sent; committing
