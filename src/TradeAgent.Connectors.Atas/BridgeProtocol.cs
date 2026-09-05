@@ -12,6 +12,30 @@ namespace TradeAgent.Connectors.Atas;
 ///
 /// This file is compiled into BOTH sides so the shapes cannot drift apart.
 /// </summary>
+public static class BridgeBudgets
+{
+    /// <summary>
+    /// THE WHOLE OF WHAT AN EMERGENCY GETS, AND BOTH ENDS READ IT FROM HERE.
+    ///
+    /// <c>docs/CONTRACTS.md</c> ("Bridge deadlines") states it as the CALLER's total for
+    /// <c>cancel</c>, <c>cancel-all</c> and <c>close</c>: the send gate, the write and the reply
+    /// together, after which the caller is told the operation is NOT confirmed and the record is
+    /// UNKNOWN. It is the same two seconds as <c>AtasConnector.EmergencyDeadline</c>, which now
+    /// defaults from it.
+    ///
+    /// IT IS HERE BECAUSE THE BRIDGE HAS TO OBEY IT AND USED NOT TO KNOW IT. The bridge is a
+    /// different process; it answered a close on its own clock — <c>WaitFor(AckTimeout)</c>, three
+    /// seconds — which cannot fit inside two. Measured on the box on 2026-09-05: a Close All whose
+    /// close FILLED in 341 ms was recorded <c>'close' is NOT confirmed … The bridge is busy</c>,
+    /// because the caller gave up at 2.0 s while the bridge was still inside its own wait. A number
+    /// one end enforces and the other end cannot see is not a budget, it is a coincidence.
+    ///
+    /// This file is compiled into both sides, so a change to it moves both at once — which is the
+    /// only way the sum in `docs/CONTRACTS.md` can stay true.
+    /// </summary>
+    public static readonly TimeSpan Emergency = TimeSpan.FromSeconds(2);
+}
+
 public static class BridgeOps
 {
     public const string Hello = "hello", Heartbeat = "heartbeat";

@@ -115,7 +115,10 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// instead of a wrong one in ten, and a connection left up so the retry it is told to make has
     /// somewhere to go.
     /// </summary>
-    public TimeSpan EmergencyDeadline { get; init; } = TimeSpan.FromSeconds(2);
+    /// <remarks>Defaulted from <see cref="BridgeBudgets.Emergency"/> rather than written here, so the
+    /// bridge — a different process, compiled from the same file — is bounded by the same number
+    /// this caller enforces. See that field for what happened while only one end knew it.</remarks>
+    public TimeSpan EmergencyDeadline { get; init; } = BridgeBudgets.Emergency;
 
     /// <summary>
     /// Whether this operation REDUCES RISK. Classified by intent, not by who asked.
