@@ -240,6 +240,30 @@ public class SweepRequestIdTests
     }
 
     /// <summary>
+    /// HOW MUCH ROOM <see cref="A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer"/> GIVES A
+    /// WAVE TO GET ITSELF ISSUED IN, and it is a fixture's patience rather than anything the product
+    /// promises: one simulated round trip, which is also the gap between the first leg of a wave
+    /// reaching the wire and the last leg reaching its re-authorization.
+    ///
+    /// It is not <see cref="TestTime"/>-scaled, because that scale is unset on every runner (the
+    /// workflow says why: file IO, the factor this depends on, measured 3.79x, 39.52x and 4.89x on
+    /// three windows-latest runs and there is no honest number to scale by). It is instead chosen
+    /// wide enough that the worst of those cannot reach it: the spread is under 2 ms here, 39.52x of
+    /// that is 79 ms, and this is nine times that again.
+    /// </summary>
+    const int WaveIssueRoom = 750;
+
+    /// <summary>
+    /// The operation budget for that same test — nine sweeps' worth of the 3 x
+    /// <see cref="WaveIssueRoom"/> it actually spends. Wide on purpose and in the other direction:
+    /// the simulator clips its wait at the deadline like the shipped connector does, and a clipped
+    /// leg can only ever report <c>PossiblyWritten</c>, so a budget this sweep could run into would
+    /// turn a <c>confirmed</c> leg into <c>sent-not-confirmed</c> for a reason that is about the
+    /// runner and not about the product.
+    /// </summary>
+    static readonly TimeSpan SweepBudget = TimeSpan.FromSeconds(20);
+
+    /// <summary>
     /// THE CLOCK BELONGS TO THE OPERATION, NOT TO EACH RPC INSIDE IT.
     ///
     /// Codex round-7 F1, and its own check. A cancel-all is a read, then a resolution per order,
@@ -359,13 +383,36 @@ public class SweepRequestIdTests
     /// lost answer and two ordinary cancellations, and the fifth leg supplies the fourth word: the
     /// lost answer settles UNKNOWN and <c>NeedsReconciliation</c> refuses everything issued after it.
     ///
-    /// TWO FIXTURE FACTS THAT ARE LOAD-BEARING, both learned the hard way.
+    /// THREE FIXTURE FACTS THAT ARE LOAD-BEARING, all learned the hard way.
     ///
-    /// FIFTY MILLISECONDS OF LATENCY, NOT ZERO. At zero the simulator never awaits, so <c>issue()</c>
-    /// runs each leg to completion before the loop starts the next one and the wave is serial — the
-    /// first UNKNOWN then refuses the other three and every word in the answer is the same one. Any
-    /// non-zero latency forces the real shape, because a leg's authorization is synchronous and
-    /// happens before its first await: all four are authorised before any of them can fail.
+    /// THE LATENCY IS THE ROOM THE WAVE HAS TO GET ISSUED IN, AND IT WAS FIFTY MILLISECONDS SHORT OF
+    /// ENOUGH. It said "any non-zero latency forces the real shape, because a leg's authorization is
+    /// synchronous and happens before its first await: all four are authorised before any of them
+    /// can fail". The first half is right and the second is the reason this failed on
+    /// `windows-latest` twice (runs 33966990967 and 33970406089, both
+    /// <c>["sent-not-confirmed", "rejected", "not-sent", "not-sent", "not-sent"]</c>). The
+    /// authorization that decides a leg's fate is not the one at the top of
+    /// <c>TradingGateway.CancelAsync</c>; it is <c>ReauthorizeAtDispatchOrThrow</c>, and that one
+    /// runs AFTER the awaited target resolution, on purpose — "authority granted before it is not
+    /// authority now". So the wave is safe only while
+    /// <c>(the spread between the first and last leg being ISSUED) &lt; (one latency)</c>: past that,
+    /// the lost answer has already settled UNKNOWN and flagged the store, and a leg still upstream of
+    /// its re-check is refused TRADING_PAUSED_UNRECONCILED with its record at CREATED — which is
+    /// <c>not-sent</c>, honestly and by the table in `docs/CONTRACTS.md`. Nothing misreports; the
+    /// fixture simply left a 50 ms window on a runner that needed more.
+    ///
+    /// THE SPREAD IS FILE IO, WHICH IS THE ONE FACTOR THAT WILL NOT HOLD STILL. A leg's synchronous
+    /// prefix is two store reads (<c>Unreconciled()</c> and the request lookup in
+    /// <c>ResolveConnectorOrderId</c>). Measured here: the wave's whole spread is under 2 ms — at
+    /// <c>LatencyMs = 1</c> this sweep loses a <c>confirmed</c> in 61 runs of 150 and reproduces the
+    /// CI collection exactly; at 2 ms and above, 100 legs in a row are clean. `RunnerSpeedProbeTests`
+    /// has measured windows-latest file IO at 3.79x, 39.52x and 4.89x, and 2 ms x 39.52 is 79 ms —
+    /// which is why 50 ms was not enough and is the whole of the failure. The latency below is
+    /// <see cref="WaveIssueRoom"/>: ~375x the measured spread, ~9x the worst factor applied to it,
+    /// and the sweep still costs three of them (book read, resolution, cancel) inside a budget nine
+    /// times wider, so the simulator's deadline clip cannot turn a `confirmed` leg into
+    /// `sent-not-confirmed` from the other side. Both bounds are ASSERTED below rather than assumed,
+    /// so a runner that ever does push past one says which one it pushed past.
     ///
     /// ITS OWN GATEWAY, NOT A SECOND SWEEP ON A SHARED ONE. This started as a second phase of the
     /// test above and passed on macOS and FAILED ON WINDOWS, twice, with all five legs
@@ -377,7 +424,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_five_order_sweep_carries_a_mix_of_outcomes_in_one_answer()
     {
-        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -392,22 +439,38 @@ public class SweepRequestIdTests
         // The precondition, stated: nothing is flagged, so nothing is refused before it is tried.
         Assert.Empty(gw.Requests.NeedingReconciliation());
 
-        conn.Faults.LatencyMs = 50;
+        conn.Faults.LatencyMs = WaveIssueRoom;
         conn.Faults.RefuseCancel = 1;      // a DEFINITE broker refusal   -> rejected
         conn.Faults.LoseAfterSend = 1;     // sent, no answer came back   -> sent-not-confirmed
 
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f5-mixed" })
             .WaitAsync(TimeSpan.FromSeconds(30));
         var data = (JsonElement)reply.Data!;
-        var words = data.GetProperty("outcomes").EnumerateArray()
-            .Select(o => o.GetProperty("outcome").GetString()!).ToList();
+        var legs = data.GetProperty("outcomes").EnumerateArray().ToList();
+        var words = legs.Select(o => o.GetProperty("outcome").GetString()!).ToList();
+        var errors = legs.Select(o => o.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "").ToList();
 
-        Assert.Equal(5, words.Count);
+        // THE TWO FIXTURE BOUNDS, CHECKED BEFORE THE WORDS, so that a runner which pushes past one of
+        // them says WHICH — rather than failing on `Assert.Contains("confirmed")` and leaving the
+        // next reader to work out from a bare collection whether the product lied.
+        Assert.True(errors.Count(e => e.Contains("unconfirmed")) == 1,
+            $"exactly one leg — the fifth, issued after its wave was collected — may be refused because an " +
+            $"earlier request is unconfirmed, and {errors.Count(e => e.Contains("unconfirmed"))} were. More than " +
+            $"one means this runner spread the wave's four issues over more than the {WaveIssueRoom} ms of room " +
+            $"the fixture gives them, so a leg was still short of its re-authorization when the lost answer " +
+            $"flagged the store: raise the latency. Words: [{string.Join(", ", words)}]");
+        Assert.True(errors.All(e => !e.Contains("deadline")),
+            $"a leg ran into the {SweepBudget.TotalSeconds:0}s operation budget, which this fixture exists to stay " +
+            $"well inside — the simulator clips its wait at the deadline and can then only report PossiblyWritten. " +
+            $"Words: [{string.Join(", ", words)}]");
+
+        // THE MULTISET, EXACTLY. Which leg carries which word is a race the one-shot faults decide and
+        // nothing here depends on; HOW MANY legs carry each word is not, and asserting only that each
+        // word is present passed the two windows runs above with three legs saying `not-sent`.
         Assert.All(words, w => Assert.Contains(w, LegVocabulary));
-        Assert.Contains("confirmed", words);
-        Assert.Contains("rejected", words);
-        Assert.Contains("not-sent", words);
-        Assert.Contains("sent-not-confirmed", words);
+        Assert.Equal(
+            new[] { "confirmed", "confirmed", "not-sent", "rejected", "sent-not-confirmed" },
+            words.Order().ToArray());
 
         // The counts agree with the words rather than being kept beside them: `attempted` is every
         // leg that got as far as the wire, which is all of them except the ones that never did.
