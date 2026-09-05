@@ -112,7 +112,9 @@ public class ZPressStopwatchMeasurementTests
 
         return $"total={returned - start} deadlineAt={deadline} overrun={overrun} " +
                $"gcPause={gcMs} gc={GC.CollectionCount(0) - g0}/{GC.CollectionCount(1) - g1}/{GC.CollectionCount(2) - g2} " +
-               $"threadGap={stall.ThreadGap} poolGap={stall.PoolGap} [{string.Join(" ", steps)}]";
+               $"threadGap={stall.ThreadGap} poolGap={stall.PoolGap} " +
+               $"cpus={Environment.ProcessorCount} poolThreads={ThreadPool.ThreadCount} " +
+               $"queued={ThreadPool.PendingWorkItemCount} [{string.Join(" ", steps)}]";
     }
 
     [Fact]
@@ -132,8 +134,9 @@ public class ZPressStopwatchMeasurementTests
         // every SQLite write at synchronous=FULL included.
         for (var i = 0; i < 3; i++) lines.Add("PRESS0 " + await OnePress(0));
 
-        // THE MEASUREMENT — the press the failing test makes.
-        for (var i = 0; i < 5; i++) lines.Add("PRESS1200 " + await OnePress(StalledMs));
+        // THE MEASUREMENT — the press the failing test makes. Eight, because the overrun this unit
+        // is chasing appeared in roughly one run in ten of a single press.
+        for (var i = 0; i < 8; i++) lines.Add("PRESS1200 " + await OnePress(StalledMs));
 
         Assert.Fail("MEASUREMENT || " + string.Join(" || ", lines));
     }
