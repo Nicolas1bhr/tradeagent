@@ -21,19 +21,16 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner). The bridge protocol is 3: the box's bridge
    DLL must be redeployed before the app there is updated (the app refuses the old bridge by design; the owner can now
    press `Reinstall the bridge` on Checks).
-3. **`docs/briefs/` holds TWO files. `REVIEW.md`: the second milestone review, in flight at `d92a61b`** — a fresh Opus
-   reviewer (worktree `~/Projects/ai-trading-software-for-mihael-worktrees/review`, probes on branch `review-probes`,
-   findings to `docs/REVIEW-2026-09-05b.md` in the main worktree) and Codex read-only in parallel (`codex exec -s read-only`
-   in worktree `…-worktrees/codex-review`, its last message written to `docs/REVIEW-2026-09-05b-codex.md`). When both
-   report: paste Codex's block into the review's `## Codex` section and delete its file, commit the review, triage — every
-   HIGH is a fix unit before v0.1.2 is cut, MED and LOW together one batch unit — and delete the brief. A killed leg is
-   re-briefed from `docs/briefs/REVIEW.md`; read `review-probes` first, the probes may already be there. Three hosted-runner
-   reds are recorded once each in the U-sweep-words-win section, none briefed: a brief each when one recurs (doctrine step 6).
-   **`U-box-precut.md`: the v0.1.2 box session minus the cut**, a fresh Opus builder with the box granted to it alone
-   (worktree `…-worktrees/box-precut`, branch `u-box-precut`): the pushed tree proven by hash, the protocol-3 refusal and
-   `Reinstall the bridge` walked, `tools/atas-gate`, the first review's two box items, the backlog's box measurements;
-   its report lands in the brief. The cut itself (installer, `gh release`, the update watched installing) waits for the
-   second review's HIGH fix units, then is a short second box leg.
+3. **The second milestone review is DONE and triaged** (`docs/REVIEW-2026-09-05b.md`: reviewer HIGH 3 · MED 2 · LOW 1 ·
+   UNVERIFIED 7 with eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in
+   with the triage). **`docs/briefs/` is the queue, nine files:** in flight — `U-box-precut` (the box, granted to it
+   alone), `U-override-lease` (HIGH 1) and `U-press-inflight` (HIGH 2 + Codex F3), both in `TradingGateway.cs` on
+   disjoint code; queued, two Mac legs at a time, in this order — `U-two-press-grant` (HIGH 3 + F12), `U-codex-2a` (F1,
+   F2, F5, F18), `U-codex-2b` (F6, F7, F13), `U-batch-2` (MED 4–5, LOW 6, F15, F17, F19), `U-batch-2b` (F16, F20,
+   UNVERIFIED 4), `U-bridge-2` (F4, F8, F9, F10, F11, F14; items 3–6 need the box, so it starts after `U-box-precut`
+   reports). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
+   first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
+   section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
@@ -44,15 +41,17 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
    containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
    the in-process gateway are not security boundaries.
-6. **Then, in order:** the v0.1.2 cut on the box (the credentials are in `~/.tradeagent/win.env` on this Mac and every
+6. **Then:** the v0.1.2 cut on the box, a short second box leg once `U-box-precut` has reported and the queue above
+   has landed — `packaging/build.ps1` there (the ATAS adapter compiles only on the box), `gh release create v0.1.2`, the
+   running app watched updating itself (`docs/DEPLOYMENT.md` §1), U9's `TreatWarningsAsErrors` once the five adapter
+   warnings are dispositioned (U-box-precut item 5). Box facts (the credentials are in `~/.tradeagent/win.env` on this Mac and every
    `tools/*.sh` script sources it — the earlier note that the box had no credentials in these sessions was WRONG; on
    2026-09-05 evening `tools/win-state.sh` answered: console session active, desktop live, ATAS running, the installed
    app 0.1.1 answering `status`, the UI agent not running. The items: redeploy the bridge at
    protocol 3, `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real
-   bridge spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`), with the second review's
-   HIGH fix units landed first; the non-box LOW batch in that backlog (`AtasConnector._pending` leaks an entry when a
-   caller cancels an emergency; a liveness probe lifted into `ConnectorSendDeadlineTests`) is a one-builder unit whenever
-   a leg is free.
+   bridge spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`) are `U-box-precut`'s.
+   The non-box LOW batch in that backlog (`AtasConnector._pending` leaks an entry when a caller cancels an emergency; a
+   liveness probe lifted into `ConnectorSendDeadlineTests`) is a one-builder unit whenever a leg is free.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
    before the Mac UI loop; the box IS reachable (see step 6); four usage-limit kills were survived by
