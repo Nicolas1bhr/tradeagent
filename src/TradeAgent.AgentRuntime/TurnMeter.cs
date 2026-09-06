@@ -297,36 +297,10 @@ public sealed class TurnMeter
                 Turns = turns,
                 UnpricedTurns = unpriced,
                 CanPrice = canPrice,
-                WhyNoPrice = canPrice ? null : probe.Unpriced ?? LastUnpricedReason(),
+                WhyNoPrice = canPrice ? null : probe.Unpriced,
                 ResumesAt = Midnight(now)
             };
         }
-    }
-
-    /// <summary>
-    /// The reason the most recent unpriced turn gave, so the card can say WHY the cost is unknown
-    /// rather than only that it is. Read from the file's tail; a file that cannot be read gives the
-    /// general sentence rather than a wrong specific one.
-    /// </summary>
-    string? LastUnpricedReason()
-    {
-        try
-        {
-            foreach (var line in ReadTail(_path, 40).Reverse())
-            {
-                var record = Json.Read<TurnRecord>(line);
-                if (record?.Unpriced is { Length: > 0 } why) return why;
-            }
-        }
-        catch (Exception) { /* fall through to the general sentence */ }
-        return $"{Labels.CostsFile} does not price these turns";
-    }
-
-    static IEnumerable<string> ReadTail(string path, int lines)
-    {
-        if (!File.Exists(path)) return [];
-        var all = File.ReadLines(path).Where(l => l.Trim().Length > 0).ToList();
-        return all.Count <= lines ? all : all.Skip(all.Count - lines);
     }
 
     // ---- the kv totals -------------------------------------------------------------------------
