@@ -27,6 +27,7 @@ public sealed class AppHost : IAsyncDisposable
     SingleInstanceLock? _lock;
     Database? _db;
     readonly AtasHealthReporter _atasHealth = new();
+    readonly RuntimeFileHealth _runtimeFile = new();
     GatewayPipeServer? _server;
     CancellationTokenSource? _loop;
 
@@ -283,8 +284,14 @@ public sealed class AppHost : IAsyncDisposable
     /// the trading connection rather than asking the connector again: two readings of one pipe taken
     /// a moment apart is how a dashboard ends up contradicting itself in the same frame.
     /// </summary>
-    void ReportAtasHealth() =>
+    void ReportAtasHealth()
+    {
         _atasHealth.Report(Health, Connector, Health.Get(Components.TradingConnection).State);
+        // The other vendor-command file, on the same tick and for the same reason. It is here rather
+        // than beside the agent's own rows because the agent's rows are written when an agent is
+        // PREPARED, and an owner whose runtimes.json cannot be read never gets that far.
+        _runtimeFile.Report(Health);
+    }
 
     /// <summary>
     /// Whether the bridge row is one a reinstall would repair — refused, or not there at all. The

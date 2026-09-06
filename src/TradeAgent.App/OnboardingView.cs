@@ -547,11 +547,21 @@ public sealed class OnboardingView
 
     Screen ChooseRuntime()
     {
+        var catalogue = RuntimeCatalog.Read();
+        // An unreadable runtimes.json offers NOTHING here, deliberately, and a screen with no cards
+        // on it and no reason given is worse than the silent fallback it replaced. Say it.
+        if (catalogue.Unreadable is { } why)
+            return new Screen(
+                "TradeAgent cannot offer you an AI assistant right now.",
+                Ui.Col(Theme.S4,
+                    Note(why, Theme.Caution),
+                    Ui.Muted(Labels.OverrideFileRepair(Labels.RuntimesFile))));
+
         var cards = Ui.Col(Theme.S3);
         // Recommended first. The order is not cosmetic: the recommended runtime is the one whose
         // sign-in finishes without leaving this window, and a user who picks by reading top-to-bottom
         // should land on it.
-        foreach (var m in RuntimeCatalog.Load().Where(m => m.Id != "custom").OrderByDescending(m => m.Recommended))
+        foreach (var m in catalogue.Runtimes.Where(m => m.Id != "custom").OrderByDescending(m => m.Recommended))
         {
             var manifest = m;
             cards.Children.Add(Choice(manifest.DisplayName, Ui.Muted(manifest.Description),
@@ -1055,7 +1065,9 @@ public sealed class OnboardingView
             Theme.Positive),
         Ui.Primary("Start the AI", Act(async () =>
         {
-            var manifest = Manifest() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
+            // Require, not Find: "no manifest for 'codex'" and "runtimes.json could not be read"
+            // are different mornings and only one of them has a repair the owner can perform.
+            var manifest = RuntimeCatalog.Require(_host.Gateway.Settings.SelectedRuntimeId ?? "opencode");
             await _host.Agent.PrepareAsync(manifest, _host.WorkspaceContext());
             await _host.Agent.StartAsync();
             Done(OnboardingStep.AGENT_READY);

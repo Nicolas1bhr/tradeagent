@@ -97,7 +97,14 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
             : CheckResult.Bad("trade command", "not installed", "Press Repair. The AI cannot trade without it.",
                 ErrorCode.IPC_UNAVAILABLE, true));
 
-        foreach (var manifest in RuntimeCatalog.Load().Where(m => m.Id != "custom"))
+        // The vendor-command file first, because when it cannot be read the loop below has nothing
+        // to walk and its silence would read as "no AI assistant is configured".
+        var catalogue = RuntimeCatalog.Read();
+        if (catalogue.Unreadable is { } runtimesWhy)
+            r.Add(CheckResult.Bad("AI assistant commands", runtimesWhy,
+                Labels.OverrideFileRepair(Labels.RuntimesFile), ErrorCode.RUNTIME_COMMANDS_UNREADABLE));
+
+        foreach (var manifest in catalogue.Runtimes.Where(m => m.Id != "custom"))
         {
             var runtime = new CliAgentRuntime(manifest);
             var d = await runtime.DetectAsync(ct);
@@ -122,11 +129,16 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
 
         // ---- ATAS
         var atas = AtasInstallation.Detect();
-        r.Add(atas.Installed
+        // Same shape as the runtimes file above: nothing below this line looked anywhere, so
+        // "not found" would be a verdict on a search that never ran.
+        if (atas.LayoutUnreadable is { } atasWhy)
+            r.Add(CheckResult.Bad("ATAS folder settings", atasWhy,
+                Labels.OverrideFileRepair(Labels.AtasFile), ErrorCode.ATAS_LAYOUT_UNREADABLE));
+        else r.Add(atas.Installed
             ? CheckResult.Ok("ATAS installation", $"{atas.InstallDir} {atas.Version}")
             : CheckResult.Bad("ATAS installation", "not found",
                 Errors.Get(ErrorCode.ATAS_NOT_FOUND).Repair, ErrorCode.ATAS_NOT_FOUND));
-        if (!atas.LayoutVerified)
+        if (atas.LayoutUnreadable is null && !atas.LayoutVerified)
             r.Add(CheckResult.Warn("ATAS folder layout",
                 "the folders TradeAgent looks in have not been confirmed against a real ATAS install",
                 "If ATAS is installed but not found, its folders can be corrected in atas.json."));

@@ -36,6 +36,10 @@ public static class AtasHealth
     public static (HealthState State, string Detail) ProcessRow(bool atasSelected, AtasDetection d)
     {
         if (!atasSelected) return (HealthState.UNKNOWN, NotInUse);
+        // BEFORE ANY VERDICT ABOUT THE MACHINE. With atas.json unreadable nothing was searched for,
+        // so "ATAS is not installed on this computer" would be a claim about a computer nobody
+        // looked at — and it names a repair (install ATAS) that is not the one this owner needs.
+        if (d.LayoutUnreadable is { } layoutWhy) return (HealthState.FAILED, layoutWhy);
         if (!d.Installed) return (HealthState.FAILED, "ATAS is not installed on this computer");
         if (!d.Running) return (HealthState.DEGRADED, "not running — press Open ATAS on the Dashboard");
         return (HealthState.READY, d.Version is { Length: > 0 } v ? $"running · {v}" : "running");
@@ -61,6 +65,12 @@ public static class AtasHealth
         bool atasSelected, AtasDetection d, HealthState connection, BridgeHello? hello, string? refusal)
     {
         if (!atasSelected) return (HealthState.UNKNOWN, NotInUse);
+
+        // Ahead of the refusal too, and for the same reason the machine facts are: every sentence
+        // below sends the owner to a folder — install it there, start it from there, press
+        // Reinstall the bridge and it will be put there — and which folder that is, is exactly what
+        // could not be read.
+        if (d.LayoutUnreadable is { } layoutWhy) return (HealthState.FAILED, layoutWhy);
 
         var recorded = string.IsNullOrWhiteSpace(refusal) ? null : refusal;
         if (recorded is not null)
@@ -119,6 +129,9 @@ public static class AtasHealth
     public static bool RepairOffered(bool atasSelected, AtasDetection d, HealthState connection, string? refusal)
     {
         if (!atasSelected) return false;
+        // Not while the folders are unknown. The button's whole action is a copy INTO a folder, and
+        // the only candidate left would be a built-in the owner had already overridden away from.
+        if (d.LayoutUnreadable is not null) return false;
         if (!string.IsNullOrWhiteSpace(refusal)) return true;
         if (connection != HealthState.FAILED) return false;
         return !d.BridgeInstalled;
@@ -151,11 +164,13 @@ public interface IAtasProbe
 /// </summary>
 public sealed class AtasProbe(AtasLayout? layout = null) : IAtasProbe
 {
-    readonly AtasLayout _layout = layout ?? AtasLayout.Load();
+    // NOT read once and kept. It used to be, and that made an unreadable or corrected atas.json a
+    // fact about the moment the app started rather than about the file: an owner who fixed the file
+    // had to restart TradeAgent before anything noticed. Passing null through means the file is read
+    // on the pass that asks, which is what the caching above is for.
+    public AtasDetection Detect() => AtasInstallation.Detect(layout);
 
-    public AtasDetection Detect() => AtasInstallation.Detect(_layout);
-
-    public bool IsRunning() => AtasInstallation.IsRunning(_layout);
+    public bool IsRunning() => AtasInstallation.IsRunning(layout);
 }
 
 /// <summary>

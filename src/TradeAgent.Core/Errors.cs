@@ -17,7 +17,13 @@ public enum ErrorCode
     EMERGENCY_PRESS_UNRESOLVED, POSITION_MOVED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
-    UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS
+    UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
+    // An override file EXISTS and could not be parsed. Their own codes because the codes that used
+    // to carry this said the opposite of the truth: AI_RUNTIME_NOT_FOUND reads "the AI assistant
+    // program is not installed yet" and offers to install it, and ATAS_NOT_FOUND sends the owner to
+    // atas.net — neither of which is the repair when the program is there and the file describing
+    // it is not readable.
+    RUNTIME_COMMANDS_UNREADABLE, ATAS_LAYOUT_UNREADABLE
 }
 
 /// <summary>
@@ -76,6 +82,45 @@ public static class Labels
     /// clears has to say which of the two it did.
     /// </summary>
     public const string NoInstrumentAllowed = "No instrument is allowed until you add one.";
+
+    // ---- the two files that say what TradeAgent runs, and where it looks -------------------------
+    //
+    // These name a FILE, which the sentences above deliberately never do — and the difference is the
+    // reader. Nobody meets runtimes.json or atas.json by accident: they exist so that somebody who
+    // has decided to correct a vendor's command or folder can, and the one thing that person needs
+    // told is that the edit did not take. Saying it without naming the file would be useless to
+    // them and no gentler to anyone else. There is still no path, no command and no console here.
+
+    /// <summary>The file holding the AI assistants' install, sign-in and sandbox commands.</summary>
+    public const string RuntimesFile = "runtimes.json";
+
+    /// <summary>The file holding ATAS's folders, process names and executables.</summary>
+    public const string AtasFile = "atas.json";
+
+    /// <summary>
+    /// WHAT THE OWNER READS WHEN <see cref="RuntimesFile"/> EXISTS AND CANNOT BE PARSED. It is the
+    /// <c>Agent runtime</c> health row's detail, the Checks page's row, and the refusal to start the
+    /// AI — one sentence in all three, which is why <see cref="Errors"/> quotes this rather than
+    /// spelling its own. It promises what the product then does: nothing built in is put in the
+    /// broken file's place, because a manifest decides which program runs and under what sandbox.
+    ///
+    /// <paramref name="why"/> is omitted where the sentence is already carrying a repair beside it
+    /// (the error catalogue), and given where it is the whole of what the row says.
+    /// </summary>
+    public static string RuntimesCouldNotBeRead(string? why = null) =>
+        RuntimesFile + " could not be read, so TradeAgent will not start an AI assistant and is not "
+        + "falling back to the commands it ships with." + Because(why);
+
+    /// <summary>The same, for <see cref="AtasFile"/>: both ATAS rows and the Checks page.</summary>
+    public static string AtasLayoutCouldNotBeRead(string? why = null) =>
+        AtasFile + " could not be read, so TradeAgent will not look for ATAS and is not falling back "
+        + "to the folders it ships with." + Because(why);
+
+    static string Because(string? why) => why is null ? "" : $" The reason: {why}.";
+
+    /// <summary>What to do about either of them, said once.</summary>
+    public static string OverrideFileRepair(string file) =>
+        $"Correct {file} or delete it. Deleting it puts TradeAgent back on the settings it ships with.";
 
     // ---- the armed sentences of every control that GRANTS authority ----------------------------
     //
@@ -207,6 +252,10 @@ public static class Errors
         // names the wrong program entirely.
         [ErrorCode.UPDATE_INTEGRITY_FAILED]        = ("The new version of TradeAgent did not match the checksum published with it, so it was not installed.", "Nothing was installed and the version you are running is untouched. Press Install update again; if it keeps happening the published release is at fault, not your computer.", false),
         [ErrorCode.UPDATE_INSTALL_IN_PROGRESS]     = ("TradeAgent is installing a new version of itself and is about to close, so it is not sending orders.", "Wait for TradeAgent to reopen. Nothing was sent to your broker.", false),
+        // The words come from Labels because the health row and the Checks page say the same thing,
+        // and the specific reason travels in the technical text rather than being spelled twice.
+        [ErrorCode.RUNTIME_COMMANDS_UNREADABLE]    = (Labels.RuntimesCouldNotBeRead(), Labels.OverrideFileRepair(Labels.RuntimesFile), false),
+        [ErrorCode.ATAS_LAYOUT_UNREADABLE]         = (Labels.AtasLayoutCouldNotBeRead(), Labels.OverrideFileRepair(Labels.AtasFile), false),
     };
 
     public static ErrorInfo Get(ErrorCode code, string? technical = null)

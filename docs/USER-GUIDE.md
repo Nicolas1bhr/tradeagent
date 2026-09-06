@@ -453,6 +453,30 @@ do. The trading mode and your account go the same way, so set the mode on that p
 real-money mode is two presses as well — and choose your account again on **Settings**. Nothing here
 needs a file, a folder or a command: if you can see the panel, you can undo it.
 
+## If TradeAgent names runtimes.json or atas.json
+
+Almost nobody meets these two files. They exist for the case where a supplier changes something on
+their own schedule — the command that installs an AI assistant, the folder ATAS keeps its add-ons in
+— so that the fix is an edit rather than a new version of TradeAgent. If you have never edited
+either, TradeAgent is using the settings it ships with and neither name will ever appear.
+
+If you have, and one of them stops making sense to TradeAgent — a comma in the wrong place, a save
+that did not finish — TradeAgent tells you and **stops**. It does not quietly go back to the settings
+it ships with. That would be the worse of the two: the reason people edit these files is usually to
+make TradeAgent *more* careful than it is by default, and silently restoring the shipped version of
+that is exactly the moment nobody would notice.
+
+So, concretely:
+
+- **`runtimes.json`** — no AI assistant is offered and none will start. The Dashboard's *Agent
+  runtime* row and the **Checks** page both say *"runtimes.json could not be read"*, with the reason.
+- **`atas.json`** — TradeAgent does not go looking for ATAS at all, rather than looking in the
+  folders it shipped with. Both ATAS rows say so, and **Reinstall the bridge** is not offered,
+  because where it would put the bridge is the thing that cannot be read.
+
+Either way the repair is the same and it is on screen: correct the file, or delete it. Deleting it
+puts TradeAgent back on the settings it ships with. Nothing here needs a command prompt.
+
 ## Two behaviours that will look like faults, but are not
 
 **"AI trading paused — an earlier order is unconfirmed."**

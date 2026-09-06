@@ -395,25 +395,86 @@ public static class RuntimeCatalog
         }
     ];
 
-    public static List<RuntimeManifest> Load()
+    /// <summary>
+    /// The runtimes this build will start, or the reason there are none.
+    ///
+    /// AN UNREADABLE OVERRIDE FILE YIELDS NO RUNTIMES AT ALL, and that is the point of this method
+    /// existing (milestone review 2026-09-05b, Codex F16 / UNVERIFIED 6). This used to catch every
+    /// exception and return the built-ins, so an owner who edited <c>runtimes.json</c> to pin a
+    /// version, change a flag or take the sandbox bypass OUT got the shipped command back on one
+    /// misplaced comma — a different program, under a different sandbox policy, launched silently in
+    /// place of the one they wrote. Failing safe was the argument for it, and it is not safe: the
+    /// built-in <c>codex</c> manifest carries
+    /// <c>--dangerously-bypass-approvals-and-sandbox</c>.
+    ///
+    /// So the file is trusted whole or not at all. Not "the entries that parsed": a file that ended
+    /// mid-token has no honest partial reading, and one that does parse is either the owner's
+    /// intent entire or nothing.
+    ///
+    /// An ABSENT file is a different fact and keeps its old meaning — the built-ins, no complaint.
+    /// </summary>
+    public static RuntimeCatalogRead Read()
     {
+        var file = VendorFile.Read<List<RuntimeManifest>>(OverridePath);
+        if (file.Unreadable is { } why) return new([], Labels.RuntimesCouldNotBeRead(why));
+
         var builtIn = BuiltIn();
-        if (!File.Exists(OverridePath)) return builtIn;
-        try
+        foreach (var o in file.Value ?? [])
         {
-            var overrides = Json.Read<List<RuntimeManifest>>(File.ReadAllText(OverridePath)) ?? [];
-            foreach (var o in overrides)
-            {
-                var i = builtIn.FindIndex(b => b.Id == o.Id);
-                if (i >= 0) builtIn[i] = o; else builtIn.Add(o);
-            }
+            var i = builtIn.FindIndex(b => b.Id == o.Id);
+            if (i >= 0) builtIn[i] = o; else builtIn.Add(o);
         }
-        catch (Exception) { /* a broken override file must not stop the app from starting */ }
-        return builtIn;
+        return new(builtIn, null);
     }
+
+    public static List<RuntimeManifest> Load() => [.. Read().Runtimes];
 
     public static void SaveOverrides(IEnumerable<RuntimeManifest> manifests) =>
         File.WriteAllText(OverridePath, Json.Write(manifests.ToList(), pretty: true));
 
-    public static RuntimeManifest? Find(string id) => Load().FirstOrDefault(m => m.Id == id);
+    public static RuntimeManifest? Find(string id) => Read().Runtimes.FirstOrDefault(m => m.Id == id);
+
+    /// <summary>
+    /// The manifest an agent is about to be STARTED from, or a refusal in the owner's own words.
+    ///
+    /// <see cref="Find"/> answers null for two situations that are not alike — an id nobody has a
+    /// manifest for, and a catalogue that could not be read — and the caller that starts the AI has
+    /// to tell the owner which. Every start path goes through here so that neither can end in a
+    /// built-in being launched quietly.
+    /// </summary>
+    public static RuntimeManifest Require(string id)
+    {
+        var read = Read();
+        if (read.Unreadable is not null) throw new TradeAgentException(ErrorCode.RUNTIME_COMMANDS_UNREADABLE, read.Unreadable);
+        return read.Runtimes.FirstOrDefault(m => m.Id == id)
+               ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"no manifest for '{id}'");
+    }
+}
+
+/// <summary>
+/// The catalogue, or the one sentence saying why there is none. <see cref="Unreadable"/> non-null
+/// always means <see cref="Runtimes"/> is empty: a refusal and a fallback cannot both be true.
+/// </summary>
+public sealed record RuntimeCatalogRead(IReadOnlyList<RuntimeManifest> Runtimes, string? Unreadable);
+
+/// <summary>
+/// Puts an unreadable <c>runtimes.json</c> on the health row the owner is already looking at.
+///
+/// A class rather than a static call because it has to give the row BACK. Nothing else writes
+/// <see cref="Components.AgentRuntime"/> until an agent is prepared, so a reporter that only ever
+/// set FAILED would leave the row red for the rest of the session after the file was corrected —
+/// a repair that worked, reported as one that did not, which is the same defect the ATAS bridge
+/// row's cache had. It therefore remembers whether the standing row is its own, and hands that one
+/// back to UNKNOWN — never a row somebody else wrote.
+/// </summary>
+public sealed class RuntimeFileHealth
+{
+    bool _owned;
+
+    public void Report(HealthRegistry health)
+    {
+        var why = RuntimeCatalog.Read().Unreadable;
+        if (why is not null) { health.Set(Components.AgentRuntime, HealthState.FAILED, why); _owned = true; }
+        else if (_owned) { health.Set(Components.AgentRuntime, HealthState.UNKNOWN, ""); _owned = false; }
+    }
 }

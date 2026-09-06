@@ -381,6 +381,9 @@ public class CapabilityTests
 /// The refusal of fully automatic live trading is correct; learning about it from a turned-down
 /// order is not. These pin the exact words the user reads, because the wording is the fix.
 /// </summary>
+// Doctor.RunAsync reads both override files, so it may not run beside a test that is deliberately
+// corrupting one of them.
+[Collection(VendorOverrideFiles.Name)]
 public class DoctorReconciliationCheckTests
 {
     const string Facts = "ATAS — carries TradeAgent's own order reference: ";
@@ -526,6 +529,7 @@ public class DoctorReconciliationCheckTests
     }
 }
 
+[Collection(VendorOverrideFiles.Name)]
 public class RuntimeCatalogTests
 {
     [Fact]
@@ -559,13 +563,22 @@ public class RuntimeCatalogTests
         Assert.Equal(original.Executable, RuntimeCatalog.Find("opencode")!.Executable);
     }
 
+    /// <summary>
+    /// Still true, and no longer by falling back. The app carries on running — nothing throws out of
+    /// a read, the window opens, every other page works — but it offers no runtime and says why
+    /// instead of quietly starting a built-in in place of the override (milestone review 2026-09-05b,
+    /// Codex F16). <see cref="VendorOverrideFileTests"/> owns the rest of that behaviour; what this
+    /// test keeps is the property its name claims.
+    /// </summary>
     [Fact]
     public void A_corrupt_override_file_does_not_stop_the_app()
     {
         try
         {
             File.WriteAllText(RuntimeCatalog.OverridePath, "{ this is not json");
-            Assert.NotEmpty(RuntimeCatalog.Load());
+            var read = RuntimeCatalog.Read();
+            Assert.NotNull(read.Unreadable);
+            Assert.Empty(read.Runtimes);
         }
         finally { if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath); }
     }

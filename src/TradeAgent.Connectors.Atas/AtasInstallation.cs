@@ -78,24 +78,60 @@ public sealed class AtasLayout
 
     public static string OverridePath => Path.Combine(Paths.Home, "atas.json");
 
-    public static AtasLayout Load()
+    /// <summary>
+    /// Nowhere to look, nothing to look for. What an UNREADABLE <c>atas.json</c> yields, and the
+    /// reason this is not simply <c>new AtasLayout()</c>: an owner edits this file to point
+    /// TradeAgent at a folder the build does not know about, and quietly reinstating the shipped
+    /// candidates on one bad byte is how a bridge assembly gets copied somewhere ATAS is not loading
+    /// it from — trap 12's symptom, arrived at from a direction nothing reports (milestone review
+    /// 2026-09-05b, Codex F16 / UNVERIFIED 6). Every candidate list is empty, so
+    /// <see cref="AtasInstallation.Detect"/> finds nothing, creates nothing, and says why.
+    /// </summary>
+    static AtasLayout Nothing() => new()
     {
-        if (!File.Exists(OverridePath)) return new AtasLayout();
-        try { return Json.Read<AtasLayout>(File.ReadAllText(OverridePath)) ?? new AtasLayout(); }
-        catch (Exception) { return new AtasLayout(); }
+        InstallDirCandidates = [], StrategyDirCandidates = [], IndicatorDirCandidates = [],
+        ProcessNames = [], ExecutableNames = [], Verified = false
+    };
+
+    /// <summary>The layout in force, and the reason it is the empty one when it is.</summary>
+    public static AtasLayoutRead Read()
+    {
+        var file = VendorFile.Read<AtasLayout>(OverridePath);
+        return file.Unreadable is { } why
+            ? new(Nothing(), Labels.AtasLayoutCouldNotBeRead(why))
+            : new(file.Value ?? new AtasLayout(), null);
     }
+
+    public static AtasLayout Load() => Read().Layout;
 
     public void Save() => File.WriteAllText(OverridePath, Json.Write(this, pretty: true));
 }
 
+/// <summary>
+/// The folders to search, and the one sentence saying why there are none. <see cref="Unreadable"/>
+/// non-null always means <see cref="Layout"/> is the empty one: a refusal and a fallback cannot both
+/// be true.
+/// </summary>
+public sealed record AtasLayoutRead(AtasLayout Layout, string? Unreadable);
+
+/// <summary>
+/// What was found. <paramref name="LayoutUnreadable"/> non-null means nothing was LOOKED for — the
+/// file saying where to look could not be read — so every other field is an absence of evidence
+/// rather than evidence of absence, and the rows are written from this rather than from
+/// <c>Installed = false</c>.
+/// </summary>
 public sealed record AtasDetection(bool Installed, string? InstallDir, string? StrategyDir, string? Version,
-    bool Running, bool BridgeInstalled, bool LayoutVerified, string? RuntimeTfm = null);
+    bool Running, bool BridgeInstalled, bool LayoutVerified, string? RuntimeTfm = null,
+    string? LayoutUnreadable = null);
 
 public static class AtasInstallation
 {
     public static AtasDetection Detect(AtasLayout? layout = null)
     {
-        var l = layout ?? AtasLayout.Load();
+        // A layout handed in is one a caller already has — the setup wizard's, or a test's — and
+        // carries no file behind it to be unreadable. Only the default route reads atas.json.
+        var read = layout is null ? AtasLayout.Read() : new AtasLayoutRead(layout, null);
+        var l = read.Layout;
 
         var installDir = l.InstallDirCandidates.Select(Expand).FirstOrDefault(Directory.Exists);
         var strategyDir = l.StrategyDirCandidates.Select(Expand).FirstOrDefault(Directory.Exists);
@@ -128,7 +164,7 @@ public static class AtasInstallation
                               File.Exists(Path.Combine(strategyDir, "TradeAgent.AtasBridge.dll"));
 
         return new AtasDetection(installDir is not null, installDir, strategyDir, version, running,
-            bridgeInstalled, l.Verified, RuntimeTfm(installDir));
+            bridgeInstalled, l.Verified, RuntimeTfm(installDir), read.Unreadable);
     }
 
     /// <summary>
@@ -201,6 +237,11 @@ public static class AtasInstallation
     public static string InstallBridge(string bridgeSourceDir, AtasLayout? layout = null)
     {
         var d = Detect(layout);
+        // Before "could not find it": a folder nobody looked for is not one that is missing, and the
+        // repair for the two is different. Copying this build's bridge into a candidate the owner
+        // had overridden away from is the specific mistake an unreadable atas.json would cause.
+        if (d.LayoutUnreadable is not null)
+            throw new TradeAgentException(ErrorCode.ATAS_LAYOUT_UNREADABLE, d.LayoutUnreadable);
         if (d.StrategyDir is null)
             throw new TradeAgentException(ErrorCode.ATAS_NOT_FOUND, "could not find the ATAS strategies folder");
         if (!Directory.Exists(bridgeSourceDir))

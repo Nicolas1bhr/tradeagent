@@ -677,8 +677,10 @@ public sealed class MainWindow : Window
         if (_host.Agent.Running) { await _host.Agent.StopAsync(); return; }
 
         var id = _host.Gateway.Settings.SelectedRuntimeId ?? "opencode";
-        var manifest = AgentRuntime.RuntimeCatalog.Find(id)
-            ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"no manifest for '{id}'");
+        // Require, not Find: an unreadable runtimes.json yields no manifests at all rather than the
+        // built-ins, so this is the call that turns "the file the owner wrote cannot be read" into
+        // a refusal in their own words instead of a different program starting quietly.
+        var manifest = AgentRuntime.RuntimeCatalog.Require(id);
         await _host.Agent.PrepareAsync(manifest, _host.WorkspaceContext());
         await _host.Agent.StartAsync();
 
