@@ -112,6 +112,7 @@ sealed class DashboardPage
     readonly Button _workButton;
     readonly TextBlock _missionState = Ui.With(Ui.Body("—"), t => t.FontWeight = FontWeight.SemiBold);
     readonly TextBlock _missionCounts = Ui.Micro("");
+    readonly TextBlock _missionCost = Ui.Micro("");
     readonly TextBlock _missionLast = Ui.Muted("");
     readonly TextBox _guidance;
 
@@ -126,8 +127,25 @@ sealed class DashboardPage
     /// </summary>
     public const string LetTheAiWork = "Let the AI work on its own";
 
-    /// <summary>What the second press does, in full. Never the bare word "Confirm".</summary>
-    public const string LetTheAiWorkArmed = "Confirm: let the AI keep working without being asked";
+    /// <summary>
+    /// WHAT THE SECOND PRESS DOES, IN FULL — including what it will cost. Never the bare word
+    /// "Confirm".
+    ///
+    /// The press is a grant of a great deal of room, and the cap is the whole of what bounds it. An
+    /// armed sentence that named the autonomy but not the money would be describing half the grant;
+    /// a sentence that names a limit which cannot actually be applied would be worse than that, so
+    /// the unpriced case says so instead of quoting a ceiling that is holding nothing back.
+    /// </summary>
+    public static string LetTheAiWorkArmed(AiSpendToday spend)
+    {
+        const string head = "Confirm: let the AI keep working without being asked";
+
+        if (!spend.Metered) return head;
+
+        return spend.CanPrice
+            ? head + $", up to {MissionSituation.Money(spend.Cap, spend.Currency)} a day"
+            : head + " — TradeAgent cannot price this AI, so your daily limit will not stop it";
+    }
 
     /// <summary>The other direction. One press: it only ever takes work away.</summary>
     public const string PauseTheAi = "Pause the AI";
@@ -213,7 +231,11 @@ sealed class DashboardPage
         _workButton = BuildWorkOnItsOwn(
             () => _host.Mission.Running,
             () => _host.LetTheAiWorkOnItsOwn(),
-            () => _ = PauseMissionAsync());
+            () => _ = PauseMissionAsync(),
+            // Asked at ARM time, not at build time: the cap the second press names has to be the one
+            // in force when the owner reads it, and they may have changed it on the Safety page since
+            // this window opened.
+            () => _host.SpendToday);
 
         _guidance = Ui.TextField(host.Gateway.Settings.Guidance,
             "e.g. focus on ES during the US session; keep positions small until the journal shows three good days");
@@ -224,6 +246,7 @@ sealed class DashboardPage
         var aiCard = Ui.Col(Theme.S3,
             _missionState,
             _missionCounts,
+            _missionCost,
             Ui.With(_missionLast, t => t.FontSize = Theme.Small),
             Ui.With(Ui.Row(Theme.S2, _workButton), r => r.Margin = new Thickness(0, Theme.S2, 0, 0)),
             Ui.With(Ui.Divider(), d => d.Margin = new Thickness(0, Theme.S2, 0, 0)),
@@ -271,7 +294,7 @@ sealed class DashboardPage
         _agentButton.Content = _host.Agent.Running ? "Stop the AI" : "Start the AI";
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
-        RefreshMission(_host.Mission.Status, _host.Mission.Running);
+        RefreshMission(_host.Mission.Status, _host.Mission.Running, _host.SpendToday);
         RefreshApprovals(waiting);
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
@@ -308,9 +331,10 @@ sealed class DashboardPage
     /// A factory, like the Safety page's three, so that what a test presses is the control the owner
     /// sees rather than a reconstruction of it.
     /// </summary>
-    internal static Button BuildWorkOnItsOwn(Func<bool> working, Action letItWork, Action pause) =>
+    internal static Button BuildWorkOnItsOwn(Func<bool> working, Action letItWork, Action pause,
+        Func<AiSpendToday>? spend = null) =>
         Ui.ConfirmIf(working() ? PauseTheAi : LetTheAiWork,
-            () => working() ? null : LetTheAiWorkArmed,
+            () => working() ? null : LetTheAiWorkArmed(spend?.Invoke() ?? AiSpendToday.NotMetered),
             () => { if (working()) pause(); else letItWork(); },
             working() ? "secondary" : "primary");
 
@@ -322,9 +346,15 @@ sealed class DashboardPage
     /// or stops, and a plain assignment on the five-second tick would wipe a half-pressed confirm off
     /// the screen while the owner was reading it.
     /// </summary>
-    void RefreshMission(MissionStatus status, bool running)
+    void RefreshMission(MissionStatus status, bool running, AiSpendToday spend)
     {
         Ui.SetResting(_workButton, running ? PauseTheAi : LetTheAiWork, running ? "secondary" : "primary");
+
+        _missionCost.Text = MissionCost(spend);
+        _missionCost.IsVisible = _missionCost.Text.Length > 0;
+        _missionCost.Foreground = spend.CapReached ? Theme.Caution
+            : !spend.CanPrice ? Theme.Caution
+            : Theme.TextFaint;
 
         _missionState.Text = MissionSentence(status);
         _missionState.Foreground = status.State switch
@@ -369,6 +399,29 @@ sealed class DashboardPage
             1 => counts + " — the last one ended in an error",
             var n => counts + $" — {n} errors in a row"
         };
+    }
+
+    /// <summary>
+    /// WHAT THE AI HAS COST TODAY, AGAINST THE CEILING IT STOPS AT. Pulled out of the repaint so the
+    /// sentence can be read back without a running app, exactly as the four state words are.
+    ///
+    /// Three readings, and the third is the one that has to be loud. An installation TradeAgent
+    /// cannot price shows no figure at all — not "0.00 of 5.00", which would be a limit that is
+    /// holding nothing back drawn as one that is — and says what to correct.
+    /// </summary>
+    internal static string MissionCost(AiSpendToday spend)
+    {
+        if (!spend.Metered) return "";
+
+        var cap = MissionSituation.Money(spend.Cap, spend.Currency);
+
+        if (!spend.CanPrice)
+            return $"Cost today: unknown — {spend.WhyNoPrice}. Your {cap} daily limit cannot stop it.";
+
+        var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
+        if (spend.UnpricedTurns > 0) line += $" — {spend.UnpricedTurns} turns could not be priced, so it is at least that";
+        if (spend.CapReached) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
+        return line + ".";
     }
 
     static string Shorten(string text, int max) => text.Length <= max ? text : text[..max] + "…";
@@ -821,6 +874,8 @@ sealed class SafetyPage
     readonly Button _liveButton;
     readonly Button _stopButton;
     readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
+    readonly NumericUpDown _dailyCap;
+    readonly TextBlock _capNote = Ui.Micro("");
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
@@ -930,6 +985,28 @@ sealed class SafetyPage
         return b;
     }
 
+    /// <summary>
+    /// THE AI'S OWN DAILY CEILING. Raising it asks twice; lowering it saves in one press.
+    ///
+    /// It is the Safety page's rule for a widened limit, applied to the one limit on this page that
+    /// is not about orders: turns run back to back for as long as the machine is on, so raising this
+    /// number is granting the AI more of the owner's money, and that is the same act as raising a
+    /// quantity cap even though nothing here reaches a broker.
+    ///
+    /// A factory, like the three beside it, so a test presses the control the owner sees.
+    /// </summary>
+    internal static Button BuildSaveDailyCap(Func<decimal> current, Func<decimal> pending,
+        Func<string> currency, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveDailyCap,
+            () => pending() > current()
+                ? Labels.RaiseDailyCapArmed(MissionSituation.Money(pending(), currency()))
+                : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
     public SafetyPage(AppHost host)
     {
         _host = host;
@@ -982,6 +1059,24 @@ sealed class SafetyPage
         // rather than everything is. It said "any".
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
+        _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
+
+        // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
+        // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
+        // — has nothing to say about it. Folding it into that button would put a money ceiling
+        // behind a comparison that cannot see it.
+        var spending = Ui.Section("What the AI costs", Ui.Col(Theme.S2,
+            Ui.Muted("The AI works non-stop, and every turn it takes is charged to whoever pays for its "
+                + "AI tool. This is the most it may spend on itself in a day. Reaching it stops the AI "
+                + "taking new turns until midnight; it does not touch your orders or positions."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.DailyCostCap, _dailyCap,
+                "0 stops it working at all. Raising this lets the AI spend more of your money, so it asks again first."),
+            Ui.Spacer(Theme.S2),
+            BuildSaveDailyCap(() => _host.Gateway.Settings.AiDailyCostCap, () => PendingCap(),
+                () => _host.SpendToday.Currency, SaveDailyCap),
+            _capNote));
+
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
             Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point. "
                 + "Lowering one saves in a press; raising one is a grant, so it asks again first."),
@@ -1019,7 +1114,7 @@ sealed class SafetyPage
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits, spending)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -1070,6 +1165,22 @@ sealed class SafetyPage
     /// asks this to decide whether the press is a grant, and <see cref="SaveLimits"/> writes it, so
     /// the values compared and the values written cannot be two different readings of the boxes.
     /// </summary>
+    /// <summary>What the box says, as the number it would be saved as. The button compares this.</summary>
+    decimal PendingCap() => _dailyCap.Value ?? _host.Gateway.Settings.AiDailyCostCap;
+
+    /// <summary>
+    /// Writes the ceiling. The activity line is in the owner's words and names the figure, because
+    /// this is the one setting whose effect they will meet later as an AI that stopped.
+    /// </summary>
+    void SaveDailyCap()
+    {
+        var cap = PendingCap();
+        _host.Gateway.Update(s => s.AiDailyCostCap = cap);
+        var money = MissionSituation.Money(cap, _host.SpendToday.Currency);
+        _host.Gateway.Log.Activity($"The AI may now spend up to {money} a day");
+        _capNote.Text = $"Saved. The AI may spend up to {money} a day.";
+    }
+
     RiskPolicy PendingLimits()
     {
         var now = _host.Gateway.Settings.Risk;

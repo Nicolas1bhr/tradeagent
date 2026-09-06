@@ -154,9 +154,17 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// twice is harmless and closing it late only widens the window, never narrows it — the failure
     /// this must not have is a window that closes early.
     /// </summary>
-    internal static IDisposable Presence(Process process)
+    /// <param name="presence">
+    /// Whose register to report to. Defaults to the process-wide one, which is the only value the
+    /// product ever passes; a test that starts a child in the agent's role passes its own, exactly
+    /// as <c>MaterialScanner</c> already takes the question rather than reaching for the singleton.
+    /// The register is deliberately sticky — once an agent has been alive in this process, no scan
+    /// can attest a window that began before it — so a test that used the shared one would change
+    /// what every other scan in that process concludes, for the rest of the run.
+    /// </param>
+    internal static IDisposable Presence(Process process, AgentPresence? presence = null)
     {
-        var window = AgentPresence.Shared.Enter();
+        var window = (presence ?? AgentPresence.Shared).Enter();
         try
         {
             process.EnableRaisingEvents = true;

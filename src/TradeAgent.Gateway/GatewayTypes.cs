@@ -145,7 +145,26 @@ public sealed record GatewayStatus(
     string ProtocolVersion, string AppVersion, TradingMode Mode, bool AiTradingStopped, bool LiveActivated,
     bool ExecutionAvailable, string? ExecutionBlockedReason, string? ConnectorId, string? ConnectorName,
     bool ConnectorIsPaper, string? AccountId, IReadOnlyList<ComponentHealth> Health,
-    int OpenRequests, int UnreconciledRequests, RiskPolicy Risk);
+    int OpenRequests, int UnreconciledRequests, RiskPolicy Risk)
+{
+    /// <summary>
+    /// What the AI's own loop is doing: <c>stopped</c>, <c>working</c>, <c>waiting</c> or
+    /// <c>paused</c>. Init-only rather than a fourth positional parameter, because these three are
+    /// composed by the app and every other construction site of this record means to say nothing
+    /// about them.
+    /// </summary>
+    public string AiState { get; init; } = AiActivity.None.State;
+
+    /// <summary>Turns the AI has taken since local midnight.</summary>
+    public int AiTurnsToday { get; init; }
+
+    /// <summary>
+    /// What those turns cost, or ABSENT when TradeAgent cannot price them — which is the ordinary
+    /// case for a CLI that reports tokens but no model, and for a machine with no <c>costs.json</c>.
+    /// It is absent rather than zero on purpose: a zero here would tell the agent its work was free.
+    /// </summary>
+    public decimal? AiCostToday { get; init; }
+}
 
 public sealed record ReconcileResult(int Resolved, int Inconclusive, IReadOnlyList<string> Details)
 {

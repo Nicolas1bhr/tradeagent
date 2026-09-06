@@ -51,7 +51,13 @@ internal static class AgentRuntimeProbe
             JsonFlag = streaming ? "--json" : null
         };
 
-        return new AgentSession(manifest, () => script, () => dir, () => new Dictionary<string, string>());
+        // ITS OWN PRESENCE REGISTER, NOT THE PROCESS-WIDE ONE. AgentPresence.Shared is sticky by
+        // design — once an agent has been alive in a process, no scan can attest a window that began
+        // before it — so a child started here under the shared register would permanently downgrade
+        // every inbox sighting in this assembly to InboxUnattested. Measured: it turned three of
+        // MaterialLedgerTests red while both classes passed alone.
+        return new AgentSession(manifest, () => script, () => dir, () => new Dictionary<string, string>(),
+            presence: new AgentPresence());
     }
 }
 

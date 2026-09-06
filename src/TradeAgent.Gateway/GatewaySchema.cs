@@ -51,7 +51,13 @@ public static class GatewaySchema
 
     public static OpSpec[] Ops() =>
     [
-        new(Core.Ops.Status,      "trade status",              false, "Everything at a glance: mode, health, whether execution is allowed.", []),
+        new(Core.Ops.Status,      "trade status",              false,
+            "Everything at a glance: mode, health, whether execution is allowed — and what your own work has cost. "
+            + "ai_state is what your loop is doing (stopped, working, waiting, paused), ai_turns_today counts your "
+            + "turns since local midnight, and ai_cost_today is what they cost. ai_cost_today is ABSENT, not zero, "
+            + "when TradeAgent cannot price them: your CLI reported no model, or the account owner has set no prices. "
+            + "Absent means unknown and never means free — your mission is to cover what you cost, so treat an absent "
+            + "figure as a cost you cannot see rather than one you did not incur.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),

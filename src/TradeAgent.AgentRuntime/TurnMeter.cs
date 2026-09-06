@@ -202,6 +202,13 @@ public sealed class TurnMeter
         _path = recordPath ?? RecordPath;
     }
 
+    /// <summary>
+    /// A turn with nothing in it, used only to ask the price list "could you price this runtime at
+    /// all?". Zero tokens at any rate is zero, so the ANSWER is never a number worth having — what
+    /// is worth having is whether an answer came back at all.
+    /// </summary>
+    static readonly TurnUsage Probe = new(0, 0, 0, 0, 0, null);
+
     /// <summary>Raised after a turn has been recorded, so the card can redraw on the new total.</summary>
     public event Action? Changed;
 
@@ -270,15 +277,27 @@ public sealed class TurnMeter
         {
             var now = _now();
             var (cost, turns, unpriced) = ReadTotals(Today_(now));
+            var catalogue = CostCatalog.Read();
+
+            // ASKED OF THE PRICE LIST, not inferred from the day's history — which on the first turn
+            // of the day is empty and would make an unpriceable installation look priced.
+            //
+            // A turn that HAS priced today settles it the other way: a runtime whose stream names its
+            // own model prices without an entry in RuntimeModels, and the probe below cannot know
+            // that in advance because it has no model to offer.
+            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue);
+            var canPrice = probe.Cost is not null || (turns > 0 && unpriced < turns);
+
             return new AiSpendToday
             {
                 Metered = true,
                 Spent = cost,
                 Cap = _cap(),
-                Currency = CostCatalog.Read().Costs?.Currency ?? "",
+                Currency = catalogue.Costs?.Currency ?? "",
                 Turns = turns,
                 UnpricedTurns = unpriced,
-                WhyNoPrice = unpriced > 0 ? LastUnpricedReason() : null,
+                CanPrice = canPrice,
+                WhyNoPrice = canPrice ? null : probe.Unpriced ?? LastUnpricedReason(),
                 ResumesAt = Midnight(now)
             };
         }

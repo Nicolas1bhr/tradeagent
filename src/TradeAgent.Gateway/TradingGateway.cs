@@ -64,6 +64,19 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public Func<bool>? InstallInProgress { get; set; }
 
+    /// <summary>
+    /// WHAT THE AI'S OWN LOOP IS DOING AND WHAT IT HAS COST TODAY, for the status the agent reads.
+    ///
+    /// A delegate, and set by the app, because the gateway must not learn what a mission loop is:
+    /// it is the execution authority, the loop holds none, and a gateway that could see the loop is
+    /// one edit away from being a gateway that could start it. Null means nothing is metering, and
+    /// the status then says the AI is stopped and has cost nothing measurable — which is exactly
+    /// what a build with no AI prepared should say.
+    ///
+    /// It grants nothing either way. Nothing an agent can send over the pipe reaches this.
+    /// </summary>
+    public Func<AiActivity>? Ai { get; set; }
+
     public event Action? StateChanged;
 
     /// <summary>The only clock this class reads, so a test can move it. See GatewayOptions.Clock.</summary>
@@ -728,11 +741,22 @@ public sealed class TradingGateway : IAsyncDisposable
         try { acct = Settings.SelectedAccountId is { } id ? await Connector.GetAccountAsync(id, ct) : (await Connector.GetAccountsAsync(ct)).FirstOrDefault(); }
         catch (Exception) { /* status must render even with the wire down */ }
 
+        // Asked, never cached: the loop's state changes between two five-second ticks, and a status
+        // describing the turn before last is a status the agent would reason against.
+        AiActivity ai;
+        try { ai = Ai?.Invoke() ?? AiActivity.None; }
+        catch (Exception) { ai = AiActivity.None; }
+
         return new GatewayStatus(
             Versions.ProtocolVersion.ToString(), Versions.App, Settings.Mode, Settings.AiTradingStopped,
             Settings.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
             Connector.Capabilities.IsPaper, acct?.Id ?? Settings.SelectedAccountId, _health.Snapshot(),
-            _requests.Open().Count, Unreconciled().Count, Settings.Risk);
+            _requests.Open().Count, Unreconciled().Count, Settings.Risk)
+        {
+            AiState = ai.State,
+            AiTurnsToday = ai.TurnsToday,
+            AiCostToday = ai.CostToday
+        };
     }
 
     public Task<IReadOnlyList<AccountInfo>> AccountsAsync(CancellationToken ct = default) => Connector.GetAccountsAsync(ct);

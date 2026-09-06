@@ -154,6 +154,13 @@ public sealed record MissionSituation
     public IReadOnlyList<string> OwnerMessages { get; init; } = [];
 
     /// <summary>
+    /// WHAT THE AI HAS COST ITS OWNER TODAY. The other half of the sentence it was given as its
+    /// mission — make at least enough to pay for yourself — and an AI told to cover its own costs
+    /// without being told what they are is being asked to guess at half the arithmetic.
+    /// </summary>
+    public AiSpendToday Spend { get; init; } = AiSpendToday.NotMetered;
+
+    /// <summary>
     /// The sentence that ends every turn's message. It is the whole of what makes the loop a mission
     /// rather than a cron job: the AI is told where its memory is and that keeping it is part of
     /// finishing, because a fresh CLI session starts every <see cref="MissionOptions.TurnsPerSession"/>
@@ -187,6 +194,7 @@ public sealed record MissionSituation
         b.AppendLine(Positions.Count == 0
             ? "- Positions: none"
             : $"- Positions: {string.Join("; ", Positions)}");
+        if (SpendLine(Spend) is { } spend) b.AppendLine($"- {spend}");
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
         if (!string.IsNullOrWhiteSpace(Guidance))
@@ -195,6 +203,41 @@ public sealed record MissionSituation
         b.AppendLine().AppendLine(Continue);
         return b.ToString();
     }
+
+    /// <summary>
+    /// THE COST LINE, or null when there is nothing measured to say. A function so it can be read
+    /// back without a running loop, and so the three cases are visibly three.
+    ///
+    /// The unpriced case is spelled out rather than shortened to a number, because a "0.00 today"
+    /// beside a working AI is the one reading that is actively misleading: it says the turns were
+    /// free when what happened is that nobody could price them. It also says the limit is not
+    /// holding anything back, so the AI does not plan its day against a ceiling that is not there.
+    /// </summary>
+    public static string? SpendLine(AiSpendToday spend)
+    {
+        if (!spend.Metered) return null;
+
+        var turns = spend.Turns == 1 ? "1 turn" : $"{spend.Turns} turns";
+
+        if (!spend.CanPrice)
+            return $"What you have cost today: {turns}, price unknown — {spend.WhyNoPrice}. "
+                   + $"Your owner's daily limit of {Money(spend.Cap, spend.Currency)} cannot be applied to that, "
+                   + "so nothing is holding your spending back but you.";
+
+        var spent = $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
+                    + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}";
+
+        if (spend.UnpricedTurns > 0)
+            spent += $" — and {spend.UnpricedTurns} of those could not be priced, so the real figure is higher";
+
+        return spent + (spend.CapReached
+            ? ". You are at the limit: this is the last turn until midnight."
+            : ".");
+    }
+
+    /// <summary>An amount with its currency, or without one where <c>costs.json</c> named none.</summary>
+    public static string Money(decimal amount, string currency) =>
+        currency.Length == 0 ? amount.ToString("0.####") : $"{amount:0.####} {currency}";
 }
 
 /// <summary>

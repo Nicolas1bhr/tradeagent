@@ -134,11 +134,16 @@ internal static class AgentArgs
 /// parsed line by line so assistant text appears while it is being written and tool activity — the
 /// AI checking a price, placing an order — is visible as it happens rather than after the fact.
 /// </summary>
+/// <param name="presence">
+/// The register a running turn reports itself to. Null is the process-wide one and is what the
+/// product always uses; only a test that starts a child in the agent's role passes its own.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
     Func<string> workspace,
-    Func<IReadOnlyDictionary<string, string>> environment) : IAgentConversation
+    Func<IReadOnlyDictionary<string, string>> environment,
+    AgentPresence? presence = null) : IAgentConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
@@ -349,7 +354,7 @@ public sealed class AgentSession(
         // Every path out of here has the child already dead — the method awaits its exit, and
         // CancelAsync kills the tree before it cancels the token — so the window never closes on a
         // process that is still writing.
-        using var alive = CliAgentRuntime.Presence(process);
+        using var alive = CliAgentRuntime.Presence(process, presence);
 
         // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
         try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }

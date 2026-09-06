@@ -43,7 +43,7 @@ public class MissionControlsTests
 
         Press(b);
         Assert.False(working);
-        Assert.Equal(DashboardPage.LetTheAiWorkArmed, b.Content);
+        Assert.Equal(DashboardPage.LetTheAiWorkArmed(AiSpendToday.NotMetered), b.Content);
 
         Press(b);
         Assert.True(working);
@@ -81,7 +81,7 @@ public class MissionControlsTests
         Press(b);
         Ui.SetResting(b, DashboardPage.LetTheAiWork, "primary");
         Assert.True(Ui.IsArmed(b));
-        Assert.Equal(DashboardPage.LetTheAiWorkArmed, b.Content);
+        Assert.Equal(DashboardPage.LetTheAiWorkArmed(AiSpendToday.NotMetered), b.Content);
         Assert.False(working);
 
         working = true;

@@ -44,6 +44,19 @@ public static class Labels
     /// <summary>The button on the Safety page that writes the limits back.</summary>
     public const string SaveLimits = "Save limits";
 
+    /// <summary>The AI's own daily spending ceiling, and the press that writes it.</summary>
+    public const string DailyCostCap = "The most the AI may spend on itself in a day";
+
+    public const string SaveDailyCap = "Save the daily limit";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveDailyCap"/> will do. RAISING the ceiling is a grant —
+    /// the same act as raising a risk limit, done with a different number — so it asks twice and
+    /// names the figure; LOWERING it is one press, because hesitating on the way down costs money.
+    /// </summary>
+    public static string RaiseDailyCapArmed(string amount) =>
+        $"Confirm: let the AI spend up to {amount} a day";
+
     /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
     public const string SafetyPage = "Safety";
 

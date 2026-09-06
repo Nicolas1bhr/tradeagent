@@ -271,7 +271,17 @@ public sealed record AiSpendToday
     /// <summary>Turns today whose cost is unknown. Above zero, <see cref="Spent"/> is a floor.</summary>
     public int UnpricedTurns { get; init; }
 
-    /// <summary>Why those turns have no price, in the owner's words. Null when none are unpriced.</summary>
+    /// <summary>
+    /// WHETHER THIS INSTALLATION CAN TURN A TURN INTO A NUMBER AT ALL — asked of the price list now,
+    /// not inferred from a day that may have had no turns yet.
+    ///
+    /// It is what the screens key their wording on, because the misleading moment is the FIRST turn
+    /// of the day: with no prices on the machine, <see cref="UnpricedTurns"/> is still zero and a
+    /// card reading "0.00 of 5.00 today" would be describing a ceiling nothing can reach.
+    /// </summary>
+    public bool CanPrice { get; init; }
+
+    /// <summary>Why there is no price, in the owner's words. Null when <see cref="CanPrice"/>.</summary>
     public string? WhyNoPrice { get; init; }
 
     /// <summary>The local midnight today's totals expire at — when a capped loop starts again.</summary>

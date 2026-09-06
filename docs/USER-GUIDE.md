@@ -321,8 +321,9 @@ run — to pay for itself. That is the instruction it works to, not a promise ab
 The control is on the **Dashboard**, under **The AI's own work**.
 
 **Starting it takes two presses; pausing it takes one.** The first press turns the button red and
-says *"Confirm: let the AI keep working without being asked"*. Pausing is a single press, because
-nobody should have to press a button twice to make something stop.
+says *"Confirm: let the AI keep working without being asked, up to 5 USD a day"* — the second half
+of that sentence is the daily spending limit, and it is described below. Pausing is a single press,
+because nobody should have to press a button twice to make something stop.
 
 The card beside the button says which of four things is happening:
 
@@ -339,6 +340,43 @@ first line of the last thing it said. If the error count is climbing, that line 
 **It picks up where it left off after a restart.** If it was working when TradeAgent closed, it is
 working when TradeAgent opens. If you had paused it, it is still paused — a pause is never undone
 for you.
+
+### What it costs you, and the daily limit
+
+The AI is not free to run. Every turn it takes is one run of the AI assistant you signed in with, and
+whoever pays for that assistant pays for those runs. Since the whole point is that it works
+non-stop, TradeAgent counts.
+
+Under the four words on the card is one more line: **what today's work has cost, against the most it
+is allowed to cost.** The limit starts at **5 a day** and you change it on the **Safety** page, under
+*What the AI costs*. Raising it asks twice and names the new figure — it is giving the AI more of
+your money, which is the same kind of act as raising a trading limit. Lowering it saves at once.
+
+**Reaching the limit stops the AI taking new turns until midnight.** It does not touch your orders or
+your positions, and it does not take away any permission — at midnight the day's total starts again
+and the AI carries on where it left off. You get one line in the **Activity** log saying it happened,
+what it had spent, and when it will start again. If you want it working sooner, raise the limit.
+
+**If the card says the cost is unknown, read that line.** TradeAgent works the cost out from two
+things: the token counts the AI assistant reports at the end of each turn, and a price list. It ships
+with **no prices at all**, deliberately — the same assistant costs per-token on one kind of account
+and nothing per-token on another, and the published rates change on the supplier's schedule, not
+TradeAgent's. A number invented here would be a wrong figure presented as a real one.
+
+So until you write that price list, the card says *"Cost today: unknown"* and says why, and **the
+daily limit is not holding anything back.** That is said in those words in three places — on the
+card, on the second press of *Let the AI work on its own*, and in what the AI itself is told — rather
+than shown as a comfortable "0.00 of 5.00".
+
+The price list is a file called `costs.json`, beside the two files in the next-but-one section, and
+it is the only one of the three most people might have a reason to write. It holds a currency, a
+price per million tokens for each model you use, and — because some assistants do not say which model
+they used — which model to price each assistant's turns at. If you want this and are not sure what to
+put in it, that is a fair thing to ask for help with; nothing else in TradeAgent needs it, and
+everything else works without it.
+
+Every turn is written down either way, with its tokens, in TradeAgent's own records — so a price list
+written later still tells you what the tokens were.
 
 ### The Guidance box
 
@@ -533,7 +571,7 @@ do. The trading mode and your account go the same way, so set the mode on that p
 real-money mode is two presses as well — and choose your account again on **Settings**. Nothing here
 needs a file, a folder or a command: if you can see the panel, you can undo it.
 
-## If TradeAgent names runtimes.json or atas.json
+## If TradeAgent names runtimes.json, atas.json or costs.json
 
 Almost nobody meets these two files. They exist for the case where a supplier changes something on
 their own schedule — the command that installs an AI assistant, the folder ATAS keeps its add-ons in
@@ -553,6 +591,10 @@ So, concretely:
 - **`atas.json`** — TradeAgent does not go looking for ATAS at all, rather than looking in the
   folders it shipped with. Both ATAS rows say so, and **Reinstall the bridge** is not offered,
   because where it would put the bridge is the thing that cannot be read.
+- **`costs.json`** — the AI keeps working, and TradeAgent stops being able to say what it costs. This
+  one is deliberately gentler than the other two, because it only prices work that has already
+  happened and stopping the AI over it would be the wrong trade. What it does mean is that your daily
+  spending limit cannot be applied, and the AI card says exactly that.
 
 Either way the repair is the same and it is on screen: correct the file, or delete it. Deleting it
 puts TradeAgent back on the settings it ships with. Nothing here needs a command prompt.
@@ -636,6 +678,9 @@ down" is not a state this can end up in.
 - **The installer has not been tried on a brand-new computer** — only on machines that already had
   developer tools on them.
 - One of the two AI assistants has never been tested at all; only the other one has.
+- **TradeAgent ships with no prices, so the daily spending limit is not enforced until you write
+  `costs.json`.** The turns and their token counts are recorded either way; what is missing is the
+  arithmetic that turns them into money. See *What it costs you, and the daily limit*.
 
 The engineering record of exactly what is proven and what is not is in
 [BUILD-STATUS.md](../BUILD-STATUS.md).

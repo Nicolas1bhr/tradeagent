@@ -65,8 +65,12 @@ public sealed class AppHost : IAsyncDisposable
             if (runtime is null) return null;
             if (!ReferenceEquals(runtime, _conversationOwner))
             {
+                // The old conversation's turns are over; metering it further would be metering a
+                // process that cannot run again.
+                _metering?.Dispose();
                 _conversation = runtime.OpenConversation();
                 _conversationOwner = runtime;
+                _metering = Meter?.Attach(_conversation);
             }
             return _conversation;
         }
@@ -74,6 +78,20 @@ public sealed class AppHost : IAsyncDisposable
 
     IAgentConversation? _conversation;
     IAgentRuntime? _conversationOwner;
+    IDisposable? _metering;
+
+    /// <summary>
+    /// THE BILL. One line per turn in the app's own state directory and today's totals in the
+    /// database, so what the AI costs is a measurement rather than an impression.
+    ///
+    /// Attached to the conversation in the property above, which means EVERY turn is metered — the
+    /// owner's typed questions as well as the mission's — because every one of them is a run of the
+    /// CLI and every run of the CLI is charged to somebody.
+    /// </summary>
+    public TurnMeter? Meter { get; private set; }
+
+    /// <summary>What the AI has cost today, for the card, the Safety page and the agent's status.</summary>
+    public AiSpendToday SpendToday => Meter?.Today ?? AiSpendToday.NotMetered;
 
     /// <summary>
     /// THE LOOP THAT KEEPS THE AI WORKING. Composed here, beside the gateway, because that is where
@@ -193,9 +211,16 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.Gateway, HealthState.READY);
 
             Agent = new AgentSupervisor(Health);
+            Meter = new TurnMeter(_db,
+                cap: () => Gateway.Settings.AiDailyCostCap,
+                session: () => (Conversation as AgentSession)?.ThreadId,
+                runtimeId: () => Agent.Current?.Id);
+            Meter.Changed += () => Changed?.Invoke();
+
             Mission = new MissionLoop(new MissionHost(this),
                 new MissionOptions { TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession) });
             Mission.Changed += () => Changed?.Invoke();
+            ReportAiToTheGateway();
 
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
@@ -252,6 +277,9 @@ public sealed class AppHost : IAsyncDisposable
         _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
         _server.Start();
         Health.Set(Components.Gateway, HealthState.READY);
+        // A new gateway is a new object, and the hook is on the object. Forgetting this line is how
+        // `trade status` starts reporting an AI that is stopped and free while it is working.
+        ReportAiToTheGateway();
 
         try { await Connector.ConnectAsync(); } catch (Exception) { /* health reports it */ }
         await Gateway.RefreshHealthAsync();
@@ -259,6 +287,27 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.Log.Activity($"Trading platform set to {id}");
         Changed?.Invoke();
     }
+
+    /// <summary>
+    /// PUTS THE AI'S OWN THREE FACTS ON THE STATUS THE AGENT READS, and nothing else.
+    ///
+    /// The gateway holds a delegate rather than a reference to the loop, so what it can learn is
+    /// these three values and what it can DO about them is nothing: there is no verb, no pipe op and
+    /// no path from this hook back to Start, Pause or the cap. The agent reading its own bill is the
+    /// point — its mission is to cover what it costs — and it must not become the agent editing it.
+    ///
+    /// The cost is null unless this installation can actually price a turn. Reporting zero would tell
+    /// an AI whose mission is to pay for itself that it was free.
+    /// </summary>
+    void ReportAiToTheGateway() =>
+        Gateway.Ai = () =>
+        {
+            var spend = SpendToday;
+            return new AiActivity(
+                Mission is null ? AiActivity.None.State : Mission.Status.State.ToString().ToLowerInvariant(),
+                spend.Turns,
+                spend.CanPrice ? spend.Spent : null);
+        };
 
     void OnGatewayStateChanged() => Changed?.Invoke();
 
@@ -465,6 +514,24 @@ public sealed class AppHost : IAsyncDisposable
 
         public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host.LastScanAt);
 
+        public AiSpendToday Spend => host.SpendToday;
+
+        /// <summary>
+        /// The one activity line the owner gets when the AI stops for the day, in their words and
+        /// naming both numbers. It is written where they already look for what the software did,
+        /// rather than only on a card they may not be in front of.
+        /// </summary>
+        public void SpendCapReached(AiSpendToday spend)
+        {
+            var money = MissionSituation.Money(spend.Spent, spend.Currency);
+            var cap = MissionSituation.Money(spend.Cap, spend.Currency);
+            host.Gateway.Log.Activity(
+                $"The AI has spent {money} today, which is its {cap} daily limit. It stops taking new "
+                + $"turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety page to let it carry on.",
+                "warn");
+            host.Changed?.Invoke();
+        }
+
         public Task ScanAsync(CancellationToken ct)
         {
             try { host.ScanMaterials(ct); }
@@ -503,7 +570,8 @@ public sealed class AppHost : IAsyncDisposable
                 OpenOrders = status.OpenRequests,
                 UnconfirmedRequests = status.UnreconciledRequests,
                 NewMaterial = NewInbox(since),
-                Guidance = host.Gateway.Settings.Guidance
+                Guidance = host.Gateway.Settings.Guidance,
+                Spend = host.SpendToday
             };
         }
 
