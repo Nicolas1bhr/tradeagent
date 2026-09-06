@@ -75,6 +75,34 @@ public class FillLedgerTests
     }
 
     /// <summary>
+    /// A CONNECTION THAT COMES BACK IS THE ONE MOMENT THE EVENT STREAM IS KNOWN TO HAVE A HOLE IN IT.
+    ///
+    /// The routine pull is on a five-minute interval, so this fixture first shows that an ordinary
+    /// health pass does NOT pull — otherwise the reconnect proves nothing — and then that the pass
+    /// after a reconnect does.
+    /// </summary>
+    [Fact]
+    public async Task A_reconnect_pulls_the_fills_that_happened_while_nobody_was_listening()
+    {
+        var (gw, conn, db) = await Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        await using var _ = gw;
+        using var __ = db;
+
+        var req = await gw.PlaceAsync(new AgentContext("agent-1"), "fill-reconnect",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 100m, null, TimeInForce.Day, null));
+        conn.Broker.FillWorking(req.ConnectorOrderId!);      // filled with nobody listening
+
+        await gw.RefreshHealthAsync();
+        Assert.Empty(gw.Fills.Since());                      // the interval has not come round
+
+        await conn.ConnectAsync();                           // the connection comes back
+        await gw.RefreshHealthAsync();
+
+        var row = Assert.Single(gw.Fills.Since());
+        Assert.Equal(FillSource.Pull, row.Source);
+    }
+
+    /// <summary>
     /// Attribution is resolved when the row is written or never: the client order id is
     /// <c>TA-{requestId}</c>, and the request row is what carries the agent session.
     /// </summary>

@@ -140,6 +140,9 @@ public class PnlOverPipeTests(ITestOutputHelper log)
         var schema = Json.Write((await client.SendAsync(new IpcRequest { Op = Ops.Schema, Session = "agent-1" })).Data);
         Assert.Contains("\"op\":\"pnl\"", schema);
         Assert.Contains("never a zero", schema);
+        // And the ledger it is computed from describes itself, including what it does not cover.
+        Assert.Contains("one row per fill", schema);
+        Assert.Contains("coverage begins when TradeAgent first read your platform's executions", schema);
 
         var paths = ((GatewayPipeServer)server).HandlerPaths;
         Assert.Contains(paths, p => p.Handler == Ops.Pnl);
