@@ -97,6 +97,9 @@ public static class Labels
     /// <summary>The file holding ATAS's folders, process names and executables.</summary>
     public const string AtasFile = "atas.json";
 
+    /// <summary>The file holding what the AI assistants charge, per model, per million tokens.</summary>
+    public const string CostsFile = "costs.json";
+
     /// <summary>
     /// WHAT THE OWNER READS WHEN <see cref="RuntimesFile"/> EXISTS AND CANNOT BE PARSED. It is the
     /// <c>Agent runtime</c> health row's detail, the Checks page's row, and the refusal to start the
@@ -110,6 +113,18 @@ public static class Labels
     public static string RuntimesCouldNotBeRead(string? why = null) =>
         RuntimesFile + " could not be read, so TradeAgent will not start an AI assistant and is not "
         + "falling back to the commands it ships with." + Because(why);
+
+    /// <summary>
+    /// The same, for <see cref="CostsFile"/> — and it promises something SMALLER than the other two,
+    /// on purpose. An unreadable <see cref="RuntimesFile"/> stops the AI, because that file decides
+    /// which program runs and under what sandbox. This one only prices turns that have already
+    /// happened, so an unreadable one cannot be allowed to stop the work — what it does instead is
+    /// make every turn's cost unknown, which makes the daily limit unenforceable, and the owner is
+    /// told exactly that rather than shown a limit that is holding nothing back.
+    /// </summary>
+    public static string CostsCouldNotBeRead(string? why = null) =>
+        CostsFile + " could not be read, so TradeAgent cannot say what the AI is costing and cannot "
+        + "hold it to your daily limit." + Because(why);
 
     /// <summary>The same, for <see cref="AtasFile"/>: both ATAS rows and the Checks page.</summary>
     public static string AtasLayoutCouldNotBeRead(string? why = null) =>

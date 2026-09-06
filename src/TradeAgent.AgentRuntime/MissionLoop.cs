@@ -50,9 +50,9 @@ public sealed record MissionOptions
 /// <summary>
 /// One completed run of the agent CLI, as the loop saw it end.
 ///
-/// It carries the exit code, the wall clock and the raw stream and nothing else on purpose: `U-meter`
-/// prices turns later and will read these, and a number invented here — tokens, cost, a "success"
-/// verdict — would be a claim rather than a measurement.
+/// It carries the exit code, the wall clock, the raw stream and what the runtime SAID the turn used,
+/// and nothing else on purpose: a number invented here — a token count, a cost, a "success" verdict
+/// — would be a claim rather than a measurement.
 ///
 /// <see cref="ExitCode"/> is -1 when no child produced one at all: the runtime was missing, the
 /// process would not start, or the turn was cancelled. That is a failed turn for the loop's backoff,
@@ -61,6 +61,14 @@ public sealed record MissionOptions
 public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw, DateTimeOffset At)
 {
     public bool Failed => ExitCode != 0;
+
+    /// <summary>
+    /// The tokens the runtime reported for this turn, or NULL when it reported none — which is a
+    /// different fact from a turn that used nothing, and is why this is nullable rather than a zeroed
+    /// <see cref="TurnUsage"/>. An init-only property with no default so that every existing site
+    /// that builds one of these keeps compiling and keeps meaning what it meant: silence.
+    /// </summary>
+    public TurnUsage? Usage { get; init; }
 }
 
 /// <summary>

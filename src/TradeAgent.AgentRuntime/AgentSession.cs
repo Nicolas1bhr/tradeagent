@@ -255,6 +255,7 @@ public sealed class AgentSession(
         var startedAt = DateTimeOffset.UtcNow;
         var exitCode = -1;
         var raw = "";
+        TurnUsage? usage = null;
 
         var exe = resolveExecutable();
         if (exe is null)
@@ -269,7 +270,7 @@ public sealed class AgentSession(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, raw) = await RunTurnAsync(exe, message, _cts.Token);
+            (exitCode, raw, usage) = await RunTurnAsync(exe, message, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -292,11 +293,18 @@ public sealed class AgentSession(
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
-            TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
+            TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow)
+            {
+                // What the RUNTIME said this turn used, or null where it said nothing. Carried out
+                // of the turn rather than re-derived from Raw by whoever prices it, because the
+                // stream is parsed once, here, and a second parser somewhere else would be a second
+                // thing to keep correct as these CLIs change their event shapes.
+                Usage = usage
+            });
         }
     }
 
-    async Task<(int ExitCode, string Raw)> RunTurnAsync(string exe, string message, CancellationToken ct)
+    async Task<(int ExitCode, string Raw, TurnUsage? Usage)> RunTurnAsync(string exe, string message, CancellationToken ct)
     {
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
@@ -361,7 +369,7 @@ public sealed class AgentSession(
         var errorText = (await stderr).Trim();
 
         FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
-        return (process.ExitCode, raw.ToString());
+        return (process.ExitCode, raw.ToString(), state.Usage);
     }
 
     /// <summary>
@@ -416,6 +424,16 @@ public sealed class AgentSession(
         public HashSet<string> AnnouncedTools { get; } = [];
 
         public bool ProducedAnyMessage { get; set; }
+
+        /// <summary>
+        /// What the runtime has reported this turn using so far, or null while it has reported
+        /// nothing. Null and zero are different answers — "it did not say" against "it used none" —
+        /// and only the first is honest about a CLI with no usage event.
+        /// </summary>
+        public TurnUsage? Usage { get; private set; }
+
+        public void Add(TurnUsage usage) => Usage = Usage is null ? usage : Usage.Plus(usage);
+
         readonly List<string> _pending = [];
 
         public void Remember(string id, string text) => Partial[id] = text;
@@ -454,6 +472,15 @@ public sealed class AgentSession(
     void HandleEvent(JsonElement e, TurnState state)
     {
         if (e.ValueKind != JsonValueKind.Object) return;
+
+        // WHAT THE TURN COST, READ BEFORE ANY OTHER BRANCH CAN RETURN.
+        //
+        // It has to be first because the event carrying it is not one this method otherwise cares
+        // about: Codex 0.153.4 reports tokens on `turn.completed`, which names no message, no tool
+        // and no error, and would fall out of the bottom of this method untouched. Every branch
+        // below returns, so anywhere else is a place the counts are silently dropped for one runtime
+        // and not another.
+        if (TurnUsage.Read(e) is { } usage) state.Add(usage);
 
         var type = e.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String
             ? t.GetString() ?? "" : "";

@@ -138,6 +138,25 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
+    /// THE MOST THE AI MAY SPEND ON ITSELF IN ONE LOCAL DAY, in <c>costs.json</c>'s currency.
+    ///
+    /// The AI's mission is to make at least enough to pay for itself, and half of that sentence is
+    /// its own bill: turns run back to back for as long as the machine is on, so without a ceiling
+    /// this is an account being charged with nobody watching. Reaching it pauses the mission loop
+    /// until local midnight; it removes no permission and touches no order.
+    ///
+    /// Five is the default because it is small enough that a mistake is a rounding error on the
+    /// owner's month and large enough for a day of real work. RAISING it asks twice — it is a grant,
+    /// exactly as a raised risk limit is — and lowering it saves in one press.
+    ///
+    /// <b>Zero means no spending at all, not "unlimited".</b> That is the opposite of
+    /// <see cref="RiskPolicy.MaxNotionalPerOrder"/>, whose zero means unenforced, and it is
+    /// deliberate: this is the value <see cref="Unreadable"/> falls to, and a settings row nobody
+    /// could read must not be the event that takes the ceiling off.
+    /// </summary>
+    public decimal AiDailyCostCap { get; set; } = 5m;
+
+    /// <summary>
     /// IS THE SAVED MODE ONE THIS BUILD ACTUALLY HAS?
     ///
     /// <see cref="TradingMode"/> is persisted as a name, and <c>System.Text.Json</c>'s enum converter
@@ -187,6 +206,7 @@ public sealed class TradeAgentSettings
     ///   quantity, positions, orders-per-minute = 0
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
+    ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
     ///
     /// <c>MaxNotionalPerOrder</c> stays at 0, which for that field alone means "not enforced": it has
     /// no floor, and a quantity cap of zero has already refused every order before a notional is
@@ -206,6 +226,9 @@ public sealed class TradeAgentSettings
         SelectedAccountId = null,
         AiWorksOnItsOwn = false,
         Guidance = "",
+        // Zero is the smallest this field has and it means no spending, so a row nobody could read
+        // is not the event that lifts the ceiling. The loop is not running on this row anyway.
+        AiDailyCostCap = 0m,
         Risk = new RiskPolicy
         {
             MaxOrderQuantity = 0m,
@@ -214,6 +237,70 @@ public sealed class TradeAgentSettings
             InstrumentAllowlist = []
         }
     };
+}
+
+/// <summary>
+/// WHAT THE AI HAS COST TODAY, MEASURED AGAINST WHAT IT IS ALLOWED TO COST.
+///
+/// In <c>Core</c> rather than beside the meter that fills it in, because three layers that cannot
+/// see each other all need this one reading: the loop decides whether to take another turn from it,
+/// the card draws it, and the status the agent reads is composed from it.
+///
+/// <see cref="Metered"/> false is "there is no meter here at all" — a build with no AI prepared, or
+/// a test — and is not the same fact as a metered day whose turns could not be priced. That second
+/// case is <see cref="Metered"/> true with <see cref="UnpricedTurns"/> above zero, and it is the
+/// ordinary case for a runtime whose CLI reports tokens but no model.
+/// </summary>
+public sealed record AiSpendToday
+{
+    public static readonly AiSpendToday NotMetered = new();
+
+    /// <summary>False when nothing is metering turns at all. Then nothing below means anything.</summary>
+    public bool Metered { get; init; }
+
+    /// <summary>What today's PRICED turns came to. Turns nobody could price are not in it.</summary>
+    public decimal Spent { get; init; }
+
+    public decimal Cap { get; init; }
+
+    /// <summary>Empty when <c>costs.json</c> could not be read, so a number is never shown bare.</summary>
+    public string Currency { get; init; } = "";
+
+    public int Turns { get; init; }
+
+    /// <summary>Turns today whose cost is unknown. Above zero, <see cref="Spent"/> is a floor.</summary>
+    public int UnpricedTurns { get; init; }
+
+    /// <summary>Why those turns have no price, in the owner's words. Null when none are unpriced.</summary>
+    public string? WhyNoPrice { get; init; }
+
+    /// <summary>The local midnight today's totals expire at — when a capped loop starts again.</summary>
+    public DateTimeOffset ResumesAt { get; init; }
+
+    /// <summary>
+    /// THE COMPARISON THE MISSION LOOP STOPS ON. Reaching the cap is enough — the owner's number is
+    /// a ceiling, not a threshold to cross — so it is <c>&gt;=</c>, and a cap of zero is reached by
+    /// a day that has spent nothing, which is what makes zero mean "no spending at all".
+    ///
+    /// Unpriced turns cannot reach it and deliberately do not: the alternative is stopping the AI on
+    /// a number nobody measured. That is why <see cref="UnpricedTurns"/> is on this record and on
+    /// the card — an owner whose turns are unpriced has a limit that is holding nothing back, and
+    /// they have to be able to see that rather than infer it from an AI that never stops.
+    /// </summary>
+    public bool CapReached => Metered && Spent >= Cap;
+}
+
+/// <summary>
+/// The three facts about the AI's own work that the agent-facing status carries. Composed by the
+/// app, because the gateway cannot see the mission loop and must not learn to.
+/// </summary>
+/// <param name="State">The loop's own word: stopped, working, waiting or paused.</param>
+/// <param name="TurnsToday">Turns metered since local midnight.</param>
+/// <param name="CostToday">What they cost, or null when TradeAgent cannot price them.</param>
+public sealed record AiActivity(string State, int TurnsToday, decimal? CostToday)
+{
+    /// <summary>No loop wired: the honest reading is that the AI is not working.</summary>
+    public static readonly AiActivity None = new("stopped", 0, null);
 }
 
 /// <summary>
