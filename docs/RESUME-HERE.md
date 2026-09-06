@@ -16,6 +16,10 @@ works non-stop, does its own research, builds its own strategies and places as m
 the gateway's limits; the owner adds guidance, strategies and documents through the inbox and a Guidance box. An
 evolution scheme — non-performing agents terminated and replaced — comes later and needs a higher manager level. **A
 chat window that answers when typed at is NOT the product**; until `U-life` lands, that is what the build is.
+**Decided 2026-09-06: there must be no human in the loop for real money.** Fully automatic is the target, not
+ask-me-first. ATAS cannot prove order history, so it cannot be the execution venue for that; a direct connector to a
+venue whose API returns orders by client id and history since a timestamp is required (the owner chooses the venue),
+and the same-user containment hole becomes load-bearing the day the app holds that venue's keys.
 
 **Session closed 2026-09-06 (late morning). Restart in this order, and you are working within ten minutes:**
 
@@ -79,8 +83,11 @@ chat window that answers when typed at is NOT the product**; until `U-life` land
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
    or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
    paper loop on the box for weeks, the Performance card as the report; (h) the owner's decisions: broker, instrument,
-   size, and the venue for fully automatic real money — ATAS refuses it correctly, so either a second connector with
-   real order history or ask-me-first on ATAS; (i) the third milestone review at the next cut; the ATAS hash pin
+   size, and WHICH venue for fully automatic real money (decided: a direct connector is required, ATAS stays the
+   owner's screen); then `U-venue` (the connector, testnet first), `U-data` (history and feeds from it), `U-runner`
+   (strategies as code the app runs identically in backtest, paper and live, supervised jobs), `U-referee` (the app
+   backtests on data the agent never saw, counts attempts, promotes on measured numbers), `U-allocator` (allocation by
+   live track record: losers to zero and replaced, the swarm's evolution); (i) the third milestone review at the next cut; the ATAS hash pin
    (recommended now, a data line); the box's real-home migration whenever the owner wants it.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
