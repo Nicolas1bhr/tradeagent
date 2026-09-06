@@ -365,17 +365,32 @@ public class BridgeRoundTripTests
             "the handshake did not establish the capabilities this test is about losing");
         Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
 
+        // EVERY OTHER GATE IS OPEN, deliberately: mode, live activation and all four health rows
+        // this gateway consults. What is left standing between an agent and an unattended live order
+        // is the capability proof and nothing else, which is the only way this test can tell whether
+        // that proof is what refuses. Against the code this unit found, the same setup answered
+        // authorized=True.
         using var db = TestEnv.NewDb();
-        var gw = new TradingGateway(db, connector, new HealthRegistry());
+        var health = new HealthRegistry();
+        foreach (var c in new[] { Components.Gateway, Components.TradingConnection, Components.Account, Components.ExecutionCapability })
+            health.Set(c, HealthState.READY);
+        var gw = new TradingGateway(db, connector, health);
         gw.Update(s =>
         {
             s.Mode = TradingMode.LIVE_AUTONOMOUS;
             s.SelectedAccountId = "ATAS-LOOPBACK";
         });
         gw.ActivateLive(true);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("agent-1"), out _, out _),
+            "the harness never authorized autonomous dispatch, so losing it proves nothing");
 
-        // Every heartbeat from here on is a bare pulse: Describe() throws on the far side.
-        await Wait(async () => await Task.FromResult(!connector.Capabilities.ReconciliationProvable));
+        // Every heartbeat from here on is a bare pulse: Describe() throws on the far side. Polled to a
+        // deadline rather than waited on, so that the code this unit found REPORTS what it believes
+        // instead of dying at the wait with nothing to read.
+        var started = DateTime.UtcNow;
+        var until = started.AddSeconds(10);
+        while (DateTime.UtcNow < until && connector.Capabilities.ReconciliationProvable) await Task.Delay(50);
+        var pulsed = DateTime.UtcNow - started;
 
         var caps = connector.Capabilities;
         var authorized = gw.TryAuthorizeExecution(new AgentContext("agent-1"), out var reason, out var code);
@@ -384,6 +399,7 @@ public class BridgeRoundTripTests
             new AtasDetection(true, @"C:\ATAS", @"C:\Strategies", "8.0", Running: true, BridgeInstalled: true, LayoutVerified: true),
             await connector.GetHealthAsync(), connector.Bridge, connector.StatusDetail);
 
+        Console.WriteLine($"after {pulsed.TotalSeconds:0.0}s of pulses that cannot describe the bridge:");
         Console.WriteLine($"pulsing, cannot describe : connected={await connector.IsConnectedAsync()} " +
                           $"coid={caps.SupportsClientOrderId} history={caps.SupportsOrderHistory} " +
                           $"provable={caps.ReconciliationProvable}");
@@ -423,9 +439,12 @@ public class BridgeRoundTripTests
         Assert.True(connector.Capabilities.ReconciliationProvable);
 
         adapter.Throwing = true;
-        await Wait(async () => await Task.FromResult(!connector.Capabilities.ReconciliationProvable));
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < until && connector.Capabilities.ReconciliationProvable) await Task.Delay(50);
         Console.WriteLine($"while it cannot describe : provable={connector.Capabilities.ReconciliationProvable} " +
-                          $"row={connector.StatusDetail}");
+                          $"row={connector.StatusDetail ?? "<nothing to say>"}");
+        Assert.False(connector.Capabilities.ReconciliationProvable,
+            "the proof survived a bridge that had stopped being able to give it");
 
         adapter.Throwing = false;
         await Wait(async () => await Task.FromResult(connector.Capabilities.ReconciliationProvable));
@@ -434,6 +453,49 @@ public class BridgeRoundTripTests
 
         Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
         Assert.Null(connector.StatusDetail);
+        Assert.True(await connector.IsConnectedAsync());
+    }
+
+    /// <summary>
+    /// THE THIRD WAY A HEARTBEAT CAN FAIL TO ATTEST, and the one no run covered until this line was
+    /// written: the payload is whole and readable and announces a bridge protocol this build does
+    /// not speak. It clears the proof exactly as an absent or unreadable one does — the answer is
+    /// not adopted, and the previous answer is not kept either, because neither is a description
+    /// this end can act on.
+    ///
+    /// It is NOT the refusal <c>A_refused_bridge_cannot_set_capabilities_through_a_heartbeat</c>
+    /// records. That one is about a connection whose HELLO was mismatched, which poisons the
+    /// connection; this bridge said hello correctly and is not accused of anything. Written after
+    /// dropping <c>BridgeCompatible</c> from <c>Attested</c> left the whole suite green: a
+    /// version check nothing measures is a version check that can be deleted by accident.
+    /// </summary>
+    [Fact]
+    public async Task A_heartbeat_at_a_version_this_build_does_not_speak_attests_nothing()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromSeconds(30) };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+        Assert.True(connector.Capabilities.ReconciliationProvable);
+
+        await bridge.Heartbeat(Speaking(2));
+        await Wait(async () => await Task.FromResult(!connector.Capabilities.ReconciliationProvable));
+
+        Console.WriteLine($"heartbeat announcing bridge protocol 2 : provable={connector.Capabilities.ReconciliationProvable} " +
+                          $"bridge={connector.Bridge?.BridgeProtocolVersion.ToString() ?? "<nothing attested>"} " +
+                          $"refused={connector.Incompatible is not null} connected={await connector.IsConnectedAsync()}");
+
+        // Neither adopted nor kept.
+        Assert.Null(connector.Bridge);
+        Assert.False(connector.Capabilities.SupportsClientOrderId);
+        Assert.False(connector.Capabilities.SupportsOrderHistory);
+
+        // And not turned into a refusal: a heartbeat is not a handshake, and the connection stands.
+        Assert.Null(connector.Incompatible);
         Assert.True(await connector.IsConnectedAsync());
     }
 
