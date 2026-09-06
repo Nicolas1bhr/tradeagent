@@ -352,7 +352,7 @@ public class OperatorPressIsAnEmergencyTests
     /// windows-latest the second term is not a cost the press controls: measured per step on the
     /// draft PR (runs 34046090536 and 34046100888, four presses of each kind per runner), ONE
     /// `SafelyRecordIndefinite` commit at `synchronous=FULL` took 1890 ms and the `SafelySettle`
-    /// after it 1469 ms — 3578 ms of overrun off code whose whole local cost is 15-63 ms in the
+    /// after it 1469 ms — 3578 ms of overrun off code whose whole press costs 31-63 ms in the
     /// same job — while `gcPause=0` and a 20 ms tick on a dedicated thread and on the pool kept
     /// arriving at 32-47 ms, so the process was running and it was file IO. A bare-SQLite probe of
     /// ten one-row commits on the same database in the same test ran 4-11 ms on ubuntu, 0-7 ms on
@@ -360,7 +360,7 @@ public class OperatorPressIsAnEmergencyTests
     ///
     /// So the press is charged the wire and nothing else. `RecoveryConnector.WireCalls` stamps every
     /// platform call in and out, and this sums the part of each that lies past the deadline. In all
-    /// 24 measured presses that sum was 0-2 ms on ubuntu, 0-16 ms on windows and 13-140 ms on macos
+    /// 24 measured presses that sum was 0-2 ms on ubuntu, 0-16 ms on windows and 8-138 ms on macos
     /// (its timer floor), against the same unchanged H. What is no longer asserted is the runner's
     /// fsync, which was never a statement about this product.
     /// </summary>
