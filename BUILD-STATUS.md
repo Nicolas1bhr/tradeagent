@@ -4162,7 +4162,7 @@ updating itself — is `U-cut-0.1.2-b`, in flight). Merge `6672b5e`: one product
   vendor files failing closed and visible; inbox origin attested; downloads bound to what they are a part of.
 
 **Verified by running (the manager):** the hashes and sizes quoted above; `gh api …/releases/tags/v0.1.2` digests;
-`gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, pending. **NOT VERIFIED yet:** the
+`gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, all three platforms and `package` SUCCESS. **NOT VERIFIED yet:** the
 update installing itself; the build script's own summary block was not read — the leg that ran it was killed and its
 console output is gone; the adapter presence is the script's own check, re-run by hand. **NOT done:**
 `TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
