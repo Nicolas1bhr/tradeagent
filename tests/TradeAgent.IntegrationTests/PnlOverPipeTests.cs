@@ -178,8 +178,10 @@ public class PnlOverPipeTests(ITestOutputHelper log)
         Assert.Contains("\"op\":\"pnl\"", schema);
         Assert.Contains("never a zero", schema);
         // And the ledger it is computed from describes itself, including what it does not cover.
+        // No apostrophes in these needles: the serializer escapes them (`platform's`), which is
+        // how the first version of this assertion failed against a sentence that was really there.
         Assert.Contains("one row per fill", schema);
-        Assert.Contains("coverage begins when TradeAgent first read your platform's executions", schema);
+        Assert.Contains("coverage begins when TradeAgent first read your platform", schema);
 
         var paths = ((GatewayPipeServer)server).HandlerPaths;
         Assert.Contains(paths, p => p.Handler == Ops.Pnl);
