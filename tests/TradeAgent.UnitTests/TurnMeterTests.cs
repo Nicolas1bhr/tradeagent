@@ -443,3 +443,156 @@ public class TurnRecordTests : IDisposable
         Assert.Empty(read.Costs!.Models);
     }
 }
+
+/// <summary>
+/// THE PRICES THIS BUILD SHIPS: dated, sourced, per runtime id and model.
+///
+/// What is asserted here is NOT that OpenAI charges these amounts — no test can settle that, and a
+/// test that pinned every figure would be this repository asserting a vendor's bill, which is the
+/// claim <see cref="AgentCosts"/> refuses to make. What is asserted is the shape the figures must
+/// keep to be checkable by the person who does settle it: every entry says which day it was read and
+/// which page it was read from, every entry names a runtime this build actually installs, and a
+/// model the vendor publishes no price for is ABSENT rather than filled in from a neighbour.
+///
+/// The one figure quoted in full is <c>gpt-5.3-codex</c>'s, because the arithmetic below has to have
+/// one right answer; it was read from the page named in <see cref="ListPrices.OpenAiPrices"/> on
+/// <see cref="ListPrices.ReadOn"/> and is quoted in this unit's report with that date.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class ShippedListPriceTests : IDisposable
+{
+    public void Dispose() => NoCosts();
+
+    static void NoCosts()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+    }
+
+    static void CostsAre(AgentCosts costs) =>
+        File.WriteAllText(CostCatalog.OverridePath, Json.Write(costs, pretty: true));
+
+    /// <summary>
+    /// A PRICE WITH NO DATE IS A PRICE NOBODY CAN CHECK. These go stale on the vendor's schedule,
+    /// so the day and the page travel with every one of them.
+    /// </summary>
+    [Fact]
+    public void Every_shipped_price_carries_the_day_it_was_read_and_the_page_it_came_from()
+    {
+        Assert.NotEmpty(ListPrices.All);
+
+        foreach (var p in ListPrices.All)
+        {
+            Assert.True(DateOnly.TryParse(p.PricedAt, out _), $"{p.Model} has no readable date: '{p.PricedAt}'");
+            Assert.StartsWith("https://", p.Source, StringComparison.Ordinal);
+            Assert.NotEqual("", p.Runtime);
+            Assert.True(p.InputPerMillion > 0m, $"{p.Model} has no input price");
+            Assert.True(p.OutputPerMillion > 0m, $"{p.Model} has no output price");
+        }
+    }
+
+    /// <summary>
+    /// Priced per runtime id, and only for the two whose provider this build knows. <c>custom</c> is
+    /// an engineer's own command in <c>runtimes.json</c>: a price for it would be a guess about a
+    /// vendor nobody here has heard of.
+    /// </summary>
+    [Fact]
+    public void The_shipped_catalogue_covers_the_runtimes_whose_provider_is_known_and_no_others()
+    {
+        var runtimes = ListPrices.All.Select(p => p.Runtime).Distinct().Order().ToArray();
+        Assert.Equal(["codex", "opencode"], runtimes);
+
+        var known = RuntimeCatalog.BuiltIn().Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+        Assert.All(runtimes, r => Assert.Contains(r, known));
+        Assert.Null(CostCatalog.Highest(CostCatalog.BuiltIn(), "custom"));
+    }
+
+    /// <summary>
+    /// A model the vendor's page does not price is left out. <c>gpt-5.3-codex-spark</c> is one of the
+    /// five models the Codex model page recommends and the pricing page has no row for it, so it is
+    /// absent — not estimated from the plain <c>gpt-5.3-codex</c> row that shares most of its name.
+    /// </summary>
+    [Fact]
+    public void A_model_the_vendor_publishes_no_price_for_is_absent_rather_than_guessed()
+    {
+        Assert.DoesNotContain(ListPrices.All, p => p.Model == "gpt-5.3-codex-spark");
+        Assert.Contains(ListPrices.All, p => p.Model == "gpt-5.3-codex");
+
+        var price = CostCatalog.Price(new TurnUsage(1, 0, 0, 1, 0, "gpt-5.3-codex-spark"), "codex");
+        Assert.Null(price.Cost);
+        Assert.Contains("gpt-5.3-codex-spark", price.Unpriced!);
+    }
+
+    /// <summary>
+    /// The arithmetic against a shipped figure, with no <c>costs.json</c> anywhere: one million
+    /// uncached input tokens and one million output tokens at <c>gpt-5.3-codex</c>'s published rate.
+    /// </summary>
+    [Fact]
+    public void A_model_the_stream_names_is_priced_from_the_shipped_list_with_no_file_at_all()
+    {
+        NoCosts();
+        var price = CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "gpt-5.3-codex"), "codex");
+
+        Assert.Null(price.Unpriced);
+        Assert.Equal(1.75m + 14.00m, price.Cost);
+        Assert.Equal("USD", price.Currency);
+    }
+
+    /// <summary>
+    /// THE OWNER'S FILE WINS WHERE IT SPEAKS, and the shipped list stands where it does not — the
+    /// arrangement <c>runtimes.json</c> already has. Both halves in one test, because it is the
+    /// combination that is the claim.
+    /// </summary>
+    [Fact]
+    public void The_owners_file_wins_for_a_model_it_prices_and_the_shipped_list_stands_for_the_rest()
+    {
+        CostsAre(new AgentCosts
+        {
+            Currency = "USD",
+            Models = [new ModelPrice
+            {
+                Runtime = "codex", Model = "gpt-5.3-codex",
+                InputPerMillion = 0.10m, OutputPerMillion = 0.20m
+            }]
+        });
+
+        var mine = CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "gpt-5.3-codex"), "codex");
+        Assert.Equal(0.10m + 0.20m, mine.Cost);
+
+        var shipped = CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "gpt-5.6-luna"), "codex");
+        Assert.Equal(0.20m + 1.20m, shipped.Cost);
+    }
+
+    /// <summary>
+    /// A CATALOGUE IN ANOTHER CURRENCY STANDS ALONE. Merging dollar figures under a file that says
+    /// EUR would produce a total labelled in euros that is partly not — the wrong bill that is
+    /// hardest to notice, because every number in it looks reasonable.
+    /// </summary>
+    [Fact]
+    public void Shipped_dollar_prices_are_not_merged_under_a_catalogue_in_another_currency()
+    {
+        CostsAre(new AgentCosts { Currency = "EUR", Models = [] });
+
+        var price = CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "gpt-5.3-codex"), "codex");
+        Assert.Null(price.Cost);
+        Assert.Contains("gpt-5.3-codex", price.Unpriced!);
+    }
+
+    /// <summary>
+    /// An entry that names no runtime prices a model BY NAME and is in no runtime's catalogue, so it
+    /// cannot raise what an unidentified turn is charged. Both halves, again in one test.
+    /// </summary>
+    [Fact]
+    public void A_price_that_names_no_runtime_prices_that_model_and_joins_no_runtimes_catalogue()
+    {
+        CostsAre(new AgentCosts
+        {
+            Currency = "USD",
+            Models = [new ModelPrice { Model = "house-model", InputPerMillion = 3m, OutputPerMillion = 7m }]
+        });
+
+        Assert.Equal(3m + 7m,
+            CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "house-model"), "custom").Cost);
+
+        Assert.Null(CostCatalog.Highest(CostCatalog.Read().Costs!, "custom"));
+    }
+}

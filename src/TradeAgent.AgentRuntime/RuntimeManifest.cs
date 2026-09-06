@@ -469,6 +469,28 @@ public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced)
 public sealed class ModelPrice
 {
     public string Model { get; set; } = "";
+
+    /// <summary>
+    /// The <see cref="RuntimeManifest.Id"/> this price belongs to, or empty for "any runtime".
+    ///
+    /// The distinction is not decoration. A price WITH a runtime is part of that runtime's
+    /// catalogue, and the catalogue is what an unknown model is estimated against
+    /// (<see cref="CostCatalog.Highest"/>) — so an entry here can raise what a turn nobody could
+    /// identify is charged at. A price with none can only ever be looked up BY NAME, which is the
+    /// safe half: an owner adding one model's price to <c>costs.json</c> does not thereby change
+    /// what an unidentified turn costs.
+    /// </summary>
+    public string Runtime { get; set; } = "";
+
+    /// <summary>
+    /// The date this figure was read from <see cref="Source"/>, as <c>yyyy-MM-dd</c>. Empty on a
+    /// price the owner wrote, who knows when theirs was true; never empty on a shipped one.
+    /// </summary>
+    public string PricedAt { get; set; } = "";
+
+    /// <summary>The vendor page the figure was read from. Shown to the owner beside the default.</summary>
+    public string Source { get; set; } = "";
+
     public decimal InputPerMillion { get; set; }
 
     /// <summary>Null means the input rate: a vendor that does not discount cache reads charges it.</summary>
@@ -484,13 +506,19 @@ public sealed class ModelPrice
 /// <c>costs.json</c>: what the owner's AI tool charges them, beside <c>runtimes.json</c> and read
 /// the same way.
 ///
-/// <b>It ships EMPTY of prices, and that is the decision, not an omission.</b> A price is a claim
-/// about somebody else's bill, and this software cannot see that bill: the same Codex CLI costs
-/// per-token on an API key and nothing per-token on a ChatGPT subscription, and the published
-/// per-million rates change on OpenAI's schedule, not on this repository's. So a shipped number
-/// would be wrong for a whole class of owners and stale for the rest, and it would be wrong
-/// invisibly — which is the failure mode this file exists to avoid. With no prices, every turn is
-/// recorded with its tokens and reported "cost unknown", in those words, on the card.
+/// <b>THE FILE ships empty, and the BUILD does not.</b> The file's own catalogue is what an engineer
+/// writes here; the dated list prices this build was shipped with are <see cref="ListPrices"/>, in
+/// this same shape, and the two are merged by <see cref="CostCatalog"/> with the file winning
+/// wherever it speaks. That is <c>runtimes.json</c>'s arrangement — built-ins in code, an override
+/// file on top — and it is why an absent file is still not a refusal and still ships no catalogue of
+/// its own.
+///
+/// The reason the built-ins are dated and sourced rather than simply correct is the one
+/// <c>U-meter</c> gave for shipping none at all: a price is a claim about somebody else's bill, and
+/// this software cannot see that bill. The same Codex CLI costs per-token on an API key and nothing
+/// per-token on a ChatGPT subscription. What changed is the conclusion — an owner who will never
+/// open a text editor was left with a daily cap that could not bite — so the list price is charged,
+/// said to be a list price, and beaten by the two numbers on the Safety page.
 /// </summary>
 public sealed class AgentCosts
 {
@@ -527,8 +555,10 @@ public static class CostCatalog
     public static string OverridePath => Path.Combine(Paths.Home, Labels.CostsFile);
 
     /// <summary>
-    /// Shipped with no model prices. See <see cref="AgentCosts"/> for why that is the honest default
-    /// rather than a table of last month's published rates.
+    /// THE FILE's shipped contents, which are empty. Not the BUILD's prices — those are
+    /// <see cref="ListPrices.All"/>, dated and sourced, and <see cref="Applicable"/> is where the
+    /// two meet. An absent <c>costs.json</c> therefore still contributes no catalogue of its own,
+    /// which is what makes "absent is not a refusal" true of this layer as well.
     /// </summary>
     public static AgentCosts BuiltIn() => new();
 
@@ -538,6 +568,72 @@ public static class CostCatalog
         if (file.Unreadable is { } why) return new(null, Labels.CostsCouldNotBeRead(why));
         return new(file.Value ?? BuiltIn(), null);
     }
+
+    /// <summary>
+    /// MAY THE SHIPPED FIGURES BE MERGED UNDER THIS CATALOGUE? Only where the currencies agree.
+    ///
+    /// <see cref="ListPrices"/> is in dollars. An owner whose <c>costs.json</c> says <c>EUR</c> has
+    /// told this software what its numbers mean, and adding dollar figures underneath would make a
+    /// total labelled in euros that is partly not — a wrong bill, in the direction hardest to
+    /// notice. Their file then stands alone, which is what an override is for.
+    /// </summary>
+    public static bool ListPricesApply(AgentCosts costs) =>
+        string.Equals(costs.Currency, ListPrices.Currency, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Every price that can be applied to <paramref name="runtimeId"/>, THE OWNER'S FILE FIRST.
+    ///
+    /// A model in both is the owner's: they are describing a bill they have seen and this build is
+    /// quoting a page. Order is the mechanism — <see cref="Price"/> takes the first match — and
+    /// <see cref="Highest"/> takes a maximum, which is order-blind, so a model named twice is
+    /// dropped by name here rather than counted twice there.
+    /// </summary>
+    public static IEnumerable<ModelPrice> Applicable(AgentCosts costs, string? runtimeId)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var p in costs.Models.Where(p => Belongs(p, runtimeId)))
+            if (seen.Add(p.Model)) yield return p;
+
+        if (!ListPricesApply(costs)) yield break;
+
+        foreach (var p in ListPrices.All.Where(p => Belongs(p, runtimeId)))
+            if (seen.Add(p.Model)) yield return p;
+    }
+
+    /// <summary>
+    /// A price belongs to a runtime when it names that runtime, or when it names none at all — the
+    /// owner's shorthand for "whatever is running, this is the rate".
+    /// </summary>
+    static bool Belongs(ModelPrice p, string? runtimeId) =>
+        p.Runtime.Length == 0 ||
+        (runtimeId is { Length: > 0 } id && string.Equals(p.Runtime, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// THE DEAREST ENTRY IN ONE RUNTIME'S OWN CATALOGUE — what an unidentified turn is charged at,
+    /// and the default the Safety page shows the owner.
+    ///
+    /// Runtime-agnostic entries are deliberately not in it, though <see cref="Belongs"/> lets them
+    /// price a NAMED model: an entry that names no runtime is in no runtime's catalogue, and the
+    /// practical half is that an owner pricing one model in <c>costs.json</c> must not thereby raise
+    /// what every unidentified turn on every runtime is charged.
+    ///
+    /// Dearest is decided by output rate then input rate, NOT by pricing a specimen turn: the answer
+    /// must not depend on the shape of the turn being asked about, or the same installation would
+    /// show the owner one default and charge them against another.
+    /// </summary>
+    public static ModelPrice? Highest(AgentCosts costs, string? runtimeId) =>
+        runtimeId is not { Length: > 0 }
+            ? null
+            : Applicable(costs, runtimeId)
+                .Where(p => p.Runtime.Length > 0)
+                .OrderByDescending(p => p.OutputPerMillion)
+                .ThenByDescending(p => p.InputPerMillion)
+                .FirstOrDefault();
+
+    /// <summary>The dearest entry for a runtime, under the catalogue on disk. For the screens.</summary>
+    public static ModelPrice? Highest(string? runtimeId) =>
+        Read().Costs is { } costs ? Highest(costs, runtimeId) : null;
 
     /// <summary>
     /// WHAT THIS TURN COST, or why nobody can say. Every branch that cannot produce a number
@@ -557,20 +653,24 @@ public static class CostCatalog
             return TurnPrice.Unknown(
                 $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
 
-        var price = costs.Models.FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));
+        var price = Applicable(costs, runtimeId)
+            .FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));
         if (price is null)
             return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
 
-        var cost =
-            usage.UncachedInputTokens * price.InputPerMillion +
-            usage.CachedInputTokens * (price.CachedInputPerMillion ?? price.InputPerMillion) +
-            usage.CacheWriteInputTokens * (price.CacheWritePerMillion ?? price.InputPerMillion) +
-            // Reasoning tokens are part of the output count, not a sixth line: adding them would
-            // bill the same tokens twice on every runtime that reports both.
-            usage.OutputTokens * price.OutputPerMillion;
-
-        return new TurnPrice(cost / 1_000_000m, costs.Currency, null);
+        return new TurnPrice(Charge(usage, price), costs.Currency, null);
     }
+
+    /// <summary>
+    /// The arithmetic, on one price. Cached input is a SUBSET of the input count and reasoning
+    /// output a subset of the output count, so each is billed exactly once — see
+    /// <see cref="TurnUsage"/>, where both subsets were measured rather than assumed.
+    /// </summary>
+    static decimal Charge(TurnUsage usage, ModelPrice price) =>
+        (usage.UncachedInputTokens * price.InputPerMillion +
+         usage.CachedInputTokens * (price.CachedInputPerMillion ?? price.InputPerMillion) +
+         usage.CacheWriteInputTokens * (price.CacheWritePerMillion ?? price.InputPerMillion) +
+         usage.OutputTokens * price.OutputPerMillion) / 1_000_000m;
 
     static string? Declared(AgentCosts costs, string? runtimeId) =>
         runtimeId is { Length: > 0 } id && costs.RuntimeModels.TryGetValue(id, out var m) && m.Length > 0
