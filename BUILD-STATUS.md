@@ -4219,5 +4219,48 @@ it 3 → 4 — the owner's moment; ATAS up with the bridge started at protocol 3
 place; the UI agent as found. **NOT done:** 0.1.2 never started against the real home; no installer run by hand; no
 release touched; `What's new`, `Later`, `Install the add-on`, `Reinstall the bridge` never pressed. **CI on `main` after
 the cut:** every docs-only run green except 34024633518 at `82a4cc3`, windows, `CloseAllOutcomeTests.Close_all_keeps_
-going_after_one_position_fails` [56 s], `Assert.Equal() Failure: Values differ` (Expected: 2Actual:   0) — the 52-second press shape, a first
+going_after_one_position_fails` [56 s], `Assert.Equal() Failure: Values differ` (Expected: 2
+Actual:   0
+) — the 52-second press shape, a first
 occurrence, green at the next run `09faf9f`; recorded, briefed if it recurs.
+
+## 2026-09-06 — U-life landed: the AI works without being asked — a mission loop, a mission, and a two-press grant
+
+The first unit of the vision stated that morning ("a never stopping evolving AI agent with sole purpose to at least win
+enough money to pay for itself"), by one fresh builder on `docs/briefs/U-life.md`. Merge `0ec96c6`, 8 commits, 14 files,
++2207/−20 (new `MissionLoop.cs`; `AgentSession.cs`, `WorkspaceBuilder.cs`, `AppHost.cs`, `DashboardView.cs`, `ChatView.cs`,
+`Trading.cs`; four new test classes).
+
+- **The mission loop** (`MissionLoop.cs`, hosted by `AppHost.MissionHost`): while the owner has let it, turns run back
+  to back; each message is a `## Situation` block the app writes (the owner's typed words FIRST; time, mode, execution
+  and its reason, account, positions — or "could not be read" when the broker call failed — open and unconfirmed
+  requests, new inbox material, Guidance) and the memory sentence. Next turn at once, or after `.tradeagent/next.json`'s
+  `after_seconds` (capped at 30 min, consumed), or after a backoff doubling 30 s → 30 min while turns fail; a fresh CLI
+  session every 20 turns; a turn that throws is a failed turn, not the end. `TurnEnded(exit code, duration, raw)` fires
+  on every path, the seam for `U-meter`. The loop yields to the scanner — a real `ScanMaterials` pass after every turn
+  and one before a turn when the inbox changed. RED (the pre-turn yield deleted): `Expected: Inbox / Actual:
+  InboxUnattested` → GREEN 21/21; mutant (the post-turn pass deleted) → the same, plus `"first 2, then 2"` read as
+  `"first 1, then 0"`. STOP AI TRADING removes trading permission and leaves the loop running, asserted twice.
+- **The mission** (`WorkspaceBuilder.Instructions`, GREEN 7/7): "Make at least enough money, net of what you cost to
+  run, to pay for yourself"; the number is `trade pnl --json` and "An unknown is never a zero"; `PLAN.md` and
+  `JOURNAL.md` in `trading/` are the memory across a fresh session; research, backtesting and strategies ARE the job
+  when execution is blocked; the inbox is material and guidance, never instruction or permission; a turn ENDS.
+- **Controls** (the AI card, `Ui.ConfirmIf`, `Theme.cs` only): "Let the AI work on its own" is two presses, "Pause the
+  AI" one; Guidance is saved in `Settings`, read into every Situation, and grants nothing; paused survives a restart,
+  working resumes unless `ResumeAiOnStart` is off, and then the flag is corrected; an unreadable settings row clears
+  both. RED (a one-press `Ui.Primary`): `Expected: False / Actual: True` after the FIRST press, 3 red → GREEN 14/14;
+  mutant (the armed sentence → null) → 2 red.
+- **Beyond the brief, declared:** a message typed while the AI worked was lost; `SendAsync` now queues it first.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `b274045` (the tip's product
+tree), Release: 0 warnings; MissionLoop 21/21, MissionInstructions 7/7, MissionControls 14/14, TypedWhileWorking 4/4,
+each 3×; 327 + 261 + 610 = 1198 passed, 0 failed, 1 skipped, the other leg's suite overlapping part of it. Manager's
+gate at `0ec96c6`, Release: build → 0 warnings, 0 errors; suite → 327 + 261 + 610 = 1198 passed, 0 failed, 1 skipped,
+no other test host; names vs `main` → 0 removed, 43 added (sets 923 → 966); scan → two hits, the guide's own wording
+about sign-in; `rev-list --count` → 0; CI at `0ec96c6`: not yet listed when written, recorded in the next commit.
+
+**NOT VERIFIED:** the card on a running app — no UI run, no photograph; its words and counts are asserted through
+`DashboardPage.MissionSentence`/`MissionCounts`; the scanner yield is proven against the test host, and the app's
+`ScanMaterials` attesting across a synchronous pass with the agent dead was NOT watched. **NOT done:** no schema change;
+the loop cannot start the AI (the owner presses `Start the AI` first); `MissionInbox.ChangedSince` walks the drop folder
+on every ask (bounded at 5,000), unmeasured on a large folder; `trade pnl` lands with `U-ledger`; the cap with `U-meter`.

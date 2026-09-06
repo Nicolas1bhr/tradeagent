@@ -75,9 +75,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    the in-process gateway are not security boundaries.
 6. **Then, in order (the money path, re-planned 2026-09-06 against the vision above; GPT-6 Astra consulted once on
    direction, its corrections taken):** (a) `U-ledger` (the fill table, `trade pnl`, a Performance card) and `U-life`
-   (the mission loop, the mission, Guidance, two-press "work on its own") — in flight, briefs in `docs/briefs/`;
-   (b) `U-meter` (briefed: the AI's cost per turn and per day, `costs.json`, a daily cap that pauses the loop) when one
-   of them lands; (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
+   (the mission loop, the mission, Guidance, two-press "work on its own") — `U-life` LANDED `0ec96c6`, `U-ledger` built at `ab0c4e9` and being carried over it by `U-ledger-rebase`;
+   (b) `U-meter` (the AI's cost per turn and per day, `costs.json`, a daily cap that pauses the loop) in flight; (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
    ledger; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
