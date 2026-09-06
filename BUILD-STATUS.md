@@ -4402,6 +4402,6 @@ errors; the class 3× → 149/149 each; 348 + 261 + 615 = 1224 passed, 0 failed,
 `--list-tests` vs `main` 1225 = 1225; scan clean. PR #11 run 34042541589 at `3791460` GREEN on all three runners and
 `package`, no Timing retry; run 34044573112 at `5b242ac` GREEN on all three and `package` — nine runner-passes for this
 test. Manager's gate at `b6b044b` (rebased over the meter and typed landings, neither touching this file), Release:
-build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI at `697e24f`: pending when written, recorded in the next commit.
+build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI run 34046329176 at `697e24f`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no product code; no box, no UI. Nothing in the fixer's report is NOT VERIFIED.
