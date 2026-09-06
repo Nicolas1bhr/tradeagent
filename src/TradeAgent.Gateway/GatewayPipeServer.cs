@@ -1648,7 +1648,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return new
         {
             count = items.Count,
-            note = "sha is the first 12 characters of sha256, and is what the material commands accept",
+            note = "sha is the first 12 characters of sha256, and is what the material commands accept. A shorter prefix works only while it names exactly one file; one that names two is refused rather than guessed at.",
             items = items.Select(m => new
             {
                 path = m.RelPath,

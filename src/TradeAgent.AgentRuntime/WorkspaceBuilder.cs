@@ -224,7 +224,9 @@ public static class WorkspaceBuilder
     trade material note <sha> "anything else worth knowing"
     ```
 
-    Use a short hash prefix — the first 12 characters, as `trade material list` prints them.
+    Use a short hash prefix — the first 12 characters, as `trade material list` prints them. A
+    prefix that would name two different files is refused rather than guessed at, so if you get that
+    error, give more of the hash.
     **Run one of these every time you execute something from the inbox, and every time you produce
     a file that matters.** Two lines at the time cost nothing; reconstructing it later is impossible.
 

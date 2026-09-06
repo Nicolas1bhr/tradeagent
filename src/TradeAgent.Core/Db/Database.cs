@@ -217,6 +217,30 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','3') ON CONFLICT(key) DO UPDATE SET value='3';");
         }
 
+        if (have < 4)
+        {
+            // A REMOVED ROW IS NEVER UN-REMOVED (REVIEW 2026-09-05b finding 6).
+            //
+            // The observation key was (rel_path, size_bytes, modified_at), and a sighting that
+            // matched it cleared `removed_at`. So a file the ledger had WATCHED GO, replaced by
+            // different content of the same length with the mtime restored, brought the old row
+            // back — hash and all. `NeedingHash` only picks up rows whose sha256 is null, so it was
+            // never re-read: the ledger stated a hash of bytes that were provably not there.
+            //
+            // The version column is what lets the answer be the one this table's own doc comment
+            // already promises — "a file that is replaced leaves its old row behind and gains a new
+            // one" — rather than clearing the hash and pretending one row had always been the same
+            // file. It does not touch the blind spot the DDL above records (an in-place swap with
+            // size AND mtime both preserved); that one is closed only by hashing unconditionally,
+            // which the laptop budget forbids. This is the other half, the one the ledger watched.
+            Exec("""
+            ALTER TABLE material ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+            DROP INDEX IF EXISTS ux_material_seen;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_material_seen ON material(rel_path, size_bytes, modified_at, version);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','4') ON CONFLICT(key) DO UPDATE SET value='4';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

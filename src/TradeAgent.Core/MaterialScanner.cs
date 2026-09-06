@@ -152,6 +152,18 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
     /// Fills in hashes for rows that do not have one yet. Separated from the walk so a slow disk
     /// delays the hashes and not the record that the file arrived — knowing a 4 GB installer landed
     /// at 14:02 is most of the value, and it should not wait on reading 4 GB.
+    ///
+    /// <b>The tuple the row is keyed on is re-read here, from the open handle, before and after the
+    /// bytes</b> (Codex F19). The gap between the walk and this loop is unbounded — a 4 GB drop is
+    /// hashed over several passes — and nothing checked that the file was still the one the row
+    /// describes. An equal-length replacement with the mtime restored inside that gap had its hash
+    /// written onto the earlier sighting's row, which is the same lie as finding 6 reached from the
+    /// other side: a measurement filed against something that was not measured.
+    ///
+    /// From the HANDLE, not the path, because by then the path may name a different file entirely;
+    /// and twice, because a swap during the read would otherwise pass the check before it happened.
+    /// A row that fails either check is simply left unhashed: the next walk sees the new tuple and
+    /// records it as the new version it is.
     /// </summary>
     int HashPending(CancellationToken ct)
     {
@@ -163,7 +175,12 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
             try
             {
                 using var fs = File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                _store.SetHash(m.Id, Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant());
+                if (!IsStill(fs, m)) continue;
+
+                var digest = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+                if (!IsStill(fs, m)) continue;
+
+                _store.SetHash(m.Id, digest);
                 hashed++;
             }
             catch (IOException) { }                 // still being written, or gone — the next pass retries
@@ -171,6 +188,11 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
         }
         return hashed;
     }
+
+    /// <summary>Is the open file still the one this row was written about?</summary>
+    static bool IsStill(FileStream fs, Material m) =>
+        fs.Length == m.SizeBytes &&
+        new DateTimeOffset(File.GetLastWriteTimeUtc(fs.SafeFileHandle), TimeSpan.Zero) == m.ModifiedAt;
 
     IEnumerable<string> Walk(string dir, int depth, ref int skipped, CancellationToken ct)
     {
