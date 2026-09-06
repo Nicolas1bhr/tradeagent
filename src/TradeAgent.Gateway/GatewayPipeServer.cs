@@ -241,6 +241,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.Orders, ReadPath, "the account, then the orders"),
         new(Core.Ops.Order, ReadPath, "the account, then the orders"),
         new(Core.Ops.Executions, ReadPath, "the account, then the executions"),
+        new(Core.Ops.Pnl, PnlHandlerPath, "the account, then the positions, then the instruments — the fills come from the ledger"),
 
         // NO CONNECTOR CALL AT ALL, and they are in the table anyway. A row with a zero path
         // contributes nothing to the maximum, which is the correct arithmetic — but a handler that
@@ -275,6 +276,17 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// one. Two is what a bound is for.
     /// </summary>
     TimeSpan ReadPath => 2 * gateway.Connector.WorstCaseOperationPath;
+
+    /// <summary>
+    /// `pnl`: the account, the positions, and then the instruments — three in series.
+    ///
+    /// The FILLS cost nothing here: they come out of the ledger, which is the point of having one.
+    /// The two reads that remain are the ones a figure about money cannot be honest without — the
+    /// platform's own open positions with its own average price, and the contract size the value of
+    /// a point is derived from. Both are allowed to FAIL without failing the handler; the report
+    /// names what it could not include, which is why this row is a bound and not a requirement.
+    /// </summary>
+    TimeSpan PnlHandlerPath => 3 * gateway.Connector.WorstCaseOperationPath;
 
     /// <summary>
     /// `modify`: ONE orders read — which both resolves the target reference and takes the target as
@@ -901,6 +913,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Orders      => await gateway.OrdersAsync(NamedFlag(req, "all", whenAbsent: false), ct),
                 Core.Ops.Order       => await FindOrder(ctx, Require(req, "id"), ct),
                 Core.Ops.Executions  => await gateway.ExecutionsAsync(ct),
+                Core.Ops.Pnl         => await PnlFor(req, ct),
                 Core.Ops.MaterialList => MaterialList(req),
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
 
@@ -1644,6 +1657,111 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             requests = results
         });
     }
+
+    /// <summary>
+    /// What the trading made or lost, and everything the figure does not know.
+    ///
+    /// THE SHAPE OF THE ANSWER IS THE CONTRACT: a field that is null is an UNKNOWN. `net` is null
+    /// whenever a fill in the window carries no fee, because a net figure computed as though an
+    /// unreported fee were zero is wrong in the owner's favour every time — and the loss budget this
+    /// ruler is being built for would be enforced against it. `incomplete` is where every such gap is
+    /// named in words a person can act on. An empty `incomplete` is a claim, and it is only made when
+    /// nothing was missing.
+    /// </summary>
+    async Task<object> PnlFor(IpcRequest req, CancellationToken ct)
+    {
+        var all = NamedFlag(req, "all", whenAbsent: false);
+        var sinceArg = req.Args is not null && req.Args.ContainsKey("since") ? req.Str("since") : null;
+
+        if (all && sinceArg is not null)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'all' and 'since' ask for two different periods — send one of them");
+
+        DateTimeOffset? since;
+        string window;
+        if (all) { since = null; window = "all"; }
+        else if (sinceArg is not null)
+        {
+            // PRESENT AND UNREADABLE IS A REFUSAL, never a fall-through to today — the same rule as
+            // a price. A window that quietly became a different window is a different answer.
+            if (!DateTimeOffset.TryParse(sinceArg, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var parsed))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'since' is not a date this build can read: {sinceArg}. Send an ISO-8601 instant or date, " +
+                    "for example 2026-09-06 or 2026-09-06T13:00:00Z. Reading it as today would answer a " +
+                    "different question from the one you asked.");
+            since = parsed;
+            window = "since";
+        }
+        else { since = TradingGateway.StartOfDay(DateTimeOffset.UtcNow); window = "today"; }
+
+        var r = await gateway.PnlAsync(since, window, ct);
+        return new PnlReply(
+            r.Window, r.Since, r.AsOf,
+            "days are UTC calendar days. A null figure is an UNKNOWN and never a zero: 'net' is " +
+            "withheld when any fill in the period has no fee, and 'unrealized' when an open " +
+            "position has no price or no contract size. 'incomplete' names every gap.",
+            r.Realized, r.Fees, r.FeesUnknownFills, r.Net, r.Unrealized,
+            r.MaxDrawdown, r.DrawdownIncludesUnrealized, r.Fills, r.FirstFillAt, r.CoverageFrom,
+            [.. r.BySymbol.Select(s => new PnlReplySymbol(s.Symbol, s.Realized, s.Fees, s.FeesUnknownFills,
+                s.Unrealized, s.OpenQuantity, s.LastPrice, s.LastPriceAt, s.Multiplier, s.MultiplierKnown, s.Fills))],
+            [.. r.ByDay.Select(d => new PnlReplyDay(d.Day, d.Realized, d.Fees, d.FeesUnknownFills, d.Fills))],
+            r.Incomplete);
+    }
+
+    /// <summary>
+    /// A NULL FIELD HAS TO ARRIVE AS <c>null</c>, WHICH IS WHY THIS IS A DECLARED TYPE.
+    ///
+    /// <c>Json.Options</c> carries <c>DefaultIgnoreCondition = WhenWritingNull</c>, so an anonymous
+    /// object's null field is not serialized at all — and an ABSENT <c>net</c> is worse than a wrong
+    /// one: it reads as a field this build does not have, so a reader that asks for it gets a missing
+    /// key rather than the answer "TradeAgent cannot compute this". Measured over the real pipe
+    /// before this changed: a report with two unpriced fees came back with no <c>net</c> and no
+    /// <c>fees</c> key at all. <see cref="JsonIgnoreCondition.Never"/> on each nullable money field is
+    /// what overrides that default; the global option is left alone because every other payload on
+    /// this channel wants it.
+    /// </summary>
+    sealed record PnlReply(
+        string Window,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? Since,
+        DateTimeOffset AsOf,
+        string Note,
+        decimal Realized,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        int FeesUnknownFills,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Net,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Unrealized,
+        decimal MaxDrawdown,
+        bool DrawdownIncludesUnrealized,
+        int Fills,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? FirstFillAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? CoverageFrom,
+        IReadOnlyList<PnlReplySymbol> BySymbol,
+        IReadOnlyList<PnlReplyDay> ByDay,
+        IReadOnlyList<string> Incomplete);
+
+    /// <inheritdoc cref="PnlReply"/>
+    sealed record PnlReplySymbol(
+        string Symbol,
+        decimal Realized,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        int FeesUnknownFills,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Unrealized,
+        decimal OpenQuantity,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? LastPrice,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastPriceAt,
+        decimal Multiplier,
+        bool MultiplierKnown,
+        int Fills);
+
+    /// <inheritdoc cref="PnlReply"/>
+    sealed record PnlReplyDay(
+        string Day,
+        decimal Realized,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        int FeesUnknownFills,
+        int Fills);
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
     object MaterialList(IpcRequest req)

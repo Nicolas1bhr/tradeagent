@@ -145,6 +145,14 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             if (all) a["all"] = "true";
             return (Ops.Orders, a);
 
+        // `--all` is consumed before the argument split, like `orders`; `--since` is a flag with a
+        // value and reaches here through `flags`. Neither is defaulted on this side: an unreadable
+        // date is refused by the gateway rather than quietly becoming today.
+        case "pnl":
+            if (all) a["all"] = "true";
+            Opt("since");
+            return (Ops.Pnl, a);
+
         case "quote":
             a["symbol"] = pos.ElementAtOrDefault(0) ?? flags.GetValueOrDefault("symbol") ?? "";
             return (Ops.Quote, a);
@@ -216,6 +224,7 @@ static void Usage()
       trade positions | position <symbol>
       trade orders [--all] | order <id>
       trade executions
+      trade pnl [--since 2026-09-06] [--all]     what it made or lost, and what that figure misses
 
       trade buy  <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
       trade sell <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]

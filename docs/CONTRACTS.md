@@ -197,6 +197,25 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   owner's screen (UNVERIFIED 6). The BROKER's book is unrestricted and stays so: `orders --all`
   already shows every order on the account, and it carries the platform's view rather than
   TradeAgent's record of who asked for it.
+- **`pnl` answers in money, and a null there is an UNKNOWN rather than a zero.** It is computed from
+  TradeAgent's own `fill` table (schema 5) — one row per execution, keyed `(account_id,
+  execution_id)`, written by the gateway from BOTH the connector's execution stream and a pull of
+  `GetExecutionsAsync` at every (re)connect and every five minutes, so a fill both sources report is
+  one row. Realized P&L is average cost, signed by side, sized by `InstrumentInfo.ContractSize` or by
+  the value of a point (`TickValue / TickSize`) where the platform reported those instead, and by
+  quantity × price where it reported neither. `net` is `realized - fees` and is **null whenever any
+  fill in the period carries no fee**, because a net computed as though an unreported cost were zero
+  is wrong in the owner's favour on exactly the fills nobody checked; `fees` is the sum of the fees
+  the platform did report and `fees_unknown_fills` counts the rest. `unrealized` values the
+  platform's own positions at the last price this gateway saw, and is null when a held symbol has no
+  price. `max_drawdown` is the worst peak-to-trough drop of that curve. `incomplete` names every gap
+  in words, including a `GetExecutionsAsync` that FAILED — the difference between "nothing traded"
+  and "nothing was asked" — and how far back the ledger reaches at all: coverage starts when
+  TradeAgent first read the platform's executions, and **on ATAS that is when the bridge started**,
+  because `AtasStrategyAdapter.GetExecutions` reads the strategy's in-session `MyTrades` whatever the
+  bridge says about order history. `by_day` buckets are UTC calendar days and the default window is
+  the UTC day; `--since` takes an ISO-8601 date or instant and, present and unreadable, is refused
+  rather than read as today; `--all` is everything the ledger holds and cannot be combined with it.
 - `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
@@ -368,6 +387,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 | `status` `schema` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read — `schema` builds the same status `status` does |
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
 | `connectors` `material-list` `material-note` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
+| `pnl` | **3W** | the account, the positions, then the instruments. The fills cost nothing: they come out of the ledger. Both reads may FAIL without failing the handler — the report names what it could not include |
 | `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
 | `modify` | **6W** | one orders read that both resolves the target and takes it as it stands, then everything a cold placement does — account, positions, quote, instruments — and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
 | `cancel` | **E** | resolve the target, then cancel — every call risk-reducing, so the whole handler is the one budget |

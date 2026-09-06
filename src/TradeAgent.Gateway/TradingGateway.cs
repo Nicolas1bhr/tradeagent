@@ -496,6 +496,86 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>The last quote seen for a symbol, or null when this gateway has never seen one.</summary>
     public QuoteInfo? LastQuote(string symbol) => _quotes.GetValueOrDefault(symbol);
 
+    // ---------------------------------------------------------------- what it made, and what it does not know
+
+    /// <summary>The UTC day <paramref name="at"/> falls in. What <c>today</c> means everywhere.</summary>
+    public static DateTimeOffset StartOfDay(DateTimeOffset at) => new(at.UtcDateTime.Date, TimeSpan.Zero);
+
+    /// <summary>
+    /// P&amp;L from the ledger alone — no connector call, so the five-second screen refresh can ask for
+    /// it. Open positions are NOT in it: <see cref="PnlReport.Unrealized"/> is null and the caller is
+    /// the one that says so on screen.
+    /// </summary>
+    public PnlReport LedgerPnl(DateTimeOffset? since, string window) => Pnl.Compute(new PnlInputs
+    {
+        AllFills = _fills.Since(),
+        Positions = null,
+        Instruments = _instrumentCache,
+        Quotes = _quotes,
+        Since = since,
+        Window = window,
+        AsOf = Now,
+        CoverageFrom = Coverage()?.WatchingFrom,
+        Notes = PullNotes()
+    });
+
+    /// <summary>
+    /// The whole answer, including what is still open. Reads the platform's positions — its own
+    /// average price, not the ledger's reconstruction of one — and values them at the last price this
+    /// gateway saw. A read that fails is a NOTE, not an exception: a P&amp;L that refuses to answer
+    /// because the connection dropped is less use than one that answers and says what is missing.
+    /// </summary>
+    public async Task<PnlReport> PnlAsync(DateTimeOffset? since, string window, CancellationToken ct = default)
+    {
+        var notes = new List<string>(PullNotes());
+        IReadOnlyList<PositionInfo>? positions = null;
+        try { positions = await PositionsAsync(ct); }
+        catch (Exception ex)
+        {
+            notes.Add($"your open positions could not be read ({ex.Message}), so nothing here includes " +
+                      "what is still open");
+        }
+
+        // The instrument list is what carries the contract size, and a stale cache is the difference
+        // between a figure that is right and one that is out by the multiplier. Refreshed here, and a
+        // failure leaves whatever was cached — with `incomplete` naming any symbol still unpriced.
+        try { await InstrumentsAsync(ct); } catch (Exception) { /* the report names what it could not size */ }
+
+        return Pnl.Compute(new PnlInputs
+        {
+            AllFills = _fills.Since(),
+            Positions = positions,
+            Instruments = _instrumentCache,
+            Quotes = _quotes,
+            Since = since,
+            Window = window,
+            AsOf = Now,
+            CoverageFrom = Coverage()?.WatchingFrom,
+            Notes = notes
+        });
+    }
+
+    public FillCoverage? Coverage() =>
+        _db.GetKv(FillCoverageKey) is { } json ? Json.Read<FillCoverage>(json) : null;
+
+    public FillPullRecord? LastPull() =>
+        _db.GetKv(FillPullKey) is { } json ? Json.Read<FillPullRecord>(json) : null;
+
+    /// <summary>
+    /// What the last read of the platform's fills has to say for itself. A pull that FAILED is the
+    /// difference between "nothing traded" and "nothing was asked", and a report that did not
+    /// distinguish them would let an outage read as a quiet day.
+    /// </summary>
+    IReadOnlyList<string> PullNotes()
+    {
+        var notes = new List<string>();
+        if (LastPull() is not { } pull) return notes;
+        if (!pull.Ok)
+            notes.Add($"TradeAgent's last check of your platform's fills failed at " +
+                      $"{pull.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC ({pull.Error}), so fills since then may be missing");
+        return notes;
+    }
+
     // ---------------------------------------------------------------- settings
 
     TradeAgentSettings LoadSettings()

@@ -16,6 +16,12 @@ public static class Ops
     public const string Instruments = "instruments", Quote = "quote";
     public const string Positions = "positions", Position = "position";
     public const string Orders = "orders", Order = "order", Executions = "executions";
+
+    /// <summary>
+    /// What the trading actually made or lost, out of the fill ledger. A READ — it changes nothing —
+    /// and the only op that answers in money rather than in orders.
+    /// </summary>
+    public const string Pnl = "pnl";
     public const string Buy = "buy", Sell = "sell", Modify = "modify", Cancel = "cancel", CancelAll = "cancel-all";
     public const string Close = "close", CloseAll = "close-all";
     public const string Schema = "schema";
