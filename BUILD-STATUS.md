@@ -4007,7 +4007,7 @@ them, and added the proofs). Merge `15b873d`, 6 commits, 25 files, +1457/−116 
 test host (a first run overlapping another leg's suite was discarded); names 0 removed, 17 added. Manager's gate at
 `15b873d`, Release: build → 0 warnings, 0 errors; suite → 253 + 261 + 587 = 1101, 0 failed (no other test host); names
 vs `main` → 0 removed, 17 added (sets 877 → 894); scan → two hits, `http://127.0.0.1` in a test vendor; `rev-list
---count` → 0; CI at `15b873d`: pending.
+--count` → 0; CI run 34012671151 at `15b873d`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no box, no ATAS, no money, no UI run; no ATAS hash pinned (the owner's call); `DashboardView`'s "Open the
 AI's folder" still points at `workspace/` (another builder owned that file); the DDL's in-place blind spot (size AND
