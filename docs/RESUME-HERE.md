@@ -67,7 +67,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    starting from the open items in step 3 and `docs/REVIEW-2026-09-05b.md`'s UNVERIFIED list and "What I did NOT do"
    (the bridge half beyond what `U-bridge-2` touched, `BridgePipeAuth`, `AtasHealth`, the chat/inbox/onboarding views,
    `AgentSession`, the updater's release-reading half), Codex read-only beside it (`codex exec -s read-only -m
-   gpt-5.6-sol …`; the configured `gpt-6-astra` needs a newer CLI than 0.144.1); (c) the box's real home migrated by
+   gpt-5.6-sol …`; codex-cli 0.153.4 since 2026-09-06, on which `gpt-6-astra` also answers — a direction consult for the manager, never a leg); (c) the box's real home migrated by
    starting 0.1.2 against it, watched, with the bridge row read after; (d) the non-box LOW batch in
    `docs/hardening/briefs/U6-U9-backlog.md` and `TreatWarningsAsErrors` for the whole solution.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
