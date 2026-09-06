@@ -37,3 +37,24 @@ trailers. Gate: Release `--no-incremental` → 0 warnings; each touched class 3�
 at a time, nothing else running (a `Timing` test failing beside another suite → that class alone 3×); names vs `main`
 0 removed. No box, no ATAS, no UI run: say so.
 ## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant quoted; gate counts; NOT done.
+
+Code tip `38925f1` (7 commits), this report on top, rebased onto `main` `ea7c44e`; the gate ran at `d11db37`, whose code tree `38925f1` repeats.
+1. **`fill`, schema 5** (`Database.cs`, `Versions` 4→5, new `Db/FillStore.cs`, `TradingGateway`, `GatewaySchema`): one row
+   per execution keyed `(account_id, execution_id)`, never updated or deleted, from the event stream AND a pull of
+   `GetExecutionsAsync` at every (re)connect (on the health pass that follows) and every five minutes, each pull's `since`
+   and outcome and the coverage start in `kv`. RED `Assert.Single() Failure: The collection contained 2 items` — `X-2`
+   twice, `Event` and `Pull`, 1 failed / 5 passed → GREEN 6/6 → mutant (`source` in the key) → the same `2 items`.
+2. **`trade pnl --json`** (new `Pnl.cs`, `Protocol`, `GatewayPipeServer`, `TradeCli`, the schema, `CONTRACTS.md`): RED
+   `Assert.Null() Failure: … Expected: null / Actual: 48` with an empty `incomplete`, 3 failed / 7 passed → GREEN 10/10 →
+   mutant (NULL fee coalesced to 0) → `Expected: null / Actual: 48`. The pipe found a second defect: `Json.Options` drops
+   nulls, so `net` and `fees` arrived as MISSING KEYS — a declared reply type fixes it, and `"net":null` is now asserted.
+3. **Performance card** (new `PerformanceCard.cs`, `USER-GUIDE.md`): GREEN 3/3; mutant (a withheld net printed as a
+   number) → `Expected: "—" / Actual: "0.00"`.
+**Gate** at `d11db37`, bin/obj deleted, Release `--no-incremental`: 0 warnings, 0 errors, 17 projects. Touched classes
+3× each: 7/7, 11/11, 3/3, 5/5 — 12 runs, 0 failed. Full suite to a file, one project at a time, no other test host:
+302 + 261 + 616 = 1179, 0 failed, 1 skipped. Names vs `main`: 0 removed, 26 added (1153 → 1179). One earlier gate run
+went red on my own assertion (an apostrophe the serializer escapes); fixed in `38925f1`.
+**Off the brief:** `ExecutionInfo.Fee` in `ConnectorSdk`, without which "0 only when the connector said 0" has no
+source; THREE inserted lines in `DashboardView.cs`, not one — a field, a layout entry, the update call.
+**NOT done:** no box, no ATAS, no real money, no UI run — the card is proved by its words, not photographed. That ATAS
+serves in-session `MyTrades` only is read from its source and is NOT VERIFIED.
