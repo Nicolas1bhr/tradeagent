@@ -85,9 +85,6 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
         // The window every Inbox claim in this pass is measured over. On the very first pass there
         // is no previous one, and MinValue is the honest window: "since before anything happened".
         var since = Sql.TimeN(db.GetKv(LastScanKey)) ?? DateTimeOffset.MinValue;
-        // Written at the START of the pass, not the end: a file created while this pass is walking
-        // is seen by the NEXT one, and its window has to reach back far enough to contain it.
-        db.SetKv(LastScanKey, Sql.T(now));
 
         foreach (var (origins, root, dirs) in new (MaterialOrigin[], string, string[])[]
                  {
@@ -143,6 +140,14 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
             // would cover is a silent false deletion. Do not read it as covered.
             if (complete && !truncated) removed += _store.MarkMissing(origins, present, now);
         }
+
+        // THE WINDOW ADVANCES ONLY ON A PASS THAT WALKED THE WHOLE TREE AND GOT HERE. It carries
+        // the pass's START, so a file created while this walk was running is inside the window the
+        // NEXT pass measures it over. A pass that ran out of budget, or threw before this line,
+        // leaves the older and wider window in place: it did not look everywhere, so it cannot
+        // shorten the period the next pass has to account for. Fail-closed, in the direction that
+        // costs a weaker word on a row rather than a claim nobody can support.
+        if (!truncated) db.SetKv(LastScanKey, Sql.T(now));
 
         var hashed = HashPending(ct);
         return new ScanResult(seen, added, hashed, removed, skipped, truncated);

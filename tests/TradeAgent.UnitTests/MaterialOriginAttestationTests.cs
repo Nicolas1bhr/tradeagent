@@ -152,6 +152,35 @@ public class MaterialOriginAttestationTests
         Assert.All(new MaterialStore(db).Present(), m => Assert.Null(m.RemovedAt));
     }
 
+    /// <summary>
+    /// A pass that ran out of budget did not look everywhere, so it must not record itself as having
+    /// covered the period since the last one. If it did, an agent run inside that period would be
+    /// walked past and the next pass would attest a window it has no business attesting.
+    /// </summary>
+    [Fact]
+    public void A_pass_that_ran_out_of_budget_does_not_shorten_the_window_the_next_one_attests_over()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+
+        Drop(root, "inbox/one.txt", "dropped by the owner");
+        new MaterialScanner(db, root, presence.NoneSince).Scan();   // a whole pass: the window moves
+
+        presence.Enter().Dispose();                                 // and then an agent ran
+
+        // A pass whose budget is spent before it looks at anything. It stamps nothing removed, and
+        // it must not close the window over the run above either.
+        Assert.True(new MaterialScanner(db, root, presence.NoneSince) { FileLimit = 0 }.Scan().HashBudgetSpent);
+
+        Drop(root, "inbox/two.txt", "and this appeared after that run");
+        new MaterialScanner(db, root, presence.NoneSince).Scan();
+
+        var store = new MaterialStore(db);
+        Assert.Equal(MaterialOrigin.Inbox, store.Present().Single(m => m.Name == "one.txt").Origin);
+        Assert.Equal(MaterialOrigin.InboxUnattested, store.Present().Single(m => m.Name == "two.txt").Origin);
+    }
+
     /// <summary>The witness itself: unsure is never "nobody was here".</summary>
     [Fact]
     public void The_presence_witness_answers_no_whenever_it_is_unsure()
