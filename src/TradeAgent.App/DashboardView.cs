@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
@@ -107,9 +108,28 @@ sealed class DashboardPage
     readonly Border _unconfirmedCard;
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
 
+    readonly Button _workButton;
+    readonly TextBlock _missionState = Ui.With(Ui.Body("—"), t => t.FontWeight = FontWeight.SemiBold);
+    readonly TextBlock _missionCounts = Ui.Micro("");
+    readonly TextBlock _missionLast = Ui.Muted("");
+    readonly TextBox _guidance;
+
     string _healthSignature = "";
     string _approvalSignature = "";
     string _unconfirmedSignature = "";
+
+    /// <summary>
+    /// THE ARMED SENTENCES OF THE ONE CONTROL ON THIS PAGE THAT GRANTS. Spelled here rather than at
+    /// the widget so a test and the guide can quote the words the owner actually reads — the same
+    /// arrangement the Safety page's controls have in <see cref="Labels"/>.
+    /// </summary>
+    public const string LetTheAiWork = "Let the AI work on its own";
+
+    /// <summary>What the second press does, in full. Never the bare word "Confirm".</summary>
+    public const string LetTheAiWorkArmed = "Confirm: let the AI keep working without being asked";
+
+    /// <summary>The other direction. One press: it only ever takes work away.</summary>
+    public const string PauseTheAi = "Pause the AI";
 
     public Control Root { get; }
 
@@ -186,10 +206,40 @@ sealed class DashboardPage
                 Ui.With(_unconfirmed, p => p.Margin = new Thickness(0, Theme.S2, 0, 0)))
         };
 
+        // The AI's own work. Built once, like everything else on this page: the five-second tick
+        // rewrites the text of these four controls and touches nothing else, so a half-pressed
+        // "Confirm: let the AI keep working…" and a half-typed guidance box both survive it.
+        _workButton = BuildWorkOnItsOwn(
+            () => _host.Mission.Running,
+            () => _host.LetTheAiWorkOnItsOwn(),
+            () => _ = PauseMissionAsync());
+
+        _guidance = Ui.TextField(host.Gateway.Settings.Guidance,
+            "e.g. focus on ES during the US session; keep positions small until the journal shows three good days");
+        _guidance.AcceptsReturn = true;
+        _guidance.TextWrapping = TextWrapping.Wrap;
+        _guidance.MinHeight = 72;
+
+        var aiCard = Ui.Col(Theme.S3,
+            _missionState,
+            _missionCounts,
+            Ui.With(_missionLast, t => t.FontSize = Theme.Small),
+            Ui.With(Ui.Row(Theme.S2, _workButton), r => r.Margin = new Thickness(0, Theme.S2, 0, 0)),
+            Ui.With(Ui.Divider(), d => d.Margin = new Thickness(0, Theme.S2, 0, 0)),
+            Ui.Label("Guidance"),
+            // Words, not authority, and the box says so. Nothing typed here can widen a limit,
+            // change a mode or lift the kill switch — the AI is told the same thing in its own file.
+            Ui.Micro("Included in everything the AI is told, every turn. It steers what it works on; "
+                     + "it cannot give it permission to do anything the Safety page has not."),
+            _guidance,
+            Ui.With(Ui.Row(Theme.S2, Ui.Secondary("Save guidance", SaveGuidance)),
+                r => r.Margin = new Thickness(0, Theme.S2, 0, 0)));
+
         var left = Ui.Col(Theme.S6,
             _unconfirmedCard,
             _approvalsCard,
-            Ui.Section("Right now", Ui.Col(0, facts, actions)));
+            Ui.Section("Right now", Ui.Col(0, facts, actions)),
+            Ui.Section("The AI's own work", aiCard));
 
         var right = Ui.Section("System health", _healthRows);
         right.Margin = new Thickness(Theme.S5, 0, 0, 0);
@@ -219,6 +269,7 @@ sealed class DashboardPage
         _agentButton.Content = _host.Agent.Running ? "Stop the AI" : "Start the AI";
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
 
+        RefreshMission(_host.Mission.Status, _host.Mission.Running);
         RefreshApprovals(waiting);
         // Read straight from the gateway rather than from GatewayStatus, which carries only a count.
         // Unreconciled() is the same question TryAuthorizeExecution refuses on — the flag AND a
@@ -235,6 +286,88 @@ sealed class DashboardPage
             _healthRows.Children.Clear();
             foreach (var h in health) _healthRows.Children.Add(Ui.StatusRow(h));
         }
+    }
+
+    // ---- the AI's own work -----------------------------------------------------------------------
+
+    /// <summary>
+    /// LETTING THE AI WORK ON ITS OWN IS TWO PRESSES; PAUSING IT IS ONE.
+    ///
+    /// It is the same rule as every other control in this product (REVIEW 2026-09-05b finding 3):
+    /// a press that gives the AI room asks twice and says what the second press will do, in full; a
+    /// press that takes room away happens at once, because hesitating on the way down costs money
+    /// and an owner trying to stop should not have to argue with the software.
+    ///
+    /// This one gives it a great deal of room. It is the difference between an AI that answers when
+    /// spoken to and one that starts a new turn the moment the last one ends, for as long as the
+    /// machine is on — which is the product, and is not something to arrive at by a mis-click.
+    ///
+    /// A factory, like the Safety page's three, so that what a test presses is the control the owner
+    /// sees rather than a reconstruction of it.
+    /// </summary>
+    internal static Button BuildWorkOnItsOwn(Func<bool> working, Action letItWork, Action pause) =>
+        Ui.ConfirmIf(working() ? PauseTheAi : LetTheAiWork,
+            () => working() ? null : LetTheAiWorkArmed,
+            () => { if (working()) pause(); else letItWork(); },
+            working() ? "secondary" : "primary");
+
+    /// <summary>
+    /// The four words the card can say, and the two numbers beside them. Every value is read from the
+    /// loop rather than inferred here, so the card cannot claim a state the loop is not in.
+    ///
+    /// <c>Ui.SetResting</c> rather than assigning the content: the label changes when the loop starts
+    /// or stops, and a plain assignment on the five-second tick would wipe a half-pressed confirm off
+    /// the screen while the owner was reading it.
+    /// </summary>
+    void RefreshMission(MissionStatus status, bool running)
+    {
+        Ui.SetResting(_workButton, running ? PauseTheAi : LetTheAiWork, running ? "secondary" : "primary");
+
+        (_missionState.Text, _missionState.Foreground) = status.State switch
+        {
+            MissionState.Working => ("working", Theme.Positive),
+            MissionState.Waiting => (status.NextTurnAt is { } at
+                ? $"waiting until {at.ToLocalTime():HH:mm}"
+                : "waiting", Theme.TextMuted),
+            MissionState.Paused => ("paused", Theme.Caution),
+            _ => ("stopped — the AI has not been started", Theme.TextFaint)
+        };
+
+        var counts = status.Turns == 1 ? "1 turn" : $"{status.Turns} turns";
+        if (status.ConsecutiveErrors > 0)
+            counts += status.ConsecutiveErrors == 1
+                ? " — the last one ended in an error"
+                : $" — {status.ConsecutiveErrors} errors in a row";
+        _missionCounts.Text = counts;
+        _missionCounts.Foreground = status.ConsecutiveErrors > 0 ? Theme.Danger : Theme.TextFaint;
+
+        _missionLast.Text = status.LastTurnFirstLine is { Length: > 0 } line
+            ? Shorten(line, 160)
+            : "";
+        _missionLast.IsVisible = _missionLast.Text.Length > 0;
+    }
+
+    static string Shorten(string text, int max) => text.Length <= max ? text : text[..max] + "…";
+
+    /// <summary>Stops the loop, and says why if it will not stop.</summary>
+    async Task PauseMissionAsync()
+    {
+        try { await _host.PauseTheAiAsync(); }
+        catch (Exception ex) { Ui.ReportError?.Invoke(ex.Message); }
+    }
+
+    /// <summary>
+    /// Saves the guidance. ONE press: text that steers what the AI spends its time on takes no
+    /// authority and gives none, so asking twice here would teach the owner to click through the
+    /// confirmations that do matter.
+    /// </summary>
+    void SaveGuidance()
+    {
+        var text = _guidance.Text?.Trim() ?? "";
+        _host.Gateway.Update(s => s.Guidance = text);
+        _host.Gateway.Log.Activity(text.Length == 0
+            ? "Your guidance for the AI was cleared"
+            : "Your guidance for the AI was saved");
     }
 
     void RefreshApprovals(IReadOnlyList<ExecutionRequest> waiting)

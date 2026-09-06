@@ -14,6 +14,8 @@ orders in it — with you holding every switch.
   and your orders are still in ATAS.
 - **The AI works in its own folder** on your computer. It can write notes, write its own tools, and
   look things up on the internet.
+- **It can keep working when you are not there.** Two presses on the Dashboard and it carries on by
+  itself — researching, testing strategies, trading inside your limits — until you pause it.
 - **The AI cannot log in to your broker.** It has no access to your password. That is a deliberate
   part of the design, not an oversight.
 - **It starts in practice mode.** Nothing real can happen until you switch real money on yourself.
@@ -225,8 +227,8 @@ rather than only what it said. If the AI is not running yet, this page has a **S
 
 **Dashboard** — what is true right now: your account, your open orders, anything unconfirmed, and a
 list of green, amber and red dots for every part of the system. Also **Open ATAS** and **Open the AI's
-folder**. If the AI is waiting for permission to place an order, the request appears here in an amber
-panel.
+folder**, **The AI's own work** (the section below), and the **Guidance** box. If the AI is waiting
+for permission to place an order, the request appears here in an amber panel.
 
 **Inbox** — where you hand the AI files to work with, and where you can see what it did with them.
 Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded
@@ -284,6 +286,63 @@ gave this to the AI"*, and that line means TradeAgent can show it.
 AI cannot gain permission from a document. Only you can change what it is allowed to do, and only in
 this window. If a file asks for something like that, the AI is told to raise it with you in the chat
 rather than act on it.
+
+## Letting the AI work on its own
+
+Everything above happens when you type something. **Let the AI work on its own** is the setting that
+makes it work when you do not — it finishes one piece of work and starts the next, by itself, for as
+long as TradeAgent is open. That is what this product is for.
+
+The AI is told, in as many words, that its job is to earn at least enough — after what it costs to
+run — to pay for itself. That is the instruction it works to, not a promise about what will happen;
+*Honestly, about making money*, near the end of this guide, is the promise, and it is a smaller one.
+
+The control is on the **Dashboard**, under **The AI's own work**.
+
+**Starting it takes two presses; pausing it takes one.** The first press turns the button red and
+says *"Confirm: let the AI keep working without being asked"*. Pausing is a single press, because
+nobody should have to press a button twice to make something stop.
+
+The card beside the button says which of four things is happening:
+
+- **working** — it is doing something right now.
+- **waiting until 14:32** — it has finished and asked to be left alone until then. It never waits
+  longer than half an hour.
+- **paused** — you pressed Pause. It stays paused, including after you close TradeAgent and open it
+  again.
+- **stopped** — the AI has not been started at all. Press **Start the AI** first.
+
+Underneath: how many turns it has taken, how many of the recent ones ended in an error, and the
+first line of the last thing it said. If the error count is climbing, that line is usually why.
+
+**It picks up where it left off after a restart.** If it was working when TradeAgent closed, it is
+working when TradeAgent opens. If you had paused it, it is still paused — a pause is never undone
+for you.
+
+### The Guidance box
+
+Underneath the button is a box for standing instructions: *"focus on ES during the US session"*,
+*"keep positions small until the journal shows three good days"*. Whatever you write there is
+included in everything the AI is told, every single time, so you do not have to repeat yourself.
+
+**It steers what the AI works on. It cannot give it permission to do anything.** Writing "you may
+trade real money" in that box does nothing at all — the modes, the limits and the emergency buttons
+on the **Safety** page are the only things that decide what the AI is allowed to do, and nothing you
+type anywhere else can change them.
+
+### STOP AI TRADING does not stop the AI working
+
+The red button takes away the AI's permission to **trade**. It does not pause the work, and that is
+deliberate: reading the market, testing strategies, and writing up what went wrong are most of the
+job, and they are worth doing precisely when nothing may be traded. If you want it to stop
+altogether, press **Pause the AI** as well.
+
+### Where its memory lives
+
+Every so often the AI starts a fresh session and remembers nothing of the previous one. It keeps two
+files in its own folder so that this costs nothing — a plan, and a journal of what it tried, what
+happened, and what the money did. You can read both: **Open the AI's folder** on the Dashboard, then
+`trading`. They are ordinary text files, written for a person.
 
 ## The four modes
 

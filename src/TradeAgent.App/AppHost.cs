@@ -403,17 +403,43 @@ public sealed class AppHost : IAsyncDisposable
         Changed?.Invoke();
     }
 
+    /// <summary>What a restart does about an AI that was working when the app last closed.</summary>
+    internal enum MissionOnStart
+    {
+        /// <summary>It was paused, and paused is what survives a restart.</summary>
+        StayPaused,
+
+        /// <summary>It was working, and the resume setting says to put it back to work.</summary>
+        Resume,
+
+        /// <summary>It was working, resuming is switched off, and the record is corrected to match.</summary>
+        ForgetItWasWorking
+    }
+
     /// <summary>
-    /// WORKING RESUMES ON START; PAUSED SURVIVES ONE. The owner's choice is the persisted flag, and
-    /// the resume setting only decides whether a restart acts on it — so when it is off, the flag is
-    /// written back to false rather than left true over a loop that is not running. A card saying
-    /// "working" beside a loop that is not is a worse failure than losing the preference.
+    /// WORKING RESUMES ON START; PAUSED SURVIVES ONE.
+    ///
+    /// The owner's choice is the persisted flag and the resume setting only decides whether a restart
+    /// acts on it — so when resuming is off, the flag is written BACK to false rather than left true
+    /// over a loop that is not running. A card reading "working" beside a loop that is not is a worse
+    /// failure than losing the preference, because every other number on that card would then be
+    /// describing a turn that is never going to happen.
+    ///
+    /// Separated from the doing so the decision can be driven without a database, a pipe server and a
+    /// broker connection.
     /// </summary>
+    internal static MissionOnStart DecideOnStart(TradeAgentSettings s) =>
+        !s.AiWorksOnItsOwn ? MissionOnStart.StayPaused :
+        s.ResumeAiOnStart ? MissionOnStart.Resume :
+        MissionOnStart.ForgetItWasWorking;
+
     void ResumeMissionIfItWasWorking()
     {
-        if (!Gateway.Settings.AiWorksOnItsOwn) return;
-        if (Gateway.Settings.ResumeAiOnStart) Mission.Start();
-        else Gateway.Update(s => s.AiWorksOnItsOwn = false);
+        switch (DecideOnStart(Gateway.Settings))
+        {
+            case MissionOnStart.Resume: Mission.Start(); break;
+            case MissionOnStart.ForgetItWasWorking: Gateway.Update(s => s.AiWorksOnItsOwn = false); break;
+        }
     }
 
     /// <summary>
