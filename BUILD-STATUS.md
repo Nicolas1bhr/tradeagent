@@ -4053,3 +4053,44 @@ through `HealthRegistry` and `DoctorReport`, not photographed; item 1's health-r
 reporter did not exist to fail) — the mutant kills both halves. **NOT done:** `OpenAtasOrExplain` still starts ATAS
 through its own `Process.Start` (an `InstallDir` a readable `atas.json` points at, `File.Exists`-guarded, not behind
 item 3's check); no box, no real ATAS, no UI run.
+
+## 2026-09-06 — U-codex-2b landed: an unreadable present field is refused, a versionless frame is refused, a heartbeat that cannot describe the bridge clears the proof
+
+Codex F6, F7 and F13 (read-only claims from review 2), by two builders on `docs/briefs/U-codex-2b.md` (the first killed
+by a usage limit after three commits; the second kept all three, added the proofs, corrected a false claim the branch
+shipped) and one fresh fixer on `docs/briefs/U-codex-2b-fix.md` for the race the manager's gate found. Merge `07cbb91`,
+8 commits, 11 files, +994/−45 (`Protocol.cs`, `GatewayPipeServer.cs`, `AtasConnector.cs`, `AtasHealth.cs`,
+`CONTRACTS.md`, four test files, the harness).
+
+- **F6 — a price or a tif that is present and unreadable is refused, not read as absent.** RED (the guard reverted,
+  real pipe, 10 failed): `limit='bad' → ok=True · connector saw: Market limit=none`, `limit='1,5' → Limit limit=15`,
+  `tif='' → ok=True · connector saw: Day` → GREEN `INVALID_REQUEST` naming the field, nothing placed; three mutants
+  (`AllowThousands`; JSON null read as absent; `InvariantCulture` → `CurrentCulture`) each red. JSON `null` on
+  limit/stop/quantity/tif and `all: ""` were claimed by `CONTRACTS.md` and covered by nothing: both RED pre-fix, now
+  asserted. A false claim corrected: `InvariantGlobalization=true` makes `new CultureInfo("de-DE")` throw in this build.
+- **F13 — a frame that does not say which protocol it speaks is refused rather than read as this one.** RED: a hello
+  with no `v` answered `ok:true … compatible:true` and a versionless `buy` on a live session `FILLED` → GREEN
+  `INCOMPATIBLE_PROTOCOL`, then `IPC_UNAUTHENTICATED`, no order; mutant → refused for the wrong reason, red on the
+  reason. The old test asserting the versionless hello was accepted is `[Fact(Skip=…)]` naming its replacement.
+- **F7 — a heartbeat that cannot say what the bridge can do clears what it last said.** RED: `after 10.0s of pulses
+  that cannot describe the bridge: … provable=True · autonomous dispatch: authorized=True` → GREEN `provable=False ·
+  authorized=False code=AUTONOMY_REQUIRES_PROVABLE_STATE`, row `FAILED — …has stopped saying what it can do`; a mutant
+  dropping `BridgeCompatible` from `Attested` left the suite green, so the missing probe (a heartbeat at a version this
+  build does not speak attests nothing) was written and went red.
+- **The race the manager's gate found, fixed by the fresh fixer:** `Capabilities` read `_hello` six times while the new
+  clear could null it between reads — `NullReferenceException` at `AtasConnector.cs:554`, once in the full suite, the
+  class alone 40/40 ×3. `_hello` is `volatile` and every reader takes one snapshot (`Capabilities`, `StatusDetail` and
+  its three helpers, `Unauthenticated`, `PeerHasGoneQuiet`; `AtasHealthReporter.Report` read `StatusDetail` twice a
+  tick). RED 6/6 with a 32-reader hammer (`torn read : NullReferenceException — at get_Capabilities() … line 554`; the
+  tier-0 disassembly reloads the field before each read) → GREEN 20/20; mutant → RED 3/3.
+
+**Verified by running (the builders, quoted; then the manager's gate):** builder's gate at `98a4da2`, Release: 0
+warnings; 237 + 261 + 610 = 1108, 0 failed, 1 skipped. Fixer's gate at `c67858c`: 0 warnings; 1125 passed, 0 failed, 1
+skipped. Manager's gate at `07cbb91` (rebased onto `64743bf`; one add/add conflict on the fixer's brief, a docs file,
+taken from the branch), Release: build → 0 warnings, 0 errors; suite → 281 + 261 + 610 = 1152 passed, 0 failed, 1
+skipped (no other test host); names vs `main` → 0 removed, 15 added (sets 908 → 923); scan clean; `rev-list --count`
+→ 0; CI at `07cbb91`: pending.
+
+**NOT done:** `req.V` is checked only on `hello`, so a frame naming a wrong version mid-session is read as this one —
+left for the next review; `Bridge` and `StatusDetail` remain two readings of the connector (a display inconsistency on
+a five-second tick, not an NRE); no box, no UI run.
