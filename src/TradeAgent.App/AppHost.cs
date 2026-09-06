@@ -306,7 +306,13 @@ public sealed class AppHost : IAsyncDisposable
             return new AiActivity(
                 Mission is null ? AiActivity.None.State : Mission.Status.State.ToString().ToLowerInvariant(),
                 spend.Turns,
-                spend.CanPrice ? spend.Spent : null);
+                spend.CanPrice ? spend.Spent : null)
+            {
+                // Only ever beside a figure. A label with no number to qualify would tell the agent
+                // its unmeasurable cost was an estimate, which is a claim about a figure that is not
+                // on the wire at all.
+                CostEstimated = spend.CanPrice ? spend.Estimated : null
+            };
         };
 
     void OnGatewayStateChanged() => Changed?.Invoke();

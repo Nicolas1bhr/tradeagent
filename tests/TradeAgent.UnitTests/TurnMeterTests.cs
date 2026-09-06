@@ -384,8 +384,15 @@ public class TurnRecordTests : IDisposable
     }
 
     /// <summary>
-    /// Codex 0.153.4 names no model, so without an entry the owner wrote there is nothing to price
-    /// against — and the sentence says that, rather than the software choosing a model for them.
+    /// A runtime with no list price of its own names no model and has nothing to be estimated
+    /// against, so it stays unpriced until the owner's file names one — and the sentence says that,
+    /// rather than the software choosing a model for them.
+    ///
+    /// <c>custom</c> is that runtime and is the honest example of it: its command, and therefore its
+    /// provider, is written by an engineer in <c>runtimes.json</c>, so <see cref="ListPrices"/>
+    /// deliberately ships nothing for it. <c>codex</c> USED to behave this way and no longer does —
+    /// it now carries a dated catalogue and its unnamed model is charged at the dearest entry in it
+    /// (<c>U-prices</c> item 2, asserted in <see cref="UnknownModelIsPricedHighTests"/>).
     /// </summary>
     [Fact]
     public void A_runtime_that_names_no_model_is_unpriced_until_costs_json_names_one_for_it()
@@ -393,8 +400,8 @@ public class TurnRecordTests : IDisposable
         CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
         var usage = new TurnUsage(17232, 12928, 0, 6, 0, null);
 
-        Assert.Null(CostCatalog.Price(usage, "codex").Cost);
-        Assert.Contains(Labels.CostsFile, CostCatalog.Price(usage, "codex").Unpriced);
+        Assert.Null(CostCatalog.Price(usage, "custom").Cost);
+        Assert.Contains(Labels.CostsFile, CostCatalog.Price(usage, "custom").Unpriced);
         Assert.NotNull(CostCatalog.Price(usage, "probe").Cost);
     }
 
@@ -594,5 +601,139 @@ public class ShippedListPriceTests : IDisposable
             CostCatalog.Price(new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "house-model"), "custom").Cost);
 
         Assert.Null(CostCatalog.Highest(CostCatalog.Read().Costs!, "custom"));
+    }
+}
+
+/// <summary>
+/// AN UNKNOWN IS PRICED HIGH, NEVER ZERO AND NEVER ABSENT.
+///
+/// Codex 0.153.4's <c>--json</c> stream names no model anywhere — measured, see
+/// <see cref="TurnUsage"/> — so on the runtime this build recommends, EVERY turn is a turn whose
+/// model nobody can name. <c>U-meter</c> answered that with "unpriced", which is honest about the
+/// arithmetic and dishonest about the consequence: an unpriced turn cannot reach the daily cap, so
+/// the ceiling the owner set held nothing back on the ordinary installation.
+///
+/// The answer here is to charge the DEAREST model in that runtime's own catalogue and say so in
+/// those words. The direction matters and is the whole design: over-charging an unidentified turn
+/// can only stop the AI early, which is recoverable at midnight or with the owner's own two numbers
+/// on the Safety page; under-charging it lets the cap be walked past, which is not.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class UnknownModelIsPricedHighTests : IDisposable
+{
+    readonly Database _db = TestEnv.NewDb();
+    readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
+
+    public void Dispose()
+    {
+        NoCosts();
+        _db.Dispose();
+    }
+
+    static void NoCosts()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+    }
+
+    /// <summary>The usage Codex actually reported on this Mac — and it names no model.</summary>
+    static AgentTurnEnded CodexTurn(DateTimeOffset at) =>
+        new(0, TimeSpan.FromSeconds(12.5), "…", at) { Usage = new TurnUsage(17232, 12928, 0, 6, 0, null) };
+
+    /// <summary>
+    /// The dearest entry in <c>codex</c>'s shipped catalogue is <c>gpt-6-astra</c> at $10.00 input,
+    /// $1.00 cached and $50.00 output per million, read from OpenAI's pricing page on 2026-09-06.
+    /// 4,304 uncached input + 12,928 cached + 6 output, the real measured turn.
+    /// </summary>
+    const decimal HighestOnCodex = (4304m * 10.00m + 12928m * 1.00m + 6m * 50.00m) / 1_000_000m;
+
+    [Fact]
+    public void A_turn_whose_model_the_stream_never_named_is_charged_at_the_highest_list_price()
+    {
+        NoCosts();
+        var price = CostCatalog.Price(new TurnUsage(17232, 12928, 0, 6, 0, null), "codex");
+
+        Assert.Null(price.Unpriced);
+        Assert.Equal(HighestOnCodex, price.Cost);
+    }
+
+    /// <summary>
+    /// THE POINT OF THE WHOLE ITEM: the cap bites out of the box. One measured Codex turn is dearer
+    /// than a cap of five cents, and the loop stops on it.
+    /// </summary>
+    [Fact]
+    public void The_daily_cap_is_reached_by_turns_whose_model_was_never_named()
+    {
+        NoCosts();
+        var meter = new TurnMeter(_db, () => 0.05m, runtimeId: () => "codex", recordPath: _records);
+
+        Assert.False(meter.Today.CapReached);
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+
+        Assert.Equal(HighestOnCodex, meter.Today.Spent);
+        Assert.Equal(0, meter.Today.UnpricedTurns);
+        Assert.True(meter.Today.CapReached);
+    }
+
+    /// <summary>
+    /// AND IT SAYS SO, IN THOSE WORDS, EVERYWHERE THE FIGURE GOES. A high estimate that is not
+    /// labelled is worse than an unpriced turn: it looks like a measurement, so nobody corrects it.
+    /// </summary>
+    [Fact]
+    public void The_estimate_is_labelled_on_the_price_on_the_line_and_on_the_days_total()
+    {
+        NoCosts();
+        Assert.Equal(Labels.PricedAtHighestListPrice,
+            CostCatalog.Price(new TurnUsage(17232, 12928, 0, 6, 0, null), "codex").Estimated);
+
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records);
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+
+        var record = Json.Read<TurnRecord>(File.ReadAllLines(_records)[0])!;
+        Assert.Equal(Labels.PricedAtHighestListPrice, record.Estimated);
+        Assert.Null(record.Unpriced);
+        Assert.Equal(HighestOnCodex, record.Cost);
+
+        Assert.Equal(1, meter.Today.EstimatedTurns);
+        Assert.Equal(Labels.PricedAtHighestListPrice, meter.Today.Estimated);
+        Assert.True(meter.Today.CanPrice);
+    }
+
+    /// <summary>
+    /// A figure priced against a model something actually NAMED is not labelled an estimate, and the
+    /// day it belongs to is not either. Without this the label would be decoration rather than a
+    /// distinction, and the owner would have no way to tell the two apart on the card.
+    /// </summary>
+    [Fact]
+    public void A_turn_whose_model_was_named_is_not_labelled_an_estimate()
+    {
+        NoCosts();
+        var price = CostCatalog.Price(new TurnUsage(17232, 12928, 0, 6, 0, "gpt-5.6-luna"), "codex");
+        Assert.Null(price.Estimated);
+        Assert.NotNull(price.Cost);
+
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "custom", recordPath: _records);
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", DateTimeOffset.Now)
+        {
+            Usage = new TurnUsage(10, 0, 0, 10, 0, "gpt-5.6-luna")
+        });
+
+        Assert.Equal(0, meter.Today.EstimatedTurns);
+        Assert.Null(meter.Today.Estimated);
+    }
+
+    /// <summary>
+    /// The estimate never reaches for a model in ANOTHER runtime's catalogue. <c>opencode</c> carries
+    /// the two $30/$180 pro models — Codex's own model page does not list them, so Codex cannot be
+    /// set to one — and charging a Codex turn at a rate Codex cannot incur would be a fabricated
+    /// bill, not a conservative one.
+    /// </summary>
+    [Fact]
+    public void The_estimate_is_taken_from_that_runtimes_catalogue_and_not_from_another()
+    {
+        NoCosts();
+        var usage = new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, null);
+
+        Assert.Equal(10.00m + 50.00m, CostCatalog.Price(usage, "codex").Cost);
+        Assert.Equal(30.00m + 180.00m, CostCatalog.Price(usage, "opencode").Cost);
     }
 }

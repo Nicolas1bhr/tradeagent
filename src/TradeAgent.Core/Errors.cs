@@ -57,6 +57,19 @@ public static class Labels
     public static string RaiseDailyCapArmed(string amount) =>
         $"Confirm: let the AI spend up to {amount} a day";
 
+    /// <summary>
+    /// WHAT A TURN NOBODY COULD IDENTIFY WAS CHARGED AT, in the same words on the card, in the block
+    /// the AI reads and on <c>trade status</c>.
+    ///
+    /// It is one sentence in one place because it is one claim, and the claim is doing two jobs at
+    /// once: it says the figure is real enough to hold the AI to a limit, and it says the figure is
+    /// an upper bound rather than a bill. Softening either half breaks something — an owner who
+    /// reads it as a bill will think the AI costs more than it does, and an owner who reads it as a
+    /// guess will stop trusting the ceiling it is enforcing.
+    /// </summary>
+    public const string PricedAtHighestListPrice =
+        "estimated at the highest list price — the AI did not say which model it used";
+
     /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
     public const string SafetyPage = "Safety";
 

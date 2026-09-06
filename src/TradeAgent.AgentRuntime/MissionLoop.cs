@@ -227,6 +227,12 @@ public sealed record MissionSituation
         var spent = $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
                     + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}";
 
+        // The AI is told the figure is an upper bound in the same words the owner reads. An agent
+        // asked to cover what it costs and given a number without that word would plan against a
+        // bill it has not actually run up — and would be wrong in the expensive direction if the
+        // label were ever dropped, since it is the ONLY thing separating a ceiling from a receipt.
+        if (spend.Estimated is { } estimated) spent += $" — {estimated}";
+
         if (spend.UnpricedTurns > 0)
             spent += $" — and {spend.UnpricedTurns} of those could not be priced, so the real figure is higher";
 

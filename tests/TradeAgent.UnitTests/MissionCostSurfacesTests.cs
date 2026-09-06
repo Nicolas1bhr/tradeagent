@@ -124,6 +124,27 @@ public class MissionCostSurfacesTests
         Assert.DoesNotContain("up to", (string)b.Content!);
     }
 
+    /// <summary>
+    /// A FIGURE THAT IS AN UPPER BOUND SAYS SO WHERE IT IS SHOWN. It is the same danger as the zero
+    /// above, one step along: an owner who cannot tell an estimate from a bill will believe the AI
+    /// costs what the dearest model charges, and will never think to correct the rate.
+    /// </summary>
+    [Fact]
+    public void The_card_says_when_todays_figure_is_the_highest_list_price_rather_than_a_bill()
+    {
+        var line = DashboardPage.MissionCost(Priced(1.25m, 5m) with { Estimated = Labels.PricedAtHighestListPrice });
+
+        Assert.Contains("1.25 USD", line);
+        Assert.Contains(Labels.PricedAtHighestListPrice, line);
+    }
+
+    /// <summary>And a figure priced against a named model does NOT carry the label.</summary>
+    [Fact]
+    public void The_card_does_not_call_a_measured_figure_an_estimate()
+    {
+        Assert.DoesNotContain("estimated", DashboardPage.MissionCost(Priced(1.25m, 5m)));
+    }
+
     // ---- the Safety page's ceiling ---------------------------------------------------------------
 
     /// <summary>
@@ -186,6 +207,23 @@ public class MissionCostSurfacesTests
         }.Text();
 
         Assert.Contains("What you have cost today: 0.31 USD of a 5 USD daily limit", text);
+    }
+
+    /// <summary>
+    /// The AI is told in the same words. An agent whose mission is to cover what it costs, handed an
+    /// upper bound it thinks is a receipt, plans its day against money it has not spent.
+    /// </summary>
+    [Fact]
+    public void The_situation_tells_the_ai_when_its_own_figure_is_an_estimate()
+    {
+        var text = new MissionSituation
+        {
+            LocalTime = DateTimeOffset.Now, Mode = "PAPER",
+            Spend = Priced(0.31m, 5m) with { Estimated = Labels.PricedAtHighestListPrice }
+        }.Text();
+
+        Assert.Contains("What you have cost today: 0.31 USD of a 5 USD daily limit", text);
+        Assert.Contains(Labels.PricedAtHighestListPrice, text);
     }
 
     [Fact]
@@ -259,6 +297,43 @@ public class AiStatusFieldsTests
 
         var described = Json.Write(GatewaySchema.Describe(await gw.StatusAsync()));
         Assert.Contains("ABSENT, not zero", described);
+    }
+
+    /// <summary>
+    /// AN UPPER BOUND ON THE WIRE IS LABELLED AS ONE, and the schema tells the agent what the label
+    /// means — that its real bill is at most the figure, and who can correct the rate. Nothing here
+    /// lets it change anything: operator authority is not on this channel and this is a read.
+    /// </summary>
+    [Fact]
+    public async Task An_estimated_cost_is_labelled_on_the_wire_and_explained_in_the_schema()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+
+        gw.Ai = () => new AiActivity("working", 3, 0.0563m) { CostEstimated = Labels.PricedAtHighestListPrice };
+        var status = await gw.StatusAsync();
+
+        Assert.Equal(Labels.PricedAtHighestListPrice, status.AiCostEstimated);
+
+        var json = Json.Write(status);
+        Assert.Contains("\"ai_cost_today\":0.0563", json);
+        Assert.Contains("\"ai_cost_estimated\":", json);
+
+        var described = Json.Write(GatewaySchema.Describe(status));
+        Assert.Contains("UPPER BOUND", described);
+    }
+
+    /// <summary>A measured figure carries no label, and the key is absent rather than empty.</summary>
+    [Fact]
+    public async Task A_measured_cost_carries_no_estimate_label_on_the_wire()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+
+        gw.Ai = () => new AiActivity("working", 3, 0.0563m);
+        Assert.DoesNotContain("ai_cost_estimated", Json.Write(await gw.StatusAsync()));
     }
 
     /// <summary>

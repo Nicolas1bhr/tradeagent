@@ -272,6 +272,23 @@ public sealed record AiSpendToday
     public int UnpricedTurns { get; init; }
 
     /// <summary>
+    /// Turns today charged at the highest list price because nothing named a model. Counted rather
+    /// than inferred, because <see cref="Estimated"/> can be true of an installation on a day that
+    /// has had no turns yet, and the two facts are read by different screens.
+    /// </summary>
+    public int EstimatedTurns { get; init; }
+
+    /// <summary>
+    /// THE LABEL A FIGURE THAT IS AN UPPER BOUND HAS TO CARRY, or null when it is a bill.
+    ///
+    /// <see cref="Spent"/> beside a cap, with no word about where the number came from, is the
+    /// reading this record exists to prevent: an owner cannot tell an estimate from a measurement,
+    /// and neither can the AI reading it in its own Situation. So the sentence travels WITH the
+    /// number, on all three surfaces, rather than being left for a documentation page.
+    /// </summary>
+    public string? Estimated { get; init; }
+
+    /// <summary>
     /// WHETHER THIS INSTALLATION CAN TURN A TURN INTO A NUMBER AT ALL — asked of the price list now,
     /// not inferred from a day that may have had no turns yet.
     ///
@@ -309,6 +326,16 @@ public sealed record AiSpendToday
 /// <param name="CostToday">What they cost, or null when TradeAgent cannot price them.</param>
 public sealed record AiActivity(string State, int TurnsToday, decimal? CostToday)
 {
+    /// <summary>
+    /// Present when <see cref="CostToday"/> is an upper bound rather than a bill, and then it is the
+    /// sentence saying so — the same sentence the owner reads on the card.
+    ///
+    /// Init-only rather than a fourth positional parameter, for the reason the three AI fields on
+    /// <c>GatewayStatus</c> are: every other construction site of this record means to say nothing
+    /// about it, and a fourth parameter would make them all say something.
+    /// </summary>
+    public string? CostEstimated { get; init; }
+
     /// <summary>No loop wired: the honest reading is that the AI is not working.</summary>
     public static readonly AiActivity None = new("stopped", 0, null);
 }

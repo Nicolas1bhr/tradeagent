@@ -164,6 +164,16 @@ public sealed record GatewayStatus(
     /// It is absent rather than zero on purpose: a zero here would tell the agent its work was free.
     /// </summary>
     public decimal? AiCostToday { get; init; }
+
+    /// <summary>
+    /// Present when <see cref="AiCostToday"/> is an UPPER BOUND rather than a bill: the CLI named no
+    /// model, so the dearest model in its catalogue was charged, and this is the sentence saying so.
+    ///
+    /// It is on the wire for the same reason the figure is: the agent's mission is to cover what it
+    /// costs, and an estimate it cannot tell from a measurement is one it will plan against wrongly.
+    /// Absent means the figure was priced against a model something actually named.
+    /// </summary>
+    public string? AiCostEstimated { get; init; }
 }
 
 public sealed record ReconcileResult(int Resolved, int Inconclusive, IReadOnlyList<string> Details)

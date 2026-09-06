@@ -21,9 +21,12 @@ namespace TradeAgent.AgentRuntime;
 /// <list type="bullet">
 /// <item><b>No model name.</b> Nothing in that run's four events named a model — not
 /// <c>thread.started</c>, not <c>turn.started</c>, not the message item. So <see cref="Model"/> is
-/// null for this runtime, and the price has to come from a model the OWNER names in
-/// <c>costs.json</c> for that runtime. A model guessed here would become a price, and a guessed
-/// price is a guessed bill.</item>
+/// null for this runtime, and no model is guessed here: a model guessed at this layer would become
+/// a price indistinguishable from a measured one. What happens instead is one layer up and says so
+/// out loud — <see cref="CostCatalog.Price"/> charges the DEAREST model in that runtime's catalogue
+/// and labels the figure an estimate on every screen it reaches (<c>U-prices</c>). An owner who
+/// knows better names the model in <c>costs.json</c>, or their own two numbers on the Safety
+/// page.</item>
 /// <item><b>Cached input is a SUBSET of <see cref="InputTokens"/></b>, not a number beside it —
 /// 12,928 of the 17,232 were served from cache. Adding the two would bill the cached half twice, so
 /// <see cref="UncachedInputTokens"/> is what carries the full input rate.</item>
@@ -158,6 +161,14 @@ public sealed record TurnRecord
 
     /// <summary>Why <see cref="Cost"/> is absent. Present exactly when it is.</summary>
     public string? Unpriced { get; init; }
+
+    /// <summary>
+    /// Present when <see cref="Cost"/> is an upper bound rather than a bill — the runtime named no
+    /// model and the dearest entry in its catalogue was charged. On the line as well as on the
+    /// screens, because this file is the evidence behind a day's total and a reader adding it up
+    /// has to be able to see which turns were estimates.
+    /// </summary>
+    public string? Estimated { get; init; }
 }
 
 /// <summary>
@@ -179,6 +190,9 @@ public sealed class TurnMeter
     public const string CostKey = "ai_meter_cost";
     public const string TurnsKey = "ai_meter_turns";
     public const string UnpricedKey = "ai_meter_unpriced";
+
+    /// <summary>Turns today charged at the highest list price because nothing named a model.</summary>
+    public const string EstimatedKey = "ai_meter_estimated";
 
     /// <summary>The per-turn detail, in the app's state directory. Appended to, never rewritten.</summary>
     public static string RecordPath => Path.Combine(Paths.State, "agent-turns.jsonl");
@@ -238,13 +252,14 @@ public sealed class TurnMeter
             Model = ended.Usage?.Model,
             Cost = price.Cost,
             Currency = price.Cost is null ? null : price.Currency,
-            Unpriced = price.Unpriced
+            Unpriced = price.Unpriced,
+            Estimated = price.Estimated
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
         catch (Exception) { /* the totals below are what the cap reads */ }
 
-        try { AddToToday(price.Cost); }
+        try { AddToToday(price.Cost, price.Estimated is not null); }
         catch (Exception) { /* a database that cannot be written must not end the turn */ }
 
         Changed?.Invoke();
@@ -276,7 +291,7 @@ public sealed class TurnMeter
         get
         {
             var now = _now();
-            var (cost, turns, unpriced) = ReadTotals(Today_(now));
+            var (cost, turns, unpriced, estimated) = ReadTotals(Today_(now));
             var catalogue = CostCatalog.Read();
 
             // ASKED OF THE PRICE LIST, not inferred from the day's history — which on the first turn
@@ -296,6 +311,12 @@ public sealed class TurnMeter
                 Currency = catalogue.Costs?.Currency ?? "",
                 Turns = turns,
                 UnpricedTurns = unpriced,
+                EstimatedTurns = estimated,
+                // The label describes how THIS INSTALLATION is being priced, so it is the probe's
+                // answer first — true before the day's first turn, which is the moment the card is
+                // most likely to be read — and the day's own history second, for the runtime whose
+                // stream names its model and whose probe therefore cannot know in advance.
+                Estimated = probe.Estimated ?? (estimated > 0 ? Labels.PricedAtHighestListPrice : null),
                 CanPrice = canPrice,
                 WhyNoPrice = canPrice ? null : probe.Unpriced,
                 ResumesAt = Midnight(now)
@@ -319,23 +340,25 @@ public sealed class TurnMeter
     /// The totals, or zeroes when the row is another day's. The stale row is NOT cleared here: a
     /// read must not write, and the next turn's write replaces it with today's anyway.
     /// </summary>
-    (decimal Cost, int Turns, int Unpriced) ReadTotals(string today)
+    (decimal Cost, int Turns, int Unpriced, int Estimated) ReadTotals(string today)
     {
-        if (!string.Equals(_db.GetKv(DayKey), today, StringComparison.Ordinal)) return (0m, 0, 0);
-        return (Dec(_db.GetKv(CostKey)), Int(_db.GetKv(TurnsKey)), Int(_db.GetKv(UnpricedKey)));
+        if (!string.Equals(_db.GetKv(DayKey), today, StringComparison.Ordinal)) return (0m, 0, 0, 0);
+        return (Dec(_db.GetKv(CostKey)), Int(_db.GetKv(TurnsKey)),
+                Int(_db.GetKv(UnpricedKey)), Int(_db.GetKv(EstimatedKey)));
     }
 
-    void AddToToday(decimal? cost)
+    void AddToToday(decimal? cost, bool estimated)
     {
         lock (_gate)
         {
             var today = Today_(_now());
-            var (had, turns, unpriced) = ReadTotals(today);
+            var (had, turns, unpriced, estimates) = ReadTotals(today);
 
             _db.SetKv(DayKey, today);
             _db.SetKv(CostKey, (had + (cost ?? 0m)).ToString(CultureInfo.InvariantCulture));
             _db.SetKv(TurnsKey, (turns + 1).ToString(CultureInfo.InvariantCulture));
             _db.SetKv(UnpricedKey, (unpriced + (cost is null ? 1 : 0)).ToString(CultureInfo.InvariantCulture));
+            _db.SetKv(EstimatedKey, (estimates + (estimated ? 1 : 0)).ToString(CultureInfo.InvariantCulture));
         }
     }
 

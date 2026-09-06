@@ -55,9 +55,11 @@ public static class GatewaySchema
             "Everything at a glance: mode, health, whether execution is allowed — and what your own work has cost. "
             + "ai_state is what your loop is doing (stopped, working, waiting, paused), ai_turns_today counts your "
             + "turns since local midnight, and ai_cost_today is what they cost. ai_cost_today is ABSENT, not zero, "
-            + "when TradeAgent cannot price them: your CLI reported no model, or the account owner has set no prices. "
-            + "Absent means unknown and never means free — your mission is to cover what you cost, so treat an absent "
-            + "figure as a cost you cannot see rather than one you did not incur.", []),
+            + "when TradeAgent cannot price them at all. Absent means unknown and never means free — your mission is "
+            + "to cover what you cost, so treat an absent figure as a cost you cannot see rather than one you did not "
+            + "incur. When ai_cost_estimated is present, ai_cost_today is an UPPER BOUND and that field says why: your "
+            + "CLI did not report which model it used, so TradeAgent charged the dearest model that runtime has a list "
+            + "price for. Your real bill is at most that, and the account owner can correct the rate in TradeAgent.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),

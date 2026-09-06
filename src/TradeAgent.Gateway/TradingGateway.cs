@@ -755,7 +755,8 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             AiState = ai.State,
             AiTurnsToday = ai.TurnsToday,
-            AiCostToday = ai.CostToday
+            AiCostToday = ai.CostToday,
+            AiCostEstimated = ai.CostEstimated
         };
     }
 

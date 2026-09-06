@@ -460,7 +460,12 @@ public sealed record RuntimeCatalogRead(IReadOnlyList<RuntimeManifest> Runtimes,
 /// <summary>
 /// What one turn cost, or the sentence saying why nobody can say. Never both, and never neither.
 /// </summary>
-public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced)
+/// <param name="Estimated">
+/// Non-null when <see cref="Cost"/> is an UPPER BOUND rather than a bill — the model was never
+/// named, so the dearest entry in that runtime's catalogue was charged — and then it is the sentence
+/// that travels with the figure onto every screen. Null on a figure priced against a named model.
+/// </param>
+public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced, string? Estimated = null)
 {
     public static TurnPrice Unknown(string why) => new(null, "", why);
 }
@@ -649,9 +654,23 @@ public static class CostCatalog
             return TurnPrice.Unknown("the AI tool did not report how many tokens the turn used");
 
         var model = usage.Model ?? Declared(costs, runtimeId);
+
+        // AN UNKNOWN IS PRICED HIGH, NEVER ZERO AND NEVER ABSENT.
+        //
+        // Codex names no model in any of its events, so on the runtime this build recommends EVERY
+        // turn arrives here. `U-meter` returned "unpriced", which was honest about the arithmetic
+        // and wrong about the consequence: an unpriced turn cannot reach the daily cap, so the
+        // ceiling the owner set held nothing back on the ordinary installation.
+        //
+        // The dearest entry in that runtime's own catalogue is charged instead, and the figure says
+        // so wherever it is shown. The direction is the design: over-charging an unidentified turn
+        // can only stop the AI early, which midnight or the owner's own two numbers undo; charging
+        // it low, or nothing, lets the cap be walked past, which nothing undoes.
         if (model is null)
-            return TurnPrice.Unknown(
-                $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
+            return Highest(costs, runtimeId) is { } highest
+                ? new TurnPrice(Charge(usage, highest), costs.Currency, null, Labels.PricedAtHighestListPrice)
+                : TurnPrice.Unknown(
+                    $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
 
         var price = Applicable(costs, runtimeId)
             .FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));

@@ -419,6 +419,9 @@ sealed class DashboardPage
             return $"Cost today: unknown — {spend.WhyNoPrice}. Your {cap} daily limit cannot stop it.";
 
         var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
+        // Where the figure came from, beside the figure. An owner cannot tell an upper bound from a
+        // bill by looking at it, and the difference decides whether they should go and correct it.
+        if (spend.Estimated is { } estimated) line += $" — {estimated}";
         if (spend.UnpricedTurns > 0) line += $" — {spend.UnpricedTurns} turns could not be priced, so it is at least that";
         if (spend.CapReached) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
         return line + ".";
