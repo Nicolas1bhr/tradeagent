@@ -43,8 +43,14 @@ public static class Versions
     /// disappear becomes a new row instead of un-removing the old one and inheriting its hash
     /// (REVIEW 2026-09-05b finding 6). Additive too — one column with a default, and the
     /// observation index widened to carry it — and every existing row reads as version 0.
+    ///
+    /// 4 -&gt; 5: the <c>fill</c> table. One row per execution, keyed <c>(account_id, execution_id)</c>,
+    /// written by the gateway and never updated or deleted, so the money the AI made or lost is a
+    /// number somebody can read rather than a line in an activity log. Additive — one new table —
+    /// and an older database gains it empty, which is the honest starting point: the ledger covers
+    /// what it saw, and <c>trade pnl</c> says from when.
     /// </summary>
-    public const int DatabaseSchemaVersion = 4;
+    public const int DatabaseSchemaVersion = 5;
 
     public static string App =>
         Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)

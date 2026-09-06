@@ -23,6 +23,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly CompositeRequestStore _composites;
     readonly LogStore _log;
     readonly MaterialStore _materials;
+    readonly FillStore _fills;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -40,6 +41,9 @@ public sealed class TradingGateway : IAsyncDisposable
     public CompositeRequestStore Composites => _composites;
     public LogStore Log => _log;
     public MaterialStore Materials => _materials;
+
+    /// <summary>The fill ledger. Read by anything; written by this class and nothing else.</summary>
+    public FillStore Fills => _fills;
 
     /// <summary>
     /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
@@ -237,6 +241,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _composites = new CompositeRequestStore(db, _opt.Clock);
         _log = new LogStore(db);
         _materials = new MaterialStore(db);
+        _fills = new FillStore(db);
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
 
@@ -244,6 +249,7 @@ public sealed class TradingGateway : IAsyncDisposable
         Connector.ConnectionChanged += OnConnectionChanged;
         Connector.OrderChanged += OnOrderChanged;
         Connector.ExecutionReceived += OnExecutionReceived;
+        Connector.QuoteChanged += OnQuoteChanged;
 
         RecoverStrandedDispatches();
     }
@@ -326,10 +332,169 @@ public sealed class TradingGateway : IAsyncDisposable
     }
     // The detail is what makes a red row repairable: a version-mismatched ATAS bridge is refused
     // for good reasons and otherwise looks identical to no bridge at all.
-    void OnConnectionChanged(HealthState s) =>
+    void OnConnectionChanged(HealthState s)
+    {
         _health.Set(Components.TradingConnection, s,
             s == HealthState.FAILED && Connector is IConnectorStatusDetail d ? d.StatusDetail ?? "" : "");
-    void OnExecutionReceived(ExecutionInfo x) => _log.Activity($"Filled {x.Quantity} {x.Symbol} at {x.Price}");
+
+        // A CONNECTION THAT HAS JUST COME UP IS THE ONE MOMENT THE EVENT STREAM IS KNOWN TO HAVE A
+        // HOLE IN IT: whatever filled while it was down was never raised to anybody. Marking the
+        // pull due rather than starting one here is deliberate — this handler is called from the
+        // connector's own thread, inside ConnectAsync on some backends, and an async read started
+        // from it would be a fire-and-forget task nothing can wait for or cancel. The pull happens
+        // on the health pass that follows, which every host runs immediately after connecting and
+        // every five seconds after that.
+        if (s == HealthState.READY) _fillPullDue = true;
+    }
+
+    // ---------------------------------------------------------------- the fill ledger
+
+    /// <summary>
+    /// THE LEDGER'S TWO SOURCES, AND WHY THERE ARE TWO. The connector raises an execution as it
+    /// happens; a read of <c>GetExecutionsAsync</c> serves the same executions again. The event is
+    /// the fast one and the pull is the one that survives a dropped connection, an app that was not
+    /// running, and a bridge that raised nothing. Neither alone is a record.
+    ///
+    /// A fill seen by both is ONE ROW — see <see cref="FillStore"/>, where the identity lives.
+    /// </summary>
+    void OnExecutionReceived(ExecutionInfo x)
+    {
+        _log.Activity($"Filled {x.Quantity} {x.Symbol} at {x.Price}");
+        RecordFill(x, FillSource.Event);
+    }
+
+    /// <summary>How often the ledger asks the platform for the fills it may not have been told about.</summary>
+    public static readonly TimeSpan FillPullInterval = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// How far back a routine pull asks, measured from the newest fill already in the ledger. Only a
+    /// margin for a platform that timestamps a fill slightly before it reports it — the first pull
+    /// of a session asks for everything, and this is what keeps every pull after it cheap.
+    /// </summary>
+    static readonly TimeSpan FillPullOverlap = TimeSpan.FromMinutes(5);
+
+    /// <summary>The kv row holding what the last pull asked for and what came back.</summary>
+    public const string FillPullKey = "fills.pull.last";
+
+    /// <summary>The kv row holding the instant from which this ledger claims to know anything.</summary>
+    public const string FillCoverageKey = "fills.coverage";
+
+    volatile bool _fillPullDue = true;
+    DateTimeOffset? _lastFillPull;
+
+    /// <summary>What one pull asked and what it got. Written to <see cref="FillPullKey"/> verbatim.</summary>
+    public sealed record FillPullRecord(DateTimeOffset At, DateTimeOffset? Since, bool Ok, int Seen, int Added, string? Error);
+
+    /// <summary>
+    /// From when this ledger knows anything at all. <c>WatchingFrom</c> is when TradeAgent first
+    /// read the platform's executions on this installation; <c>EarliestFill</c> is the oldest fill
+    /// that first read handed back, which may be older when the platform keeps history.
+    ///
+    /// <c>HistoryClaimed</c> is the CONNECTOR'S claim, not this software's finding. On ATAS it is
+    /// worth little for executions specifically: <c>AtasStrategyAdapter.GetExecutions</c> reads the
+    /// strategy's in-session <c>MyTrades</c>, so the answer begins when the bridge started whatever
+    /// the platform says about order history. That is why coverage is recorded as an instant this
+    /// software watched rather than as a promise, and why <c>pnl</c> names it in <c>incomplete</c>
+    /// whenever the window asked for starts before it.
+    /// </summary>
+    public sealed record FillCoverage(DateTimeOffset WatchingFrom, DateTimeOffset? EarliestFill, bool HistoryClaimed);
+
+    /// <summary>
+    /// Writes one execution into the ledger, attributing it to the request — and so to the agent
+    /// session — that asked for it.
+    ///
+    /// ATTRIBUTION IS DONE HERE OR NOT AT ALL. The link is the client order id the gateway put on
+    /// the order (<c>TA-{requestId}</c>), and it is resolved while the request row is still around
+    /// to be asked. A row that recorded only the broker's own ids could never be handed back to the
+    /// agent that placed it, and no later pass could work it out — which is the whole reason a
+    /// second agent's numbers cannot be separated from the first's after the fact.
+    /// </summary>
+    bool RecordFill(ExecutionInfo x, FillSource source)
+    {
+        try
+        {
+            string? requestId = null, session = null;
+            if (x.ClientOrderId is { Length: > 0 } coid)
+            {
+                var req = _requests.GetByClientOrderId(coid);
+                requestId = req?.RequestId;
+                session = req?.AgentSessionId;
+            }
+
+            return _fills.Record(new Fill(
+                AccountId: x.AccountId, ExecutionId: x.ExecutionId, At: x.At, Symbol: x.Symbol,
+                Side: x.Side.ToString(), Quantity: x.Quantity, Price: x.Price,
+                ConnectorOrderId: x.ConnectorOrderId, ClientOrderId: x.ClientOrderId,
+                RequestId: requestId, AgentSession: session, Source: source,
+                Fee: x.Fee, RecordedAt: Now));
+        }
+        catch (Exception ex)
+        {
+            // NOT A TRADING GATE. The ledger is a measurement; a store that will not take a row must
+            // not stop an execution being reported, reconciled or acted on. It is loud in the
+            // engineering log, and `pnl` reports a pull that failed, so a ledger with holes in it is
+            // never silently read as a ledger with nothing in it.
+            _log.TryEngineering("Gateway", "fill_not_recorded", "error", ex: ex,
+                metadataJson: Json.Write(new { execution = x.ExecutionId, source = source.ToString() }));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Asks the platform for its executions and writes whatever is new. Called at every (re)connect
+    /// and every <see cref="FillPullInterval"/>; see <see cref="OnConnectionChanged"/>.
+    ///
+    /// The outcome is recorded whether it succeeded or not, because a pull that failed is the
+    /// difference between "nothing traded" and "nothing was asked" — and <c>pnl</c> has to be able
+    /// to tell the reader which of those it is looking at.
+    /// </summary>
+    public async Task<FillPullRecord> PullFillsAsync(CancellationToken ct = default)
+    {
+        var at = Now;
+        _lastFillPull = at;
+        _fillPullDue = false;
+
+        // The first pull of a ledger asks for everything the platform will give; after that it asks
+        // from the newest fill it holds, less an overlap, and the identity in FillStore is what makes
+        // asking for the same fills again free.
+        var newest = _fills.Newest();
+        var since = newest is null ? (DateTimeOffset?)null : newest.Value - FillPullOverlap;
+
+        int seen = 0, added = 0;
+        string? error = null;
+        var ok = false;
+        try
+        {
+            var accountId = await RequireAccountId(ct);
+            var fills = await Connector.GetExecutionsAsync(accountId, since, ct);
+            seen = fills.Count;
+            foreach (var x in fills) if (RecordFill(x, FillSource.Pull)) added++;
+            ok = true;
+        }
+        catch (Exception ex) { error = ex.Message; }
+
+        var record = new FillPullRecord(at, since, ok, seen, added, error);
+        try
+        {
+            _db.SetKv(FillPullKey, Json.Write(record));
+            if (ok && _db.GetKv(FillCoverageKey) is null)
+                _db.SetKv(FillCoverageKey, Json.Write(new FillCoverage(
+                    WatchingFrom: at,
+                    EarliestFill: _fills.FirstAt(),
+                    HistoryClaimed: Connector.Capabilities.SupportsOrderHistory)));
+        }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "fill_pull_not_recorded", "error", ex: ex); }
+
+        return record;
+    }
+
+    /// <summary>The last quote this gateway saw for each symbol, for valuing an open position.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, QuoteInfo> _quotes = new(StringComparer.Ordinal);
+
+    void OnQuoteChanged(QuoteInfo q) => _quotes[q.Symbol] = q;
+
+    /// <summary>The last quote seen for a symbol, or null when this gateway has never seen one.</summary>
+    public QuoteInfo? LastQuote(string symbol) => _quotes.GetValueOrDefault(symbol);
 
     // ---------------------------------------------------------------- settings
 
@@ -3653,6 +3818,15 @@ public sealed class TradingGateway : IAsyncDisposable
                 unreadable ? Labels.SettingsCouldNotBeRead
                 : unknownMode ? $"the saved trading mode ({(int)Settings.Mode}) is not one this version knows"
                 : unreconciled > 0 ? $"{unreconciled} request(s) unconfirmed" : latched ?? "");
+
+            // THE PULL RIDES THIS PASS RATHER THAN A TIMER OF ITS OWN. Every host already runs this
+            // method immediately after connecting and every HealthInterval after that, so a pull
+            // marked due by a (re)connect happens on the next pass and a routine one happens on the
+            // first pass past FillPullInterval. It is LAST because it is a record, not a gate: the
+            // health rows above are what the screen and the authorization chain read, and they must
+            // be written whatever the platform's execution list does.
+            if (_fillPullDue || _lastFillPull is null || Now - _lastFillPull >= FillPullInterval)
+                await PullFillsAsync(ct);
         }
         catch (Exception ex)
         {
@@ -3667,6 +3841,7 @@ public sealed class TradingGateway : IAsyncDisposable
         Connector.ConnectionChanged -= OnConnectionChanged;
         Connector.OrderChanged -= OnOrderChanged;
         Connector.ExecutionReceived -= OnExecutionReceived;
+        Connector.QuoteChanged -= OnQuoteChanged;
         _dispatchGate.Dispose();
         await Connector.DisposeAsync();
     }

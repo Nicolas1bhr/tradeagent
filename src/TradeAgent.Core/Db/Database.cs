@@ -241,6 +241,52 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','4') ON CONFLICT(key) DO UPDATE SET value='4';");
         }
 
+        if (have < 5)
+        {
+            // THE FILL LEDGER. One row per execution, written by the gateway and by nothing else,
+            // never updated and never deleted — the same discipline as `material`, for the same
+            // reason: a number computed from rows the observed party can edit is not a measurement.
+            //
+            // THE KEY IS (account_id, execution_id) BECAUSE THE LEDGER HAS TWO SOURCES ON PURPOSE.
+            // The connector raises an execution as it happens, and a pull of GetExecutionsAsync at
+            // every (re)connect and every five minutes serves the same executions again. The event
+            // is the fast one; the pull is the one that survives a dropped connection, a bridge that
+            // raised nothing, and an app that was not running. Both are needed and both report the
+            // SAME fill, so without this key the ledger's first act would be to double every figure
+            // it exists to produce. `account_id` is in the key because an execution id is the
+            // platform's, unique on that platform's account and nowhere else.
+            //
+            // Decimals as TEXT, exactly as execution_request stores them: a quantity and a price the
+            // broker reported must come back out as they went in, not as the nearest double.
+            //
+            // `fee` NULL is UNKNOWN and 0 is the platform saying zero. `source` records which of the
+            // two sources got there first. `agent_session` and `request_id` are resolved when the row
+            // is written or never — the request row is what carries the session, and attribution per
+            // agent cannot be worked out afterwards from the broker's own ids.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS fill(
+              account_id         TEXT NOT NULL,
+              execution_id       TEXT NOT NULL,
+              at                 TEXT NOT NULL,
+              symbol             TEXT NOT NULL,
+              side               TEXT NOT NULL,
+              quantity           TEXT NOT NULL,
+              price              TEXT NOT NULL,
+              connector_order_id TEXT,
+              client_order_id    TEXT,
+              request_id         TEXT,
+              agent_session      TEXT,
+              source             TEXT NOT NULL,
+              fee                TEXT,
+              recorded_at        TEXT NOT NULL,
+              PRIMARY KEY(account_id, execution_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_fill_at ON fill(at);
+            CREATE INDEX IF NOT EXISTS ix_fill_symbol ON fill(symbol, at);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','5') ON CONFLICT(key) DO UPDATE SET value='5';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

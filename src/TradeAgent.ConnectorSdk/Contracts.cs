@@ -42,7 +42,19 @@ public sealed record OrderInfo(string ConnectorOrderId, string? ClientOrderId, s
     decimal? StopPrice, ExecutionState State, string? RejectReason, DateTimeOffset At);
 
 public sealed record ExecutionInfo(string ExecutionId, string ConnectorOrderId, string? ClientOrderId,
-    string AccountId, string Symbol, OrderSide Side, decimal Quantity, decimal Price, DateTimeOffset At);
+    string AccountId, string Symbol, OrderSide Side, decimal Quantity, decimal Price, DateTimeOffset At)
+{
+    /// <summary>
+    /// What this fill cost in commission and exchange fees, when the platform said. <b>Null is
+    /// UNKNOWN and zero means the platform reported zero</b> — they are different answers and the
+    /// fill ledger stores the difference, because a net figure that quietly treated an unknown fee
+    /// as no fee would overstate every result the owner is shown.
+    ///
+    /// Init-only with a default so that a connector which cannot report fees says nothing rather
+    /// than claiming a number, and so that adding it re-parameterised no construction site.
+    /// </summary>
+    public decimal? Fee { get; init; }
+}
 
 /// <summary>
 /// WHY A PLACEMENT IS BEING MADE, because the side and the quantity do not say.

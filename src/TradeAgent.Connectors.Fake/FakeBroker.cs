@@ -86,11 +86,22 @@ public sealed class FakeBroker
         }
     }
 
+    /// <summary>
+    /// What this simulated platform charges per contract, or null for a platform that does not say.
+    ///
+    /// NULL BY DEFAULT, and that is the honest default for a simulator: most backends report a fee
+    /// on some fills and not others, and the fill ledger's rule is that an unknown fee is never read
+    /// as zero. A test that wants the known case sets a number — including <c>0m</c>, which is the
+    /// platform saying this fill was free and is a different answer from saying nothing.
+    /// </summary>
+    public decimal? FeePerContract { get; set; }
+
     void ApplyFill(OrderInfo order, decimal qty, decimal price)
     {
         var signed = order.Side == OrderSide.Buy ? qty : -qty;
         _executions.Add(new ExecutionInfo($"X-{++_seq}", order.ConnectorOrderId, order.ClientOrderId,
-            order.AccountId, order.Symbol, order.Side, qty, price, DateTimeOffset.UtcNow));
+            order.AccountId, order.Symbol, order.Side, qty, price, DateTimeOffset.UtcNow)
+        { Fee = FeePerContract is { } f ? f * qty : null });
         var key = order.Symbol;
         if (_positions.TryGetValue(key, out var p))
         {
