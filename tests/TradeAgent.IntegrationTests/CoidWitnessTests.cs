@@ -2605,95 +2605,46 @@ public class CoidWitnessTests : IDisposable
     /// A temp that is GONE is not contention, and waiting 200 ms in 20 ms steps for a file that is
     /// never coming back is 200 ms of an order's life spent on a certainty. Both of the exceptions
     /// that say so derive from <see cref="IOException"/>, so they have to be excluded by name.
+    ///
+    /// THE BUDGET IS SPENT BETWEEN ATTEMPTS, SO THAT IS WHERE IT IS MEASURED. The clock is read
+    /// only inside the injected rename, so the span below is the retry loop and nothing else: every
+    /// millisecond in it is a <c>Thread.Sleep</c> the loop chose to take, and there is no file IO
+    /// inside it at all.
+    ///
+    /// TIMING THE WHOLE OF <c>Submitting</c> MEASURED THE RUNNER'S DISK INSTEAD, and went red on it
+    /// three times at this line: windows-latest at 137 ms (run 34035317665) and twice before that
+    /// (34016321810, 34015391617), then ubuntu-latest at 194 ms (run 34041721936) — so it was never
+    /// one platform's problem. A harness on draft PR #11 printed the call's parts on all three
+    /// runners, three runs each, and in every one of the 27 the rename was attempted ONCE and the
+    /// retry loop spanned 0.0 ms, while the call around it cost 10.7-50.3 ms on windows (8.1-29.2
+    /// of it before the rename, 2.7-26.3 after), against 0.6-19.8 on ubuntu and 1.7-4.5 on macos.
+    /// What is in there is the lease file's exclusive create, the temp's flush-to-device and the
+    /// sidecar's append; the flush alone measured 7.2-47.1 ms on windows against 0.4-1.1 on ubuntu.
+    /// None of that is the retry budget, and all of it is the disk.
+    ///
+    /// The count is the other half, and it is the assertion
+    /// <see cref="A_refused_rename_is_attempted_exactly_five_times_and_then_gives_up"/> already
+    /// makes: dropping the exclusion by name turns this 1 into 5, and the span into 205 ms.
     /// </summary>
     [Fact]
     public void A_vanished_temp_is_not_waited_for()
     {
-        var w = Session((tmp, destination) => throw new FileNotFoundException("it is gone", tmp));
-
+        var attemptedAt = new List<long>();
         var clock = System.Diagnostics.Stopwatch.StartNew();
+        var w = Session((tmp, destination) =>
+        {
+            attemptedAt.Add(clock.ElapsedMilliseconds);
+            throw new FileNotFoundException("it is gone", tmp);
+        });
+
         Assert.False(w.Submitting("TA-GONE", "SIM", "ES", "Buy", 1m, null));
-        clock.Stop();
 
-        Assert.True(clock.ElapsedMilliseconds < 100,
-            $"burned {clock.ElapsedMilliseconds} ms of the retry budget on a file that is not coming back");
-    }
-
-    /// <summary>
-    /// TEMPORARY HARNESS (U-coid-vanished-win). Fails on purpose so every runner prints where the
-    /// wall clock of the call above goes: the retry loop, or the disk under it. Removed from this
-    /// branch before it is proposed.
-    /// </summary>
-    [Fact]
-    public void Zz_temporary_harness_where_the_vanished_temp_call_spends_its_time()
-    {
-        var log = new System.Text.StringBuilder().AppendLine();
-
-        for (var round = 1; round <= 3; round++)
-        {
-            var dir = Path.Combine(_dir, "vanish-" + round);
-            Directory.CreateDirectory(dir);
-            var at = new List<double>();
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-
-            var ctor0 = clock.Elapsed.TotalMilliseconds;
-            var w = new CoidWitness(Path.Combine(dir, "coid-witness.json"), null, CoidWitness.DefaultCap,
-                (tmp, destination) =>
-                {
-                    at.Add(clock.Elapsed.TotalMilliseconds);
-                    throw new FileNotFoundException("it is gone", tmp);
-                });
-            var call0 = clock.Elapsed.TotalMilliseconds;
-            var answer = w.Submitting("TA-GONE", "SIM", "ES", "Buy", 1m, null);
-            var call1 = clock.Elapsed.TotalMilliseconds;
-            w.Dispose();
-
-            log.AppendLine($"[HARNESS vanish r{round}] answer={answer} ctor={call0 - ctor0:F1} " +
-                           $"pre_replace={at[0] - call0:F1} attempts={at.Count} " +
-                           $"in_retry_loop={at[^1] - at[0]:F1} post_replace={call1 - at[^1]:F1} " +
-                           $"submitting_total={call1 - call0:F1}");
-        }
-
-        // The same call with the rename landing: the identical file IO, no vanish, no retry.
-        for (var round = 1; round <= 3; round++)
-        {
-            var dir = Path.Combine(_dir, "land-" + round);
-            Directory.CreateDirectory(dir);
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            var w = new CoidWitness(Path.Combine(dir, "coid-witness.json"));
-            var call0 = clock.Elapsed.TotalMilliseconds;
-            var answer = w.Submitting("TA-LANDS", "SIM", "ES", "Buy", 1m, null);
-            var call1 = clock.Elapsed.TotalMilliseconds;
-            w.Dispose();
-            log.AppendLine($"[HARNESS land r{round}] answer={answer} submitting_total={call1 - call0:F1}");
-        }
-
-        // The primitives underneath it, timed on this runner: an exclusive create (the lease), a
-        // write flushed to the device (the temp), a directory listing and an append (the sidecar).
-        for (var round = 1; round <= 3; round++)
-        {
-            var dir = Path.Combine(_dir, "raw-" + round);
-            Directory.CreateDirectory(dir);
-            var clock = System.Diagnostics.Stopwatch.StartNew();
-            var t0 = clock.Elapsed.TotalMilliseconds;
-            using (new FileStream(Path.Combine(dir, "x.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) { }
-            var t1 = clock.Elapsed.TotalMilliseconds;
-            using (var s = new FileStream(Path.Combine(dir, "x.tmp"), FileMode.Create, FileAccess.Write, FileShare.Read))
-            {
-                var bytes = System.Text.Encoding.UTF8.GetBytes(new string('x', 400));
-                s.Write(bytes, 0, bytes.Length);
-                s.Flush(flushToDisk: true);
-            }
-            var t2 = clock.Elapsed.TotalMilliseconds;
-            Directory.GetFileSystemEntries(dir);
-            var t3 = clock.Elapsed.TotalMilliseconds;
-            File.AppendAllText(Path.Combine(dir, "x.log"), "a line of the sidecar" + Environment.NewLine);
-            var t4 = clock.Elapsed.TotalMilliseconds;
-            log.AppendLine($"[HARNESS raw r{round}] exclusive_create={t1 - t0:F1} " +
-                           $"write_flush_to_disk={t2 - t1:F1} list_dir={t3 - t2:F1} append={t4 - t3:F1}");
-        }
-
-        Assert.True(false, log.ToString());
+        // A rename never attempted at all says so here, rather than as an index out of range.
+        Assert.NotEmpty(attemptedAt);
+        var burned = attemptedAt[^1] - attemptedAt[0];
+        Assert.True(burned < 100,
+            $"burned {burned} ms of the retry budget on a file that is not coming back");
+        Assert.Single(attemptedAt);
     }
 
     /// <summary>
