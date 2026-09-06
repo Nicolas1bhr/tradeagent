@@ -125,6 +125,43 @@ public class PnlOverPipeTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE REAL CLI, as an agent invokes it: the same built bytes the publish step packages, with the
+    /// flags going through the same argument split as every other command. `--all` is consumed before
+    /// that split and `--since` is a flag with a value, so a mapping that got either wrong would ask
+    /// for a different period from the one on the command line and answer it without complaint.
+    /// </summary>
+    [Fact]
+    public async Task The_cli_answers_pnl_as_json_and_carries_its_period_flags()
+    {
+        var (gw, conn, db) = await TestEnv.Ready();
+        using var _ = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure());   // the default pipe
+        server.Start();
+
+        conn.Broker.FeePerContract = 0.75m;
+        await gw.PlaceAsync(new AgentContext("agent-1"), "cli-pnl", TestEnv.Buy());
+
+        var today = await Build.RunTradeAsync("pnl", "--json");
+        Assert.Equal(0, today.Code);
+        using var doc = JsonDocument.Parse(today.Out);
+        var d = doc.RootElement.GetProperty("data");
+        log.WriteLine(today.Out);
+        Assert.Equal("today", d.GetProperty("window").GetString());
+        Assert.Equal(1, d.GetProperty("fills").GetInt32());
+        Assert.Equal(0.75m, d.GetProperty("fees").GetDecimal());
+
+        var all = await Build.RunTradeAsync("pnl", "--all", "--json");
+        Assert.Equal(0, all.Code);
+        using var allDoc = JsonDocument.Parse(all.Out);
+        Assert.Equal("all", allDoc.RootElement.GetProperty("data").GetProperty("window").GetString());
+
+        var since = await Build.RunTradeAsync("pnl", "--since", "2026-01-01", "--json");
+        Assert.Equal(0, since.Code);
+        using var sinceDoc = JsonDocument.Parse(since.Out);
+        Assert.Equal("since", sinceDoc.RootElement.GetProperty("data").GetProperty("window").GetString());
+    }
+
+    /// <summary>
     /// The op is in the schema an agent discovers at runtime, and in the handler table the shutdown
     /// drain is derived from — a handler that is absent from that table is one nobody notices growing
     /// a connector call.
