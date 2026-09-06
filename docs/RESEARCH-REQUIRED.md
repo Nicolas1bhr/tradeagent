@@ -180,3 +180,28 @@ boolean, and every order on a flat-by-close account is inside it. Probe it; do n
 writing that a self-owned, AI-authored algorithm run by the account holder is "traded solely by you"; nothing in the
 design hides that it is automated. (4) Several accounts at one firm must never hold opposite positions: the allocator
 enforces it.
+
+---
+
+## D — AI list prices (read 2026-09-06 from OpenAI's own pages; re-read before every release)
+
+**File:** `src/TradeAgent.AgentRuntime/ListPrices.cs` — the whole catalogue, in `costs.json`'s shape.
+Overridable at runtime by `%LOCALAPPDATA%\TradeAgent\costs.json`, and beaten outright by the two
+numbers the owner types on the Safety page.
+
+These are the only figures in the product that are somebody else's published claim rather than a
+measurement. They are not a bill: the same CLI costs per-token on an API key and nothing per-token on
+a subscription. They exist so the daily cost cap bites out of the box, and they are charged as a
+ceiling that says on screen that it is one.
+
+| # | Source read | What was taken from it | Still open |
+|---|---|---|---|
+| D1 | <https://developers.openai.com/api/docs/pricing> | The STANDARD tier's short-context columns for the current-generation text models: input, cached input, cache writes, output per million. Eighteen rows, `gpt-6-astra` 10.00 / 1.00 / 12.50 / 50.00 down to `gpt-5-nano` 0.05 / 0.005 / — / 0.40, plus the specialised Codex row `gpt-5.3-codex` 1.75 / 0.175 / — / 14.00. A dash on the page is null in the file, and null means the input rate. | The page also carries a **long-context** tier (astra 20.00 / 75.00) and a **Codex fast mode** tier (`gpt-5.3-codex` 3.50 / 28.00). Neither the token counts nor either CLI's stream says which tier a turn ran under, so the standard tier is charged and an owner on another one uses the Safety page. If a later CLI reports the tier, take it and price accordingly. |
+| D2 | <https://learn.chatgpt.com/docs/models> | Which model ids Codex can be set to: recommended `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.3-codex-spark`; other `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.2`, `gpt-5.3-codex`. Nine of the ten are in the `codex` catalogue. | `gpt-5.3-codex-spark` is recommended and the pricing page has **no row for it**, so it is absent rather than guessed from the `gpt-5.3-codex` row beside it. A turn on it is priced by the highest-list-price estimate or by the owner's own numbers. Add it the day the vendor publishes it. |
+| D3 | The same two pages, for `opencode` | OpenCode ships no model and bills nothing itself, and TradeAgent's built-in sign-in for it writes an **OpenAI** key (`ApiKeyPlan.Label = "your OpenAI API key"`, `auth.json` keyed `"openai"`), so under the configuration this build ships an OpenCode turn is charged by OpenAI. All eighteen rows apply to it, without the Codex model restriction. | An owner who points OpenCode at Anthropic, Google or a local model is paying somebody else entirely and nothing here knows it. That is what `costs.json` and the Safety page's two numbers are for. If OpenCode's own sign-in gains other providers, this runtime's catalogue has to become provider-dependent rather than a copy of OpenAI's. |
+| D4 | Not read from any page | The `custom` runtime has **no** shipped price. Its command, and therefore its provider, is an engineer's own line in `runtimes.json`. | Leave it empty. A price shipped for `custom` would be a guess about a vendor this build has never heard of. |
+
+**The rule for whoever re-reads these.** Check the page, not this table and not memory. A model the
+page does not price is absent from `ListPrices`, never interpolated from a neighbouring row. Change
+`ListPrices.ReadOn` on the same commit as any figure, because the date travels onto the owner's
+screen beside the number and a stale date beside a fresh price is the one reading nobody can catch.

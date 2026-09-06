@@ -354,6 +354,64 @@ public class MissionCostSurfacesTests
         var text = new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" }.Text();
         Assert.DoesNotContain("cost today", text);
     }
+
+    // ---- what the guide says the numbers are ------------------------------------------------------
+
+    /// <summary>
+    /// THE GUIDE CARRIES THE PAGE AND THE DAY, AND THEY ARE THE BUILD'S OWN.
+    ///
+    /// A price is the one figure in this product that is somebody else's published claim rather than
+    /// something measured here, so the owner is told where it came from and when it was read. That
+    /// promise is only worth anything if the guide cannot drift from the catalogue: asserting the
+    /// constants themselves means a re-read that moves <see cref="ListPrices.ReadOn"/> fails here
+    /// until the sentence the owner reads moves with it.
+    ///
+    /// The three sentences are asserted from <c>Labels</c> for the same reason — the guide describing
+    /// a screen the product no longer has is how an owner learns not to trust the guide.
+    /// </summary>
+    [Fact]
+    public void The_guide_says_where_the_shipped_prices_came_from_and_the_day_they_were_read()
+    {
+        var guide = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "USER-GUIDE.md"));
+
+        Assert.Contains(ListPrices.OpenAiPrices, guide, StringComparison.Ordinal);
+        Assert.Contains(ListPrices.OpenAiModels, guide, StringComparison.Ordinal);
+        Assert.Contains(ListPrices.ReadOn, guide, StringComparison.Ordinal);
+
+        Assert.Contains(Labels.PricedAtHighestListPrice, guide, StringComparison.Ordinal);
+        Assert.Contains(Labels.PricedByYou, guide, StringComparison.Ordinal);
+
+        // The override file stays, and stays described as the engineer's route rather than the owner's.
+        Assert.Contains(Labels.CostsFile, guide, StringComparison.Ordinal);
+
+        // And the claim the shipped prices retired is gone, so a revert cannot pass by adding a
+        // paragraph beside the sentence that contradicts it.
+        Assert.DoesNotContain("ships with **no prices at all**", guide, StringComparison.Ordinal);
+        Assert.DoesNotContain("TradeAgent ships with no prices", guide, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The source pages are also rows in <c>RESEARCH-REQUIRED.md</c>, which is where the next person
+    /// to re-read them looks. A price nobody knows to re-read is a price that goes quietly stale.
+    /// </summary>
+    [Fact]
+    public void Every_page_the_prices_were_read_from_is_a_row_in_the_research_table()
+    {
+        var research = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "RESEARCH-REQUIRED.md"));
+
+        Assert.Contains(ListPrices.OpenAiPrices, research, StringComparison.Ordinal);
+        Assert.Contains(ListPrices.OpenAiModels, research, StringComparison.Ordinal);
+        Assert.Contains(ListPrices.ReadOn, research, StringComparison.Ordinal);
+        Assert.Contains("gpt-5.3-codex-spark", research, StringComparison.Ordinal);
+    }
+
+    static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
 }
 
 /// <summary>

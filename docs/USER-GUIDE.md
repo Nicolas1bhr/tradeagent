@@ -357,26 +357,55 @@ your positions, and it does not take away any permission — at midnight the day
 and the AI carries on where it left off. You get one line in the **Activity** log saying it happened,
 what it had spent, and when it will start again. If you want it working sooner, raise the limit.
 
-**If the card says the cost is unknown, read that line.** TradeAgent works the cost out from two
-things: the token counts the AI assistant reports at the end of each turn, and a price list. It ships
-with **no prices at all**, deliberately — the same assistant costs per-token on one kind of account
-and nothing per-token on another, and the published rates change on the supplier's schedule, not
-TradeAgent's. A number invented here would be a wrong figure presented as a real one.
+**Where the money figure comes from.** TradeAgent works the cost out from two things: the token
+counts the AI assistant reports at the end of each turn, and a price per million tokens.
 
-So until you write that price list, the card says *"Cost today: unknown"* and says why, and **the
-daily limit is not holding anything back.** That is said in those words in three places — on the
-card, on the second press of *Let the AI work on its own*, and in what the AI itself is told — rather
-than shown as a comfortable "0.00 of 5.00".
+The prices it ships with are **the supplier's own published list prices, copied from the supplier's
+own page on a stated day** — OpenAI's pricing page, <https://developers.openai.com/api/docs/pricing>,
+read on **2026-09-06**, together with the list of models Codex can be set to from
+<https://learn.chatgpt.com/docs/models> read the same day. Both AI assistants TradeAgent offers are
+billed by OpenAI under the sign-in TradeAgent sets up for them, which is why one page covers both.
+Every price carries that page and that date with it, and the Safety page shows you both.
 
-The price list is a file called `costs.json`, beside the two files in the next-but-one section, and
-it is the only one of the three most people might have a reason to write. It holds a currency, a
-price per million tokens for each model you use, and — because some assistants do not say which model
-they used — which model to price each assistant's turns at. If you want this and are not sure what to
-put in it, that is a fair thing to ask for help with; nothing else in TradeAgent needs it, and
-everything else works without it.
+Three things follow from that, and it is worth knowing all three:
 
-Every turn is written down either way, with its tokens, in TradeAgent's own records — so a price list
-written later still tells you what the tokens were.
+- **A list price is not your bill.** The same assistant costs per-token on one kind of account and
+  nothing per-token on a subscription. What TradeAgent charges against your daily limit is what the
+  supplier publishes, which is a ceiling, not an invoice.
+- **A price read on a day goes stale on the supplier's schedule, not TradeAgent's.** If the page has
+  moved since, the figure on your screen is the old one until TradeAgent ships a new one or you
+  correct it yourself.
+- **When the assistant does not say which model it used, the dearest one is charged.** Codex does not
+  name its model anywhere in what it reports, so this is the ordinary case rather than the odd one.
+  The card, the AI's own status and the line in *What the AI is doing* all say
+  *"estimated at the highest list price — the AI did not say which model it used"* beside the figure,
+  so you can tell an upper bound from a measurement. Charging high is deliberate: it can only stop
+  the AI early, and midnight undoes that, while charging low would let the daily limit be walked past.
+
+**If you know what you are actually charged, say so — on the Safety page, under *What the AI
+costs*.** Two boxes, per million tokens in and per million tokens out. They open on the price
+TradeAgent is using, with the model, the page and the date underneath. Your numbers then beat
+everything else, for every turn, whether or not the assistant named a model, and the card says
+*"priced by you"* instead of calling the figure an estimate.
+
+That press runs **backwards from every other one on that page**, and it says so before it saves. A
+*higher* price saves at once: it charges the AI more per turn, so your limit stops it sooner. A
+*lower* price asks twice, because it makes each turn count for less against the same limit — the AI
+takes more turns and more of your money is spent before anything stops it. A smaller number is the
+grant here, and it is the only place in TradeAgent where that is true.
+
+**If the card still says the cost is unknown, read that line.** It happens when the assistant reports
+no token counts at all, when it names a model nobody publishes a price for, or when a `costs.json`
+you wrote cannot be read. The card says which, in those words, rather than showing a comfortable
+"0.00 of 5.00" — and while it says so, the daily limit is not holding anything back.
+
+`costs.json`, beside the two files in the next-but-one section, is still there and still wins over
+the shipped prices wherever it speaks. **You should not need it.** It exists for an engineer with a
+case the two boxes cannot state — a currency other than dollars, a discount for cached tokens, a
+model priced per name — and everything on the screen works without it.
+
+Every turn is written down either way, with its tokens, in TradeAgent's own records — so a price
+corrected later still tells you what the tokens were.
 
 ### The Guidance box
 
@@ -594,7 +623,10 @@ So, concretely:
 - **`costs.json`** — the AI keeps working, and TradeAgent stops being able to say what it costs. This
   one is deliberately gentler than the other two, because it only prices work that has already
   happened and stopping the AI over it would be the wrong trade. What it does mean is that your daily
-  spending limit cannot be applied, and the AI card says exactly that.
+  spending limit cannot be applied, and the AI card says exactly that. Note that a file which cannot
+  be read is **not** the same as no file: with no file at all, the prices TradeAgent ships with
+  apply and the limit works normally. A broken one is you having said something TradeAgent cannot
+  make out, so it stops pricing rather than guessing which half you meant.
 
 Either way the repair is the same and it is on screen: correct the file, or delete it. Deleting it
 puts TradeAgent back on the settings it ships with. Nothing here needs a command prompt.
@@ -678,9 +710,12 @@ down" is not a state this can end up in.
 - **The installer has not been tried on a brand-new computer** — only on machines that already had
   developer tools on them.
 - One of the two AI assistants has never been tested at all; only the other one has.
-- **TradeAgent ships with no prices, so the daily spending limit is not enforced until you write
-  `costs.json`.** The turns and their token counts are recorded either way; what is missing is the
-  arithmetic that turns them into money. See *What it costs you, and the daily limit*.
+- **The daily spending limit is enforced against the supplier's published list prices, not against
+  your bill.** Nobody has reconciled a day of TradeAgent's figures with an invoice from OpenAI. The
+  prices were read from the supplier's page on 2026-09-06 and go stale on their schedule; a turn
+  whose model the assistant did not name is charged at the dearest one and labelled as an estimate.
+  If you know your real rate, the two boxes on the Safety page beat all of it. See *What it costs
+  you, and the daily limit*.
 
 The engineering record of exactly what is proven and what is not is in
 [BUILD-STATUS.md](../BUILD-STATUS.md).
