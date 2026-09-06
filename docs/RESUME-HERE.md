@@ -21,53 +21,33 @@ ask-me-first. ATAS cannot prove order history, so it cannot be the execution ven
 venue whose API returns orders by client id and history since a timestamp is required (the owner chooses the venue),
 and the same-user containment hole becomes load-bearing the day the app holds that venue's keys.
 
-**Session closed 2026-09-06 (late morning). Restart in this order, and you are working within ten minutes:**
+**Session closed 2026-09-06 (evening). Restart in this order, and you are working within ten minutes:**
 
-1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process) and the `## 2026-09-04` … `## 2026-09-06` sections at the
-   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 39 sections since the pivot, every claim with its run).
-2. **`main` is `6672b5e`, the v0.1.2 version bump and the release's target, plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
-   U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
-   units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
-   `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
-   at `d92a61b`, and `U-box-precut` at `5b9e2e9` (the protocol-3 refusal and `Reinstall the bridge` walked for real,
-   `tools/atas-gate` green). The box's state today is in step 3.
-3. **The second milestone review is DONE, its whole queue LANDED, and v0.1.2 IS PUBLISHED.** Review:
-   `docs/REVIEW-2026-09-05b.md` (reviewer HIGH 3 · MED 2 · LOW 1 · UNVERIFIED 7, eleven executed probes on branch
-   `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in with the triage). Landed, each with its ≤40-line
-   section in `BUILD-STATUS.md`: `U-override-lease` `d14a2f0`, `U-press-inflight` `145e725`, `U-two-press-grant`
-   `303a7ad`, `U-bridge-2` `110f67c`, `U-press-stopwatch` `ce4b367`, `U-codex-2a` `3de8cc6`, `U-batch-2` `15b873d`,
-   `U-batch-2b` `ab67a56`, `U-codex-2b` with its fixer `07cbb91`, `U-attest-precondition` `575390c` (test-only: the F7
-   probe's precondition raced its own fixture on all three runners), and the cut `6672b5e`. **v0.1.2:** `gh release
-   view v0.1.2` — target `6672b5e`, Latest; the installer built on the box, hashed equal on the box, on the Mac, in
-   `SHA256SUMS.txt` and in the GitHub asset digest (`672f28fa…ab66`, 117,979,718 bytes). The cut leg was killed by a
-   third usage limit after the bump and the box build; the manager rebased its branch, ran PR #9 green, fast-forwarded
-   `main` and published from the Mac. Three usage-limit kills in all (2026-09-05 23:40, 2026-09-06 03:50 and ~09:10)
-   took seven running legs; every one was re-briefed fresh from its file with "read your branch first" and lost nothing
-   committed — this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place.
-   **The update was watched installing itself:** from a fresh home (`TRADEAGENT_HOME`), the installed 0.1.1 walked
-   its setup, found v0.1.2 one second after Finish, asked twice, ran Setup's own window only, and relaunched as 0.1.2;
-   the fifth hash, read off the copy it downloaded, equals the other four. The first attempt found that the installed
-   0.1.1 cannot start on the box's REAL home at all (schema 3 from the week's repo builds against its schema 1: "records
-   are damaged", no update strip — a finding). **`docs/briefs/` is EMPTY** (the folder is absent when nothing is in
-   flight). **The box:** the installed app is now 0.1.2; the real home is still at schema 3 and the next start of a
-   0.1.2 process against it migrates 3 → 4 — the owner's moment, deliberately not taken; ATAS up, the bridge at
-   protocol 3 started on a chart; the book flat; the fresh home `C:\ta\home-0.1.1-update` left in place.
-   **Open, not briefed** (the third review starts here): an UNKNOWN close on the same instrument can still fill after
-   the press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked
-   only on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail`
-   are two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2;
-   `TreatWarningsAsErrors` is on for the bridge only; an installed OLDER build refuses a home a newer build
-   migrated with "records are damaged" (false — they are newer) and no update path; 0.1.1 wrote no activity row for the
-   update press and whether `main`'s hook fires at runtime is NOT VERIFIED; five hosted-runner reds recorded once each
-   (three in the U-sweep-words-win section, two in U-attest-precondition's) plus the one in step 4, a brief each when
-   one recurs.
-4. **CI on `main`:** green on all three platforms at every code landing of the session and at the release sha
-   (`6672b5e`, run 34022935338). Hosted-runner reds are a known class: timing fixtures tuned on fast machines; the
-   `Timing` category gets one second attempt on EVERY runner since `U-press-stopwatch`; the remaining instances are
-   recorded in `BUILD-STATUS.md` with their runs. One more one-off after the close: run 34024633518 at the docs-only
-   `82a4cc3`, windows, `CloseAllOutcomeTests.Close_all_keeps_going_after_one_position_fails` [56 s], `Assert.Equal()
-   Failure: Values differ` — the 52-second press shape, first occurrence, green at the next run; a brief if it recurs.
-   A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset; runner or harness red → a fixer on top.
+1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process) and the `## 2026-09-06` sections at the end of
+   `BUILD-STATUS.md` (one ≤40-line section per landing, every claim with its run).
+2. **`main` is `a167884` plus the docs commits after it, clean, pushed.** Landed today against the vision above, each
+   with its section: `U-life` `0ec96c6` (the mission loop — the AI runs turn after turn on a `## Situation` the app
+   writes; "Let the AI work on its own" is two presses, "Pause" one; its instructions are a mission), `U-ledger`
+   `640bce5` (a `fill` table at schema 5, `trade pnl --json` that withholds a net it cannot compute, a Performance
+   card), `U-meter` `902e3da` (the AI's cost per turn from the CLI's own usage event, a daily cap that pauses the loop
+   — INERT until `U-prices` lands, because no prices ship), and three test-only fixers: `U-typed-catalog` `4d48395` (a
+   unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
+   `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
+   measured on the runners, no assertion loosened). **`U-prices` is in flight** on branch `u-prices` (worktree
+   `~/Projects/ai-trading-software-for-mihael-worktrees/prices`), its brief in `docs/briefs/`; read the branch first.
+3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
+   release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
+   migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **Nothing landed
+   today has run on the box or on any screen** — every card and control is proved by its words, not photographed; the
+   first UI run of the loop (`tools/mac-run.sh`, then the box) is due before the paper run. The morning's open items
+   stand for the third review: the UNKNOWN close that can reverse a position (step 6 (e)); `req.V` checked only on
+   `hello`; "Open the AI's folder" pointing at `workspace/`; `Bridge`/`StatusDetail` two readings of the connector;
+   an older build refusing a newer home as "damaged"; 0.1.1 writing no activity row for the update press;
+   `TreatWarningsAsErrors` on the bridge only.
+4. **CI on `main`:** the merge shas `0ec96c6` and `640bce5` are recorded RED (the harness race `U-typed-catalog`
+   closed); every later merge — `902e3da`, `4d48395`, `697e24f`, and `a167884` (pending when this was written) — green
+   on all three platforms and `package`. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
