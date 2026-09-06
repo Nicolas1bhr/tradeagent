@@ -242,6 +242,10 @@ public sealed class AgentSession(
         using var process = Process.Start(psi)
             ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} would not start");
         _current = process;
+        // The conversation turn: the one process that runs what the agent decided to do. Held open
+        // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
+        // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
+        using var alive = AgentPresence.Shared.Enter();
 
         // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
         try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }

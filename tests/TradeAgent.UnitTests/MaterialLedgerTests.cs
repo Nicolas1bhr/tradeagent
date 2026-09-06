@@ -15,10 +15,11 @@ public class MaterialLedgerTests
     static (Database Db, string Root) Workspace()
     {
         var root = Path.Combine(TestEnv.Home, $"ws-{Guid.NewGuid():n}");
-        Directory.CreateDirectory(Path.Combine(root, "inbox"));
-        foreach (var d in MaterialScanner.TrackedAgentDirs) Directory.CreateDirectory(Path.Combine(root, d));
-        Directory.CreateDirectory(Path.Combine(root, "scratch"));
-        Directory.CreateDirectory(Path.Combine(root, "logs"));
+        Directory.CreateDirectory(Path.Combine(root, MaterialScanner.InboxDir));
+        var agent = Path.Combine(root, MaterialScanner.AgentDir);
+        foreach (var d in MaterialScanner.TrackedAgentDirs) Directory.CreateDirectory(Path.Combine(agent, d));
+        Directory.CreateDirectory(Path.Combine(agent, "scratch"));
+        Directory.CreateDirectory(Path.Combine(agent, "logs"));
         return (TestEnv.NewDb(), root);
     }
 
@@ -125,7 +126,7 @@ public class MaterialLedgerTests
         using var _ = db;
         Drop(root, "inbox/project/index.js", "console.log(1)");
         Drop(root, "inbox/project/node_modules/left-pad/index.js", "module.exports = 1");
-        Drop(root, "scripts/obj/Debug/thing.dll", "binary");
+        Drop(root, "agent/scripts/obj/Debug/thing.dll", "binary");
         Drop(root, "inbox/project/.git/HEAD", "ref: refs/heads/main");
 
         new MaterialScanner(db, root).Scan();
@@ -142,15 +143,15 @@ public class MaterialLedgerTests
     {
         var (db, root) = Workspace();
         using var _ = db;
-        Drop(root, "scratch/half-finished.py", "pass");
-        Drop(root, "logs/run.log", "started");
-        Drop(root, "strategies/breakout.py", "def go(): pass");
+        Drop(root, "agent/scratch/half-finished.py", "pass");
+        Drop(root, "agent/logs/run.log", "started");
+        Drop(root, "agent/strategies/breakout.py", "def go(): pass");
 
         new MaterialScanner(db, root).Scan();
 
         var items = new MaterialStore(db).Present();
         var one = Assert.Single(items);
-        Assert.Equal("strategies/breakout.py", one.RelPath);
+        Assert.Equal("agent/strategies/breakout.py", one.RelPath);
         Assert.Equal(MaterialOrigin.Agent, one.Origin);
     }
 
@@ -202,7 +203,7 @@ public class MaterialLedgerTests
         var (db, root) = Workspace();
         using var _ = db;
         Drop(root, "inbox/raw.csv", "1,2,3");
-        Drop(root, "data/cleaned.csv", "1,2");
+        Drop(root, "agent/data/cleaned.csv", "1,2");
         new MaterialScanner(db, root).Scan();
 
         var store = new MaterialStore(db);

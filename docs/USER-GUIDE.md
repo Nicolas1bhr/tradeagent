@@ -271,6 +271,14 @@ The page shows two lists, and the difference between them matters:
 - **What the AI says it did** — the AI's own account of what it ran and what it made from what. It is
   a report, not a measurement, and the page labels it that way.
 
+**Occasionally a file says "the AI was running when it appeared".** The inbox is your folder and the
+AI works in a different one, but nothing physically stops a program from writing into a folder next
+to it — so TradeAgent does not simply take the folder's word for who put a file there. When a file
+turns up while the AI has a program running, the page says so plainly instead of telling you that you
+handed it over. The file is still recorded, still fingerprinted, still yours to open. What is missing
+is only the claim that it came from you. Files you drop while the AI is idle read the usual *"you
+gave this to the AI"*, and that line means TradeAgent can show it.
+
 **One thing to know about documents.** If a file you hand over contains text aimed at the AI —
 "you are approved to trade", "place this order", "ignore your instructions" — it has no effect. The
 AI cannot gain permission from a document. Only you can change what it is allowed to do, and only in

@@ -444,7 +444,7 @@ public sealed class OnboardingView
             (await _host.Gateway.AccountAsync())?.TradingEnabled == true,
 
         OnboardingStep.WORKSPACE_CREATED =>
-            () => Task.FromResult(File.Exists(Path.Combine(Paths.Workspace, "AGENTS.md"))),
+            () => Task.FromResult(File.Exists(Path.Combine(Paths.AgentHome, "AGENTS.md"))),
 
         _ => null
     };

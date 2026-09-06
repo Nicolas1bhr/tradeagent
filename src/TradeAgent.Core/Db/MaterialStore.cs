@@ -64,15 +64,26 @@ public sealed class MaterialStore(Database db)
         return c.ExecuteNonQuery();
     });
 
-    /// <summary>Rows in this origin that a scan did not find, stamped gone. Never deleted.</summary>
-    public int MarkMissing(MaterialOrigin origin, IReadOnlyCollection<long> stillPresent, DateTimeOffset now)
+    /// <summary>
+    /// Rows in these origins that a scan did not find, stamped gone. Never deleted.
+    ///
+    /// A COLLECTION of origins, because one walked directory can produce more than one word for the
+    /// same place: the inbox yields <see cref="MaterialOrigin.Inbox"/> or
+    /// <see cref="MaterialOrigin.InboxUnattested"/> depending on what the pass could attest, and a
+    /// sweep that named only the first would stamp every unattested row gone on the strength of a
+    /// walk that had just seen the file.
+    /// </summary>
+    public int MarkMissing(IReadOnlyCollection<MaterialOrigin> origins, IReadOnlyCollection<long> stillPresent, DateTimeOffset now)
     {
+        if (origins.Count == 0) return 0;
         var keep = stillPresent.Count == 0 ? "" : $" AND id NOT IN ({string.Join(',', stillPresent)})";
+        // The enum's own names, never anything a caller typed, so this cannot be a hole.
+        var names = string.Join(',', origins.Select(o => $"'{o}'"));
         return db.Write(_ =>
         {
             using var c = db.Cmd(
-                $"UPDATE material SET removed_at=$now WHERE origin=$o AND removed_at IS NULL{keep}",
-                ("$now", Sql.T(now)), ("$o", origin.ToString()));
+                $"UPDATE material SET removed_at=$now WHERE origin IN ({names}) AND removed_at IS NULL{keep}",
+                ("$now", Sql.T(now)));
             return c.ExecuteNonQuery();
         });
     }

@@ -1633,10 +1633,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         MaterialOrigin? origin = req.Str("origin")?.ToLowerInvariant() switch
         {
             "inbox" => MaterialOrigin.Inbox,
+            // A separate word, not a synonym for `inbox`: these are the rows TradeAgent could not
+            // attribute to the account owner because an agent process was running when the file
+            // appeared. Asking for `inbox` and getting them back would be the ledger conceding the
+            // very claim it declines to make.
+            "inbox-unattested" => MaterialOrigin.InboxUnattested,
             "agent" => MaterialOrigin.Agent,
             null or "" or "all" => null,
             var other => throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"origin '{other}' is not one of: inbox, agent, all")
+                $"origin '{other}' is not one of: inbox, inbox-unattested, agent, all")
         };
 
         var items = gateway.Materials.Present(origin);

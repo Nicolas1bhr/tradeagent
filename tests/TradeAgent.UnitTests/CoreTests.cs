@@ -213,8 +213,8 @@ public class WorkspaceTests
     public void The_agent_is_told_the_things_it_must_not_get_wrong()
     {
         var root = Path.Combine(TestEnv.Home, $"ws-{Guid.NewGuid():n}");
-        WorkspaceBuilder.Build(Ctx(), root);
-        var text = File.ReadAllText(Path.Combine(root, "AGENTS.md"));
+        var home = WorkspaceBuilder.Build(Ctx(), root);
+        var text = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
 
         Assert.Contains("trade schema --json", text);
         Assert.Contains("request id", text, StringComparison.OrdinalIgnoreCase);
@@ -224,15 +224,19 @@ public class WorkspaceTests
         // the platform: an agent told to re-send while the connection is down has to know that works.
         Assert.Contains("reads nothing from the platform", text);
         foreach (var d in WorkspaceBuilder.SubDirs)
-            Assert.True(Directory.Exists(Path.Combine(root, d)), $"{d} was not created");
+            Assert.True(Directory.Exists(Path.Combine(home, d)), $"{d} was not created");
+        // The owner's drop folder is built too, and it is a SIBLING of the agent's home rather than
+        // a subdirectory of it (REVIEW 2026-09-05b finding 5).
+        Assert.True(Directory.Exists(Path.Combine(root, MaterialScanner.InboxDir)));
+        Assert.False(Directory.Exists(Path.Combine(home, MaterialScanner.InboxDir)));
     }
 
     [Fact]
     public void The_current_limits_appear_in_the_instructions()
     {
         var root = Path.Combine(TestEnv.Home, $"ws-{Guid.NewGuid():n}");
-        WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxOrderQuantity = 3m, MaxOpenPositions = 7 }), root);
-        var text = File.ReadAllText(Path.Combine(root, "AGENTS.md"));
+        var home = WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxOrderQuantity = 3m, MaxOpenPositions = 7 }), root);
+        var text = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("**3**", text);
         Assert.Contains("**7**", text);
     }
@@ -243,14 +247,14 @@ public class WorkspaceTests
         // MaxNotionalPerOrder == 0 means "not enforced". Rendered naively it read as
         // "at most 0 order value", which tells the agent it may not trade at all.
         var root = Path.Combine(TestEnv.Home, $"ws-{Guid.NewGuid():n}");
-        WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxNotionalPerOrder = 0m }), root);
-        var text = File.ReadAllText(Path.Combine(root, "AGENTS.md"));
+        var home = WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxNotionalPerOrder = 0m }), root);
+        var text = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.DoesNotContain("**0** order value", text);
         Assert.Contains("not capped", text);
 
         var root2 = Path.Combine(TestEnv.Home, $"ws-{Guid.NewGuid():n}");
-        WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxNotionalPerOrder = 7500m }), root2);
-        Assert.Contains("**7,500** order value", File.ReadAllText(Path.Combine(root2, "AGENTS.md")));
+        var home2 = WorkspaceBuilder.Build(Ctx(new RiskPolicy { MaxNotionalPerOrder = 7500m }), root2);
+        Assert.Contains("**7,500** order value", File.ReadAllText(Path.Combine(home2, "AGENTS.md")));
     }
 
     [Fact]

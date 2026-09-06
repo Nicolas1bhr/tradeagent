@@ -8,15 +8,35 @@ public static class Paths
 {
     public static string Home { get; } = ResolveHome();
     public static string Tools { get; } = Sub("tools");
+    /// <summary>
+    /// The recorded tree: the owner's <see cref="Inbox"/> and the agent's <see cref="AgentHome"/>
+    /// side by side. This is what the material scanner walks; it is not anybody's working directory.
+    /// </summary>
     public static string Workspace { get; } = Sub("workspace");
 
     /// <summary>
-    /// Where the account owner hands the agent material to work on. Deliberately *inside* the
-    /// workspace: the agent is already broadly free in there, so this grants it nothing it did not
-    /// already have. A drop folder outside the workspace would be a real widening of the blast
-    /// radius, and the workspace boundary is the whole containment story.
+    /// Where the account owner hands the agent material to work on. Unchanged for the owner since
+    /// the day this shipped, and it stays inside the workspace: the agent is already broadly free
+    /// in there, so this grants it nothing it did not already have, and a drop folder somewhere
+    /// else would be a real widening of the blast radius.
+    ///
+    /// What changed is what is NOT above it. See <see cref="AgentHome"/>.
     /// </summary>
     public static string Inbox { get; } = SubOf(Workspace, "inbox");
+
+    /// <summary>
+    /// The agent's own tree, and the working directory every runtime process is started in. A
+    /// SIBLING of <see cref="Inbox"/>, not its parent.
+    ///
+    /// It used to be <see cref="Workspace"/> itself, which put the owner's drop folder one relative
+    /// path inside the agent's working directory: <c>inbox/anything.pdf</c> was a file the agent
+    /// could create, and the scanner recorded it as material the owner had handed over
+    /// (REVIEW 2026-09-05b finding 5). Nothing here is a sandbox — a process that wants to write
+    /// <c>../inbox</c> still can — and that is why the origin is also attested rather than inferred
+    /// (<see cref="AgentPresence"/>). What this changes is that reaching the owner's folder is now
+    /// a deliberate climb out of your own directory instead of the shortest path you could type.
+    /// </summary>
+    public static string AgentHome { get; } = SubOf(Workspace, "agent");
     public static string Bin { get; } = Sub("bin");
     public static string Logs { get; } = Sub("logs");
     public static string State { get; } = Sub("state");
@@ -50,7 +70,7 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, Bin, Logs, State, BridgeDir, Updates })
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates })
         {
             Directory.CreateDirectory(d);
             if (!Directory.Exists(d)) throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, $"cannot create {d}");

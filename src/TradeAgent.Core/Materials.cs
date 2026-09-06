@@ -3,8 +3,25 @@ namespace TradeAgent.Core;
 /// <summary>Who put the file there. The distinction the ledger exists to preserve.</summary>
 public enum MaterialOrigin
 {
-    /// <summary>The account owner handed it over, through the inbox.</summary>
+    /// <summary>
+    /// The account owner handed it over, through the inbox, and the scanner can attest it: no agent
+    /// process was alive at any point between the previous pass and this sighting. This is the only
+    /// origin that states something the filesystem alone cannot show, and it is never assumed.
+    /// </summary>
     Inbox,
+
+    /// <summary>
+    /// It is in the inbox, and nobody can prove who put it there — an agent process was alive
+    /// somewhere in the window between the previous pass and this sighting
+    /// (REVIEW 2026-09-05b finding 5).
+    ///
+    /// It is a real sighting with a real hash; what is missing is the attribution. Kept as a
+    /// separate word rather than folded into <see cref="Inbox"/> because a measurement table that
+    /// says "the owner gave me this" when it means "it was in their folder" is exactly the record
+    /// the observed party can author.
+    /// </summary>
+    InboxUnattested,
+
     /// <summary>It appeared under the agent's own working directories, so the agent produced it.</summary>
     Agent
 }

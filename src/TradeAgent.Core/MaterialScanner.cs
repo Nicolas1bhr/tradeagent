@@ -17,19 +17,39 @@ namespace TradeAgent.Core;
 /// the pass compares the tuple it can read from a directory listing (path, size, mtime) and opens
 /// only what changed, a bounded number per pass.
 /// </summary>
-public sealed class MaterialScanner(Database db, string? workspaceRoot = null)
+/// <param name="noAgentSince">
+/// Answers "was no agent process alive at any point since this instant?". Only when it says yes is
+/// a file in the inbox recorded as <see cref="MaterialOrigin.Inbox"/> — the one origin that claims
+/// something a directory listing cannot show. Defaults to the process-wide
+/// <see cref="AgentPresence.Shared"/>; tests pass their own so nothing races through shared state.
+/// </param>
+public sealed class MaterialScanner(Database db, string? workspaceRoot = null, Func<DateTimeOffset, bool>? noAgentSince = null)
 {
     readonly string _root = workspaceRoot ?? Paths.Workspace;
     readonly MaterialStore _store = new(db);
+    readonly Func<DateTimeOffset, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
 
     /// <summary>Where the account owner drops things. Everything under it is theirs, not the agent's.</summary>
     public const string InboxDir = "inbox";
 
     /// <summary>
-    /// The agent's own directories that are worth remembering. <c>logs/</c> and <c>scratch/</c> are
-    /// deliberately absent: the agent is told scratch is disposable, and its logs churn every run.
-    /// The rule that makes this legible to the agent is in AGENTS.md — anything it wants on the
-    /// record goes in a tracked folder.
+    /// The agent's tree, beside <see cref="InboxDir"/> rather than around it. Every tracked agent
+    /// directory below is relative to THIS, so a recorded path reads <c>agent/scripts/x.py</c>.
+    /// </summary>
+    public const string AgentDir = "agent";
+
+    /// <summary>
+    /// When the previous pass ran. The window an <see cref="MaterialOrigin.Inbox"/> claim is
+    /// attested over is [this, the sighting]. Kept in the database rather than on the instance
+    /// because a scanner is built fresh for every pass.
+    /// </summary>
+    const string LastScanKey = "material_scan_at";
+
+    /// <summary>
+    /// The agent's own directories that are worth remembering, relative to <see cref="AgentDir"/>.
+    /// <c>logs/</c> and <c>scratch/</c> are deliberately absent: the agent is told scratch is
+    /// disposable, and its logs churn every run. The rule that makes this legible to the agent is
+    /// in AGENTS.md — anything it wants on the record goes in a tracked folder.
     /// </summary>
     public static readonly string[] TrackedAgentDirs = ["trading", "research", "strategies", "data", "scripts"];
 
@@ -62,10 +82,17 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null)
         int seen = 0, added = 0, removed = 0, skipped = 0;
         var truncated = false;
 
-        foreach (var (origin, dirs) in new (MaterialOrigin, string[])[]
+        // The window every Inbox claim in this pass is measured over. On the very first pass there
+        // is no previous one, and MinValue is the honest window: "since before anything happened".
+        var since = Sql.TimeN(db.GetKv(LastScanKey)) ?? DateTimeOffset.MinValue;
+        // Written at the START of the pass, not the end: a file created while this pass is walking
+        // is seen by the NEXT one, and its window has to reach back far enough to contain it.
+        db.SetKv(LastScanKey, Sql.T(now));
+
+        foreach (var (origins, root, dirs) in new (MaterialOrigin[], string, string[])[]
                  {
-                     (MaterialOrigin.Inbox, [InboxDir]),
-                     (MaterialOrigin.Agent, TrackedAgentDirs)
+                     ([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested], "", [InboxDir]),
+                     ([MaterialOrigin.Agent], AgentDir, TrackedAgentDirs)
                  })
         {
             var present = new List<long>();
@@ -73,7 +100,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null)
 
             foreach (var dir in dirs)
             {
-                var full = Path.Combine(_root, dir);
+                var full = Path.Combine(_root, root, dir);
                 if (!Directory.Exists(full)) continue;
 
                 foreach (var file in Walk(full, 0, ref skipped, ct))
@@ -87,6 +114,11 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null)
                     catch (UnauthorizedAccessException) { skipped++; continue; }
 
                     var rel = Relative(file);
+                    // Asked HERE, per sighting, rather than once for the pass: an agent that starts
+                    // while this walk is running must not be attested away by a question asked
+                    // before it existed. `origins[0]` is the attested word, `[^1]` the weaker one,
+                    // and for the agent's own tree they are the same word.
+                    var origin = _noAgentSince(since) ? origins[0] : origins[^1];
                     var (isNew, id) = _store.Observe(rel, origin, info.Length,
                         new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero),
                         RunnableExts.Contains(info.Extension), now);
@@ -109,7 +141,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null)
             // comes back empty after an earlier one ran out of budget — and removing it on its own
             // breaks nothing today. It stays because the cost is one boolean and the failure it
             // would cover is a silent false deletion. Do not read it as covered.
-            if (complete && !truncated) removed += _store.MarkMissing(origin, present, now);
+            if (complete && !truncated) removed += _store.MarkMissing(origins, present, now);
         }
 
         var hashed = HashPending(ct);

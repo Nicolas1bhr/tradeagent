@@ -264,7 +264,20 @@ sealed class InboxPage
         }
     };
 
-    static string Origin(Material m) => m.Origin == MaterialOrigin.Inbox ? "you gave this to the AI" : "the AI made this";
+    /// <summary>
+    /// The three things the ledger can honestly say about where a file came from, in the owner's
+    /// words. <see cref="MaterialOrigin.InboxUnattested"/> gets its own sentence rather than being
+    /// rounded up to "you gave this to the AI": it is in the drop folder, and the AI was running
+    /// while it appeared, so nobody can show who put it there (REVIEW 2026-09-05b finding 5). It is
+    /// rounded DOWN in one place only — the sort order below keeps it with the rest of the inbox,
+    /// because it is still the folder the owner is looking in.
+    /// </summary>
+    static string Origin(Material m) => m.Origin switch
+    {
+        MaterialOrigin.Inbox => "you gave this to the AI",
+        MaterialOrigin.InboxUnattested => "in your inbox, but the AI was running when it appeared — TradeAgent cannot say who put it there",
+        _ => "the AI made this"
+    };
 
     static string Size(long bytes) => bytes switch
     {

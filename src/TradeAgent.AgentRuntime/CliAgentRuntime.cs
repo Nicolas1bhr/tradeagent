@@ -128,6 +128,29 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// A .cmd or .bat is a script, not an image: CreateProcess refuses it. Route those through the
     /// command interpreter so an npm shim behaves like any other executable.
     /// </summary>
+    /// <summary>
+    /// Marks an agent process alive in <see cref="AgentPresence"/> for as long as it runs, so the
+    /// material scanner can tell an inbox file the OWNER dropped from one that appeared while the
+    /// agent was executing (REVIEW 2026-09-05b finding 5).
+    ///
+    /// The returned handle also closes the window when it is disposed, which is how the short runs
+    /// end it; the <c>Exited</c> hook is for the two long-lived processes nobody awaits. Closing it
+    /// twice is harmless and closing it late only widens the window, never narrows it — the failure
+    /// this must not have is a window that closes early.
+    /// </summary>
+    static IDisposable Presence(Process process)
+    {
+        var window = AgentPresence.Shared.Enter();
+        try
+        {
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => window.Dispose();
+            if (process.HasExited) window.Dispose();
+        }
+        catch (InvalidOperationException) { window.Dispose(); }   // already gone, and already reaped
+        return window;
+    }
+
     internal static void SetCommand(ProcessStartInfo psi, string exe, IEnumerable<string> args)
     {
         var isScript = OperatingSystem.IsWindows() &&
@@ -156,7 +179,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     {
         var exe = ResolveExecutable();
         if (exe is null) return null;
-        var r = await Run(exe, manifest.VersionArgs, TimeSpan.FromSeconds(20), ct);
+        var r = await Run(exe, manifest.VersionArgs, TimeSpan.FromSeconds(20), ct, agentWork: false);
         if (r.ExitCode != 0 && string.IsNullOrWhiteSpace(r.StdOut)) return null;
         var text = string.IsNullOrWhiteSpace(r.StdOut) ? r.StdErr : r.StdOut;
         var m = Regex.Match(text, @"\d+\.\d+(\.\d+)?");
@@ -193,7 +216,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
             case InstallKind.Winget:
                 progress?.Report($"Installing {manifest.DisplayName}...");
                 var wg = await Run("winget", ["install", "--id", manifest.Install.WingetId ?? "", "--silent",
-                    "--accept-package-agreements", "--accept-source-agreements"], TimeSpan.FromMinutes(15), ct);
+                    "--accept-package-agreements", "--accept-source-agreements"], TimeSpan.FromMinutes(15), ct,
+                    agentWork: false);
                 if (wg.ExitCode != 0)
                     throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED, $"winget failed: {wg.StdErr}");
                 break;
@@ -319,6 +343,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
         var process = Process.Start(psi)
             ?? throw new TradeAgentException(ErrorCode.AI_AUTH_FAILED, $"{manifest.DisplayName} would not start its sign-in");
         _login = process;
+        Presence(process);
 
         var transcript = new StringBuilder();
         var urlFound = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -438,6 +463,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
 
             using var p = Process.Start(psi)
                 ?? throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, $"could not start {Path.GetFileName(exe)}");
+            using var alive = Presence(p);
             await p.StandardInput.WriteLineAsync(key);
             p.StandardInput.Close();
 
@@ -509,7 +535,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
         if (exe is null) return AuthState.Unknown;
         if (manifest.AuthStateArgs.Length == 0) return AuthState.Unknown;
 
-        var r = await Run(exe, manifest.AuthStateArgs, TimeSpan.FromSeconds(30), ct);
+        var r = await Run(exe, manifest.AuthStateArgs, TimeSpan.FromSeconds(30), ct, agentWork: false);
         // Both runtimes print this through a terminal renderer, so the answer arrives wrapped in
         // colour codes that a pattern like "3 credentials" would never match.
         var text = Ansi.Strip(r.StdOut + "\n" + r.StdErr);
@@ -564,6 +590,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
             SetCommand(psi, exe, manifest.InteractiveArgs);
             foreach (var (k, v) in _env) psi.Environment[k] = v;
             _session = Process.Start(psi);
+            if (_session is not null) Presence(_session);
         }
 
         var conversation = OpenConversation();
@@ -617,7 +644,15 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// handle never reaches end-of-file. The child then waits forever and the timeout below is the
     /// only thing that ends it. Giving it end-of-file at once turns a hang into an answer.
     /// </summary>
-    public async Task<ProcResult> Run(string exe, IEnumerable<string> args, TimeSpan timeout, CancellationToken ct = default)
+    /// <param name="agentWork">
+    /// True when the arguments carry something the AGENT chose — a prompt, a task — so the run
+    /// counts as an agent process for <see cref="AgentPresence"/>. False only for the fixed probes
+    /// this class issues on its own account (a version string, an auth state, an installer), whose
+    /// arguments come from the manifest and can carry nothing of the agent's. It defaults to true:
+    /// a run nobody classified is one nobody can attest around.
+    /// </param>
+    public async Task<ProcResult> Run(string exe, IEnumerable<string> args, TimeSpan timeout,
+        CancellationToken ct = default, bool agentWork = true)
     {
         var psi = new ProcessStartInfo
         {
@@ -628,6 +663,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
         foreach (var (k, v) in _env) psi.Environment[k] = v;
 
         using var p = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED, $"could not start {exe}");
+        using var alive = agentWork ? Presence(p) : null;
         try { p.StandardInput.Close(); } catch (Exception) { /* already gone */ }
         using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timer.CancelAfter(timeout);
