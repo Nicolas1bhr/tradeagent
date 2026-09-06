@@ -477,6 +477,13 @@ So, concretely:
 Either way the repair is the same and it is on screen: correct the file, or delete it. Deleting it
 puts TradeAgent back on the settings it ships with. Nothing here needs a command prompt.
 
+One thing `runtimes.json` cannot do, however it is written: make TradeAgent open something other
+than a web page. The sign-in step opens your browser at whatever address the AI tool printed, and
+that address is picked out by a rule in that file — so TradeAgent checks it before opening anything.
+Only `http://` and `https://` addresses are opened, plus TradeAgent's own folders for the
+*Open the AI's folder* and *Show the file* buttons. Anything else is turned down in the window, with
+the address it turned down shown, so you can see what was wrong with the rule.
+
 ## Two behaviours that will look like faults, but are not
 
 **"AI trading paused — an earlier order is unconfirmed."**

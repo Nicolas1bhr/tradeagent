@@ -743,9 +743,75 @@ public sealed class MainWindow : Window
         explain($"TradeAgent found the ATAS folder ({d.InstallDir}) but no program to start inside it.");
     }
 
-    internal static void OpenPath(string path, Action<string>? explain = null)
+    /// <summary>
+    /// WHAT THE OWNER READS WHEN SOMETHING IS NOT OPENED. In this window, like everything else —
+    /// there is no console for it to go to, and a shell-out that fails silently is a button that
+    /// does nothing.
+    /// </summary>
+    internal const string OnlyWebPagesAndOurFolders =
+        "TradeAgent only opens web addresses that start with http:// or https://, and its own folders. " +
+        "It did not open this:";
+
+    /// <summary>
+    /// Why this must not be handed to the shell, or null when it may be.
+    ///
+    /// <c>UseShellExecute = true</c> is the whole point of this method — it is how a web page reaches
+    /// the owner's browser and a folder reaches Explorer without TradeAgent knowing which programs
+    /// they are — and it is also why the string matters: the shell will run whatever a scheme handler
+    /// or a file association says it should. Most of what arrives here is the app's own, but not all
+    /// of it. The sign-in address is whatever a vendor's CLI printed, picked out by
+    /// <c>RuntimeManifest.AuthUrlPattern</c>, and that pattern is overridable from
+    /// <c>runtimes.json</c>; so are the help and download addresses beside it. Both built-in patterns
+    /// are anchored on <c>https?://</c>, an override is anchored on nothing, and nothing between the
+    /// regex and the shell looked (milestone review 2026-09-05b, UNVERIFIED 4).
+    ///
+    /// Two things pass. An absolute http or https URL — the whole of what a sign-in, a help page or
+    /// a download page can honestly be. And a folder INSIDE TradeAgent's own directory that exists:
+    /// the workspace, the inbox, the folder a support package was written to, which is the complete
+    /// list of what the buttons here open. Nothing else, and note what that excludes: a program, a
+    /// document, <c>file:</c>, a network share, and a path anywhere else on the machine. The folder
+    /// test compares the text before it touches the disk, so a target naming a remote share does not
+    /// become a connection to it just by being checked.
+    /// </summary>
+    internal static string? RefusedToOpen(string target)
     {
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
-        catch (Exception ex) { explain?.Invoke($"Windows could not open {path}: {ex.Message}"); }
+        if (string.IsNullOrWhiteSpace(target)) return $"{OnlyWebPagesAndOurFolders} nothing at all.";
+
+        if (Uri.TryCreate(target, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            return null;
+
+        return IsOneOfOurFolders(target) ? null : $"{OnlyWebPagesAndOurFolders} {Short(target)}";
+    }
+
+    static bool IsOneOfOurFolders(string target)
+    {
+        try
+        {
+            var home = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Paths.Home));
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target));
+            var how = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!full.Equals(home, how) && !full.StartsWith(home + Path.DirectorySeparatorChar, how)) return false;
+            return Directory.Exists(full);
+        }
+        // A target the path rules cannot even parse is not one of our folders.
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>Bounded, because the refused string can be anything a vendor's program printed.</summary>
+    static string Short(string s) => s.Length <= 120 ? s : s[..120] + "…";
+
+    internal static void OpenPath(string path, Action<string>? explain = null) =>
+        Open(path, explain, static target => Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }));
+
+    /// <summary>
+    /// The decision and the shell-out, with the shell-out passed in so a test can watch the decision
+    /// without a browser opening. Every refusal returns before <paramref name="launch"/> is reached.
+    /// </summary>
+    internal static void Open(string target, Action<string>? explain, Action<string> launch)
+    {
+        if (RefusedToOpen(target) is { } why) { explain?.Invoke(why); return; }
+        try { launch(target); }
+        catch (Exception ex) { explain?.Invoke($"Windows could not open {Short(target)}: {ex.Message}"); }
     }
 }
