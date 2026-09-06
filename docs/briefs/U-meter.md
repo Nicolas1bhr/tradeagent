@@ -35,3 +35,24 @@ running; names vs `main` 0 removed. No box, no UI photograph: say so.
 
 ## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant quoted; the codex `--json` usage
 event verbatim; gate counts; what you did NOT do. Verified or NOT VERIFIED, nothing in between.
+
+Code tip `14164c9`: the builder's four commits plus one of mine, rebased onto `main` `c1a8ee2`; this report on top.
+**The uncommitted `TurnMeter.cs` edit: COMMITTED, as dead code.** Every `CostCatalog.Price` branch that returns a null `Cost` returns
+a sentence with it, so `probe.Unpriced` is never null where `WhyNoPrice` reads it: `LastUnpricedReason`/`ReadTail` were unreachable,
+and dropping them makes `TurnRecord`'s "nothing reads it back" true.
+**Verified by running, mine** — `codex exec -s read-only --skip-git-repo-check --json "say hi"`, `codex-cli 0.153.4`, this Mac: four
+stdout lines, no model named in any of them, and the fourth identical to the builder's recording, verbatim:
+`{"type":"turn.completed","usage":{"input_tokens":17232,"cached_input_tokens":12928,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}`
+**The builder's, carried as its claims and NOT re-verified — I re-ran no mutant:** usage onto `AgentTurnEnded.Usage` (`c05cc48`); a line
+per turn in `state/agent-turns.jsonl` with `kv` totals, priced from `costs.json` or visibly unpriced (`adda9e4`); the cap pausing the
+loop until local midnight (`9c29015`); card, second press, Safety ceiling, Situation and `trade status` carrying it (`0d2c66c`); item 1
+RED `Assert.NotNull() Failure: Value is null` → GREEN 9/9 → mutant (parser dropped) RED 2/9; item 3 RED `Assert.Empty() Failure:
+Collection was not empty` → GREEN 6/6 → mutant (`Spent >= Cap` inverted) RED 5/6, both ways. Its cross-test fix is in the tree.
+**Rebase: NO conflict**, against the brief — git merged the four shared files textually, twice (`main` moved mid-leg). Both sides are
+checked by name: `DashboardView.cs` keeps `_missionCost`, `MissionCost()` and `BuildSaveDailyCap` AND `_performance`, its `Root` in the
+left column and its `Update`; `GatewaySchema.cs` the new `status` text AND `fill_ledger` and the `pnl` op; `TradingGateway.cs`
+`Ai`/`AiState` AND `LedgerPnl`; `USER-GUIDE.md` both sections. The five commits keep their messages.
+**Gate** at `14164c9`, bin/obj deleted (17 → 0), Release `--no-incremental`: 0 warnings, 0 errors, 17 projects; 11 classes 3× → 33 runs,
+0 failed (meter 9, 6, 13 · life 21, 7, 14, 4 · ledger 7, 11, 3, 5); the suite to a file, one project at a time, no other test host:
+390 + 615 + 261 = 1266 passed, 0 failed, 1 skipped; names vs `main` 0 removed, 42 added (1225 → 1267).
+**NOT done:** no box, no ATAS, no real money, no UI run or photograph — card, armed sentence and cap control proved by words alone; not pushed, not merged, worktree kept.
