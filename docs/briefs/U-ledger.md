@@ -58,3 +58,9 @@ went red on my own assertion (an apostrophe the serializer escapes); fixed in `3
 source; THREE inserted lines in `DashboardView.cs`, not one — a field, a layout entry, the update call.
 **NOT done:** no box, no ATAS, no real money, no UI run — the card is proved by its words, not photographed. That ATAS
 serves in-session `MyTrades` only is read from its source and is NOT VERIFIED.
+**Rebased** onto `main` `b3e7d0a` (it moved to the U-life landing record mid-rebase; redone on the newer tip). Code tip `547e83d`:
+the eight commits keep their messages, this report on top. Both conflicts sat in the card commit and each keeps both sides —
+`DashboardView.cs`'s left column carries the AI section as `main` wrote it AND `_performance.Root` (field and `Update` call
+auto-merged); `USER-GUIDE.md` keeps `main`'s Dashboard sentence and both new sections. **Gate** at `547e83d`, bin/obj deleted,
+Release `--no-incremental`: 0 warnings, 0 errors, 17 projects; the 8 classes 3× → 24 runs, 0 failed (7,11,3,5 · 21,7,14,4); suite
+348+261+615 = 1224 passed, 0 failed, 1 skipped; names vs `main` 0 removed, 26 added (1199 → 1225).
