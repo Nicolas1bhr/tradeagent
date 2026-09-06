@@ -275,6 +275,64 @@ public class AtasHealthTests
     }
 
     /// <summary>
+    /// THE ROW MAY NOT OUTLIVE THE TRUTH (milestone review 2026-09-05b, Codex F20).
+    ///
+    /// The cache above invalidated on TIME and on one in-app event, so anything that changed the
+    /// bridge from outside TradeAgent — a folder tidied, an antivirus quarantine, a hand-copied
+    /// build, ATAS uninstalled — left the row saying the opposite of the machine for up to a minute.
+    /// The row's whole job is to separate three mornings that look alike (trap 24), and a stale one
+    /// picks the wrong one confidently: here the bridge file is gone and the row goes on offering
+    /// "the strategy is not started on a chart", which sends the owner into ATAS to start a strategy
+    /// that is not there to start.
+    ///
+    /// A minute is also exactly the window a reinstall happens in, which is why <c>Forget()</c>
+    /// existed — the in-app half of this fix, and the evidence that a five-second row derived from a
+    /// sixty-second reading was already known to be wrong.
+    /// </summary>
+    [Fact]
+    public void A_bridge_removed_outside_the_app_reaches_the_row_on_the_next_pass()
+    {
+        var probe = new FakeProbe { Detection = Machine(), Running = true };
+        var reporter = new AtasHealthReporter(probe) { DetectionTtl = TimeSpan.FromHours(1) };
+        var health = new HealthRegistry();
+        var connector = new AtasConnector();
+
+        reporter.Report(health, connector, HealthState.READY);
+        Assert.Equal(HealthState.READY, health.Get(Components.AtasBridge).State);
+
+        // Somebody deletes TradeAgent.AtasBridge.dll out of the Strategies folder. ATAS is still up,
+        // so nothing else about the machine has changed, and the pipe goes quiet.
+        probe.Detection = Machine(bridge: false);
+        reporter.Report(health, connector, HealthState.FAILED);
+
+        Assert.Equal(HealthState.FAILED, health.Get(Components.AtasBridge).State);
+        Assert.Contains("not installed in ATAS", health.Get(Components.AtasBridge).Detail);
+        Assert.Contains(Labels.ReinstallBridge, health.Get(Components.AtasBridge).Detail);
+    }
+
+    /// <summary>
+    /// The other half of F20: a REPLACEMENT, not a removal. ATAS updates itself while TradeAgent is
+    /// open, and the process row goes on naming the version that is no longer installed.
+    /// </summary>
+    [Fact]
+    public void A_platform_replaced_outside_the_app_reaches_the_row_on_the_next_pass()
+    {
+        var probe = new FakeProbe { Detection = Machine(), Running = true };
+        var reporter = new AtasHealthReporter(probe) { DetectionTtl = TimeSpan.FromHours(1) };
+        var health = new HealthRegistry();
+        var connector = new AtasConnector();
+
+        reporter.Report(health, connector, HealthState.READY);
+        Assert.Contains("8.0.14.397", health.Get(Components.AtasProcess).Detail);
+
+        probe.Detection = Machine(version: "9.1.2.3");
+        reporter.Report(health, connector, HealthState.READY);
+
+        Assert.Contains("9.1.2.3", health.Get(Components.AtasProcess).Detail);
+        Assert.DoesNotContain("8.0.14.397", health.Get(Components.AtasProcess).Detail);
+    }
+
+    /// <summary>
     /// A probe that answers out of these two properties and never looks at the machine the tests are
     /// running on. <see cref="Detect"/> folds <see cref="Running"/> in the way the real one does, so
     /// the one knob is the one fact that changes while the app is up.
@@ -285,6 +343,7 @@ public class AtasHealthTests
         public bool Running { get; set; }
         public int Detects { get; private set; }
         public int RunningChecks { get; private set; }
+        public int Stamps { get; private set; }
 
         public AtasDetection Detect()
         {
@@ -297,6 +356,18 @@ public class AtasHealthTests
             RunningChecks++;
             return Running;
         }
+
+        /// <summary>
+        /// The machine this fake is standing in for, minus the one fact the real stamp cannot see —
+        /// whether the process is up, which leaves no mark on any file and is asked afresh anyway.
+        /// The argument is ignored on purpose: the real probe re-reads the paths a detection came
+        /// from, and this re-reads the property those paths stand for.
+        /// </summary>
+        public string Stamp(AtasDetection of)
+        {
+            Stamps++;
+            return (Detection with { Running = false }).ToString();
+        }
     }
 
     /// <summary>Fails the test if anything asks it, which on the simulator path nothing may.</summary>
@@ -307,5 +378,8 @@ public class AtasHealthTests
 
         public bool IsRunning() =>
             throw new Xunit.Sdk.XunitException("the simulator health tick enumerated processes");
+
+        public string Stamp(AtasDetection of) =>
+            throw new Xunit.Sdk.XunitException("the simulator health tick touched the filesystem");
     }
 }

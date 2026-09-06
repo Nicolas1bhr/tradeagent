@@ -73,6 +73,12 @@ public class BridgeReinstallTests
     /// five-second tick. But a reinstall changes exactly the fact that cache is holding, so without
     /// a way to drop it the owner presses the button, the bridge lands, and the row goes on saying
     /// "not installed in ATAS" for up to a minute — which reads as a repair that did not work.
+    ///
+    /// TWO WAYS OUT OF THAT NOW, and this asserts both. The cache no longer holds against a bridge
+    /// file that has changed at all (Codex F20: the same staleness reached by removals and updates
+    /// nobody pressed a button for), so an ordinary tick already sees the new file; and
+    /// <c>Forget()</c> still forces the reading, which is what the button's own handler uses so the
+    /// row is right in the same breath as the copy rather than on the next breath.
     /// </summary>
     [Fact]
     public void The_bridge_row_re_derives_after_a_reinstall_instead_of_waiting_out_the_cache()
@@ -87,13 +93,15 @@ public class BridgeReinstallTests
         // The reinstall lands.
         probe.Detection = Machine();
 
-        // Another tick alone does not see it — that is the cache doing its job.
-        reporter.Report(health, new AtasConnector(), HealthState.FAILED);
-        Assert.Contains("not installed", health.Get(Components.AtasBridge).Detail);
-
-        reporter.Forget();
+        // An ordinary tick, well inside the cache's minute, already tells the truth.
         reporter.Report(health, new AtasConnector(), HealthState.FAILED);
         Assert.DoesNotContain("not installed", health.Get(Components.AtasBridge).Detail);
+
+        // And so does one the button forced, which is the path AppHost.ReinstallBridgeAsync takes.
+        probe.Detection = Machine(bridge: false);
+        reporter.Forget();
+        reporter.Report(health, new AtasConnector(), HealthState.FAILED);
+        Assert.Contains("not installed", health.Get(Components.AtasBridge).Detail);
     }
 
     /// <summary>
@@ -194,5 +202,8 @@ public class BridgeReinstallTests
         public AtasDetection Detection { get; set; } = detection;
         public AtasDetection Detect() => Detection;
         public bool IsRunning() => Detection.Running;
+
+        /// <summary>The property the real stamp's directory entries stand for, as this fake holds it.</summary>
+        public string Stamp(AtasDetection of) => Detection.ToString();
     }
 }

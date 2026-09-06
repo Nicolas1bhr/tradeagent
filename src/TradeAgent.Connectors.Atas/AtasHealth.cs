@@ -155,6 +155,20 @@ public interface IAtasProbe
 
     /// <summary>Only whether a platform process is up right now — the one answer that goes stale.</summary>
     bool IsRunning();
+
+    /// <summary>
+    /// THE CHEAP QUESTION: would <see cref="Detect"/> still answer what it answered for
+    /// <paramref name="of"/>?
+    ///
+    /// Any two passes that produce equal strings may share a reading. The real implementation reads
+    /// nothing but a handful of directory entries — a file's presence, its length, when it was last
+    /// written — while a detection reads a version resource out of a PE image and parses ATAS's own
+    /// runtimeconfig, which is why the reading is cached at all. It exists because caching on TIME
+    /// alone let a row outlive the machine (Codex F20): the bridge assembly removed from the
+    /// strategies folder outside the app, or ATAS replaced under it, changed nothing the cache was
+    /// watching.
+    /// </summary>
+    string Stamp(AtasDetection of);
 }
 
 /// <summary>
@@ -171,22 +185,67 @@ public sealed class AtasProbe(AtasLayout? layout = null) : IAtasProbe
     public AtasDetection Detect() => AtasInstallation.Detect(layout);
 
     public bool IsRunning() => AtasInstallation.IsRunning(layout);
+
+    /// <summary>
+    /// Four directory entries and no more: the file that says where to look, the two folders, the
+    /// bridge assembly, and the platform executable the version was read out of. Between them they
+    /// carry every fact <see cref="AtasDetection"/> derives from a file rather than from the process
+    /// table — installed or not, which version, bridge present or not.
+    ///
+    /// What it CANNOT see is a folder appearing where the last pass found none: with nothing found
+    /// there is no path to watch, and watching the candidate list instead would mean parsing
+    /// atas.json on every tick, which is the work this is avoiding. That case is what the reporter's
+    /// time bound is still for, and it is the harmless direction — an ATAS installed a minute ago
+    /// reported a minute late, rather than an ATAS removed a minute ago reported as present.
+    /// </summary>
+    public string Stamp(AtasDetection of) => string.Join('|',
+        Mark(AtasLayout.OverridePath),
+        Mark(of.InstallDir),
+        Mark(of.StrategyDir),
+        Mark(of.StrategyDir is null ? null : Path.Combine(of.StrategyDir, AtasInstallation.BridgeAssembly)),
+        Mark(of.PlatformExe));
+
+    static string Mark(string? path)
+    {
+        if (path is null) return "-";
+        try
+        {
+            var file = new FileInfo(path);
+            if (file.Exists) return $"f{file.Length}@{file.LastWriteTimeUtc.Ticks}";
+            var dir = new DirectoryInfo(path);
+            return dir.Exists ? $"d@{dir.LastWriteTimeUtc.Ticks}" : "x";
+        }
+        // An unreadable entry is not a stable one: answering "?" every time would freeze the cache
+        // on whatever it happened to hold, so it changes, and the next pass detects again.
+        catch (Exception) { return $"?{Guid.NewGuid():n}"; }
+    }
 }
 
 /// <summary>
 /// Writes the two rows on the health tick.
 ///
 /// It is a class rather than a static call because it caches: the tick runs every five seconds for
-/// the life of the app, and a detection is filesystem work that cannot change while the app runs —
-/// except for whether the process is up, which is the one part re-probed every pass.
+/// the life of the app, and a detection is filesystem work — a PE version resource, ATAS's own
+/// runtimeconfig — that is wasted on most passes.
+///
+/// "CANNOT CHANGE WHILE THE APP RUNS" WAS THE PART THAT WAS WRONG, and this is where the row went
+/// stale (Codex F20). It can: a folder is tidied, an antivirus quarantines the assembly, ATAS
+/// updates itself, somebody copies a build in by hand. The reading is therefore kept against a
+/// STAMP — a handful of directory entries, read every pass because reading them is nothing — and
+/// dropped the moment they disagree. The time bound stays underneath as the backstop for the one
+/// case a stamp cannot cover: an install appearing where the last pass found nothing to watch.
 /// </summary>
 public sealed class AtasHealthReporter(IAtasProbe? probe = null)
 {
-    /// <summary>How long a filesystem detection is reused. The process check ignores this.</summary>
+    /// <summary>
+    /// How long a filesystem detection may be reused when nothing it was read from has changed. The
+    /// process check ignores it, and so does <see cref="IAtasProbe.Stamp"/> disagreeing.
+    /// </summary>
     public TimeSpan DetectionTtl { get; set; } = TimeSpan.FromMinutes(1);
 
     readonly IAtasProbe _probe = probe ?? new AtasProbe();
     AtasDetection? _cached;
+    string _stamp = "";
     DateTimeOffset _cachedAt = DateTimeOffset.MinValue;
 
     /// <summary>
@@ -231,14 +290,18 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
     AtasDetection Detect()
     {
         var now = DateTimeOffset.UtcNow;
-        if (_cached is null || now - _cachedAt > DetectionTtl)
+        if (_cached is null || now - _cachedAt > DetectionTtl || _probe.Stamp(_cached) != _stamp)
         {
             _cached = _probe.Detect();
+            // Stamped from the reading it belongs to, and after taking it: a stamp read beforehand
+            // would belong to a machine state the detection may have raced past, which is a cache
+            // that can be born stale.
+            _stamp = _probe.Stamp(_cached);
             _cachedAt = now;
             return _cached;
         }
         // Everything but "is it up" is reused; that one is asked afresh, because it is the answer
-        // that changes while somebody is watching the screen.
+        // that changes while somebody is watching the screen and leaves no mark on any file.
         return _cached with { Running = _probe.IsRunning() };
     }
 }

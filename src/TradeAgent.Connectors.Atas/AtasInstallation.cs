@@ -122,10 +122,13 @@ public sealed record AtasLayoutRead(AtasLayout Layout, string? Unreadable);
 /// </summary>
 public sealed record AtasDetection(bool Installed, string? InstallDir, string? StrategyDir, string? Version,
     bool Running, bool BridgeInstalled, bool LayoutVerified, string? RuntimeTfm = null,
-    string? LayoutUnreadable = null);
+    string? LayoutUnreadable = null, string? PlatformExe = null);
 
 public static class AtasInstallation
 {
+    /// <summary>The one file whose presence in the strategies folder means the bridge is there.</summary>
+    public const string BridgeAssembly = "TradeAgent.AtasBridge.dll";
+
     public static AtasDetection Detect(AtasLayout? layout = null)
     {
         // A layout handed in is one a caller already has — the setup wizard's, or a test's — and
@@ -148,23 +151,25 @@ public static class AtasInstallation
         }
 
         string? version = null;
-        if (installDir is not null)
+        // Carried on the detection, not thrown away with it: reading this file's version resource is
+        // the expensive half of a pass, and knowing WHICH file it was is what lets a later pass ask
+        // the cheap question — has it been replaced — without doing the expensive one again.
+        var exe = installDir is null
+            ? null
+            : l.ExecutableNames.Select(n => Path.Combine(installDir, n)).FirstOrDefault(File.Exists);
+        if (exe is not null)
         {
-            var exe = l.ExecutableNames.Select(n => Path.Combine(installDir, n)).FirstOrDefault(File.Exists);
-            if (exe is not null)
-            {
-                try { version = FileVersionInfo.GetVersionInfo(exe).FileVersion; }
-                catch (Exception) { /* version is nice to have, not required */ }
-            }
+            try { version = FileVersionInfo.GetVersionInfo(exe).FileVersion; }
+            catch (Exception) { /* version is nice to have, not required */ }
         }
 
         var running = IsRunning(l);
 
         var bridgeInstalled = strategyDir is not null &&
-                              File.Exists(Path.Combine(strategyDir, "TradeAgent.AtasBridge.dll"));
+                              File.Exists(Path.Combine(strategyDir, BridgeAssembly));
 
         return new AtasDetection(installDir is not null, installDir, strategyDir, version, running,
-            bridgeInstalled, l.Verified, RuntimeTfm(installDir), read.Unreadable);
+            bridgeInstalled, l.Verified, RuntimeTfm(installDir), read.Unreadable, exe);
     }
 
     /// <summary>
