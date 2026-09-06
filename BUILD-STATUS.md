@@ -4304,3 +4304,44 @@ passed, 0 failed, 1 skipped (Integration 10 m 36 s; no other test host); names v
 in-session `MyTrades` only is read from its source, not watched on hardware, so the coverage start recorded in `kv` is
 the pull's own claim. **NOT done:** no box, no ATAS, no real money; fees on ATAS are NULL until the bridge reports
 them (`incomplete` says so); the meter's cost side is `U-meter`'s, in flight.
+
+## 2026-09-06 — U-meter landed: what the AI costs, per turn and per day, and a cap that pauses it
+
+The cost half of "pay for yourself", by one fresh builder on `docs/briefs/U-meter.md` (four commits, then superseded
+mid-gate) and one fresh fixer on `docs/briefs/U-meter-finish.md` (the leftover edit judged and committed, the branch
+carried over the landed ledger, the gate at the rebased tip, the report). Merge `902e3da`, 6 commits, 18 files,
++2022/−28 (new `TurnMeter.cs`; `AgentSession.cs`, `MissionLoop.cs`, `CliAgentRuntime.cs`, `AppHost.cs`, `DashboardView.cs`,
+`Trading.cs`, `Errors.cs`, `GatewaySchema.cs`, `GatewayTypes.cs`, `TradingGateway.cs`; tests).
+
+- **Usage from the stream** (builder): the runtime's own `--json` event carries the tokens onto `AgentTurnEnded.Usage`.
+  Measured twice on this Mac, `codex-cli 0.153.4`, `codex exec -s read-only --skip-git-repo-check --json "say hi"`, the
+  fourth and last stdout line verbatim: `{"type":"turn.completed","usage":{"input_tokens":17232,"cached_input_tokens":
+  12928,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}`. No model name in any event, so
+  `costs.json` names the model per runtime. Without `--skip-git-repo-check` the CLI refuses ("Not inside a trusted
+  directory"); the built-in manifest carries it (`RuntimeManifest.cs:381`). RED `Assert.NotNull() Failure: Value is
+  null` → GREEN 9/9; mutant (the parser call dropped) → RED 2/9.
+- **The record** (builder): one line per turn in `state/agent-turns.jsonl` under `Paths.State` — the app's directory,
+  not the agent's home — totals and the turn count in `kv`, reset at local midnight; priced from `costs.json` through
+  `VendorFile` or visibly unpriced. GREEN 10/10. **It ships NO prices**: a per-token figure is a claim about a bill this
+  software cannot see, so until a `costs.json` exists every turn reads "unpriced" and the cap cannot bite (below).
+- **The cap** (builder): reaching it stops the loop taking turns until local midnight and tells the owner once. RED
+  `Assert.Empty() Failure: Collection was not empty` (a Situation past the cap) → GREEN 6/6; mutant (inverted) → RED 5/6.
+- **Surfaces** (builder): the AI card's cost line, the grant's second press naming the cap, the Safety page ceiling
+  (raising asks twice, lowering saves at once), the Situation's cost line, `ai_state` / `ai_turns_today` /
+  `ai_cost_today` on `trade status`. GREEN 17/17. A cross-test collision fixed on the way: a real child in the agent's
+  role moved the sticky `AgentPresence.Shared`; the probe now passes its own register.
+- **The fixer's half:** the leftover edit deleted `LastUnpricedReason`/`ReadTail`, unreachable because every unpriced
+  branch of `CostCatalog.Price` already returns its sentence — committed as dead-code removal; the rebase over the
+  ledger merged four shared files textually with NO conflict, both sides checked by name in each.
+
+**Verified by running (the builder and the fixer, quoted; then the manager's gate):** builder's gate at the pre-rebase
+tree, Release: 0 warnings; 7 classes 3× green; Unit 369 and Fault 261 green (its Integration run straddled the rebase,
+discarded). Fixer's gate at `14164c9`, Release: 0 warnings; 11 classes 3× → 33 runs, 0 failed; 390 + 615 + 261 = 1266
+passed, 0 failed, 1 skipped; names 0 removed, 42 added. Manager's gate at `902e3da`, Release: build → 0 warnings, 0 errors; suite → 390 + 261 + 615 = 1266 passed, 0 failed, 1 skipped (Integration 10 m 36 s, the typed fixer's Unit runs overlapping — no false green possible); names vs
+`main` → 0 removed, 40 added (sets 992 → 1032); scan clean; `rev-list --count` → 0; CI at `902e3da`: pending when written, recorded in the next commit.
+
+**NOT VERIFIED:** the card, the armed sentence and the cap control on a running app — words only; the codex measurement
+is macOS only; the status fields asserted on the composer's JSON, not over a live pipe; no mutant re-run by the fixer.
+**NOT done:** no prices shipped, so the cap is inert until `costs.json` exists — the owner cannot be asked to write
+JSON, so `U-prices` (list prices as dated data plus a Settings field) is queued in the resume file; `agent-turns.jsonl`
+is never rotated; no box, no ATAS, no money.
