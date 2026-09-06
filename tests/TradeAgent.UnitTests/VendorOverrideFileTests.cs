@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Connectors.Atas;
 using TradeAgent.Core;
@@ -237,5 +238,75 @@ public class VendorOverrideFileTests
             Assert.False(string.IsNullOrWhiteSpace(row.UserAction));
         }
         finally { Clean(); }
+    }
+}
+
+/// <summary>
+/// THE SWEEP, KEPT RATHER THAN REPORTED.
+///
+/// `U-typed-catalog`: <c>TypedWhileWorkingTests</c> built its conversation with
+/// <c>RuntimeCatalog.Require</c>, which reads <c>runtimes.json</c> — the one file
+/// <see cref="VendorOverrideFileTests"/> corrupts on purpose, under the one test home this assembly
+/// shares. The class was not in this collection, so xUnit was free to run the two side by side, and
+/// on ubuntu-latest (CI run 34040176577) it did: three tests red in a millisecond each, on a tree
+/// this Mac and the Windows runner both passed. Nothing in the product was wrong, which is what made
+/// it expensive to read.
+///
+/// A sweep of the assembly found no second offender. That fact has a shelf life of one commit, so it
+/// is asserted here instead: every call below opens or replaces one of the two files, and a class
+/// that makes one either joins this collection or is rewritten not to need the disk — the choice
+/// <c>TypedWhileWorkingTests</c> took.
+///
+/// It reads SOURCE because a read cannot be seen from a running test, and it skips whole-line
+/// comments so that prose about a call is not mistaken for one. It names these calls in its own
+/// source, so it carries the attribute itself rather than needing an exception; the cost is that one
+/// file-scan does not run in parallel. <c>AtasInstallation</c>'s overloads that are handed a layout
+/// read nothing and are deliberately absent — only its no-argument forms go to disk.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class EveryClassThatTouchesAVendorFileSharesThisCollectionTests
+{
+    static readonly string[] Touches =
+    [
+        "RuntimeCatalog.Read(", "RuntimeCatalog.Load(", "RuntimeCatalog.Find(",
+        "RuntimeCatalog.Require(", "RuntimeCatalog.SaveOverrides(", "RuntimeCatalog.OverridePath",
+        "AtasLayout.Read(", "AtasLayout.Load(", "AtasLayout.OverridePath",
+        "AtasInstallation.Detect()", "AtasInstallation.IsRunning()",
+        "new Doctor(", "new RuntimeFileHealth("
+    ];
+
+    [Fact]
+    public void No_class_in_this_assembly_touches_a_vendor_file_from_outside_the_collection()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        var sources = Directory.GetFiles(Path.Combine(dir.FullName, "tests", "TradeAgent.UnitTests"), "*.cs");
+        Assert.Contains(sources, f => Path.GetFileName(f) == "VendorOverrideFileTests.cs");
+
+        var offenders = new List<string>();
+        foreach (var file in sources)
+        {
+            var text = string.Join("\n", File.ReadAllLines(file)
+                .Select(l => l.TrimStart().StartsWith("//") ? "" : l));
+            var classes = Regex.Matches(
+                text, @"(?m)^(?:\[Collection\((?<attr>[^)]*)\)\]\n)?public (?:sealed |static |abstract )?class (?<name>\w+)");
+
+            foreach (var call in Touches)
+                for (var at = text.IndexOf(call, StringComparison.Ordinal); at >= 0;
+                     at = text.IndexOf(call, at + 1, StringComparison.Ordinal))
+                {
+                    var owner = classes.LastOrDefault(c => c.Index < at);
+                    if (owner?.Groups["attr"].Value == "VendorOverrideFiles.Name") continue;
+                    offenders.Add($"{Path.GetFileName(file)}: {owner?.Groups["name"].Value ?? "<file scope>"} calls {call}");
+                }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "These read or write runtimes.json / atas.json under the shared test home while outside " +
+            $"[Collection(VendorOverrideFiles.Name)], so they race the tests that corrupt it on purpose. " +
+            $"Either build the object under test off the disk, or add the attribute:\n  " +
+            string.Join("\n  ", offenders));
     }
 }
