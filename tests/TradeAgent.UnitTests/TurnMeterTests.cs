@@ -2,20 +2,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
 
-/// <summary>
-/// WHAT THE AI COSTS, TAKEN FROM THE RUNTIME'S OWN STREAM AND NEVER FROM A GUESS.
-///
-/// The stream below is not a fixture somebody wrote to make a parser pass. It is the whole of what
-/// Codex CLI 0.153.4 printed on this Mac on 2026-09-06 for
-/// <c>codex exec -s read-only --skip-git-repo-check --json "say hi"</c>, four lines, copied
-/// verbatim. Every assertion about "what the CLI emits" in this file is an assertion about that
-/// recording, so a vendor that changes the event shape breaks a test here rather than silently
-/// billing zero.
-/// </summary>
 /// <summary>
 /// An <see cref="AgentSession"/> driven over a REAL child process that prints a canned stream.
 ///
@@ -64,6 +55,16 @@ internal static class AgentRuntimeProbe
     }
 }
 
+/// <summary>
+/// WHAT THE AI COSTS, TAKEN FROM THE RUNTIME'S OWN STREAM AND NEVER FROM A GUESS.
+///
+/// The stream below is not a fixture somebody wrote to make a parser pass. It is the whole of what
+/// Codex CLI 0.153.4 printed on this Mac on 2026-09-06 for
+/// <c>codex exec -s read-only --skip-git-repo-check --json "say hi"</c>, four lines, copied
+/// verbatim. Every assertion about "what the CLI emits" in this file is an assertion about that
+/// recording, so a vendor that changes the event shape breaks a test here rather than silently
+/// billing zero.
+/// </summary>
 public class TurnMeterTests
 {
     /// <summary>
@@ -193,5 +194,246 @@ public class TurnMeterTests
     {
         var usage = UsageOf("""{"usage":{"input_tokens":1,"output_tokens":1,"model":"gpt-5.1-codex-max"}}""");
         Assert.Equal("gpt-5.1-codex-max", usage!.Model);
+    }
+}
+
+/// <summary>
+/// THE BILL: one line per turn in the app's own state directory, today's totals in <c>kv</c>, and a
+/// price only where <c>costs.json</c> supplies one.
+///
+/// It writes the real <c>costs.json</c> under the assembly's test home, so it shares the vendor-file
+/// collection with the classes that corrupt the other two on purpose.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class TurnRecordTests : IDisposable
+{
+    readonly Database _db = TestEnv.NewDb();
+    readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
+
+    public void Dispose()
+    {
+        NoCosts();
+        _db.Dispose();
+    }
+
+    static void NoCosts()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+    }
+
+    /// <summary>
+    /// The owner's own price list, as a test fixture and nothing else. These are NOT this repository
+    /// asserting what OpenAI charges — that is exactly the claim <see cref="AgentCosts"/> refuses to
+    /// ship — they are numbers chosen so the arithmetic below has one right answer.
+    /// </summary>
+    static void CostsAre(decimal input, decimal cached, decimal output) =>
+        File.WriteAllText(CostCatalog.OverridePath, Json.Write(new AgentCosts
+        {
+            Currency = "USD",
+            Models = [new ModelPrice
+            {
+                Model = "test-model", InputPerMillion = input,
+                CachedInputPerMillion = cached, OutputPerMillion = output
+            }],
+            RuntimeModels = new(StringComparer.OrdinalIgnoreCase) { ["probe"] = "test-model" }
+        }, pretty: true));
+
+    /// <summary>The usage Codex actually reported on this Mac, as an ended turn.</summary>
+    static AgentTurnEnded CodexTurn(DateTimeOffset at, int exitCode = 0) =>
+        new(exitCode, TimeSpan.FromSeconds(12.5), "…", at)
+        {
+            Usage = new TurnUsage(17232, 12928, 0, 6, 0, null)
+        };
+
+    TurnMeter Meter(decimal cap = 5m, Func<DateTimeOffset>? now = null) =>
+        new(_db, () => cap, session: () => "thread-1", runtimeId: () => "probe",
+            now: now ?? (() => DateTimeOffset.Now), recordPath: _records);
+
+    /// <summary>
+    /// WHERE THE RECORD LIVES IS A SAFETY PROPERTY, not a tidiness one. The agent may write anywhere
+    /// under its own home, so a bill kept there is a bill the party being billed can rewrite — the
+    /// same reason the material ledger keeps the scanner's measurements out of the agent's reach.
+    /// </summary>
+    [Fact]
+    public void The_record_is_in_the_apps_state_directory_and_not_the_agents_home()
+    {
+        Assert.StartsWith(Paths.State, TurnMeter.RecordPath, StringComparison.Ordinal);
+        Assert.DoesNotContain(Paths.AgentHome, TurnMeter.RecordPath, StringComparison.Ordinal);
+        Assert.EndsWith("agent-turns.jsonl", TurnMeter.RecordPath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void One_line_per_turn_carries_what_was_measured_about_that_turn()
+    {
+        NoCosts();
+        var at = DateTimeOffset.Now;
+        var meter = Meter();
+        meter.Record(CodexTurn(at));
+        meter.Record(CodexTurn(at.AddSeconds(30), exitCode: 2));
+
+        var lines = File.ReadAllLines(_records).Where(l => l.Trim().Length > 0).ToArray();
+        Assert.Equal(2, lines.Length);
+
+        var first = Json.Read<TurnRecord>(lines[0])!;
+        Assert.Equal(0, first.ExitCode);
+        Assert.Equal("thread-1", first.Session);
+        Assert.Equal("probe", first.Runtime);
+        Assert.Equal(17232, first.InputTokens);
+        Assert.Equal(12928, first.CachedInputTokens);
+        Assert.Equal(6, first.OutputTokens);
+        Assert.Equal(12.5, first.Seconds, 3);
+        Assert.Equal(at, first.Ended);
+        Assert.Equal(at.AddSeconds(-12.5), first.Started);
+
+        Assert.Equal(2, Json.Read<TurnRecord>(lines[1])!.ExitCode);
+    }
+
+    /// <summary>
+    /// The two totals, in <c>kv</c> — no new table, and the file above is the detail behind them.
+    /// </summary>
+    [Fact]
+    public void Todays_totals_are_kept_in_kv()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+        var meter = Meter();
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+
+        Assert.Equal(2, meter.Today.Turns);
+        Assert.Equal(0, meter.Today.UnpricedTurns);
+        Assert.Equal(2, int.Parse(_db.GetKv(TurnMeter.TurnsKey)!));
+        Assert.NotNull(_db.GetKv(TurnMeter.CostKey));
+        Assert.Equal(DateTimeOffset.Now.ToLocalTime().ToString("yyyy-MM-dd"), _db.GetKv(TurnMeter.DayKey));
+    }
+
+    /// <summary>
+    /// MIDNIGHT IS THE OWNER'S, NOT UTC'S. An owner in Ljubljana whose day rolled over at 01:00 or
+    /// 02:00 would be reading a "today" that is not the one on their wall.
+    /// </summary>
+    [Fact]
+    public void The_totals_reset_at_local_midnight_and_the_resume_time_is_that_midnight()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+
+        var lateLastNight = new DateTimeOffset(2026, 9, 6, 23, 59, 0, TimeZoneInfo.Local.GetUtcOffset(new DateTime(2026, 9, 6)));
+        var now = lateLastNight;
+        var meter = Meter(now: () => now);
+
+        meter.Record(CodexTurn(now));
+        Assert.Equal(1, meter.Today.Turns);
+        Assert.True(meter.Today.Spent > 0m);
+
+        // The same wall clock, two minutes later, on the other side of midnight.
+        Assert.Equal(lateLastNight.ToLocalTime().Date.AddDays(1), meter.Today.ResumesAt.LocalDateTime);
+        now = lateLastNight.AddMinutes(2);
+
+        Assert.Equal(0, meter.Today.Turns);
+        Assert.Equal(0m, meter.Today.Spent);
+    }
+
+    /// <summary>
+    /// The arithmetic, on the real event. Cached input is a SUBSET of the input count, so billing
+    /// both in full would charge the cached three quarters of that turn twice.
+    /// </summary>
+    [Fact]
+    public void Cached_input_is_billed_once_at_the_cached_rate()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+
+        // 4,304 uncached at 1.25 + 12,928 cached at 0.125 + 6 output at 10, per million.
+        var expected = (4304m * 1.25m + 12928m * 0.125m + 6m * 10m) / 1_000_000m;
+        var price = CostCatalog.Price(new TurnUsage(17232, 12928, 0, 6, 0, null), "probe");
+
+        Assert.Null(price.Unpriced);
+        Assert.Equal(expected, price.Cost);
+        Assert.Equal("USD", price.Currency);
+
+        var meter = Meter();
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+        Assert.Equal(expected, meter.Today.Spent);
+    }
+
+    /// <summary>
+    /// NEVER A GUESSED NUMBER. With no prices on the machine the turn is still recorded, with its
+    /// tokens, and its cost is absent and says why — not zero, which would read as a free turn.
+    /// </summary>
+    [Fact]
+    public void With_no_prices_the_turn_is_recorded_unpriced_rather_than_free()
+    {
+        NoCosts();
+        var meter = Meter();
+        meter.Record(CodexTurn(DateTimeOffset.Now));
+
+        var record = Json.Read<TurnRecord>(File.ReadAllLines(_records)[0])!;
+        Assert.Null(record.Cost);
+        Assert.Null(record.Currency);
+        Assert.NotNull(record.Unpriced);
+        Assert.Equal(17232, record.InputTokens);
+
+        var today = meter.Today;
+        Assert.Equal(1, today.Turns);
+        Assert.Equal(1, today.UnpricedTurns);
+        Assert.Equal(0m, today.Spent);
+        Assert.NotNull(today.WhyNoPrice);
+    }
+
+    /// <summary>
+    /// Codex 0.153.4 names no model, so without an entry the owner wrote there is nothing to price
+    /// against — and the sentence says that, rather than the software choosing a model for them.
+    /// </summary>
+    [Fact]
+    public void A_runtime_that_names_no_model_is_unpriced_until_costs_json_names_one_for_it()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+        var usage = new TurnUsage(17232, 12928, 0, 6, 0, null);
+
+        Assert.Null(CostCatalog.Price(usage, "codex").Cost);
+        Assert.Contains(Labels.CostsFile, CostCatalog.Price(usage, "codex").Unpriced);
+        Assert.NotNull(CostCatalog.Price(usage, "probe").Cost);
+    }
+
+    /// <summary>A turn the runtime said nothing about is unpriced for a different, named reason.</summary>
+    [Fact]
+    public void A_turn_the_runtime_reported_nothing_about_is_unpriced_and_says_so()
+    {
+        CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
+        var price = CostCatalog.Price(null, "probe");
+        Assert.Null(price.Cost);
+        Assert.Contains("did not report", price.Unpriced);
+    }
+
+    /// <summary>
+    /// An override file that EXISTS and does not parse is not an absent one — <c>U-batch-2b</c>'s
+    /// rule, applied to the third of these files. It cannot stop the AI the way an unreadable
+    /// <c>runtimes.json</c> does, because it only prices work already done; what it does is make the
+    /// cost unknown and say so, in the sentence the owner reads.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_costs_file_makes_every_turn_unpriced_in_the_owners_words()
+    {
+        File.WriteAllText(CostCatalog.OverridePath, "{ \"currency\": ");
+        try
+        {
+            var read = CostCatalog.Read();
+            Assert.Null(read.Costs);
+            Assert.NotNull(read.Unreadable);
+
+            var price = CostCatalog.Price(new TurnUsage(1, 0, 0, 1, 0, "test-model"), "probe");
+            Assert.Null(price.Cost);
+            Assert.Contains(Labels.CostsFile, price.Unpriced);
+            Assert.Contains("daily limit", price.Unpriced);
+        }
+        finally { NoCosts(); }
+    }
+
+    /// <summary>An ABSENT file is the shipped configuration and is not a refusal. It ships no prices.</summary>
+    [Fact]
+    public void An_absent_costs_file_is_not_a_refusal_and_ships_no_prices()
+    {
+        NoCosts();
+        var read = CostCatalog.Read();
+        Assert.Null(read.Unreadable);
+        Assert.NotNull(read.Costs);
+        Assert.Empty(read.Costs!.Models);
     }
 }

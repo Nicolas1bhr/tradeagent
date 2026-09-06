@@ -458,6 +458,127 @@ public static class RuntimeCatalog
 public sealed record RuntimeCatalogRead(IReadOnlyList<RuntimeManifest> Runtimes, string? Unreadable);
 
 /// <summary>
+/// What one turn cost, or the sentence saying why nobody can say. Never both, and never neither.
+/// </summary>
+public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced)
+{
+    public static TurnPrice Unknown(string why) => new(null, "", why);
+}
+
+/// <summary>One model's prices, per MILLION tokens, in <see cref="AgentCosts.Currency"/>.</summary>
+public sealed class ModelPrice
+{
+    public string Model { get; set; } = "";
+    public decimal InputPerMillion { get; set; }
+
+    /// <summary>Null means the input rate: a vendor that does not discount cache reads charges it.</summary>
+    public decimal? CachedInputPerMillion { get; set; }
+
+    /// <summary>Null means the input rate. OpenAI does not bill cache writes separately; others do.</summary>
+    public decimal? CacheWritePerMillion { get; set; }
+
+    public decimal OutputPerMillion { get; set; }
+}
+
+/// <summary>
+/// <c>costs.json</c>: what the owner's AI tool charges them, beside <c>runtimes.json</c> and read
+/// the same way.
+///
+/// <b>It ships EMPTY of prices, and that is the decision, not an omission.</b> A price is a claim
+/// about somebody else's bill, and this software cannot see that bill: the same Codex CLI costs
+/// per-token on an API key and nothing per-token on a ChatGPT subscription, and the published
+/// per-million rates change on OpenAI's schedule, not on this repository's. So a shipped number
+/// would be wrong for a whole class of owners and stale for the rest, and it would be wrong
+/// invisibly — which is the failure mode this file exists to avoid. With no prices, every turn is
+/// recorded with its tokens and reported "cost unknown", in those words, on the card.
+/// </summary>
+public sealed class AgentCosts
+{
+    /// <summary>The currency every number here is in, and the one the cap is read in.</summary>
+    public string Currency { get; set; } = "USD";
+
+    public List<ModelPrice> Models { get; set; } = [];
+
+    /// <summary>
+    /// The model to price a runtime's turns at WHEN THE RUNTIME DOES NOT SAY WHICH IT USED — keyed
+    /// by <see cref="RuntimeManifest.Id"/>. Codex 0.153.4's <c>--json</c> stream names no model
+    /// anywhere (see <see cref="TurnUsage"/>), so without an entry here its turns are unpriced. The
+    /// owner names it because only they know what they are signed in as.
+    /// </summary>
+    public Dictionary<string, string> RuntimeModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>The prices, or the one sentence saying why there are none. Never both.</summary>
+public sealed record CostCatalogRead(AgentCosts? Costs, string? Unreadable);
+
+/// <summary>
+/// Reading <c>costs.json</c>, under <c>VendorFile</c>'s rule: an ABSENT file is the shipped
+/// configuration and says nothing; a file that EXISTS and cannot be parsed is a refusal, in the
+/// owner's words, and nothing shipped stands in for it.
+///
+/// What a refusal means here is narrower than it is for <c>runtimes.json</c>, deliberately. That
+/// file decides which program runs and under what sandbox, so an unreadable one stops the AI. This
+/// one only prices what the AI already did: an unreadable one makes every turn "cost unknown" and
+/// therefore makes the daily cap unenforceable — which the card says, rather than the software
+/// quietly pricing turns at zero and reporting a cap that is holding nothing back.
+/// </summary>
+public static class CostCatalog
+{
+    public static string OverridePath => Path.Combine(Paths.Home, Labels.CostsFile);
+
+    /// <summary>
+    /// Shipped with no model prices. See <see cref="AgentCosts"/> for why that is the honest default
+    /// rather than a table of last month's published rates.
+    /// </summary>
+    public static AgentCosts BuiltIn() => new();
+
+    public static CostCatalogRead Read()
+    {
+        var file = VendorFile.Read<AgentCosts>(OverridePath);
+        if (file.Unreadable is { } why) return new(null, Labels.CostsCouldNotBeRead(why));
+        return new(file.Value ?? BuiltIn(), null);
+    }
+
+    /// <summary>
+    /// WHAT THIS TURN COST, or why nobody can say. Every branch that cannot produce a number
+    /// produces a sentence instead; none of them produces a zero.
+    /// </summary>
+    public static TurnPrice Price(TurnUsage? usage, string? runtimeId, CostCatalogRead? catalogue = null)
+    {
+        var read = catalogue ?? Read();
+        if (read.Unreadable is { } why) return TurnPrice.Unknown(why);
+
+        var costs = read.Costs ?? BuiltIn();
+        if (usage is null)
+            return TurnPrice.Unknown("the AI tool did not report how many tokens the turn used");
+
+        var model = usage.Model ?? Declared(costs, runtimeId);
+        if (model is null)
+            return TurnPrice.Unknown(
+                $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
+
+        var price = costs.Models.FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));
+        if (price is null)
+            return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
+
+        var cost =
+            usage.UncachedInputTokens * price.InputPerMillion +
+            usage.CachedInputTokens * (price.CachedInputPerMillion ?? price.InputPerMillion) +
+            usage.CacheWriteInputTokens * (price.CacheWritePerMillion ?? price.InputPerMillion) +
+            // Reasoning tokens are part of the output count, not a sixth line: adding them would
+            // bill the same tokens twice on every runtime that reports both.
+            usage.OutputTokens * price.OutputPerMillion;
+
+        return new TurnPrice(cost / 1_000_000m, costs.Currency, null);
+    }
+
+    static string? Declared(AgentCosts costs, string? runtimeId) =>
+        runtimeId is { Length: > 0 } id && costs.RuntimeModels.TryGetValue(id, out var m) && m.Length > 0
+            ? m
+            : null;
+}
+
+/// <summary>
 /// Puts an unreadable <c>runtimes.json</c> on the health row the owner is already looking at.
 ///
 /// A class rather than a static call because it has to give the row BACK. Nothing else writes
