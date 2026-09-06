@@ -3970,7 +3970,8 @@ Release: 0 warnings; the touched classes 3× → 29/29 and `GatewayPipeBackpress
 1084, 0 failed; names 0 removed, 9 added; one test-only cost — `A_cold_placement_…drain_assumes` names the same five ops
 with `positions` moved 2nd → 4th, the count and the drain it bounds unchanged. Manager's gate at `3de8cc6`, Release:
 build → 0 warnings, 0 errors; suite → 236 + 261 + 587 = 1084, 0 failed (one other test host running); names vs `main`
-→ 0 removed, 9 added (sets 868 → 877); scan clean; `rev-list --count` → 0; CI at `3de8cc6`: pending.
+→ 0 removed, 9 added (sets 868 → 877); scan clean; `rev-list --count` → 0; CI run 34003273178 at `3de8cc6`: all three
+platforms and `package` SUCCESS.
 
 **NOT done:** no box, no UI, no new pipe op, no new operator authority; F5's connector-send half refuted, not closed;
 `Stranded.AtasOrderPath` NOT re-measured here.
