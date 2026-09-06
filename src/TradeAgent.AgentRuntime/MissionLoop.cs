@@ -100,6 +100,24 @@ public interface IMissionHost
 
     /// <summary>Runs one material scan pass to completion. Called only when no turn is in flight.</summary>
     Task ScanAsync(CancellationToken ct);
+
+    /// <summary>
+    /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
+    /// turn and takes none while <see cref="AiSpendToday.CapReached"/> is true.
+    ///
+    /// A default of <see cref="AiSpendToday.NotMetered"/> so that a host with no meter behind it —
+    /// a test, a build with no AI prepared — keeps working and keeps turning. That default is
+    /// deliberately the permissive one: the restrictive reading belongs where the number is
+    /// measured, and a loop that stopped because nobody was counting would stop for ever.
+    /// </summary>
+    AiSpendToday Spend => AiSpendToday.NotMetered;
+
+    /// <summary>
+    /// Told ONCE, on the turn the cap is first reached, so the activity log gets one line rather
+    /// than one every five seconds for the rest of the day. The loop knows the transition; the host
+    /// owns the words and the log.
+    /// </summary>
+    void SpendCapReached(AiSpendToday spend) { }
 }
 
 /// <summary>
@@ -263,6 +281,9 @@ public sealed class MissionLoop
     bool _working;
     DateTimeOffset? _nextTurnAt;
 
+    /// <summary>Whether the owner has already been told about THIS spell of being over the cap.</summary>
+    bool _reportedCap;
+
     public MissionLoop(IMissionHost host, MissionOptions? options = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
@@ -381,6 +402,14 @@ public sealed class MissionLoop
     /// </summary>
     public async Task<TimeSpan> TurnAsync(CancellationToken ct = default)
     {
+        // ---- the day's ceiling -------------------------------------------------------------------
+        // FIRST, because it is the one reason not to take a turn that depends on nothing else here.
+        // The AI's mission is to make at least enough to pay for itself and half of that sentence is
+        // its own bill; turns run back to back for as long as the machine is on, so without this the
+        // account is being charged with nobody watching. It removes no permission and touches no
+        // order — it is the loop declining to spend more of the owner's money today.
+        if (CappedUntilMidnight() is { } untilMidnight) return untilMidnight;
+
         var conversation = _host.Conversation;
         if (conversation is null) return _options.BusyRetry;
 
@@ -466,6 +495,40 @@ public sealed class MissionLoop
             return asked > _options.MaxDelay ? _options.MaxDelay : asked;
         }
         catch (Exception) { return TimeSpan.Zero; }
+    }
+
+    /// <summary>
+    /// HOW LONG TO WAIT BECAUSE THE DAY'S SPENDING HAS REACHED THE OWNER'S CAP, or null to carry on.
+    ///
+    /// The wait is until local MIDNIGHT rather than the backoff's half hour, because that is when
+    /// the number this refuses on stops being today's — waking every thirty minutes to re-read the
+    /// same total would be the loop asking the same question all night and getting the same answer.
+    ///
+    /// The card is left reading "waiting until 00:00" rather than "paused": the owner has not paused
+    /// anything and their permission is intact, so a card saying they had would be the software
+    /// putting a decision in their mouth. The AI card's cost line is where the reason is said.
+    ///
+    /// <see cref="IMissionHost.SpendCapReached"/> is told on the TRANSITION only. It fires again
+    /// after a cap is raised and reached a second time, because that is a second event.
+    /// </summary>
+    TimeSpan? CappedUntilMidnight()
+    {
+        var spend = _host.Spend;
+        if (!spend.CapReached) { _reportedCap = false; return null; }
+
+        if (!_reportedCap)
+        {
+            _reportedCap = true;
+            _host.SpendCapReached(spend);
+        }
+
+        lock (_gate) { _working = false; _nextTurnAt = spend.ResumesAt; }
+        Changed?.Invoke();
+
+        var wait = spend.ResumesAt - _now();
+        // A resume time already behind us would busy-spin the loop against a total that is about to
+        // roll over anyway. One BusyRetry is the smallest honest wait.
+        return wait > TimeSpan.Zero ? wait : _options.BusyRetry;
     }
 
     /// <summary>Doubling from <see cref="MissionOptions.FirstBackoff"/>, capped at the same ceiling.</summary>
