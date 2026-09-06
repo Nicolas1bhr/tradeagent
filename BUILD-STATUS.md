@@ -4473,7 +4473,7 @@ own. Merge `4e0d877`, 7 commits, 16 files, +1496/−72 (`TurnMeter.cs`, a `ListP
 Release: 0 warnings, 0 errors, 17 projects; touched classes 3× → 68/68 each; 424 + 261 + 615 = 1300 passed, 0 failed,
 1 skipped, no other test host; names vs `main` → 0 removed, 32 added. Manager's gate at `7609a44` (rebased over the
 two test-only landings), Release: build → 0 warnings, 0 errors; suite → 424 + 261 + 615 = 1300 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 32 added (sets 1034 → 1066); scan →
-two hits, both the words "your OpenAI API key" naming the sign-in label; `rev-list --count` → 0; CI at `4e0d877`: pending when written, recorded in the next commit.
+two hits, both the words "your OpenAI API key" naming the sign-in label; `rev-list --count` → 0; CI run 34056709789 at `4e0d877`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the two boxes and the card on a running app — nobody has seen them; the prices are the vendor's page
 as read on one day and will drift — the date is in the data and in the guide for that reason. **NOT done:** no box,
