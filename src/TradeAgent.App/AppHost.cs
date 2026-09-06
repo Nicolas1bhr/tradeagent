@@ -86,8 +86,6 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public MissionLoop Mission { get; private set; } = null!;
 
-    MissionHost? _missionHost;
-
     /// <summary>
     /// The moment the last material pass began, as this process saw it. Read before the walk rather
     /// than after, so it is never later than the scanner's own idea of the pass — erring early costs
@@ -184,8 +182,7 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.Gateway, HealthState.READY);
 
             Agent = new AgentSupervisor(Health);
-            _missionHost = new MissionHost(this);
-            Mission = new MissionLoop(_missionHost,
+            Mission = new MissionLoop(new MissionHost(this),
                 new MissionOptions { TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession) });
             Mission.Changed += () => Changed?.Invoke();
 

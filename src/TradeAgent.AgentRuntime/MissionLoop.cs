@@ -276,9 +276,14 @@ public sealed class MissionLoop
         {
             lock (_gate)
             {
+                // STOPPED OUTRANKS EVERYTHING, because with no conversation there is nothing to take
+                // a turn: a loop started before the AI was would otherwise sit reporting "waiting
+                // until 14:32" over a turn that cannot happen, and every number beside it would be
+                // describing that same turn.
                 var state =
+                    _host.Conversation is null ? MissionState.Stopped :
                     _working ? MissionState.Working :
-                    !Running ? (_host.Conversation is null ? MissionState.Stopped : MissionState.Paused) :
+                    !Running ? MissionState.Paused :
                     MissionState.Waiting;
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
                     _turns, _consecutiveErrors, _lastFirstLine);

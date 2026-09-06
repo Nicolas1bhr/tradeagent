@@ -464,6 +464,13 @@ public class MissionLoopTests
 
         Assert.Equal(MissionState.Stopped, new MissionLoop(host).Status.State);
 
+        // A loop started before the AI is still reads stopped: there is nothing to take a turn, and
+        // "waiting until 14:32" over a turn that cannot happen is the card inventing a future.
+        var early = new MissionLoop(host);
+        early.Start();
+        Assert.Equal(MissionState.Stopped, early.Status.State);
+        await early.PauseAsync();
+
         host.Conversation = conversation;
         var loop = new MissionLoop(host);
         Assert.Equal(MissionState.Paused, loop.Status.State);
