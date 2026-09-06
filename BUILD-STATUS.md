@@ -3852,8 +3852,8 @@ the presses were made by a temporary in-app probe raising the same `Click` route
 no Accessibility grant — then deleted; weaker than a mouse, stated. Builder's gate at `8d34072`, Release: 0 warnings;
 236 + 250 + 584 = 1070, 0 failed; names 0 removed, 15 added. Manager's gate at `303a7ad`, Release: build → 0 warnings, 0
 errors; suite → 236 + 250 + 584 = 1070, 0 failed (with three other test hosts running); names vs `main` → 0 removed,
-15 added (sets 850 → 865); scan → one hit, the phrase "Secret scan clean" in the report; `rev-list --count` → 0; CI at
-`303a7ad`: pending.
+15 added (sets 850 → 865); scan → one hit, the phrase "Secret scan clean" in the report; `rev-list --count` → 0; CI run
+33999461962 at `303a7ad`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** a mouse-driven press; Windows pixels. **NOT done:** no gateway change, no box.
 
