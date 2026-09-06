@@ -29,8 +29,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `U-press-stopwatch` `ce4b367`, `U-codex-2a` `3de8cc6`, `U-batch-2` `15b873d`, `U-batch-2b` `ab67a56`, `U-codex-2b`
    with its fixer `07cbb91`. Two usage-limit kills (2026-09-05 23:40, 2026-09-06 03:50) took six running legs between
    them; every one was re-briefed fresh from its file with "read your branch first" and lost nothing committed — this
-   desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. **`docs/briefs/` holds ONE file,
-   `U-cut-0.1.2.md`, in flight on the box:** the version bump on its own branch, a draft PR for CI, the installer built
+   desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. **`docs/briefs/` holds TWO files.** `U-attest-precondition.md`, a
+   test-only fixer in flight: CI at `07cbb91` went red on ubuntu in the F7 probe's own precondition, which raced the
+   fixture's first bare heartbeat (the Mac passed it at 1152); the fix flips the adapter to throwing only after the gates
+   are open. `U-cut-0.1.2.md`, in flight on the box:** the version bump on its own branch, a draft PR for CI, the installer built
    there with the adapter PRESENT, hashed in five places, published against the branch's full sha only on a green run,
    the installed 0.1.1 watched updating itself; the manager fast-forwards `main` onto the branch afterwards.
    **Open, not briefed** (for the next review): an UNKNOWN close on the same instrument can still fill after the
