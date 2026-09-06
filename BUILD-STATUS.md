@@ -3975,3 +3975,41 @@ platforms and `package` SUCCESS.
 
 **NOT done:** no box, no UI, no new pipe op, no new operator authority; F5's connector-send half refuted, not closed;
 `Stranded.AtasOrderPath` NOT re-measured here.
+
+## 2026-09-06 — U-batch-2 landed: a download is what it says it is, and the material ledger measures
+
+Review-2 findings 4 (MED), 5 (MED), 6 (LOW) and Codex F15, F17, F19, by two builders on `docs/briefs/U-batch-2.md`
+(the first killed by a usage limit with seven files uncommitted; the second kept all seven, changed two things inside
+them, and added the proofs). Merge `15b873d`, 6 commits, 25 files, +1457/−116 (`Downloader.cs` +236, `MaterialStore.cs`,
+`MaterialScanner.cs`, `WorkspaceBuilder.cs`, `Paths.cs`, a new `AgentPresence.cs`, `Database.cs` schema 4, `InboxView.cs`,
+`Prerequisites.cs`, `NodeRuntime.cs`, `AtasInstallation.cs`, four test files).
+
+- **A part file is bound to what it is a part of** (finding 4, F15): the resume file is named after the URL and the
+  expected length and discarded when either differs; resuming still resumes. `Integrity` has no null — `Pinned`,
+  `Unverified`, `PinnedOr` — so a checksum-less install is a recorded decision that writes one activity line carrying
+  the vendor's reason, never a silent skip; `Downloader.RecordDecision` is wired above `Connector.ConnectAsync()` so a
+  backend that will not connect cannot decide whether the owner is told. ATAS's hash stays the owner's decision: a null
+  `installerSha256` in `atas.json`, pinnable with no rebuild. Mutant (the binding deleted) → 3 of 5 RED, the finished
+  file beginning `STALE`.
+- **`Inbox` is a measurement** (finding 5): the agent's home is `workspace/agent`, a sibling of `workspace/inbox` (an
+  older install's folders are moved on the next start; unchanged for the owner). Origin is `Inbox` only when
+  `AgentPresence` attests that no agent process was alive since the last COMPLETE scan pass; otherwise `InboxUnattested`,
+  and the Inbox page and the guide say so in the owner's words. Mutant (the attestation deleted) → `Expected:
+  InboxUnattested / Actual: Inbox` ×2, P5a exactly; second mutant (the window advanced on a truncated pass) → the same.
+- **A removed row is never un-removed** (finding 6, F17, F19): schema 4 adds `material.version` — a sighting after
+  `removed_at` is a new row with no hash and the old row keeps its own; `ByShaPrefix` refuses non-hex, under 4
+  characters, and any prefix matching two distinct hashes; `(size, mtime)` are re-read from the OPEN HANDLE before and
+  after the bytes. Three mutants, one per guard → `Expected: 2 / Actual: 1` rows; `No exception was thrown` ×2;
+  `Expected: 0 / Actual: 1` hashed.
+
+**Verified by running (the builders, quoted; then the manager's gate):** GREEN 5/5, 6/6, 6/6, each 3×. Builder's gate at
+`53912fb`, bin/obj deleted, Release: 0 warnings; 253 + 261 + 587 = 1101, 0 failed, one project at a time with no other
+test host (a first run overlapping another leg's suite was discarded); names 0 removed, 17 added. Manager's gate at
+`15b873d`, Release: build → 0 warnings, 0 errors; suite → 253 + 261 + 587 = 1101, 0 failed (no other test host); names
+vs `main` → 0 removed, 17 added (sets 877 → 894); scan → two hits, `http://127.0.0.1` in a test vendor; `rev-list
+--count` → 0; CI at `15b873d`: pending.
+
+**NOT done:** no box, no ATAS, no money, no UI run; no ATAS hash pinned (the owner's call); `DashboardView`'s "Open the
+AI's folder" still points at `workspace/` (another builder owned that file); the DDL's in-place blind spot (size AND
+mtime both preserved) is still open — it needs unconditional hashing; ledger rows at the agent's old paths are
+re-recorded under `agent/` by the next scan rather than migrated.

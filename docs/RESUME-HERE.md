@@ -14,7 +14,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `3de8cc6` plus the docs commits after it, clean, pushed.** A second usage-limit kill at ~03:50 on
+2. **`main` is `15b873d` plus the docs commits after it, clean, pushed.** A second usage-limit kill at ~03:50 on
    2026-09-06 took `U-codex-2b` (3 commits) and `U-batch-2` (7 uncommitted files); both re-briefed fresh at ~05:35. Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
@@ -39,8 +39,12 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    at `ce4b367` (the ubuntu red at `d14a2f0` was the runner's disk inside one post-deadline settle; the stopwatch tests
    joined `Timing`, whose second attempt now runs on every runner; draft PR #8 closed), and `U-codex-2a` at `3de8cc6`
    (F1, F2, F18 fixed; F5 half fixed — the re-check is the last thing before the wire — and half refuted with the
-   connector-send bound in `CONTRACTS.md`). In flight: `U-codex-2b` (F6, F7, F13), `U-batch-2` (MED 4–5, LOW 6, F15,
-   F17, F19). Queued: `U-batch-2b` (F16, F20, UNVERIFIED 4). Then the cut (step 6). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
+   connector-send bound in `CONTRACTS.md`), and `U-batch-2` at `15b873d` (a part file bound to its URL and length,
+   a checksum-less install a recorded decision, the agent's home `workspace/agent` beside the inbox, `Inbox` origin
+   attested by `AgentPresence`, `material.version` in schema 4). Built and landing: `U-codex-2b` (F6, F7, F13; rebased
+   onto `15b873d` at `5390b74`, manager's gate running). In flight: `U-batch-2b` (F16, F20, UNVERIFIED 4). Then the cut
+   (step 6). Open, not briefed: `req.V` is checked only on `hello`, so a frame naming a wrong version mid-session is
+   read as this one (codex-2b's builder); `DashboardView`'s "Open the AI's folder" still points at `workspace/`. Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
    first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
    section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
