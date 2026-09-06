@@ -278,10 +278,17 @@ public sealed class AtasHealthReporter(IAtasProbe? probe = null)
         var (ps, pd) = AtasHealth.ProcessRow(selected, d);
         health.Set(Components.AtasProcess, ps, pd);
 
-        var (bs, bd) = AtasHealth.BridgeRow(selected, d, connection, atas?.Bridge, atas?.StatusDetail);
+        // ONE READING OF THE CONNECTOR PER PASS. Since a heartbeat that cannot attest clears the
+        // hello, both of these change under the pulse thread — so asking twice let the row say the
+        // bridge was refused while the repair that clears the refusal was not offered, on the same
+        // tick and from the same connector. Two readings of one fact are not a report.
+        var hello = atas?.Bridge;
+        var detail = atas?.StatusDetail;
+
+        var (bs, bd) = AtasHealth.BridgeRow(selected, d, connection, hello, detail);
         health.Set(Components.AtasBridge, bs, bd);
 
-        RepairOffered = AtasHealth.RepairOffered(selected, d, connection, atas?.StatusDetail);
+        RepairOffered = AtasHealth.RepairOffered(selected, d, connection, detail);
     }
 
     static readonly AtasDetection Nothing =

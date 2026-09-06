@@ -184,6 +184,16 @@ public sealed class StubBridge : IAsyncDisposable
     public Task Heartbeat(BridgeHello hello) =>
         Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat, data = hello });
 
+    /// <summary>
+    /// The BARE PULSE the real bridge falls back to when <c>Describe()</c> throws — liveness with no
+    /// description attached to it. It is the frame that makes the connector let go of a proof it can
+    /// no longer see refreshed (F7), and nothing here could put one on the wire before this: the
+    /// only route to it was a real <c>BridgeServer</c> over an adapter told to throw, which cannot
+    /// be driven faster than its heartbeat interval.
+    /// </summary>
+    public Task BarePulse() =>
+        Send(new { v = Versions.BridgeProtocolVersion, op = BridgeOps.Heartbeat });
+
     Task Send(object o) => _w!.WriteLineAsync(Json.Write(o));
 
     async Task Loop(CancellationToken ct)

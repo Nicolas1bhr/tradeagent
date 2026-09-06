@@ -457,6 +457,126 @@ public class BridgeRoundTripTests
     }
 
     /// <summary>
+    /// NO READER EVER DEREFERENCES A HELLO THE HEARTBEAT HAS ALREADY CLEARED — the hole the F7 fix
+    /// above opened, and the one the manager's landing gate hit in the full suite while the class
+    /// alone stayed green.
+    ///
+    /// Before F7, <c>_hello</c> was assigned once and never cleared, so a reader could test it for
+    /// null and then dereference it with no risk at all: there was nothing on the other side that
+    /// could take the value away in between. Clearing it on a heartbeat that cannot attest made that
+    /// interleaving real, and every reader that read the field twice became a live race.
+    /// <c>Capabilities</c> read it SIX times — once for the null test and five more for the fields —
+    /// so a bare pulse landing between the first read and the second produced
+    /// <c>NullReferenceException at AtasConnector.get_Capabilities()</c> in a getter whose whole job
+    /// is to say what the bridge can do.
+    ///
+    /// So this hammers every read the dashboard and the gateway make while a peer alternates a whole
+    /// answer with the bare pulse as fast as a real pipe will carry them. It asserts NOTHING about
+    /// which answer a reader gets: the last attested description and no description at all are both
+    /// correct, and which one a given read sees is genuinely a race. What is not a race is that a
+    /// reader gets an answer rather than a throw.
+    ///
+    /// TWO THINGS ABOUT THE SHAPE, BOTH MEASURED RATHER THAN CHOSEN.
+    ///
+    /// The pulses come from <see cref="StubBridge"/> and not from a real <c>BridgeServer</c> over an
+    /// adapter told to throw. That route is the more faithful one and this test was written on it
+    /// first, but a real bridge cannot beat faster than <c>Task.Delay</c> resolves — about 170 beats
+    /// a second here, so 85 clears — and at that rate the hammer landed the tear once in six runs.
+    /// The stub writes the same two frames back to back at the pipe's own speed, and the connector's
+    /// <c>Dispatch</c> handles them by exactly the same branch.
+    ///
+    /// The readers run on dedicated threads rather than on the pool, because pool tasks spinning
+    /// this tightly starve the connector's own read loop and the pulses stop arriving — which would
+    /// leave the hammer swinging at a field nothing is writing. The two counters below are asserted
+    /// for that reason: a run in which no reader ever saw the proof withdrawn proves nothing.
+    /// </summary>
+    [Fact]
+    public async Task No_reader_ever_dereferences_a_hello_the_heartbeat_has_cleared()
+    {
+        var pipe = NewPipe();
+        var connector = new AtasConnector(pipe, TimeSpan.FromSeconds(10)) { HeartbeatTimeout = TimeSpan.FromSeconds(30) };
+        await connector.ConnectAsync();
+        await using var _1 = connector;
+
+        await using var bridge = new StubBridge(pipe, Speaking(Versions.BridgeProtocolVersion));
+        await bridge.ConnectAsync();
+        await Wait(async () => await Task.FromResult(connector.Bridge is not null));
+
+        var whole = Speaking(Versions.BridgeProtocolVersion);
+        var pulses = 0L;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+        // A whole answer, then a pulse carrying none: _hello takes a value and loses it again, over
+        // and over, on a connection that is never dropped and never goes stale.
+        var pump = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    await bridge.Heartbeat(whole);
+                    await bridge.BarePulse();
+                    Interlocked.Add(ref pulses, 2);
+                }
+            }
+            catch (Exception) { /* the pipe goes when the test ends; that is not a finding */ }
+        });
+
+        Exception? torn = null;
+        var reads = 0L;
+        var seenAttested = 0L;
+        var seenCleared = 0L;
+        var readers = new List<Thread>();
+        for (var i = 0; i < 32; i++)
+        {
+            // A quarter of them read the whole status row, which derives from the same field three
+            // times over; the rest hammer the capability getter, which is where the tear was seen.
+            var readsTheRow = i % 4 == 0;
+            var t = new Thread(() =>
+            {
+                var mine = 0L; var attested = 0L; var cleared = 0L;
+                try
+                {
+                    while (!stop.IsCancellationRequested)
+                    {
+                        var caps = connector.Capabilities;
+                        if (caps.ReconciliationProvable) attested++; else cleared++;
+                        if (readsTheRow)
+                        {
+                            _ = connector.Bridge?.AccountId;
+                            _ = connector.StatusDetail;
+                            _ = connector.Unauthenticated;
+                        }
+                        mine++;
+                    }
+                }
+                catch (Exception ex) { Interlocked.CompareExchange(ref torn, ex, null); }
+                Interlocked.Add(ref reads, mine);
+                Interlocked.Add(ref seenAttested, attested);
+                Interlocked.Add(ref seenCleared, cleared);
+            }) { IsBackground = true };
+            readers.Add(t);
+            t.Start();
+        }
+
+        foreach (var t in readers) await Task.Run(t.Join);
+        await pump;
+
+        Console.WriteLine($"heartbeats sent : {pulses} (half of them carrying no description at all)");
+        Console.WriteLine($"reads taken     : {reads} across {readers.Count} threads");
+        Console.WriteLine($"what they saw   : provable={seenAttested} not-provable={seenCleared}");
+        Console.WriteLine($"torn read       : {(torn is null ? "<none>" : torn.GetType().Name + " — " + torn.StackTrace?.Split('\n')[0].Trim())}");
+
+        Assert.Null(torn);
+
+        // The hammer must have been swinging at something that moved. Both readings have to have
+        // been observed, or the run proves only that a field nobody was clearing can be read.
+        Assert.True(seenAttested > 0, "no reader ever saw an attested bridge; the pulses were not attesting");
+        Assert.True(seenCleared > 0, "no reader ever saw a cleared proof; the pulses never cleared it");
+        Assert.True(await connector.IsConnectedAsync(), "the connection went down under the hammer");
+    }
+
+    /// <summary>
     /// THE THIRD WAY A HEARTBEAT CAN FAIL TO ATTEST, and the one no run covered until this line was
     /// written: the payload is whole and readable and announces a bridge protocol this build does
     /// not speak. It clears the proof exactly as an absent or unreadable one does — the answer is

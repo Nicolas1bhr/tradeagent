@@ -250,6 +250,12 @@ handshake throwing: `after 10.0s of pulses that cannot describe the bridge: conn
 history=True provable=True` and `autonomous dispatch: authorized=True`. The same probe now reads
 `provable=False` and `authorized=False code=AUTONOMY_REQUIRES_PROVABLE_STATE`).
 
+**And what a reader sees while that clear is happening: the last attested description, or none at
+all, never a torn read.** `_hello` is volatile and every reader takes one snapshot of it and decides
+on that, so `Capabilities`, `Bridge` and the whole bridge status row are each derived from a single
+instant. Which of the two answers a given read gets is genuinely a race and neither is wrong; a
+`NullReferenceException` out of the getter the gateway consults before it permits anything is.
+
 ## What ATAS's own objects mean — the readings, not the guesses
 
 **`Position.Volume` is NEGATIVE for a short.** Measured 2026-09-05 on ATAS 8.0.14.397, simulated

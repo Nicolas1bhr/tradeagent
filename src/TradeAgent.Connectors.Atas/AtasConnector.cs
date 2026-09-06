@@ -230,7 +230,24 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
 
     Task? _accept;
     volatile bool _connected;
-    BridgeHello? _hello;
+
+    /// <summary>
+    /// THE BRIDGE'S CURRENT DESCRIPTION OF ITSELF, OR NULL — AND IT IS WRITTEN BY THE READ LOOP
+    /// WHILE THE DASHBOARD AND THE GATEWAY ARE READING IT.
+    ///
+    /// Volatile, and every reader below takes ONE snapshot of it and decides on that. Neither was
+    /// needed until F7: this field was assigned once and never cleared, so a reader could test it
+    /// for null and then dereference it with nothing on the other side able to take the value away
+    /// in between. A heartbeat that cannot attest now clears it, and that made every double read a
+    /// live race — <see cref="Capabilities"/> read it six times, once for the null test and five
+    /// more for the fields, and the landing gate caught the NullReferenceException that follows.
+    ///
+    /// The snapshot is what closes the race; volatile is what stops a reader spinning on a value it
+    /// cached before the clear, which on ARM64 is a hoisted load rather than a theoretical one. A
+    /// reader sees either the last attested description or none, and never a torn read.
+    /// </summary>
+    volatile BridgeHello? _hello;
+
     IncompatibleBridge? _incompatible;
     DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
 
@@ -374,17 +391,20 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     ///     <see cref="AuthGrace"/>. That is the only reading below that is derived from a clock, and
     ///     it is the only one that refuses nothing: there is nothing yet to refuse.
     /// </summary>
-    public UnauthenticatedBridge? Unauthenticated => UnauthenticatedNow().Peer;
+    public UnauthenticatedBridge? Unauthenticated => UnauthenticatedNow(_hello).Peer;
 
     /// <summary>
     /// The unauthenticated reading and the stamp that decides whether it outranks a protocol
     /// refusal. An explicit refusal is an observation and a silence is derived from a clock, so the
     /// two are ordered the same way any two observations are — by which was made later — rather than
     /// by one being blind to the other.
+    ///
+    /// The hello is passed in rather than read here, so that a caller deriving several readings from
+    /// it derives all of them from ONE snapshot. See <see cref="_hello"/>.
     /// </summary>
-    (UnauthenticatedBridge? Peer, long At) UnauthenticatedNow()
+    (UnauthenticatedBridge? Peer, long At) UnauthenticatedNow(BridgeHello? hello)
     {
-        var silent = _hello is null && !_authenticated
+        var silent = hello is null && !_authenticated
                      && DateTimeOffset.UtcNow - _peerArrived > AuthGrace
             ? UnauthenticatedBridge.Silent
             : null;
@@ -433,8 +453,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <see cref="_authenticatedAt"/> outranks this, or the peer is refused and its own marker does.
     /// A hello ends it by ending the whole row.
     /// </summary>
-    string? Connecting =>
-        _peerArrived != DateTimeOffset.MaxValue && _hello is null && !_authenticated
+    string? Connecting(BridgeHello? hello) =>
+        _peerArrived != DateTimeOffset.MaxValue && hello is null && !_authenticated
         && DateTimeOffset.UtcNow - _peerArrived <= AuthGrace
             ? "connecting — waiting for the add-on to authenticate"
             : null;
@@ -451,8 +471,8 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// <c>_compatible</c> is what separates them: it is set only by a hello this build accepted on
     /// THIS connection, and <see cref="Drop"/> clears it with everything else.
     /// </summary>
-    string? PendingHello =>
-        _authenticated && _hello is null
+    string? PendingHello(BridgeHello? hello) =>
+        _authenticated && hello is null
             ? _compatible
                 ? "the ATAS bridge is connected and has stopped saying what it can do — it is still " +
                   "answering, and its recent heartbeats carried no readable description of the platform " +
@@ -484,8 +504,13 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     {
         get
         {
+            // ONE SNAPSHOT FOR THE WHOLE ROW. Three of the four readings below derive from _hello,
+            // and the pulse thread can clear it between any two of them — so reading the field once
+            // per reading would let the row be assembled out of two different instants and say
+            // "connecting" and "has stopped saying what it can do" about the same moment.
+            var hello = _hello;
             var incompatible = _incompatible;
-            var (unauthenticated, unauthenticatedAt) = UnauthenticatedNow();
+            var (unauthenticated, unauthenticatedAt) = UnauthenticatedNow(hello);
 
             string? winner = null;
             var at = long.MinValue;
@@ -494,9 +519,9 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
             { winner = unauthenticated.ToString(); at = unauthenticatedAt; }
             // THE ARRIVAL ITSELF IS AN OBSERVATION. It is stamped at accept, so it outranks every
             // marker older than this connection and yields to anything this peer has since done.
-            if (Connecting is { } dialling && _peerArrivedAt > at)
+            if (Connecting(hello) is { } dialling && _peerArrivedAt > at)
             { winner = dialling; at = _peerArrivedAt; }
-            if (PendingHello is { } waiting && _authenticatedAt > at) winner = waiting;
+            if (PendingHello(hello) is { } waiting && _authenticatedAt > at) winner = waiting;
             return winner;
         }
     }
@@ -523,8 +548,12 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     bool PeerHasGoneQuiet()
     {
+        // Snapshotted for the same reason everything else here is, even though this one is asked on
+        // the read loop — the thread that writes it — so no interleaving is possible today. It is a
+        // field the pulse path writes, and the next reader of it may not be on that thread.
+        var beat = _lastHeartbeat;
         var arrived = _peerArrived == DateTimeOffset.MaxValue ? DateTimeOffset.MinValue : _peerArrived;
-        var lastHeard = _lastHeartbeat > arrived ? _lastHeartbeat : arrived;
+        var lastHeard = beat > arrived ? beat : arrived;
         return DateTimeOffset.UtcNow - lastHeard > HeartbeatTimeout;
     }
 
@@ -551,10 +580,23 @@ public sealed class AtasConnector(string? pipeName = null, TimeSpan? rpcTimeout 
     /// </summary>
     public TimeSpan AuthGrace { get; set; } = TimeSpan.FromSeconds(3);
 
-    public ConnectorCapabilities Capabilities => _hello is null
-        ? new ConnectorCapabilities(false, false, false, false, false, true)
-        : new ConnectorCapabilities(_hello.IsSimulated, _hello.SupportsClientOrderId, _hello.SupportsOrderHistory,
-            _hello.SupportsModify, _hello.SupportsClosePosition, true);
+    /// <summary>
+    /// What the bridge says it can do, as of one instant. ONE SNAPSHOT: this used to read
+    /// <see cref="_hello"/> six times, and a pulse that cleared it between the null test and the
+    /// first field threw a NullReferenceException out of the getter the gateway consults before it
+    /// will permit anything. See <see cref="_hello"/> for why that became possible.
+    /// </summary>
+    public ConnectorCapabilities Capabilities
+    {
+        get
+        {
+            var hello = _hello;
+            return hello is null
+                ? new ConnectorCapabilities(false, false, false, false, false, true)
+                : new ConnectorCapabilities(hello.IsSimulated, hello.SupportsClientOrderId, hello.SupportsOrderHistory,
+                    hello.SupportsModify, hello.SupportsClosePosition, true);
+        }
+    }
 
     public event Action<HealthState>? ConnectionChanged;
     public event Action<QuoteInfo>? QuoteChanged;
