@@ -57,34 +57,45 @@ public static class ListPrices
     public const string Currency = "USD";
 
     /// <summary>
-    /// OpenAI's current-generation text models, per MILLION tokens: input, cached input, output.
-    /// Read from <see cref="OpenAiPrices"/> on <see cref="ReadOn"/>, in the order the page lists them.
+    /// OpenAI's current-generation text models, per MILLION tokens: input, cached input, CACHE
+    /// WRITES, output. Read from <see cref="OpenAiPrices"/> on <see cref="ReadOn"/>, from the
+    /// STANDARD tier's short-context columns, in the order the page lists them.
     ///
-    /// A null cached-input figure is the page showing a dash for that row, and null means "the input
-    /// rate" everywhere in <see cref="ModelPrice"/> — the conservative reading, since the alternative
-    /// is inventing a discount the vendor does not publish. Cache WRITES are not billed separately
-    /// by OpenAI, so no row sets <see cref="ModelPrice.CacheWritePerMillion"/>.
+    /// A null figure is the page showing a dash or no column at all for that row, and null means
+    /// "the input rate" everywhere in <see cref="ModelPrice"/> — the conservative reading for a
+    /// cached-input dash, since the alternative is inventing a discount the vendor does not publish.
+    ///
+    /// CACHE WRITES are a column on that page and are DEARER than plain input, so a null there is
+    /// not conservative at all: it charges 10.00 where the page says 12.50, and an under-charge is
+    /// the one direction that lets the daily cap be walked past. The page gives the column for the
+    /// four Daybreak rows only; the rows below them carry null because there is nothing to read.
+    ///
+    /// Two figures on the page are deliberately NOT taken. The LONG-CONTEXT columns are dearer
+    /// again (astra 20.00/75.00), and Codex's FAST MODE prices <c>gpt-5.3-codex</c> at 3.50/28.00
+    /// rather than 1.75/14.00 — but neither the token counts nor the stream say which was in force,
+    /// and inventing the dearer reading would over-charge every ordinary turn. An owner on either
+    /// has the two numbers on the Safety page.
     /// </summary>
-    static readonly (string Model, decimal Input, decimal? Cached, decimal Output)[] OpenAi =
+    static readonly (string Model, decimal Input, decimal? Cached, decimal? Write, decimal Output)[] OpenAi =
     [
-        ("gpt-6-astra",   10.00m, 1.000m,  50.00m),
-        ("gpt-5.6-sol",    4.00m, 0.400m,  20.00m),
-        ("gpt-5.6-terra",  2.00m, 0.200m,  12.00m),
-        ("gpt-5.6-luna",   0.20m, 0.020m,   1.20m),
-        ("gpt-5.5",        5.00m, 0.500m,  30.00m),
-        ("gpt-5.5-pro",   30.00m, null,   180.00m),
-        ("gpt-5.4",        2.50m, 0.250m,  15.00m),
-        ("gpt-5.4-mini",   0.75m, 0.075m,   4.50m),
-        ("gpt-5.4-nano",   0.20m, 0.020m,   1.25m),
-        ("gpt-5.4-pro",   30.00m, null,   180.00m),
-        ("gpt-5.3-codex",  1.75m, 0.175m,  14.00m),
-        ("gpt-5.2",        1.75m, 0.175m,  14.00m),
-        ("gpt-5.2-pro",   21.00m, null,   168.00m),
-        ("gpt-5.1",        1.25m, 0.125m,  10.00m),
-        ("gpt-5",          1.25m, 0.125m,  10.00m),
-        ("gpt-5-mini",     0.25m, 0.025m,   2.00m),
-        ("gpt-5-nano",     0.05m, 0.005m,   0.40m),
-        ("gpt-5-pro",     15.00m, null,   120.00m)
+        ("gpt-6-astra",   10.00m, 1.000m, 12.50m,  50.00m),
+        ("gpt-5.6-sol",    4.00m, 0.400m,  5.00m,  20.00m),
+        ("gpt-5.6-terra",  2.00m, 0.200m,  2.50m,  12.00m),
+        ("gpt-5.6-luna",   0.20m, 0.020m,  0.25m,   1.20m),
+        ("gpt-5.5",        5.00m, 0.500m, null,    30.00m),
+        ("gpt-5.5-pro",   30.00m, null,   null,   180.00m),
+        ("gpt-5.4",        2.50m, 0.250m, null,    15.00m),
+        ("gpt-5.4-mini",   0.75m, 0.075m, null,     4.50m),
+        ("gpt-5.4-nano",   0.20m, 0.020m, null,     1.25m),
+        ("gpt-5.4-pro",   30.00m, null,   null,   180.00m),
+        ("gpt-5.3-codex",  1.75m, 0.175m, null,    14.00m),
+        ("gpt-5.2",        1.75m, 0.175m, null,    14.00m),
+        ("gpt-5.2-pro",   21.00m, null,   null,   168.00m),
+        ("gpt-5.1",        1.25m, 0.125m, null,    10.00m),
+        ("gpt-5",          1.25m, 0.125m, null,    10.00m),
+        ("gpt-5-mini",     0.25m, 0.025m, null,     2.00m),
+        ("gpt-5-nano",     0.05m, 0.005m, null,     0.40m),
+        ("gpt-5-pro",     15.00m, null,   null,   120.00m)
     ];
 
     /// <summary>
@@ -132,12 +143,14 @@ public static class ListPrices
         return all;
     }
 
-    static ModelPrice Price(string runtime, (string Model, decimal Input, decimal? Cached, decimal Output) row) => new()
+    static ModelPrice Price(string runtime,
+        (string Model, decimal Input, decimal? Cached, decimal? Write, decimal Output) row) => new()
     {
         Runtime = runtime,
         Model = row.Model,
         InputPerMillion = row.Input,
         CachedInputPerMillion = row.Cached,
+        CacheWritePerMillion = row.Write,
         OutputPerMillion = row.Output,
         PricedAt = ReadOn,
         Source = OpenAiPrices

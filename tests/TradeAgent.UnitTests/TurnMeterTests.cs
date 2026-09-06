@@ -498,6 +498,45 @@ public class ShippedListPriceTests : IDisposable
     }
 
     /// <summary>
+    /// THE CACHE-WRITE COLUMN IS ON THE PAGE, and every figure in it is DEARER than that model's
+    /// input rate. <see cref="ModelPrice.CacheWritePerMillion"/> null means "charge the input rate",
+    /// so leaving it null on a model the vendor prices separately under-charges every cache write —
+    /// the one direction that lets the daily limit be walked past.
+    ///
+    /// Read from the standard table on <see cref="ListPrices.ReadOn"/>: the four Daybreak rows are
+    /// the only ones the page gives that column for, and the rows below them stay null because the
+    /// page gives them no such figure to carry.
+    /// </summary>
+    [Fact]
+    public void The_rows_the_vendor_prices_cache_writes_for_carry_that_figure_and_the_rest_carry_none()
+    {
+        var published = new Dictionary<string, decimal>
+        {
+            ["gpt-6-astra"] = 12.50m,
+            ["gpt-5.6-sol"] = 5.00m,
+            ["gpt-5.6-terra"] = 2.50m,
+            ["gpt-5.6-luna"] = 0.25m
+        };
+
+        foreach (var p in ListPrices.All)
+        {
+            if (published.TryGetValue(p.Model, out var write))
+            {
+                Assert.Equal(write, p.CacheWritePerMillion);
+                Assert.True(write > p.InputPerMillion, $"{p.Model}: a cache write is dearer than input");
+            }
+            else
+            {
+                Assert.Null(p.CacheWritePerMillion);
+            }
+        }
+
+        // And the charge follows the column rather than the input rate beside it.
+        NoCosts();
+        Assert.Equal(12.50m, CostCatalog.Price(new TurnUsage(0, 0, 1_000_000, 0, 0, "gpt-6-astra"), "codex").Cost);
+    }
+
+    /// <summary>
     /// Priced per runtime id, and only for the two whose provider this build knows. <c>custom</c> is
     /// an engineer's own command in <c>runtimes.json</c>: a price for it would be a guess about a
     /// vendor nobody here has heard of.
