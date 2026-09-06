@@ -3936,3 +3936,41 @@ running); names vs `main` → 0 removed, 0 added (sets 868 → 868); scan → on
 `rev-list --count` → 0; CI run 34001656361 at `ce4b367`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no product code, no box, no ATAS, no UI; nothing loosened, the shipped 2 s untouched.
+
+## 2026-09-06 — U-codex-2a landed: the position cap counts open work, a missing multiplier fails closed, the re-check is last before the wire, a duplicate composite waits for its owner
+
+Codex F1, F2, F5 and F18 (read-only claims from review 2), by two builders on `docs/briefs/U-codex-2a.md` (the first
+killed by a usage limit with four files uncommitted; the second kept all four, added the proofs, corrected one test).
+Merge `3de8cc6`, 5 commits, 14 files, +1042/−45 (`TradingGateway.cs` +295, `GatewayPipeServer.cs`, `Errors.cs`,
+`FakeConnector.cs`, `CONTRACTS.md` +71, four new or changed test files).
+
+- **F1 fixed — `MaxOpenPositions` counts opening work, decided inside the dispatch gate.** RED on `main`'s gateway:
+  `cap 1 / connector place calls: 2 / orders at the broker: 2 / positions open: 2`, and a WORKING opening order read
+  `positions reported: 0` with no refusal → GREEN; mutant (`>=` → `>`) → `connector place calls: 2` again. A
+  MODIFICATION no longer runs this cap — deliberate, in `CONTRACTS.md`: a cap on instruments cannot be raised by
+  changing an order already in one.
+- **F2 fixed — a value-capped order whose contract size the platform cannot supply is refused**, three ways the
+  multiplier goes missing (the instrument read throws, `ContractSize` null, zero): RED `Assert.Throws() Failure: No
+  exception was thrown` ×3, the order went out → GREEN `RISK_CHECK_UNAVAILABLE`, 0 place calls, no row; mutant
+  (`|| size <= 0` dropped) → the zero case red. `CONTRACTS.md` states the multiplier's provenance; ATAS's `LotSize`
+  mapping NOT VERIFIED.
+- **F5 half fixed, half refuted.** A gateway-side window Codex's wording did not name: the re-check sat above the
+  close's stale-position re-read, so a close made one more awaited round trip after its last gate — RED `outcome: ok —
+  FILLED / orders at the broker: 2 (was 1)` with the switch down → GREEN with the re-check the last thing before the
+  wire; mutant (deleted) → red identically. Codex's literal probe REFUTED: paused inside the connector's send, the order
+  is placed and cannot be recalled; closing that would mean the owner's press waiting on the wire, or manufacturing
+  the UNKNOWN rule 3 exists to avoid. The bound, in `CONTRACTS.md`: one `WorstCaseOperationPath`, 50 s at shipped values.
+- **F18 fixed — a second caller on a running composite waits for the owner's answer.** RED, verbatim: owner
+  `{"cancelled":2,[FB-1=CANCELLED,FB-2=CANCELLED]}` against the duplicate, stored first, `{"cancelled":1,[FB-1=DISPATCHING,
+  FB-2=CANCELLED]}` → GREEN with an in-memory owner lease; mutant (no re-read after the wait) → `from the store: False`.
+  The press's `BeginComposite` takes no lease: its `op-` ids carry a fresh nonce the pipe refuses to name.
+
+**Verified by running (the builders, quoted; then the manager's gate):** builder's gate at `c64e9b8`, run alone,
+Release: 0 warnings; the touched classes 3× → 29/29 and `GatewayPipeBackpressureTests` 34/34 each; 236 + 261 + 587 =
+1084, 0 failed; names 0 removed, 9 added; one test-only cost — `A_cold_placement_…drain_assumes` names the same five ops
+with `positions` moved 2nd → 4th, the count and the drain it bounds unchanged. Manager's gate at `3de8cc6`, Release:
+build → 0 warnings, 0 errors; suite → 236 + 261 + 587 = 1084, 0 failed (one other test host running); names vs `main`
+→ 0 removed, 9 added (sets 868 → 877); scan clean; `rev-list --count` → 0; CI at `3de8cc6`: pending.
+
+**NOT done:** no box, no UI, no new pipe op, no new operator authority; F5's connector-send half refuted, not closed;
+`Stranded.AtasOrderPath` NOT re-measured here.
