@@ -4161,7 +4161,18 @@ updating itself — is `U-cut-0.1.2-b`, in flight). Merge `6672b5e`: one product
   an order still on the wire or a position that moved; the override under the dispatch lease; unreadable settings and
   vendor files failing closed and visible; inbox origin attested; downloads bound to what they are a part of.
 
-- **The update watch, first attempt (`U-cut-0.1.2-b`, branch `u-cut-0.1.2-b` @ `a23f540`): NOT DONE, and a finding.**
+**Verified by running (the manager):** the hashes and sizes quoted above; `gh api …/releases/tags/v0.1.2` digests;
+`gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, pending. **NOT VERIFIED yet:** the
+update installing itself; the build script's own summary block was not read — the leg that ran it was killed and its
+console output is gone; the adapter presence is the script's own check, re-run by hand. **NOT done:**
+`TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
+
+## 2026-09-06 — The v0.1.2 update watch: the installed 0.1.1 cannot start on the box's real home, so the measurement moves to a fresh home
+
+The second half of the cut (`U-cut-0.1.2-b`, one fresh builder; branch `u-cut-0.1.2-b` @ `a23f540` holds its report),
+then `U-cut-0.1.2-c`, in flight.
+
+- **First attempt: NOT DONE, and a finding.**
   The INSTALLED 0.1.1 (file version 0.1.1.0, commit `16d4862`, `DatabaseSchemaVersion = 1`) started against the box's
   real home and showed only `TradeAgent cannot start / TradeAgent's records are damaged. / If this keeps happening, open
   TradeAgent again and use Create support package on the Checks page.` — `state\tradeagent.db` is at `schema_version 3`
@@ -4171,8 +4182,10 @@ updating itself — is `U-cut-0.1.2-b`, in flight). Merge `6672b5e`: one product
   Nothing on the box reached the ledger (db mtimes unchanged); ATAS untouched, the book flat; the fifth hash NOT READ.
   The measurement moves to a fresh home: `U-cut-0.1.2-c`.
 
-**Verified by running (the manager):** the hashes and sizes quoted above; `gh api …/releases/tags/v0.1.2` digests;
-`gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, pending. **NOT VERIFIED yet:** the
-update installing itself; the build script's own summary block was not read — the leg that ran it was killed and its
-console output is gone; the adapter presence is the script's own check, re-run by hand. **NOT done:**
-`TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
+**Verified by running (the builder, quoted):** `tools/win-state.sh` → everything works, capture WORKS; the installed exe's
+file version `0.1.1.0`, product version `0.1.1+16d4862…`; the app launched through the UI agent (12 UIA elements, the
+three sentences above, no control); `trade status` at once and after 20 s → `IPC_UNAVAILABLE`; `meta.schema_version`
+read off a copy of the live database → `3`; the app closed by WM_CLOSE, the copy deleted. **NOT VERIFIED:** everything
+about the update path — download, checksum verification, the refusal sentences, Setup's own window, relaunch, the
+version after, the health rows after. **NOT done:** no install by hand, no installer run, no release edited, no
+second home in that attempt, no mode or settings change, no order.
