@@ -3933,6 +3933,6 @@ this Mac throughout) — **draft PR #8 green TWICE on all three runners, categor
 1 and 2: 1053 passed per runner, 0 failed, 0 retry markers, so both are first-attempt greens)**. Manager's gate at
 `ce4b367`, Release: build → 0 warnings, 0 errors; suite → 236 + 250 + 587 = 1073, 0 failed (two other test hosts
 running); names vs `main` → 0 removed, 0 added (sets 868 → 868); scan → one hit, "Secret scan" in the report;
-`rev-list --count` → 0; CI at `ce4b367`: pending.
+`rev-list --count` → 0; CI run 34001656361 at `ce4b367`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no product code, no box, no ATAS, no UI; nothing loosened, the shipped 2 s untouched.
