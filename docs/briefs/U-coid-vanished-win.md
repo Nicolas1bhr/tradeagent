@@ -24,3 +24,18 @@ target every time it was run there.
 
 ## Report — append here, commit it, ≤12 lines: tip sha; what the 137 ms were, with the runner's numbers; what changed
 and why; gate counts and the three runner results. Verified or NOT VERIFIED. No push except the draft PR.
+
+## Report
+
+Gate and CI at `3791460`, rebased onto `main` `aaff41b`; `CoidWitnessTests.cs` only, +33/-5, no product file. **The 137 ms were the runner's disk, not the retry loop.** Harness on
+PR #11, 3 runs x 3 runners (34041706666 / 34041712859 / 34041721936): in all 27 samples the rename was attempted ONCE and the retry loop spanned 0.0 ms, while the call around it
+cost 10.7-50.3 ms on windows (8.1-29.2 of that before the rename) against 0.6-19.8 ubuntu and 1.7-4.5 macos, and one flush-to-device 7.2-47.1 ms on windows vs 0.4-1.1 ubuntu. That
+harness run also went RED on **ubuntu** - the same message at the same line, 194 ms, run 34041721936 - so it was never one platform's. **Fixture fixed, no assertion loosened:** the
+stopwatch is read only inside the injected rename, so its span is the product's own sleeps and holds no file IO; the 100 ms ceiling and the message are unchanged, and
+`Assert.Single` on the attempts is added, the exact count the sibling five-attempt test already asserts. What it no longer bounds is the disk around the call, which is not the
+product. NOT moved to `Timing`: the verdict needs no runner clock. **Mutant** (the exclusion by name dropped from `Transient`) -> `burned 204 ms of the retry budget on a file that
+is not coming back`. **Gate, each run and quoted:** Release `--no-incremental` -> 0 warnings, 0 errors; the class 3x -> 149/149 each; full suite one project at a time, 0 other test
+hosts -> 348 + 261 + 615 = 1224 passed, 0 failed, 1 skipped; `--list-tests` vs `main` 1225 = 1225, 0 removed, 0 added; secret scan clean. **Draft PR #11 run 34042541589 GREEN on
+all three runners** and `package`, no Timing retry on any runner. A second run at the same sha, 34043185411: ubuntu and macos success, windows RED in the `Timing` step only and in
+BOTH attempts, on `OperatorPressIsAnEmergencyTests` (`close-all returned 2813 ms after the deadline the press itself opened`, then cancel-all) - not this unit; this test passed on
+all three runners in both runs, six runner-passes. **NOT done:** no product code, no box, no UI, no merge; `main` untouched. Nothing here is NOT VERIFIED.
