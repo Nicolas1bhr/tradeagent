@@ -2620,6 +2620,83 @@ public class CoidWitnessTests : IDisposable
     }
 
     /// <summary>
+    /// TEMPORARY HARNESS (U-coid-vanished-win). Fails on purpose so every runner prints where the
+    /// wall clock of the call above goes: the retry loop, or the disk under it. Removed from this
+    /// branch before it is proposed.
+    /// </summary>
+    [Fact]
+    public void Zz_temporary_harness_where_the_vanished_temp_call_spends_its_time()
+    {
+        var log = new System.Text.StringBuilder().AppendLine();
+
+        for (var round = 1; round <= 3; round++)
+        {
+            var dir = Path.Combine(_dir, "vanish-" + round);
+            Directory.CreateDirectory(dir);
+            var at = new List<double>();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            var ctor0 = clock.Elapsed.TotalMilliseconds;
+            var w = new CoidWitness(Path.Combine(dir, "coid-witness.json"), null, CoidWitness.DefaultCap,
+                (tmp, destination) =>
+                {
+                    at.Add(clock.Elapsed.TotalMilliseconds);
+                    throw new FileNotFoundException("it is gone", tmp);
+                });
+            var call0 = clock.Elapsed.TotalMilliseconds;
+            var answer = w.Submitting("TA-GONE", "SIM", "ES", "Buy", 1m, null);
+            var call1 = clock.Elapsed.TotalMilliseconds;
+            w.Dispose();
+
+            log.AppendLine($"[HARNESS vanish r{round}] answer={answer} ctor={call0 - ctor0:F1} " +
+                           $"pre_replace={at[0] - call0:F1} attempts={at.Count} " +
+                           $"in_retry_loop={at[^1] - at[0]:F1} post_replace={call1 - at[^1]:F1} " +
+                           $"submitting_total={call1 - call0:F1}");
+        }
+
+        // The same call with the rename landing: the identical file IO, no vanish, no retry.
+        for (var round = 1; round <= 3; round++)
+        {
+            var dir = Path.Combine(_dir, "land-" + round);
+            Directory.CreateDirectory(dir);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var w = new CoidWitness(Path.Combine(dir, "coid-witness.json"));
+            var call0 = clock.Elapsed.TotalMilliseconds;
+            var answer = w.Submitting("TA-LANDS", "SIM", "ES", "Buy", 1m, null);
+            var call1 = clock.Elapsed.TotalMilliseconds;
+            w.Dispose();
+            log.AppendLine($"[HARNESS land r{round}] answer={answer} submitting_total={call1 - call0:F1}");
+        }
+
+        // The primitives underneath it, timed on this runner: an exclusive create (the lease), a
+        // write flushed to the device (the temp), a directory listing and an append (the sidecar).
+        for (var round = 1; round <= 3; round++)
+        {
+            var dir = Path.Combine(_dir, "raw-" + round);
+            Directory.CreateDirectory(dir);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var t0 = clock.Elapsed.TotalMilliseconds;
+            using (new FileStream(Path.Combine(dir, "x.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) { }
+            var t1 = clock.Elapsed.TotalMilliseconds;
+            using (var s = new FileStream(Path.Combine(dir, "x.tmp"), FileMode.Create, FileAccess.Write, FileShare.Read))
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(new string('x', 400));
+                s.Write(bytes, 0, bytes.Length);
+                s.Flush(flushToDisk: true);
+            }
+            var t2 = clock.Elapsed.TotalMilliseconds;
+            Directory.GetFileSystemEntries(dir);
+            var t3 = clock.Elapsed.TotalMilliseconds;
+            File.AppendAllText(Path.Combine(dir, "x.log"), "a line of the sidecar" + Environment.NewLine);
+            var t4 = clock.Elapsed.TotalMilliseconds;
+            log.AppendLine($"[HARNESS raw r{round}] exclusive_create={t1 - t0:F1} " +
+                           $"write_flush_to_disk={t2 - t1:F1} list_dir={t3 - t2:F1} append={t4 - t3:F1}");
+        }
+
+        Assert.True(false, log.ToString());
+    }
+
+    /// <summary>
     /// One writer keeps at most one uncommitted rewrite. The new one is on disk before the old one
     /// is removed, so the claim is never unheld — and two temps of the same lineage from one writer
     /// would be genuinely ambiguous to the recovery scan, since they are written milliseconds apart
