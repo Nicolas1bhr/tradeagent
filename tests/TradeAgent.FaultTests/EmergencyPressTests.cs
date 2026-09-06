@@ -311,6 +311,14 @@ public class PressReachesTheWireOnItsOwnTermsTests
 /// runner's file IO, the same spread `U-win-timing` measured at 3.79-39.52x, and it lands on this
 /// class as a whole because the assertion that catches it is the one every test here shares.
 /// Nothing is loosened by the move — the assertions below are exactly what they were.
+///
+/// U-press-win-3: THE CATEGORY WAS NOT ENOUGH, because a retry only helps a rare event. The same
+/// windows overrun came back at run 34043185411 in BOTH attempts (`close-all returned 2813 ms after
+/// the deadline the press itself opened`), and the measurement below found why: on windows-latest
+/// the slow commit landed in 2 of 8 presses in one job and 1 of 8 in another, so two attempts both
+/// hitting it is ordinary. The press is now charged the WIRE and not the disk — see
+/// `TheStalledPressGaveUpOnItsOwnDeadline` — and the class stays in `Timing`, because what it still
+/// measures is a wall clock around a platform call and a descheduled runner would still redden it.
 /// </summary>
 [Trait("Category", "Timing")]
 public class OperatorPressIsAnEmergencyTests
@@ -333,23 +341,53 @@ public class OperatorPressIsAnEmergencyTests
     ///
     /// So the promise is asserted instead of the stopwatch. The press opens ONE absolute deadline
     /// and hands it to every call it makes; this reads that deadline back out of the scope, from
-    /// inside the press, and asserts what the press did about it: it RETURNED, it returned within a
-    /// handler's own overhead of its deadline rather than of the test's start, it told the owner the
+    /// inside the press, and asserts what the press did about it: it RETURNED, it told the owner the
     /// outcome is NOT confirmed, and nothing it sent after the deadline reached the book. The
     /// shipped 2 s is untouched — this widens nothing, it stops measuring the wrong clock.
+    ///
+    /// THE SECOND CORRECTION, U-press-win-3, AND THE HALF OF THE STOPWATCH THAT WAS STILL LEFT IN.
+    /// "Returned within a handler's overhead OF ITS DEADLINE" still measured two things added
+    /// together: what the press spent on the platform past the deadline, which the budget bounds,
+    /// and what it spent afterwards writing down what it learned, which is the runner's disk. On
+    /// windows-latest the second term is not a cost the press controls: measured per step on the
+    /// draft PR (runs 34046090536 and 34046100888, four presses of each kind per runner), ONE
+    /// `SafelyRecordIndefinite` commit at `synchronous=FULL` took 1890 ms and the `SafelySettle`
+    /// after it 1469 ms — 3578 ms of overrun off code whose whole local cost is 15-63 ms in the
+    /// same job — while `gcPause=0` and a 20 ms tick on a dedicated thread and on the pool kept
+    /// arriving at 32-47 ms, so the process was running and it was file IO. A bare-SQLite probe of
+    /// ten one-row commits on the same database in the same test ran 4-11 ms on ubuntu, 0-7 ms on
+    /// macos and 16-2234 ms on windows. No product change bounds that: one commit alone is over.
+    ///
+    /// So the press is charged the wire and nothing else. `RecoveryConnector.WireCalls` stamps every
+    /// platform call in and out, and this sums the part of each that lies past the deadline. In all
+    /// 24 measured presses that sum was 0-2 ms on ubuntu, 0-16 ms on windows and 13-140 ms on macos
+    /// (its timer floor), against the same unchanged H. What is no longer asserted is the runner's
+    /// fsync, which was never a statement about this product.
     /// </summary>
-    static void TheStalledPressGaveUpOnItsOwnDeadline(long returnedAt, long? deadlineAt, string what)
+    static void TheStalledPressGaveUpOnItsOwnDeadline(RecoveryConnector c, int firstPressCall, long? deadlineAt, string what)
     {
         // Non-null is itself the assertion that the read was inside the scope: a step that opened
         // its own budget, or none, is what the scope exists to prevent.
         Assert.NotNull(deadlineAt);
-        var overrun = returnedAt - deadlineAt.Value;
 
-        // What a press costs BEYOND its connector calls is a handler's overhead — local SQLite
-        // writes, in `docs/CONTRACTS.md`'s own term H — and never the connector budget E, which
-        // bounds the calls. Worst seen on a hosted runner: 40 ms.
-        Assert.True(overrun < GatewayPipeServer.HandlerOverhead.TotalMilliseconds,
-            $"{what} returned {overrun} ms after the deadline the press itself opened, against " +
+        // The press's own platform calls — the setup's are before the watermark and are not its.
+        var calls = c.WireCalls.Skip(firstPressCall).ToList();
+        Assert.NotEmpty(calls);
+
+        // WHAT THE PRESS SPENT ON THE PLATFORM AFTER ITS OWN DEADLINE HAD PASSED. Each call is
+        // charged the part of itself lying past the deadline; one that was already back, or that
+        // only started afterwards and was refused at once by the expired token, is charged nothing.
+        // The bound is `docs/CONTRACTS.md`'s H — what a handler may cost beyond its connector calls
+        // — because a call still on the wire after the deadline is precisely the budget E failing.
+        var late = calls
+            .Select(w => (w.Call, Past: Math.Max(0L, w.LeftAt - Math.Max(w.EnteredAt, deadlineAt.Value))))
+            .Where(x => x.Past > 0)
+            .ToList();
+        var waited = late.Sum(x => x.Past);
+
+        Assert.True(waited < GatewayPipeServer.HandlerOverhead.TotalMilliseconds,
+            $"{what} was still on the platform {waited} ms after the deadline the press itself opened " +
+            $"({string.Join(", ", late.Select(x => $"{x.Call} {x.Past} ms"))}), against " +
             $"{GatewayPipeServer.HandlerOverhead.TotalSeconds:0}s of handler overhead; the emergency budget was not the thing that ran out");
     }
 
@@ -366,8 +404,9 @@ public class OperatorPressIsAnEmergencyTests
         long? deadlineAt = null;
         c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
 
+        var firstPressCall = c.WireCalls.Count;
         var press = await gw.OperatorCloseAllAsync();
-        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "close-all");
+        TheStalledPressGaveUpOnItsOwnDeadline(c, firstPressCall, deadlineAt, "close-all");
 
         // ...and the owner is told, in the words the card uses, rather than being told it worked.
         var row = Assert.Single(gw.Requests.Query("request_id LIKE 'op-close-%'"));
@@ -430,8 +469,9 @@ public class OperatorPressIsAnEmergencyTests
         long? deadlineAt = null;
         c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
 
+        var firstPressCall = c.WireCalls.Count;
         var press = await gw.OperatorCancelAllAsync();
-        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "cancel-all");
+        TheStalledPressGaveUpOnItsOwnDeadline(c, firstPressCall, deadlineAt, "cancel-all");
 
         // AND IT SENT NOTHING AFTER THE BUDGET. The cancel's turn came with less than its latency
         // left, so it was stopped mid-call and never reached the book: the order is still working,
@@ -475,8 +515,9 @@ public class OperatorPressIsAnEmergencyTests
         long? deadlineAt = null;
         c.BeforePositionsRead = () => deadlineAt ??= RiskReducingScope.DeadlineAt;
 
+        var firstPressCall = c.WireCalls.Count;
         var press = await gw.OperatorCancelAllAsync();
-        TheStalledPressGaveUpOnItsOwnDeadline(Environment.TickCount64, deadlineAt, "a press whose simulator ran late");
+        TheStalledPressGaveUpOnItsOwnDeadline(c, firstPressCall, deadlineAt, "a press whose simulator ran late");
         Assert.Contains(press.Targets, t => t.Outcome == "not confirmed — check ATAS");
 
         // THE OTHER DIRECTION. A wait that runs late and still lands inside the budget is left
