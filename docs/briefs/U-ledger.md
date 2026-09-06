@@ -36,6 +36,4 @@ Yours: the files named above, `docs/CONTRACTS.md` (`pnl`), `docs/USER-GUIDE.md` 
 trailers. Gate: Release `--no-incremental` → 0 warnings; each touched class 3×; full suite once to a file, one project
 at a time, nothing else running (a `Timing` test failing beside another suite → that class alone 3×); names vs `main`
 0 removed. No box, no ATAS, no UI run: say so.
-
-## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant quoted; gate counts; what you did
-NOT do. Verified or NOT VERIFIED, nothing in between.
+## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant quoted; gate counts; NOT done.
