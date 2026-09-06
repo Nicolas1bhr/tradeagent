@@ -33,3 +33,20 @@ class alone 3×); names vs `main` 0 removed.
 
 ## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant or REFUTED with the probe's output;
 gate counts; what you did NOT do. Verified or NOT VERIFIED.
+
+Fresh builder, 2026-09-06. Code tip `c64e9b8`; this report commits on top. Rebased onto `main` five times, all clean.
+**Kept all four of the previous builder's uncommitted files, discarded none.** Its F1 direction is right, and its
+quote-barrier move in `RecordingConnector`/`DispatchGateTests` is forced by it: the position read sits inside the gate now, so a barrier there can never assemble a wave.
+**F1 RED→GREEN→mutant.** RED on `main`'s gateway under the same tests: `cap 1 / connector place calls: 2 / positions open: 2`; a WORKING opening order read `positions reported: 0` and was not refused. Mutant `>=`→`>`: `place calls: 2`.
+Cost: `A_cold_placement_…drain_assumes` names the same FIVE ops, `positions` 2nd→4th — count, and so the drain, unchanged.
+**F2 RED→GREEN→mutant.** Cap between the raw and the ×50 notional; three ways the multiplier goes missing (read throws / null `ContractSize` / zero). RED: all three `Assert.Throws() Failure: No exception was thrown` — the order went out.
+GREEN: `RISK_CHECK_UNAVAILABLE`, 0 place calls, no row. Mutant dropping `|| size <= 0` → the zero row red. The fake now describes `YM` (it already traded it); `XYZ` stays undescribed on purpose and its two tests set no value cap.
+**F5 — half fixed, half REFUTED.** RED: Stop pressed inside a close's stale-position re-read → `outcome: ok — FILLED / orders at the broker: 2 (was 1)`. GREEN by making the re-check the last thing before the wire; mutant (delete it,
+keep the pre-read one) red identically. Codex's own probe REFUTES: paused inside the connector's send the order is placed and cannot be recalled — `CONTRACTS.md` states the bound, one `WorstCaseOperationPath` = 50 s at shipped ATAS
+values (`Stranded.AtasOrderPath`; NOT re-measured here).
+**F18 RED→GREEN→mutant.** RED: owner `{"cancelled":2,…}` vs duplicate AND stored `{"cancelled":1,["FB-1=DISPATCHING",…]}` — the transient answer persisted first. GREEN with an in-memory owner lease; mutant (no re-read after
+the wait) → the duplicate recomputes an equal answer, `from the store: False`.
+**Gate**, run alone, on the tree this tip carries: Release `--no-incremental` → 0 Warning(s), 0 Error(s); Unit 236 + Fault 261 + Integration 587 = 1084, 0 failed; touched classes 3× (29/29; backpressure 34/34); names vs `main` 0
+removed, 9 added. The only `main` commit after that run is `be65c25`, BUILD-STATUS.md only, rebased onto and not re-gated.
+**NOT done:** no box, UI, pipe op or operator authority; F5's connector-send half is refuted, not closed; the press's sync `BeginComposite` takes no lease (fresh-nonce `op-` ids the pipe refuses); a MODIFICATION no longer runs the
+open-position cap (in `CONTRACTS.md`).
