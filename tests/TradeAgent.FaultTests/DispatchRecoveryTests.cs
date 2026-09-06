@@ -76,11 +76,51 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public TimeSpan WorstCaseOperationPath => inner.WorstCaseOperationPath;
     public TimeSpan EmergencyBudget => inner.EmergencyBudget;
 
+    /// <summary>
+    /// THE WIRE CLOCK — when this connector entered a platform call and when it left it, in
+    /// <see cref="Environment.TickCount64"/>, for every call it forwards.
+    ///
+    /// It exists because a wall clock cannot answer the only question an emergency-budget test
+    /// asks. The budget bounds the CALLS (`docs/CONTRACTS.md`'s term E); what a caller spends on
+    /// top of them is local SQLite at `synchronous=FULL` (term H). A stopwatch around the whole
+    /// operation adds the two together and hands the sum to an assertion about the first — and on a
+    /// hosted runner the second is not a fixed cost. U-press-win-3 measured one `SafelyRecordIndefinite`
+    /// commit at 1890 ms on windows-latest off the same code that costs 2 ms on ubuntu. So the
+    /// press is charged for the wire alone, on the clock the promise is written in, and the
+    /// runner's disk is charged to nobody.
+    ///
+    /// Permanent on purpose: any test that wants to say "the deadline stopped the platform call"
+    /// rather than "the whole thing returned quickly enough" needs exactly this, and building it
+    /// per-test is how the wrong clock got used in the first place.
+    /// </summary>
+    public IReadOnlyList<(string Call, long EnteredAt, long LeftAt)> WireCalls
+    {
+        get { lock (_wire) return _wire.ToArray(); }
+    }
+
+    readonly List<(string Call, long EnteredAt, long LeftAt)> _wire = [];
+
+    async Task<T> OnTheWire<T>(string call, Func<Task<T>> body)
+    {
+        var entered = Environment.TickCount64;
+        try { return await body(); }
+        finally { lock (_wire) _wire.Add((call, entered, Environment.TickCount64)); }
+    }
+
+    async Task OnTheWire(string call, Func<Task> body)
+    {
+        var entered = Environment.TickCount64;
+        try { await body(); }
+        finally { lock (_wire) _wire.Add((call, entered, Environment.TickCount64)); }
+    }
+
     public Task ConnectAsync(CancellationToken ct = default) => inner.ConnectAsync(ct);
     public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => inner.GetHealthAsync(ct);
     public Task<bool> IsConnectedAsync(CancellationToken ct = default) => inner.IsConnectedAsync(ct);
-    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => inner.GetAccountsAsync(ct);
-    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => inner.GetAccountAsync(a, ct);
+    public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) =>
+        OnTheWire("accounts", () => inner.GetAccountsAsync(ct));
+    public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) =>
+        OnTheWire("account", () => inner.GetAccountAsync(a, ct));
     public Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) => inner.GetInstrumentsAsync(ct);
     public Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) => inner.GetQuoteAsync(s, ct);
     /// <summary>Runs before every positions read, so a test can move the book between two of them.</summary>
@@ -89,7 +129,7 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default)
     {
         BeforePositionsRead?.Invoke();
-        var p = await inner.GetPositionsAsync(a, ct);
+        var p = await OnTheWire("positions", () => inner.GetPositionsAsync(a, ct));
         return SortPositionsBySymbol ? p.OrderBy(x => x.Symbol, StringComparer.Ordinal).ToList() : p;
     }
     public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inc, DateTimeOffset? since, CancellationToken ct = default)
@@ -99,22 +139,23 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
         // own timestamp — which is exactly the thing a test needs to move to prove that a caller's
         // window can hide a resting order. Filtering first (the inner fake's own behaviour) made a
         // window mutant survive: the rewrite never reached the filter.
-        var orders = await inner.GetOrdersAsync(a, inc, null, ct);
+        var orders = await OnTheWire("orders", () => inner.GetOrdersAsync(a, inc, null, ct));
         if (RewriteBook is not null) orders = orders.Select(RewriteBook).ToList();
         return since is null ? orders : orders.Where(o => o.At >= since).ToList();
     }
-    public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) => inner.GetExecutionsAsync(a, since, ct);
+    public Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
+        OnTheWire("executions", () => inner.GetExecutionsAsync(a, since, ct));
 
-    public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default)
+    public Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default) => OnTheWire("place", async () =>
     {
         var o = await inner.PlaceOrderAsync(cmd, ct);            // the broker HAS it
         OnPlaced?.Invoke();
         if (HangPlace is { } hang) await hang.Task;              // ...and the answer never comes back
         if (ThrowAfterPlace is { } ex) throw ex;                 // ...or this happens instead
         return RewritePlaced?.Invoke(o) ?? o;
-    }
+    });
 
-    public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default)
+    public Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand cmd, CancellationToken ct = default) => OnTheWire("modify", async () =>
     {
         var o = ModifyIgnoresTheRequest
             ? (await inner.GetOrdersAsync(inner.Broker.AccountId, true, null, ct)).First(x => x.ConnectorOrderId == cmd.ConnectorOrderId)
@@ -127,18 +168,18 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
                 StopPrice = o.StopPrice is { } st ? Math.Round(st / tick, MidpointRounding.AwayFromZero) * tick : null
             };
         return RewriteModified?.Invoke(o) ?? o;
-    }
+    });
 
     /// <summary>When set, ThrowAfterCancel fires only for this order id.</summary>
     public string? CancelFailsFor;
 
-    public async Task CancelOrderAsync(string id, CancellationToken ct = default)
+    public Task CancelOrderAsync(string id, CancellationToken ct = default) => OnTheWire("cancel", async () =>
     {
         if (!CancelDoesNotReachTheBook) await inner.CancelOrderAsync(id, ct);   // the broker DID cancel
         OnCancelled?.Invoke();                                   // ...and this happens before we hear back
         OnCancelledId?.Invoke(id);
         if (ThrowAfterCancel is { } ex && (CancelFailsFor is null || CancelFailsFor == id)) throw ex;
-    }
+    });
 
     /// <summary>Runs after the broker cancelled and before this connector answers. See OnPlaced.</summary>
     public Action? OnCancelled;
@@ -151,19 +192,19 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
     /// captured, so the account-wide sweep — and the three hooks that used to script its partial
     /// answers — are gone from these tests. The counter stays, as the assertion that it is not sent.
     /// </summary>
-    public async Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default)
+    public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) => OnTheWire("cancel-all", async () =>
     {
         CancelAlls++;
         return await inner.CancelAllOrdersAsync(a, ct);
-    }
+    });
 
-    public async Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)
+    public Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default) => OnTheWire("close", async () =>
     {
         Closes++;
         var o = await inner.ClosePositionAsync(a, s, coid, ct);  // the closing order IS submitted
         if (ThrowAfterClose is { } ex && (ThrowAfterCloseSymbol is null || ThrowAfterCloseSymbol == s)) throw ex;
         return o;
-    }
+    });
 
     public event Action<HealthState>? ConnectionChanged { add => inner.ConnectionChanged += value; remove => inner.ConnectionChanged -= value; }
     public event Action<QuoteInfo>? QuoteChanged { add => inner.QuoteChanged += value; remove => inner.QuoteChanged -= value; }
