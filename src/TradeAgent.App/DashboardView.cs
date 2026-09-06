@@ -323,28 +323,49 @@ sealed class DashboardPage
     {
         Ui.SetResting(_workButton, running ? PauseTheAi : LetTheAiWork, running ? "secondary" : "primary");
 
-        (_missionState.Text, _missionState.Foreground) = status.State switch
+        _missionState.Text = MissionSentence(status);
+        _missionState.Foreground = status.State switch
         {
-            MissionState.Working => ("working", Theme.Positive),
-            MissionState.Waiting => (status.NextTurnAt is { } at
-                ? $"waiting until {at.ToLocalTime():HH:mm}"
-                : "waiting", Theme.TextMuted),
-            MissionState.Paused => ("paused", Theme.Caution),
-            _ => ("stopped — the AI has not been started", Theme.TextFaint)
+            MissionState.Working => Theme.Positive,
+            MissionState.Waiting => Theme.TextMuted,
+            MissionState.Paused => Theme.Caution,
+            _ => Theme.TextFaint
         };
 
-        var counts = status.Turns == 1 ? "1 turn" : $"{status.Turns} turns";
-        if (status.ConsecutiveErrors > 0)
-            counts += status.ConsecutiveErrors == 1
-                ? " — the last one ended in an error"
-                : $" — {status.ConsecutiveErrors} errors in a row";
-        _missionCounts.Text = counts;
+        _missionCounts.Text = MissionCounts(status);
         _missionCounts.Foreground = status.ConsecutiveErrors > 0 ? Theme.Danger : Theme.TextFaint;
 
-        _missionLast.Text = status.LastTurnFirstLine is { Length: > 0 } line
-            ? Shorten(line, 160)
-            : "";
+        _missionLast.Text = status.LastTurnFirstLine is { Length: > 0 } line ? Shorten(line, 160) : "";
         _missionLast.IsVisible = _missionLast.Text.Length > 0;
+    }
+
+    /// <summary>
+    /// THE ONE LINE THE CARD SAYS THE AI IS DOING. Pulled out of the repaint so the four words can be
+    /// read back without a running app — the layout and the colours cannot be, and are not claimed.
+    /// A waiting loop names the minute it will start again, because "waiting" alone is what an owner
+    /// reads as "stuck".
+    /// </summary>
+    internal static string MissionSentence(MissionStatus status) => status.State switch
+    {
+        MissionState.Working => "working",
+        MissionState.Waiting => status.NextTurnAt is { } at ? $"waiting until {at.ToLocalTime():HH:mm}" : "waiting",
+        MissionState.Paused => "paused",
+        _ => "stopped — the AI has not been started"
+    };
+
+    /// <summary>
+    /// How much it has done, and whether it is getting anywhere. The error count is spelled rather
+    /// than shown as a bare number, because "3" beside "12 turns" reads as a second turn count.
+    /// </summary>
+    internal static string MissionCounts(MissionStatus status)
+    {
+        var counts = status.Turns == 1 ? "1 turn" : $"{status.Turns} turns";
+        return status.ConsecutiveErrors switch
+        {
+            0 => counts,
+            1 => counts + " — the last one ended in an error",
+            var n => counts + $" — {n} errors in a row"
+        };
     }
 
     static string Shorten(string text, int max) => text.Length <= max ? text : text[..max] + "…";

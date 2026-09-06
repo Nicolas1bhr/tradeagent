@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -89,7 +90,48 @@ public class MissionControlsTests
         Assert.Equal(DashboardPage.PauseTheAi, b.Content);
     }
 
-    // ---- 2. what survives a restart ------------------------------------------------------------
+    // ---- 2. what the card says -----------------------------------------------------------------
+
+    /// <summary>
+    /// THE FOUR WORDS, in the order of least to most alarming. A waiting loop names the minute it
+    /// starts again: "waiting" on its own is what an owner reads as "stuck", and this card is the
+    /// only place they can tell the difference. The layout and the colours are NOT asserted here —
+    /// they need a running app — but the words are what carries the meaning.
+    /// </summary>
+    [Fact]
+    public void The_card_says_which_of_four_things_is_happening()
+    {
+        var at = DateTimeOffset.UtcNow.ToLocalTime().Date.AddHours(14).AddMinutes(32);
+
+        Assert.Equal("working", DashboardPage.MissionSentence(Status(MissionState.Working)));
+        Assert.Equal("paused", DashboardPage.MissionSentence(Status(MissionState.Paused)));
+        Assert.Equal("stopped — the AI has not been started",
+            DashboardPage.MissionSentence(Status(MissionState.Stopped)));
+        Assert.Equal("waiting until 14:32",
+            DashboardPage.MissionSentence(Status(MissionState.Waiting, next: at)));
+        Assert.Equal("waiting", DashboardPage.MissionSentence(Status(MissionState.Waiting)));
+    }
+
+    /// <summary>
+    /// The turn count and the errors beside it. The errors are spelled out rather than shown as a
+    /// bare number, because "3" next to "12 turns" reads as a second turn count.
+    /// </summary>
+    [Fact]
+    public void The_card_counts_the_turns_and_says_when_they_keep_failing()
+    {
+        Assert.Equal("0 turns", DashboardPage.MissionCounts(Status(MissionState.Paused)));
+        Assert.Equal("1 turn", DashboardPage.MissionCounts(Status(MissionState.Working, turns: 1)));
+        Assert.Equal("12 turns", DashboardPage.MissionCounts(Status(MissionState.Working, turns: 12)));
+        Assert.Equal("12 turns — the last one ended in an error",
+            DashboardPage.MissionCounts(Status(MissionState.Working, turns: 12, errors: 1)));
+        Assert.Equal("12 turns — 4 errors in a row",
+            DashboardPage.MissionCounts(Status(MissionState.Working, turns: 12, errors: 4)));
+    }
+
+    static MissionStatus Status(MissionState state, DateTimeOffset? next = null, int turns = 0, int errors = 0) =>
+        new(state, next, turns, errors, null);
+
+    // ---- 3. what survives a restart ------------------------------------------------------------
 
     /// <summary>
     /// PAUSED SURVIVES A RESTART; WORKING RESUMES. Both halves matter and only one of them is a
@@ -182,7 +224,7 @@ public class MissionControlsTests
         Assert.True(gw.Settings.AiWorksOnItsOwn);
     }
 
-    // ---- 3. the composition --------------------------------------------------------------------
+    // ---- 4. the composition --------------------------------------------------------------------
 
     /// <summary>
     /// What ties the control above to the screen that shows it, and the restart decision to the

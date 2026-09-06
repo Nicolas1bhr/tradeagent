@@ -87,11 +87,22 @@ public sealed class AppHost : IAsyncDisposable
     public MissionLoop Mission { get; private set; } = null!;
 
     /// <summary>
-    /// The moment the last material pass began, as this process saw it. Read before the walk rather
-    /// than after, so it is never later than the scanner's own idea of the pass — erring early costs
-    /// one spare pass and erring late costs an attestation.
+    /// The moment the last material pass began, as this process saw it, in UTC ticks — 0 for "no
+    /// pass yet". Read before the walk rather than after, so it is never later than the scanner's
+    /// own idea of the pass: erring early costs one spare pass and erring late costs an attestation.
+    ///
+    /// A long through <see cref="Interlocked"/> rather than a <c>DateTimeOffset?</c>, because two
+    /// threads write it — the background loop every thirty seconds and the mission loop after every
+    /// turn — while the mission loop reads it, and a sixteen-byte struct is not read or written
+    /// atomically anywhere. A torn read landing in the future would answer "nothing new in the drop
+    /// folder" when there is, skip the yield, and cost the very attestation this field exists for.
     /// </summary>
-    DateTimeOffset? _lastScanAt;
+    long _lastScanAtTicks;
+
+    DateTimeOffset? LastScanAt =>
+        Interlocked.Read(ref _lastScanAtTicks) is var t and not 0
+            ? new DateTimeOffset(t, TimeSpan.Zero)
+            : null;
 
     /// <summary>When the last mission turn was composed, so the next one can say what is new since.</summary>
     DateTimeOffset _lastSituationAt = DateTimeOffset.UtcNow;
@@ -367,7 +378,7 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public ScanResult ScanMaterials(CancellationToken ct = default)
     {
-        _lastScanAt = DateTimeOffset.UtcNow;
+        Interlocked.Exchange(ref _lastScanAtTicks, DateTimeOffset.UtcNow.UtcTicks);
         var result = new MaterialScanner(_db!).Scan(ct);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
@@ -452,7 +463,7 @@ public sealed class AppHost : IAsyncDisposable
 
         public string AgentHome => host.Agent.Workspace is { Length: > 0 } w ? w : Paths.AgentHome;
 
-        public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host._lastScanAt);
+        public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host.LastScanAt);
 
         public Task ScanAsync(CancellationToken ct)
         {

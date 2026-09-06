@@ -274,6 +274,11 @@ public sealed class MissionLoop
     {
         get
         {
+            // Asked OUTSIDE the lock. The host's answer comes from the composition root, and holding
+            // this loop's lock across a call into it is how two locks that never met become a
+            // deadlock in the next unit that adds one.
+            var hasAgent = _host.Conversation is not null;
+
             lock (_gate)
             {
                 // STOPPED OUTRANKS EVERYTHING, because with no conversation there is nothing to take
@@ -281,7 +286,7 @@ public sealed class MissionLoop
                 // until 14:32" over a turn that cannot happen, and every number beside it would be
                 // describing that same turn.
                 var state =
-                    _host.Conversation is null ? MissionState.Stopped :
+                    !hasAgent ? MissionState.Stopped :
                     _working ? MissionState.Working :
                     !Running ? MissionState.Paused :
                     MissionState.Waiting;
