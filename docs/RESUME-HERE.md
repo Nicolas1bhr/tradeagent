@@ -10,10 +10,10 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session resumed 2026-09-05 (evening), landed the queue's last unit and dispatched the second milestone review. Restart in this order, and you are working within ten minutes:**
+**Session closed 2026-09-06 (late morning). Restart in this order, and you are working within ten minutes:**
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
-   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
+   end of `BUILD-STATUS.md` (one ≤40-line section per landing; 39 sections since the pivot, every claim with its run).
 2. **`main` is `6672b5e`, the v0.1.2 version bump and the release's target, plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
@@ -35,20 +35,22 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `main` and published from the Mac. Three usage-limit kills in all (2026-09-05 23:40, 2026-09-06 03:50 and ~09:10)
    took seven running legs; every one was re-briefed fresh from its file with "read your branch first" and lost nothing
    committed — this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place.
-   **`docs/briefs/` holds ONE file, `U-cut-0.1.2-c.md`, in flight on the box:** the installed 0.1.1 app watched
-   updating itself to 0.1.2 from a FRESH home (`TRADEAGENT_HOME`), the fifth hash read off the copy it downloaded. The
-   first attempt (`U-cut-0.1.2-b`) found the installed 0.1.1 cannot start on the real home at all — schema 3 from this
-   week's repo builds against its schema 1 — and dies on "records are damaged" with no update strip: a finding for the
-   next review, in the cut's section. The box's real home is at schema 3; 0.1.2 carries schema 4 — starting 0.1.2
-   against it migrates it, which is the owner's moment. When the leg reports: its lines into the cut's section, the
-   brief deleted, the session closed.
+   **The update was watched installing itself:** from a fresh home (`TRADEAGENT_HOME`), the installed 0.1.1 walked
+   its setup, found v0.1.2 one second after Finish, asked twice, ran Setup's own window only, and relaunched as 0.1.2;
+   the fifth hash, read off the copy it downloaded, equals the other four. The first attempt found that the installed
+   0.1.1 cannot start on the box's REAL home at all (schema 3 from the week's repo builds against its schema 1: "records
+   are damaged", no update strip — a finding). **`docs/briefs/` is EMPTY** (the folder is absent when nothing is in
+   flight). **The box:** the installed app is now 0.1.2; the real home is still at schema 3 and the next start of a
+   0.1.2 process against it migrates 3 → 4 — the owner's moment, deliberately not taken; ATAS up, the bridge at
+   protocol 3 started on a chart; the book flat; the fresh home `C:\ta\home-0.1.1-update` left in place.
    **Open, not briefed** (the third review starts here): an UNKNOWN close on the same instrument can still fill after
    the press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked
    only on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail`
    are two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2;
    `TreatWarningsAsErrors` is on for the bridge only; an installed OLDER build refuses a home a newer build
-   migrated with "records are damaged" (false — they are newer) and no update path; five hosted-runner reds recorded
-   once each (three in the U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
+   migrated with "records are damaged" (false — they are newer) and no update path; 0.1.1 wrote no activity row for the
+   update press and whether `main`'s hook fires at runtime is NOT VERIFIED; five hosted-runner reds recorded once each
+   (three in the U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
@@ -59,22 +61,20 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
    containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
    the in-process gateway are not security boundaries.
-6. **Then:** the v0.1.2 cut on the box, a short second box leg once `U-box-precut` has reported and the queue above
-   has landed — `packaging/build.ps1` there (the ATAS adapter compiles only on the box), `gh release create v0.1.2`, the
-   running app watched updating itself (`docs/DEPLOYMENT.md` §1), U9's `TreatWarningsAsErrors` once the five adapter
-   warnings are dispositioned (U-box-precut item 5). Box facts (the credentials are in `~/.tradeagent/win.env` on this Mac and every
-   `tools/*.sh` script sources it — the earlier note that the box had no credentials in these sessions was WRONG; on
-   2026-09-05 evening `tools/win-state.sh` answered: console session active, desktop live, ATAS running, the installed
-   app 0.1.1 answering `status`, the UI agent not running. The items: redeploy the bridge at
-   protocol 3, `tools/atas-gate`, the review's two box items — whether ATAS accepts the new press id shape, whether a real
-   bridge spends 30–50 s in gate + frame; the items in `docs/hardening/briefs/U6-U9-backlog.md`) are `U-box-precut`'s.
-   The non-box LOW batch in that backlog (`AtasConnector._pending` leaks an entry when a caller cancels an emergency; a
-   liveness probe lifted into `ConnectorSendDeadlineTests`) is a one-builder unit whenever a leg is free.
+6. **Then, in order:** (a) the two decisions above, whenever Nicolas takes them — the checksum one is a data change
+   (`installerSha256` in `atas.json`) plus a fail-closed path; (b) the third milestone review on `main` at a named sha,
+   starting from the open items in step 3 and `docs/REVIEW-2026-09-05b.md`'s UNVERIFIED list and "What I did NOT do"
+   (the bridge half beyond what `U-bridge-2` touched, `BridgePipeAuth`, `AtasHealth`, the chat/inbox/onboarding views,
+   `AgentSession`, the updater's release-reading half), Codex read-only beside it (`codex exec -s read-only -m
+   gpt-5.6-sol …`; the configured `gpt-6-astra` needs a newer CLI than 0.144.1); (c) the box's real home migrated by
+   starting 0.1.2 against it, watched, with the bridge row read after; (d) the non-box LOW batch in
+   `docs/hardening/briefs/U6-U9-backlog.md` and `TreatWarningsAsErrors` for the whole solution.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
    before the Mac UI loop; the box IS reachable (see step 6); four usage-limit kills were survived by
    re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
-   check a command's exit with `$?` on the bare command.
+   check a command's exit with `$?` on the bare command; `pgrep -f testhost` matches the waiting shell itself — count
+   test hosts with `pgrep -fl 'testhost.dll' | grep -v pgrep`; `git grep -E` here has no `\s` — use `[[:space:]]`.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 

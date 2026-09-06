@@ -4167,10 +4167,10 @@ update installing itself; the build script's own summary block was not read — 
 console output is gone; the adapter presence is the script's own check, re-run by hand. **NOT done:**
 `TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
 
-## 2026-09-06 — The v0.1.2 update watch: the installed 0.1.1 cannot start on the box's real home, so the measurement moves to a fresh home
+## 2026-09-06 — The v0.1.2 update watch, first attempt: the installed 0.1.1 cannot start on the box's real home
 
-The second half of the cut (`U-cut-0.1.2-b`, one fresh builder; branch `u-cut-0.1.2-b` @ `a23f540` holds its report),
-then `U-cut-0.1.2-c`, in flight.
+The second half of the cut, first attempt: `U-cut-0.1.2-b`, one fresh builder against the real home (branch
+`u-cut-0.1.2-b` @ `a23f540` holds its report). No file changed but the brief.
 
 - **First attempt: NOT DONE, and a finding.**
   The INSTALLED 0.1.1 (file version 0.1.1.0, commit `16d4862`, `DatabaseSchemaVersion = 1`) started against the box's
@@ -4189,3 +4189,32 @@ read off a copy of the live database → `3`; the app closed by WM_CLOSE, the co
 about the update path — download, checksum verification, the refusal sentences, Setup's own window, relaunch, the
 version after, the health rows after. **NOT done:** no install by hand, no installer run, no release edited, no
 second home in that attempt, no mode or settings change, no order.
+
+## 2026-09-06 — The v0.1.2 update watch, second attempt: the installed 0.1.1 updated itself to 0.1.2 from a fresh home, and the fifth hash matches
+
+`U-cut-0.1.2-c`, one fresh builder (branch `u-cut-0.1.2-c` @ `12a559a` holds its report). No file changed but the brief.
+
+- **Second attempt, from a fresh home: DONE.** `C:\ta\home-0.1.1-update` empty; the installed 0.1.1 started under
+  `TRADEAGENT_HOME` at 11:07 (box time) and showed `STEP 1 OF 16 · Welcome …` and no update strip — in 0.1.1 the strip
+  lives in the shell, which onboarding never reaches. The setup journey pressed through the UI agent (`Practice
+  simulator`, `Simulation account`, `Create it`, `Start the AI`, `Finish` 11:15:03; ATAS never chosen, its Strategies
+  folder untouched: 0 files written today). **11:15:08, one second after Finish:** `TradeAgent 0.1.2 is available ·
+  112.5 MB. You are running 0.1.1.` with `What's new` · `Install update` · `Later`; the first press armed `Confirm: close
+  TradeAgent and install 0.1.2, stopping the AI`, the second press at 11:16:20; 11:16:23 the installer stood complete at
+  `updates\0.1.2\TradeAgent-Setup-x64.exe`, 117,979,718 bytes; 11:16:25–35 one window carrying only `Cancel` (Setup's
+  own progress window; no console at any point); 11:16:35 TradeAgent 0.1.2 relaunched by itself on the same home.
+  **The fifth hash,** `certutil` on the copy the app downloaded → `672f28fa…ab66`, equal to the published installer at
+  the same byte count. After: exe file version `0.1.2.0`; `trade status` → `app_version 0.1.2`, `TradeAgent READY
+  "0.1.2"`; Settings reads `This version 0.1.2 · Newest published version 0.1.2 — you have the newest one`; the fresh
+  home's database at `schema_version 4`. The real home's database mtimes identical before and after.
+- **A finding for the next review:** 0.1.1 recorded no press — its `activity` table holds 13 rows, none about the
+  update, `engineering_log` empty, against the guide's "Every press you make is written into your Activity history";
+  0.1.1's `UpdateService.cs` has no logging call; `main` has the hook (`UpdateService.Activity` →
+  `UpdateTradingInterlock.Record:125`), and that it fires at runtime is NOT VERIFIED.
+
+**Verified by running (the second builder, quoted):** everything above is the box's own output with times; the
+download/verify strip's text was NOT read (15 s from the second press to the relaunch); Setup's caption NOT captured.
+**Box left:** no TradeAgent running; the INSTALLED app is now 0.1.2, so the next start against the real home migrates
+it 3 → 4 — the owner's moment; ATAS up with the bridge started at protocol 3, the book flat; the fresh home left in
+place; the UI agent as found. **NOT done:** 0.1.2 never started against the real home; no installer run by hand; no
+release touched; `What's new`, `Later`, `Install the add-on`, `Reinstall the bridge` never pressed.
