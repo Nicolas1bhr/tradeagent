@@ -4089,8 +4089,9 @@ warnings; 237 + 261 + 610 = 1108, 0 failed, 1 skipped. Fixer's gate at `c67858c`
 skipped. Manager's gate at `07cbb91` (rebased onto `64743bf`; one add/add conflict on the fixer's brief, a docs file,
 taken from the branch), Release: build → 0 warnings, 0 errors; suite → 281 + 261 + 610 = 1152 passed, 0 failed, 1
 skipped (no other test host); names vs `main` → 0 removed, 15 added (sets 908 → 923); scan clean; `rev-list --count`
-→ 0; CI at `07cbb91`: pending.
+→ 0; CI run 34014790766 at `07cbb91`: RED on all three runners on ONE test, the F7 probe's own precondition
+(`the harness never authorized autonomous dispatch` at 300 / 174 / 130 ms): it races the fixture's first bare heartbeat,
+which clears the proof it reads, and the Mac finishes inside that 100 ms; test-only fixer `U-attest-precondition` on top.
 
-**NOT done:** `req.V` is checked only on `hello`, so a frame naming a wrong version mid-session is read as this one —
-left for the next review; `Bridge` and `StatusDetail` remain two readings of the connector (a display inconsistency on
-a five-second tick, not an NRE); no box, no UI run.
+**NOT done:** `req.V` is checked only on `hello` (a wrong version named mid-session is read as this one) and `Bridge`
+and `StatusDetail` remain two readings of the connector — both for the next review; no box, no UI run.
