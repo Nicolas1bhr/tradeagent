@@ -29,3 +29,26 @@ test home while the corruption test has it corrupted, and it is not in that test
 
 ## Report — append here, commit it, ≤12 lines: tip sha; the reproduction's RED and GREEN; the sweep's findings; the
 gate counts and the three runner results. Verified or NOT VERIFIED, nothing in between. No push except the draft PR.
+
+**Tip `b0bb35b`** (2 commits over `f2e30f0`, both test-only; PR #12, draft, not merged).
+
+- **RED, deliberately** (verified, `dotnet test --filter TypedWhileWorkingSurvivesACorruptRuntimesFileTests`): the new
+  test corrupts `runtimes.json` then builds the session → `TradeAgentException : runtimes.json could not be read … the
+  text in it is not valid JSON`, at `RuntimeManifest.cs:448` from `TypedWhileWorkingTests.Session()` — the CI message,
+  file and frame exactly. **GREEN** after `Session()` took its manifest from `RuntimeCatalog.BuiltIn()` (a literal, no
+  file): 5/5 in that file. The reproduction stays, in the collection, because it writes the file.
+- **The sweep** (verified by instrumenting `VendorFile.Read` to log a stack per call and running the whole assembly):
+  28 vendor-file reads, every one inside `[Collection(VendorOverrideFiles.Name)]` — `VendorOverrideFileTests` 17,
+  `RuntimeCatalogTests` 4, `DoctorReconciliationCheckTests` 2 (+4 `Doctor.RunAsync` continuations past an await, whose
+  only callers in this assembly are those two classes), the new reproduction 1. No writer outside those classes; the
+  other two assemblies get their own `TestEnv.Home` and write neither file, so they cannot race. Nothing else to fix, so
+  the sweep is asserted instead of reported: a source scan fails naming file, class and call. Mutant (`Require` put
+  back) → red, `TypedWhileWorkingTests.cs: TypedWhileWorkingTests calls RuntimeCatalog.Require(`.
+- **Gate at `b0bb35b`, nothing else running** (verified): Release `--no-incremental` → 0 warnings, 0 errors; touched
+  classes 3× → 14/14 each; Unit suite 5× → 329/329 each; full suite one project at a time → 329 + 261 + 610 = 1200
+  passed, 0 failed, 1 skipped; names vs the merge-base → **0 removed**, 2 added (327 → 329).
+- **The three runners** (verified, CI run 34041875509 at `b0bb35b`): ubuntu-latest **pass** (11m33s; the assembly that
+  was red is 329/329), macos-latest **pass** (14m42s), windows-latest **pass** (16m1s), `package` **pass**.
+- `main` has moved to `c1a8ee2`, whose own note records this same race red on macos. Verified from `main`'s tree: none
+  of the unit test files it has gained reads a vendor file, so the guard holds over the merge. NOT VERIFIED: no suite
+  has been run on the merge of this branch with `c1a8ee2`.
