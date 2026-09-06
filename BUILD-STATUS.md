@@ -4370,7 +4370,7 @@ Release: 0 warnings, 0 errors; touched classes 3× → 14/14 each; the Unit suit
 1200 passed, 0 failed, 1 skipped; names 0 removed, 2 added. The three runners on PR #12 (run 34041875509 at `b0bb35b`):
 ubuntu pass (the assembly that was red 329/329), macos pass, windows pass, `package` pass. Manager's gate at
 `4d48395` (rebased over the ledger and the meter, both of which added no vendor-file reader), Release: build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host;
-names vs `main` → 0 removed, 2 added; scan clean; `rev-list --count` → 0; CI at `4d48395`: pending when written, recorded in the next commit.
+names vs `main` → 0 removed, 2 added; scan clean; `rev-list --count` → 0; CI run 34045624693 at `4d48395`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the guard against the merged tree on the hosted runners themselves, until `main`'s own run at the merge
 sha completes. **NOT done:** no product code; no box, no UI.
