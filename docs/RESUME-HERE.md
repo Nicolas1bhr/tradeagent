@@ -14,7 +14,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `575390c` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
+2. **`main` is `6672b5e`, the v0.1.2 version bump and the release's target, plus the docs commits after it, clean, pushed.**`main` is `575390c` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
@@ -22,28 +22,29 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    box now runs the repo's Release build with the bridge at protocol 3 (the refusal and `Reinstall the bridge` walked
    for real; `tools/atas-gate` green), PAUSED with 2 unconfirmed requests the bridge unit settles from the platform's
    own answer. The installed 0.1.1 there is stale until v0.1.2 is cut.
-3. **The second milestone review is DONE, triaged, and its whole queue has LANDED** (`docs/REVIEW-2026-09-05b.md`:
-   reviewer HIGH 3 · MED 2 · LOW 1 · UNVERIFIED 7, eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex
-   12/6/2/2 read-only, merged in with the triage). Landed, each with its ≤40-line section in `BUILD-STATUS.md`:
-   `U-override-lease` `d14a2f0`, `U-press-inflight` `145e725`, `U-two-press-grant` `303a7ad`, `U-bridge-2` `110f67c`,
-   `U-press-stopwatch` `ce4b367`, `U-codex-2a` `3de8cc6`, `U-batch-2` `15b873d`, `U-batch-2b` `ab67a56`, `U-codex-2b`
-   with its fixer `07cbb91`. Two usage-limit kills (2026-09-05 23:40, 2026-09-06 03:50) took six running legs between
-   them; every one was re-briefed fresh from its file with "read your branch first" and lost nothing committed — this
-   desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. `U-attest-precondition` landed at `575390c` (CI at
-   `07cbb91` was red on all three runners in the F7 probe's own precondition, racing the fixture's first heartbeat;
-   test-only). A third usage-limit kill (2026-09-06 ~09:10) took the cut leg after its version bump (`54e0782`, draft
-   PR #9) and the installer built on the box, before anything was published. **`docs/briefs/` holds ONE file,
-   `U-cut-0.1.2.md`; the manager finishes the cut in two halves:** the branch rebased onto `main`, PR #9 green, the
-   installer hashed on the box and here, `main` fast-forwarded onto the branch with no docs commit in between, the
-   release published from the Mac against that sha; then a short box leg watches the installed 0.1.1 update itself.
-   The brief as written (one leg does it all) is superseded by this note:** the version bump on its own branch, a draft PR for CI, the installer built
-   there with the adapter PRESENT, hashed in five places, published against the branch's full sha only on a green run,
-   the installed 0.1.1 watched updating itself; the manager fast-forwards `main` onto the branch afterwards.
-   **Open, not briefed** (for the next review): an UNKNOWN close on the same instrument can still fill after the
-   press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked only
-   on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail` are
-   two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2; three
-   hosted-runner reds recorded once each in the U-sweep-words-win section, a brief each when one recurs.
+3. **The second milestone review is DONE, its whole queue LANDED, and v0.1.2 IS PUBLISHED.** Review:
+   `docs/REVIEW-2026-09-05b.md` (reviewer HIGH 3 · MED 2 · LOW 1 · UNVERIFIED 7, eleven executed probes on branch
+   `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in with the triage). Landed, each with its ≤40-line
+   section in `BUILD-STATUS.md`: `U-override-lease` `d14a2f0`, `U-press-inflight` `145e725`, `U-two-press-grant`
+   `303a7ad`, `U-bridge-2` `110f67c`, `U-press-stopwatch` `ce4b367`, `U-codex-2a` `3de8cc6`, `U-batch-2` `15b873d`,
+   `U-batch-2b` `ab67a56`, `U-codex-2b` with its fixer `07cbb91`, `U-attest-precondition` `575390c` (test-only: the F7
+   probe's precondition raced its own fixture on all three runners), and the cut `6672b5e`. **v0.1.2:** `gh release
+   view v0.1.2` — target `6672b5e`, Latest; the installer built on the box, hashed equal on the box, on the Mac, in
+   `SHA256SUMS.txt` and in the GitHub asset digest (`672f28fa…ab66`, 117,979,718 bytes). The cut leg was killed by a
+   third usage limit after the bump and the box build; the manager rebased its branch, ran PR #9 green, fast-forwarded
+   `main` and published from the Mac. Three usage-limit kills in all (2026-09-05 23:40, 2026-09-06 03:50 and ~09:10)
+   took seven running legs; every one was re-briefed fresh from its file with "read your branch first" and lost nothing
+   committed — this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place.
+   **`docs/briefs/` holds ONE file, `U-cut-0.1.2-b.md`, in flight on the box:** the installed 0.1.1 app watched
+   updating itself to 0.1.2, the fifth hash read off the copy it downloaded. The box was left with TradeAgent STOPPED by
+   the killed cut leg; the part-B leg starts the INSTALLED 0.1.1 first. When it reports: its lines into the cut's
+   section, the brief deleted, the session closed.
+   **Open, not briefed** (the third review starts here): an UNKNOWN close on the same instrument can still fill after
+   the press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked
+   only on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail`
+   are two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2;
+   `TreatWarningsAsErrors` is on for the bridge only; five hosted-runner reds recorded once each (three in the
+   U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
