@@ -4131,3 +4131,38 @@ build → 0 warnings, 0 errors; suite → 281 + 261 + 610 = 1152 passed, 0 faile
 will_be_reconciled` (`Assert.NotEmpty() Failure` at `:652`, the U-sweep-words-win family, a different test) and
 `CoidWitnessTests.A_vanished_temp_is_not_waited_for`, on PR #10's runs 34016321810 and 34015391617; NOT VERIFIED whether
 either is a fixture asserting a schedule. **NOT done:** no product code; no box, no UI.
+
+## 2026-09-06 — v0.1.2 cut and published: built on the box with the adapter present, hashed in four places, the update watch in flight
+
+The v0.1.2 cut, `docs/briefs/U-cut-0.1.2.md`, by one builder killed by a usage limit after the version bump and the box
+build, then finished by the manager in two halves (this section is the first; the second — the installed 0.1.1 watched
+updating itself — is `U-cut-0.1.2-b`, in flight). Merge `6672b5e`: one product commit, `Directory.Build.props`
+`<Version>` 0.1.1 → 0.1.2, the one place the assembly, the installer (`/DAppVersion`) and the tag read it from.
+
+- **Built on the box from the bumped tree** (`54e0782`, whose product tree — `src/`, `packaging/`,
+  `Directory.Build.props`, `tools/`, the solution — is byte-identical to the release commit `6672b5e`; the two differ in
+  docs and one test file only, `git diff --stat` empty over the product paths). `packaging/build.ps1` with the ATAS
+  install dir: `C:\ta\repo\artifacts\` holds `TradeAgent-Setup-x64.exe` (117,979,718 bytes) and `SHA256SUMS.txt`
+  (497 bytes); the ATAS adapter is compiled into the staged bridge, read the way the script reads it — the ASCII type
+  name `AtasStrategyAdapter` in `artifacts\stage\bridge\TradeAgent.AtasBridge.dll` → PRESENT.
+- **Four of the five hashes agree:** the box (`certutil`), this Mac after `scp` (`shasum -a 256`), `SHA256SUMS.txt`'s
+  line, and the GitHub asset digest from the API — all `672f28fa5f43cbe12d8786264fbb42cbbe8a10ecd2e7bb1df4da3371e72dab66`
+  at 117,979,718 bytes; `SHA256SUMS.txt`'s own digest `2726090…dee384`. The fifth, the copy the app downloads, is the
+  second half's.
+- **Published from the Mac** after the cut branch's draft PR #9 (run 34022206728 at `6672b5e`) was green on ubuntu,
+  windows and macos, and after `main` was fast-forwarded onto the branch with no docs commit in between, so the release
+  targets a commit on `main`: `gh release create v0.1.2 --target 6672b5e… --title "TradeAgent 0.1.2" --notes-file …`
+  with the two assets; `gh release view` → not a draft, not a prerelease, Latest; `git merge-base --is-ancestor v0.1.2
+  main` → yes. A first attempt failed harmlessly (run outside a git directory: `not a git repository`), created
+  nothing, and was repeated with `-R` and absolute paths. The notes are in the owner's words and say the ATAS installer
+  hash is not pinned, the owner's decision pending.
+- **What the release carries** since v0.1.1, as its notes say: two-press for every grant; the bridge at protocol 3 with
+  `Reinstall the bridge`; the emergency close confirmed on the real bridge inside its budget; a close refused against
+  an order still on the wire or a position that moved; the override under the dispatch lease; unreadable settings and
+  vendor files failing closed and visible; inbox origin attested; downloads bound to what they are a part of.
+
+**Verified by running (the manager):** the hashes and sizes quoted above; `gh api …/releases/tags/v0.1.2` digests;
+`gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, pending. **NOT VERIFIED yet:** the
+update installing itself (the second half); the build script's own summary block was not read — the leg that ran it
+was killed and its console output is gone; the adapter presence is the script's own check, re-run by hand.
+**NOT done:** `TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
