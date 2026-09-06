@@ -4297,7 +4297,8 @@ its own assertion (an apostrophe the serializer escapes), fixed. Fixer's gate at
 24 runs, 0 failed; 348 + 261 + 615 = 1224 passed, 0 failed, 1 skipped. Manager's gate at `4113386` (the merge sha's
 product tree, the last rebase docs-only), Release: build → 0 warnings, 0 errors; suite → 348 + 261 + 615 = 1224
 passed, 0 failed, 1 skipped (Integration 10 m 36 s; no other test host); names vs `main` → 0 removed, 26 added (sets
-966 → 992); scan clean; `rev-list --count` → 0; CI at `640bce5`: pending when written, recorded in the next commit.
+966 → 992); scan clean; `rev-list --count` → 0; CI run 34041956405 at `640bce5`: **RED on macos only**, the same
+`runtimes.json` harness race as `0ec96c6` (`U-typed-catalog` in flight); ubuntu and windows green, `package` skipped.
 
 **NOT VERIFIED:** the card on a running app — no UI run, no photograph, proved by its words; that ATAS serves
 in-session `MyTrades` only is read from its source, not watched on hardware, so the coverage start recorded in `kv` is
