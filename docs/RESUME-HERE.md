@@ -14,8 +14,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `ab67a56` plus the docs commits after it, clean, pushed.** A second usage-limit kill at ~03:50 on
-   2026-09-06 took `U-codex-2b` (3 commits) and `U-batch-2` (7 uncommitted files); both re-briefed fresh at ~05:35. Landed since the pivot: U2a, U2d, U14 (a+b),
+2. **`main` is `07cbb91` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
@@ -23,33 +22,22 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    box now runs the repo's Release build with the bridge at protocol 3 (the refusal and `Reinstall the bridge` walked
    for real; `tools/atas-gate` green), PAUSED with 2 unconfirmed requests the bridge unit settles from the platform's
    own answer. The installed 0.1.1 there is stale until v0.1.2 is cut.
-3. **The second milestone review is DONE and triaged** (`docs/REVIEW-2026-09-05b.md`: reviewer HIGH 3 · MED 2 · LOW 1 ·
-   UNVERIFIED 7 with eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in
-   with the triage). **`docs/briefs/` is the queue, seven files.** A usage-limit kill at ~23:40 on 2026-09-05 took all four running
-   legs (`U-two-press-grant` 4 commits, `U-bridge-2` 5 commits, `U-press-stopwatch` 1 commit, `U-codex-2a` four
-   uncommitted files); at 00:40 on 2026-09-06 each was re-briefed FRESH from its file with "read your branch first" —
-   this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. The kill left the box's app
-   STOPPED (`trade status` → `IPC_UNAVAILABLE`, ATAS running); the bridge leg was told to assess and restore it first.
-   Landed: `U-override-lease` (HIGH 1) at `d14a2f0`, `U-press-inflight` (HIGH 2 + Codex F3) at `145e725` — its
-   builder's stated deviation: the press refuses a leg against DISPATCHING work only, not UNKNOWN, so an UNKNOWN close
-   on the same instrument can still fill after the press's close and reverse it (in `docs/CONTRACTS.md`, NOT fixed, not
-   yet briefed), `U-two-press-grant` (HIGH 3 + F12) at `303a7ad`, and `U-bridge-2` at `110f67c` (the box runs its
-   tip build, bridge READY at protocol 3, the emergency close reads `confirmed` on the real bridge, the store at 0
-   unconfirmed — the 2 the box-precut record expected were not there, unexplained), and the fixer `U-press-stopwatch`
-   at `ce4b367` (the ubuntu red at `d14a2f0` was the runner's disk inside one post-deadline settle; the stopwatch tests
-   joined `Timing`, whose second attempt now runs on every runner; draft PR #8 closed), and `U-codex-2a` at `3de8cc6`
-   (F1, F2, F18 fixed; F5 half fixed — the re-check is the last thing before the wire — and half refuted with the
-   connector-send bound in `CONTRACTS.md`), and `U-batch-2` at `15b873d` (a part file bound to its URL and length,
-   a checksum-less install a recorded decision, the agent's home `workspace/agent` beside the inbox, `Inbox` origin
-   attested by `AgentPresence`, `material.version` in schema 4). Built and landing: `U-codex-2b` (F6, F7, F13; rebased
-   onto `15b873d` at `5390b74`; the manager's gate hit ONE red, an NRE in `AtasConnector.Capabilities` racing the
-   heartbeat's new clear of `_hello` — a fresh one-item fixer, `U-codex-2b-fix`, works the landing branch; the unit
-   lands when its report is in and the gate is re-run). Landed: `U-batch-2b` at `ab67a56` (an unreadable vendor file
-   fails visibly, the ATAS rows stamped against the entries they came from, the sign-in URL checked before the shell).
-   Queued: `U-cut-0.1.2` (`docs/briefs/U-cut-0.1.2.md`, the box) once `U-codex-2b` has landed. Open, not briefed: `req.V` is checked only on `hello`, so a frame naming a wrong version mid-session is
-   read as this one (codex-2b's builder); `DashboardView`'s "Open the AI's folder" still points at `workspace/`. Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
-   first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
-   section, none briefed: a brief each when one recurs (doctrine step 6).
+3. **The second milestone review is DONE, triaged, and its whole queue has LANDED** (`docs/REVIEW-2026-09-05b.md`:
+   reviewer HIGH 3 · MED 2 · LOW 1 · UNVERIFIED 7, eleven executed probes on branch `review-probes-b` @ `80f19f0`; Codex
+   12/6/2/2 read-only, merged in with the triage). Landed, each with its ≤40-line section in `BUILD-STATUS.md`:
+   `U-override-lease` `d14a2f0`, `U-press-inflight` `145e725`, `U-two-press-grant` `303a7ad`, `U-bridge-2` `110f67c`,
+   `U-press-stopwatch` `ce4b367`, `U-codex-2a` `3de8cc6`, `U-batch-2` `15b873d`, `U-batch-2b` `ab67a56`, `U-codex-2b`
+   with its fixer `07cbb91`. Two usage-limit kills (2026-09-05 23:40, 2026-09-06 03:50) took six running legs between
+   them; every one was re-briefed fresh from its file with "read your branch first" and lost nothing committed — this
+   desktop session has no `SendMessage`, so a killed leg cannot be resumed in place. **`docs/briefs/` holds ONE file,
+   `U-cut-0.1.2.md`, in flight on the box:** the version bump on its own branch, a draft PR for CI, the installer built
+   there with the adapter PRESENT, hashed in five places, published against the branch's full sha only on a green run,
+   the installed 0.1.1 watched updating itself; the manager fast-forwards `main` onto the branch afterwards.
+   **Open, not briefed** (for the next review): an UNKNOWN close on the same instrument can still fill after the
+   press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked only
+   on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail` are
+   two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2; three
+   hosted-runner reds recorded once each in the U-sweep-words-win section, a brief each when one recurs.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
