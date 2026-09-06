@@ -4345,3 +4345,32 @@ is macOS only; the status fields asserted on the composer's JSON, not over a liv
 **NOT done:** no prices shipped, so the cap is inert until `costs.json` exists — the owner cannot be asked to write
 JSON, so `U-prices` (list prices as dated data plus a Settings field) is queued in the resume file; `agent-turns.jsonl`
 is never rotated; no box, no ATAS, no money.
+
+## 2026-09-06 — U-typed-catalog landed: a unit test no longer reads the runtime file the corruption test corrupts
+
+The hosted-runner red at `0ec96c6` (run 34040140435, macos and ubuntu) and `640bce5` (run 34041956405, macos), by one
+fresh fixer on `docs/briefs/U-typed-catalog.md`. Merge `4d48395`, 3 commits, test-only: `TypedWhileWorkingTests.cs`,
+`VendorOverrideFileTests.cs`, the brief. Draft PR #12, closed after the landing.
+
+- **The race, reproduced deliberately:** a new test corrupts `runtimes.json` then builds the session → `TradeAgentException
+  : runtimes.json could not be read … the text in it is not valid JSON` at `RuntimeManifest.cs:448` from
+  `TypedWhileWorkingTests.Session()` — the CI message, file and frame exactly. GREEN once `Session()` takes its manifest
+  from `RuntimeCatalog.BuiltIn()`, a literal with no file behind it: 5/5. The reproduction stays, inside the shared
+  `VendorOverrideFiles` collection, because it writes the file.
+- **The sweep, instrumented rather than read:** `VendorFile.Read` logged a stack per call across the whole Unit assembly
+  → 28 vendor-file reads, every one inside `[Collection(VendorOverrideFiles.Name)]` (`VendorOverrideFileTests` 17,
+  `RuntimeCatalogTests` 4, `DoctorReconciliationCheckTests` 2 plus 4 `Doctor.RunAsync` continuations whose only callers
+  are those two classes, the reproduction 1); no writer outside them; the other two assemblies take their own
+  `TestEnv.Home` and write neither file. The sweep is now asserted, not reported: a source scan fails naming file,
+  class and call. Mutant (`Require` put back) → RED, `TypedWhileWorkingTests.cs: TypedWhileWorkingTests calls
+  RuntimeCatalog.Require(`.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `b0bb35b`, nothing else running,
+Release: 0 warnings, 0 errors; touched classes 3× → 14/14 each; the Unit suite 5× → 329/329 each; 329 + 261 + 610 =
+1200 passed, 0 failed, 1 skipped; names 0 removed, 2 added. The three runners on PR #12 (run 34041875509 at `b0bb35b`):
+ubuntu pass (the assembly that was red 329/329), macos pass, windows pass, `package` pass. Manager's gate at
+`4d48395` (rebased over the ledger and the meter, both of which added no vendor-file reader), Release: build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host;
+names vs `main` → 0 removed, 2 added; scan clean; `rev-list --count` → 0; CI at `4d48395`: pending when written, recorded in the next commit.
+
+**NOT VERIFIED:** the guard against the merged tree on the hosted runners themselves, until `main`'s own run at the merge
+sha completes. **NOT done:** no product code; no box, no UI.
