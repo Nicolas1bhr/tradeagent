@@ -14,7 +14,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 23 landings since the pivot, every claim with its run).
-2. **`main` is `110f67c` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
+2. **`main` is `ce4b367` plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
@@ -34,10 +34,11 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    on the same instrument can still fill after the press's close and reverse it (in `docs/CONTRACTS.md`, NOT fixed, not
    yet briefed), `U-two-press-grant` (HIGH 3 + F12) at `303a7ad`, and `U-bridge-2` at `110f67c` (the box runs its
    tip build, bridge READY at protocol 3, the emergency close reads `confirmed` on the real bridge, the store at 0
-   unconfirmed — the 2 the box-precut record expected were not there, unexplained). In flight: `U-codex-2a` (F1, F2,
-   F5, F18), `U-codex-2b` (F6, F7, F13), and the fixer `U-press-stopwatch` (the ubuntu red at `d14a2f0`, run
-   33986791747: the press-budget stopwatch 1243 ms over; measured first, then the product step or the `Timing` class).
-   Queued, two Mac legs at a time: `U-batch-2` (MED 4–5, LOW 6, F15, F17, F19), `U-batch-2b` (F16, F20, UNVERIFIED 4). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
+   unconfirmed — the 2 the box-precut record expected were not there, unexplained), and the fixer `U-press-stopwatch`
+   at `ce4b367` (the ubuntu red at `d14a2f0` was the runner's disk inside one post-deadline settle; the stopwatch tests
+   joined `Timing`, whose second attempt now runs on every runner; draft PR #8 closed). In flight: `U-codex-2a` (F1,
+   F2, F5, F18), `U-codex-2b` (F6, F7, F13). Queued, two Mac legs at a time: `U-batch-2` (MED 4–5, LOW 6, F15, F17,
+   F19), `U-batch-2b` (F16, F20, UNVERIFIED 4). Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
    first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
    section, none briefed: a brief each when one recurs (doctrine step 6).
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known

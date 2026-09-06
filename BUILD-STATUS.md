@@ -3897,3 +3897,42 @@ build → 0 warnings, 0 errors; suite → 236 + 250 + 587 = 1073, 0 failed (thre
 
 **NOT done:** no installer, no release, no update of the installed 0.1.1; ATAS 8.0.14.398 declined. With no broker,
 `ReconciliationProvable` is false and every press is flagged for a human by design: the "waiting for you" banner is that.
+
+## 2026-09-06 — U-press-stopwatch landed: the ubuntu overrun was the runner's disk inside one post-deadline settle, so the stopwatch tests join Timing and that category is retried everywhere
+
+The ubuntu red at `d14a2f0` (run 33986791747: `cancel-all returned 1243 ms after the deadline the press itself opened`),
+by two fixers on `docs/briefs/U-press-stopwatch.md` (the first killed by a usage limit with its harness committed; the
+second read the numbers). Merge `ce4b367`, 5 commits, 6 files, +81/−28: `build.yml`, `HOW-WE-BUILD.md`, three test
+files, the brief. Product code untouched (`git diff main -- src/` empty). Draft PR #8, closed.
+
+- **Measured first, 3 runs × 3 runners on the draft PR** (run 33996443013 attempts 1–3, plus the killed fixer's
+  33987436723), with a 20 ms tick on a dedicated thread and on the pool, GC-pause and pool-queue counters beside every
+  press. The overrun is carried by ONE post-deadline local SQLite settle at `synchronous=FULL` (`SafelyRecordIndefinite`,
+  seen as `leg-settle-indefinite` or at `press-settle`): ubuntu 547 / 593 / 358 / 129 / 113 ms in the bad runs and 2–5
+  ms in the good ones, off the same code and fixture (a 200× spread); windows 63–187 ms (worst press 313 ms over);
+  macos local steps ≤27 ms with the 9–136 ms overrun in the connector call, because macos delivered a 1200 ms timer at
+  1204–1337 ms. Throughout, the tick kept arriving (21 ms ubuntu, 32–47 windows, 145–181 macos, its floor), `gcPause=0`,
+  pool queue 0–1: the runner's file IO, not descheduling, GC or pool starvation.
+- **Nothing in the press is wrongly off the emergency clock.** What runs after the deadline is the write-ahead record
+  of what the press learned (`LatchUnconfirmed`, the settle, the activity and engineering rows — the contract's H, which
+  `HandlerOverhead` bounds); putting it under the deadline would abandon the record `U-stranded` exists to keep.
+- **The class joins `Timing`, assertions byte-identical:** `OperatorPressIsAnEmergencyTests` (5 tests) and
+  `SweepRequestIdTests`' two budget tests. The category's meaning is written once in `build.yml` and in
+  `docs/HOW-WE-BUILD.md` step 6, and its one second attempt now runs on every runner, not windows only — the numbers
+  above retire "windows is the flaky one". `RunnerSpeedProbeTests`' comment stated the old rule and was corrected.
+- **NOT moved, on measurement:** `PressReachesTheWireOnItsOwnTermsTests` asserts no wall clock; `ControlTests.Cancel_
+  all_removes_orders_but_leaves_positions_alone` (52 s on 33973192760) was measured 24 times across the runners and
+  never exceeded 63 ms against its 2 s budget — one unexplained occurrence, unbriefed, like the 24 ms
+  `A_wait_the_simulator_predicted…` red on 33974342472.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** harness out (`grep` over `src tests .github docs`
+→ nothing but the report's own sentence). Fixer's gate at `0c0d53c`: `dotnet clean`, Release `--no-incremental` → 0
+warnings; the moved classes 3× → 5/5 and 2/2 each time; partition exact, `Category=Timing` 93 + `Category!=Timing` 961
+= 1054 listed; names 860 each side, 0 removed, 0 added; the local full suite NOT run (other legs held 4–9 test hosts on
+this Mac throughout) — **draft PR #8 green TWICE on all three runners, category step included (run 33997442226 attempts
+1 and 2: 1053 passed per runner, 0 failed, 0 retry markers, so both are first-attempt greens)**. Manager's gate at
+`ce4b367`, Release: build → 0 warnings, 0 errors; suite → 236 + 250 + 587 = 1073, 0 failed (two other test hosts
+running); names vs `main` → 0 removed, 0 added (sets 868 → 868); scan → one hit, "Secret scan" in the report;
+`rev-list --count` → 0; CI at `ce4b367`: pending.
+
+**NOT done:** no product code, no box, no ATAS, no UI; nothing loosened, the shipped 2 s untouched.
