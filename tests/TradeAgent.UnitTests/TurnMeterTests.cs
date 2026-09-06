@@ -875,6 +875,38 @@ public class OwnerPriceTests : IDisposable
     }
 
     /// <summary>
+    /// AND A ZERO IS NOT A CHEAP PRICE, IT IS THE ABSENCE OF ONE. Every turn would cost nothing, the
+    /// day's total would never move, and the daily cap — the whole of what bounds an AI working
+    /// non-stop — would stop existing while the card went on reading as though it were in force.
+    ///
+    /// It is reachable rather than theoretical: the Safety page's boxes open on the rate in force,
+    /// which is 0 on a runtime this build ships no list price for, and nothing about pressing Save
+    /// on an untouched pair of boxes asks twice. So the pair is refused here and the list price —
+    /// or the honest "unpriced" — stands instead.
+    /// </summary>
+    [Fact]
+    public void A_zero_is_not_a_price_and_leaves_the_list_price_standing()
+    {
+        Assert.Null(OwnerPrice.From(Priced(0m, 0m)));
+        Assert.Null(OwnerPrice.From(Priced(0m, 8m)));
+        Assert.Null(OwnerPrice.From(Priced(2m, 0m)));
+
+        NoCosts();
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records,
+            owner: () => OwnerPrice.From(Priced(0m, 0m)));
+
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "…", DateTimeOffset.Now)
+        {
+            Usage = new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, null)
+        });
+
+        // The dearest entry in the codex catalogue, not nothing: gpt-6-astra at 10.00 in, 50.00 out.
+        Assert.Equal(10.00m + 50.00m, meter.Today.Spent);
+        Assert.False(meter.Today.PricedByOwner);
+        Assert.Equal(Labels.PricedAtHighestListPrice, meter.Today.Estimated);
+    }
+
+    /// <summary>
     /// A settings row nobody could read has no owner price, so the LIST price stands — which is the
     /// dearer reading and therefore the restrictive one, the rule every other field on
     /// <see cref="TradeAgentSettings.Unreadable"/> keeps.

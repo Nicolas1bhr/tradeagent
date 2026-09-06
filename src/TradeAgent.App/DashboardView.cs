@@ -1225,8 +1225,12 @@ sealed class SafetyPage
 
     /// <summary>
     /// THE RATE IN FORCE: the owner's own numbers where they have set them, and otherwise the
-    /// shipped list price the estimate is charging. Never zero — a zero rate would draw a control
-    /// saying the AI is free, and would be the one value that makes the cap unreachable.
+    /// shipped list price the estimate is charging.
+    ///
+    /// Zero on a runtime this build ships no list price for, because that is the truth about that
+    /// installation — nothing is priced. Saving that pair back does NOT price the AI at nothing:
+    /// <see cref="OwnerPrice.From"/> refuses a zero, so the one press an owner could make without
+    /// touching either box leaves the cap exactly as it was.
     /// </summary>
     (decimal In, decimal Out) ShownRate()
     {

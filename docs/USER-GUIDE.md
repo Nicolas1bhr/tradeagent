@@ -394,6 +394,12 @@ That press runs **backwards from every other one on that page**, and it says so 
 takes more turns and more of your money is spent before anything stops it. A smaller number is the
 grant here, and it is the only place in TradeAgent where that is true.
 
+**Zero is not accepted as a price**, and it is the one number that would be worth guarding against:
+at zero every turn costs nothing, the day's total never moves, and the daily limit stops existing
+while still reading as though it were in force. If your assistant is on a subscription and genuinely
+costs you nothing per turn, say that by leaving the price alone and raising the limit, not by
+pricing the AI's work at nothing.
+
 **If the card still says the cost is unknown, read that line.** It happens when the assistant reports
 no token counts at all, when it names a model nobody publishes a price for, or when a `costs.json`
 you wrote cannot be read. The card says which, in those words, rather than showing a comfortable

@@ -270,12 +270,23 @@ public sealed class TradeAgentSettings
 /// settings row and it refuses a half-filled pair: one number without the other is not a price, and
 /// applying it to a whole turn would under-charge it, which is the direction that lets the daily cap
 /// be walked past.
+///
+/// IT REFUSES A ZERO FOR THE SAME REASON, AND THAT ONE IS NOT THEORETICAL. Zero is not a cheap rate,
+/// it is the absence of one: every turn costs nothing, the day's total never moves, and the daily
+/// cap — the whole of what bounds an AI working non-stop — stops existing while reading as though it
+/// were in force. The boxes on the Safety page open on the rate in force, which is <c>0</c> on a
+/// runtime this build ships no list price for, so without this guard a single press on an untouched
+/// pair of boxes would have written it: no typing, no second press, the cap dead.
+///
+/// An owner who genuinely pays nothing per token — a subscription rather than an API key — says that
+/// by leaving the price alone and raising the ceiling, not by pricing the work at nothing.
 /// </summary>
 public sealed record OwnerPrice(decimal InputPerMillion, decimal OutputPerMillion)
 {
-    /// <summary>The owner's rate, or null where they have not set one.</summary>
+    /// <summary>The owner's rate, or null where they have not set a usable one.</summary>
     public static OwnerPrice? From(TradeAgentSettings settings) =>
         settings.AiPriceInputPerMillion is { } input && settings.AiPriceOutputPerMillion is { } output
+        && input > 0m && output > 0m
             ? new OwnerPrice(input, output)
             : null;
 }
