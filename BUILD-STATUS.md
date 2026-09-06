@@ -4405,3 +4405,39 @@ test. Manager's gate at `b6b044b` (rebased over the meter and typed landings, ne
 build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI run 34046329176 at `697e24f`: all three platforms and `package` SUCCESS.
 
 **NOT done:** no product code; no box, no UI. Nothing in the fixer's report is NOT VERIFIED.
+
+## 2026-09-06 — U-press-win-3 landed: the stalled press is charged for its wire calls past the deadline, not for the runner's disk
+
+`OperatorPressIsAnEmergencyTests` (already `Timing`), red in BOTH attempts on windows-latest in PR #11's second run
+34043185411 (`close-all returned 2813 ms after the deadline the press itself opened`, then cancel-all), the class's third
+appearance on this record. By two fresh fixers on `docs/briefs/U-press-win-3.md` — the first killed by a usage limit after
+committing a timing harness and opening draft PR #13, the second re-briefed from the branch. Merge `a167884`, 4
+commits, test-only (`EmergencyPressTests.cs`, `DispatchRecoveryTests.cs`, the brief); `git diff main -- src/` empty.
+Draft PR #13, closed after the landing.
+
+- **Where the 2.8 s went, measured:** the harness on PR #13 (runs 34046090536, 34046100888; 8 presses per runner per
+  job, a mark per step). The budget cut EVERY stalled platform call at its deadline on all three runners (2000–2016 ms
+  against `deadlineAt=2000`; macos 2110, its timer floor), so the whole overrun is the post-deadline record-keeping.
+  Worst windows press: `cancel-call-threw=2000 leg-settle-indefinite=3890 press-settle=5359 complete-composite=5468
+  activity-line=5578` — one `SafelyRecordIndefinite` commit at `synchronous=FULL` cost 1890 ms and the `SafelySettle`
+  1469 ms, with `gcPause=0` and a 20 ms tick arriving at 47 ms, so the process was running. Ten bare one-row commits on
+  the same database: ubuntu 4–11 ms, macos 0–7 ms, **windows 16–2234 ms**. Windows overran 15–63 ms in 12 of 16 presses
+  and 219 / 1000 / 1516 / 3578 ms in the other four. No product wait: one commit alone exceeds the handler overhead.
+- **The fixture charged E and H together and gave the sum to an assertion about E.** `RecoveryConnector` now stamps
+  every platform call in and out (`WireCalls`, permanent, the finding on it) and `TheStalledPressGaveUpOnItsOwnDeadline`
+  sums the part of each call past the deadline against the SAME `HandlerOverhead` — 0–1 ms ubuntu, 0–16 ms windows,
+  8–138 ms macos over 24 presses. The five tests' behavioural assertions are byte-identical; the class stays in `Timing`;
+  the harness and its product hook are gone from the tip. Mutant (the late simulator ignoring its token) → RED `a press
+  whose simulator ran late was still on the platform 1408 ms after the deadline the press itself opened (orders 1407
+  ms, cancel 1 ms), against 1s of handler overhead`.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `8867f86`, Release: 0 warnings,
+0 errors; the class 3× → 5/5 each; 392 + 615 + 261 = 1268 passed, 0 failed, 1 skipped, 0 other test hosts; names vs
+`origin/main` 1014 = 1014. CI four runs green on all three runners, 1268 passed each, zero Timing retries executed:
+34052601589 and 34052615610 at `7fa64f1`, 34053292187 and 34053305400 at `8867f86`, `package` SUCCESS in all four.
+Manager's gate at `a167884` (rebased over the witness landing, a different test file), Release: build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names
+vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI at `a167884`: pending when written, recorded in the next commit.
+
+**Carried forward, for the product rather than the test:** a Windows disk can hold one `synchronous=FULL` commit for
+two seconds inside an emergency press's record-keeping. The press's platform calls were cut at the deadline every time,
+so the money-path guard held; the record after it is what stretched. **NOT done:** no product code; no box, no UI.

@@ -76,8 +76,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
 6. **Then, in order (the money path, re-planned 2026-09-06 against the vision above; GPT-6 Astra consulted once on
    direction, its corrections taken):** (a) `U-ledger` (the fill table, `trade pnl`, a Performance card) and `U-life`
    (the mission loop, the mission, Guidance, two-press "work on its own") — BOTH LANDED (`U-life` `0ec96c6`, `U-ledger` `640bce5`); `U-typed-catalog` LANDED `4d48395` (the runtime-file harness race);
-   `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` (the
-   operator-press Timing red on windows, a recurrence) and `U-prices` in flight; (b) `U-meter` LANDED `902e3da` — it ships NO prices, so the cap is inert until `U-prices` (list prices as dated
+   `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` LANDED `a167884` (the
+   stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` in flight; (b) `U-meter` LANDED `902e3da` — it ships NO prices, so the cap is inert until `U-prices` (list prices as dated
    data plus a Settings field; the owner never edits JSON) lands, the next small unit; (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
    ledger; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
