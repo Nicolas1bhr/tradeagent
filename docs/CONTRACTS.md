@@ -176,8 +176,12 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   dropped price is a different order: `decimal.TryParse(...) ? d : null` made `limit: "bad"` a MARKET
   order, and the framework's default `NumberStyles.Number` in the ambient culture made `limit: "1,5"`
   a limit of **15** (Codex F6; both measured over the pipe: `limit='bad' -> ok=True · connector saw:
-  Market limit=none` and `limit='1,5' -> ... Limit limit=15`). On `modify` the same collapse read an
-  unreadable price as "leave that price where it is".
+  Market limit=none` and `limit='1,5' -> ... Limit limit=15`). The culture is NAMED at the call site
+  rather than inherited: `InvariantGlobalization=true` in `Directory.Build.props` already makes the
+  ambient culture invariant everywhere this ships, and a price is not a number whose meaning a build
+  property may decide. On `modify` the same collapse read an unreadable price as "leave that price
+  where it is". A field named with JSON `null` in it is PRESENT and is refused on all four of
+  `limit`, `stop`, `quantity` and `tif`.
 - **`side` and `type` are not fields of this protocol and a frame naming one is refused.** The side is
   the op and the type is read off which prices are present (neither = Market, `limit` = Limit, `stop`
   = Stop, both = StopLimit). They were accepted and discarded, so `{"op":"buy","side":"sell"}` bought
@@ -240,8 +244,11 @@ connection. The bridge row says which state it is, in its own sentence: *"connec
 saying what it can do"*, distinct from *"has not said hello yet"*, because a bridge that introduced
 itself correctly must not be reported as the wrong strategy on the chart. Until 2026-09-06 the pulse
 refreshed liveness while the latched answer stayed true, so autonomous eligibility survived the
-evidence for it (Codex F7; measured over a real pipe: every `Describe()` after the handshake throwing,
-pulses every 100 ms, `ReconciliationProvable` still true ten seconds later).
+evidence for it (Codex F7; measured over a real pipe with every other gate deliberately open — mode
+`LIVE_AUTONOMOUS`, live activated, all four health rows READY — and every `Describe()` after the
+handshake throwing: `after 10.0s of pulses that cannot describe the bridge: connected=True coid=True
+history=True provable=True` and `autonomous dispatch: authorized=True`. The same probe now reads
+`provable=False` and `authorized=False code=AUTONOMY_REQUIRES_PROVABLE_STATE`).
 
 ## What ATAS's own objects mean — the readings, not the guesses
 

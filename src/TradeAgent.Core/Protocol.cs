@@ -76,11 +76,19 @@ public sealed class IpcRequest
     ///
     /// STRICT, AND INVARIANT, which is the second half of the same defect. The framework default is
     /// <see cref="NumberStyles.Number"/> — thousands separators and surrounding whitespace included —
-    /// read in the AMBIENT culture, so <c>limit: "1,5"</c> was accepted as <b>15</b> on this machine
-    /// and would be 1.5 on a machine whose culture writes decimals with a comma. A price is not a
-    /// number a program may interpret two ways. Names of the styles rather than a bare TryParse, for
-    /// the same reason <c>NamedValue</c> matches names rather than parsing: a value with a stray
-    /// character in it and a value the caller meant are not distinguishable from here.
+    /// so <c>limit: "1,5"</c> was accepted as <b>15</b>, measured over the pipe on this machine.
+    ///
+    /// The culture is named rather than inherited, and that is a smaller claim than it looks:
+    /// <c>Directory.Build.props</c> sets <c>InvariantGlobalization=true</c> for every project, so the
+    /// ambient culture already IS the invariant one wherever this ships — a line written for startup
+    /// cost, holding up the reading of a price. Naming it here moves that guarantee to the call site,
+    /// where the next person to change a build property cannot silently take it away, and
+    /// <c>A_price_is_read_the_same_way_whatever_the_threads_culture_says</c> is the run that holds it
+    /// to it under a culture whose decimal separator is a comma.
+    ///
+    /// Names of the styles rather than a bare TryParse, for the same reason <c>NamedValue</c> matches
+    /// names rather than parsing: a value with a stray character in it and a value the caller meant
+    /// are not distinguishable from here.
     ///
     /// JSON <c>null</c> is a refusal too, not an absence. The frame named the field; a field named
     /// with no value in it is the caller saying something this end cannot act on, and the whole rule

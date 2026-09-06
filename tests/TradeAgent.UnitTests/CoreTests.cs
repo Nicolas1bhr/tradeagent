@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
@@ -334,6 +335,50 @@ public class ProtocolTests
         Assert.Equal("ES", req.Str("symbol"));
         Assert.Equal(2.5m, req.Dec("quantity"));
         Assert.Equal(4300.25m, req.Dec("limit"));
+    }
+
+    /// <summary>
+    /// A PRICE IS READ THE SAME WAY WHATEVER THE AMBIENT CULTURE SAYS, and that is pinned at the call
+    /// site rather than inherited from a build property.
+    ///
+    /// <c>Dec</c> was a bare <c>decimal.TryParse</c>, which reads in <see cref="CultureInfo.CurrentCulture"/>.
+    /// Today that is harmless by accident: <c>Directory.Build.props</c> sets
+    /// <c>InvariantGlobalization=true</c> for every project, so the ambient culture IS the invariant
+    /// one on every machine that runs this build — measured below, and the reason
+    /// <c>new CultureInfo("de-DE")</c> cannot even be constructed here. One line in one props file
+    /// is the whole of that protection, and it is a line written for startup cost, not for prices.
+    ///
+    /// So the ambient reader is given a culture that writes decimals with a comma — a
+    /// <see cref="NumberFormatInfo"/> mutation, which invariant mode does allow — and the frame is
+    /// read under it. <c>"4300.25"</c> is still four thousand three hundred and a quarter and
+    /// <c>"1,5"</c> is still refused, because the reader names its culture instead of asking the
+    /// thread. What was measured over the pipe on THIS machine, before the fix, was the other half of
+    /// the same default: <c>NumberStyles.Number</c> allows thousands separators, so <c>limit: "1,5"</c>
+    /// was read as <b>15</b> under the invariant culture too.
+    /// </summary>
+    [Fact]
+    public void A_price_is_read_the_same_way_whatever_the_threads_culture_says()
+    {
+        Assert.Equal(CultureInfo.InvariantCulture, CultureInfo.CurrentCulture);   // InvariantGlobalization=true
+
+        var comma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        comma.NumberFormat.NumberDecimalSeparator = ",";
+        comma.NumberFormat.NumberGroupSeparator = ".";
+
+        var was = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = comma;
+            Assert.Equal(1.5m, decimal.Parse("1,5", CultureInfo.CurrentCulture));    // what an ambient reader would do
+            Assert.Equal(4300.25m, decimal.Parse("4.300,25", CultureInfo.CurrentCulture));
+
+            var req = Json.Read<IpcRequest>("""{"v":1,"id":"a","op":"buy","args":{"limit":"4300.25","stop":"1,5"}}""")!;
+            Assert.Equal(4300.25m, req.Dec("limit"));
+            var refused = Assert.Throws<TradeAgentException>(() => req.Dec("stop"));
+            Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Code);
+            Assert.Contains("stop", refused.Message);
+        }
+        finally { CultureInfo.CurrentCulture = was; }
     }
 
     [Fact]
