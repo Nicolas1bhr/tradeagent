@@ -4217,4 +4217,7 @@ download/verify strip's text was NOT read (15 s from the second press to the rel
 **Box left:** no TradeAgent running; the INSTALLED app is now 0.1.2, so the next start against the real home migrates
 it 3 → 4 — the owner's moment; ATAS up with the bridge started at protocol 3, the book flat; the fresh home left in
 place; the UI agent as found. **NOT done:** 0.1.2 never started against the real home; no installer run by hand; no
-release touched; `What's new`, `Later`, `Install the add-on`, `Reinstall the bridge` never pressed.
+release touched; `What's new`, `Later`, `Install the add-on`, `Reinstall the bridge` never pressed. **CI on `main` after
+the cut:** every docs-only run green except 34024633518 at `82a4cc3`, windows, `CloseAllOutcomeTests.Close_all_keeps_
+going_after_one_position_fails` [56 s], `Assert.Equal() Failure: Values differ` (Expected: 2Actual:   0) — the 52-second press shape, a first
+occurrence, green at the next run `09faf9f`; recorded, briefed if it recurs.

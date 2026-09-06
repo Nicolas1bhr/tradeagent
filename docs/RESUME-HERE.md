@@ -12,16 +12,14 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 **Session closed 2026-09-06 (late morning). Restart in this order, and you are working within ten minutes:**
 
-1. **Read `docs/HOW-WE-BUILD.md`** (94 lines, the whole process) and the `## 2026-09-04` / `## 2026-09-05` sections at the
+1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process) and the `## 2026-09-04` … `## 2026-09-06` sections at the
    end of `BUILD-STATUS.md` (one ≤40-line section per landing; 39 sections since the pivot, every claim with its run).
 2. **`main` is `6672b5e`, the v0.1.2 version bump and the release's target, plus the docs commits after it, clean, pushed.** Landed since the pivot: U2a, U2d, U14 (a+b),
    U2c-1 (a+b+c), U8 (deployment and monitoring docs), the milestone review (`docs/REVIEW-2026-09-05.md`) and ALL its fix
    units (`U-stranded`, `U-interlock`, `U-gates`, `U-pipe-hello`, `U-press-atomic`, `U-pipe-words`, `U-pipe-replay`,
    `U-settings-closed`, `U-press-budget`), `U-bridge-reinstall`, and seven test-only fixes, the last `U-sweep-words-win`
-   at `d92a61b` (draft PR #7 closed; the remote branch is left for the owner), and `U-box-precut` at `5b9e2e9`: the
-   box now runs the repo's Release build with the bridge at protocol 3 (the refusal and `Reinstall the bridge` walked
-   for real; `tools/atas-gate` green), PAUSED with 2 unconfirmed requests the bridge unit settles from the platform's
-   own answer. The installed 0.1.1 there is stale until v0.1.2 is cut.
+   at `d92a61b`, and `U-box-precut` at `5b9e2e9` (the protocol-3 refusal and `Reinstall the bridge` walked for real,
+   `tools/atas-gate` green). The box's state today is in step 3.
 3. **The second milestone review is DONE, its whole queue LANDED, and v0.1.2 IS PUBLISHED.** Review:
    `docs/REVIEW-2026-09-05b.md` (reviewer HIGH 3 · MED 2 · LOW 1 · UNVERIFIED 7, eleven executed probes on branch
    `review-probes-b` @ `80f19f0`; Codex 12/6/2/2 read-only, merged in with the triage). Landed, each with its ≤40-line
@@ -50,12 +48,15 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `TreatWarningsAsErrors` is on for the bridge only; an installed OLDER build refuses a home a newer build
    migrated with "records are damaged" (false — they are newer) and no update path; 0.1.1 wrote no activity row for the
    update press and whether `main`'s hook fires at runtime is NOT VERIFIED; five hosted-runner reds recorded once each
-   (three in the U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
-4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
-   class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
-   instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all
-   three platforms with `package` SUCCESS. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red →
-   reset; runner or harness red → a fixer on top.
+   (three in the U-sweep-words-win section, two in U-attest-precondition's) plus the one in step 4, a brief each when
+   one recurs.
+4. **CI on `main`:** green on all three platforms at every code landing of the session and at the release sha
+   (`6672b5e`, run 34022935338). Hosted-runner reds are a known class: timing fixtures tuned on fast machines; the
+   `Timing` category gets one second attempt on EVERY runner since `U-press-stopwatch`; the remaining instances are
+   recorded in `BUILD-STATUS.md` with their runs. One more one-off after the close: run 34024633518 at the docs-only
+   `82a4cc3`, windows, `CloseAllOutcomeTests.Close_all_keeps_going_after_one_position_fails` [56 s], `Assert.Equal()
+   Failure: Values differ` — the 52-second press shape, first occurrence, green at the next run; a brief if it recurs.
+   A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset; runner or harness red → a fixer on top.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
@@ -71,8 +72,8 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `docs/hardening/briefs/U6-U9-backlog.md` and `TreatWarningsAsErrors` for the whole solution.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
-   before the Mac UI loop; the box IS reachable (see step 6); four usage-limit kills were survived by
-   re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
+   before the Mac UI loop; the box IS reachable (`~/.tradeagent/win.env`, sourced by every `tools/*.sh`); seven
+   usage-limit kills over two sessions were survived by re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
    check a command's exit with `$?` on the bare command; `pgrep -f testhost` matches the waiting shell itself — count
    test hosts with `pgrep -fl 'testhost.dll' | grep -v pgrep`; `git grep -E` here has no `\s` — use `[[:space:]]`.
 
