@@ -4228,8 +4228,7 @@ occurrence, green at the next run `09faf9f`; recorded, briefed if it recurs.
 
 The first unit of the vision stated that morning ("a never stopping evolving AI agent with sole purpose to at least win
 enough money to pay for itself"), by one fresh builder on `docs/briefs/U-life.md`. Merge `0ec96c6`, 8 commits, 14 files,
-+2207/−20 (new `MissionLoop.cs`; `AgentSession.cs`, `WorkspaceBuilder.cs`, `AppHost.cs`, `DashboardView.cs`, `ChatView.cs`,
-`Trading.cs`; four new test classes).
++2207/−20 (new `MissionLoop.cs`; seven product files touched; four new test classes).
 
 - **The mission loop** (`MissionLoop.cs`, hosted by `AppHost.MissionHost`): while the owner has let it, turns run back
   to back; each message is a `## Situation` block the app writes (the owner's typed words FIRST; time, mode, execution
@@ -4249,18 +4248,19 @@ enough money to pay for itself"), by one fresh builder on `docs/briefs/U-life.md
   AI" one; Guidance is saved in `Settings`, read into every Situation, and grants nothing; paused survives a restart,
   working resumes unless `ResumeAiOnStart` is off, and then the flag is corrected; an unreadable settings row clears
   both. RED (a one-press `Ui.Primary`): `Expected: False / Actual: True` after the FIRST press, 3 red → GREEN 14/14;
-  mutant (the armed sentence → null) → 2 red.
-- **Beyond the brief, declared:** a message typed while the AI worked was lost; `SendAsync` now queues it first.
+  mutant (the armed sentence → null) → 2 red. Beyond the brief, declared: a message typed while the AI worked was
+  lost; `SendAsync` now queues it first.
 
-**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `b274045` (the tip's product
-tree), Release: 0 warnings; MissionLoop 21/21, MissionInstructions 7/7, MissionControls 14/14, TypedWhileWorking 4/4,
-each 3×; 327 + 261 + 610 = 1198 passed, 0 failed, 1 skipped, the other leg's suite overlapping part of it. Manager's
-gate at `0ec96c6`, Release: build → 0 warnings, 0 errors; suite → 327 + 261 + 610 = 1198 passed, 0 failed, 1 skipped,
-no other test host; names vs `main` → 0 removed, 43 added (sets 923 → 966); scan → two hits, the guide's own wording
-about sign-in; `rev-list --count` → 0; CI at `0ec96c6`: not yet listed when written, recorded in the next commit.
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `b274045`, Release: 0
+warnings; MissionLoop 21/21, MissionInstructions 7/7, MissionControls 14/14, TypedWhileWorking 4/4, each 3×; 327 + 261
++ 610 = 1198 passed, 0 failed, 1 skipped, the other leg's suite overlapping part of it. Manager's gate at `0ec96c6`,
+Release: build → 0 warnings, 0 errors; suite → 327 + 261 + 610 = 1198 passed, 0 failed, 1 skipped, no other test host;
+names vs `main` → 0 removed, 43 added (sets 923 → 966); scan → two hits, the guide's own wording about sign-in;
+`rev-list --count` → 0; CI run 34040140435 at `0ec96c6`: **RED** on macos and ubuntu, windows green —
+`TypedWhileWorkingTests` read `runtimes.json` while the corruption test had it corrupted (outside the shared collection,
+a harness race: the same tree green at `b3e7d0a`, run 34040307786); fixer `U-typed-catalog` on top, this sha stays red.
 
-**NOT VERIFIED:** the card on a running app — no UI run, no photograph; its words and counts are asserted through
-`DashboardPage.MissionSentence`/`MissionCounts`; the scanner yield is proven against the test host, and the app's
-`ScanMaterials` attesting across a synchronous pass with the agent dead was NOT watched. **NOT done:** no schema change;
-the loop cannot start the AI (the owner presses `Start the AI` first); `MissionInbox.ChangedSince` walks the drop folder
-on every ask (bounded at 5,000), unmeasured on a large folder; `trade pnl` lands with `U-ledger`; the cap with `U-meter`.
+**NOT VERIFIED:** the card on a running app — no UI run, no photograph, its words asserted by test only; the app's
+`ScanMaterials` attesting across the loop's synchronous pass with the agent dead was NOT watched. **NOT done:** no
+schema change; the loop cannot start the AI (the owner presses `Start the AI` first); `MissionInbox.ChangedSince` walks
+the drop folder each ask, unmeasured on a large folder; `trade pnl` lands with `U-ledger`; the cap with `U-meter`.
