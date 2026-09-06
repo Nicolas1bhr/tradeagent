@@ -132,6 +132,15 @@ public sealed class AppHost : IAsyncDisposable
 
             Gateway = new TradingGateway(_db, Connector, Health);
             Gateway.StateChanged += OnGatewayStateChanged;
+
+            // Where "this was installed without a checksum, because <reason>" goes. The provisioning
+            // layer sits below the database on purpose — it has to run during setup, before there is
+            // one — so it holds a sink rather than a store, and this is the one place that fills it
+            // in. Reading the property each time means a connector switch, which replaces Gateway,
+            // does not leave the line going to a log nobody reads; wired HERE, above the connect,
+            // because onboarding is where the unchecked install happens and a backend that will not
+            // connect must not be what decides whether the owner is told about it.
+            Downloader.RecordDecision = text => Gateway.Log.Activity(text, "warn");
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
 
@@ -155,7 +164,6 @@ public sealed class AppHost : IAsyncDisposable
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
             ReportAtasHealth();
-
             _loop = new CancellationTokenSource();
             _ = Task.Run(() => BackgroundAsync(_loop.Token));
 

@@ -79,13 +79,14 @@ public static class NodeRuntime
 
         // nodejs.org publishes a SHA256 manifest beside every build. When it is reachable the
         // download is checked against it; when it is not, the install still proceeds rather than
-        // failing over a file that is only there to make a good thing better.
+        // failing over a file that is only there to make a good thing better — but it proceeds as a
+        // stated decision that reaches the owner's activity log, not as a missing argument.
         var sha = await ResolvePublishedShaAsync(version, zipName, ct);
-        if (sha is null)
-            progress?.Report(new ProvisionProgress("node", "Node.js checksum list unavailable — continuing without it"));
 
         progress?.Report(new ProvisionProgress("node", $"Downloading Node.js {version}"));
-        await Downloader.DownloadAndUnpackAsync(url, Dir, progress, ct, sha);
+        await Downloader.DownloadAndUnpackAsync(url, Dir,
+            Integrity.PinnedOr(sha, $"nodejs.org's checksum list for {version} could not be read just now"),
+            progress, ct);
 
         progress?.Report(new ProvisionProgress("node", "Arranging the files"));
         Flatten(version);

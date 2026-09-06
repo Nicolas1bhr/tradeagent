@@ -63,6 +63,19 @@ public sealed class AtasLayout
     /// <summary>True: checked against a real install and against ATAS's developer documentation.</summary>
     public bool Verified { get; set; } = true;
 
+    /// <summary>
+    /// SHA-256 of the vendor's installer, when the account owner has decided to pin one.
+    ///
+    /// Null as shipped, and that is a DECISION rather than an oversight: ATAS serves an unversioned
+    /// "latest" installer and publishes no checksum for it, so there is nothing here to fill in from
+    /// the vendor. It is here because the alternative — TLS is the whole integrity story — is the
+    /// owner's call to take, not this code's (REVIEW 2026-09-05b finding 4 and `docs/RESUME-HERE.md`
+    /// step 5a). Setting it makes the install fail closed the day the served file changes, and it is
+    /// a one-line data change in <c>atas.json</c> with no rebuild. While it is null every install
+    /// writes a line into the activity log saying the file was taken unchecked and why.
+    /// </summary>
+    public string? InstallerSha256 { get; set; }
+
     public static string OverridePath => Path.Combine(Paths.Home, "atas.json");
 
     public static AtasLayout Load()

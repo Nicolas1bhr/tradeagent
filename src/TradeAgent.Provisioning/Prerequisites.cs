@@ -68,6 +68,7 @@ public sealed class AtasPrerequisite : IPrerequisite
     readonly Func<bool> _isInstalled;
     readonly Func<string, bool> _openPage;
     readonly Func<string, string, CancellationToken, Task<int>> _runElevated;
+    readonly Func<string?> _pinnedSha256;
 
     /// <param name="isInstalled">
     /// Defaults to the one place that already knows where ATAS lives,
@@ -76,15 +77,23 @@ public sealed class AtasPrerequisite : IPrerequisite
     /// </param>
     /// <param name="openPage">Defaults to opening the page in the user's browser.</param>
     /// <param name="runElevated">Defaults to <see cref="Elevation.RunElevatedAsync"/>.</param>
+    /// <param name="pinnedSha256">
+    /// The hash to hold the vendor's installer to, read fresh at install time from
+    /// <see cref="AtasLayout.InstallerSha256"/> — i.e. from <c>atas.json</c>, which is data. Null
+    /// there means no hash is pinned, and the install is recorded as unverified rather than
+    /// silently skipping the check.
+    /// </param>
     public AtasPrerequisite(
         Func<bool>? isInstalled = null,
         Func<string, bool>? openPage = null,
-        Func<string, string, CancellationToken, Task<int>>? runElevated = null)
+        Func<string, string, CancellationToken, Task<int>>? runElevated = null,
+        Func<string?>? pinnedSha256 = null)
     {
         _isInstalled = isInstalled ?? (() => AtasInstallation.Detect().Installed);
         _openPage = openPage ?? Browser.TryOpen;
         _runElevated = runElevated ?? ((exe, args, ct) => Elevation.RunElevatedAsync(
             exe, args, ct, ErrorCode.ATAS_NOT_FOUND, ProcessWindowStyle.Hidden));
+        _pinnedSha256 = pinnedSha256 ?? (() => AtasLayout.Load().InstallerSha256);
     }
 
     public string Id => "atas";
@@ -115,7 +124,18 @@ public sealed class AtasPrerequisite : IPrerequisite
         try
         {
             progress?.Report(new ProvisionProgress("atas", "Downloading ATAS from atas.net"));
-            await Downloader.DownloadAsync(InstallerUrl, installer, progress, ct);
+
+            // THE ONE FILE THIS PRODUCT RUNS ELEVATED. Its hash is the account owner's decision, not
+            // this code's: `atas.json` can pin one, in which case a served file that changes is
+            // refused and thrown away. With none pinned the install still happens — ATAS publishes
+            // no checksum, so refusing would mean refusing ATAS — but the reason is stated here and
+            // written into the activity log by `DownloadAsync`, once per install, instead of being
+            // an omitted argument nobody can see (REVIEW 2026-09-05b finding 4).
+            await Downloader.DownloadAsync(InstallerUrl, installer,
+                Integrity.PinnedOr(_pinnedSha256(),
+                    "ATAS publishes no checksum for its installer and serves an unversioned file, so " +
+                    "the encrypted connection to atas.net is the whole check on these bytes"),
+                progress, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

@@ -248,7 +248,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
         try
         {
             progress?.Report($"Downloading {manifest.DisplayName}");
-            await Downloader.DownloadAndUnpackAsync(url, target, relay, ct, plan.Sha256);
+            await Downloader.DownloadAndUnpackAsync(url, target,
+                Integrity.PinnedOr(plan.Sha256,
+                    $"{manifest.DisplayName}'s manifest pins no checksum for the file it downloads"),
+                relay, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) when (plan.NpmPackage is { Length: > 0 })
