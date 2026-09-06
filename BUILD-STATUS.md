@@ -4124,7 +4124,7 @@ green twice on the whole matrix at `67eae98` (34017814011 first attempt on every
 rerun); the fixed test passed on every runner in every run, ten runner-passes. Manager's gate at `575390c`, Release:
 build → 0 warnings, 0 errors; suite → 281 + 261 + 610 = 1152 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
 0 added (sets 923 → 923); scan → one hit, the word "recompiled" beside a version-like token in the report; `rev-list
---count` → 0; CI at `575390c`: pending.
+--count` → 0; CI run 34022116577 at `575390c`: all three platforms and `package` SUCCESS.
 
 **Two NEW hosted-runner reds recorded here once each, both windows-latest, both outside `Timing`, neither briefed
 (a brief each when one recurs):** `SweepRequestIdTests.Every_sent_not_confirmed_leg_carries_an_unknown_record_that_
