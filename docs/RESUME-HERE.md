@@ -10,6 +10,13 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
+**The vision, in the owner's words (2026-09-06), which every unit below serves:** the product is a container with a good
+UI that runs a never-stopping, evolving AI agent whose sole purpose is to make at least enough to pay for itself. It
+works non-stop, does its own research, builds its own strategies and places as many winning trades as it can, inside
+the gateway's limits; the owner adds guidance, strategies and documents through the inbox and a Guidance box. An
+evolution scheme — non-performing agents terminated and replaced — comes later and needs a higher manager level. **A
+chat window that answers when typed at is NOT the product**; until `U-life` lands, that is what the build is.
+
 **Session closed 2026-09-06 (late morning). Restart in this order, and you are working within ten minutes:**
 
 1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process) and the `## 2026-09-04` … `## 2026-09-06` sections at the
@@ -62,14 +69,19 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
    containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
    the in-process gateway are not security boundaries.
-6. **Then, in order:** (a) the two decisions above, whenever Nicolas takes them — the checksum one is a data change
-   (`installerSha256` in `atas.json`) plus a fail-closed path; (b) the third milestone review on `main` at a named sha,
-   starting from the open items in step 3 and `docs/REVIEW-2026-09-05b.md`'s UNVERIFIED list and "What I did NOT do"
-   (the bridge half beyond what `U-bridge-2` touched, `BridgePipeAuth`, `AtasHealth`, the chat/inbox/onboarding views,
-   `AgentSession`, the updater's release-reading half), Codex read-only beside it (`codex exec -s read-only -m
-   gpt-5.6-sol …`; codex-cli 0.153.4 since 2026-09-06, on which `gpt-6-astra` also answers — a direction consult for the manager, never a leg); (c) the box's real home migrated by
-   starting 0.1.2 against it, watched, with the bridge row read after; (d) the non-box LOW batch in
-   `docs/hardening/briefs/U6-U9-backlog.md` and `TreatWarningsAsErrors` for the whole solution.
+6. **Then, in order (the money path, re-planned 2026-09-06 against the vision above; GPT-6 Astra consulted once on
+   direction, its corrections taken):** (a) `U-ledger` (the fill table, `trade pnl`, a Performance card) and `U-life`
+   (the mission loop, the mission, Guidance, two-press "work on its own") — in flight, briefs in `docs/briefs/`;
+   (b) `U-meter` (briefed: the AI's cost per turn and per day, `costs.json`, a daily cap that pauses the loop) when one
+   of them lands; (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
+   ledger; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
+   close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
+   any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
+   or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
+   paper loop on the box for weeks, the Performance card as the report; (h) the owner's decisions: broker, instrument,
+   size, and the venue for fully automatic real money — ATAS refuses it correctly, so either a second connector with
+   real order history or ask-me-first on ATAS; (i) the third milestone review at the next cut; the ATAS hash pin
+   (recommended now, a data line); the box's real-home migration whenever the owner wants it.
 7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
    one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
    before the Mac UI loop; the box IS reachable (`~/.tradeagent/win.env`, sourced by every `tools/*.sh`); seven
