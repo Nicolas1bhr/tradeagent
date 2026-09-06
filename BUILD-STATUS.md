@@ -4059,8 +4059,7 @@ item 3's check); no box, no real ATAS, no UI run.
 Codex F6, F7 and F13 (read-only claims from review 2), by two builders on `docs/briefs/U-codex-2b.md` (the first killed
 by a usage limit after three commits; the second kept all three, added the proofs, corrected a false claim the branch
 shipped) and one fresh fixer on `docs/briefs/U-codex-2b-fix.md` for the race the manager's gate found. Merge `07cbb91`,
-8 commits, 11 files, +994/−45 (`Protocol.cs`, `GatewayPipeServer.cs`, `AtasConnector.cs`, `AtasHealth.cs`,
-`CONTRACTS.md`, four test files, the harness).
+8 commits, 11 files, +994/−45 (`Protocol.cs`, `GatewayPipeServer.cs`, `AtasConnector.cs`, `AtasHealth.cs`, `CONTRACTS.md`, tests).
 
 - **F6 — a price or a tif that is present and unreadable is refused, not read as absent.** RED (the guard reverted,
   real pipe, 10 failed): `limit='bad' → ok=True · connector saw: Market limit=none`, `limit='1,5' → Limit limit=15`,
