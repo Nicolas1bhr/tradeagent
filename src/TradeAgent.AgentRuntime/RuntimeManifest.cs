@@ -465,7 +465,13 @@ public sealed record RuntimeCatalogRead(IReadOnlyList<RuntimeManifest> Runtimes,
 /// named, so the dearest entry in that runtime's catalogue was charged — and then it is the sentence
 /// that travels with the figure onto every screen. Null on a figure priced against a named model.
 /// </param>
-public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced, string? Estimated = null)
+/// <param name="ByOwner">
+/// The figure came from the two numbers the owner typed on the Safety page rather than from any list
+/// price. Then <paramref name="Estimated"/> is null even when nothing named a model: the rate is not
+/// a guess over a catalogue, it is what the owner says they are charged.
+/// </param>
+public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced, string? Estimated = null,
+    bool ByOwner = false)
 {
     public static TurnPrice Unknown(string why) => new(null, "", why);
 }
@@ -644,7 +650,8 @@ public static class CostCatalog
     /// WHAT THIS TURN COST, or why nobody can say. Every branch that cannot produce a number
     /// produces a sentence instead; none of them produces a zero.
     /// </summary>
-    public static TurnPrice Price(TurnUsage? usage, string? runtimeId, CostCatalogRead? catalogue = null)
+    public static TurnPrice Price(TurnUsage? usage, string? runtimeId, CostCatalogRead? catalogue = null,
+        OwnerPrice? owner = null)
     {
         var read = catalogue ?? Read();
         if (read.Unreadable is { } why) return TurnPrice.Unknown(why);
@@ -652,6 +659,18 @@ public static class CostCatalog
         var costs = read.Costs ?? BuiltIn();
         if (usage is null)
             return TurnPrice.Unknown("the AI tool did not report how many tokens the turn used");
+
+        // THE OWNER'S OWN RATE IS THE LAST WORD, and it is checked before the model is even looked
+        // for. They are the only party who can see the bill; a list price is this build quoting a
+        // vendor's page at them. It applies whether or not anything named a model, which is the
+        // whole point — the ordinary Codex installation never names one, and asking the owner to
+        // identify a model in order to correct a rate would be asking them the question they cannot
+        // answer.
+        //
+        // An unreadable costs.json still refuses above, deliberately: that file failing is not the
+        // owner saying anything, and a currency read out of it is part of what the figure means.
+        if (owner is not null)
+            return new TurnPrice(Charge(usage, owner), costs.Currency, null, null, ByOwner: true);
 
         var model = usage.Model ?? Declared(costs, runtimeId);
 
@@ -679,6 +698,18 @@ public static class CostCatalog
 
         return new TurnPrice(Charge(usage, price), costs.Currency, null);
     }
+
+    /// <summary>
+    /// The same arithmetic on the owner's two numbers, over the same token totals the list-price
+    /// overload bills. CACHED INPUT IS CHARGED AT THE FULL INPUT RATE here, because they gave a rate
+    /// for input and did not give a discount for cache reads, and inventing one would under-charge
+    /// every turn — the direction that lets the cap be walked past. An owner whose vendor discounts
+    /// cache reads has <c>costs.json</c>, which takes all four figures.
+    /// </summary>
+    static decimal Charge(TurnUsage usage, OwnerPrice owner) =>
+        (usage.InputTokens * owner.InputPerMillion +
+         usage.CacheWriteInputTokens * owner.InputPerMillion +
+         usage.OutputTokens * owner.OutputPerMillion) / 1_000_000m;
 
     /// <summary>
     /// The arithmetic, on one price. Cached input is a SUBSET of the input count and reasoning

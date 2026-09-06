@@ -94,6 +94,18 @@ public sealed class AppHost : IAsyncDisposable
     public AiSpendToday SpendToday => Meter?.Today ?? AiSpendToday.NotMetered;
 
     /// <summary>
+    /// THE SHIPPED RATE THE SAFETY PAGE OFFERS AS ITS DEFAULT: the dearest model in the running
+    /// runtime's catalogue, which is exactly what an unidentified turn is being charged at. Null
+    /// where this build ships no list price for that runtime, and then the page has no default to
+    /// show and says so.
+    ///
+    /// The prepared agent's id first and the owner's chosen runtime after, because before an agent
+    /// is prepared the choice on the Settings page is the honest answer to "what is this priced as".
+    /// </summary>
+    public ModelPrice? ShippedRate =>
+        CostCatalog.Highest(Agent?.Current?.Id ?? Gateway.Settings.SelectedRuntimeId);
+
+    /// <summary>
     /// THE LOOP THAT KEEPS THE AI WORKING. Composed here, beside the gateway, because that is where
     /// the facts a turn is handed already live — and deliberately NOT anywhere the agent can reach:
     /// there is no pipe op and no `trade` verb that starts it, pauses it, or changes what it is told.
@@ -214,7 +226,8 @@ public sealed class AppHost : IAsyncDisposable
             Meter = new TurnMeter(_db,
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,
-                runtimeId: () => Agent.Current?.Id);
+                runtimeId: () => Agent.Current?.Id,
+                owner: () => OwnerPrice.From(Gateway.Settings));
             Meter.Changed += () => Changed?.Invoke();
 
             Mission = new MissionLoop(new MissionHost(this),

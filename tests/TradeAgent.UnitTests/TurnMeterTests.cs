@@ -737,3 +737,113 @@ public class UnknownModelIsPricedHighTests : IDisposable
         Assert.Equal(30.00m + 180.00m, CostCatalog.Price(usage, "opencode").Cost);
     }
 }
+
+
+/// <summary>
+/// THE OWNER'S OWN RATE, TYPED IN A WINDOW, IS THE LAST WORD.
+///
+/// The two numbers on the Safety page exist because of who knows what: only the owner can see the
+/// bill, and neither this build nor the CLI can tell them which model was selected. Everything else
+/// in this unit is TradeAgent quoting a vendor's page at them; this is them correcting it, and it
+/// therefore beats the shipped list price AND <c>costs.json</c>, for every turn, named model or not.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class OwnerPriceTests : IDisposable
+{
+    readonly Database _db = TestEnv.NewDb();
+    readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
+
+    public void Dispose()
+    {
+        NoCosts();
+        _db.Dispose();
+    }
+
+    static void NoCosts()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+    }
+
+    static TradeAgentSettings Priced(decimal? input, decimal? output) =>
+        new() { AiPriceInputPerMillion = input, AiPriceOutputPerMillion = output };
+
+    [Fact]
+    public void The_owners_rate_beats_the_shipped_list_price_and_the_costs_file_alike()
+    {
+        File.WriteAllText(CostCatalog.OverridePath, Json.Write(new AgentCosts
+        {
+            Currency = "USD",
+            Models = [new ModelPrice
+            {
+                Runtime = "codex", Model = "gpt-5.3-codex",
+                InputPerMillion = 99m, OutputPerMillion = 99m
+            }]
+        }, pretty: true));
+
+        var owner = OwnerPrice.From(Priced(2m, 8m));
+        var usage = new TurnUsage(1_000_000, 0, 0, 1_000_000, 0, "gpt-5.3-codex");
+
+        var price = CostCatalog.Price(usage, "codex", owner: owner);
+        Assert.Equal(2m + 8m, price.Cost);
+        Assert.True(price.ByOwner);
+        Assert.Null(price.Estimated);
+        Assert.Null(price.Unpriced);
+    }
+
+    /// <summary>
+    /// AND IT PRICES THE TURN CODEX NEVER IDENTIFIES — which is the ordinary turn, and the reason
+    /// two numbers were the right control rather than a model name. An owner cannot be asked which
+    /// model their CLI chose; they can be asked what they are charged.
+    /// </summary>
+    [Fact]
+    public void The_owners_rate_prices_a_turn_nothing_named_a_model_for_and_is_not_an_estimate()
+    {
+        NoCosts();
+        var meter = new TurnMeter(_db, () => 5m, runtimeId: () => "codex", recordPath: _records,
+            owner: () => OwnerPrice.From(Priced(1m, 4m)));
+
+        // The measured Codex turn: 17,232 input (12,928 of it cached) and 6 output, no model.
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(12.5), "…", DateTimeOffset.Now)
+        {
+            Usage = new TurnUsage(17232, 12928, 0, 6, 0, null)
+        });
+
+        // Cached input at the FULL input rate: the owner gave a rate for input and no discount for
+        // cache reads, and inventing one would under-charge every turn.
+        Assert.Equal((17232m * 1m + 6m * 4m) / 1_000_000m, meter.Today.Spent);
+
+        var record = Json.Read<TurnRecord>(File.ReadAllLines(_records)[0])!;
+        Assert.True(record.PricedByOwner);
+        Assert.Null(record.Estimated);
+
+        Assert.True(meter.Today.PricedByOwner);
+        Assert.Null(meter.Today.Estimated);
+        Assert.Equal(0, meter.Today.EstimatedTurns);
+    }
+
+    /// <summary>
+    /// HALF A PRICE IS NOT A PRICE. Applying one number to a whole turn would under-charge it, which
+    /// is the one direction that lets the daily limit be walked past, so the pair is all or nothing
+    /// and the dearer list price stands until both are set.
+    /// </summary>
+    [Fact]
+    public void One_of_the_two_numbers_on_its_own_is_not_a_price()
+    {
+        Assert.Null(OwnerPrice.From(Priced(2m, null)));
+        Assert.Null(OwnerPrice.From(Priced(null, 8m)));
+        Assert.Null(OwnerPrice.From(Priced(null, null)));
+        Assert.NotNull(OwnerPrice.From(Priced(2m, 8m)));
+    }
+
+    /// <summary>
+    /// A settings row nobody could read has no owner price, so the LIST price stands — which is the
+    /// dearer reading and therefore the restrictive one, the rule every other field on
+    /// <see cref="TradeAgentSettings.Unreadable"/> keeps.
+    /// </summary>
+    [Fact]
+    public void A_settings_row_that_could_not_be_read_carries_no_owner_price()
+    {
+        Assert.Null(OwnerPrice.From(TradeAgentSettings.Unreadable()));
+        Assert.Null(OwnerPrice.From(new TradeAgentSettings()));
+    }
+}

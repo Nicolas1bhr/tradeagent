@@ -157,6 +157,28 @@ public sealed class TradeAgentSettings
     public decimal AiDailyCostCap { get; set; } = 5m;
 
     /// <summary>
+    /// WHAT THE OWNER SAYS THEIR AI TOOL CHARGES THEM, per million tokens in and out, or null for
+    /// "use the list price this build shipped".
+    ///
+    /// Two numbers rather than a model name because the owner is the one party who can see the bill
+    /// and is not the party who knows which model a CLI selected. It is the last word: it beats
+    /// <c>costs.json</c> and it beats the dated list prices, for every turn, whether or not anything
+    /// named a model — see <c>CostCatalog.Price</c>.
+    ///
+    /// LOWERING either number is the grant, which is back to front from every other field on that
+    /// page and is why the Safety page asks twice for it. A lower price does not let the AI trade
+    /// more; it makes each turn count for less against <see cref="AiDailyCostCap"/>, so the same
+    /// ceiling buys more turns and more real money is spent on the AI before it stops.
+    ///
+    /// Both null or both set. One of the two on its own is not a price, and half a price applied to
+    /// a whole turn would under-charge it — the one direction that lets the cap be walked past.
+    /// </summary>
+    public decimal? AiPriceInputPerMillion { get; set; }
+
+    /// <summary>The other half. See <see cref="AiPriceInputPerMillion"/>; neither works alone.</summary>
+    public decimal? AiPriceOutputPerMillion { get; set; }
+
+    /// <summary>
     /// IS THE SAVED MODE ONE THIS BUILD ACTUALLY HAS?
     ///
     /// <see cref="TradingMode"/> is persisted as a name, and <c>System.Text.Json</c>'s enum converter
@@ -207,6 +229,7 @@ public sealed class TradeAgentSettings
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
+    ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
     ///
     /// <c>MaxNotionalPerOrder</c> stays at 0, which for that field alone means "not enforced": it has
     /// no floor, and a quantity cap of zero has already refused every order before a notional is
@@ -237,6 +260,24 @@ public sealed class TradeAgentSettings
             InstrumentAllowlist = []
         }
     };
+}
+
+/// <summary>
+/// THE OWNER'S OWN RATE, per million tokens in and out — the last word on what a turn cost.
+///
+/// A record rather than two nullable fields passed around, so that "the owner has priced this" is
+/// one value that is either there or not. <see cref="From"/> is the only way to make one from the
+/// settings row and it refuses a half-filled pair: one number without the other is not a price, and
+/// applying it to a whole turn would under-charge it, which is the direction that lets the daily cap
+/// be walked past.
+/// </summary>
+public sealed record OwnerPrice(decimal InputPerMillion, decimal OutputPerMillion)
+{
+    /// <summary>The owner's rate, or null where they have not set one.</summary>
+    public static OwnerPrice? From(TradeAgentSettings settings) =>
+        settings.AiPriceInputPerMillion is { } input && settings.AiPriceOutputPerMillion is { } output
+            ? new OwnerPrice(input, output)
+            : null;
 }
 
 /// <summary>
@@ -300,6 +341,13 @@ public sealed record AiSpendToday
 
     /// <summary>Why there is no price, in the owner's words. Null when <see cref="CanPrice"/>.</summary>
     public string? WhyNoPrice { get; init; }
+
+    /// <summary>
+    /// The figures come from the two numbers the owner typed, not from a list price. The card says
+    /// so, because a total the owner is responsible for and a total this build quoted from a vendor
+    /// page are two different things to be looking at when the number surprises them.
+    /// </summary>
+    public bool PricedByOwner { get; init; }
 
     /// <summary>The local midnight today's totals expire at — when a capped loop starts again.</summary>
     public DateTimeOffset ResumesAt { get; init; }

@@ -169,6 +169,9 @@ public sealed record TurnRecord
     /// has to be able to see which turns were estimates.
     /// </summary>
     public string? Estimated { get; init; }
+
+    /// <summary>The rate was the owner's own two numbers rather than any list price.</summary>
+    public bool PricedByOwner { get; init; }
 }
 
 /// <summary>
@@ -200,18 +203,21 @@ public sealed class TurnMeter
     readonly Database _db;
     readonly Func<string?> _session;
     readonly Func<string?> _runtimeId;
+    readonly Func<OwnerPrice?> _owner;
     readonly Func<decimal> _cap;
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
     readonly Lock _gate = new();
 
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
-        Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null)
+        Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
+        Func<OwnerPrice?>? owner = null)
     {
         _db = db;
         _cap = cap;
         _session = session ?? (() => null);
         _runtimeId = runtimeId ?? (() => null);
+        _owner = owner ?? (() => null);
         _now = now ?? (() => DateTimeOffset.Now);
         _path = recordPath ?? RecordPath;
     }
@@ -235,7 +241,7 @@ public sealed class TurnMeter
     /// </summary>
     public void Record(AgentTurnEnded ended)
     {
-        var price = CostCatalog.Price(ended.Usage, _runtimeId());
+        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner());
         var record = new TurnRecord
         {
             Started = ended.At - ended.Duration,
@@ -253,7 +259,8 @@ public sealed class TurnMeter
             Cost = price.Cost,
             Currency = price.Cost is null ? null : price.Currency,
             Unpriced = price.Unpriced,
-            Estimated = price.Estimated
+            Estimated = price.Estimated,
+            PricedByOwner = price.ByOwner
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
@@ -300,7 +307,7 @@ public sealed class TurnMeter
             // A turn that HAS priced today settles it the other way: a runtime whose stream names its
             // own model prices without an entry in RuntimeModels, and the probe below cannot know
             // that in advance because it has no model to offer.
-            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue);
+            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner());
             var canPrice = probe.Cost is not null || (turns > 0 && unpriced < turns);
 
             return new AiSpendToday
@@ -317,6 +324,7 @@ public sealed class TurnMeter
                 // most likely to be read — and the day's own history second, for the runtime whose
                 // stream names its model and whose probe therefore cannot know in advance.
                 Estimated = probe.Estimated ?? (estimated > 0 ? Labels.PricedAtHighestListPrice : null),
+                PricedByOwner = probe.ByOwner,
                 CanPrice = canPrice,
                 WhyNoPrice = canPrice ? null : probe.Unpriced,
                 ResumesAt = Midnight(now)
@@ -371,6 +379,17 @@ public sealed class TurnMeter
     static string? Safe(Func<string?> f)
     {
         try { return f(); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// The owner's rate, or none. Swallowing a throw here is the same rule as <see cref="Safe"/>:
+    /// this is called from the end of a turn, and a settings read that failed must cost the RATE,
+    /// which falls back to the dearer list price, rather than the turn.
+    /// </summary>
+    OwnerPrice? Owner()
+    {
+        try { return _owner(); }
         catch (Exception) { return null; }
     }
 }

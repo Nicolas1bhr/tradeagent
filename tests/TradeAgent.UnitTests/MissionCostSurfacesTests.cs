@@ -145,6 +145,44 @@ public class MissionCostSurfacesTests
         Assert.DoesNotContain("estimated", DashboardPage.MissionCost(Priced(1.25m, 5m)));
     }
 
+    /// <summary>
+    /// A total the owner is responsible for and a total this build quoted from a vendor's page are
+    /// two different things to be looking at when the number surprises them, so the card says which.
+    /// </summary>
+    [Fact]
+    public void The_card_says_the_figure_is_priced_by_you_once_the_owner_has_set_a_rate()
+    {
+        var line = DashboardPage.MissionCost(Priced(1.25m, 5m) with { PricedByOwner = true });
+
+        Assert.Contains(Labels.PricedByYou, line);
+        Assert.DoesNotContain(Labels.PricedAtHighestListPrice, line);
+    }
+
+    /// <summary>
+    /// THE DEFAULT UNDER THE BOXES CARRIES ITS DATE AND ITS PAGE. A price with no date is a price
+    /// nobody can check, and the owner is the person who would check it.
+    /// </summary>
+    [Fact]
+    public void The_safety_pages_default_rate_names_the_model_the_page_and_the_day_it_was_read()
+    {
+        var shipped = CostCatalog.Highest(CostCatalog.BuiltIn(), "codex");
+        Assert.NotNull(shipped);
+
+        var hint = SafetyPage.ShippedRateHint(shipped);
+        Assert.Contains(shipped!.Model, hint);
+        Assert.Contains(shipped.Source, hint);
+        Assert.Contains(shipped.PricedAt, hint);
+        Assert.Contains("asks again first", hint);
+    }
+
+    /// <summary>And where nothing is shipped for a runtime, the box claims nothing.</summary>
+    [Fact]
+    public void The_safety_page_claims_no_default_rate_for_a_runtime_nothing_is_shipped_for()
+    {
+        Assert.Null(CostCatalog.Highest(CostCatalog.BuiltIn(), "custom"));
+        Assert.Contains("ships no list price", SafetyPage.ShippedRateHint(null));
+    }
+
     // ---- the Safety page's ceiling ---------------------------------------------------------------
 
     /// <summary>
@@ -187,6 +225,77 @@ public class MissionCostSurfacesTests
     {
         var saved = 0;
         var b = SafetyPage.BuildSaveDailyCap(() => 5m, () => 5m, () => "USD", () => saved++);
+        Press(b);
+        Assert.Equal(1, saved);
+    }
+
+    // ---- the Safety page's price, whose grant runs the OTHER way ---------------------------------
+
+    /// <summary>
+    /// LOWERING THE PRICE IS THE GRANT, and it is the only control on that page where the smaller
+    /// number is. It does not let the AI trade more; it makes each turn count for less against the
+    /// daily limit, so the same ceiling buys more turns and more real money is spent on the AI before
+    /// anything stops it. An owner's instinct says a smaller number is a smaller permission, and here
+    /// that instinct is wrong — which is exactly why the press has to ask, and has to say why.
+    /// </summary>
+    [Fact]
+    public void Lowering_what_the_ai_is_priced_at_asks_twice_and_names_the_figure()
+    {
+        var saved = 0;
+        var current = (In: 10m, Out: 50m);
+        var pending = (In: 1.25m, Out: 10m);
+        var b = SafetyPage.BuildSaveAiPrice(() => current, () => pending, () => "USD", () => saved++);
+
+        Press(b);
+        Assert.Equal(0, saved);
+        Assert.Equal(Labels.LowerAiPriceArmed("1.25 USD in and 10 USD out"), b.Content);
+
+        Press(b);
+        Assert.Equal(1, saved);
+    }
+
+    /// <summary>
+    /// Raising it saves at once. It charges the AI more per turn, so the ceiling stops it sooner:
+    /// nothing is granted and hesitating costs the owner money in the direction they were avoiding.
+    /// </summary>
+    [Fact]
+    public void Raising_what_the_ai_is_priced_at_saves_in_one_press()
+    {
+        var saved = 0;
+        var b = SafetyPage.BuildSaveAiPrice(() => (In: 1.25m, Out: 10m), () => (In: 10m, Out: 50m),
+            () => "USD", () => saved++);
+
+        Press(b);
+        Assert.Equal(1, saved);
+        Assert.Equal(Labels.SaveAiPrice, b.Content);
+    }
+
+    /// <summary>
+    /// EITHER half going down is the grant, not both. A rate that halves the output price and leaves
+    /// the input price alone buys the AI more turns just as surely, and an owner editing one box is
+    /// the ordinary way this control is used.
+    /// </summary>
+    [Fact]
+    public void Lowering_only_the_output_half_of_the_price_still_asks_twice()
+    {
+        var saved = 0;
+        var b = SafetyPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 25m),
+            () => "USD", () => saved++);
+
+        Press(b);
+        Assert.Equal(0, saved);
+        Press(b);
+        Assert.Equal(1, saved);
+    }
+
+    /// <summary>An unchanged rate is not a grant either.</summary>
+    [Fact]
+    public void Leaving_the_ai_price_alone_saves_in_one_press()
+    {
+        var saved = 0;
+        var b = SafetyPage.BuildSaveAiPrice(() => (In: 10m, Out: 50m), () => (In: 10m, Out: 50m),
+            () => "USD", () => saved++);
+
         Press(b);
         Assert.Equal(1, saved);
     }

@@ -420,8 +420,11 @@ sealed class DashboardPage
 
         var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
         // Where the figure came from, beside the figure. An owner cannot tell an upper bound from a
-        // bill by looking at it, and the difference decides whether they should go and correct it.
-        if (spend.Estimated is { } estimated) line += $" — {estimated}";
+        // bill by looking at it, and the difference decides whether they should go and correct it —
+        // so the third reading is the one where they already have: their own rate, named as theirs,
+        // because a surprising total priced by them is a different thing to go and look at.
+        if (spend.PricedByOwner) line += $" — {Labels.PricedByYou}";
+        else if (spend.Estimated is { } estimated) line += $" — {estimated}";
         if (spend.UnpricedTurns > 0) line += $" — {spend.UnpricedTurns} turns could not be priced, so it is at least that";
         if (spend.CapReached) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
         return line + ".";
@@ -879,6 +882,8 @@ sealed class SafetyPage
     readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
+    readonly NumericUpDown _priceIn, _priceOut;
+    readonly TextBlock _priceNote = Ui.Micro("");
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
@@ -1010,6 +1015,32 @@ sealed class SafetyPage
         return b;
     }
 
+    /// <summary>
+    /// THE PRESS THAT WRITES WHAT THE AI'S WORK IS PRICED AT.
+    ///
+    /// Pulled out of the page for the same reason <see cref="BuildSaveDailyCap"/> is: the rule about
+    /// which direction asks twice is the whole of what this control is, and a rule that can only be
+    /// exercised by running the app is a rule nobody is checking.
+    /// </summary>
+    internal static Button BuildSaveAiPrice(Func<(decimal In, decimal Out)> current,
+        Func<(decimal In, decimal Out)> pending, Func<string> currency, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveAiPrice,
+            // EITHER half going down, not both: a rate that halves only the output price buys the AI
+            // more turns under the same ceiling just as surely as one that halves both, and editing
+            // one box is the ordinary way this is used.
+            () => pending() is var p && (p.In < current().In || p.Out < current().Out)
+                ? Labels.LowerAiPriceArmed(Rate(p, currency()))
+                : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>Both halves of the rate, as one phrase for the armed sentence to name.</summary>
+    static string Rate((decimal In, decimal Out) rate, string currency) =>
+        $"{MissionSituation.Money(rate.In, currency)} in and {MissionSituation.Money(rate.Out, currency)} out";
+
     public SafetyPage(AppHost host)
     {
         _host = host;
@@ -1064,6 +1095,15 @@ sealed class SafetyPage
 
         _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
 
+        // THE BOXES OPEN ON WHAT THE AI IS ACTUALLY BEING CHARGED, not on empty. An owner correcting
+        // a rate has to be able to see the one in force to know whether it needs correcting, and the
+        // rate in force with nothing saved is the dearest model in the running runtime's catalogue —
+        // the same figure the estimate uses, from the same place, so the box and the bill agree.
+        var shipped = _host.ShippedRate;
+        var rate = ShownRate();
+        _priceIn = Ui.NumberField(rate.In, 0m, 0.25m);
+        _priceOut = Ui.NumberField(rate.Out, 0m, 1m);
+
         // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
         // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
         // — has nothing to say about it. Folding it into that button would put a money ceiling
@@ -1078,7 +1118,19 @@ sealed class SafetyPage
             Ui.Spacer(Theme.S2),
             BuildSaveDailyCap(() => _host.Gateway.Settings.AiDailyCostCap, () => PendingCap(),
                 () => _host.SpendToday.Currency, SaveDailyCap),
-            _capNote));
+            _capNote,
+            Ui.Divider(),
+            // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
+            // worth what the rate below says a turn costs. The owner never edits a file to set it —
+            // costs.json is still there for an engineer and is not on any screen.
+            Ui.Muted("TradeAgent works out what each turn cost from the tokens your AI tool reports. "
+                + "If you know what you are actually charged, put it here and it is used instead."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.AiPriceIn, _priceIn),
+            Ui.FieldRow(Labels.AiPriceOut, _priceOut, ShippedRateHint(shipped)),
+            Ui.Spacer(Theme.S2),
+            BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice),
+            _priceNote));
 
         var limits = Ui.Section("Safety limits", Ui.Col(Theme.S2,
             Ui.Muted("The AI cannot change these and has no command to ask. Small numbers are the point. "
@@ -1170,6 +1222,56 @@ sealed class SafetyPage
     /// </summary>
     /// <summary>What the box says, as the number it would be saved as. The button compares this.</summary>
     decimal PendingCap() => _dailyCap.Value ?? _host.Gateway.Settings.AiDailyCostCap;
+
+    /// <summary>
+    /// THE RATE IN FORCE: the owner's own numbers where they have set them, and otherwise the
+    /// shipped list price the estimate is charging. Never zero — a zero rate would draw a control
+    /// saying the AI is free, and would be the one value that makes the cap unreachable.
+    /// </summary>
+    (decimal In, decimal Out) ShownRate()
+    {
+        var s = _host.Gateway.Settings;
+        if (OwnerPrice.From(s) is { } mine) return (mine.InputPerMillion, mine.OutputPerMillion);
+        return _host.ShippedRate is { } shipped
+            ? (shipped.InputPerMillion, shipped.OutputPerMillion)
+            : (0m, 0m);
+    }
+
+    /// <summary>What the two boxes say, as the rate they would be saved as. The button compares this.</summary>
+    (decimal In, decimal Out) PendingRate()
+    {
+        var shown = ShownRate();
+        return (_priceIn.Value ?? shown.In, _priceOut.Value ?? shown.Out);
+    }
+
+    /// <summary>
+    /// The shipped default under the boxes, WITH ITS DATE AND THE PAGE IT CAME FROM. A price with no
+    /// date is a price nobody can check, and the owner is the person who would check it.
+    /// </summary>
+    internal static string ShippedRateHint(ModelPrice? shipped) =>
+        shipped is null
+            ? "TradeAgent ships no list price for this AI tool, so nothing is assumed about what it costs."
+            : $"TradeAgent uses {shipped.InputPerMillion} in and {shipped.OutputPerMillion} out — the "
+              + $"dearest model {shipped.Model} on {shipped.Source}, read on {shipped.PricedAt}. A LOWER "
+              + "price lets the AI take more turns before your daily limit stops it, so it asks again first.";
+
+    /// <summary>
+    /// Writes the rate. Both numbers together or neither: half a price applied to a whole turn would
+    /// under-charge it, which is the one direction that lets the daily limit be walked past.
+    /// </summary>
+    void SaveAiPrice()
+    {
+        var (input, output) = PendingRate();
+        _host.Gateway.Update(s =>
+        {
+            s.AiPriceInputPerMillion = input;
+            s.AiPriceOutputPerMillion = output;
+        });
+
+        var currency = _host.SpendToday.Currency;
+        _host.Gateway.Log.Activity($"The AI's work is now priced at {Rate((input, output), currency)} per million tokens");
+        _priceNote.Text = $"Saved. Each turn is priced at {Rate((input, output), currency)} per million tokens.";
+    }
 
     /// <summary>
     /// Writes the ceiling. The activity line is in the owner's words and names the figure, because

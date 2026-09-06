@@ -70,6 +70,28 @@ public static class Labels
     public const string PricedAtHighestListPrice =
         "estimated at the highest list price — the AI did not say which model it used";
 
+    /// <summary>What the card says once the owner has typed their own rate. Three words, on purpose.</summary>
+    public const string PricedByYou = "priced by you";
+
+    /// <summary>The Safety page's two boxes, and the press that writes them.</summary>
+    public const string AiPriceIn = "What your AI tool charges, per million tokens in";
+
+    public const string AiPriceOut = "…and per million tokens out";
+
+    public const string SaveAiPrice = "Save the price";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveAiPrice"/> will do, and WHY THIS ONE IS BACK TO
+    /// FRONT. Everywhere else on that page the larger number is the grant. Here the LOWER price is:
+    /// it does not let the AI trade more, it makes every turn count for less against the daily
+    /// limit, so the same ceiling buys more turns and more of the owner's money is spent on the AI
+    /// before anything stops it. The sentence has to say that, because the owner's instinct — that
+    /// a smaller number is a smaller permission — is wrong here and nowhere else.
+    /// </summary>
+    public static string LowerAiPriceArmed(string amount) =>
+        $"Confirm: price the AI's work at {amount} — a lower price lets it take more turns before "
+        + "your daily limit stops it";
+
     /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
     public const string SafetyPage = "Safety";
 
