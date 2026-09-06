@@ -228,7 +228,28 @@ rather than only what it said. If the AI is not running yet, this page has a **S
 **Dashboard** — what is true right now: your account, your open orders, anything unconfirmed, and a
 list of green, amber and red dots for every part of the system. Also **Open ATAS** and **Open the AI's
 folder**, **The AI's own work** (the section below), and the **Guidance** box. If the AI is waiting
-for permission to place an order, the request appears here in an amber panel.
+for permission to place an order, the request appears here in an amber panel. At the bottom is
+**Performance**, described below.
+
+### Performance — what the trading has actually made or lost
+
+TradeAgent writes down every execution your platform reports: what filled, when, at what price, and
+which of the AI's requests it belongs to. The **Performance** card on the Dashboard adds those up two
+ways — **today**, and **since the first fill** — and shows four numbers: the **net after costs**, the
+**fees**, the **worst drop** (the biggest fall from the best point the running total reached down to
+its next low, which is what a bad run looks like as a number), and how many **fills** there were.
+
+Two things about it are deliberate, and both are about not flattering the result.
+
+**A dash is an answer.** If your platform did not tell TradeAgent the fee on some fill, the net after
+costs is shown as `—` and a line underneath says why. It is not shown as if that missing cost were
+nothing. The fees it does know are still shown, with a `+` after them, meaning *at least this much*.
+
+**It counts closed trades only.** A position you still hold is not in these numbers, because what it
+is worth changes with every tick and this card is not a live valuation. The line under the numbers
+says so on screen. If you want the whole picture including what is open, ask the AI — the command is
+`trade pnl`, and it answers with the open positions valued at the last price, and with the same list
+of anything it could not work out.
 
 **Inbox** — where you hand the AI files to work with, and where you can see what it did with them.
 Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded

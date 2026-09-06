@@ -104,6 +104,7 @@ sealed class DashboardPage
     readonly Border _approvalsCard;
     readonly Button _agentButton;
 
+    readonly PerformanceCard _performance = new();
     readonly StackPanel _unconfirmed = new() { Spacing = Theme.S5 };
     readonly Border _unconfirmedCard;
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
@@ -239,7 +240,8 @@ sealed class DashboardPage
             _unconfirmedCard,
             _approvalsCard,
             Ui.Section("Right now", Ui.Col(0, facts, actions)),
-            Ui.Section("The AI's own work", aiCard));
+            Ui.Section("The AI's own work", aiCard),
+            _performance.Root);
 
         var right = Ui.Section("System health", _healthRows);
         right.Margin = new Thickness(Theme.S5, 0, 0, 0);
@@ -277,6 +279,7 @@ sealed class DashboardPage
         // pausing trading. Reading the raw flag here left the card empty while the banner said
         // paused, which reads as the software being broken rather than careful.
         RefreshUnconfirmed(_host.Gateway.Unreconciled());
+        _performance.Update(_host.Gateway.LedgerPnl(TradingGateway.StartOfDay(DateTimeOffset.UtcNow), "today"), _host.Gateway.LedgerPnl(null, "all"));
 
         var health = _host.Health.Snapshot();
         var hs = string.Join('|', health.Select(h => $"{h.Component}:{h.State}:{h.Detail}"));
