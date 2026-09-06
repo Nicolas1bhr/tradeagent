@@ -30,11 +30,11 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    writes; "Let the AI work on its own" is two presses, "Pause" one; its instructions are a mission), `U-ledger`
    `640bce5` (a `fill` table at schema 5, `trade pnl --json` that withholds a net it cannot compute, a Performance
    card), `U-meter` `902e3da` (the AI's cost per turn from the CLI's own usage event, a daily cap that pauses the loop
-   — INERT until `U-prices` lands, because no prices ship), and three test-only fixers: `U-typed-catalog` `4d48395` (a
+   — and `U-prices` `4e0d877`, which makes the cap bite: list prices as dated data, an unknown
+   model priced high, the owner's override on the Safety page), and three test-only fixers: `U-typed-catalog` `4d48395` (a
    unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
    `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
-   measured on the runners, no assertion loosened). **`U-prices` is in flight** on branch `u-prices` (worktree
-   `~/Projects/ai-trading-software-for-mihael-worktrees/prices`), its brief in `docs/briefs/`; read the branch first.
+   measured on the runners, no assertion loosened). **`docs/briefs/` is EMPTY** — nothing is in flight; every worktree is removed.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
    migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **Nothing landed
@@ -57,8 +57,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    direction, its corrections taken):** (a) `U-ledger` (the fill table, `trade pnl`, a Performance card) and `U-life`
    (the mission loop, the mission, Guidance, two-press "work on its own") — BOTH LANDED (`U-life` `0ec96c6`, `U-ledger` `640bce5`); `U-typed-catalog` LANDED `4d48395` (the runtime-file harness race);
    `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` LANDED `a167884` (the
-   stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` in flight; (b) `U-meter` LANDED `902e3da` — it ships NO prices, so the cap is inert until `U-prices` (list prices as dated
-   data plus a Settings field; the owner never edits JSON) lands, the next small unit; (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
+   stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` LANDED `4e0d877`; (b) `U-meter` LANDED `902e3da`, and with `U-prices` the daily cap bites out of the box (list
+   prices as dated data, an unknown model priced high, the owner's override on the Safety page); (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
    ledger; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits

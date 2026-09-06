@@ -4441,3 +4441,41 @@ vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI run 3
 **Carried forward, for the product rather than the test:** a Windows disk can hold one `synchronous=FULL` commit for
 two seconds inside an emergency press's record-keeping. The press's platform calls were cut at the deadline every time,
 so the money-path guard held; the record after it is what stretched. **NOT done:** no product code; no box, no UI.
+
+## 2026-09-06 — U-prices landed: the cost cap bites out of the box — list prices as dated data, an unknown priced high, the owner's override
+
+The follow-up `U-meter` queued (it shipped no prices, so the cap was inert), by two fresh builders on
+`docs/briefs/U-prices.md` — the first killed by a usage limit after items 1–2 with item 3 uncommitted in eight files, the
+second re-briefed from the branch, which kept all eight, re-read every price at its source and closed one hole of its
+own. Merge `4e0d877`, 7 commits, 16 files, +1496/−72 (`TurnMeter.cs`, a `ListPrices` catalogue, `RuntimeManifest.cs`,
+`AppHost.cs`, `DashboardView.cs`, the Safety page, `Trading.cs`, `Errors.cs`, `USER-GUIDE.md`, `RESEARCH-REQUIRED.md` § D, tests).
+
+- **Built-in prices as dated data:** per runtime and model — input, cached input, cache write, output per million —
+  read from OpenAI's pricing page on 2026-09-06 (standard tier, short context) and the Codex model ids from its docs
+  the same day, with `ReadOn` and the source URL in the data; the owner's `costs.json` still wins where it speaks.
+  The second builder re-read all eighteen rows and found the first had dropped the cache-write column the page
+  publishes for four models — dearer than input, so 10.00 was charged where the page says 12.50. RED `Expected: 12.50
+  / Actual: null` (7/8) → GREEN 8/8; mutant (the column dropped again) → the same RED. `gpt-5.3-codex-spark` has no row.
+- **An unknown is priced high, never zero:** a turn whose model the stream did not name is charged at the highest list
+  price in its runtime's catalogue and labelled an estimate on the card, in the Situation and on `trade status`.
+- **The owner's override on the Safety page:** the price per million in and out as two boxes with the built-in and its
+  date as the default; a HIGHER price saves at once, a LOWER one asks twice (it widens what the cap allows). RED (the
+  rule replaced by a one-press save) `Expected: 0 / Actual: 1`, 2 failed / 21 passed → GREEN 27/27; mutant (`||`→`&&`)
+  → RED. **A hole the second builder closed on its own judgement** (`cc4f1d3`, revertable alone): the boxes opened on
+  the rate in force, 0 where nothing was shipped, so ONE press on an untouched pair priced every turn at nothing and
+  retired the cap while it still read as in force — `OwnerPrice.From` now refuses a zero as it refused a half pair.
+  RED `Actual: OwnerPrice { InputPerMillion = 0, … }` → GREEN 43/43; mutant (input half only) → RED.
+- **The guide and the research table** name both pages, the date, the estimate, the backwards press and the refused
+  zero; two tests pin the guide to `ListPrices`' constants (RED `Sub-string not found` ×2 → GREEN 31/31; mutant
+  (`ReadOn` moved, guide untouched) → both RED); § D records the long-context and Codex-fast tiers as not taken.
+
+**Verified by running (the builders, quoted; then the manager's gate):** the second builder's gate at `de87316`,
+Release: 0 warnings, 0 errors, 17 projects; touched classes 3× → 68/68 each; 424 + 261 + 615 = 1300 passed, 0 failed,
+1 skipped, no other test host; names vs `main` → 0 removed, 32 added. Manager's gate at `7609a44` (rebased over the
+two test-only landings), Release: build → 0 warnings, 0 errors; suite → 424 + 261 + 615 = 1300 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 32 added (sets 1034 → 1066); scan →
+two hits, both the words "your OpenAI API key" naming the sign-in label; `rev-list --count` → 0; CI at `4e0d877`: pending when written, recorded in the next commit.
+
+**NOT VERIFIED:** the two boxes and the card on a running app — nobody has seen them; the prices are the vendor's page
+as read on one day and will drift — the date is in the data and in the guide for that reason. **NOT done:** no box,
+no ATAS, no money; the model the AI actually runs on is still whatever the owner's Codex configuration says, so the
+estimate label is expected on most turns until the app names the model itself (a later unit, if the owner wants it).
