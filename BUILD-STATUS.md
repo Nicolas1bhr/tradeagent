@@ -4374,3 +4374,34 @@ names vs `main` → 0 removed, 2 added; scan clean; `rev-list --count` → 0; CI
 
 **NOT VERIFIED:** the guard against the merged tree on the hosted runners themselves, until `main`'s own run at the merge
 sha completes. **NOT done:** no product code; no box, no UI.
+
+## 2026-09-06 — U-coid-vanished-win landed: the vanished-temp witness test times the product's retry, not the runner's disk
+
+`CoidWitnessTests.A_vanished_temp_is_not_waited_for`, red on windows-latest twice (PR #10's runs, then run 34035317665
+at the docs-only `e238932`: `burned 137 ms of the retry budget on a file that is not coming back`), by one fresh fixer on
+`docs/briefs/U-coid-vanished-win.md`. Merge `697e24f`, 3 commits, test-only: `CoidWitnessTests.cs` +38/−5, the brief.
+Draft PR #11, closed after the landing.
+
+- **The 137 ms were the runner's disk, not the retry loop.** A timing harness on PR #11, 3 runs × 3 runners (34041706666,
+  34041712859, 34041721936): in all 27 samples the rename was attempted ONCE and the retry loop spanned 0.0 ms, while
+  the call around it cost 10.7–50.3 ms on windows (8.1–29.2 of that before the rename) against 0.6–19.8 ubuntu and
+  1.7–4.5 macos, and one flush-to-device 7.2–47.1 ms on windows vs 0.4–1.1 ubuntu. The harness itself went red on
+  UBUNTU once (194 ms, run 34041721936) with the same message at the same line — it was never one platform's.
+- **Fixture fixed, no assertion loosened:** the stopwatch is read only inside the injected rename, so its span is the
+  product's own sleeps and holds no file IO; the 100 ms ceiling and the message are unchanged; `Assert.Single` on the
+  attempts is added, the count the sibling five-attempt test already asserts. What it no longer bounds is the disk
+  around the call, which is not the product. NOT moved to `Timing`: the verdict needs no runner clock. Mutant (the
+  exclusion by name dropped from `Transient`) → `burned 204 ms of the retry budget on a file that is not coming back`.
+- **Seen on the way, recorded here, a recurrence:** run 34043185411 (the second run at the same sha), windows-latest,
+  the `Timing` step red in BOTH attempts on `OperatorPressIsAnEmergencyTests` (`close-all returned 2813 ms after the
+  deadline the press itself opened`, then cancel-all); this test passed on all three runners in both runs. That class
+  is already on this record three times: briefed as `U-press-win-3`, below.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `3791460`, Release: 0 warnings, 0
+errors; the class 3× → 149/149 each; 348 + 261 + 615 = 1224 passed, 0 failed, 1 skipped, 0 other test hosts;
+`--list-tests` vs `main` 1225 = 1225; scan clean. PR #11 run 34042541589 at `3791460` GREEN on all three runners and
+`package`, no Timing retry; run 34044573112 at `5b242ac` GREEN on all three and `package` — nine runner-passes for this
+test. Manager's gate at `b6b044b` (rebased over the meter and typed landings, neither touching this file), Release:
+build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI at `697e24f`: pending when written, recorded in the next commit.
+
+**NOT done:** no product code; no box, no UI. Nothing in the fixer's report is NOT VERIFIED.
