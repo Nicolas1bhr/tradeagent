@@ -132,6 +132,8 @@ public sealed class AppHost : IAsyncDisposable
 
             Gateway = new TradingGateway(_db, Connector, Health);
             Gateway.StateChanged += OnGatewayStateChanged;
+            Health.Changed += _ => Changed?.Invoke();
+            Updates.Changed += () => Changed?.Invoke();
 
             // Where "this was installed without a checksum, because <reason>" goes. The provisioning
             // layer sits below the database on purpose — it has to run during setup, before there is
@@ -141,8 +143,6 @@ public sealed class AppHost : IAsyncDisposable
             // because onboarding is where the unchecked install happens and a backend that will not
             // connect must not be what decides whether the owner is told about it.
             Downloader.RecordDecision = text => Gateway.Log.Activity(text, "warn");
-            Health.Changed += _ => Changed?.Invoke();
-            Updates.Changed += () => Changed?.Invoke();
 
             // Both halves of the updater/gateway contract, in one call that a test can run: the
             // updater refuses to replace the program while an order is unconfirmed, and the gateway
@@ -164,6 +164,7 @@ public sealed class AppHost : IAsyncDisposable
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
             ReportAtasHealth();
+
             _loop = new CancellationTokenSource();
             _ = Task.Run(() => BackgroundAsync(_loop.Token));
 

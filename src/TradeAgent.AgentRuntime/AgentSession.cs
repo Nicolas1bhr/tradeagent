@@ -245,7 +245,10 @@ public sealed class AgentSession(
         // The conversation turn: the one process that runs what the agent decided to do. Held open
         // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
         // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
-        using var alive = AgentPresence.Shared.Enter();
+        // Every path out of here has the child already dead — the method awaits its exit, and
+        // CancelAsync kills the tree before it cancels the token — so the window never closes on a
+        // process that is still writing.
+        using var alive = CliAgentRuntime.Presence(process);
 
         // End-of-file on stdin, at once. See the comment on RedirectStandardInput above.
         try { process.StandardInput.Close(); } catch (Exception) { /* already gone */ }

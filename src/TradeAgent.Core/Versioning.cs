@@ -38,6 +38,11 @@ public static class Versions
     /// 1 -&gt; 2: the material ledger. Everything the account owner hands the agent, and everything
     /// the agent produces, is recorded with a hash and a timestamp. Purely additive — two new
     /// tables, nothing existing altered — so an older database opens and is migrated in place.
+    ///
+    /// 3 -&gt; 4: <c>material.version</c>, so a sighting at a tuple the ledger has already watched
+    /// disappear becomes a new row instead of un-removing the old one and inheriting its hash
+    /// (REVIEW 2026-09-05b finding 6). Additive too — one column with a default, and the
+    /// observation index widened to carry it — and every existing row reads as version 0.
     /// </summary>
     public const int DatabaseSchemaVersion = 4;
 

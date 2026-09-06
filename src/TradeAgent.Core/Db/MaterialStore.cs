@@ -151,12 +151,11 @@ public sealed class MaterialStore(Database db)
     /// distinct hash. Several ROWS may share one hash — the same bytes at two paths, or a version
     /// that came back identical — and that is not ambiguous: they are the same file, and the newest
     /// row is the answer.
-    ///
+    /// </summary>
     /// <exception cref="TradeAgentException">
     /// INVALID_REQUEST when the prefix is not hex, is too short, or names more than one file.
     /// Refusing is the point: answering with an arbitrary one of them is the defect.
     /// </exception>
-    /// </summary>
     public Material? ByShaPrefix(string prefix)
     {
         var p = (prefix ?? "").Trim().ToLowerInvariant();

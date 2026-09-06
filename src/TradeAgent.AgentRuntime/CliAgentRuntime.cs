@@ -128,29 +128,6 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// A .cmd or .bat is a script, not an image: CreateProcess refuses it. Route those through the
     /// command interpreter so an npm shim behaves like any other executable.
     /// </summary>
-    /// <summary>
-    /// Marks an agent process alive in <see cref="AgentPresence"/> for as long as it runs, so the
-    /// material scanner can tell an inbox file the OWNER dropped from one that appeared while the
-    /// agent was executing (REVIEW 2026-09-05b finding 5).
-    ///
-    /// The returned handle also closes the window when it is disposed, which is how the short runs
-    /// end it; the <c>Exited</c> hook is for the two long-lived processes nobody awaits. Closing it
-    /// twice is harmless and closing it late only widens the window, never narrows it — the failure
-    /// this must not have is a window that closes early.
-    /// </summary>
-    static IDisposable Presence(Process process)
-    {
-        var window = AgentPresence.Shared.Enter();
-        try
-        {
-            process.EnableRaisingEvents = true;
-            process.Exited += (_, _) => window.Dispose();
-            if (process.HasExited) window.Dispose();
-        }
-        catch (InvalidOperationException) { window.Dispose(); }   // already gone, and already reaped
-        return window;
-    }
-
     internal static void SetCommand(ProcessStartInfo psi, string exe, IEnumerable<string> args)
     {
         var isScript = OperatingSystem.IsWindows() &&
@@ -165,6 +142,29 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
         else psi.FileName = exe;
 
         foreach (var a in args) if (!string.IsNullOrEmpty(a)) psi.ArgumentList.Add(a);
+    }
+
+    /// <summary>
+    /// Marks an agent process alive in <see cref="AgentPresence"/> for as long as it runs, so the
+    /// material scanner can tell an inbox file the OWNER dropped from one that appeared while the
+    /// agent was executing (REVIEW 2026-09-05b finding 5).
+    ///
+    /// The returned handle also closes the window when it is disposed, which is how the short runs
+    /// end it; the <c>Exited</c> hook is for the two long-lived processes nobody awaits. Closing it
+    /// twice is harmless and closing it late only widens the window, never narrows it — the failure
+    /// this must not have is a window that closes early.
+    /// </summary>
+    internal static IDisposable Presence(Process process)
+    {
+        var window = AgentPresence.Shared.Enter();
+        try
+        {
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => window.Dispose();
+            if (process.HasExited) window.Dispose();
+        }
+        catch (InvalidOperationException) { window.Dispose(); }   // already gone, and already reaped
+        return window;
     }
 
     public async Task<RuntimeDetection> DetectAsync(CancellationToken ct = default)
