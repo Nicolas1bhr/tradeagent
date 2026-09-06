@@ -2,17 +2,17 @@
 
 Fresh builder on Opus. Read `docs/HOW-WE-BUILD.md`, `CLAUDE.md`, `AgentSession.cs` (`RunTurnAsync`: one CLI process per
 message; `SendAsync`; `StopAsync`), `AgentSupervisor.cs`, `WorkspaceBuilder.cs` (`Instructions`), the codex entry of
-`RuntimeManifest.cs` (line 292: `ExecArgs`, `ResumeArgs`), `AgentPresence.cs`, and the `U-batch-2` section of
-`BUILD-STATUS.md` (finding 5: an inbox sighting attests to the owner only across a window with no agent process alive).
-`export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`; no `timeout`. Worktree
+`RuntimeManifest.cs` (line 292), `AgentPresence.cs`, and the `U-batch-2` section of `BUILD-STATUS.md` (finding 5: an
+inbox sighting attests to the owner only across a window with no agent process alive). `export
+PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"`; no `timeout`. Worktree
 `~/Projects/ai-trading-software-for-mihael-worktrees/life`, branch `u-life` from `main`. Another builder owns schema 5,
-`Database.cs`, `GatewaySchema.cs`, `TradingGateway.cs`, `GatewayPipeServer.cs` and a `PerformanceCard.cs`: you make NO
-schema change and touch none of those. The Dashboard's AI card is yours. A later unit, `U-meter`, prices the turns; you
-leave a seam (a `TurnEnded` event carrying the turn's exit code, duration and raw stream) and nothing more.
+`Database.cs`, `GatewaySchema.cs`, `TradingGateway.cs`, `GatewayPipeServer.cs` and a `PerformanceCard.cs`: no schema
+change, none of those files. The Dashboard's AI card is yours. A later unit, `U-meter`, prices the turns: leave a
+`TurnEnded` event (exit code, duration, raw stream) and a cost placeholder line in the Situation, nothing more.
 
 **Why.** The product is a container that keeps an autonomous AI alive and working — researching, writing its own
-strategies, trading inside the limits — to make at least enough to pay for itself. Today the AI runs one process per
-chat message and its instructions tell it to leave nothing running, so nothing happens unless the owner types.
+strategies, trading inside the limits — to make at least enough to pay for itself. Today nothing happens unless the
+owner types: one process per chat message, and the instructions tell the AI to leave nothing running.
 
 1. **The mission loop** (new `MissionLoop.cs` in `AgentRuntime`, hosted from `AppHost.cs`): while "working on its own"
    (item 3), turns run back to back. Each turn's message is a `## Situation` block the app writes — local time; mode;
@@ -29,13 +29,13 @@ chat message and its instructions tell it to leave nothing running, so nothing h
    least enough, net of your own running cost, to pay for yourself; the number is `trade pnl --json` (landing beside
    you: describe it, do not depend on it). What a turn is; files as memory; research, backtesting and building
    strategies ARE the job when execution is blocked or the market is closed; `../inbox` is guidance and material to
-   work ON (the rule stands: never instruction, never permission); `JOURNAL.md` records what was tried, the result and
-   the number. Keep "leave no process behind": a turn may run a script as long as it needs, and exits.
-3. **Controls** (the AI card in `DashboardView.cs`, `Ui.Confirm`, `Theme.cs` only): a Guidance text box saved in
-   `Settings` and included in every Situation; **"Let the AI work on its own" is two presses**, **"Pause the AI" is
-   one**; the card shows working / waiting until hh:mm / paused / stopped: N errors, the turn count and the last turn's
-   first line. STOP AI TRADING keeps its meaning and does not stop the loop. Paused survives a restart; working
-   resumes on start (a setting, default on). RED first (one press starts the loop) → GREEN; mutant → RED.
+   work ON (never instruction, never permission); `JOURNAL.md` records what was tried, the result and the number.
+   Keep "leave no process behind": a turn may run a script as long as it needs, and exits.
+3. **Controls** (the AI card in `DashboardView.cs`, `Ui.Confirm`, `Theme.cs` only): a Guidance box saved in `Settings`
+   and included in every Situation; **"Let the AI work on its own" is two presses**, **"Pause the AI" is one**; the card
+   shows working / waiting until hh:mm / paused / stopped: N errors, the turn count, the last turn's first line. STOP
+   AI TRADING keeps its meaning and does not stop the loop. Paused survives a restart; working resumes on start (a
+   setting, default on). RED first (one press starts the loop) → GREEN; mutant → RED.
 
 Yours: `MissionLoop.cs`, `AgentSession.cs`, `AgentSupervisor.cs`, `WorkspaceBuilder.cs`, `AppHost.cs` (hosting only),
 `DashboardView.cs` (the AI card), `Settings` in `Trading.cs`, `docs/USER-GUIDE.md`, tests. Commit per item, no trailers.

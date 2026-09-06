@@ -9,8 +9,8 @@ you touch none of them. You own schema 5; nobody else changes the schema.
 
 **Why.** The product's purpose is an AI that works non-stop to make at least enough to pay for itself. Nothing measures
 that: `TradingGateway.OnExecutionReceived` (`TradingGateway.cs:332`) writes one activity line per fill and no table
-holds a fill, a profit or a drawdown. This unit is the ruler; a loss budget, the AI's running cost and, later, several
-agents judged against each other all read it. Right before pretty.
+holds a fill, a profit or a drawdown. This unit is the ruler that a loss budget, the AI's running cost and, later,
+several agents judged against each other will all read. Right before pretty.
 
 1. **A `fill` table, schema 5** (`Database.cs`, `Versions.DatabaseSchemaVersion` 4 → 5, `GatewaySchema.cs`, new
    `Db/FillStore.cs`): one row per execution, written by the gateway only, never updated or deleted. Sources: the
@@ -37,5 +37,5 @@ trailers. Gate: Release `--no-incremental` → 0 warnings; each touched class 3�
 at a time, nothing else running (a `Timing` test failing beside another suite → that class alone 3×); names vs `main`
 0 removed. No box, no ATAS, no UI run: say so.
 
-## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant with the outputs quoted; gate
-counts; what you did NOT do. Verified or NOT VERIFIED, nothing in between.
+## Report — append here, commit it, ≤20 lines: tip sha; per item RED→GREEN→mutant quoted; gate counts; what you did
+NOT do. Verified or NOT VERIFIED, nothing in between.
