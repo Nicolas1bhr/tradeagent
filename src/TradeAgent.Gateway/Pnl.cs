@@ -188,16 +188,23 @@ public static class Pnl
         var (drawdown, _) = Drawdown(counted, includeUnrealized ? unrealized : null);
 
         // ---- per symbol and per day ------------------------------------------------------------
-        var bySymbol = counted
-            .GroupBy(c => c.Fill.Symbol, StringComparer.Ordinal)
-            .OrderBy(g => g.Key, StringComparer.Ordinal)
-            .Select(g =>
+        // THE ROWS COVER EVERY SYMBOL THE TOTALS DO, which includes one whose only presence in this
+        // period is a position still open: it contributes to `unrealized` and has no fill in the
+        // window, so grouping the fills alone gave a breakdown that did not add up to its own total.
+        var symbols = counted.Select(c => c.Fill.Symbol)
+            .Concat(openBySymbol.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(s => s, StringComparer.Ordinal);
+
+        var bySymbol = symbols
+            .Select(symbol =>
             {
+                var g = counted.Where(c => string.Equals(c.Fill.Symbol, symbol, StringComparison.Ordinal)).ToList();
                 var known = g.Where(c => c.Fill.Fee is not null).Select(c => c.Fill.Fee!.Value).ToList();
-                var open = openBySymbol.GetValueOrDefault(g.Key);
-                var m = multipliers[g.Key];
+                var open = openBySymbol.GetValueOrDefault(symbol);
+                var m = multipliers[symbol];
                 return new PnlSymbol(
-                    Symbol: g.Key,
+                    Symbol: symbol,
                     Realized: g.Sum(c => c.Realized),
                     Fees: known.Count > 0 ? known.Sum() : null,
                     FeesUnknownFills: g.Count(c => c.Fill.Fee is null),
@@ -207,7 +214,7 @@ public static class Pnl
                     LastPriceAt: open.At,
                     Multiplier: m.Value,
                     MultiplierKnown: m.Known,
-                    Fills: g.Count());
+                    Fills: g.Count);
             })
             .ToList();
 

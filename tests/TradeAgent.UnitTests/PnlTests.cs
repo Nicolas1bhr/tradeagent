@@ -206,6 +206,28 @@ public class PnlTests
     }
 
     /// <summary>
+    /// The per-symbol rows add up to the totals, which means a symbol whose only presence in the
+    /// period is a position still open gets a row too. Grouping the window's fills alone left its
+    /// unrealized in the total with nothing to attribute it to.
+    /// </summary>
+    [Fact]
+    public void A_symbol_with_an_open_position_and_no_fill_in_the_window_still_has_a_row()
+    {
+        var fills = new[] { F("ES", OrderSide.Buy, 1, 100m, fee: 0m, minute: 0) with { At = Day.AddDays(-1) } };
+        var r = Pnl.Compute(In(fills,
+            since: TradingGateway.StartOfDay(Day),
+            positions: [new PositionInfo("P-ES", "SIM-001", "ES", 1m, 100m, null)],
+            quotes: new Dictionary<string, QuoteInfo> { ["ES"] = new("ES", 104.75m, 105.25m, 105m, 1, 1, Day) }));
+
+        Assert.Equal(0, r.Fills);                       // nothing filled inside the window
+        Assert.Equal(250m, r.Unrealized);
+        var es = Assert.Single(r.BySymbol);
+        Assert.Equal("ES", es.Symbol);
+        Assert.Equal(250m, es.Unrealized);
+        Assert.Equal(r.Unrealized, r.BySymbol.Sum(s => s.Unrealized));
+    }
+
+    /// <summary>
     /// An empty <c>incomplete</c> is a claim that nothing was missing, so it is only made when
     /// nothing was: every fee reported, every contract sized, every open position priced.
     /// </summary>
