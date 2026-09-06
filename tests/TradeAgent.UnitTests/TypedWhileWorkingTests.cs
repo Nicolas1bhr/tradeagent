@@ -20,9 +20,17 @@ public class TypedWhileWorkingTests
     /// A conversation with no runtime behind it. <c>SendAsync</c>'s queue branch is decided before
     /// anything is executed, so nothing here needs a process — which is the point: the branch is
     /// about the owner's message, not about what the AI is doing with it.
+    ///
+    /// OFF THE DISK, deliberately. This used to be <c>RuntimeCatalog.Require("codex")</c>, which
+    /// reads <c>runtimes.json</c> under the assembly's single test home — the same one file
+    /// <see cref="VendorOverrideFileTests"/> corrupts on purpose. Nothing about the owner's typed
+    /// message depends on where the manifest came from, so this class reads the built-in list, which
+    /// is a literal in <c>RuntimeManifest.cs</c> and touches no file: it cannot lose that race, and
+    /// it does not have to serialise itself behind every class that writes the file in order to
+    /// avoid it. <see cref="TypedWhileWorkingSurvivesACorruptRuntimesFileTests"/> holds it to that.
     /// </summary>
-    static AgentSession Session() => new(
-        RuntimeCatalog.Require("codex"),
+    internal static AgentSession Session() => new(
+        RuntimeCatalog.BuiltIn().Single(m => m.Id == "codex"),
         resolveExecutable: () => null,
         workspace: () => TestEnv.Home,
         environment: () => new Dictionary<string, string>());
@@ -101,5 +109,46 @@ public class TypedWhileWorkingTests
 
         Assert.DoesNotContain("if (_bound is null || _bound.Busy) return;", text);
         Assert.Contains("if (_bound is null) return;\n        _ = SubmitAsync();", text.Replace("\r\n", "\n"));
+    }
+}
+
+/// <summary>
+/// THE REPRODUCTION. This class is what <see cref="TypedWhileWorkingTests"/> went red on for real,
+/// performed on purpose instead of by ordering: the corruption test's write, then the session.
+///
+/// CI run 34040176577 (ubuntu-latest) failed all three of that class's session tests in about a
+/// millisecond each with `runtimes.json could not be read, so TradeAgent will not start an AI
+/// assistant …`, thrown out of <c>RuntimeCatalog.Require</c>. Nothing was wrong with the product or
+/// with the class: <see cref="VendorOverrideFileTests"/> deliberately corrupts the one
+/// <c>runtimes.json</c> under the assembly's single test home, and a class that reads that file
+/// while not sharing its collection is running a coin toss against xUnit's class-parallel schedule
+/// — a toss this Mac and the Windows runner happened to win.
+///
+/// So the fix is that the conversation under test never reads the file, and this is the test that
+/// says so in the only way that cannot rot: the file is corrupt on disk while the session is built
+/// and used. It carries the collection attribute the class it guards no longer needs, because IT
+/// writes the file and must not become the next unexplained failure somewhere else.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class TypedWhileWorkingSurvivesACorruptRuntimesFileTests
+{
+    [Fact]
+    public void The_queue_works_while_runtimes_json_on_disk_is_corrupt()
+    {
+        try
+        {
+            File.WriteAllText(RuntimeCatalog.OverridePath, "{ \"id\": \"codex\", ");
+            // The catalogue really is unreadable — otherwise this test proves nothing at all.
+            Assert.NotNull(RuntimeCatalog.Read().Unreadable);
+
+            var session = TypedWhileWorkingTests.Session();
+
+            session.Queue("stop buying NQ");
+            Assert.Equal(["stop buying NQ"], session.TakeTyped());
+        }
+        finally
+        {
+            if (File.Exists(RuntimeCatalog.OverridePath)) File.Delete(RuntimeCatalog.OverridePath);
+        }
     }
 }
