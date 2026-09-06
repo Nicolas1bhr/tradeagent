@@ -45,7 +45,7 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    an older build refusing a newer home as "damaged"; 0.1.1 writing no activity row for the update press;
    `TreatWarningsAsErrors` on the bridge only.
 4. **CI on `main`:** the merge shas `0ec96c6` and `640bce5` are recorded RED (the harness race `U-typed-catalog`
-   closed); every later merge — `902e3da`, `4d48395`, `697e24f`, and `a167884` (pending when this was written) — green
+   closed); every later merge — `902e3da`, `4d48395`, `697e24f`, and `a167884` (run 34055106702) — green
    on all three platforms and `package`. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is

@@ -4436,7 +4436,7 @@ Draft PR #13, closed after the landing.
 `origin/main` 1014 = 1014. CI four runs green on all three runners, 1268 passed each, zero Timing retries executed:
 34052601589 and 34052615610 at `7fa64f1`, 34053292187 and 34053305400 at `8867f86`, `package` SUCCESS in all four.
 Manager's gate at `a167884` (rebased over the witness landing, a different test file), Release: build → 0 warnings, 0 errors; suite → 392 + 261 + 615 = 1268 passed, 0 failed, 1 skipped, no other test host; names
-vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI at `a167884`: pending when written, recorded in the next commit.
+vs `main` → 0 removed, 0 added; scan clean; `rev-list --count` → 0; CI run 34055106702 at `a167884`: all three platforms and `package` SUCCESS.
 
 **Carried forward, for the product rather than the test:** a Windows disk can hold one `synchronous=FULL` commit for
 two seconds inside an emergency press's record-keeping. The press's platform calls were cut at the deadline every time,
