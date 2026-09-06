@@ -84,7 +84,7 @@ public class MissionLoopTests
         /// <summary>What the loop calls to forget the CLI session, so a fresh one starts next turn.</summary>
         public Task StopAsync() { Sessions++; return Task.CompletedTask; }
         public Task CancelAsync() => Task.CompletedTask;
-        public void Type(string message) => _typed.Add(message);
+        public void Queue(string message) => _typed.Add(message);
     }
 
     /// <summary>
@@ -359,7 +359,7 @@ public class MissionLoopTests
         };
         var loop = new MissionLoop(host);
 
-        conversation.Type("stop buying NQ");
+        conversation.Queue("stop buying NQ");
         await loop.TurnAsync();
 
         var sent = conversation.Sent.Single();

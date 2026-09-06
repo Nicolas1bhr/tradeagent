@@ -188,6 +188,10 @@ sealed class ChatView
         _busyIndicator.IsVisible = busy;
         _send.Content = busy ? "Stop" : "Send";
         MainWindow.SetVariant(_send, busy ? "danger" : "primary");
+        // The button is the Stop control while the AI works, so the box says where Enter goes.
+        _input.PlaceholderText = busy
+            ? "Type and press Enter — the AI reads it at the start of its next turn"
+            : "Ask about your account, or tell the AI what you want done";
     }
 
     // ---- conversation events (raised off a background process reader) ------------------------
@@ -246,8 +250,13 @@ sealed class ChatView
 
         // Enter never means "stop". Interrupting the AI has to be a deliberate press of a button
         // that says Stop, not a stray keystroke from someone typing their next question early.
+        //
+        // It DOES still mean send while the AI is working, and it has to now: the mission loop takes
+        // turns back to back, so the AI is busy almost all the time and a composer that discarded
+        // Enter would leave the owner with no way to say anything at all. The message is shown as
+        // theirs and carried to the top of the AI's next turn (AgentSession.SendAsync).
         e.Handled = true;
-        if (_bound is null || _bound.Busy) return;
+        if (_bound is null) return;
         _ = SubmitAsync();
     }
 

@@ -51,6 +51,13 @@ public interface IAgentConversation
     Task SendMissionAsync(string message, CancellationToken ct = default);
 
     /// <summary>
+    /// Carries one message to the top of the AI's NEXT turn instead of running a turn for it now,
+    /// and shows it in the conversation as the owner's. This is what <see cref="SendAsync"/> does
+    /// with anything typed while a turn is already in flight.
+    /// </summary>
+    void Queue(string message);
+
+    /// <summary>
     /// Takes, and clears, what the owner typed while a turn was already running. The mission loop
     /// puts these at the top of the next turn's Situation; nothing else reads them, and a message
     /// taken here has already been shown in the conversation as theirs.
@@ -193,17 +200,23 @@ public sealed class AgentSession(
     public async Task SendAsync(string message, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
-        if (_busy)
-        {
-            lock (_historyLock) _typedMeanwhile.Add(message.Trim());
-            Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-            Append(new ChatTurn(ChatRole.System,
-                "The AI is working. It will see this at the start of its next turn.", DateTimeOffset.UtcNow));
-            return;
-        }
+        if (_busy) { Queue(message); return; }
 
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
         await RunAsync(message, ct);
+    }
+
+    /// <inheritdoc />
+    public void Queue(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+        lock (_historyLock) _typedMeanwhile.Add(message.Trim());
+
+        // Shown, and said where it went. A message that disappeared into a queue with no
+        // acknowledgement reads exactly like a message that was dropped.
+        Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
+        Append(new ChatTurn(ChatRole.System,
+            "The AI is working. It will see this at the start of its next turn.", DateTimeOffset.UtcNow));
     }
 
     /// <inheritdoc />
