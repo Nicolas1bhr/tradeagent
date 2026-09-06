@@ -35,16 +35,20 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `main` and published from the Mac. Three usage-limit kills in all (2026-09-05 23:40, 2026-09-06 03:50 and ~09:10)
    took seven running legs; every one was re-briefed fresh from its file with "read your branch first" and lost nothing
    committed — this desktop session has no `SendMessage`, so a killed leg cannot be resumed in place.
-   **`docs/briefs/` holds ONE file, `U-cut-0.1.2-b.md`, in flight on the box:** the installed 0.1.1 app watched
-   updating itself to 0.1.2, the fifth hash read off the copy it downloaded. The box was left with TradeAgent STOPPED by
-   the killed cut leg; the part-B leg starts the INSTALLED 0.1.1 first. When it reports: its lines into the cut's
-   section, the brief deleted, the session closed.
+   **`docs/briefs/` holds ONE file, `U-cut-0.1.2-c.md`, in flight on the box:** the installed 0.1.1 app watched
+   updating itself to 0.1.2 from a FRESH home (`TRADEAGENT_HOME`), the fifth hash read off the copy it downloaded. The
+   first attempt (`U-cut-0.1.2-b`) found the installed 0.1.1 cannot start on the real home at all — schema 3 from this
+   week's repo builds against its schema 1 — and dies on "records are damaged" with no update strip: a finding for the
+   next review, in the cut's section. The box's real home is at schema 3; 0.1.2 carries schema 4 — starting 0.1.2
+   against it migrates it, which is the owner's moment. When the leg reports: its lines into the cut's section, the
+   brief deleted, the session closed.
    **Open, not briefed** (the third review starts here): an UNKNOWN close on the same instrument can still fill after
    the press's close and reverse it (U-press-inflight's stated deviation, in `docs/CONTRACTS.md`); `req.V` is checked
    only on `hello`; `DashboardView`'s "Open the AI's folder" still points at `workspace/`; `Bridge` and `StatusDetail`
    are two readings of the connector; the box's store held 0 unconfirmed where the box-precut record expected 2;
-   `TreatWarningsAsErrors` is on for the bridge only; five hosted-runner reds recorded once each (three in the
-   U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
+   `TreatWarningsAsErrors` is on for the bridge only; an installed OLDER build refuses a home a newer build
+   migrated with "records are damaged" (false — they are newer) and no update path; five hosted-runner reds recorded
+   once each (three in the U-sweep-words-win section, two in U-attest-precondition's), a brief each when one recurs.
 4. **CI on `main`:** green on all three platforms at every code landing today except hosted-runner flakes in a known
    class (timing fixtures tuned on fast machines: a `Timing` category is retried once on windows-latest; the remaining
    instances are recorded in `BUILD-STATUS.md` with their runs). The run at `d92a61b`, 33981829058, was green on all

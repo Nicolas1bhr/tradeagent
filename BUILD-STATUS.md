@@ -4161,8 +4161,18 @@ updating itself — is `U-cut-0.1.2-b`, in flight). Merge `6672b5e`: one product
   an order still on the wire or a position that moved; the override under the dispatch lease; unreadable settings and
   vendor files failing closed and visible; inbox origin attested; downloads bound to what they are a part of.
 
+- **The update watch, first attempt (`U-cut-0.1.2-b`, branch `u-cut-0.1.2-b` @ `a23f540`): NOT DONE, and a finding.**
+  The INSTALLED 0.1.1 (file version 0.1.1.0, commit `16d4862`, `DatabaseSchemaVersion = 1`) started against the box's
+  real home and showed only `TradeAgent cannot start / TradeAgent's records are damaged. / If this keeps happening, open
+  TradeAgent again and use Create support package on the Checks page.` — `state\tradeagent.db` is at `schema_version 3`
+  from this week's repo builds, `Database.cs:132` refuses a newer schema as `STATE_DATABASE_CORRUPT`, and that screen has
+  no shell and no update strip, so the release feed was never read. The records are not damaged; they are newer. An
+  owner who ran a newer build once is told a falsehood and has no update path from there: for the next review.
+  Nothing on the box reached the ledger (db mtimes unchanged); ATAS untouched, the book flat; the fifth hash NOT READ.
+  The measurement moves to a fresh home: `U-cut-0.1.2-c`.
+
 **Verified by running (the manager):** the hashes and sizes quoted above; `gh api …/releases/tags/v0.1.2` digests;
 `gh release list` → v0.1.2 Latest; CI on `main` at `6672b5e`: run 34022935338, pending. **NOT VERIFIED yet:** the
-update installing itself (the second half); the build script's own summary block was not read — the leg that ran it
-was killed and its console output is gone; the adapter presence is the script's own check, re-run by hand.
-**NOT done:** `TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
+update installing itself; the build script's own summary block was not read — the leg that ran it was killed and its
+console output is gone; the adapter presence is the script's own check, re-run by hand. **NOT done:**
+`TreatWarningsAsErrors` for the whole solution (U9's remaining half); the ATAS hash not pinned.
