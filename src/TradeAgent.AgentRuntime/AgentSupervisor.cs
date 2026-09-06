@@ -16,6 +16,15 @@ public sealed class AgentSupervisor(HealthRegistry health)
     public string SessionId { get; private set; } = "";
     public bool Running { get; private set; }
 
+    /// <summary>
+    /// The agent's own directory, as handed to the runtime. Empty until something is prepared.
+    ///
+    /// The mission loop reads <c>.tradeagent/next.json</c> from here — the AI's request to be left
+    /// alone for a while — so this is the one place that answer can come from without the app
+    /// guessing at a path the supervisor already knows.
+    /// </summary>
+    public string Workspace { get; private set; } = "";
+
     public async Task<IAgentRuntime> PrepareAsync(RuntimeManifest manifest, WorkspaceContext ctx, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct);
@@ -29,6 +38,7 @@ public sealed class AgentSupervisor(HealthRegistry health)
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
             var workspace = WorkspaceBuilder.Build(ctx);
+            Workspace = workspace;
             health.Set(Components.Workspace, HealthState.READY, workspace);
 
             await runtime.CreateEnvironmentAsync(workspace, WorkspaceBuilder.EnvironmentFor(SessionId, workspace), ct);

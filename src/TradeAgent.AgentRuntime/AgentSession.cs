@@ -33,8 +33,30 @@ public interface IAgentConversation
     /// <summary><see cref="Busy"/> flipped.</summary>
     event Action? StateChanged;
 
+    /// <summary>
+    /// One run of the CLI finished, however it finished. Raised for every turn — the owner's and the
+    /// mission's alike — and carrying only what was measured. `U-meter` prices turns from these.
+    /// </summary>
+    event Action<AgentTurnEnded>? TurnEnded;
+
     Task StartAsync(CancellationToken ct = default);
     Task SendAsync(string message, CancellationToken ct = default);
+
+    /// <summary>
+    /// Runs one turn on the mission's behalf. Identical to <see cref="SendAsync"/> except that the
+    /// message is not shown as something the owner said, because nobody said it: the Situation block
+    /// is written by the app. The reply and the tool activity appear exactly as they do for a typed
+    /// message, so the Chat page still shows everything the AI does while it works on its own.
+    /// </summary>
+    Task SendMissionAsync(string message, CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes, and clears, what the owner typed while a turn was already running. The mission loop
+    /// puts these at the top of the next turn's Situation; nothing else reads them, and a message
+    /// taken here has already been shown in the conversation as theirs.
+    /// </summary>
+    IReadOnlyList<string> TakeTyped();
+
     Task CancelAsync();
     Task StopAsync();
 }
@@ -113,6 +135,7 @@ public sealed class AgentSession(
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
+    readonly List<string> _typedMeanwhile = [];
 
     Process? _current;
     CancellationTokenSource? _cts;
@@ -133,6 +156,7 @@ public sealed class AgentSession(
     public event Action<ChatTurn>? TurnAdded;
     public event Action<string>? Delta;
     public event Action? StateChanged;
+    public event Action<AgentTurnEnded>? TurnEnded;
 
     /// <summary>
     /// Checks the runtime is actually there and clears any previous session, so the next message
@@ -154,44 +178,99 @@ public sealed class AgentSession(
     }
 
     /// <summary>
-    /// Sends one message and returns when the AI's reply is complete.
+    /// Sends one message the OWNER typed, and returns when the AI's reply is complete.
     ///
     /// Failures are reported as a System turn rather than thrown: this drives a chat panel, and a
-    /// conversation that throws its errors somewhere else is a conversation that loses them. The one
-    /// exception is being asked to send while already busy, which is a caller mistake.
+    /// conversation that throws its errors somewhere else is a conversation that loses them.
+    ///
+    /// <b>Typing while the AI is working no longer throws it away.</b> It used to raise
+    /// INVALID_REQUEST, which was defensible when every turn was one the owner had asked for: they
+    /// pressed send twice and the second press was a mistake. It is not defensible once the mission
+    /// loop is taking turns on its own, because then the AI is busy almost all the time and the
+    /// owner's question would have nowhere to go. The message is shown as theirs and carried to the
+    /// top of the next turn's Situation instead — see <see cref="TakeTyped"/>.
     /// </summary>
     public async Task SendAsync(string message, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         if (_busy)
-            throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
-                "The AI is still working on the previous message.");
-
-        var exe = resolveExecutable();
-        if (exe is null)
         {
+            lock (_historyLock) _typedMeanwhile.Add(message.Trim());
+            Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
             Append(new ChatTurn(ChatRole.System,
-                $"{manifest.DisplayName} is not installed, so the message was not sent.", DateTimeOffset.UtcNow));
+                "The AI is working. It will see this at the start of its next turn.", DateTimeOffset.UtcNow));
             return;
         }
 
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
+        await RunAsync(message, ct);
+    }
+
+    /// <inheritdoc />
+    public Task SendMissionAsync(string message, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return Task.CompletedTask;
+        if (_busy)
+            throw new TradeAgentException(ErrorCode.INVALID_REQUEST,
+                "The AI is still working on the previous message.");
+        return RunAsync(message, ct);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> TakeTyped()
+    {
+        lock (_historyLock)
+        {
+            if (_typedMeanwhile.Count == 0) return [];
+            var taken = _typedMeanwhile.ToArray();
+            _typedMeanwhile.Clear();
+            return taken;
+        }
+    }
+
+    /// <summary>
+    /// The run itself, shared by the owner's messages and the mission's. Everything that differs
+    /// between the two — whose words they are, and whether they are shown as such — has already
+    /// happened by the time this is called.
+    ///
+    /// <see cref="TurnEnded"/> is raised on EVERY path out, including the ones where no child ever
+    /// started, because the mission loop's backoff and `U-meter`'s prices are both counting turns and
+    /// a turn that vanished silently is one neither of them can account for.
+    /// </summary>
+    async Task RunAsync(string message, CancellationToken ct)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var exitCode = -1;
+        var raw = "";
+
+        var exe = resolveExecutable();
+        if (exe is null)
+        {
+            raw = $"{manifest.DisplayName} is not installed, so the message was not sent.";
+            Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
+            TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
+            return;
+        }
+
         SetBusy(true);
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            await RunTurnAsync(exe, message, _cts.Token);
+            (exitCode, raw) = await RunTurnAsync(exe, message, _cts.Token);
         }
         catch (OperationCanceledException)
         {
-            Append(new ChatTurn(ChatRole.System, "Stopped.", DateTimeOffset.UtcNow));
+            raw = "Stopped.";
+            Append(new ChatTurn(ChatRole.System, raw, DateTimeOffset.UtcNow));
         }
         catch (TradeAgentException ex)
         {
+            raw = ex.Message;
             Append(new ChatTurn(ChatRole.System, ex.Message, DateTimeOffset.UtcNow));
         }
         catch (Exception ex)
         {
+            raw = ex.Message;
             Append(new ChatTurn(ChatRole.System, $"The AI could not be reached: {ex.Message}", DateTimeOffset.UtcNow));
         }
         finally
@@ -200,10 +279,11 @@ public sealed class AgentSession(
             _cts?.Dispose();
             _cts = null;
             SetBusy(false);
+            TurnEnded?.Invoke(new AgentTurnEnded(exitCode, DateTimeOffset.UtcNow - startedAt, raw, DateTimeOffset.UtcNow));
         }
     }
 
-    async Task RunTurnAsync(string exe, string message, CancellationToken ct)
+    async Task<(int ExitCode, string Raw)> RunTurnAsync(string exe, string message, CancellationToken ct)
     {
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
@@ -268,6 +348,7 @@ public sealed class AgentSession(
         var errorText = (await stderr).Trim();
 
         FinishTurn(state, raw.ToString(), streaming, process.ExitCode, errorText);
+        return (process.ExitCode, raw.ToString());
     }
 
     /// <summary>

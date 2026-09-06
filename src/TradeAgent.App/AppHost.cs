@@ -76,6 +76,29 @@ public sealed class AppHost : IAsyncDisposable
     IAgentRuntime? _conversationOwner;
 
     /// <summary>
+    /// THE LOOP THAT KEEPS THE AI WORKING. Composed here, beside the gateway, because that is where
+    /// the facts a turn is handed already live — and deliberately NOT anywhere the agent can reach:
+    /// there is no pipe op and no `trade` verb that starts it, pauses it, or changes what it is told.
+    ///
+    /// It holds no authority. Turns keep running while <see cref="TradingGateway.StopAiTrading"/> is
+    /// down, because the kill switch takes away permission to TRADE and there is a great deal of work
+    /// — research, backtesting, writing strategies, the journal — that wants doing exactly then.
+    /// </summary>
+    public MissionLoop Mission { get; private set; } = null!;
+
+    MissionHost? _missionHost;
+
+    /// <summary>
+    /// The moment the last material pass began, as this process saw it. Read before the walk rather
+    /// than after, so it is never later than the scanner's own idea of the pass — erring early costs
+    /// one spare pass and erring late costs an attestation.
+    /// </summary>
+    DateTimeOffset? _lastScanAt;
+
+    /// <summary>When the last mission turn was composed, so the next one can say what is new since.</summary>
+    DateTimeOffset _lastSituationAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
     /// Whether a newer TradeAgent has been published, and the machinery to install one.
     ///
     /// It lives here, beside the gateway and the kill switch, because installing a new build of the
@@ -161,6 +184,10 @@ public sealed class AppHost : IAsyncDisposable
             Health.Set(Components.Gateway, HealthState.READY);
 
             Agent = new AgentSupervisor(Health);
+            _missionHost = new MissionHost(this);
+            Mission = new MissionLoop(_missionHost,
+                new MissionOptions { TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession) });
+            Mission.Changed += () => Changed?.Invoke();
 
             await Connector.ConnectAsync();
             await Gateway.RefreshHealthAsync();
@@ -170,6 +197,7 @@ public sealed class AppHost : IAsyncDisposable
             _ = Task.Run(() => BackgroundAsync(_loop.Token));
 
             Gateway.Log.Activity("TradeAgent started");
+            ResumeMissionIfItWasWorking();
             return true;
         }
         catch (Exception ex)
@@ -342,10 +370,128 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public ScanResult ScanMaterials(CancellationToken ct = default)
     {
+        _lastScanAt = DateTimeOffset.UtcNow;
         var result = new MaterialScanner(_db!).Scan(ct);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
         return result;
+    }
+
+    // ---- the mission ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// LETS THE AI WORK ON ITS OWN, and remembers that the owner said so. Two presses on the card;
+    /// this is what the second one reaches.
+    /// </summary>
+    public void LetTheAiWorkOnItsOwn()
+    {
+        Gateway.Update(s => s.AiWorksOnItsOwn = true);
+        Gateway.Log.Activity("The AI was set to work on its own");
+        Mission.Start();
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Stops the loop and remembers that too, so a restart does not quietly put it back to work. One
+    /// press: this only ever takes work away.
+    /// </summary>
+    public async Task PauseTheAiAsync()
+    {
+        Gateway.Update(s => s.AiWorksOnItsOwn = false);
+        await Mission.PauseAsync();
+        Gateway.Log.Activity("The AI was paused");
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// WORKING RESUMES ON START; PAUSED SURVIVES ONE. The owner's choice is the persisted flag, and
+    /// the resume setting only decides whether a restart acts on it — so when it is off, the flag is
+    /// written back to false rather than left true over a loop that is not running. A card saying
+    /// "working" beside a loop that is not is a worse failure than losing the preference.
+    /// </summary>
+    void ResumeMissionIfItWasWorking()
+    {
+        if (!Gateway.Settings.AiWorksOnItsOwn) return;
+        if (Gateway.Settings.ResumeAiOnStart) Mission.Start();
+        else Gateway.Update(s => s.AiWorksOnItsOwn = false);
+    }
+
+    /// <summary>
+    /// What one mission turn is told, and the two questions the loop asks about the drop folder.
+    ///
+    /// It is a nested type rather than <see cref="AppHost"/> implementing the interface itself
+    /// because the loop must not be handed the composition root: everything it can reach is on these
+    /// five members, and none of them can change a mode, lift the kill switch or approve an order.
+    /// </summary>
+    sealed class MissionHost(AppHost host) : IMissionHost
+    {
+        public IAgentConversation? Conversation => host.Conversation;
+
+        public string AgentHome => host.Agent.Workspace is { Length: > 0 } w ? w : Paths.AgentHome;
+
+        public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host._lastScanAt);
+
+        public Task ScanAsync(CancellationToken ct)
+        {
+            try { host.ScanMaterials(ct); }
+            catch (OperationCanceledException) { throw; }
+            // A scan that threw must not stop the mission. It is a record-keeping pass, and the
+            // engineering log already has the exception from the background loop that also runs it.
+            catch (Exception ex) { host.Gateway.Log.Engineering("Materials", "mission_scan_failed", "warn", ex: ex); }
+            return Task.CompletedTask;
+        }
+
+        public async Task<MissionSituation> SituationAsync(CancellationToken ct)
+        {
+            var status = await host.Gateway.StatusAsync(ct);
+            var since = host._lastSituationAt;
+            host._lastSituationAt = DateTimeOffset.UtcNow;
+
+            // Positions come from the broker and the broker can be down. A turn told "positions: none"
+            // because a call failed would be a turn reasoning about an account it cannot see, so the
+            // failure is said in the words the AI reads rather than rendered as an empty list.
+            IReadOnlyList<string> positions;
+            try
+            {
+                positions = (await host.Gateway.PositionsAsync(ct))
+                    .Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0} at {p.AveragePrice}").ToArray();
+            }
+            catch (Exception ex) { positions = [$"could not be read — {ex.Message}"]; }
+
+            return new MissionSituation
+            {
+                LocalTime = DateTimeOffset.Now,
+                Mode = status.Mode.ToString(),
+                ExecutionAvailable = status.ExecutionAvailable,
+                ExecutionBlockedReason = status.ExecutionBlockedReason,
+                Account = status.AccountId,
+                Positions = positions,
+                OpenOrders = status.OpenRequests,
+                UnconfirmedRequests = status.UnreconciledRequests,
+                NewMaterial = NewInbox(since),
+                Guidance = host.Gateway.Settings.Guidance
+            };
+        }
+
+        /// <summary>
+        /// What has turned up in the owner's folder since the last turn — BOTH words for it, because
+        /// the AI is being told a file exists, not being told who put it there. The distinction the
+        /// ledger keeps is the owner's to read on the Inbox page.
+        /// </summary>
+        IReadOnlyList<string> NewInbox(DateTimeOffset since)
+        {
+            try
+            {
+                var store = new MaterialStore(host._db!);
+                return store.Present(MaterialOrigin.Inbox).Concat(store.Present(MaterialOrigin.InboxUnattested))
+                    .Where(m => m.FirstSeenAt >= since)
+                    .OrderBy(m => m.FirstSeenAt)
+                    .Select(m => m.Name)
+                    .Take(50)
+                    .ToArray();
+            }
+            catch (Exception) { return []; }
+        }
     }
 
     public async ValueTask DisposeAsync()

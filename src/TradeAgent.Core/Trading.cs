@@ -100,6 +100,44 @@ public sealed class TradeAgentSettings
     public RiskPolicy Risk { get; set; } = new();
 
     /// <summary>
+    /// THE OWNER HAS SAID THE AI MAY WORK ON ITS OWN — turns back to back, with nobody typing.
+    ///
+    /// It is persisted because a program that forgot this on every restart would be a program the
+    /// owner has to re-authorise every morning, and the whole product is an AI that does not stop.
+    /// Setting it is two presses on the Dashboard; clearing it is one, and false surviving a restart
+    /// is the half that matters: a paused AI that came back working would be the software granting
+    /// itself something.
+    ///
+    /// It is NOT a trading permission and grants nothing. Mode, the real-money switch, the limits and
+    /// the kill switch are unchanged by it, and STOP AI TRADING leaves the loop running on purpose.
+    /// </summary>
+    public bool AiWorksOnItsOwn { get; set; }
+
+    /// <summary>
+    /// Whether a restart puts a working AI back to work. On by default, because the alternative is
+    /// an autonomous product that stops for good the first time Windows updates overnight. Turned
+    /// off, the app comes up paused and <see cref="AiWorksOnItsOwn"/> is written back to match, so
+    /// the card and the record never disagree.
+    /// </summary>
+    public bool ResumeAiOnStart { get; set; } = true;
+
+    /// <summary>
+    /// THE OWNER'S STANDING INSTRUCTIONS TO THE AI, included in every turn's Situation.
+    ///
+    /// Words, not authority. Nothing typed here can widen a limit, change a mode or lift the kill
+    /// switch — those are the controls beside it — and the AI is told as much: guidance tells it what
+    /// to spend its time on, and the gateway decides what it may actually do.
+    /// </summary>
+    public string Guidance { get; set; } = "";
+
+    /// <summary>
+    /// Turns resumed into one agent CLI session before a fresh one starts. Resuming for ever grows
+    /// one context until the runtime refuses it or prices it absurdly; nothing is lost by starting
+    /// again, because the AI's memory is its files and every turn is told so.
+    /// </summary>
+    public int MissionTurnsPerSession { get; set; } = 20;
+
+    /// <summary>
     /// IS THE SAVED MODE ONE THIS BUILD ACTUALLY HAS?
     ///
     /// <see cref="TradingMode"/> is persisted as a name, and <c>System.Text.Json</c>'s enum converter
@@ -147,6 +185,8 @@ public sealed class TradeAgentSettings
     ///   SelectedAccountId = null  no account was chosen, and a guess is not a choice
     ///   allowlist = []            which now allows NOTHING
     ///   quantity, positions, orders-per-minute = 0
+    ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
+    ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///
     /// <c>MaxNotionalPerOrder</c> stays at 0, which for that field alone means "not enforced": it has
     /// no floor, and a quantity cap of zero has already refused every order before a notional is
@@ -164,6 +204,8 @@ public sealed class TradeAgentSettings
         AiTradingStopped = true,
         LiveActivated = false,
         SelectedAccountId = null,
+        AiWorksOnItsOwn = false,
+        Guidance = "",
         Risk = new RiskPolicy
         {
             MaxOrderQuantity = 0m,
