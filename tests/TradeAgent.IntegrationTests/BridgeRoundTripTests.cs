@@ -355,12 +355,26 @@ public class BridgeRoundTripTests
         await connector.ConnectAsync();
         await using var _1 = connector;
 
-        await using var bridge = new BridgeServer(new ThrowsAfterHandshake(new LoopbackAtasAdapter()), pipe)
+        // THE BRIDGE GOES ON ATTESTING UNTIL THIS TEST SAYS OTHERWISE, and that is the whole reason
+        // the adapter is ThrowsWhileTold rather than ThrowsAfterHandshake. With the latter, every
+        // heartbeat after the handshake is already a bare pulse, so the proof this test needs to
+        // WATCH BEING LOST is cleared ~100 ms in — while the harness below is still building a
+        // SQLite gateway at synchronous=FULL, opening four health rows and activating live. On this
+        // Mac that finished inside the window. On the hosted runners it did not, and not marginally:
+        // at 07cbb91 the same red came back on ALL THREE — ubuntu, windows and macos alike, 1 failed
+        // of 523, the test dead in 300 ms on the precondition at TryAuthorizeExecution ("the harness
+        // never authorized autonomous dispatch, so losing it proves nothing", CI 34014790766). The
+        // fixture was asserting a schedule; nothing in the product was wrong. Ordering the flip
+        // after the gates takes the clock out of the setup altogether.
+        var adapter = new ThrowsWhileTold(new LoopbackAtasAdapter());
+        await using var bridge = new BridgeServer(adapter, pipe)
             { HeartbeatInterval = TimeSpan.FromMilliseconds(100) };
         bridge.Start();
         await Wait(async () => await connector.IsConnectedAsync());
 
-        // The handshake's Describe() answered, so at this instant the proof is real and current.
+        // The handshake's Describe() answered, so at this instant the proof is real and current —
+        // and every heartbeat until the flip below re-attests it, so it stays that way however long
+        // the harness takes.
         Assert.True(connector.Capabilities.ReconciliationProvable,
             "the handshake did not establish the capabilities this test is about losing");
         Assert.Equal("ATAS-LOOPBACK", connector.Bridge!.AccountId);
@@ -384,9 +398,11 @@ public class BridgeRoundTripTests
         Assert.True(gw.TryAuthorizeExecution(new AgentContext("agent-1"), out _, out _),
             "the harness never authorized autonomous dispatch, so losing it proves nothing");
 
-        // Every heartbeat from here on is a bare pulse: Describe() throws on the far side. Polled to a
-        // deadline rather than waited on, so that the code this unit found REPORTS what it believes
-        // instead of dying at the wait with nothing to read.
+        // ONLY NOW does the bridge stop being able to describe itself: every heartbeat from here on
+        // is a bare pulse, because Describe() throws on the far side. Polled to a deadline rather
+        // than waited on, so that the code this unit found REPORTS what it believes instead of
+        // dying at the wait with nothing to read.
+        adapter.Throwing = true;
         var started = DateTime.UtcNow;
         var until = started.AddSeconds(10);
         while (DateTime.UtcNow < until && connector.Capabilities.ReconciliationProvable) await Task.Delay(50);
