@@ -278,6 +278,7 @@ public class PipeContractTests(ITestOutputHelper log)
     [InlineData("yes")]
     [InlineData("1")]
     [InlineData("all")]
+    [InlineData("")]
     public async Task An_all_flag_the_gateway_cannot_name_is_refused(string value)
     {
         var (gw, conn, db, server, client) = await Counted();
@@ -875,6 +876,40 @@ public class PipeContractTests(ITestOutputHelper log)
         log.WriteLine($"limit=4300.25 -> {conn.Placed[0].Type} · limit absent -> {conn.Placed[1].Type}");
         Assert.Equal(TradeAgent.ConnectorSdk.OrderType.Market, conn.Placed[1].Type);
         Assert.Null(conn.Placed[1].LimitPrice);
+    }
+
+    /// <summary>
+    /// A field NAMED with JSON <c>null</c> in it is present, not absent. It is the shape a client
+    /// library produces when the caller's own variable is empty, so it is the likeliest way a price
+    /// or a time in force goes missing between the agent and this pipe — and reading it as "the
+    /// caller said nothing" is the same substitution as reading <c>"bad"</c> that way. Asserted
+    /// because <c>docs/CONTRACTS.md</c> claims it; a claim in that file with no run behind it is the
+    /// thing this project does not do.
+    /// </summary>
+    [Fact]
+    public async Task A_field_whose_value_is_json_null_is_present_and_is_refused()
+    {
+        var (gw, conn, db, server, client) = await Counted();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        foreach (var field in new[] { "limit", "stop", "quantity", "tif" })
+        {
+            var before = conn.Calls;
+            var reply = await client.SendAsync(Buy(extra: new()
+            {
+                [field] = JsonSerializer.SerializeToElement<object?>(null)
+            })).WaitAsync(TimeSpan.FromSeconds(10));
+
+            log.WriteLine($"{field}=null -> ok={reply.Ok} code={reply.Error?.Code} · connector saw: " +
+                          string.Join(", ", conn.Placed.Select(p => $"{p.Type} limit={p.LimitPrice?.ToString() ?? "none"} tif={p.Tif}")));
+            Assert.False(reply.Ok, $"{field}=null was read as an absent {field}");
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+            Assert.Contains(field, reply.Error.Message);
+            Assert.Equal(before, conn.Calls);
+            Assert.Empty(conn.Placed);
+        }
     }
 
     // ── 7. The version is a thing the peer SAYS, not a thing this build assumes ────────────────
