@@ -42,7 +42,9 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    connector-send bound in `CONTRACTS.md`), and `U-batch-2` at `15b873d` (a part file bound to its URL and length,
    a checksum-less install a recorded decision, the agent's home `workspace/agent` beside the inbox, `Inbox` origin
    attested by `AgentPresence`, `material.version` in schema 4). Built and landing: `U-codex-2b` (F6, F7, F13; rebased
-   onto `15b873d` at `5390b74`, manager's gate running). In flight: `U-batch-2b` (F16, F20, UNVERIFIED 4). Then the cut
+   onto `15b873d` at `5390b74`; the manager's gate hit ONE red, an NRE in `AtasConnector.Capabilities` racing the
+   heartbeat's new clear of `_hello` — a fresh one-item fixer, `U-codex-2b-fix`, works the landing branch; the unit
+   lands when its report is in and the gate is re-run). In flight: `U-batch-2b` (F16, F20, UNVERIFIED 4). Then the cut
    (step 6). Open, not briefed: `req.V` is checked only on `hello`, so a frame naming a wrong version mid-session is
    read as this one (codex-2b's builder); `DashboardView`'s "Open the AI's folder" still points at `workspace/`. Every HIGH lands before the cut; the batches too. A killed leg is re-briefed from its file; read its branch
    first, the commits may already be there. Three hosted-runner reds are recorded once each in the U-sweep-words-win
