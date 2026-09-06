@@ -485,6 +485,64 @@ public class MissionLoopTests
     }
 
     /// <summary>
+    /// A LOOP WHOSE PURPOSE IS NOT TO STOP DOES NOT STOP ON A SURPRISE. A turn that throws before it
+    /// can report how it ended — the owner pressing Send in the same instant, a runtime that
+    /// vanished — is counted as a failed turn and backed off from. If it killed the loop instead,
+    /// an owner who left the AI working overnight would find it stopped with no reason anywhere.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_that_throws_is_a_failed_turn_and_not_the_end_of_the_loop()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var conversation = new ThrowingConversation();
+        var loop = new MissionLoop(new FakeHost(db, root, presence, conversation),
+            delay: (_, ct) => Task.Delay(1, ct));
+
+        loop.Start();
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (loop.Status.ConsecutiveErrors < 3 && DateTimeOffset.UtcNow < deadline) await Task.Delay(10);
+        var errors = loop.Status.ConsecutiveErrors;
+        await loop.PauseAsync();
+
+        Assert.True(errors >= 3, $"errors: {errors}");
+        Assert.True(conversation.Attempts >= 3, $"attempts: {conversation.Attempts}");
+    }
+
+    /// <summary>A conversation whose every turn throws something the loop has no answer for.</summary>
+    sealed class ThrowingConversation : IAgentConversation
+    {
+        public int Attempts;
+        public bool Busy => false;
+        public IReadOnlyList<ChatTurn> History => [];
+
+        public event Action<ChatTurn>? TurnAdded;
+        public event Action<string>? Delta;
+        public event Action? StateChanged;
+        public event Action<AgentTurnEnded>? TurnEnded;
+
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendAsync(string message, CancellationToken ct = default) => SendMissionAsync(message, ct);
+
+        public Task SendMissionAsync(string message, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref Attempts);
+            TurnAdded?.Invoke(new ChatTurn(ChatRole.System, "", DateTimeOffset.UtcNow));
+            Delta?.Invoke("");
+            StateChanged?.Invoke();
+            TurnEnded?.Invoke(new AgentTurnEnded(-1, TimeSpan.Zero, "", DateTimeOffset.UtcNow));
+            throw new InvalidOperationException("the runtime went away mid-turn");
+        }
+
+        public void Queue(string message) { }
+        public IReadOnlyList<string> TakeTyped() => [];
+        public Task CancelAsync() => Task.CompletedTask;
+        public Task StopAsync() => Task.CompletedTask;
+    }
+
+    /// <summary>
     /// The loop really runs on its own — the turn-at-a-time driver above is how the rest of this
     /// class stays deterministic, not a claim that the timer works. Started here and stopped by the
     /// one press that stops it, with the waits collapsed so the test does not sleep.

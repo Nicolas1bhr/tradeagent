@@ -340,6 +340,21 @@ public sealed class MissionLoop
 
             try { wait = await TurnAsync(ct); }
             catch (OperationCanceledException) { return; }
+            catch (Exception)
+            {
+                // A LOOP WHOSE WHOLE PURPOSE IS NOT TO STOP DOES NOT STOP ON A SURPRISE. Anything
+                // reaching here is a turn that failed before it produced an AgentTurnEnded — a race
+                // with the owner's own message on the Chat page, a runtime that vanished mid-turn —
+                // so it is counted as a failed turn and backed off from exactly like any other.
+                //
+                // Dying here would leave the card reading "paused" over a decision nobody made, and
+                // an owner who had gone to bed with the AI working would find it stopped with no
+                // reason given anywhere. The climbing error count on the card is the visible signal.
+                int errors;
+                lock (_gate) { _working = false; errors = ++_consecutiveErrors; }
+                Changed?.Invoke();
+                wait = Backoff(errors);
+            }
         }
     }
 
