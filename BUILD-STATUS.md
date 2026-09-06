@@ -4094,3 +4094,40 @@ which clears the proof it reads, and the Mac finishes inside that 100 ms; test-o
 
 **NOT done:** `req.V` is checked only on `hello` (a wrong version named mid-session is read as this one) and `Bridge`
 and `StatusDetail` remain two readings of the connector — both for the next review; no box, no UI run.
+
+## 2026-09-06 — U-attest-precondition landed: the F7 probe opens every gate before the fixture stops attesting
+
+The all-three-runner red at `07cbb91` (run 34014790766: `the harness never authorized autonomous dispatch, so losing it
+proves nothing` at 300 / 174 / 130 ms), by one fresh fixer on `docs/briefs/U-attest-precondition.md`. Merge `575390c`, 2
+commits, `BridgeRoundTripTests.cs` +19/−5 and the brief. No product file; draft PR #10, closed.
+
+- **The fixture asserted a schedule.** `ThrowsAfterHandshake` made `Describe()` throw on every heartbeat from the
+  handshake on, at a 100 ms interval, so the proof the test asserts first is cleared by the first bare pulse — and the
+  gateway construction between that assertion and the precondition (`TestEnv.NewDb()`, a `TradingGateway` over SQLite at
+  `synchronous=FULL`, `Update`, `ActivateLive`) had to finish inside those 100 ms. This Mac does; no hosted runner did.
+- **Now `ThrowsWhileTold`**, as the sibling test already used: the handshake and the heartbeats attest while the harness
+  builds the gateway, opens the four health rows and activates live; `adapter.Throwing = true` comes after
+  `Assert.True(gw.TryAuthorizeExecution(…))`; the 10 s poll and every assertion are untouched. Fixed, it passes in 120 ms
+  (ubuntu), 294 ms (macos), 366 ms (windows), read off the runs' own trx.
+- **The sweep found no other assertion that depends on finishing inside one heartbeat interval:** only two adapters can
+  throw from `Describe()`; `ThrowsAfterHandshake`'s one remaining user asserts the CLEARED state after a 1500 ms delay
+  (waiting longer only makes it truer); the sibling, the version probe and the race hammer drive `StubBridge`, which
+  beats only when told. One near-miss named and left alone: a six-beat liveness margin that is the assertion its test
+  exists for.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** still RED against the pre-F7 product (`4c68a11`'s
+two connector edits reverted in the worktree, then restored): `… coid=True history=True provable=True / autonomous
+dispatch : authorized=True` → `Assert.False() Failure  Expected: False  Actual: True` at `:427`. 20× loop → 20/20 (41/41
+each), the class 3×, the test alone 20× at ~141 ms. Fixer's gate at `67eae98`, Release: 0 warnings, 17 outputs; 281 +
+261 + 610 = 1152 passed, 0 failed, 1 skipped, 0 other test hosts; names via `--list-tests` 1153 = 1153. Draft PR #10
+green twice on the whole matrix at `67eae98` (34017814011 first attempt on every job; 34015391617 after one windows job
+rerun); the fixed test passed on every runner in every run, ten runner-passes. Manager's gate at `575390c`, Release:
+build → 0 warnings, 0 errors; suite → 281 + 261 + 610 = 1152 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
+0 added (sets 923 → 923); scan → one hit, the word "recompiled" beside a version-like token in the report; `rev-list
+--count` → 0; CI at `575390c`: pending.
+
+**Two NEW hosted-runner reds recorded here once each, both windows-latest, both outside `Timing`, neither briefed
+(a brief each when one recurs):** `SweepRequestIdTests.Every_sent_not_confirmed_leg_carries_an_unknown_record_that_
+will_be_reconciled` (`Assert.NotEmpty() Failure` at `:652`, the U-sweep-words-win family, a different test) and
+`CoidWitnessTests.A_vanished_temp_is_not_waited_for`, on PR #10's runs 34016321810 and 34015391617; NOT VERIFIED whether
+either is a fixture asserting a schedule. **NOT done:** no product code; no box, no UI.
