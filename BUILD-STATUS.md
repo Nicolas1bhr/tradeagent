@@ -4013,3 +4013,43 @@ vs `main` → 0 removed, 17 added (sets 877 → 894); scan → two hits, `http:/
 AI's folder" still points at `workspace/` (another builder owned that file); the DDL's in-place blind spot (size AND
 mtime both preserved) is still open — it needs unconditional hashing; ledger rows at the agent's old paths are
 re-recorded under `agent/` by the next scan rather than migrated.
+
+## 2026-09-06 — U-batch-2b landed: an unreadable vendor file fails visibly, the ATAS rows cannot outlive the truth, a sign-in URL is checked before the shell
+
+Codex F16 and F20, review-2 UNVERIFIED 4 and 6, by one fresh builder on `docs/briefs/U-batch-2b.md`. Merge `ab67a56`, 4
+commits, 16 files, +942/−51 (a new `Core/VendorFile.cs`, `RuntimeManifest.cs`, `AtasHealth.cs`, `AtasInstallation.cs`,
+`MainWindow.cs`, `OnboardingView.cs`, `Doctor.cs`, `Errors.cs`, `AppHost.cs`, `USER-GUIDE.md`, four test files).
+
+- **An override file that exists and does not parse yields no runtime and no ATAS folder, and says so** (F16 =
+  UNVERIFIED 6): `VendorFile` reads `runtimes.json` and `atas.json` once — absent → the built-ins; present and
+  unparseable or empty → the most restrictive value plus one sentence. `RuntimeCatalog.Read/Require` yield NO manifests,
+  so `MainWindow`/`OnboardingView` start nothing; `AtasLayout.Read` yields empty candidates, so both ATAS rows,
+  `RepairOffered` and `InstallBridge` refuse; `RuntimeFileHealth` writes the `Agent runtime` row on the tick and hands
+  it back when the file is corrected; `Doctor` adds a row per file; two new error codes, because `AI_RUNTIME_NOT_FOUND`
+  reads "not installed yet" and offers to install — the wrong morning. RED 4/4 on `main`: the built-in codex, carrying
+  `--dangerously-bypass-approvals-and-sandbox`, returned in place of a restrictive override, and `["%ProgramFiles(x86)\
+  ATAS Platform", …]` for a corrupt `atas.json` → GREEN 8/8; mutant (the old silent catch) → 7 red.
+- **The ATAS rows are kept against the directory entries they were read from, not only a clock** (F20):
+  `IAtasProbe.Stamp(detection)` over `atas.json`, both folders, the bridge assembly and the platform exe the version came
+  from; the reading is dropped the moment the entries disagree, the minute stays as the backstop. RED 2/2: the bridge
+  deleted outside the app → the row still sent the owner into ATAS to start a strategy that was gone; ATAS replaced →
+  `"running · 8.0.14.397"`, not the new version → GREEN; mutant (the stamp comparison dropped) → 3 red.
+- **Only an http or https address, or one of TradeAgent's own folders, is handed to the shell** (UNVERIFIED 4):
+  `MainWindow.RefusedToOpen` refuses everything else in the window with the target quoted back (120 chars), the folder
+  test comparing text before touching the disk so a share name never becomes a connection. RED 4/4 on `main`:
+  `ta-not-a-real-scheme://sign-in`, `\\evil-share\payload.exe` and a bare path went straight to the shell → GREEN 17/17
+  (`file:`, `javascript:`, `ms-settings:`, `ftp:` refused; five real sign-in, help and download URLs still open); mutant
+  (the check disabled) → 12 red.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `7280ca8`, Release: 0
+warnings, 17 projects; seven touched classes 3× → 21 runs all passed; 280 + 261 + 587 = 1128, 0 failed, one project at
+a time with nothing else running; names 0 removed, 14 added. Manager's gate at `22e0be7` (the merge sha's code tree,
+docs aside), Release: build → 0 warnings, 0 errors; suite → 280 + 261 + 587 = 1128, 0 failed; names vs `main` → 0
+removed, 14 added (sets 894 → 908); scan → version numbers and the tests' own URL literals; `rev-list --count` → 0; CI
+at `ab67a56`: pending.
+
+**NOT VERIFIED:** the `ChooseRuntime` screen's refusal panel on any screen; item 1's health and Checks rows are asserted
+through `HealthRegistry` and `DoctorReport`, not photographed; item 1's health-row half could not be red-first (the
+reporter did not exist to fail) — the mutant kills both halves. **NOT done:** `OpenAtasOrExplain` still starts ATAS
+through its own `Process.Start` (an `InstallDir` a readable `atas.json` points at, `File.Exists`-guarded, not behind
+item 3's check); no box, no real ATAS, no UI run.
