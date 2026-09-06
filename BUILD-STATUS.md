@@ -4046,7 +4046,7 @@ warnings, 17 projects; seven touched classes 3× → 21 runs all passed; 280 + 2
 a time with nothing else running; names 0 removed, 14 added. Manager's gate at `22e0be7` (the merge sha's code tree,
 docs aside), Release: build → 0 warnings, 0 errors; suite → 280 + 261 + 587 = 1128, 0 failed; names vs `main` → 0
 removed, 14 added (sets 894 → 908); scan → version numbers and the tests' own URL literals; `rev-list --count` → 0; CI
-at `ab67a56`: pending.
+run 34014253085 at `ab67a56`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the `ChooseRuntime` screen's refusal panel on any screen; item 1's health and Checks rows are asserted
 through `HealthRegistry` and `DoctorReport`, not photographed; item 1's health-row half could not be red-first (the
