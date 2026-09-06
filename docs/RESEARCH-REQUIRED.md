@@ -156,3 +156,27 @@ into a small contracts assembly — or confirm the extra assemblies are harmless
 The app and CLI publish self-contained, so no runtime is required. Confirm the resulting install size
 and cold-start time are acceptable on the actual laptop this will run on, and revisit
 `PublishReadyToRun` / trimming only if they are not.
+
+---
+
+## C — Venues for fully automatic real money (researched 2026-09-06 from official pages; re-verify at build time)
+
+**Decided: no human in the loop for real money, so the venue's API must prove rules 1 and 2** — an order carries a
+client id that comes back on queries and fills, and order history really reaches back to the timestamp asked for.
+
+| Venue | Verdict | Facts read on 2026-09-06 |
+|---|---|---|
+| **Binance** | direct connector, rules 1–2 provable, testnet for paper | `newClientOrderId`; `allOrders` and `myTrades` take `startTime`/`endTime`, at most 24 h per query, so the connector pages; a testnet exists. https://developers.binance.com/docs/binance-spot-api-docs |
+| **Revolut X** (crypto, UK/EEA) | direct connector, same shape; spot only; NO sandbox | REST at `https://revx.revolut.com/api/1.0`, Ed25519-signed headers, API keys with trading permission; `POST /orders` takes `client_order_id` (UUID) and it returns on `GET /orders/active`, `GET /orders/historical`, `GET /orders/{venue_order_id}` and fills; `GET /orders/historical` takes `start_date`/`end_date` (≤ 1 week per query, cursor paging, `order_states` filled/cancelled/rejected/replaced); `GET /trades/private/{symbol}` with `start_date`; 1000 req/min. Paper must be our simulator over its live market data; live starts at dust size. https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api and https://github.com/revolut-engineering/revolut-x-api |
+| **Zenit Funding** (futures prop firm) | the venue is the firm's platform: **ATAS**, Quantower, Volumetrica or Zenit's own; data DXFeed, CME L1 included | Automation allowed only with code you own ("using an algorithm whose source code you do not own is prohibited"); prohibited: HFT, bracketing, cross-account and cross-client hedging, copy trading ("the account must be traded solely by you"), account lending, challenge-passing services, spread/product hedging, sim-only strategies. Flat before 22:10 GMT+1 (the firm liquidates 5–10 min before); no overnight; no positions in the minute before and after NFP, CPI, PPI, FOMC, central-bank speeches and rate decisions, oil inventories, Michigan, PMI. Classic: trailing INTRADAY drawdown incl. unrealized ($2,500 on $50k, $5,000 on $150k, $7,500 on $300k), targets $3k/$9k/$20k, 2 min days, funded consistency 30 %, max 5/15/30 lots. Expert: EOD drawdown $2,000, daily loss $1,000, target $3,000, consistency ≤ 50 % challenge / ≤ 40 % funded, 1–5 minis scaling. Fees: Classic $165/$399/$659 per month, activation $149; Expert challenge $49 or $115 all-in; reset $649; payouts 90/10, Classic windows 1st–4th and 16th–20th, Expert every 5 business days. https://www.zenitfunding.com/ |
+
+**What follows for the design.** (1) A prop firm's rulebook is a risk profile the gateway must enforce AHEAD of the firm
+with a margin, because the firm's breach is permanent and ours is recoverable: trailing floor with unrealized P&L in
+real time, a flat-by timer, a news blackout from a calendar file, a consistency governor, contract caps per account
+size — `U-rules`, as data per firm and plan. (2) On ATAS the order-history bound is the open question: after a restart
+the platform's own collection held the earlier order (2026-08-30); if a hardware probe shows it carries ALL of the
+session's orders and fills back to the session open, `SupportsOrderHistory` becomes a TIMESTAMP bound rather than a
+boolean, and every order on a flat-by-close account is inside it. Probe it; do not assume it. (3) Confirm with Zenit in
+writing that a self-owned, AI-authored algorithm run by the account holder is "traded solely by you"; nothing in the
+design hides that it is automated. (4) Several accounts at one firm must never hold opposite positions: the allocator
+enforces it.

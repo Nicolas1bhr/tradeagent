@@ -83,8 +83,10 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
    or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
    paper loop on the box for weeks, the Performance card as the report; (h) the owner's decisions: broker, instrument,
-   size, and WHICH venue for fully automatic real money (decided: a direct connector is required, ATAS stays the
-   owner's screen); then `U-venue` (the connector, testnet first), `U-data` (history and feeds from it), `U-runner`
+   size; venues decided 2026-09-06 — Binance or Revolut X direct, AND prop firms like Zenit through the platforms they
+   support (ATAS among them: that is why the bridge exists), all in `docs/RESEARCH-REQUIRED.md` § C; then `U-rules`
+   (a prop firm's rulebook enforced by the gateway ahead of the firm, replacing plain `U-loss`), `U-binance` (testnet),
+   `U-revolutx`, the ATAS order-history BOUND probed on hardware for Zenit, `U-data` (history and feeds from it), `U-runner`
    (strategies as code the app runs identically in backtest, paper and live, supervised jobs), `U-referee` (the app
    backtests on data the agent never saw, counts attempts, promotes on measured numbers), `U-allocator` (allocation by
    live track record: losers to zero and replaced, the swarm's evolution); (i) the third milestone review at the next cut; the ATAS hash pin
