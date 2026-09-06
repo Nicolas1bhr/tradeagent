@@ -4338,7 +4338,7 @@ carried over the landed ledger, the gate at the rebased tip, the report). Merge 
 tree, Release: 0 warnings; 7 classes 3× green; Unit 369 and Fault 261 green (its Integration run straddled the rebase,
 discarded). Fixer's gate at `14164c9`, Release: 0 warnings; 11 classes 3× → 33 runs, 0 failed; 390 + 615 + 261 = 1266
 passed, 0 failed, 1 skipped; names 0 removed, 42 added. Manager's gate at `902e3da`, Release: build → 0 warnings, 0 errors; suite → 390 + 261 + 615 = 1266 passed, 0 failed, 1 skipped (Integration 10 m 36 s, the typed fixer's Unit runs overlapping — no false green possible); names vs
-`main` → 0 removed, 40 added (sets 992 → 1032); scan clean; `rev-list --count` → 0; CI at `902e3da`: pending when written, recorded in the next commit.
+`main` → 0 removed, 40 added (sets 992 → 1032); scan clean; `rev-list --count` → 0; CI run 34044922006 at `902e3da`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the card, the armed sentence and the cap control on a running app — words only; the codex measurement
 is macOS only; the status fields asserted on the composer's JSON, not over a live pipe; no mutant re-run by the fixer.
