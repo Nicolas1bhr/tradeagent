@@ -4264,3 +4264,42 @@ a harness race: the same tree green at `b3e7d0a`, run 34040307786); fixer `U-typ
 `ScanMaterials` attesting across the loop's synchronous pass with the agent dead was NOT watched. **NOT done:** no
 schema change; the loop cannot start the AI (the owner presses `Start the AI` first); `MissionInbox.ChangedSince` walks
 the drop folder each ask, unmeasured on a large folder; `trade pnl` lands with `U-ledger`; the cap with `U-meter`.
+
+## 2026-09-06 — U-ledger landed: every fill is written down once, `trade pnl` withholds a net it cannot compute, a Performance card
+
+The ruler for the vision's objective ("pay for yourself"), by one fresh builder on `docs/briefs/U-ledger.md` and one
+fresh fixer on `docs/briefs/U-ledger-rebase.md` (the branch carried over the landed `U-life`). Merge `640bce5`, 9
+commits, 20 files, +1884/−7 (new `Db/FillStore.cs`, `Gateway/Pnl.cs`, `PerformanceCard.cs`; `Database.cs` schema 5,
+`Versioning.cs`, `GatewaySchema.cs`, `TradingGateway.cs`, `GatewayPipeServer.cs`, `Protocol.cs`, `TradeCli/Program.cs`,
+`Contracts.cs`, `FakeBroker.cs`, `DashboardView.cs`, `CONTRACTS.md`, `USER-GUIDE.md`; four new test classes).
+
+- **A `fill` table, schema 5:** one row per execution keyed `(account_id, execution_id)`, written by the gateway only,
+  never updated or deleted, from the `ExecutionReceived` stream AND a pull of `GetExecutionsAsync` at every (re)connect
+  and every five minutes; each pull's `since`, outcome and the coverage start in `kv`; `agent_session` on every row.
+  RED `Assert.Single() Failure: The collection contained 2 items` (`X-2` twice, `Event` and `Pull`) → GREEN 6/6;
+  mutant (`source` added to the key) → the same `2 items`.
+- **`trade pnl --json`** (`Pnl.cs`, a `pnl` op, the CLI, the schema, `CONTRACTS.md`): realized by average cost per
+  symbol and day, unrealized from positions at the last quote, fees where known, drawdown, `incomplete` naming what is
+  missing. **An unknown never reads as zero.** RED `Assert.Null() Failure: Expected: null / Actual: 48` with an empty
+  `incomplete`, 3 failed / 7 passed → GREEN 10/10; mutant (NULL fee coalesced to 0) → the same. The pipe found a second
+  defect: `Json.Options` drops nulls, so `net` and `fees` arrived as MISSING keys — a declared reply type, `"net":null`
+  asserted. A symbol whose only presence in a period is an open position gets its own row, so the breakdown adds up.
+- **Performance card** (`PerformanceCard.cs`, three inserted lines in `DashboardView.cs`, not the brief's one): GREEN
+  3/3; mutant (a withheld net printed as a number) → `Expected: "—" / Actual: "0.00"`.
+- **Beyond the brief, declared:** `ExecutionInfo.Fee` in `ConnectorSdk` as an init-only property with a default —
+  no construction site re-parameterised, so the bridge's box-only compile is unaffected (manager's check).
+- **The rebase** (fixer): onto `b3e7d0a`; `DashboardView.cs`'s left column carries the AI section as `main` wrote it
+  AND `_performance.Root`; `USER-GUIDE.md` keeps `main`'s Dashboard sentence and both new sections; commits kept.
+
+**Verified by running (the builder and the fixer, quoted; then the manager's gate):** builder's gate at `d11db37`,
+Release: 0 warnings; 7/7, 11/11, 3/3, 5/5 each 3×; 302 + 261 + 616 = 1179, 0 failed, 1 skipped; one earlier run red on
+its own assertion (an apostrophe the serializer escapes), fixed. Fixer's gate at `547e83d`: 0 warnings; 8 classes 3× →
+24 runs, 0 failed; 348 + 261 + 615 = 1224 passed, 0 failed, 1 skipped. Manager's gate at `4113386` (the merge sha's
+product tree, the last rebase docs-only), Release: build → 0 warnings, 0 errors; suite → 348 + 261 + 615 = 1224
+passed, 0 failed, 1 skipped (Integration 10 m 36 s; no other test host); names vs `main` → 0 removed, 26 added (sets
+966 → 992); scan clean; `rev-list --count` → 0; CI at `640bce5`: pending when written, recorded in the next commit.
+
+**NOT VERIFIED:** the card on a running app — no UI run, no photograph, proved by its words; that ATAS serves
+in-session `MyTrades` only is read from its source, not watched on hardware, so the coverage start recorded in `kv` is
+the pull's own claim. **NOT done:** no box, no ATAS, no real money; fees on ATAS are NULL until the bridge reports
+them (`incomplete` says so); the meter's cost side is `U-meter`'s, in flight.
