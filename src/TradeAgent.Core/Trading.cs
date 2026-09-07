@@ -197,6 +197,20 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
+    /// HOW OFTEN THE AI IS WOKEN WHEN NOTHING HAS HAPPENED, in minutes. 0 is off, and then only a
+    /// real event — the owner typing, material arriving, a fill, an order settling, the day turning
+    /// over — starts a turn.
+    ///
+    /// The AI takes a turn because something happened. That leaves the case where nothing has, which
+    /// is not the same as there being nothing worth doing: the research, the backtests and the
+    /// journal are the job, and an hour of quiet market is not a reason to stop working on them. So
+    /// this is the heartbeat, and it is a setting because every tick is a paid turn — LOWERING it
+    /// spends more of the owner's money and therefore asks twice on the Safety page, which is the
+    /// opposite direction from every risk limit and is why it is not one of them.
+    /// </summary>
+    public int MissionReviewMinutes { get; set; } = 30;
+
+    /// <summary>
     /// WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, in input tokens. See
     /// <see cref="TurnAllowance"/>: it is an upper bound, not a prediction, and the direction is
     /// deliberate — reserving too much costs a turn the owner gets back at midnight, reserving too

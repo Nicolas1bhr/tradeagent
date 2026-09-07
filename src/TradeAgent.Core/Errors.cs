@@ -69,6 +69,20 @@ public static class Labels
     public static string RaiseDailyCapArmed(string amount) =>
         $"Confirm: let the AI spend up to {amount} a day";
 
+    /// <summary>How often the AI is woken when nothing has happened, and the press that writes it.</summary>
+    public const string ReviewEvery = "Wake the AI to look around every, minutes (0 = only when something happens)";
+
+    public const string SaveReviewEvery = "Save how often it looks";
+
+    /// <summary>
+    /// What the second press of <see cref="SaveReviewEvery"/> will do. LOWERING the interval is what
+    /// asks twice here, which is the opposite of every risk limit and is the point: a shorter
+    /// interval is more turns a day and every turn is charged to the owner. Raising it, or switching
+    /// the tick off, only ever spends less, so it saves in one press.
+    /// </summary>
+    public static string LowerReviewEveryArmed(int minutes) =>
+        $"Confirm: wake the AI every {minutes} minute{(minutes == 1 ? "" : "s")}, which costs more turns a day";
+
     /// <summary>
     /// WHAT A TURN NOBODY COULD IDENTIFY WAS CHARGED AT, in the same words on the card, in the block
     /// the AI reads and on <c>trade status</c>.

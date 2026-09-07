@@ -377,11 +377,22 @@ sealed class DashboardPage
     /// read back without a running app — the layout and the colours cannot be, and are not claimed.
     /// A waiting loop names the minute it will start again, because "waiting" alone is what an owner
     /// reads as "stuck".
+    ///
+    /// AND IT NAMES WHAT IT IS WAITING FOR. A turn now happens because something happened, so a
+    /// quiet card is the ordinary state of a quiet day — and an owner cannot tell that from a broken
+    /// one without being told which. "waiting until 14:32 for the next scheduled look" is the whole
+    /// difference.
     /// </summary>
     internal static string MissionSentence(MissionStatus status) => status.State switch
     {
         MissionState.Working => "working",
-        MissionState.Waiting => status.NextTurnAt is { } at ? $"waiting until {at.ToLocalTime():HH:mm}" : "waiting",
+        MissionState.Waiting => (status.NextTurnAt, status.WaitingFor) switch
+        {
+            ({ } at, { } why) => $"waiting until {at.ToLocalTime():HH:mm} for {why}",
+            ({ } at, null) => $"waiting until {at.ToLocalTime():HH:mm}",
+            (null, { } why) => $"waiting for {why}",
+            _ => "waiting"
+        },
         MissionState.Paused => "paused",
         _ => "stopped — the AI has not been started"
     };
@@ -906,6 +917,8 @@ sealed class SafetyPage
     readonly TextBlock _dailyLossHint = Ui.Micro(Labels.LossBudgetHint());
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
+    readonly NumericUpDown _reviewEvery;
+    readonly TextBlock _reviewNote = Ui.Micro("");
     readonly NumericUpDown _priceIn, _priceOut;
     readonly TextBlock _priceNote = Ui.Micro("");
     readonly Panel _modelRow;
@@ -1050,6 +1063,33 @@ sealed class SafetyPage
     }
 
     /// <summary>
+    /// THE PRESS THAT WRITES HOW OFTEN THE AI IS WOKEN FOR NOTHING IN PARTICULAR.
+    ///
+    /// LOWERING the interval is what asks twice, which is the opposite direction from every risk
+    /// limit on this page and is exactly why it is not one of them: a shorter interval is more turns
+    /// a day and every turn is charged to the owner. Raising it, or switching the tick off with a
+    /// zero, only ever spends less, so it saves in one press.
+    ///
+    /// Static and handed the three things it does, for the same reason the two above it are: the
+    /// rule about which direction asks twice is the whole of what this control is, and a rule that
+    /// can only be exercised by running the app is a rule nobody is checking.
+    /// </summary>
+    internal static Button BuildSaveReviewEvery(Func<int> current, Func<int> pending, Action save)
+    {
+        var b = Ui.ConfirmIf(Labels.SaveReviewEvery,
+            // ZERO IS OFF, NOT THE SMALLEST INTERVAL. Comparing the numbers alone would arm the
+            // second press on the way from 0 to 30, which is the direction that spends LESS often
+            // than never — and would leave 30 to 0, which stops the tick entirely, as one press
+            // against a sentence promising more turns.
+            () => pending() > 0 && (current() == 0 || pending() < current())
+                ? Labels.LowerReviewEveryArmed(pending())
+                : null,
+            save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
     /// THE PRESS THAT WRITES WHAT THE AI'S WORK IS PRICED AT.
     ///
     /// Pulled out of the page for the same reason <see cref="BuildSaveDailyCap"/> is: the rule about
@@ -1170,6 +1210,7 @@ sealed class SafetyPage
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
+        _reviewEvery = Ui.NumberField(_host.Gateway.Settings.MissionReviewMinutes, 0m, 5m);
 
         // THE BOXES OPEN ON WHAT THE AI IS ACTUALLY BEING CHARGED, not on empty. An owner correcting
         // a rate has to be able to see the one in force to know whether it needs correcting, and the
@@ -1198,6 +1239,23 @@ sealed class SafetyPage
             BuildSaveDailyCap(() => _host.Gateway.Settings.AiDailyCostCap, () => PendingCap(),
                 () => _host.SpendToday.Currency, SaveDailyCap),
             _capNote,
+            Ui.Divider(),
+            // BESIDE THE CEILING, because this is the other half of what the AI costs: the limit
+            // above is what it may spend, and this is how often it spends anything at all when
+            // nothing has happened. A turn now happens because something happened — the owner typed,
+            // material arrived, an order filled or settled, the day turned over — and this is the
+            // heartbeat for the days when none of that does.
+            Ui.Muted("The AI takes a turn when something happens. This is how often it is woken to "
+                + "look around anyway — research, backtests, the journal. Every wake is a turn it is "
+                + "charged for, so a shorter interval costs more."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.ReviewEvery, _reviewEvery,
+                "0 means it is woken only when something actually happens. Waking it more often spends "
+                + "more of your money, so it asks again first."),
+            Ui.Spacer(Theme.S2),
+            BuildSaveReviewEvery(() => _host.Gateway.Settings.MissionReviewMinutes, PendingReviewEvery,
+                SaveReviewEvery),
+            _reviewNote,
             Ui.Divider(),
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
             // worth what the rate below says a turn costs. The owner never edits a file to set it —
@@ -1439,6 +1497,25 @@ sealed class SafetyPage
         var money = MissionSituation.Money(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now spend up to {money} a day");
         _capNote.Text = $"Saved. The AI may spend up to {money} a day.";
+    }
+
+    int PendingReviewEvery() =>
+        (int)(_reviewEvery.Value ?? _host.Gateway.Settings.MissionReviewMinutes);
+
+    /// <summary>
+    /// Writes the heartbeat. It takes effect at the next start, because the interval is read once
+    /// when the loop is built — and the note says so rather than letting the owner watch for a
+    /// change that is not coming until then.
+    /// </summary>
+    void SaveReviewEvery()
+    {
+        var minutes = PendingReviewEvery();
+        _host.Gateway.Update(s => s.MissionReviewMinutes = minutes);
+        var said = minutes == 0
+            ? "The AI is now woken only when something happens"
+            : $"The AI is now woken to look around every {minutes} minute{(minutes == 1 ? "" : "s")}";
+        _host.Gateway.Log.Activity(said);
+        _reviewNote.Text = $"Saved. {said}, from the next time TradeAgent starts.";
     }
 
     RiskPolicy PendingLimits()

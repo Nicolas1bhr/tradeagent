@@ -46,6 +46,27 @@ public sealed class TradingGateway : IAsyncDisposable
     public FillStore Fills => _fills;
 
     /// <summary>
+    /// WHERE "SOMETHING HAPPENED THAT THE AI SHOULD BE WOKEN FOR" GOES — id, kind, payload.
+    ///
+    /// A delegate rather than a store, and set by the composition root rather than constructed here,
+    /// because this class must not gain a second thing it writes to a database: the two facts below
+    /// are raised, and what is done with them — deduplicated, queued, priced as a turn — is the
+    /// app's business. Null in every host that has no mission behind it, and then nothing is raised
+    /// and nothing changes.
+    ///
+    /// It grants nothing in either direction. Waking the AI is not permission to trade; the gateway
+    /// re-checks every limit when an order actually arrives.
+    /// </summary>
+    public Action<string, string, string?>? RaiseMissionWake { get; set; }
+
+    /// <summary>Raises one wake, never throwing into the caller — every call site is an event handler.</summary>
+    void Wake(string id, string kind, object? payload = null)
+    {
+        try { RaiseMissionWake?.Invoke(id, kind, payload is null ? null : Json.Write(payload)); }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "mission_wake_failed", "warn", ex: ex); }
+    }
+
+    /// <summary>
     /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
     /// bool behind a delegate, because the gateway must not know what an update is.
     ///
@@ -434,12 +455,22 @@ public sealed class TradingGateway : IAsyncDisposable
                 session = req?.AgentSessionId;
             }
 
-            return _fills.Record(new Fill(
+            var recorded = _fills.Record(new Fill(
                 AccountId: x.AccountId, ExecutionId: x.ExecutionId, At: x.At, Symbol: x.Symbol,
                 Side: x.Side.ToString(), Quantity: x.Quantity, Price: x.Price,
                 ConnectorOrderId: x.ConnectorOrderId, ClientOrderId: x.ClientOrderId,
                 RequestId: requestId, AgentSession: session, Source: source,
                 Fee: x.Fee, RecordedAt: Now));
+
+            // MONEY MOVED, SO THE AI IS WOKEN. Raised only for a row this call actually wrote: the
+            // ledger has two sources on purpose and the five-minute pull serves the same executions
+            // again, so raising on every sighting would be a paid turn per pull per fill. The id is
+            // the execution's, which makes even that harmless.
+            if (recorded)
+                Wake(MissionEventIds.Fill(x.ExecutionId), MissionEventKind.Fill,
+                    new { symbol = x.Symbol, side = x.Side.ToString(), quantity = x.Quantity });
+
+            return recorded;
         }
         catch (Exception ex)
         {
@@ -3889,6 +3920,14 @@ public sealed class TradingGateway : IAsyncDisposable
             _requests.Transition(req.RequestId, req.State, order.State,
                 connectorOrderId: order.ConnectorOrderId, filled: order.FilledQuantity);
             StateChanged?.Invoke();
+
+            // A REQUEST THAT HAS FINISHED IS A REASON TO WAKE, and one that is merely working is
+            // not: an order moving through WORKING and PARTIALLY_FILLED would otherwise buy a turn
+            // per tick of the book. The id carries the state as well as the request, so a stream
+            // that repeats the same transition — which a reconnecting bridge does — costs nothing.
+            if (OrderStateMachine.IsTerminal(order.State))
+                Wake(MissionEventIds.Order(req.RequestId, order.State.ToString()), MissionEventKind.Order,
+                    new { request = req.RequestId, state = order.State.ToString() });
         }
         catch (TradeAgentException) { /* raced with the dispatcher; reconciliation will settle it */ }
     }

@@ -446,7 +446,12 @@ public sealed class TurnMeter
     /// admission gate is read separately from <see cref="Today"/>, and a turn that could not be
     /// recorded is a turn whose cost the ceiling will not see, which the card already says out loud.
     /// </summary>
-    public string? Begin(string prompt)
+    /// <param name="consuming">
+    /// The <c>mission_event</c> ids this launch is answering, marked consumed in the same commit as
+    /// the row below. One transaction rather than two: a kill in between would hand the same wake to
+    /// the next launch and charge the owner for both.
+    /// </param>
+    public string? Begin(string prompt, IReadOnlyList<string>? consuming = null)
     {
         var reservation = Reservation();
         var attempt = new AiAttempt
@@ -466,7 +471,7 @@ public sealed class TurnMeter
         {
             lock (_gate)
             {
-                _attempts.Begin(attempt);
+                _attempts.Begin(attempt, consuming);
                 _open = attempt.Id;
                 _openPromptChars = prompt.Length;
             }

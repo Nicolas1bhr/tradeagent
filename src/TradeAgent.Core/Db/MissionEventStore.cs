@@ -199,6 +199,19 @@ public sealed class MissionEventStore(Database db)
         return Sql.TimeN(c.ExecuteScalar());
     });
 
+    /// <summary>
+    /// Whether a wake of this kind is already queued and untaken. What keeps the scheduled kinds —
+    /// the review tick and the day's renewal — to exactly one pending row each: without it every
+    /// early wake would leave another review behind it, and a burst of owner messages would buy a
+    /// trickle of paid reviews over the following half hour.
+    /// </summary>
+    public bool HasUnconsumed(string kind) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT 1 FROM mission_event WHERE kind=$k AND consumed_at IS NULL LIMIT 1", ("$k", kind));
+        return c.ExecuteScalar() is not null;
+    });
+
     /// <summary>The kind of the earliest unconsumed event, for the line the card shows.</summary>
     public string? NextKind() => db.Read(_ =>
     {

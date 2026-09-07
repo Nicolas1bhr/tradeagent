@@ -100,7 +100,11 @@ public class TurnAllowanceTests : IDisposable
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
             Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER", Spend = meter.Today });
 
-        public void BeginTurn(string prompt) { Opened.Add(prompt); meter.Begin(prompt); }
+        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        {
+            Opened.Add(prompt);
+            return meter.Begin(prompt, wakes);
+        }
 
         /// <summary>Meters this conversation the way the composition root does, so a turn that runs closes its row.</summary>
         public Host Metered() { meter.Attach(Conv); return this; }

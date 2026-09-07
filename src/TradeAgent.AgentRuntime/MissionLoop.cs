@@ -1,5 +1,6 @@
 using System.Text;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -25,7 +26,22 @@ public sealed record MissionStatus(
     DateTimeOffset? NextTurnAt,
     int Turns,
     int ConsecutiveErrors,
-    string? LastTurnFirstLine);
+    string? LastTurnFirstLine)
+{
+    /// <summary>
+    /// WHAT THE LOOP IS WAITING FOR, in the owner's words, or null where there is nothing to say.
+    ///
+    /// The card used to read "waiting until 14:32" and nothing else, which was the whole truth while
+    /// the loop's only reason to wait was a delay the AI had asked for. Now that a turn happens
+    /// because something happened, an owner looking at a quiet card needs to know whether it is
+    /// quiet because nothing has happened or because something is broken — and "waiting for the
+    /// next scheduled look" is the difference between those two readings.
+    ///
+    /// Init-only rather than a sixth positional member so that every existing site that builds one
+    /// of these keeps compiling and keeps meaning what it meant.
+    /// </summary>
+    public string? WaitingFor { get; init; }
+}
 
 /// <summary>
 /// The numbers the loop runs on. Defaults are the brief's: a turn at once unless the AI asked for a
@@ -45,6 +61,19 @@ public sealed record MissionOptions
 
     /// <summary>How long to stand off when the owner is mid-conversation and the session is busy.</summary>
     public TimeSpan BusyRetry { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// HOW OFTEN THE AI IS WOKEN WHEN NOTHING HAS HAPPENED. <see cref="TimeSpan.Zero"/> is off, and
+    /// then only a real event — the owner, material, a fill, an order, the day's renewal — starts a
+    /// turn.
+    ///
+    /// It exists because "nothing happened" is not the same as "there is nothing worth doing": the
+    /// research, the backtests and the journal are the job, and a market that has been quiet for an
+    /// hour is not a reason to stop working on them. It is a setting rather than a constant because
+    /// every tick costs a turn, and what a turn costs is the owner's business — see
+    /// <c>TradeAgentSettings.MissionReviewMinutes</c>, where lowering it asks twice.
+    /// </summary>
+    public TimeSpan ReviewEvery { get; init; } = TimeSpan.FromMinutes(30);
 }
 
 /// <summary>
@@ -102,6 +131,18 @@ public interface IMissionHost
     Task ScanAsync(CancellationToken ct);
 
     /// <summary>
+    /// THE PERSISTED REASONS THE AI MAY TAKE A TURN. With one wired the loop turns only when an
+    /// unconsumed event is due; with none it turns whenever it is asked to, which is what it did
+    /// before this existed.
+    ///
+    /// Null is the honest default for a host with no database behind it — a test, a build with no AI
+    /// prepared — and follows the same rule as <see cref="Spend"/> and <see cref="BeginTurn"/>: the
+    /// restrictive reading belongs where the facts are recorded, and a loop that refused to work
+    /// because nobody was writing events down would refuse for ever.
+    /// </summary>
+    MissionEventStore? Events => null;
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -132,8 +173,17 @@ public interface IMissionHost
     ///
     /// A default of nothing, so a host with no meter behind it — a test, a build with no AI prepared
     /// — keeps turning, exactly as <see cref="Spend"/> defaults to unmetered.
+    ///
+    /// <paramref name="wakes"/> is the ids of the <c>mission_event</c> rows this turn is answering.
+    /// They are marked consumed IN THE SAME TRANSACTION as the launch record, which is why they are
+    /// handed to this call rather than written by the loop before or after it: two commits leave a
+    /// window in which a kill hands the same wake to the next launch and the owner pays twice.
+    ///
+    /// Returns the attempt id, or null where nothing was recorded. The loop uses it to name the
+    /// <c>self</c> event when the AI asks to be woken later, and to spend the wakes anyway when
+    /// nothing could be written — a wake nobody consumed would buy an unbounded number of turns.
     /// </summary>
-    void BeginTurn(string prompt) { }
+    string? BeginTurn(string prompt, IReadOnlyList<string> wakes) => null;
 }
 
 /// <summary>
@@ -168,6 +218,16 @@ public sealed record MissionSituation
 
     /// <summary>What the owner typed in the chat while the AI was working. Rendered first.</summary>
     public IReadOnlyList<string> OwnerMessages { get; init; } = [];
+
+    /// <summary>
+    /// WHY THIS TURN IS HAPPENING, in the words of the events that caused it.
+    ///
+    /// A turn used to have no cause at all: the previous one ended, so this one started. An AI told
+    /// nothing about why it is awake has to work that out by looking at everything, every turn,
+    /// which is both the expensive way and the way that misses the one thing that changed. Empty
+    /// only where no wake queue is behind the loop.
+    /// </summary>
+    public IReadOnlyList<string> Wakes { get; init; } = [];
 
     /// <summary>
     /// WHAT THE AI HAS COST ITS OWNER TODAY. The other half of the sentence it was given as its
@@ -210,6 +270,12 @@ public sealed record MissionSituation
                     b.Append("> ").AppendLine(line);
             b.AppendLine();
         }
+
+        // THE CAUSE, ABOVE THE STATE AND BELOW THE OWNER. The owner's words keep their first place —
+        // a person waiting for an answer outranks everything — and then the AI is told what woke it,
+        // because that is the one line that tells it where to look first.
+        if (Wakes.Count > 0)
+            b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
 
         b.AppendLine($"- Local time: {LocalTime.LocalDateTime:yyyy-MM-dd HH:mm}");
         b.AppendLine($"- Trading mode: {Mode}");
@@ -377,6 +443,13 @@ public sealed class MissionLoop
     string? _lastFirstLine;
     bool _working;
     DateTimeOffset? _nextTurnAt;
+    string? _waitingFor;
+
+    /// <summary>The sleep in flight, so <see cref="Wake"/> can end it. Null while a turn is running.</summary>
+    CancellationTokenSource? _waitCts;
+
+    /// <summary>A wake that arrived with nothing asleep to interrupt. Spent by the next wait.</summary>
+    bool _nudged;
 
     /// <summary>Whether the owner has already been told about THIS spell of being over the cap.</summary>
     bool _reportedCap;
@@ -417,7 +490,10 @@ public sealed class MissionLoop
                     !Running ? MissionState.Paused :
                     MissionState.Waiting;
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
-                    _turns, _consecutiveErrors, _lastFirstLine);
+                    _turns, _consecutiveErrors, _lastFirstLine)
+                {
+                    WaitingFor = state == MissionState.Waiting ? _waitingFor : null
+                };
             }
         }
     }
@@ -452,8 +528,28 @@ public sealed class MissionLoop
         if (_host.Conversation is { } c) await c.CancelAsync();
         if (run is not null) { try { await run; } catch (Exception) { /* it was cancelled */ } }
 
-        lock (_gate) { _working = false; _nextTurnAt = null; }
+        lock (_gate) { _working = false; _nextTurnAt = null; _waitingFor = null; }
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// ENDS THE SLEEP NOW, because something has just been written to the wake queue.
+    ///
+    /// Without it a message typed at 10:01 would sit unanswered until the next scheduled look, which
+    /// with the shipped half-hour tick is a person watching a quiet window for twenty-nine minutes.
+    /// It grants nothing and starts nothing: the loop wakes, reads the queue exactly as it would
+    /// have, and finds whatever is actually due — a raise that turned out to be a duplicate leaves
+    /// it with nothing to do and it goes back to sleep.
+    ///
+    /// A wake that arrives while a turn is running is remembered rather than lost, so the queue is
+    /// re-read the moment that turn ends.
+    /// </summary>
+    public void Wake()
+    {
+        CancellationTokenSource? cts;
+        lock (_gate) { _nudged = true; cts = _waitCts; }
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* the sleep ended on its own between the read and here */ }
     }
 
     async Task LoopAsync(CancellationToken ct)
@@ -465,7 +561,7 @@ public sealed class MissionLoop
             {
                 lock (_gate) _nextTurnAt = _now() + wait;
                 Changed?.Invoke();
-                try { await _delay(wait, ct); }
+                try { await WaitAsync(wait, ct); }
                 catch (OperationCanceledException) { return; }
             }
 
@@ -486,6 +582,29 @@ public sealed class MissionLoop
                 Changed?.Invoke();
                 wait = Backoff(errors);
             }
+        }
+    }
+
+    /// <summary>
+    /// Sleeps, or stops sleeping because <see cref="Wake"/> was called. Cancellation of the loop's
+    /// own token still propagates — only a nudge is swallowed — so Pause is unaffected.
+    /// </summary>
+    async Task WaitAsync(TimeSpan wait, CancellationToken ct)
+    {
+        CancellationTokenSource cts;
+        lock (_gate)
+        {
+            // Something arrived while the last turn was in flight. Do not sleep on it.
+            if (_nudged) { _nudged = false; return; }
+            _waitCts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+
+        try { await _delay(wait, cts.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* woken */ }
+        finally
+        {
+            lock (_gate) { if (ReferenceEquals(_waitCts, cts)) _waitCts = null; _nudged = false; }
+            cts.Dispose();
         }
     }
 
@@ -514,12 +633,36 @@ public sealed class MissionLoop
         // mission's waits rather than racing it, and what they typed is carried into the next one.
         if (conversation.Busy) return _options.BusyRetry;
 
+        // ---- the wake --------------------------------------------------------------------------
+        // A TURN HAPPENS BECAUSE SOMETHING HAPPENED, and with nothing due nothing is launched. This
+        // is what replaces the immediate re-turn: `AskedForDelay` answered Zero whenever the AI had
+        // written no `next.json`, so the loop started another turn the instant one ended and the
+        // only thing that ever stopped it was the day's cost ceiling — which is a bill, not a
+        // reason. docs/COUNCIL.md rule 7: justified idleness launches no inference.
+        //
+        // The scheduled kinds are written first, so an idle installation always has a next wake to
+        // sleep until, and both of them are DUE IN THE FUTURE — the loop scheduling its own next
+        // look must never be what makes this one eligible.
+        var events = _host.Events;
+        List<MissionEvent> wake = [];
+        if (events is not null)
+        {
+            Schedule(events);
+            wake = events.Due(_now());
+            if (wake.Count == 0) return Idle(events);
+        }
+
         // ---- yield to the scanner ----------------------------------------------------------------
         // Nothing is running at this line: the previous turn's process has exited and this one has
         // not started. So a pass taken here measures a window that contains no agent and can attest
         // what it finds to the owner. Removing this is what makes A_file_the_owner_drops_between_
         // turns_is_still_recorded_as_theirs go red.
         if (_host.InboxChangedSinceLastPass) await _host.ScanAsync(ct);
+
+        // That pass may have recorded material, which raises a wake of its own. Taking it NOW rather
+        // than leaving it for the next turn is what keeps "the owner dropped a file" one turn: the
+        // turn about to run is the one that should be told about it.
+        if (events is not null) wake = events.Due(_now());
 
         // ---- a fresh CLI session every N turns ---------------------------------------------------
         // Resuming forever grows one context until the runtime refuses it or prices it absurdly. The
@@ -531,10 +674,18 @@ public sealed class MissionLoop
             _sessionTurns = 0;
         }
 
-        var situation = (await _host.SituationAsync(ct)) with { OwnerMessages = conversation.TakeTyped() };
+        // THE OWNER'S WORDS COME OFF THE TABLE FIRST AND THE IN-MEMORY QUEUE SECOND. With a wake
+        // queue behind it `AgentSession.Queue` writes the row instead of the list, so exactly one of
+        // the two holds any given message; without one the list is still where they are, and this
+        // reads the same as it always did.
+        var situation = (await _host.SituationAsync(ct)) with
+        {
+            OwnerMessages = [.. OwnerWords(wake), .. conversation.TakeTyped()],
+            Wakes = Reasons(wake)
+        };
         var prompt = situation.Text();
 
-        lock (_gate) { _working = true; _nextTurnAt = null; }
+        lock (_gate) { _working = true; _nextTurnAt = null; _waitingFor = null; }
         Changed?.Invoke();
 
         // ---- the record and the commitment, BEFORE the process ------------------------------------
@@ -545,7 +696,18 @@ public sealed class MissionLoop
         //
         // It is handed the SAME string that is sent, so the hash on the row is of the prompt that
         // actually entered the model request rather than of a second rendering of the same facts.
-        _host.BeginTurn(prompt);
+        // It also carries the wakes this turn is answering, which are marked consumed in the same
+        // commit — see IMissionHost.BeginTurn.
+        var wakeIds = wake.Select(e => e.Id).ToArray();
+        var attemptId = _host.BeginTurn(prompt, wakeIds);
+
+        // A LAUNCH NOBODY COULD RECORD STILL SPENDS ITS WAKE. Leaving the events unconsumed because
+        // the attempt row could not be written would hand the same wake to the next turn, and the
+        // next, for as long as the database stayed unwritable — an unbounded number of paid turns
+        // out of one reason to take one.
+        if (attemptId is null && events is not null && wakeIds.Length > 0)
+            try { events.Consume(wakeIds, Unrecorded, _now()); }
+            catch (Exception) { /* the same failure that lost the attempt row; the turn still runs */ }
 
         AgentTurnEnded? ended = null;
         void Watch(AgentTurnEnded e) => ended = e;
@@ -573,7 +735,195 @@ public sealed class MissionLoop
         }
         Changed?.Invoke();
 
-        return failed ? Backoff(errors) : AskedForDelay();
+        // WHAT BECAME OF EACH WAKE, written after the turn rather than assumed by it. An owner's
+        // message whose turn failed is re-raised once, so a runtime that fell over does not swallow
+        // the one thing in the block that was waiting for an answer.
+        if (events is not null) Settle(events, wake, failed, ended);
+
+        return failed ? Backoff(errors) : NextWait(events, attemptId);
+    }
+
+    /// <summary>
+    /// What <c>consumed_by</c> reads when the launch record could not be written. It is deliberately
+    /// not an attempt id: nothing in <c>ai_attempt</c> will ever carry it, and a row pointing at an
+    /// attempt that does not exist is the honest shape of "this turn ran and was not recorded".
+    /// </summary>
+    public const string Unrecorded = "unrecorded";
+
+    /// <summary>
+    /// THE TWO WAKES THE LOOP SCHEDULES FOR ITSELF, and both are always due in the FUTURE — the loop
+    /// arranging its next look must never be what makes this moment eligible, or "no eligible event"
+    /// could never be reached and the queue would be a clock with extra steps.
+    ///
+    /// One pending row of each kind at a time. Without that check every early wake would leave
+    /// another review behind it, and a burst of owner messages would buy a trickle of paid reviews
+    /// over the following half hour.
+    /// </summary>
+    void Schedule(MissionEventStore events)
+    {
+        var now = _now();
+        try
+        {
+            if (_options.ReviewEvery > TimeSpan.Zero && !events.HasUnconsumed(MissionEventKind.Review))
+            {
+                var due = now + _options.ReviewEvery;
+                events.RaiseDue(MissionEventIds.Review(due), MissionEventKind.Review, now, due);
+            }
+
+            // NOT A SETTING. The allowance the AI works under is the owner's day, and the moment it
+            // becomes a new one is a fact about the world rather than a preference — an AI that
+            // stopped at the ceiling has to be told when it may work again, and nothing else in the
+            // queue is going to say so on a quiet night.
+            if (!events.HasUnconsumed(MissionEventKind.Renewal))
+            {
+                var midnight = LocalMidnightAfter(now);
+                events.RaiseDue(MissionEventIds.Renewal(midnight), MissionEventKind.Renewal, now, midnight);
+            }
+        }
+        catch (Exception)
+        {
+            // A queue that cannot be written must not stop the loop. The turn that follows reads
+            // whatever is there, and a missing scheduled wake costs a look, not the mission.
+        }
+    }
+
+    /// <summary>The next LOCAL midnight, on the offset in force at that boundary.</summary>
+    static DateTimeOffset LocalMidnightAfter(DateTimeOffset now)
+    {
+        var start = now.ToLocalTime().Date.AddDays(1);
+        return new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start));
+    }
+
+    /// <summary>
+    /// NOTHING IS DUE, so nothing is launched and the loop sleeps until something is. The card is
+    /// left reading "waiting" with the reason beside it: an owner looking at a quiet window needs
+    /// the difference between "nothing has happened yet" and "this is broken".
+    /// </summary>
+    TimeSpan Idle(MissionEventStore events)
+    {
+        DateTimeOffset? next;
+        string? why;
+        try { next = events.NextDueAt(); why = Waiting(events.NextKind()); }
+        catch (Exception) { next = null; why = null; }
+
+        lock (_gate) { _working = false; _nextTurnAt = next; _waitingFor = why; }
+        Changed?.Invoke();
+
+        if (next is null) return _options.MaxDelay;
+        var wait = next.Value - _now();
+        return wait <= TimeSpan.Zero ? _options.BusyRetry
+            : wait > _options.MaxDelay ? _options.MaxDelay
+            : wait;
+    }
+
+    /// <summary>
+    /// The wait after a turn that ended cleanly: the AI's own request becomes a <c>self</c> event,
+    /// and then the queue decides, exactly as it does when the loop was idle. The file is read and
+    /// deleted either way — a request left on disk would make one "leave me half an hour" into every
+    /// turn being half an hour apart for ever.
+    /// </summary>
+    TimeSpan NextWait(MissionEventStore? events, string? attemptId)
+    {
+        var asked = AskedForDelay();
+        if (events is null) return asked;
+
+        if (asked > TimeSpan.Zero)
+        {
+            var now = _now();
+            var id = MissionEventIds.Self(attemptId is { Length: > 0 } a
+                ? a
+                : now.UtcDateTime.ToString("yyyyMMddHHmmssfff"));
+            try { events.RaiseDue(id, MissionEventKind.Self, now, now + asked); }
+            catch (Exception) { /* the schedule below still gives the loop something to wake for */ }
+        }
+
+        Schedule(events);
+        return Idle(events);
+    }
+
+    /// <summary>
+    /// The owner's own words, off the durable queue, oldest first. The payload is the only copy
+    /// once an event exists for a message — see <see cref="MissionOwnerMessage"/> — so a row whose
+    /// payload cannot be read is skipped rather than rendered as an empty quotation.
+    /// </summary>
+    static IEnumerable<string> OwnerWords(IEnumerable<MissionEvent> wake)
+    {
+        foreach (var e in wake.Where(e => e.Kind == MissionEventKind.Owner))
+        {
+            string? text = null;
+            try { text = Json.Read<MissionOwnerMessage>(e.Payload ?? "")?.Text; }
+            catch (Exception) { /* an unreadable payload is not a message */ }
+            if (!string.IsNullOrWhiteSpace(text)) yield return text;
+        }
+    }
+
+    /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>
+    static string[] Reasons(IEnumerable<MissionEvent> wake) =>
+        [.. wake.Select(e => Reason(e.Kind)).Distinct()];
+
+    static string Reason(string kind) => kind switch
+    {
+        MissionEventKind.Owner => "your owner typed something",
+        MissionEventKind.Inbox => "new material arrived in `../inbox`",
+        MissionEventKind.Fill => "an order filled",
+        MissionEventKind.Order => "an order reached a final state",
+        MissionEventKind.Renewal => "the day turned over, so your spending allowance is a new one",
+        MissionEventKind.Self => "you asked to be woken now",
+        MissionEventKind.Review => "a scheduled look; nothing else has happened",
+        _ => kind
+    };
+
+    /// <summary>The card's line for what is being waited for, from the kind of the earliest wake.</summary>
+    static string? Waiting(string? kind) => kind switch
+    {
+        null => "nothing is scheduled",
+        MissionEventKind.Review => "the next scheduled look",
+        MissionEventKind.Renewal => "the day to turn over",
+        MissionEventKind.Self => "the time the AI asked for",
+        _ => Reason(kind)
+    };
+
+    /// <summary>
+    /// Records what became of each wake this turn took, and re-raises an owner's message ONCE when
+    /// the turn that was supposed to answer it failed.
+    ///
+    /// Once, and not more: a message that makes the runtime fall over would otherwise be retried for
+    /// ever, at the price of a turn each time. The retry carries the failure in its payload, and a
+    /// retry that fails again is left <c>failed</c> — the owner can see both rows and ask again in
+    /// their own words, which is the outcome a loop cannot improve on.
+    /// </summary>
+    void Settle(MissionEventStore events, IReadOnlyList<MissionEvent> wake, bool failed, AgentTurnEnded? ended)
+    {
+        if (wake.Count == 0) return;
+        var disposition = failed ? MissionEventDisposition.Failed : MissionEventDisposition.Answered;
+
+        try
+        {
+            foreach (var e in wake)
+            {
+                events.Settle(e.Id, disposition);
+                if (!failed || e.Kind != MissionEventKind.Owner) continue;
+
+                var said = Json.Read<MissionOwnerMessage>(e.Payload ?? "");
+                if (said is null || said.RetryOf is not null) continue;
+
+                var seq = events.NextOwnerSequence();
+                events.Raise(MissionEventIds.Owner(seq), MissionEventKind.Owner, _now(),
+                    Json.Write(said with
+                    {
+                        RetryOf = e.Id,
+                        Failure = ended?.Raw is { Length: > 0 } raw
+                            ? raw[..Math.Min(raw.Length, 500)]
+                            : "the turn ended without a reply"
+                    }));
+            }
+        }
+        catch (Exception)
+        {
+            // The disposition is a record, not a gate. A queue that cannot be written has already
+            // cost this turn its consumption record, and stopping the loop over it would turn a
+            // bookkeeping failure into the AI stopping work.
+        }
     }
 
     /// <summary>
@@ -639,7 +989,12 @@ public sealed class MissionLoop
             _host.SpendCapReached(spend);
         }
 
-        lock (_gate) { _working = false; _nextTurnAt = spend.ResumesAt; }
+        lock (_gate)
+        {
+            _working = false;
+            _nextTurnAt = spend.ResumesAt;
+            _waitingFor = "the daily spending limit to reset";
+        }
         Changed?.Invoke();
 
         var wait = spend.ResumesAt - _now();

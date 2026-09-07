@@ -94,6 +94,34 @@ public sealed class AppHost : IAsyncDisposable
     public AiSpendToday SpendToday => Meter?.Today ?? AiSpendToday.NotMetered;
 
     /// <summary>
+    /// WHY THE AI IS ALLOWED TO TAKE A TURN. Written by this process and by nothing else — there is
+    /// no verb and no pipe op that reaches it, which is the rule <c>material</c> and
+    /// <c>ai_attempt</c> already keep and the reason an agent cannot buy itself work.
+    /// </summary>
+    public MissionEventStore? Wakes { get; private set; }
+
+    /// <summary>
+    /// Writes one reason to wake and, when the row is new, ends whatever sleep the loop is in. A
+    /// repeat writes nothing and wakes nobody, which is what makes the fill ledger's two sources and
+    /// every reconnect free.
+    ///
+    /// It never throws: every caller is a code path — a fill arriving, a scan finishing, the owner
+    /// pressing a button — that must carry on whether or not a queue row could be written.
+    /// </summary>
+    public void RaiseWake(string id, string kind, string? payload = null)
+    {
+        try
+        {
+            if (Wakes?.Raise(id, kind, DateTimeOffset.UtcNow, payload) == true) Mission?.Wake();
+        }
+        catch (Exception ex)
+        {
+            try { Gateway.Log.Engineering("Mission", "wake_not_raised", "warn", ex: ex); }
+            catch (Exception) { /* the log is the same database that just refused the row */ }
+        }
+    }
+
+    /// <summary>
     /// THE SHIPPED RATE THE SAFETY PAGE OFFERS AS ITS DEFAULT: the dearest model in the running
     /// runtime's catalogue, which is exactly what an unidentified turn is being charged at. Null
     /// where this build ships no list price for that runtime, and then the page has no default to
@@ -269,9 +297,22 @@ public sealed class AppHost : IAsyncDisposable
                     Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens));
             Meter.Changed += () => Changed?.Invoke();
 
+            Wakes = new MissionEventStore(_db);
+
             Mission = new MissionLoop(new MissionHost(this),
-                new MissionOptions { TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession) });
+                new MissionOptions
+                {
+                    TurnsPerSession = Math.Max(1, Gateway.Settings.MissionTurnsPerSession),
+                    ReviewEvery = TimeSpan.FromMinutes(Math.Max(0, Gateway.Settings.MissionReviewMinutes))
+                });
             Mission.Changed += () => Changed?.Invoke();
+
+            // THE TWO FACTS THE GATEWAY OWNS AND NOBODY ELSE CAN SEE ARRIVE. A fill and an order
+            // reaching a final state are the events the AI most needs to be woken for, and both are
+            // known first inside the gateway's own event handling. The sink is a delegate rather
+            // than a reference to this host, so nothing reachable from it can change a mode, lift
+            // the kill switch or approve anything.
+            Gateway.RaiseMissionWake = RaiseWake;
             ReportAiToTheGateway();
 
             await Connector.ConnectAsync();
@@ -325,6 +366,9 @@ public sealed class AppHost : IAsyncDisposable
         Connector = id == "atas" ? new AtasConnector() : new FakeConnector();
         Gateway = new TradingGateway(_db, Connector, Health);
         Gateway.StateChanged += OnGatewayStateChanged;
+        // A new gateway is a new object and the sink is on the object, exactly like the hook below.
+        // Forgetting this line is how a fill on the new platform stops waking the AI.
+        Gateway.RaiseMissionWake = RaiseWake;
 
         _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
         _server.Start();
@@ -487,10 +531,19 @@ public sealed class AppHost : IAsyncDisposable
     /// </summary>
     public ScanResult ScanMaterials(CancellationToken ct = default)
     {
-        Interlocked.Exchange(ref _lastScanAtTicks, DateTimeOffset.UtcNow.UtcTicks);
+        var at = DateTimeOffset.UtcNow;
+        Interlocked.Exchange(ref _lastScanAtTicks, at.UtcTicks);
         var result = new MaterialScanner(_db!).Scan(ct);
         if (result.Added > 0 || result.Removed > 0)
             Gateway.Log.Engineering("Materials", "scan", "info", metadataJson: Json.Write(result));
+
+        // ADDED, NOT CHANGED. A pass that only hashed files it had already recorded, or watched one
+        // go, has told the AI nothing it did not know — and this is a paid turn. The id is the
+        // instant the pass began, so the same pass reported twice is one reason to wake.
+        if (result.Added > 0)
+            RaiseWake(MissionEventIds.Inbox(at), MissionEventKind.Inbox,
+                Json.Write(new { added = result.Added, seen = result.Seen }));
+
         return result;
     }
 
@@ -505,6 +558,14 @@ public sealed class AppHost : IAsyncDisposable
         Gateway.Update(s => s.AiWorksOnItsOwn = true);
         Gateway.Log.Activity("The AI was set to work on its own");
         Mission.Start();
+
+        // THE PRESS IS ITSELF A REASON TO LOOK. Without this the owner presses the button and
+        // nothing happens until the next scheduled review — half an hour of a card reading
+        // "waiting", which reads exactly like a button that did not work. Deliberately raised HERE
+        // and not in MissionLoop.Start: a restart that resumes a mission the owner had already
+        // started is not a new instruction, and must launch nothing on its own.
+        RaiseWake(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review,
+            Json.Write(new { because = "the owner set the AI to work on its own" }));
         Changed?.Invoke();
     }
 
@@ -576,12 +637,17 @@ public sealed class AppHost : IAsyncDisposable
 
         public AiSpendToday Spend => host.SpendToday;
 
+        /// <summary>The persisted reasons to wake. Read by the loop; written by the app only.</summary>
+        public MissionEventStore? Events => host.Wakes;
+
         /// <summary>
-        /// The launch record and its reservation, written before the CLI starts. Nothing else on
-        /// this interface writes to the database, and this one cannot change a mode, lift the kill
-        /// switch or approve anything — it commits money the AI is about to spend on itself.
+        /// The launch record and its reservation, written before the CLI starts, together with the
+        /// wakes this turn is answering. Nothing else on this interface writes to the database, and
+        /// this one cannot change a mode, lift the kill switch or approve anything — it commits
+        /// money the AI is about to spend on itself.
         /// </summary>
-        public void BeginTurn(string prompt) => host.Meter?.Begin(prompt);
+        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
+            host.Meter?.Begin(prompt, wakes);
 
         /// <summary>
         /// The one activity line the owner gets when the AI stops for the day, in their words and

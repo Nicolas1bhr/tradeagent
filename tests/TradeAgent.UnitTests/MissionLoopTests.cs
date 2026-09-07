@@ -1,4 +1,5 @@
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -111,7 +112,44 @@ public class MissionLoopTests
         public int Passes { get; private set; }
         public MissionSituation Next { get; set; } = new();
 
+        /// <summary>
+        /// The wake queue, or null for the pre-<c>U-wakes</c> shape — a host with no database behind
+        /// it, which is what every test above this line is. Null there is not a convenience: it is
+        /// the documented default of <see cref="IMissionHost.Events"/>, and these tests are what
+        /// pins that a host with no queue still turns.
+        /// </summary>
+        public MissionEventStore? Events { get; set; }
+
+        /// <summary>Every prompt a launch was opened for, in order.</summary>
+        public List<string> Opened { get; } = [];
+
+        /// <summary>The id of the last launch this host recorded, or null if it has recorded none.</summary>
+        public string? LastAttemptId { get; private set; }
+
+        // Unique to this HOST, not to this database. Two hosts over one database is exactly the
+        // shape of a restart, and ids that collided there would fail the restart tests for a reason
+        // that has nothing to do with what they are about.
+        readonly string _tag = Guid.NewGuid().ToString("n")[..8];
+        int _attempts;
+
         public string AgentHome => Path.Combine(Root, MaterialScanner.AgentDir);
+
+        /// <summary>
+        /// The launch record, through the REAL store, so the one-transaction consumption in
+        /// <see cref="AiAttemptStore.Begin"/> is the thing under test rather than a stand-in for it.
+        /// A host with no queue records nothing and answers null, exactly as the interface's default
+        /// does.
+        /// </summary>
+        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        {
+            Opened.Add(prompt);
+            if (Events is null) return null;
+
+            var id = $"turn-{_tag}-{++_attempts}";
+            new AiAttemptStore(_db).Begin(
+                new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow }, wakes);
+            return LastAttemptId = id;
+        }
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) => Task.FromResult(Next);
 
@@ -140,6 +178,15 @@ public class MissionLoopTests
 
     static void Drop(string root, string name, string content) =>
         File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, name), content);
+
+    /// <summary>
+    /// The heartbeat OFF, so that every turn in the wake tests below has a named cause. With it on,
+    /// "the loop did nothing" and "the loop woke itself" are the same observation for half an hour.
+    /// </summary>
+    static readonly MissionOptions NoHeartbeat = new() { ReviewEvery = TimeSpan.Zero };
+
+    static string OwnerSaid(string text) =>
+        Json.Write(new MissionOwnerMessage(text, DateTimeOffset.UtcNow));
 
     // ---- 1. the loop yields to the scanner ---------------------------------------------------
 
@@ -214,6 +261,211 @@ public class MissionLoopTests
         await loop.TurnAsync();
 
         Assert.Equal($"first {2}, then {2}", $"first {before}, then {host.Passes - before}");
+    }
+
+    // ---- 1b. the loop turns because something happened, and not otherwise --------------------
+
+    /// <summary>
+    /// THE PROPERTY THE UNIT IS BUILT ON (<c>docs/COUNCIL.md</c>, the <c>U-wakes</c> line): with no
+    /// eligible unconsumed event, ticks, a fresh loop over the same database and a replay of every
+    /// consumed event launch ZERO paid processes.
+    ///
+    /// RED FIRST, and it was red for the plainest possible reason: <c>AskedForDelay</c> answered
+    /// <c>Zero</c> whenever the AI had written no <c>next.json</c>, so a turn was taken every time
+    /// the loop was asked for one and the only thing that ever stopped it was the day's cost
+    /// ceiling. A bill is not a reason to work.
+    ///
+    /// The replay is not hypothetical: the fill ledger has two sources on purpose, a reconnect
+    /// re-pulls a whole day of executions, and a bridge that reconnects repeats order transitions.
+    /// Every one of those raises an id the table already holds.
+    /// </summary>
+    [Fact]
+    public async Task With_nothing_due_ticks_a_restart_and_a_replay_launch_nothing()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+
+        // The day that already happened: one real reason to wake, and the turn that answered it.
+        var yesterday = new FakeConversation(presence);
+        events.Raise(MissionEventIds.Owner(1), MissionEventKind.Owner, DateTimeOffset.UtcNow,
+            OwnerSaid("how did today go?"));
+        await new MissionLoop(new FakeHost(db, root, presence, yesterday) { Events = events },
+            NoHeartbeat).TurnAsync();
+        Assert.Single(yesterday.Sent);
+
+        // From here nothing new has happened, and nothing may be launched.
+        var conversation = new FakeConversation(presence);
+        var host = new FakeHost(db, root, presence, conversation) { Events = new MissionEventStore(db) };
+        var restarted = new MissionLoop(host, NoHeartbeat);
+
+        for (var i = 0; i < 5; i++) await restarted.TurnAsync();          // ticks
+        foreach (var e in events.OfKind(MissionEventKind.Owner))          // the day, replayed
+            events.Raise(e.Id, e.Kind, DateTimeOffset.UtcNow, e.Payload);
+        for (var i = 0; i < 5; i++) await restarted.TurnAsync();
+
+        Assert.Empty(conversation.Sent);
+        Assert.Empty(host.Opened);
+        Assert.Equal(0, restarted.Status.Turns);
+    }
+
+    /// <summary>
+    /// The other direction, so the gate is a queue and not an off switch: one due event is one turn,
+    /// and the turn names what woke it. An AI told nothing about why it is awake has to look at
+    /// everything, every turn, which is both the expensive way and the way that misses the one thing
+    /// that changed.
+    /// </summary>
+    [Fact]
+    public async Task One_due_event_is_one_turn_and_the_situation_says_what_woke_it()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var conversation = new FakeConversation(presence);
+        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        events.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, DateTimeOffset.UtcNow);
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+
+        Assert.Single(conversation.Sent);
+        Assert.Contains("- Why you are awake: an order filled", conversation.Sent[0]);
+        Assert.Equal(MissionEventDisposition.Answered,
+            events.Get(MissionEventIds.Fill("EXEC-1"))!.Disposition);
+    }
+
+    /// <summary>
+    /// THE WAKE IS SPENT BEFORE THE PROCESS STARTS, in the launch record's own transaction. Two
+    /// commits would leave a window in which the turn is recorded and its reason is not, and a kill
+    /// inside that window hands the same reason to the next launch — the owner paying twice for one
+    /// thing having happened.
+    /// </summary>
+    [Fact]
+    public async Task The_wake_is_consumed_by_the_attempt_that_answered_it()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var host = new FakeHost(db, root, presence, new FakeConversation(presence)) { Events = events };
+        events.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, DateTimeOffset.UtcNow);
+
+        await new MissionLoop(host, NoHeartbeat).TurnAsync();
+
+        var row = events.Get(MissionEventIds.Fill("EXEC-1"))!;
+        Assert.True(row.Consumed);
+        Assert.Equal(host.LastAttemptId, row.ConsumedBy);
+        Assert.Equal(AiAttemptState.LAUNCHED, new AiAttemptStore(db).Get(host.LastAttemptId!)!.State);
+    }
+
+    /// <summary>
+    /// The AI's request to be woken later is an event like any other now, so a delay it asked for
+    /// survives a restart — and the wait the loop returns is the queue's, not a number it is holding
+    /// in memory. Nothing is due before the delay is up.
+    /// </summary>
+    [Fact]
+    public async Task The_delay_the_ai_asks_for_becomes_an_event_that_survives_the_loop()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var conversation = new FakeConversation(presence);
+        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        events.Raise(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review, DateTimeOffset.UtcNow);
+        File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
+            """{"after_seconds": 600}""");
+
+        var wait = await new MissionLoop(host, NoHeartbeat).TurnAsync();
+
+        Assert.InRange(wait, TimeSpan.FromSeconds(590), TimeSpan.FromSeconds(600));
+        var self = events.OfKind(MissionEventKind.Self).Single();
+        Assert.Equal(MissionEventIds.Self(host.LastAttemptId!), self.Id);
+        Assert.False(self.Consumed);
+
+        // A fresh loop over the same database honours it too, and takes no turn until it is due.
+        var later = new FakeConversation(presence);
+        await new MissionLoop(new FakeHost(db, root, presence, later) { Events = new MissionEventStore(db) },
+            NoHeartbeat).TurnAsync();
+        Assert.Empty(later.Sent);
+    }
+
+    /// <summary>
+    /// THE SCHEDULED WAKES ARE ALWAYS IN THE FUTURE. The loop arranging its own next look must never
+    /// be what makes this moment eligible — otherwise "no eligible event" is unreachable and the
+    /// queue is a clock with extra steps. Exactly one of each kind is pending at a time, so an early
+    /// wake does not leave a trickle of paid reviews behind it.
+    /// </summary>
+    [Fact]
+    public async Task The_review_tick_and_the_renewal_are_scheduled_ahead_and_never_pile_up()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var conversation = new FakeConversation(presence);
+        var loop = new MissionLoop(new FakeHost(db, root, presence, conversation) { Events = events },
+            new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) });
+
+        for (var i = 0; i < 4; i++) await loop.TurnAsync();
+
+        Assert.Empty(conversation.Sent);
+        Assert.Single(events.OfKind(MissionEventKind.Review));
+        Assert.Single(events.OfKind(MissionEventKind.Renewal));
+        Assert.True(events.NextDueAt() > DateTimeOffset.UtcNow, "a scheduled wake was already due");
+    }
+
+    /// <summary>
+    /// A QUIET CARD IS THE ORDINARY STATE OF A QUIET DAY, and the owner cannot tell that from a
+    /// broken one unless it says which. The line names the minute and the reason.
+    /// </summary>
+    [Fact]
+    public async Task The_card_says_what_the_loop_is_waiting_for()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var conversation = new FakeConversation(presence);
+        var loop = new MissionLoop(new FakeHost(db, root, presence, conversation)
+        { Events = new MissionEventStore(db) },
+            new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) },
+            delay: (_, ct) => Task.Delay(1, ct));
+
+        loop.Start();
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+        while (loop.Status.WaitingFor is null && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(10);
+        var status = loop.Status;
+        await loop.PauseAsync();
+
+        Assert.Empty(conversation.Sent);                    // it waited; it did not work
+        Assert.Equal(MissionState.Waiting, status.State);
+        // Whichever of the two scheduled wakes is nearer. A test run at 23:55 has the day turning
+        // over before the next half-hourly look, and pinning one of them would be pinning the hour
+        // the suite happened to run at.
+        Assert.True(status.WaitingFor is "the next scheduled look" or "the day to turn over",
+            $"the card said it was waiting for: {status.WaitingFor}");
+        Assert.Contains("waiting until", DashboardPage.MissionSentence(status));
+        Assert.EndsWith($" for {status.WaitingFor}", DashboardPage.MissionSentence(status));
+    }
+
+    /// <summary>The four readings of the line, without a loop, so the wording itself is pinned.</summary>
+    [Theory]
+    [InlineData(true, "the day to turn over", "waiting until")]
+    [InlineData(true, null, "waiting until")]
+    [InlineData(false, "nothing is scheduled", "waiting for nothing is scheduled")]
+    [InlineData(false, null, "waiting")]
+    public void The_waiting_line_reads_the_minute_and_the_reason(bool hasTime, string? why, string expected)
+    {
+        var at = hasTime ? DateTimeOffset.UtcNow.AddMinutes(30) : (DateTimeOffset?)null;
+        var line = DashboardPage.MissionSentence(
+            new MissionStatus(MissionState.Waiting, at, 3, 0, null) { WaitingFor = why });
+
+        Assert.StartsWith(expected, line);
+        if (why is not null && hasTime) Assert.EndsWith($" for {why}", line);
     }
 
     // ---- 2. what the next turn waits for -----------------------------------------------------
