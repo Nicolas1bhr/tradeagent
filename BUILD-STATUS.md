@@ -4589,7 +4589,7 @@ Integration 615 = 1313 passed, 0 failed, 1 skipped; touched classes 3× → 45/4
 (`ApprovalReauthorizationTests`) each run; names vs `main` → 0 removed, 13 added; the `U-loss` leg's suite overlapping,
 no `Timing` red. Manager's gate at `6e26872` (rebased over the `U-loss` landing), Release: build → 0 warnings, 0 errors;
 suite → 454 + 269 + 615 = 1338 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
-13 added (sets 1112 → 1125; `[Fact]`/`[Theory]` 1070 → 1083); scan clean; no trailers; `rev-list --count` → 0; CI at `06a8636`: run 34073713557 in flight when this section was written, its verdict recorded in a follow-up commit (the merge sha is the gated tip rebased once more over the U-loss record, docs-only).
+13 added (sets 1112 → 1125; `[Fact]`/`[Theory]` 1070 → 1083); scan clean; no trailers; `rev-list --count` → 0; CI run 34073713557 at `06a8636` (the gated tip rebased once more over the U-loss record, docs-only): **RED on windows-latest only** — `MissionInstructionsTests.The_paragraph_is_the_only_difference_between_the_two_missions`, `13 out of 13 items … did not pass`: the test splits the mission on `'\n'` and the runner's CRLF checkout leaves `\r` on every line of the raw-literal paragraph (no `.gitattributes` in the repository); macos and ubuntu green, `package` skipped; the same tree 454/454 on this Mac. A fresh fixer, `U-crlf-win`, on top; this sha stays red.
 
 **NOT VERIFIED:** the card's new wording and the snapped quotes on a running app — no UI run since the one that found them;
 `AppHost.ConnectorIsBuiltInSimulator` (`Connector.Id == FakeConnector.ConnectorId`), the line that decides whether the
