@@ -37,6 +37,18 @@ public static class Paths
     /// a deliberate climb out of your own directory instead of the shortest path you could type.
     /// </summary>
     public static string AgentHome { get; } = SubOf(Workspace, "agent");
+
+    /// <summary>
+    /// ONE COUNCIL ROLE'S HOME, beside <see cref="Inbox"/> exactly as <see cref="AgentHome"/> is —
+    /// which is what Operations' home still IS, so an install that has been running keeps its plan
+    /// and its journal at the path they were already at.
+    ///
+    /// A method rather than a property per role because the roles are data
+    /// (<see cref="CouncilRoles.All"/>) and a second property would have to be remembered by
+    /// whoever adds the third role. It creates the directory, like every other member here.
+    /// </summary>
+    public static string RoleHome(string role) => SubOf(Workspace, CouncilRoles.HomeDir(role));
+
     public static string Bin { get; } = Sub("bin");
     public static string Logs { get; } = Sub("logs");
     public static string State { get; } = Sub("state");
@@ -80,7 +92,8 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data })
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data }
+                     .Concat(CouncilRoles.All.Select(RoleHome)))
         {
             Directory.CreateDirectory(d);
             if (!Directory.Exists(d)) throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, $"cannot create {d}");

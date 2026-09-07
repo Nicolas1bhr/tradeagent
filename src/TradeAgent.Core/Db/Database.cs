@@ -453,6 +453,71 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','8') ON CONFLICT(key) DO UPDATE SET value='8';");
         }
 
+        if (have < 9)
+        {
+            // THE COUNCIL. Two roles run serially by one app instance, and the app carrying work
+            // between them — docs/COUNCIL.md, "The shape" and round 4's access contract.
+            //
+            // `role` ON THE TWO EXISTING TABLES, additively. Every row written before this migration
+            // is NULL and reads as the chair's (CouncilRoles.Or): the single agent this replaces WAS
+            // Operations, and reassigning its history to nobody would lose the attribution round 4
+            // named as unrecoverable. A column rather than a second table because the fact is about
+            // the attempt and the wake themselves — which role was charged, which role was woken —
+            // and a fact split across two tables is a fact two queries can disagree about.
+            //
+            // `publication` IS THE IMMUTABLE ARTIFACT, and its id is the SHA-256 of its content.
+            // That is the whole of what makes the relay safe to crash inside: publishing the same
+            // text twice is publishing the same row twice, which the primary key refuses, so a
+            // restart that re-reads a file already published writes nothing. An id minted from the
+            // attempt would make every restart a second publication, a second delivery and a second
+            // paid task — the exact defect the unit's property test injects a crash to catch.
+            //
+            // `content` is stored beside the metadata rather than left in the role's `out/` file,
+            // because the file is the AGENT'S and may be overwritten, moved or deleted between the
+            // commit and the copy; a delivery that cannot be re-copied from the app's own record is
+            // a delivery a crash can lose. It is the recipient-scoped artifact of round 4, and
+            // `recipients` and `classification` are what scope it.
+            //
+            // `delivery` is one row per recipient and carries the two-state life the copy needs:
+            // `committed` the moment the transaction lands, `delivered` only once the file is on
+            // disk in the recipient's `in/`. Between those two states a restart re-copies; there is
+            // no state in which a delivery is claimed and no file exists.
+            //
+            // WRITTEN BY THE APP ONLY, the rule `material`, `ai_attempt` and `mission_event` already
+            // keep. There is no verb and no pipe op that publishes, delivers or creates a task, so
+            // neither role can hand itself work, publish in the other's name, or delete the record
+            // of what it was asked to do.
+            Exec("""
+            ALTER TABLE ai_attempt ADD COLUMN role TEXT;
+            ALTER TABLE mission_event ADD COLUMN role TEXT;
+
+            CREATE TABLE IF NOT EXISTS publication(
+              id             TEXT PRIMARY KEY,
+              role           TEXT NOT NULL,
+              attempt        TEXT,
+              revision       INTEGER NOT NULL,
+              kind           TEXT NOT NULL,
+              recipients     TEXT NOT NULL,
+              classification TEXT NOT NULL,
+              created_at     TEXT NOT NULL,
+              source         TEXT,
+              content        TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_publication_role ON publication(role, revision);
+
+            CREATE TABLE IF NOT EXISTS delivery(
+              publication_id TEXT NOT NULL,
+              recipient      TEXT NOT NULL,
+              state          TEXT NOT NULL,
+              created_at     TEXT NOT NULL,
+              delivered_at   TEXT,
+              PRIMARY KEY(publication_id, recipient)
+            );
+            CREATE INDEX IF NOT EXISTS ix_delivery_state ON delivery(recipient, state);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','9') ON CONFLICT(key) DO UPDATE SET value='9';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

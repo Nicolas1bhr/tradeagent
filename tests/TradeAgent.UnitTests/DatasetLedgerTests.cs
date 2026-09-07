@@ -47,18 +47,23 @@ public class DatasetLedgerTests
 
     /// <summary>
     /// The migration. <c>dataset</c> and <c>dataset_file</c> arrived at schema 8 — 7 was
-    /// <c>U-wakes</c>'s <c>mission_event</c> — and this is where the exact number is pinned, with
-    /// the migration that last moved it, which is the convention <c>AiAttemptLedgerTests</c> and
-    /// <c>MissionEventTests</c> now both defer to. An older database gains both tables empty, which
-    /// reads correctly as "this installation has collected no data yet".
+    /// <c>U-wakes</c>'s <c>mission_event</c> — and 8 is this class's FLOOR, because below it there
+    /// are no dataset tables at all. The exact number belongs to whichever migration last moved it,
+    /// which is now the council's at 9
+    /// (<c>CouncilRoleTests.The_role_columns_arrive_at_schema_nine_and_an_unnamed_row_is_the_chairs</c>);
+    /// pinning it here as well is the trap <c>AiAttemptLedgerTests</c> and <c>MissionEventTests</c>
+    /// were both cured of, where an ADDITIVE migration that touches neither table fails the test of
+    /// the table it did not touch. An older database gains both tables empty, which reads correctly
+    /// as "this installation has collected no data yet".
     /// </summary>
     [Fact]
     public void The_schema_carries_the_dataset_tables_at_version_eight()
     {
         using var db = TestEnv.NewDb();
 
-        Assert.Equal(8, Versions.DatabaseSchemaVersion);
-        Assert.Equal("8", db.Read(_ =>
+        Assert.True(Versions.DatabaseSchemaVersion >= 8,
+            $"the dataset ledger needs schema 8 or later; this build says {Versions.DatabaseSchemaVersion}");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), db.Read(_ =>
         {
             using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
             return c.ExecuteScalar() as string;

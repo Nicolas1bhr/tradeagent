@@ -72,8 +72,16 @@ public static class Versions
     /// closed. Written by the app only; there is no verb and no pipe op that reaches them. Additive
     /// — two new tables — and an older database gains them empty, which reads correctly as "this
     /// installation has collected no data yet".
+    ///
+    /// 8 -&gt; 9: the council. A <c>role</c> column on <c>ai_attempt</c> and on <c>mission_event</c>,
+    /// and the <c>publication</c> and <c>delivery</c> tables the relay between the two roles commits
+    /// into. Additive — two nullable columns and two new tables — and every row written before it
+    /// reads as the chair's, because the single agent this replaces was Operations and attributing
+    /// its history to nobody would lose the one thing round 4 called unrecoverable. A publication's
+    /// id is the SHA-256 of its content, which is what makes a crash inside the relay recover to
+    /// exactly one committed task rather than to none or to two.
     /// </summary>
-    public const int DatabaseSchemaVersion = 8;
+    public const int DatabaseSchemaVersion = 9;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

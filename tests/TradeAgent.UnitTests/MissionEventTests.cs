@@ -27,9 +27,10 @@ public class MissionEventTests
     /// the one this build writes. It used to read <c>Assert.Equal(7, ...)</c> — the same shape the
     /// launch ledger's test was already cured of: an ADDITIVE migration that touched nothing about
     /// <c>mission_event</c> failed here anyway. <c>U-data-binance</c> added <c>dataset</c> at 8 and
-    /// the exact number moved with it, to
-    /// <c>DatasetLedgerTests.The_schema_carries_the_dataset_tables_at_version_eight</c>. 7 is this
-    /// class's floor, because below it there is no wake queue at all.
+    /// the council's role columns and relay tables came at 9; the exact number moves with whichever
+    /// migration last claimed it, now
+    /// <see cref="CouncilRoleTests.The_role_columns_arrive_at_schema_nine_and_an_unnamed_row_is_the_chairs"/>.
+    /// 7 is this class's floor, because below it there is no wake queue at all.
     /// </summary>
     [Fact]
     public void The_schema_carries_the_table_at_version_seven_or_later()
@@ -48,6 +49,10 @@ public class MissionEventTests
             using var c = db.Cmd("SELECT COUNT(*) FROM mission_event");
             return Convert.ToInt64(c.ExecuteScalar());
         }));
+
+        // The table itself, which is what the name is about: present, readable, and empty.
+        Assert.Null(new MissionEventStore(db).NextDueAt());
+        Assert.Empty(new MissionEventStore(db).Due(DateTimeOffset.UtcNow));
     }
 
     /// <summary>

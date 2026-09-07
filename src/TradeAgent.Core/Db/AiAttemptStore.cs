@@ -74,6 +74,13 @@ public sealed record AiAttempt
     public string? InputHash { get; init; }
 
     /// <summary>
+    /// WHICH COUNCIL ROLE WAS CHARGED FOR THIS LAUNCH. Null on every row written before the council
+    /// existed, and read as the chair's — the single agent it replaces was Operations, and a launch
+    /// attributed to nobody is a bill nobody can allocate.
+    /// </summary>
+    public string? Role { get; init; }
+
+    /// <summary>
     /// WHAT THIS ROW COSTS THE DAY IT STARTED ON. A row still LAUNCHED costs its reservation,
     /// because the work has been asked for; a LOST one costs it for good.
     /// </summary>
@@ -116,7 +123,7 @@ public sealed class AiAttemptStore(Database db)
         id, started_at, runtime, requested_model, pricing_basis, reserved_cost, state, ended_at,
         exit_code, input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens,
         reasoning_output_tokens, effective_model, cost, unpriced_reason, context, policy_version,
-        input_hash
+        input_hash, role
         """;
 
     /// <summary>
@@ -135,12 +142,12 @@ public sealed class AiAttemptStore(Database db)
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
-                   NULL,NULL,NULL,$ctx,$policy,$hash)
+                   NULL,NULL,NULL,$ctx,$policy,$hash,$role)
             """,
             ("$id", a.Id), ("$started", Sql.T(a.StartedAt)), ("$rt", a.Runtime),
             ("$req", a.RequestedModel), ("$basis", a.PricingBasis), ("$res", Sql.D(a.ReservedCost)),
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
-            ("$policy", a.PolicyVersion), ("$hash", a.InputHash));
+            ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role));
         c.ExecuteNonQuery();
         if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
         return a.Id;
@@ -213,7 +220,8 @@ public sealed class AiAttemptStore(Database db)
     /// the owner's own (<see cref="OwnerBasis"/>), which is a figure they are responsible for rather
     /// than one this build inferred.
     /// </summary>
-    public AiAttemptTotals TotalsBetween(DateTimeOffset from, DateTimeOffset to) => db.Read(_ =>
+    public AiAttemptTotals TotalsBetween(DateTimeOffset from, DateTimeOffset to, string? role = null) =>
+        db.Read(_ =>
     {
         using var c = db.Cmd("""
             SELECT
@@ -225,7 +233,9 @@ public sealed class AiAttemptStore(Database db)
                             AND COALESCE(pricing_basis,'') <> 'owner' THEN 1 ELSE 0 END),
               SUM(CASE WHEN state='LAUNCHED' THEN 1 ELSE 0 END)
             FROM ai_attempt WHERE started_at >= $from AND started_at < $to
-            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)));
+              AND ($role IS NULL OR COALESCE(role,$chair) = $role)
+            """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role),
+            ("$chair", CouncilRoles.Default));
         using var r = c.ExecuteReader();
         if (!r.Read()) return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0);
 
@@ -281,7 +291,8 @@ public sealed class AiAttemptStore(Database db)
         UnpricedReason = Sql.S(r.GetValue(16)),
         Context = Sql.S(r.GetValue(17)),
         PolicyVersion = Sql.S(r.GetValue(18)),
-        InputHash = Sql.S(r.GetValue(19))
+        InputHash = Sql.S(r.GetValue(19)),
+        Role = Sql.S(r.GetValue(20))
     };
 
     static long? Long(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetInt64(i);

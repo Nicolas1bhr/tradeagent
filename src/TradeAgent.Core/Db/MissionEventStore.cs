@@ -79,6 +79,17 @@ public sealed record MissionEvent
 
     public string? Disposition { get; init; }
 
+    /// <summary>
+    /// WHICH COUNCIL ROLE THIS WAKE IS FOR. Null on every row written before the council existed,
+    /// and read as the chair's — see <see cref="CouncilRoles.Or"/>. A wake belongs to exactly one
+    /// role: a fact that concerns both (new material, the day's renewal) is TWO rows with two ids,
+    /// because one row consumed by one role would silently deny the other the turn it was owed.
+    /// </summary>
+    public string? Role { get; init; }
+
+    /// <summary>The role this wake is for, with a row that names none reading as the chair's.</summary>
+    public string For => CouncilRoles.Or(Role);
+
     public bool Consumed => ConsumedAt is not null;
 }
 
@@ -111,6 +122,21 @@ public static class MissionEventIds
     /// <summary>Rounded to the minute: two ticks scheduled inside one minute are one review.</summary>
     public static string Review(DateTimeOffset at) =>
         $"{MissionEventKind.Review}:{at.LocalDateTime.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// THE ID FOR ONE ROLE'S COPY OF A FACT THAT WAKES MORE THAN ONE OF THEM — new material, the
+    /// day's renewal, the scheduled look, a delay a role asked for.
+    ///
+    /// The chair's copy keeps the bare id. That is not cosmetic: every id already written is the
+    /// chair's, and suffixing it would make the whole existing queue look like a set of facts
+    /// nobody had answered. A second role's copy is the same id with its name on it, so the pair is
+    /// still a function of the fact and a replay of either is still free.
+    /// </summary>
+    public static string ForRole(string id, string role) =>
+        role == CouncilRoles.Default ? id : $"{id}#{role}";
+
+    /// <summary>The task a publication delivered to a role. Uniquely keyed BY THE PUBLICATION.</summary>
+    public static string Task(string publicationId) => $"task:{publicationId}";
 }
 
 /// <summary>
@@ -137,7 +163,8 @@ public static class MissionEventIds
 /// </summary>
 public sealed class MissionEventStore(Database db)
 {
-    const string Cols = "id, kind, created_at, due_at, payload, consumed_at, consumed_by, disposition";
+    const string Cols =
+        "id, kind, created_at, due_at, payload, consumed_at, consumed_by, disposition, role";
 
     /// <summary>Events handed to one turn. A wake with more behind it leaves the rest for the next one.</summary>
     public const int BatchLimit = 50;
@@ -151,27 +178,35 @@ public sealed class MissionEventStore(Database db)
     {
         using var c = db.Cmd($"""
             INSERT INTO mission_event({Cols})
-            VALUES($id,$kind,$created,$due,$payload,NULL,NULL,NULL)
+            VALUES($id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", e.Id), ("$kind", e.Kind), ("$created", Sql.T(e.CreatedAt)),
-            ("$due", Sql.T(e.DueAt)), ("$payload", e.Payload));
+            ("$due", Sql.T(e.DueAt)), ("$payload", e.Payload), ("$role", e.Role));
         return c.ExecuteNonQuery() == 1;
     });
 
     /// <summary>
     /// Raises an event that is due the moment it is written. The ordinary case: something happened.
     /// </summary>
-    public bool Raise(string id, string kind, DateTimeOffset at, string? payload = null) =>
-        Raise(new MissionEvent { Id = id, Kind = kind, CreatedAt = at, DueAt = at, Payload = payload });
+    public bool Raise(string id, string kind, DateTimeOffset at, string? payload = null,
+        string? role = null) =>
+        Raise(new MissionEvent
+        {
+            Id = id, Kind = kind, CreatedAt = at, DueAt = at, Payload = payload, Role = role
+        });
 
     /// <summary>
     /// Raises an event that becomes eligible later — a delay the AI asked for, the next review tick,
     /// tomorrow's renewal. <paramref name="at"/> is when it was decided and <paramref name="dueAt"/>
     /// is when it counts.
     /// </summary>
-    public bool RaiseDue(string id, string kind, DateTimeOffset at, DateTimeOffset dueAt, string? payload = null) =>
-        Raise(new MissionEvent { Id = id, Kind = kind, CreatedAt = at, DueAt = dueAt, Payload = payload });
+    public bool RaiseDue(string id, string kind, DateTimeOffset at, DateTimeOffset dueAt,
+        string? payload = null, string? role = null) =>
+        Raise(new MissionEvent
+        {
+            Id = id, Kind = kind, CreatedAt = at, DueAt = dueAt, Payload = payload, Role = role
+        });
 
     /// <summary>
     /// WRITES WHAT THE OWNER TYPED WHILE THE AI WAS WORKING, with the next sequence number, and
@@ -186,8 +221,11 @@ public sealed class MissionEventStore(Database db)
     public bool RecordOwnerMessage(string text, DateTimeOffset at)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
+        // THE CHAIR'S, ALWAYS. docs/COUNCIL.md round 4: "Owner text enters Operations' agenda first,
+        // with receipt, disposition and deadline; workers receive scoped briefs." A message routed
+        // to whichever role happened to be next would be a person waiting on the research queue.
         return Raise(MissionEventIds.Owner(NextOwnerSequence()), MissionEventKind.Owner, at,
-            Json.Write(new MissionOwnerMessage(text, at)));
+            Json.Write(new MissionOwnerMessage(text, at)), CouncilRoles.Operations);
     }
 
     /// <summary>
@@ -204,6 +242,43 @@ public sealed class MissionEventStore(Database db)
         var list = new List<MissionEvent>();
         while (r.Read()) list.Add(Read(r));
         return list;
+    });
+
+    /// <summary>
+    /// EVERY DUE UNCONSUMED EVENT FOR ONE ROLE. What the serial scheduler hands to one turn: a turn
+    /// runs for exactly one role, so it must never be told about — or charged for — a wake that
+    /// belongs to the other.
+    ///
+    /// A row with no role is the chair's, which is why the filter is written out rather than
+    /// expressed as <c>role = $role</c>: every event in an upgraded database has NULL there.
+    /// </summary>
+    public List<MissionEvent> DueFor(string role, DateTimeOffset now, int limit = BatchLimit) =>
+        db.Read(_ =>
+        {
+            using var c = db.Cmd(
+                $"SELECT {Cols} FROM mission_event WHERE consumed_at IS NULL AND due_at <= $now "
+                + "AND COALESCE(role,$chair) = $role ORDER BY due_at, rowid LIMIT $limit",
+                ("$now", Sql.T(now)), ("$role", role), ("$chair", CouncilRoles.Default),
+                ("$limit", limit));
+            using var r = c.ExecuteReader();
+            var list = new List<MissionEvent>();
+            while (r.Read()) list.Add(Read(r));
+            return list;
+        });
+
+    /// <summary>
+    /// THE ROLE WHOSE EARLIEST DUE WAKE IS EARLIEST, or null when nothing is due for anybody. The
+    /// serial scheduler's whole decision: one loop, one process at a time, and the oldest reason to
+    /// work wins. A tie goes to whichever role the query reaches first by rowid, which is insertion
+    /// order — the chair, on any fact that woke both.
+    /// </summary>
+    public string? NextRoleDue(DateTimeOffset now) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COALESCE(role,$chair) FROM mission_event "
+            + "WHERE consumed_at IS NULL AND due_at <= $now ORDER BY due_at, rowid LIMIT 1",
+            ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default));
+        return c.ExecuteScalar() as string;
     });
 
     /// <summary>
@@ -226,6 +301,17 @@ public sealed class MissionEventStore(Database db)
     {
         using var c = db.Cmd(
             "SELECT 1 FROM mission_event WHERE kind=$k AND consumed_at IS NULL LIMIT 1", ("$k", kind));
+        return c.ExecuteScalar() is not null;
+    });
+
+    /// <summary>The same question for one role, so the chair's pending review does not stand in for
+    /// Research's and leave a role that is never scheduled at all.</summary>
+    public bool HasUnconsumed(string kind, string role) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT 1 FROM mission_event WHERE kind=$k AND consumed_at IS NULL "
+            + "AND COALESCE(role,$chair) = $role LIMIT 1",
+            ("$k", kind), ("$role", role), ("$chair", CouncilRoles.Default));
         return c.ExecuteScalar() is not null;
     });
 
@@ -317,6 +403,7 @@ public sealed class MissionEventStore(Database db)
         Payload = Sql.S(r.GetValue(4)),
         ConsumedAt = Sql.TimeN(r.GetValue(5)),
         ConsumedBy = Sql.S(r.GetValue(6)),
-        Disposition = Sql.S(r.GetValue(7))
+        Disposition = Sql.S(r.GetValue(7)),
+        Role = Sql.S(r.GetValue(8))
     };
 }

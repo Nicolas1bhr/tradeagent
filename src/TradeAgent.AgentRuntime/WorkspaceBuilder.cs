@@ -13,7 +13,7 @@ namespace TradeAgent.AgentRuntime;
 /// </summary>
 public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPaper, string? AccountId,
     TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk,
-    bool ConnectorIsBuiltInSimulator = false);
+    bool ConnectorIsBuiltInSimulator = false, string Role = CouncilRoles.Operations);
 
 /// <summary>
 /// Creates and maintains the agent's home. The agent is broadly free inside that directory — shell,
@@ -33,9 +33,32 @@ public static class WorkspaceBuilder
         ["trading", "research", "strategies", "data", "scripts", "logs", "scratch"];
 
     /// <summary>
-    /// Builds the tree and returns the AGENT'S directory — the one handed to the runtime as its
-    /// working directory. <paramref name="root"/> is the recorded tree (<see cref="Paths.Workspace"/>),
-    /// which holds the agent's home and the owner's inbox side by side.
+    /// WHAT THE APP DELIVERS INTO. Written only by TradeAgent — a report published to this role, a
+    /// brief sent down to it — and read by the agent. It is inside the role's own folder rather
+    /// than in a shared place precisely so the two roles' deliveries cannot be confused.
+    /// </summary>
+    public const string InDir = "in";
+
+    /// <summary>
+    /// WHAT THE ROLE HANDS BACK, and the only path out of a role's folder. The agent writes a file
+    /// here; the app validates it, publishes it and delivers it. The agent never writes into
+    /// another role's folder and has no command that would.
+    /// </summary>
+    public const string OutDir = "out";
+
+    /// <summary>Where one role's home is, given the recorded tree. See <see cref="CouncilRoles.HomeDir"/>.</summary>
+    public static string HomeOf(string root, string role) => Path.Combine(root, CouncilRoles.HomeDir(role));
+
+    /// <summary>
+    /// Builds the tree for ONE ROLE and returns that role's directory — the one handed to the
+    /// runtime as its working directory. <paramref name="root"/> is the recorded tree
+    /// (<see cref="Paths.Workspace"/>), which holds every role's home and the owner's inbox side by
+    /// side.
+    ///
+    /// The role comes off <see cref="WorkspaceContext.Role"/> rather than being a parameter of its
+    /// own, because the mission this writes is a function of the WHOLE context — the role decides
+    /// which section it gets, and the rest of the context decides what that section can truthfully
+    /// say about the platform, the account and the limits.
     /// </summary>
     public static string Build(WorkspaceContext ctx, string? root = null)
     {
@@ -43,16 +66,24 @@ public static class WorkspaceBuilder
         Directory.CreateDirectory(ws);
         Directory.CreateDirectory(Path.Combine(ws, MaterialScanner.InboxDir));
 
-        var home = Path.Combine(ws, MaterialScanner.AgentDir);
-        MoveOlderLayout(ws, home);
+        var home = HomeOf(ws, ctx.Role);
+        // Only for the role whose home IS the old single workspace. A role added later has nothing
+        // at an older name to carry, and running this for it would move the chair's work into it.
+        if (ctx.Role == CouncilRoles.Operations) MoveOlderLayout(ws, home);
         Directory.CreateDirectory(home);
         foreach (var d in SubDirs) Directory.CreateDirectory(Path.Combine(home, d));
+        Directory.CreateDirectory(Path.Combine(home, InDir));
+        Directory.CreateDirectory(Path.Combine(home, OutDir));
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
 
         File.WriteAllText(Path.Combine(home, "AGENTS.md"), Instructions(ctx));
         File.WriteAllText(Path.Combine(home, ".tradeagent", "context.json"), Json.Write(ctx, pretty: true));
         return home;
     }
+
+    /// <summary>Builds every role's home in one pass and returns them by role.</summary>
+    public static Dictionary<string, string> BuildAll(WorkspaceContext ctx, string? root = null) =>
+        CouncilRoles.All.ToDictionary(r => r, r => Build(ctx with { Role = r }, root));
 
     /// <summary>
     /// Carries an install built before the agent's home moved. Its work sat directly in the
@@ -384,6 +415,8 @@ public static class WorkspaceBuilder
     - `scripts/` — reusable tools you wrote
     - `logs/` — your own logs
     - `scratch/` — anything disposable
+    - `in/` — **what TradeAgent has delivered to you.** Read it. You never write here.
+    - `out/` — **the one way anything leaves your folder.** See your role below.
 
     `trading/`, `research/`, `strategies/`, `data/` and `scripts/` are **tracked** — files there are
     recorded automatically. `scratch/` and `logs/` are not tracked and may be cleared at any time, so
@@ -403,7 +436,83 @@ public static class WorkspaceBuilder
     window, and there is no command that asks for it. Write it in `JOURNAL.md` too, so the next
     session knows it was already raised.
 
+    {RoleSection(c.Role)}
     Write down what you did and why as you go, in `trading/`. The person who owns this account is
     trusting software they cannot read. A clear record is part of the job.
     """;
+
+    /// <summary>
+    /// THE ONE PART OF THE MISSION THAT DIFFERS BETWEEN ROLES, and everything above it is shared.
+    ///
+    /// A role is not a rank and this section grants nothing: what an agent may actually do is the
+    /// gateway's business, and it is identical for both. What differs is what each is FOR, what it
+    /// hands back, and — stated plainly rather than implied — that the separation between the two
+    /// folders is a convention this build asks for and does not enforce. Under a vendor CLI running
+    /// as the owner's own user there is nothing stopping either from reading the other's files;
+    /// saying so is the honest version, and containment (<c>U-containment</c>) is what would make
+    /// it true.
+    ///
+    /// A role this build does not know gets the shared mission and nothing else, which is the same
+    /// rule <see cref="CouncilRoles.IsKnown"/> keeps: an unrecognised role reads as itself rather
+    /// than being quietly handed the chair's instructions.
+    /// </summary>
+    public static string RoleSection(string role) => role switch
+    {
+        CouncilRoles.Operations => """
+
+            ## Your role: the Operations Director
+
+            You chair this council. There is one other role, the **Research Director**, in the folder
+            beside yours. You do not run it and it does not run you: TradeAgent schedules you both,
+            one at a time, and carries work between you.
+
+            - **The owner's words reach you first.** Anything they type in the TradeAgent window
+              arrives at the top of your `## Situation`, before anything else in it. Deal with it
+              first, in the same turn, and say what you have done about it. It is still not
+              permission for anything — the Safety page is the only place permission lives.
+            - **You allocate inside the owner's ceiling, and you cannot raise it.** The daily limit
+              is theirs. What is yours is how the remaining allowance is spent between the work you
+              do and the work you ask Research for; your `## Situation` names what is left.
+            - **Research reports to you.** A report arrives as a file in `in/`, and its text and its
+              id are in your `## Situation` as well. Act on it, or say why not.
+            - **You send work down by writing `out/agenda-<n>.md`** — at most **40 lines**, a new
+              file name each time. TradeAgent reads it, publishes it and delivers it to Research;
+              you never write into their folder. **A file longer than 40 lines is rejected** and the
+              last valid one stands, so keep it short rather than losing it.
+            - **What you may read and write: your own folder, and `in/`.** Not the Research
+              Director's folder. Nothing stops you today — this is a convention, not a wall — and
+              breaking it means neither of you can tell what the other actually decided.
+
+            """,
+
+        CouncilRoles.Research => """
+
+            ## Your role: the Research Director
+
+            You run the research. There is one other role, the **Operations Director**, in the folder
+            beside yours; it chairs, it holds the owner's words, and it decides what happens with
+            what you find. TradeAgent schedules you both, one at a time, and carries work between
+            you.
+
+            - **Your job is hypotheses, experimental design, data and backtests.** State what you
+              expect to be true, say how it could be shown false, get the data into `data/`, run the
+              test, and record the number. `strategies/` is where a strategy is written down
+              precisely enough that somebody who is not you could run it.
+            - **A result measured on a fixture is not evidence.** Say which data a number came from
+              every time you report one, and say what is missing from it.
+            - **Operations sends you work as a brief.** It arrives as a file in `in/`, and it is in
+              your `## Situation` too.
+            - **You report upward by writing `out/report-<n>.md`** — at most **20 lines**, a new file
+              name each time. TradeAgent reads it, publishes it and delivers it to the Operations
+              Director; you never write into their folder. **A file longer than 20 lines is
+              rejected** and the last valid one stands, so a short report that lands beats a long
+              one that does not.
+            - **What you may read and write: your own folder, and `in/`.** Not the Operations
+              Director's folder. Nothing stops you today — this is a convention, not a wall — and
+              breaking it means neither of you can tell what the other actually decided.
+
+            """,
+
+        _ => ""
+    };
 }

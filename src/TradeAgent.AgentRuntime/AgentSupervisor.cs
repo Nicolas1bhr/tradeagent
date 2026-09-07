@@ -21,13 +21,25 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     public bool Running { get; private set; }
 
     /// <summary>
-    /// The agent's own directory, as handed to the runtime. Empty until something is prepared.
+    /// The CHAIR'S directory, as handed to the runtime. Empty until something is prepared.
     ///
     /// The mission loop reads <c>.tradeagent/next.json</c> from here — the AI's request to be left
     /// alone for a while — so this is the one place that answer can come from without the app
-    /// guessing at a path the supervisor already knows.
+    /// guessing at a path the supervisor already knows. Every role's home is in
+    /// <see cref="Workspaces"/>; this one is Operations', because it is the working directory the
+    /// window's own conversation runs in and the one an install has always had.
     /// </summary>
     public string Workspace { get; private set; } = "";
+
+    /// <summary>
+    /// EVERY COUNCIL ROLE'S HOME, by role, as of the last prepare. Empty until something is prepared.
+    ///
+    /// Both are built on every prepare rather than lazily when a role first turns: the mission file
+    /// is regenerated so it can never describe a stale world, and a role whose folder appears only
+    /// once it is scheduled is a role whose first turn runs against a world nobody wrote down.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Workspaces { get; private set; } =
+        new Dictionary<string, string>();
 
     public async Task<IAgentRuntime> PrepareAsync(RuntimeManifest manifest, WorkspaceContext ctx, CancellationToken ct = default)
     {
@@ -41,7 +53,9 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
                 detection.Installed ? $"{manifest.DisplayName} {detection.Version}" : $"{manifest.DisplayName} is not installed");
 
             SessionId = $"agent-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-            var workspace = WorkspaceBuilder.Build(ctx);
+            var homes = WorkspaceBuilder.BuildAll(ctx);
+            Workspaces = homes;
+            var workspace = homes[CouncilRoles.Operations];
             Workspace = workspace;
             health.Set(Components.Workspace, HealthState.READY, workspace);
 
@@ -87,7 +101,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
     /// <summary>Refreshes the instruction file so a restarted agent never reads a stale world.</summary>
     public async Task RestartAsync(WorkspaceContext ctx, CancellationToken ct = default)
     {
-        WorkspaceBuilder.Build(ctx);
+        Workspaces = WorkspaceBuilder.BuildAll(ctx);
         await StopAsync(ct);
         await StartAsync(ct);
     }

@@ -154,6 +154,47 @@ public sealed class TradeAgentSettings
     /// </summary>
     public string? SelectedModelId { get; set; }
 
+    /// <summary>
+    /// THE MODEL EACH COUNCIL ROLE RUNS ON, by role id, or absent for "whatever
+    /// <see cref="SelectedModelId"/> says" and then the runtime's own default.
+    ///
+    /// A dictionary rather than a field per role because the roles are data
+    /// (<see cref="CouncilRoles.All"/>): a field per role is a field somebody has to remember to add
+    /// with the third role, and a settings row from a build that had one is read by a build that has
+    /// three. It is not a permission — a dearer model does not let a role do more, it reaches the
+    /// day's ceiling sooner — so it saves in one press, exactly as <see cref="SelectedModelId"/> does.
+    /// </summary>
+    public Dictionary<string, string> RoleModel { get; set; } = [];
+
+    /// <summary>
+    /// EACH ROLE'S SLICE OF <see cref="AiDailyCostCap"/>, as a fraction, or absent for an equal
+    /// share. Fifty-fifty across the two roles this build runs.
+    ///
+    /// It is a slice of the owner's ceiling and never an addition to it: the chair allocates INSIDE
+    /// what the owner allowed and cannot raise it — <c>docs/COUNCIL.md</c>, "Budgets are reserved,
+    /// not checked". A share is applied on top of the global gate rather than instead of it, so
+    /// shares that sum to more than one still cannot spend more than the cap; what they would do is
+    /// let one role take the whole day, which is the failure the share exists to prevent.
+    /// </summary>
+    public Dictionary<string, decimal> RoleShare { get; set; } = [];
+
+    /// <summary>
+    /// The model this role will be asked to run on: its own choice, then the single choice that
+    /// predates the council, then null for the runtime's default.
+    /// </summary>
+    public string? ModelForRole(string role) =>
+        RoleModel.TryGetValue(role, out var m) && m.Length > 0 ? m : SelectedModelId;
+
+    /// <summary>
+    /// This role's fraction of the day's ceiling. An equal share when nothing was chosen, and an
+    /// equal share when what was chosen is not a fraction — a zero or a negative here would be a
+    /// role that can never work, which is a stop nobody pressed.
+    /// </summary>
+    public decimal ShareForRole(string role) =>
+        RoleShare.TryGetValue(role, out var s) && s > 0m && s <= 1m
+            ? s
+            : 1m / CouncilRoles.All.Length;
+
     public string? SelectedConnectorId { get; set; }
     public string? SelectedAccountId { get; set; }
     public RiskPolicy Risk { get; set; } = new();
@@ -537,7 +578,42 @@ public sealed record AiSpendToday
     /// nobody measured is worse than not stopping.
     /// </summary>
     public bool AdmitsAnotherTurn =>
-        !Metered || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap);
+        !Metered
+        || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap && RoleAdmitsAnotherTurn);
+
+    /// <summary>
+    /// WHICH COUNCIL ROLE THIS READING IS ABOUT, or null for the whole day across every role. Null
+    /// is what the card, the Safety page and <c>trade status</c> read: an owner is being told what
+    /// their AI cost, not what one of its roles cost.
+    /// </summary>
+    public string? Role { get; init; }
+
+    /// <summary>This role's slice of <see cref="Cap"/>. Meaningless, and equal to it, when <see cref="Role"/> is null.</summary>
+    public decimal RoleCap { get; init; }
+
+    /// <summary>What this role's priced turns came to today.</summary>
+    public decimal RoleSpent { get; init; }
+
+    /// <summary>What this role has committed today and not yet resolved.</summary>
+    public decimal RoleReserved { get; init; }
+
+    /// <summary>
+    /// THE SHARE IS A SECOND GATE, NOT A REPLACEMENT FOR THE FIRST. The global comparison above is
+    /// what bounds the owner's day; this is what stops one role spending all of it.
+    ///
+    /// Drop it and the arithmetic still adds up — nothing is over-spent — but the council stops
+    /// being one: whichever role woke first takes every turn until midnight, and the other is never
+    /// scheduled at all. That is the failure this exists for, and it is why a role's share is
+    /// checked before the turn rather than reported after it, exactly as the global cap is.
+    ///
+    /// Always true for a reading with no role, so nothing that predates the council changes meaning.
+    /// </summary>
+    public bool RoleAdmitsAnotherTurn =>
+        Role is null || RoleSpent + RoleReserved + NextTurnReservation <= RoleCap;
+
+    /// <summary>What is left of this role's slice after what it has spent and committed.</summary>
+    public decimal RoleRemaining => Role is null ? Cap - Spent - Reserved
+        : RoleCap - RoleSpent - RoleReserved;
 
     /// <summary>
     /// THE OWNER'S CEILING IS SMALLER THAN ONE TURN'S WORST CASE, so no turn will ever be admitted —
