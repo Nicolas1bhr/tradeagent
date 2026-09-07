@@ -718,6 +718,20 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!Enum.IsDefined(mode))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, $"{(int)mode} is not a trading mode");
 
+        // REAL MONEY NEEDS A BOUND ON THE DAY, AND THIS IS WHERE IT IS ASKED FOR.
+        //
+        // There is no human in the loop for real money (decided 2026-09-06): the AI takes turn after
+        // turn for as long as the machine is on, and every gate but this one bounds a single order.
+        // A real-money mode with MaxDailyLoss at 0 — which on that field means NOT ENFORCED — is an
+        // unattended agent with nothing at all bounding what a day may cost, and that configuration
+        // must not be reachable by pressing one more button.
+        //
+        // It is a refusal to SELECT the mode, not a refusal to trade: the owner sets the number on
+        // the Safety page and presses the mode again. The sentence names the field, because a
+        // refusal an owner cannot act on is a refusal that gets read as the software being broken.
+        if (mode is TradingMode.LIVE_CONFIRM or TradingMode.LIVE_AUTONOMOUS && Settings.Risk.MaxDailyLoss <= 0m)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST, Labels.LiveNeedsADailyLossBudget(mode.ToString()));
+
         Settings.Mode = mode;
         if (!Settings.ModeIsLive) Settings.LiveActivated = false; // leaving live re-arms the safety
         SaveSettings();
