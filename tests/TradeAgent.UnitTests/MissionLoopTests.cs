@@ -365,6 +365,11 @@ public class MissionLoopTests
     /// The AI's request to be woken later is an event like any other now, so a delay it asked for
     /// survives a restart — and the wait the loop returns is the queue's, not a number it is holding
     /// in memory. Nothing is due before the delay is up.
+    ///
+    /// ON A FIXED CLOCK AT MIDDAY, because the wait this asserts is the QUEUE'S MINIMUM and the
+    /// day's renewal is due at local midnight. A suite that happened to run at 23:55 measured the
+    /// renewal instead of the AI's request and read a true answer as a failure; the assertion is
+    /// unchanged, and what is pinned is the hour it is asked at.
     /// </summary>
     [Fact]
     public async Task The_delay_the_ai_asks_for_becomes_an_event_that_survives_the_loop()
@@ -375,11 +380,12 @@ public class MissionLoopTests
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
         var host = new FakeHost(db, root, presence, conversation) { Events = events };
-        events.Raise(MissionEventIds.Review(DateTimeOffset.Now), MissionEventKind.Review, DateTimeOffset.UtcNow);
+        var noon = new DateTimeOffset(DateTime.Today.AddHours(12), DateTimeOffset.Now.Offset);
+        events.Raise(MissionEventIds.Review(noon), MissionEventKind.Review, noon);
         File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
             """{"after_seconds": 600}""");
 
-        var wait = await new MissionLoop(host, NoHeartbeat).TurnAsync();
+        var wait = await new MissionLoop(host, NoHeartbeat, now: () => noon).TurnAsync();
 
         Assert.InRange(wait, TimeSpan.FromSeconds(590), TimeSpan.FromSeconds(600));
         var self = events.OfKind(MissionEventKind.Self).Single();
@@ -389,7 +395,7 @@ public class MissionLoopTests
         // A fresh loop over the same database honours it too, and takes no turn until it is due.
         var later = new FakeConversation(presence);
         await new MissionLoop(new FakeHost(db, root, presence, later) { Events = new MissionEventStore(db) },
-            NoHeartbeat).TurnAsync();
+            NoHeartbeat, now: () => noon).TurnAsync();
         Assert.Empty(later.Sent);
     }
 
@@ -398,6 +404,11 @@ public class MissionLoopTests
     /// be what makes this moment eligible — otherwise "no eligible event" is unreachable and the
     /// queue is a clock with extra steps. Exactly one of each kind is pending at a time, so an early
     /// wake does not leave a trickle of paid reviews behind it.
+    ///
+    /// EXACTLY ONE OF EACH KIND PER ROLE, which is what "never pile up" means once the council
+    /// exists. One shared review tick would be consumed by whichever role reached it first, and the
+    /// other would run only when a real event named it — a Research Director never scheduled at all
+    /// on a quiet day. Two roles, two ticks, two renewals, and still nothing behind them.
     /// </summary>
     [Fact]
     public async Task The_review_tick_and_the_renewal_are_scheduled_ahead_and_never_pile_up()
@@ -413,8 +424,8 @@ public class MissionLoopTests
         for (var i = 0; i < 4; i++) await loop.TurnAsync();
 
         Assert.Empty(conversation.Sent);
-        Assert.Single(events.OfKind(MissionEventKind.Review));
-        Assert.Single(events.OfKind(MissionEventKind.Renewal));
+        Assert.Equal(CouncilRoles.All, events.OfKind(MissionEventKind.Review).Select(e => e.For).ToArray());
+        Assert.Equal(CouncilRoles.All, events.OfKind(MissionEventKind.Renewal).Select(e => e.For).ToArray());
         Assert.True(events.NextDueAt() > DateTimeOffset.UtcNow, "a scheduled wake was already due");
     }
 

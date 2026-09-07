@@ -41,6 +41,17 @@ public sealed record MissionStatus(
     /// of these keeps compiling and keeps meaning what it meant.
     /// </summary>
     public string? WaitingFor { get; init; }
+
+    /// <summary>
+    /// WHICH COUNCIL ROLE THE CARD IS DESCRIBING — the one whose turn is in flight, or the one whose
+    /// wake is next. Null where no wake queue is behind the loop, and then the card reads exactly as
+    /// it did before the council existed.
+    ///
+    /// It is on the card because "working" with two roles running serially is an ambiguous word: an
+    /// owner watching a quiet Research Director while Operations takes every turn cannot tell that
+    /// from a council that is working, and the fix for the two is different.
+    /// </summary>
+    public string? Role { get; init; }
 }
 
 /// <summary>
@@ -110,14 +121,36 @@ public interface IMissionHost
     IAgentConversation? Conversation { get; }
 
     /// <summary>
+    /// ONE COUNCIL ROLE'S CONVERSATION — its own CLI session, its own working directory, its own
+    /// model. The loop runs exactly one of these at a time, which is what makes the council serial:
+    /// two processes against one workspace and one account is a race with real money in it.
+    ///
+    /// The default is the single conversation above, so a host that knows nothing about roles — a
+    /// test, a build with one agent prepared — keeps behaving as it did.
+    /// </summary>
+    IAgentConversation? ConversationFor(string role) => Conversation;
+
+    /// <summary>
     /// Everything the app knows this turn, gathered at the moment the turn is composed. Asynchronous
     /// because positions and open orders come from the broker, and a turn boundary is exactly the
     /// right place to pay for a fresh reading rather than hand the AI a cached one.
     /// </summary>
     Task<MissionSituation> SituationAsync(CancellationToken ct);
 
+    /// <summary>
+    /// The same, for one role: its deliveries, its share of the day, its name. The default ignores
+    /// the role, which is the honest answer for a host that has none.
+    /// </summary>
+    Task<MissionSituation> SituationAsync(string role, CancellationToken ct) => SituationAsync(ct);
+
     /// <summary>The agent's own directory — where <c>.tradeagent/next.json</c> is read from.</summary>
     string AgentHome { get; }
+
+    /// <summary>
+    /// One role's own directory. Each role asks to be woken in its OWN <c>next.json</c>: one file
+    /// shared between them would let whichever ran last decide when the other works.
+    /// </summary>
+    string HomeFor(string role) => AgentHome;
 
     /// <summary>
     /// Something is in the owner's drop folder that no complete scan pass has recorded yet. Answered
@@ -156,6 +189,17 @@ public interface IMissionHost
     AiSpendToday Spend => AiSpendToday.NotMetered;
 
     /// <summary>
+    /// THE SAME READING, NARROWED TO ONE ROLE: what that role has spent and committed today, and the
+    /// slice of the owner's ceiling it may spend. The loop admits a turn only when BOTH gates say so
+    /// — the day's ceiling and the role's share — which is what stops whichever role woke first
+    /// taking every turn until midnight.
+    ///
+    /// The default is the whole-day reading, so a host with no roles behind it is bounded exactly as
+    /// it was: <see cref="AiSpendToday.RoleAdmitsAnotherTurn"/> is true whenever no role is named.
+    /// </summary>
+    AiSpendToday SpendFor(string role) => Spend;
+
+    /// <summary>
     /// Told ONCE, on the turn the cap is first reached, so the activity log gets one line rather
     /// than one every five seconds for the rest of the day. The loop knows the transition; the host
     /// owns the words and the log.
@@ -184,6 +228,23 @@ public interface IMissionHost
     /// nothing could be written — a wake nobody consumed would buy an unbounded number of turns.
     /// </summary>
     string? BeginTurn(string prompt, IReadOnlyList<string> wakes) => null;
+
+    /// <summary>
+    /// The same, naming the role being charged. The role is on the launch record so the day's
+    /// spending can be allocated at all; a bill nobody can allocate cannot be shared.
+    /// </summary>
+    string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => BeginTurn(prompt, wakes);
+
+    /// <summary>
+    /// EVERYTHING THE APP OWES THE FILESYSTEM AFTER A TURN, AND ON START: an unpublished report
+    /// published, a committed delivery whose file is missing re-copied. Called by the loop at both
+    /// moments, and by nothing else on this interface that can change what the AI is allowed to do.
+    ///
+    /// It is on the host rather than inside the loop because the relay needs the database and the
+    /// role folders, and the loop is deliberately drivable with neither. A default of nothing keeps
+    /// every existing host turning.
+    /// </summary>
+    void Relay() { }
 }
 
 /// <summary>
@@ -201,6 +262,13 @@ public interface IMissionHost
 /// </summary>
 public sealed record MissionSituation
 {
+    /// <summary>
+    /// WHICH ROLE THIS TURN IS, or null where no council is behind the loop. A role that is not told
+    /// which one it is has to infer it from its own mission file, which is exactly the guess a
+    /// serial council cannot afford: two roles, one account, and only one of them chairs.
+    /// </summary>
+    public string? Role { get; init; }
+
     public DateTimeOffset LocalTime { get; init; }
     public string Mode { get; init; } = "";
     public bool ExecutionAvailable { get; init; }
@@ -286,6 +354,9 @@ public sealed record MissionSituation
         // because that is the one line that tells it where to look first.
         if (Wakes.Count > 0)
             b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
+
+        if (Role is { Length: > 0 } role)
+            b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
 
         b.AppendLine($"- Local time: {LocalTime.LocalDateTime:yyyy-MM-dd HH:mm}");
         b.AppendLine($"- Trading mode: {Mode}");
@@ -480,6 +551,9 @@ public sealed class MissionLoop
     DateTimeOffset? _nextTurnAt;
     string? _waitingFor;
 
+    /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
+    string? _role;
+
     /// <summary>The sleep in flight, so <see cref="Wake"/> can end it. Null while a turn is running.</summary>
     CancellationTokenSource? _waitCts;
 
@@ -527,7 +601,8 @@ public sealed class MissionLoop
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
                     _turns, _consecutiveErrors, _lastFirstLine)
                 {
-                    WaitingFor = state == MissionState.Waiting ? _waitingFor : null
+                    WaitingFor = state == MissionState.Waiting ? _waitingFor : null,
+                    Role = _role
                 };
             }
         }
@@ -563,7 +638,7 @@ public sealed class MissionLoop
         if (_host.Conversation is { } c) await c.CancelAsync();
         if (run is not null) { try { await run; } catch (Exception) { /* it was cancelled */ } }
 
-        lock (_gate) { _working = false; _nextTurnAt = null; _waitingFor = null; }
+        lock (_gate) { _working = false; _nextTurnAt = null; _waitingFor = null; _role = null; }
         Changed?.Invoke();
     }
 
@@ -653,39 +728,53 @@ public sealed class MissionLoop
     /// </summary>
     public async Task<TimeSpan> TurnAsync(CancellationToken ct = default)
     {
-        // ---- the day's ceiling -------------------------------------------------------------------
-        // FIRST, because it is the one reason not to take a turn that depends on nothing else here.
-        // The AI's mission is to make at least enough to pay for itself and half of that sentence is
-        // its own bill; turns run back to back for as long as the machine is on, so without this the
-        // account is being charged with nobody watching. It removes no permission and touches no
-        // order — it is the loop declining to spend more of the owner's money today.
-        if (CappedUntilMidnight() is { } untilMidnight) return untilMidnight;
-
-        var conversation = _host.Conversation;
-        if (conversation is null) return _options.BusyRetry;
-
-        // The owner is mid-conversation on the Chat page. Their turn is the one in flight; the
-        // mission's waits rather than racing it, and what they typed is carried into the next one.
-        if (conversation.Busy) return _options.BusyRetry;
-
-        // ---- the wake --------------------------------------------------------------------------
+        // ---- the wake, and WHOSE it is -----------------------------------------------------------
         // A TURN HAPPENS BECAUSE SOMETHING HAPPENED, and with nothing due nothing is launched. This
         // is what replaces the immediate re-turn: `AskedForDelay` answered Zero whenever the AI had
         // written no `next.json`, so the loop started another turn the instant one ended and the
         // only thing that ever stopped it was the day's cost ceiling — which is a bill, not a
         // reason. docs/COUNCIL.md rule 7: justified idleness launches no inference.
         //
-        // The scheduled kinds are written first, so an idle installation always has a next wake to
-        // sleep until, and both of them are DUE IN THE FUTURE — the loop scheduling its own next
-        // look must never be what makes this one eligible.
+        // The scheduled kinds are written first, per role, so an idle installation always has a next
+        // wake to sleep until, and every one of them is DUE IN THE FUTURE — the loop scheduling its
+        // own next look must never be what makes this one eligible.
+        //
+        // ONE ROLE PER TURN, AND ONE TURN AT A TIME. The council is serial: the role that has waited
+        // longest goes first, and a role that has spent its slice of the day is stepped over rather
+        // than being allowed to stop the other from working. Everything below this block — the
+        // ceiling, the conversation, the record, the process — is that role's.
         var events = _host.Events;
+        var role = CouncilRoles.Default;
         List<MissionEvent> wake = [];
+
         if (events is not null)
         {
             Schedule(events);
-            wake = events.Due(_now());
-            if (wake.Count == 0) return Idle(events);
+            var due = RolesDue(events);
+            if (due.Count == 0) return Idle(events);
+
+            // The first role whose own share AND the owner's ceiling both have room for a turn.
+            var affordable = due.FirstOrDefault(r => Spend(r).AdmitsAnotherTurn);
+            if (affordable is null) return CappedUntilMidnight(Spend(due[0])) ?? _options.BusyRetry;
+            role = affordable;
         }
+
+        // ---- the day's ceiling -------------------------------------------------------------------
+        // The AI's mission is to make at least enough to pay for itself and half of that sentence is
+        // its own bill; turns run back to back for as long as the machine is on, so without this the
+        // account is being charged with nobody watching. It removes no permission and touches no
+        // order — it is the loop declining to spend more of the owner's money today.
+        //
+        // Asked again here rather than only above, because a host with no wake queue never reached
+        // the block above at all and this is the only gate it has.
+        if (CappedUntilMidnight(Spend(role)) is { } untilMidnight) return untilMidnight;
+
+        var conversation = _host.ConversationFor(role);
+        if (conversation is null) return _options.BusyRetry;
+
+        // The owner is mid-conversation on the Chat page. Their turn is the one in flight; the
+        // mission's waits rather than racing it, and what they typed is carried into the next one.
+        if (conversation.Busy) return _options.BusyRetry;
 
         // ---- yield to the scanner ----------------------------------------------------------------
         // Nothing is running at this line: the previous turn's process has exited and this one has
@@ -697,7 +786,11 @@ public sealed class MissionLoop
         // That pass may have recorded material, which raises a wake of its own. Taking it NOW rather
         // than leaving it for the next turn is what keeps "the owner dropped a file" one turn: the
         // turn about to run is the one that should be told about it.
-        if (events is not null) wake = events.Due(_now());
+        if (events is not null)
+        {
+            wake = events.DueFor(role, _now());
+            if (wake.Count == 0) return Idle(events);
+        }
 
         // ---- a fresh CLI session every N turns ---------------------------------------------------
         // Resuming forever grows one context until the runtime refuses it or prices it absurdly. The
@@ -713,14 +806,15 @@ public sealed class MissionLoop
         // queue behind it `AgentSession.Queue` writes the row instead of the list, so exactly one of
         // the two holds any given message; without one the list is still where they are, and this
         // reads the same as it always did.
-        var situation = (await _host.SituationAsync(ct)) with
+        var situation = (await _host.SituationAsync(role, ct)) with
         {
+            Role = role,
             OwnerMessages = [.. OwnerWords(wake), .. conversation.TakeTyped()],
             Wakes = Reasons(wake)
         };
         var prompt = situation.Text();
 
-        lock (_gate) { _working = true; _nextTurnAt = null; _waitingFor = null; }
+        lock (_gate) { _working = true; _nextTurnAt = null; _waitingFor = null; _role = role; }
         Changed?.Invoke();
 
         // ---- the record and the commitment, BEFORE the process ------------------------------------
@@ -734,7 +828,7 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var attemptId = _host.BeginTurn(prompt, wakeIds);
+        var attemptId = _host.BeginTurn(prompt, wakeIds, role);
 
         // A LAUNCH NOBODY COULD RECORD STILL SPENDS ITS WAKE. Leaving the events unconsumed because
         // the attempt row could not be written would hand the same wake to the next turn, and the
@@ -759,6 +853,13 @@ public sealed class MissionLoop
         // turn still measures a window this turn is inside, and attests nothing.
         await _host.ScanAsync(ct);
 
+        // ---- and what the turn left in `out/` ----------------------------------------------------
+        // After the turn rather than before it, because the file this publishes is the one the turn
+        // just wrote. It runs whether the turn succeeded or failed: a report written by a turn that
+        // then fell over is still the role's work, and the publication is idempotent by content, so
+        // running it after every turn costs a hash of a small file.
+        Relay();
+
         var failed = ended?.Failed ?? true;
         int errors;
         lock (_gate)
@@ -775,7 +876,7 @@ public sealed class MissionLoop
         // the one thing in the block that was waiting for an answer.
         if (events is not null) Settle(events, wake, failed, ended);
 
-        return failed ? Backoff(errors) : NextWait(events, attemptId);
+        return failed ? Backoff(errors) : NextWait(events, attemptId, role);
     }
 
     /// <summary>
@@ -799,20 +900,29 @@ public sealed class MissionLoop
         var now = _now();
         try
         {
-            if (_options.ReviewEvery > TimeSpan.Zero && !events.HasUnconsumed(MissionEventKind.Review))
+            // PER ROLE, both of them. One shared review tick would be consumed by whichever role
+            // reached it first, so the other would only ever run when a real event named it — a
+            // Research Director that is never scheduled at all on a quiet day.
+            foreach (var role in CouncilRoles.All)
             {
-                var due = now + _options.ReviewEvery;
-                events.RaiseDue(MissionEventIds.Review(due), MissionEventKind.Review, now, due);
-            }
+                if (_options.ReviewEvery > TimeSpan.Zero
+                    && !events.HasUnconsumed(MissionEventKind.Review, role))
+                {
+                    var due = now + _options.ReviewEvery;
+                    events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Review(due), role),
+                        MissionEventKind.Review, now, due, role: role);
+                }
 
-            // NOT A SETTING. The allowance the AI works under is the owner's day, and the moment it
-            // becomes a new one is a fact about the world rather than a preference — an AI that
-            // stopped at the ceiling has to be told when it may work again, and nothing else in the
-            // queue is going to say so on a quiet night.
-            if (!events.HasUnconsumed(MissionEventKind.Renewal))
-            {
-                var midnight = LocalMidnightAfter(now);
-                events.RaiseDue(MissionEventIds.Renewal(midnight), MissionEventKind.Renewal, now, midnight);
+                // NOT A SETTING. The allowance the AI works under is the owner's day, and the moment
+                // it becomes a new one is a fact about the world rather than a preference — a role
+                // that stopped at its share has to be told when it may work again, and nothing else
+                // in the queue is going to say so on a quiet night.
+                if (!events.HasUnconsumed(MissionEventKind.Renewal, role))
+                {
+                    var midnight = LocalMidnightAfter(now);
+                    events.RaiseDue(MissionEventIds.ForRole(MissionEventIds.Renewal(midnight), role),
+                        MissionEventKind.Renewal, now, midnight, role: role);
+                }
             }
         }
         catch (Exception)
@@ -820,6 +930,34 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// The roles with a due wake, longest-waiting first, or nothing at all when the queue cannot be
+    /// read. A queue that throws is not a reason to launch a process nobody asked for.
+    /// </summary>
+    List<string> RolesDue(MissionEventStore events)
+    {
+        try { return events.RolesDue(_now()); }
+        catch (Exception) { return []; }
+    }
+
+    /// <summary>This role's reading of today's spending, or the whole day's where the host has none.</summary>
+    AiSpendToday Spend(string role)
+    {
+        try { return _host.SpendFor(role); }
+        catch (Exception) { return _host.Spend; }
+    }
+
+    /// <summary>
+    /// Publishes what the turn left behind and re-copies anything a crash lost. Never throws: the
+    /// relay is bookkeeping, and a loop that stopped over it would turn a lost copy into an AI that
+    /// stopped working.
+    /// </summary>
+    void Relay()
+    {
+        try { _host.Relay(); }
+        catch (Exception) { /* the next turn reconciles; the host has already logged it */ }
     }
 
     /// <summary>The next LOCAL midnight, on the offset in force at that boundary.</summary>
@@ -838,10 +976,16 @@ public sealed class MissionLoop
     {
         DateTimeOffset? next;
         string? why;
-        try { next = events.NextDueAt(); why = Waiting(events.NextKind()); }
-        catch (Exception) { next = null; why = null; }
+        string? whose;
+        try
+        {
+            next = events.NextDueAt();
+            why = Waiting(events.NextKind());
+            whose = events.NextRole();
+        }
+        catch (Exception) { next = null; why = null; whose = null; }
 
-        lock (_gate) { _working = false; _nextTurnAt = next; _waitingFor = why; }
+        lock (_gate) { _working = false; _nextTurnAt = next; _waitingFor = why; _role = whose; }
         Changed?.Invoke();
 
         if (next is null) return _options.MaxDelay;
@@ -857,18 +1001,21 @@ public sealed class MissionLoop
     /// deleted either way — a request left on disk would make one "leave me half an hour" into every
     /// turn being half an hour apart for ever.
     /// </summary>
-    TimeSpan NextWait(MissionEventStore? events, string? attemptId)
+    TimeSpan NextWait(MissionEventStore? events, string? attemptId, string role)
     {
-        var asked = AskedForDelay();
+        var asked = AskedForDelay(role);
         if (events is null) return asked;
 
         if (asked > TimeSpan.Zero)
         {
             var now = _now();
+            // The role's OWN wake. An attempt id already names one role, but the fallback does not,
+            // and a self-wake with no role on it would be answered by the chair — one role asking to
+            // be woken and the other one waking.
             var id = MissionEventIds.Self(attemptId is { Length: > 0 } a
                 ? a
                 : now.UtcDateTime.ToString("yyyyMMddHHmmssfff"));
-            try { events.RaiseDue(id, MissionEventKind.Self, now, now + asked); }
+            try { events.RaiseDue(id, MissionEventKind.Self, now, now + asked, role: role); }
             catch (Exception) { /* the schedule below still gives the loop something to wake for */ }
         }
 
@@ -972,9 +1119,9 @@ public sealed class MissionLoop
     /// The file is consumed. Leaving it would make one request to be left alone for half an hour
     /// into every turn being half an hour apart, for ever.
     /// </summary>
-    TimeSpan AskedForDelay()
+    TimeSpan AskedForDelay(string role)
     {
-        var path = Path.Combine(_host.AgentHome, ".tradeagent", "next.json");
+        var path = Path.Combine(_host.HomeFor(role), ".tradeagent", "next.json");
         try
         {
             if (!File.Exists(path)) return TimeSpan.Zero;
@@ -1011,9 +1158,8 @@ public sealed class MissionLoop
     /// <see cref="IMissionHost.SpendCapReached"/> is told on the TRANSITION only. It fires again
     /// after a cap is raised and reached a second time, because that is a second event.
     /// </summary>
-    TimeSpan? CappedUntilMidnight()
+    TimeSpan? CappedUntilMidnight(AiSpendToday spend)
     {
-        var spend = _host.Spend;
         // ASKED BEFORE THE TURN, ABOUT THE TURN. `CapReached` alone could only ever be answered
         // after the turn that passed the ceiling had already run and been billed.
         if (spend.AdmitsAnotherTurn) { _reportedCap = false; return null; }
@@ -1028,7 +1174,10 @@ public sealed class MissionLoop
         {
             _working = false;
             _nextTurnAt = spend.ResumesAt;
-            _waitingFor = "the daily spending limit to reset";
+            _waitingFor = spend.Role is { } r && !spend.RoleAdmitsAnotherTurn && spend.AdmitsGlobally
+                ? $"the {CouncilRoles.Title(r)}'s share of the day to reset"
+                : "the daily spending limit to reset";
+            _role = spend.Role;
         }
         Changed?.Invoke();
 

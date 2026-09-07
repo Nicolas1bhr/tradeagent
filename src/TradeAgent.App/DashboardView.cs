@@ -383,7 +383,7 @@ sealed class DashboardPage
     /// one without being told which. "waiting until 14:32 for the next scheduled look" is the whole
     /// difference.
     /// </summary>
-    internal static string MissionSentence(MissionStatus status) => status.State switch
+    internal static string MissionSentence(MissionStatus status) => Whose(status) + status.State switch
     {
         MissionState.Working => "working",
         MissionState.Waiting => (status.NextTurnAt, status.WaitingFor) switch
@@ -396,6 +396,21 @@ sealed class DashboardPage
         MissionState.Paused => "paused",
         _ => "stopped — the AI has not been started"
     };
+
+    /// <summary>
+    /// WHICH ROLE THE REST OF THE LINE IS ABOUT, as a prefix, or nothing at all where no council is
+    /// behind the loop.
+    ///
+    /// It is a prefix rather than a suffix because the sentence already ends with the thing the loop
+    /// is waiting for, and that is the half an owner reads first. "Working" with two roles running
+    /// one at a time is otherwise an ambiguous word: a council in which Operations takes every turn
+    /// and Research never runs looks exactly like a healthy one, and the repair for the two is
+    /// different — the share on the Safety page, not the daily limit.
+    /// </summary>
+    static string Whose(MissionStatus status) =>
+        status.Role is { Length: > 0 } role && status.State is MissionState.Working or MissionState.Waiting
+            ? $"{CouncilRoles.Title(role)}: "
+            : "";
 
     /// <summary>
     /// How much it has done, and whether it is getting anywhere. The error count is spelled rather

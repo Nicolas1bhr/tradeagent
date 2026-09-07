@@ -267,18 +267,25 @@ public sealed class MissionEventStore(Database db)
         });
 
     /// <summary>
-    /// THE ROLE WHOSE EARLIEST DUE WAKE IS EARLIEST, or null when nothing is due for anybody. The
-    /// serial scheduler's whole decision: one loop, one process at a time, and the oldest reason to
-    /// work wins. A tie goes to whichever role the query reaches first by rowid, which is insertion
-    /// order — the chair, on any fact that woke both.
+    /// EVERY ROLE WITH A DUE UNCONSUMED WAKE, THE ONE THAT HAS WAITED LONGEST FIRST. The serial
+    /// scheduler's whole decision: one loop, one process at a time, and the oldest reason to work
+    /// wins. A tie goes to insertion order — the chair, on any fact that woke both.
+    ///
+    /// A LIST rather than the single winner, because the winner may not be affordable: a role that
+    /// has spent its slice of the day is skipped and the next one runs. Returning only the first
+    /// would let one role's exhausted allowance stop the whole council until midnight, which is the
+    /// opposite of what a share is for.
     /// </summary>
-    public string? NextRoleDue(DateTimeOffset now) => db.Read(_ =>
+    public List<string> RolesDue(DateTimeOffset now) => db.Read(_ =>
     {
         using var c = db.Cmd(
-            "SELECT COALESCE(role,$chair) FROM mission_event "
-            + "WHERE consumed_at IS NULL AND due_at <= $now ORDER BY due_at, rowid LIMIT 1",
+            "SELECT COALESCE(role,$chair) AS r FROM mission_event "
+            + "WHERE consumed_at IS NULL AND due_at <= $now GROUP BY r ORDER BY MIN(due_at), MIN(rowid)",
             ("$now", Sql.T(now)), ("$chair", CouncilRoles.Default));
-        return c.ExecuteScalar() as string;
+        using var r = c.ExecuteReader();
+        var list = new List<string>();
+        while (r.Read()) list.Add(r.GetString(0));
+        return list;
     });
 
     /// <summary>
@@ -320,6 +327,15 @@ public sealed class MissionEventStore(Database db)
     {
         using var c = db.Cmd(
             "SELECT kind FROM mission_event WHERE consumed_at IS NULL ORDER BY due_at, rowid LIMIT 1");
+        return c.ExecuteScalar() as string;
+    });
+
+    /// <summary>Whose the earliest unconsumed event is, so a waiting card can name the role.</summary>
+    public string? NextRole() => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COALESCE(role,$chair) FROM mission_event WHERE consumed_at IS NULL "
+            + "ORDER BY due_at, rowid LIMIT 1", ("$chair", CouncilRoles.Default));
         return c.ExecuteScalar() as string;
     });
 

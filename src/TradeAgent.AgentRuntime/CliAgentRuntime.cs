@@ -44,6 +44,13 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         }
     }
 
+    /// <inheritdoc />
+    public string? ModelFor(string? chosen)
+    {
+        try { return manifest.ModelFor(chosen); }
+        catch (Exception) { return null; }
+    }
+
     public RuntimeCapabilities Capabilities => new(
         CanInstallItself: manifest.Install.Kind is not (InstallKind.None or InstallKind.Manual),
         BrowserAuth: manifest.AuthArgs.Length > 0,
@@ -588,6 +595,31 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             model: () => RequestedModel);
 
     /// <summary>
+    /// One conversation per council role, made once and kept. The chair gets the window's own
+    /// conversation — the one the Chat page draws — so nothing about the owner's view changes; every
+    /// other role gets a session of its own, in its own folder, on its own model.
+    /// </summary>
+    readonly Dictionary<string, IAgentConversation> _roleConversations = [];
+
+    public IAgentConversation OpenConversation(string role, Func<string> workspace,
+        Func<IReadOnlyDictionary<string, string>> environment, Func<string?> model)
+    {
+        if (role == CouncilRoles.Default) return OpenConversation();
+        lock (_roleConversations)
+        {
+            if (_roleConversations.TryGetValue(role, out var existing)) return existing;
+            // The caller hands over the OWNER'S choice for this role and the manifest resolves it,
+            // exactly as it does for the single conversation above. A caller resolving it itself
+            // would have to know which runtime is prepared, which is the one thing this interface
+            // exists to keep out of the app.
+            var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
+                model: () => ModelFor(model()));
+            _roleConversations[role] = session;
+            return session;
+        }
+    }
+
+    /// <summary>
     /// Makes the agent ready to talk to.
     ///
     /// There is no console any more. The agent used to be started as an interactive program in its
@@ -627,6 +659,11 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     {
         _started = false;
         if (_conversation is not null) await _conversation.StopAsync();
+        // Every role's session too. One left running is an agent process this runtime believes it
+        // has stopped, and the inbox attestation is measured over exactly that belief.
+        List<IAgentConversation> roles;
+        lock (_roleConversations) roles = [.. _roleConversations.Values];
+        foreach (var c in roles) await c.StopAsync();
         StopLogin();
         try { if (_session is { HasExited: false }) _session.Kill(entireProcessTree: true); }
         catch (Exception) { /* already gone */ }

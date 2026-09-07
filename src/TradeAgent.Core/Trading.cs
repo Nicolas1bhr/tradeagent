@@ -577,9 +577,17 @@ public sealed record AiSpendToday
     /// the old comparison again — an unpriced day is not stopped, because stopping on a number
     /// nobody measured is worse than not stopping.
     /// </summary>
-    public bool AdmitsAnotherTurn =>
-        !Metered
-        || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap && RoleAdmitsAnotherTurn);
+    public bool AdmitsAnotherTurn => AdmitsGlobally && RoleAdmitsAnotherTurn;
+
+    /// <summary>
+    /// THE OWNER'S CEILING ALONE, with no role narrowing — the comparison this record made before
+    /// the council existed. Kept as its own reading because the two stops are different events with
+    /// different repairs: the day's ceiling is raised on the Safety page, and a role's exhausted
+    /// share is the chair reallocating what is left. A card that said one when it meant the other
+    /// would send the owner to the wrong screen.
+    /// </summary>
+    public bool AdmitsGlobally =>
+        !Metered || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap);
 
     /// <summary>
     /// WHICH COUNCIL ROLE THIS READING IS ABOUT, or null for the whole day across every role. Null

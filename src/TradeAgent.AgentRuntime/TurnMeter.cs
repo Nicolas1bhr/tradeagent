@@ -341,6 +341,13 @@ public sealed class TurnMeter
     readonly Func<OwnerPrice?> _owner;
     readonly Func<decimal> _cap;
     readonly Func<TurnAllowance> _allowance;
+
+    /// <summary>One role's slice of the daily ceiling, as a fraction. An equal share by default.</summary>
+    readonly Func<string, decimal> _share;
+
+    /// <summary>The model one role runs on, for the reading that names a role.</summary>
+    readonly Func<string, string?> _roleModel;
+
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
     readonly Lock _gate = new();
@@ -357,7 +364,8 @@ public sealed class TurnMeter
 
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
-        Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null)
+        Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
+        Func<string, decimal>? share = null, Func<string, string?>? roleModel = null)
     {
         _db = db;
         _attempts = new AiAttemptStore(db);
@@ -367,6 +375,10 @@ public sealed class TurnMeter
         _model = model ?? (() => null);
         _owner = owner ?? (() => null);
         _allowance = allowance ?? (() => TurnAllowance.Default);
+        // An equal share, so a meter built with no council behind it still answers a role's question
+        // with something honest rather than with zero — a zero share is a role that can never work.
+        _share = share ?? (_ => 1m / CouncilRoles.All.Length);
+        _roleModel = roleModel ?? (_ => (model ?? (() => null))());
         _now = now ?? (() => DateTimeOffset.Now);
         _path = recordPath ?? RecordPath;
 
@@ -451,20 +463,21 @@ public sealed class TurnMeter
     /// the row below. One transaction rather than two: a kill in between would hand the same wake to
     /// the next launch and charge the owner for both.
     /// </param>
-    public string? Begin(string prompt, IReadOnlyList<string>? consuming = null)
+    public string? Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
     {
-        var reservation = Reservation();
+        var reservation = Reservation(role);
         var attempt = new AiAttempt
         {
             Id = $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
             StartedAt = _now(),
             Runtime = Safe(_runtimeId),
-            RequestedModel = Safe(_model),
+            RequestedModel = ModelOf(role),
             PricingBasis = reservation.Basis,
             ReservedCost = reservation.Cost ?? 0m,
             State = AiAttemptState.LAUNCHED,
             PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture),
-            InputHash = HashOf(prompt)
+            InputHash = HashOf(prompt),
+            Role = role
         };
 
         try
@@ -490,16 +503,23 @@ public sealed class TurnMeter
     /// still gets. A rate nobody can supply reserves nothing, and then the ceiling holds nothing
     /// back, which the card and the Situation both say rather than hide.
     /// </summary>
-    public TurnPrice Reservation()
+    public TurnPrice Reservation(string? role = null)
     {
         try
         {
             var allowance = _allowance();
             var probe = new TurnUsage(allowance.InputTokens, 0, 0, allowance.OutputTokens, 0, null);
-            return CostCatalog.Price(probe, _runtimeId(), owner: Owner(), requestedModel: Safe(_model));
+            // The ROLE'S model, because that is the one its next turn will actually be run on. A
+            // reservation priced at another role's model is a commitment against a rate nobody is
+            // going to be charged, in whichever direction that rate happens to differ.
+            return CostCatalog.Price(probe, _runtimeId(), owner: Owner(),
+                requestedModel: ModelOf(role));
         }
         catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
     }
+
+    /// <summary>The model a role will be asked for, or the app's single choice where none is named.</summary>
+    string? ModelOf(string? role) => role is null ? Safe(_model) : Safe(() => _roleModel(role));
 
     /// <summary>
     /// Completes this meter's open attempt, or writes a finished row where nothing opened one — the
@@ -559,9 +579,18 @@ public sealed class TurnMeter
     /// at. Read on every card repaint, so it does its own day-rollover check rather than relying on
     /// anything having run at midnight.
     /// </summary>
-    public AiSpendToday Today
+    public AiSpendToday Today => Reading(null);
+
+    /// <summary>
+    /// THE SAME READING, NARROWED TO ONE COUNCIL ROLE: what that role spent and committed today, and
+    /// the slice of the owner's ceiling it may spend (<c>docs/COUNCIL.md</c>, "Budgets are reserved,
+    /// not checked"). The whole-day figures stay on it — a role is bounded by both its share and the
+    /// owner's ceiling, and the loop admits a turn only when both have room.
+    /// </summary>
+    public AiSpendToday TodayFor(string role) => Reading(role);
+
+    AiSpendToday Reading(string? role)
     {
-        get
         {
             var now = _now();
             var totals = ReadTotals(now);
@@ -573,17 +602,29 @@ public sealed class TurnMeter
             // A turn that HAS priced today settles it the other way: a runtime whose stream names its
             // own model prices without an entry in RuntimeModels, and the probe below cannot know
             // that in advance because it has no model to offer.
-            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner(), Safe(_model));
+            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner(), ModelOf(role));
             var canPrice = probe.Cost is not null || (totals.Turns > 0 && totals.Unpriced < totals.Turns);
+
+            // The role's own rows, and its slice of the ceiling. Read separately from the day's
+            // totals rather than derived from them: the two are different queries over the same
+            // ledger, and a share worked out by subtracting one role from the day would be wrong the
+            // moment a third role exists.
+            var cap = _cap();
+            var mine = role is null ? totals : ReadTotals(now, role);
+            var share = role is null ? cap : cap * _share(role);
 
             return new AiSpendToday
             {
                 Metered = true,
+                Role = role,
+                RoleSpent = mine.Spent,
+                RoleReserved = mine.Reserved,
+                RoleCap = share,
                 Spent = totals.Spent,
                 Reserved = totals.Reserved,
-                NextTurnReservation = Reservation().Cost ?? 0m,
-                Cap = _cap(),
-                Model = Safe(_model),
+                NextTurnReservation = Reservation(role).Cost ?? 0m,
+                Cap = cap,
+                Model = ModelOf(role),
                 Currency = catalogue.Costs?.Currency ?? "",
                 Turns = totals.Turns,
                 UnpricedTurns = totals.Unpriced,
@@ -632,12 +673,12 @@ public sealed class TurnMeter
     /// than throwing into a card repaint, and a zero here is visibly the same as a day with no turns
     /// — which is why the card keys its wording on <see cref="AiSpendToday.CanPrice"/> instead.
     /// </summary>
-    AiAttemptTotals ReadTotals(DateTimeOffset now)
+    AiAttemptTotals ReadTotals(DateTimeOffset now, string? role = null)
     {
         try
         {
             var (from, to) = LocalDay(now);
-            return _attempts.TotalsBetween(from, to);
+            return _attempts.TotalsBetween(from, to, role);
         }
         catch (Exception) { return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0); }
     }

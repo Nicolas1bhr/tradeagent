@@ -87,6 +87,69 @@ public sealed class AppHost : IAsyncDisposable
     IDisposable? _metering;
 
     /// <summary>
+    /// ONE COUNCIL ROLE'S CONVERSATION: its own CLI session, in its own folder, on its own model.
+    ///
+    /// The chair's IS the window's conversation above, so the owner sees the Operations Director's
+    /// work on the Chat page exactly as they always have, and what they type reaches the role that
+    /// holds their agenda. Every other role gets a session of its own.
+    ///
+    /// Cached against the runtime that owns it, for the same reason the single conversation is: a
+    /// different AI tool, or a restart, must start a genuinely new thread rather than replay the old
+    /// one. It is metered on this line and nowhere else — every run of the CLI is charged to
+    /// somebody, and a role whose turns were not attached would spend the owner's day invisibly.
+    ///
+    /// <b>One open attempt at a time is safe because the council is serial.</b>
+    /// <see cref="TurnMeter"/> holds a single open attempt, and <see cref="MissionLoop"/> runs one
+    /// role's turn at a time by construction; concurrent roles are <c>U-council-concurrent</c>, and
+    /// they need the meter to hold one per role before they can exist.
+    /// </summary>
+    public IAgentConversation? ConversationFor(string role)
+    {
+        if (role == CouncilRoles.Operations) return Conversation;
+
+        var runtime = Agent?.Current;
+        if (runtime is null) return null;
+
+        if (_roleConversations.TryGetValue(role, out var held) && ReferenceEquals(held.Owner, runtime))
+            return held.Conversation;
+
+        held.Metering?.Dispose();
+        // FUNCTIONS, NOT VALUES. The folder is rebuilt on every prepare and the model is changed on
+        // the Safety page while the agent is running; the next turn is the one that has to obey.
+        var conversation = runtime.OpenConversation(role,
+            workspace: () => HomeFor(role),
+            environment: () => WorkspaceBuilder.EnvironmentFor(Agent?.SessionId ?? "", HomeFor(role)),
+            model: () => Gateway.Settings.ModelForRole(role));
+        _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation));
+        return conversation;
+    }
+
+    readonly Dictionary<string, (IAgentRuntime Owner, IAgentConversation Conversation, IDisposable? Metering)>
+        _roleConversations = [];
+
+    /// <summary>
+    /// ONE ROLE'S OWN DIRECTORY, as the last prepare built it, and the managed path for that role
+    /// where nothing has been prepared yet. Each role reads and writes only here — its
+    /// <c>.tradeagent/next.json</c>, its <c>in/</c> and its <c>out/</c> — because one folder shared
+    /// between them would let whichever ran last decide when the other works.
+    /// </summary>
+    public string HomeFor(string role) =>
+        Agent?.Workspaces.TryGetValue(role, out var w) == true && w.Length > 0 ? w : Paths.RoleHome(role);
+
+    /// <summary>
+    /// THE MODEL THE NEXT TURN OF ONE ROLE WILL RUN ON. The same fallback as
+    /// <see cref="RequestedModel"/> — the prepared runtime first, the chosen runtime's manifest
+    /// before one is prepared — over that role's own choice rather than the app-wide one, so the
+    /// reservation a role's turn commits is priced at the rate that role is actually charged.
+    /// </summary>
+    public string? RequestedModelFor(string role)
+    {
+        var chosen = Gateway.Settings.ModelForRole(role);
+        return Agent?.Current?.ModelFor(chosen)
+               ?? (PricingRuntime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
+    }
+
+    /// <summary>
     /// THE BILL. One line per turn in the app's own state directory and today's totals in the
     /// database, so what the AI costs is a measurement rather than an impression.
     ///
@@ -340,7 +403,12 @@ public sealed class AppHost : IAsyncDisposable
                 owner: () => OwnerPrice.From(Gateway.Settings),
                 model: () => RequestedModel,
                 allowance: () => TurnAllowance.From(
-                    Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens));
+                    Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens),
+                // The council's two: a role's slice of the owner's ceiling, and the model that role
+                // runs on. Both are read through a function for the same reason the model above is —
+                // the owner changes them while the AI is working.
+                share: role => Gateway.Settings.ShareForRole(role),
+                roleModel: RequestedModelFor);
             Meter.Changed += () => Changed?.Invoke();
 
             Wakes = new MissionEventStore(_db);
@@ -677,11 +745,23 @@ public sealed class AppHost : IAsyncDisposable
     {
         public IAgentConversation? Conversation => host.Conversation;
 
+        /// <summary>One role's conversation. The chair's is the window's; see <see cref="AppHost.ConversationFor"/>.</summary>
+        public IAgentConversation? ConversationFor(string role) => host.ConversationFor(role);
+
         public string AgentHome => host.Agent.Workspace is { Length: > 0 } w ? w : Paths.AgentHome;
+
+        /// <summary>One role's own folder, where its <c>next.json</c>, its <c>in/</c> and its <c>out/</c> are.</summary>
+        public string HomeFor(string role) => host.HomeFor(role);
 
         public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host.LastScanAt);
 
         public AiSpendToday Spend => host.SpendToday;
+
+        /// <summary>
+        /// What one role has spent and committed today, and the slice of the owner's ceiling it may
+        /// spend. The loop admits a turn only when this AND the day's ceiling both have room.
+        /// </summary>
+        public AiSpendToday SpendFor(string role) => host.Meter?.TodayFor(role) ?? AiSpendToday.NotMetered;
 
         /// <summary>The persisted reasons to wake. Read by the loop; written by the app only.</summary>
         public MissionEventStore? Events => host.Wakes;
@@ -694,6 +774,13 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public string? BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
             host.Meter?.Begin(prompt, wakes);
+
+        /// <summary>
+        /// The same, naming the role being charged, so the day's spending can be allocated at all —
+        /// a bill nobody can allocate cannot be shared between two roles.
+        /// </summary>
+        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) =>
+            host.Meter?.Begin(prompt, wakes, role);
 
         /// <summary>
         /// The one activity line the owner gets when the AI stops for the day, in their words and
@@ -726,6 +813,14 @@ public sealed class AppHost : IAsyncDisposable
             catch (Exception ex) { host.Gateway.Log.Engineering("Materials", "mission_scan_failed", "warn", ex: ex); }
             return Task.CompletedTask;
         }
+
+        /// <summary>
+        /// THE SAME SITUATION, NARROWED TO ONE ROLE: which role it is, and that role's own reading
+        /// of the day's spending rather than the council's total. The turn is being told what IT may
+        /// spend, and a role handed the whole day's figure would plan against another role's money.
+        /// </summary>
+        public async Task<MissionSituation> SituationAsync(string role, CancellationToken ct) =>
+            (await SituationAsync(ct)) with { Role = role, Spend = SpendFor(role) };
 
         public async Task<MissionSituation> SituationAsync(CancellationToken ct)
         {
@@ -809,6 +904,8 @@ public sealed class AppHost : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_loop is not null) { await _loop.CancelAsync(); _loop.Dispose(); }
+        foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
+        _metering?.Dispose();
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();
