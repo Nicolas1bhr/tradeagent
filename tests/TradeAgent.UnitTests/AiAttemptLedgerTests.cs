@@ -178,13 +178,27 @@ public class AiAttemptLedgerTests : IDisposable
     }
 
     /// <summary>
-    /// The migration itself: schema 6 is what this build writes, and an older database gains the
-    /// table empty rather than inheriting a total whose per-turn detail nobody kept.
+    /// The migration itself: the launch ledger arrived at schema 6, this build is at or past it, the
+    /// version on disk is the one this build writes, and an older database gains the table empty
+    /// rather than inheriting a total whose per-turn detail nobody kept.
+    ///
+    /// It used to read <c>Assert.Equal(6, Versions.DatabaseSchemaVersion)</c>, which made every
+    /// later ADDITIVE migration fail here for no reason of its own — <c>U-wakes</c> added
+    /// <c>mission_event</c> at 7 and this went red without anything about the launch ledger having
+    /// changed. The exact number is still pinned, by
+    /// <c>MissionEventTests.The_schema_carries_the_table_at_version_seven</c>, which is where the
+    /// current version belongs: with the migration that last moved it. What is asserted here is what
+    /// this class is about — 6 is the floor, because below it there is no table at all.
     /// </summary>
     [Fact]
     public void The_launch_ledger_is_schema_six_and_starts_empty()
     {
-        Assert.Equal(6, Versions.DatabaseSchemaVersion);
+        Assert.True(Versions.DatabaseSchemaVersion >= 6,
+            $"the launch ledger needs schema 6 or later; this build says {Versions.DatabaseSchemaVersion}");
+
+        using var version = _db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), version.ExecuteScalar() as string);
+
         using var c = _db.Cmd("SELECT COUNT(*) FROM ai_attempt");
         Assert.Equal(0, Convert.ToInt32(c.ExecuteScalar()));
     }
