@@ -78,6 +78,25 @@ public static class Labels
     /// <summary>What the card says once the owner has typed their own rate. Three words, on purpose.</summary>
     public const string PricedByYou = "priced by you";
 
+    /// <summary>The row of models on the Safety page, and the button that means "whatever ships".</summary>
+    public const string AiModel = "The model the AI runs on";
+
+    public const string AiModelDefault = "TradeAgent's choice";
+
+    /// <summary>
+    /// WHAT A TURN WAS CHARGED AT WHEN TRADEAGENT CHOSE THE MODEL AND THE CLI DID NOT SAY WHICH ONE
+    /// IT RAN — measured on codex 0.153.4, whose stream names no model even when <c>-m</c> was on
+    /// the command line.
+    ///
+    /// It is a different sentence from <see cref="PricedAtHighestListPrice"/> because it is a
+    /// different claim, and the difference is the whole of item 5: the dearest-model figure is a
+    /// ceiling over a catalogue nobody chose from, and this one is the list price of the model
+    /// TradeAgent put on the command line itself. Still not a bill — the vendor could serve
+    /// something else and no event would say so — so it is still labelled wherever it is shown.
+    /// </summary>
+    public static string PricedAtTheModelAskedFor(string model) =>
+        $"priced at {model}, the model TradeAgent asked for — the AI did not say which model it used";
+
     /// <summary>The Safety page's two boxes, and the press that writes them.</summary>
     public const string AiPriceIn = "What your AI tool charges, per million tokens in";
 

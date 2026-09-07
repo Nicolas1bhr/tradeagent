@@ -892,6 +892,16 @@ sealed class SafetyPage
     readonly TextBlock _capNote = Ui.Micro("");
     readonly NumericUpDown _priceIn, _priceOut;
     readonly TextBlock _priceNote = Ui.Micro("");
+    readonly Panel _modelRow;
+    readonly TextBlock _modelNote = Ui.Micro("");
+
+    /// <summary>
+    /// The runtime <see cref="_modelRow"/>'s buttons were built for. The row is rebuilt when this
+    /// changes and NEVER on the five-second tick: which models exist is a fact about the runtime,
+    /// which the owner changes on another page, and a repaint that rebuilt the row would wipe the
+    /// press they were in the middle of. Rebuilding a tree is not a refresh.
+    /// </summary>
+    string? _modelRowRuntime;
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
@@ -1049,6 +1059,46 @@ sealed class SafetyPage
     static string Rate((decimal In, decimal Out) rate, string currency) =>
         $"{MissionSituation.Money(rate.In, currency)} in and {MissionSituation.Money(rate.Out, currency)} out";
 
+    /// <summary>
+    /// THE ROW THAT CHOOSES WHICH MODEL THE AI RUNS ON, one button per model this build ships a
+    /// price for on the runtime in force, plus the one that means "whatever TradeAgent ships".
+    ///
+    /// ONE PRESS, unlike everything else in this card. Choosing a model grants nothing: the daily
+    /// ceiling is unchanged, and a dearer model reaches it sooner rather than later. It is the two
+    /// price boxes below that ask twice, because those change what a turn is CHARGED at, which is
+    /// the number the ceiling is measured in.
+    ///
+    /// Static and handed the two things it does, so the row a test presses is the row the owner sees.
+    /// </summary>
+    internal static Panel BuildModelRow(IReadOnlyList<ModelPrice> models, string currency, Action<string?> choose)
+    {
+        // A WrapPanel for the reason the mode row is one: nine models at two prices each is far
+        // wider than the card, and a horizontal stack clips the last of them off the screen.
+        var row = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = Theme.S2,
+            LineSpacing = Theme.S2
+        };
+
+        row.Children.Add(Ui.Button(Labels.AiModelDefault, () => choose(null)));
+        foreach (var m in models)
+        {
+            var id = m.Model;
+            row.Children.Add(Ui.Button(ModelLabel(m, currency), () => choose(id)));
+        }
+        return row;
+    }
+
+    /// <summary>
+    /// One button's words: the model, then what it costs per million in and out. The price is on the
+    /// button rather than in a note under the row because the choice IS the price — an owner picking
+    /// between nine ids they have never seen has nothing else to pick on.
+    /// </summary>
+    internal static string ModelLabel(ModelPrice m, string currency) =>
+        $"{m.Model} — {MissionSituation.Money(m.InputPerMillion, currency)} in / "
+        + $"{MissionSituation.Money(m.OutputPerMillion, currency)} out per million";
+
     public SafetyPage(AppHost host)
     {
         _host = host;
@@ -1114,6 +1164,9 @@ sealed class SafetyPage
         _priceIn = Ui.NumberField(rate.In, 0m, 0.25m);
         _priceOut = Ui.NumberField(rate.Out, 0m, 1m);
 
+        _modelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
+        _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
+
         // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
         // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
         // — has nothing to say about it. Folding it into that button would put a money ceiling
@@ -1133,6 +1186,16 @@ sealed class SafetyPage
             // BESIDE THE CAP, because the two numbers are one arithmetic: the limit above is only
             // worth what the rate below says a turn costs. The owner never edits a file to set it —
             // costs.json is still there for an engineer and is not on any screen.
+            // WHICH MODEL, ABOVE WHAT IT COSTS, because the model is what the two boxes below are a
+            // correction to. TradeAgent puts this on the AI tool's command line itself — before this
+            // row existed the model came from the tool's own configuration file, so the owner was
+            // paying for whichever model that file happened to name.
+            Ui.Muted("TradeAgent chooses which model your AI tool runs on. A dearer model does more per "
+                + "turn and reaches the daily limit above sooner; a cheaper one buys more turns."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.AiModel, _modelRow),
+            _modelNote,
+            Ui.Divider(),
             Ui.Muted("TradeAgent works out what each turn cost from the tokens your AI tool reports. "
                 + "If you know what you are actually charged, put it here and it is used instead."),
             Ui.Spacer(Theme.S2),
@@ -1228,6 +1291,59 @@ sealed class SafetyPage
         // five-second tick, and the fill it wears while armed is registered with the control.
         Ui.SetResting(_stopButton,
             status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading, "emergency");
+
+        RefreshModelRow();
+    }
+
+    /// <summary>
+    /// Marks the model in force, and rebuilds the row ONLY when the runtime it was built for has
+    /// changed — which the owner does on the Settings page, not here. On the five-second tick this
+    /// is an emphasis pass over the buttons that are already there, because rebuilding a tree is not
+    /// a refresh: it resets scroll, drops half-pressed confirmations and makes text vanish mid-read.
+    /// </summary>
+    void RefreshModelRow()
+    {
+        var runtime = _host.Gateway.Settings.SelectedRuntimeId;
+        if (!string.Equals(runtime, _modelRowRuntime, StringComparison.Ordinal))
+        {
+            _modelRowRuntime = runtime;
+            _modelRow.Children.Clear();
+            foreach (var c in BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel)
+                         .Children.ToArray())
+            {
+                // Detached first: a control cannot be in two visual trees, and the row above is
+                // thrown away the moment this loop is done with it.
+                ((Panel)c.Parent!).Children.Remove(c);
+                _modelRow.Children.Add(c);
+            }
+        }
+
+        var chosen = _host.Gateway.Settings.SelectedModelId;
+        var i = 0;
+        if (_modelRow.Children.Count > 0 && _modelRow.Children[i++] is Button d) Ui.Emphasise(d, chosen is null);
+        foreach (var m in _host.ModelChoices)
+        {
+            if (i >= _modelRow.Children.Count) break;
+            if (_modelRow.Children[i++] is Button b)
+                Ui.Emphasise(b, string.Equals(m.Model, chosen, StringComparison.OrdinalIgnoreCase));
+        }
+
+        _modelNote.Text = _host.RequestedModel is { Length: > 0 } model
+            ? $"Every turn runs on {model}."
+            : "This AI tool has no model TradeAgent can choose, so it runs on whatever it is configured for.";
+    }
+
+    /// <summary>
+    /// Writes the choice. ONE press: it takes no permission and gives none, and the daily limit above
+    /// is unchanged either way. Null is the button that means "whatever TradeAgent ships".
+    /// </summary>
+    void ChooseModel(string? model)
+    {
+        _host.Gateway.Update(s => s.SelectedModelId = model);
+        _host.Gateway.Log.Activity(_host.RequestedModel is { Length: > 0 } m
+            ? $"The AI now runs on {m}"
+            : "The AI now runs on whatever its AI tool is configured for");
+        RefreshModelRow();
     }
 
     /// <summary>

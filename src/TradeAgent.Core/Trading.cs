@@ -138,6 +138,22 @@ public sealed class TradeAgentSettings
     public bool LiveActivated { get; set; }
     public bool AiTradingStopped { get; set; }
     public string? SelectedRuntimeId { get; set; }
+
+    /// <summary>
+    /// WHICH MODEL THE AI RUNS ON, or null for the one TradeAgent ships as that runtime's default.
+    ///
+    /// Before this existed the model came from the CLI's own configuration file, so the model
+    /// running the owner's money was whichever one that file happened to name — measured on
+    /// 2026-09-07, <c>gpt-6-astra</c> at about 1.5 USD a turn, chosen by nobody and visible nowhere.
+    /// A product that spends someone's money has to be able to say what it is spending it on.
+    ///
+    /// It is not a permission and asks once. A dearer model does not let the AI do more; the daily
+    /// ceiling is unchanged and bites sooner, which is the safe direction — and a cheaper one buys
+    /// more turns under the same ceiling without lowering what a turn is charged at, which is the
+    /// difference between this and the two price boxes beside it.
+    /// </summary>
+    public string? SelectedModelId { get; set; }
+
     public string? SelectedConnectorId { get; set; }
     public string? SelectedAccountId { get; set; }
     public RiskPolicy Risk { get; set; } = new();

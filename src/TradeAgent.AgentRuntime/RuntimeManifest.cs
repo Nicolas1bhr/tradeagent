@@ -129,6 +129,35 @@ public sealed class RuntimeManifest
     public string[] UnattendedArgs { get; set; } = [];
 
     /// <summary>
+    /// HOW THIS RUNTIME IS TOLD WHICH MODEL TO RUN. <c>"{model}"</c> is replaced with the id.
+    ///
+    /// Data, like every other command here, because which flag a vendor spells this with is the
+    /// vendor's business and changes on their schedule. Empty means the runtime has no such flag —
+    /// and empty is load-bearing rather than merely absent: it is what keeps the "dearest model in
+    /// the catalogue" estimate alive for a runtime whose model TradeAgent genuinely cannot choose,
+    /// while a runtime that HAS this flag is priced at the model TradeAgent asked for.
+    /// </summary>
+    public string[] ModelArgs { get; set; } = [];
+
+    /// <summary>
+    /// The model TradeAgent asks for when the owner has not chosen one, or null for "let the
+    /// runtime decide". The alternative is what shipped before: the model came from the CLI's own
+    /// config file, so the loop ran whatever that said — measured on 2026-09-07, that was
+    /// <c>gpt-6-astra</c> at about 1.5 USD a turn, chosen by nobody.
+    /// </summary>
+    public string? DefaultModel { get; set; }
+
+    /// <summary>
+    /// THE MODEL THIS RUNTIME WILL BE ASKED FOR, given the owner's choice. Null means no model flag
+    /// goes on the command line at all — either the runtime has none, or nothing has named one.
+    /// </summary>
+    public string? ModelFor(string? chosen) =>
+        ModelArgs.Length == 0 ? null
+        : chosen is { Length: > 0 } c ? c
+        : DefaultModel is { Length: > 0 } d ? d
+        : null;
+
+    /// <summary>
     /// Regex with one capture group, applied to the sign-in command's output to pull out the URL the
     /// user has to visit. TradeAgent opens it in the browser itself, so the sign-in never needs a
     /// console.
@@ -379,6 +408,27 @@ public static class RuntimeCatalog
             // order still goes through the gateway's modes, limits, approvals and kill switch,
             // none of which the agent can reach or change. Revisit once tested on Windows.
             UnattendedArgs = ["--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"],
+            // THE MODEL IS TRADEAGENT'S CHOICE, NOT ~/.codex/config.toml's.
+            //
+            // Measured on this Mac, codex-cli 0.153.4, 2026-09-07, in a scratch directory, with the
+            // machine's own config.toml saying `model = "gpt-6-astra"`:
+            //
+            //   codex exec --json --skip-git-repo-check -s read-only -m gpt-5.6-sol "<prompt>"
+            //     -> exit 0, and the flag was accepted; the turn ran.
+            //   codex exec resume --last --json --skip-git-repo-check -m gpt-5.6-sol "<prompt>"
+            //     -> exit 0. `-m, --model <MODEL>` is on `codex exec resume --help` as well as on
+            //        `codex exec`, so the resumed turn takes it too — which is the half that
+            //        matters, since nineteen of every twenty turns are resumes.
+            //
+            // One flag that is NOT shared: `-s/--sandbox` is refused by `exec resume`
+            // ("error: unexpected argument '-s' found", exit 2). UnattendedArgs above passes
+            // --dangerously-bypass-approvals-and-sandbox rather than -s, and that one IS on both.
+            //
+            // gpt-5.6-sol as the default because it is the mid-priced current model on the
+            // catalogue this build ships (4.00 in / 20.00 out per million against astra's
+            // 10.00/50.00), so the day's ceiling buys roughly two and a half times the work.
+            ModelArgs = ["-m", "{model}"],
+            DefaultModel = "gpt-5.6-sol",
             InteractiveArgs = [],
             SelfContained = true,
             Verified = false,
@@ -645,6 +695,20 @@ public static class CostCatalog
     /// <summary>The dearest entry for a runtime, under the catalogue on disk. For the screens.</summary>
     public static ModelPrice? Highest(string? runtimeId) =>
         Read().Costs is { } costs ? Highest(costs, runtimeId) : null;
+
+    /// <summary>
+    /// THE MODELS THE OWNER MAY CHOOSE BETWEEN on one runtime — its own catalogue, in the order the
+    /// catalogue lists them, with each entry carrying the two rates the Safety page prints beside it.
+    ///
+    /// Runtime-agnostic entries are excluded for the same reason <see cref="Highest"/> excludes
+    /// them: an owner pricing one model in <c>costs.json</c> is describing a bill, not adding a
+    /// model to a vendor's menu, and a button that asks a CLI for a model it does not have is a
+    /// button that stops the AI.
+    /// </summary>
+    public static IReadOnlyList<ModelPrice> Choices(string? runtimeId) =>
+        Read().Costs is { } costs
+            ? [.. Applicable(costs, runtimeId).Where(p => p.Runtime.Length > 0)]
+            : [];
 
     /// <summary>
     /// WHAT THIS TURN COST, or why nobody can say. Every branch that cannot produce a number

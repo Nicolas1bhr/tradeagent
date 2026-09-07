@@ -121,6 +121,24 @@ public sealed class AppHost : IAsyncDisposable
     public static string? PricedRuntimeId(string? preparedAgentId, string? chosenRuntimeId) =>
         preparedAgentId is { Length: > 0 } ? preparedAgentId : chosenRuntimeId;
 
+    /// <summary>The same question, asked of this host. One place, so the screens cannot disagree.</summary>
+    string? PricingRuntime => PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId);
+
+    /// <summary>Every model this build ships a price for on the runtime in force. The Safety page's row.</summary>
+    public IReadOnlyList<ModelPrice> ModelChoices => CostCatalog.Choices(PricingRuntime);
+
+    /// <summary>
+    /// THE MODEL TRADEAGENT WILL ASK FOR on the next turn, or null where it asks for none. The
+    /// prepared runtime answers first, and the manifest for the owner's chosen runtime answers
+    /// before one is prepared — the same fallback and for the same reason as the rate above, so the
+    /// Safety page shows the model the next turn will actually run on rather than nothing at all.
+    /// </summary>
+    public string? RequestedModel =>
+        Agent?.Current?.RequestedModel
+        ?? (PricingRuntime is { Length: > 0 } id
+            ? RuntimeCatalog.Find(id)?.ModelFor(Gateway.Settings.SelectedModelId)
+            : null);
+
     /// <summary>
     /// THE LOOP THAT KEEPS THE AI WORKING. Composed here, beside the gateway, because that is where
     /// the facts a turn is handed already live — and deliberately NOT anywhere the agent can reach:
@@ -238,7 +256,9 @@ public sealed class AppHost : IAsyncDisposable
             _server.Start();
             Health.Set(Components.Gateway, HealthState.READY);
 
-            Agent = new AgentSupervisor(Health);
+            // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
+            // page while the agent is running, and the next turn is the one that has to obey.
+            Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId);
             Meter = new TurnMeter(_db,
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,

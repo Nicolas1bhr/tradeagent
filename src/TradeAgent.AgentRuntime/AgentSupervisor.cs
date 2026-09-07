@@ -7,7 +7,11 @@ namespace TradeAgent.AgentRuntime;
 /// workspace and one trading account is a race with real money in it, and on a low-spec laptop it is
 /// also simply too much load.
 /// </summary>
-public sealed class AgentSupervisor(HealthRegistry health)
+/// <param name="selectedModel">
+/// The model the owner chose on the Safety page, or null for the runtime's default. Handed to every
+/// runtime this supervisor prepares, so the choice survives a restart of the agent.
+/// </param>
+public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null)
 {
     readonly SemaphoreSlim _gate = new(1, 1);
     IAgentRuntime? _runtime;
@@ -30,7 +34,7 @@ public sealed class AgentSupervisor(HealthRegistry health)
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest);
+            var runtime = new CliAgentRuntime(manifest, selectedModel);
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,

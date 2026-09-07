@@ -94,17 +94,55 @@ internal static partial class Ansi
 /// <summary>
 /// Turns an argument template into a real argument list.
 ///
-/// The unattended flags and the stream flag have to land before the prompt, because every CLI here
-/// treats the first non-flag word after the subcommand as the prompt.
+/// The unattended flags, the stream flag and the model flag have to land before the prompt, because
+/// every CLI here treats the first non-flag word after the subcommand as the prompt.
+///
+/// <b>Public, and <see cref="For"/> with it.</b> The argv is a rule rather than a detail — the model
+/// TradeAgent chose has to reach the RESUMED turn as well as the first one, and nineteen turns in
+/// twenty are resumes — and a rule that can only be checked by starting a vendor's CLI is a rule
+/// nobody is checking.
 /// </summary>
-internal static class AgentArgs
+public static class AgentArgs
 {
-    public static List<string> Build(string[] template, string prompt, string? jsonFlag, string[] unattended)
+    /// <summary>
+    /// THE ARGV FOR ONE TURN, first message or resumed, from one method so the two cannot drift.
+    ///
+    /// <paramref name="resuming"/> picks the template and NOTHING ELSE: every flag below is chosen
+    /// the same way for both, which is the whole point. A resumed session does not remember which
+    /// model it was run with — it is a fresh process reading a transcript — so a build that put the
+    /// flag on the first turn only would run one turn on the model TradeAgent chose and every turn
+    /// after it on whatever the CLI's own config file says.
+    /// </summary>
+    public static List<string> For(RuntimeManifest manifest, string prompt, bool resuming, string? model)
+    {
+        var template =
+            resuming && manifest.ResumeArgs.Length > 0 ? manifest.ResumeArgs :
+            manifest.ExecArgs.Length > 0 ? manifest.ExecArgs :
+            manifest.TaskArgs;
+
+        var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
+        return Build(template, prompt, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs,
+            ModelArgs(manifest, model));
+    }
+
+    /// <summary>
+    /// The model flag as this runtime spells it, or nothing at all. Nothing when the runtime has no
+    /// such flag, and nothing when no model was named: an empty <c>-m</c> would be a CLI refusing to
+    /// start, which is a worse failure than a model TradeAgent did not choose.
+    /// </summary>
+    static string[] ModelArgs(RuntimeManifest manifest, string? model) =>
+        manifest.ModelArgs.Length == 0 || model is not { Length: > 0 }
+            ? []
+            : [.. manifest.ModelArgs.Select(a => a.Replace("{model}", model, StringComparison.Ordinal))];
+
+    public static List<string> Build(string[] template, string prompt, string? jsonFlag, string[] unattended,
+        string[]? modelArgs = null)
     {
         var flags = new List<string>();
         if (!string.IsNullOrWhiteSpace(jsonFlag))
             flags.AddRange(jsonFlag.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         flags.AddRange(unattended.Where(a => !string.IsNullOrEmpty(a)));
+        if (modelArgs is not null) flags.AddRange(modelArgs.Where(a => !string.IsNullOrEmpty(a)));
 
         var promptIndex = Array.FindIndex(template, a => a.Contains("{prompt}", StringComparison.Ordinal));
         var args = new List<string>();
@@ -138,12 +176,18 @@ internal static class AgentArgs
 /// The register a running turn reports itself to. Null is the process-wide one and is what the
 /// product always uses; only a test that starts a child in the agent's role passes its own.
 /// </param>
+/// <param name="model">
+/// THE MODEL TRADEAGENT ASKS FOR, read at the start of every turn rather than captured once, so an
+/// owner who changes it on the Safety page is obeyed by the next turn and not by the next restart.
+/// Null, or a null answer, means no model flag goes on the command line.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
     Func<string> workspace,
     Func<IReadOnlyDictionary<string, string>> environment,
-    AgentPresence? presence = null) : IAgentConversation
+    AgentPresence? presence = null,
+    Func<string?>? model = null) : IAgentConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
@@ -164,6 +208,20 @@ public sealed class AgentSession(
 
     /// <summary>The runtime's own session identifier, once it has told us one. Diagnostics only.</summary>
     public string? ThreadId => _threadId;
+
+    /// <summary>
+    /// The model this session's next turn will ask for, or null for none. A settings read that threw
+    /// answers null — the turn runs on the runtime's own default rather than not running at all,
+    /// which is the same rule the meter keeps about a rate it could not read.
+    /// </summary>
+    public string? RequestedModel
+    {
+        get
+        {
+            try { return model?.Invoke(); }
+            catch (Exception) { return null; }
+        }
+    }
 
     public event Action<ChatTurn>? TurnAdded;
     public event Action<string>? Delta;
@@ -313,12 +371,9 @@ public sealed class AgentSession(
     {
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
-        var template =
-            _sessionExists && manifest.ResumeArgs.Length > 0 ? manifest.ResumeArgs :
-            manifest.ExecArgs.Length > 0 ? manifest.ExecArgs :
-            manifest.TaskArgs;
-
-        var args = AgentArgs.Build(template, message, streaming ? manifest.JsonFlag : null, manifest.UnattendedArgs);
+        // The model is read here, at the turn, and handed to the SAME builder for a first message and
+        // a resumed one. See AgentArgs.For: `resuming` picks the template and nothing else.
+        var args = AgentArgs.For(manifest, message, resuming: _sessionExists, model: RequestedModel);
 
         var psi = new ProcessStartInfo
         {

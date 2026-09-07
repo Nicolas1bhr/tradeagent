@@ -15,7 +15,11 @@ namespace TradeAgent.AgentRuntime;
 /// <c>CreateNoWindow = true</c>, with its output captured. There is no path through this file that
 /// puts a terminal in front of the user.
 /// </summary>
-public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
+/// <param name="selectedModel">
+/// The model the OWNER chose, or null for the manifest's default. A function rather than a value
+/// because it lives in the settings and can change while this runtime is alive.
+/// </param>
+public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null) : IAgentRuntime
 {
     Process? _session;
     Process? _login;
@@ -27,6 +31,18 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     public RuntimeManifest Manifest => manifest;
     public string Id => manifest.Id;
     public string DisplayName => manifest.DisplayName;
+
+    /// <inheritdoc />
+    public string? RequestedModel
+    {
+        get
+        {
+            try { return manifest.ModelFor(selectedModel?.Invoke()); }
+            // A settings read that threw must cost the CHOICE, not the turn: the runtime falls back
+            // to whatever its own configuration says, exactly as it did before this existed.
+            catch (Exception) { return null; }
+        }
+    }
 
     public RuntimeCapabilities Capabilities => new(
         CanInstallItself: manifest.Install.Kind is not (InstallKind.None or InstallKind.Manual),
@@ -568,7 +584,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest) : IAgentRuntime
     /// rather than silently ignored.
     /// </summary>
     public IAgentConversation OpenConversation() =>
-        _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env);
+        _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
+            model: () => RequestedModel);
 
     /// <summary>
     /// Makes the agent ready to talk to.

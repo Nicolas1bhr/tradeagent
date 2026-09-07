@@ -17,6 +17,16 @@ public interface IAgentRuntime
     string DisplayName { get; }
     RuntimeCapabilities Capabilities { get; }
 
+    /// <summary>
+    /// THE MODEL TRADEAGENT ASKS THIS RUNTIME FOR, or null where it asks for none — either the
+    /// runtime takes no model flag, or nothing has named one.
+    ///
+    /// It is on the interface because two things outside the runtime need it and neither may guess:
+    /// the meter prices a turn by it when the stream names no model, and the screens say which model
+    /// the owner is paying for.
+    /// </summary>
+    string? RequestedModel { get; }
+
     Task<RuntimeDetection> DetectAsync(CancellationToken ct = default);
     Task<RuntimeDetection> InstallAsync(IProgress<string>? progress = null, CancellationToken ct = default);
     Task<RuntimeDetection> UpdateAsync(IProgress<string>? progress = null, CancellationToken ct = default);
