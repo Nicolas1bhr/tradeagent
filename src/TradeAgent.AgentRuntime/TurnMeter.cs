@@ -138,6 +138,142 @@ public sealed record TurnUsage(
             : null;
 }
 
+/// <summary>
+/// WHAT THE APP COULD SEE OF ONE TURN'S CONTEXT, COMPONENT BY COMPONENT, AND HOW MUCH OF IT IT
+/// COULD NOT SEE AT ALL.
+///
+/// <para><b>The units are the units the stream gives.</b> Characters are not tokens and bytes are not
+/// tokens, and converting one to the other would be exactly the estimate this record exists to
+/// avoid — a number that looks measured, is not, and would end up beside real ones on a screen. So
+/// the prompt is counted in characters, tool output in bytes, and the token figures are the
+/// runtime's own.</para>
+///
+/// <para><b>Therefore <see cref="UnattributedInputTokens"/> is large, and that is the finding.</b>
+/// The only part of the input the stream accounts for in tokens is the part it says came from cache.
+/// Everything else — the CLI's system prompt, the tool schemas, the instruction files, the
+/// conversation so far — arrives as one number with no breakdown, so it is labelled unattributed
+/// rather than divided up by guesswork. <c>docs/COUNCIL.md</c> rule 4 asks for the observable
+/// components measured and the remainder named; naming the remainder honestly is most of the value.</para>
+///
+/// <para>Measured against a real turn: codex-cli 0.153.4 on this Mac, 2026-09-07, asked to run
+/// <c>ls</c>. The command item arrives twice with one id — once <c>item.started</c> with
+/// <c>"aggregated_output":""</c>, once <c>item.completed</c> with the output on it — so items are
+/// counted by id and the largest output seen for an id is the one that counts.</para>
+/// </summary>
+public sealed record TurnContext
+{
+    /// <summary>Characters of the prompt THE APP WROTE, or null where the app did not write it.</summary>
+    public int? PromptChars { get; init; }
+
+    /// <summary>Distinct command or tool items the stream showed, counted by item id.</summary>
+    public int CommandItems { get; init; }
+
+    /// <summary>Bytes of tool output the stream carried, where an item carried any.</summary>
+    public int ToolOutputBytes { get; init; }
+
+    /// <summary>Bytes of stream the app kept for this turn. The whole of what it had to look at.</summary>
+    public int StreamBytes { get; init; }
+
+    public long InputTokens { get; init; }
+    public long CachedInputTokens { get; init; }
+    public long UncachedInputTokens { get; init; }
+
+    /// <summary>
+    /// Input tokens no component of this record accounts for. The cached ones are accounted for
+    /// because the runtime said so; nothing else in the stream is reported in tokens at all.
+    /// </summary>
+    public long UnattributedInputTokens { get; init; }
+
+    public long OutputTokens { get; init; }
+    public long ReasoningOutputTokens { get; init; }
+
+    /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
+    public string Note { get; init; } = Unmeasured;
+
+    public const string Unmeasured =
+        "characters and bytes are not tokens and are never converted to them; the only input this "
+        + "stream accounts for in tokens is the cached part, so the rest is unattributed";
+
+    /// <summary>
+    /// Reads one turn's stream. Never throws and never invents: a line that is not JSON, or an event
+    /// shape nobody here recognises, contributes nothing rather than a guess.
+    /// </summary>
+    public static TurnContext Read(string raw, int? promptChars, TurnUsage? usage)
+    {
+        // Counted by ITEM ID, largest output per id. A command arrives as `item.started` with an
+        // empty output and again as `item.completed` with the output on it; counting the lines would
+        // report two commands and, worse, would report the output twice the day a runtime streams it
+        // in pieces.
+        var outputs = new Dictionary<string, int>(StringComparer.Ordinal);
+        var anonymous = 0;
+
+        foreach (var line in (raw ?? "").Replace("\r\n", "\n").Split('\n'))
+        {
+            var text = line.Trim();
+            if (text.Length == 0 || text[0] != '{') continue;
+
+            JsonElement item;
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                if (!doc.RootElement.TryGetProperty("item", out var e) || e.ValueKind != JsonValueKind.Object)
+                    continue;
+                item = e.Clone();
+            }
+            catch (JsonException) { continue; }
+
+            if (!IsToolItem(item)) continue;
+
+            var id = Text(item, "id") ?? $"#{anonymous++}";
+            var bytes = OutputBytes(item);
+            outputs[id] = Math.Max(outputs.TryGetValue(id, out var had) ? had : 0, bytes);
+        }
+
+        var input = usage?.InputTokens ?? 0;
+        var cached = usage?.CachedInputTokens ?? 0;
+
+        return new TurnContext
+        {
+            PromptChars = promptChars,
+            CommandItems = outputs.Count,
+            ToolOutputBytes = outputs.Values.Sum(),
+            StreamBytes = Encoding.UTF8.GetByteCount(raw ?? ""),
+            InputTokens = input,
+            CachedInputTokens = cached,
+            UncachedInputTokens = usage?.UncachedInputTokens ?? 0,
+            UnattributedInputTokens = Math.Max(0, input - cached),
+            OutputTokens = usage?.OutputTokens ?? 0,
+            ReasoningOutputTokens = usage?.ReasoningOutputTokens ?? 0
+        };
+    }
+
+    /// <summary>
+    /// An item the AI RAN rather than wrote. By exclusion on purpose: the measured runtime calls its
+    /// one <c>command_execution</c>, and a vendor that renames it should make this count MORE, not
+    /// silently nothing — an uncounted tool item makes the context look smaller than it was, which
+    /// is the direction that misleads.
+    /// </summary>
+    static bool IsToolItem(JsonElement item) =>
+        Text(item, "type") is { } type
+        && !type.Equals("agent_message", StringComparison.OrdinalIgnoreCase)
+        && !type.Equals("reasoning", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Bytes of output an item carries, where it carries any. <c>aggregated_output</c> is the
+    /// measured field on codex 0.153.4; the others are the spellings the neighbouring CLIs use, in
+    /// the same spirit as <see cref="TurnUsage.Read"/>.
+    /// </summary>
+    static int OutputBytes(JsonElement item)
+    {
+        foreach (var name in new[] { "aggregated_output", "output", "stdout", "result" })
+            if (Text(item, name) is { } s) return Encoding.UTF8.GetByteCount(s);
+        return 0;
+    }
+
+    static string? Text(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+}
+
 /// <summary>One line of <c>state/agent-turns.jsonl</c>. Written by the app; nothing reads it back.</summary>
 public sealed record TurnRecord
 {
@@ -174,6 +310,9 @@ public sealed record TurnRecord
 
     /// <summary>The rate was the owner's own two numbers rather than any list price.</summary>
     public bool PricedByOwner { get; init; }
+
+    /// <summary>What the app could see of this turn's context. See <see cref="TurnContext"/>.</summary>
+    public TurnContext? Context { get; init; }
 }
 
 /// <summary>
@@ -208,6 +347,13 @@ public sealed class TurnMeter
 
     /// <summary>The attempt this meter opened and has not closed. At most one: turns are serial.</summary>
     string? _open;
+
+    /// <summary>
+    /// Characters of the prompt that attempt was launched with. Null when nothing opened an attempt
+    /// — the owner's own typed turn — and then the context record says so rather than reporting a
+    /// zero-length prompt that nobody wrote.
+    /// </summary>
+    int? _openPromptChars;
 
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
@@ -274,7 +420,8 @@ public sealed class TurnMeter
             Currency = price.Cost is null ? null : price.Currency,
             Unpriced = price.Unpriced,
             Estimated = price.Estimated,
-            PricedByOwner = price.ByOwner
+            PricedByOwner = price.ByOwner,
+            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(), ended.Usage)
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
@@ -321,6 +468,7 @@ public sealed class TurnMeter
             {
                 _attempts.Begin(attempt);
                 _open = attempt.Id;
+                _openPromptChars = prompt.Length;
             }
             Changed?.Invoke();
             return attempt.Id;
@@ -356,7 +504,12 @@ public sealed class TurnMeter
     void Close(AgentTurnEnded ended, TurnPrice price)
     {
         string? id;
-        lock (_gate) { id = _open; _open = null; }
+        int? promptChars;
+        lock (_gate) { id = _open; promptChars = _openPromptChars; _open = null; _openPromptChars = null; }
+
+        // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
+        // TurnContext: what the stream does not show is named rather than divided up.
+        var context = Json.Write(TurnContext.Read(ended.Raw, promptChars, ended.Usage));
 
         if (id is null)
         {
@@ -377,7 +530,7 @@ public sealed class TurnMeter
         _attempts.End(id, ended.ExitCode, ended.At,
             ended.Usage?.InputTokens, ended.Usage?.CachedInputTokens, ended.Usage?.CacheWriteInputTokens,
             ended.Usage?.OutputTokens, ended.Usage?.ReasoningOutputTokens,
-            ended.Usage?.Model, price.Cost, price.Unpriced, null, price.Basis);
+            ended.Usage?.Model, price.Cost, price.Unpriced, context, price.Basis);
     }
 
     /// <summary>
@@ -490,6 +643,12 @@ public sealed class TurnMeter
     /// </summary>
     static string HashOf(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+
+    /// <summary>The open attempt's prompt length, read WITHOUT closing it — the row is closed later.</summary>
+    int? PromptCharsOfOpenAttempt()
+    {
+        lock (_gate) return _openPromptChars;
+    }
 
     static string? Safe(Func<string?> f)
     {
