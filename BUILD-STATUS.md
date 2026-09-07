@@ -4636,3 +4636,36 @@ trailers; `rev-list --count` → 0; CI at `2504c5b`: run 34139262127 in flight w
 
 **NOT VERIFIED:** the Safety page's model row on a screen — no UI run, and no test presses `DashboardView.BuildModelRow`;
 only the card's words, the pipe field and the schema sentence are asserted. **NOT done:** no box, no ATAS, no order.
+
+## 2026-09-07 — U-crlf-win landed: line endings pinned at the root, so a raw-string paragraph compiles to one program on every checkout
+
+The windows-only red at `06a8636` (run 34073713557: `MissionInstructionsTests.The_paragraph_is_the_only_difference_between_
+the_two_missions`, `13 out of 13 items … did not pass`), by one fresh fixer on `docs/briefs/U-crlf-win.md`. Merge `2082091`,
+4 commits, no product code: a root `.gitattributes`, one test file, the brief; `git diff main -- src/` empty.
+
+- **The class fix:** `.gitattributes` with `* text=auto` and `eol=lf` on `.cs`, `.csproj`, `.props`, `.sln`, `.md`, `.json`,
+  `.yml`, `.sh`, `.py`, `.txt`; `eol=crlf` on `.cmd`, `.bat`, `.ps1`; `-text` on twelve binary extensions (none tracked). Its
+  header says why `text=auto` alone does not fix it: every word the app ships is a `"""` raw string literal, which keeps
+  the SOURCE file's line endings, so a CRLF checkout compiles a different program. `git add --renormalize .` touched ONE
+  file, the vendor's `docs/atas-api-8.0.14.397.txt` (5,882 CRLF lines, a 13,158-line whitespace-only diff); the manager
+  marked `docs/atas-api-*.txt -text` and reverted that, so vendor material stays byte-for-byte as shipped — after which a
+  renormalise changes nothing (verified: 0 files staged).
+- **The test made honest on its own:** `Lines()` splits on `["\r\n", "\n"]`, the assertion untouched. RED reproduced
+  byte-for-byte as the runner sees it — `git archive HEAD` into a scratch tree, all 159 `.cs` rewritten to CRLF with
+  `perl -pe 's/(?<!\r)\n/\r\n/'`, no git config changed: `Assert.All() Failure: 13 out of 13 items in the collection did
+  not pass.` with `[4]: Item: "report one as though it did.\r"`; GREEN in the same CRLF tree `Passed: 454, Failed: 0`;
+  mutant (`Lines()` back to `Split('\n')`) → the same 13-of-13 red.
+- **The sweep, run rather than argued:** 14 sites split text on a bare `'\n'`; one needed the fix (the test above); the
+  other 13 were run under the CRLF tree and pass — they normalise already (`MissionLoop.cs:193,616`, `TurnMeterTests.cs`),
+  trim (`CliAgentRuntime.cs`, `NodeRuntime.cs`, `UpdateService.cs`, `GatewayPipeBackpressureTests.cs`), assert substrings
+  only (`EmptyAllowlistTests.cs`, `CoidWitnessTests.cs`) or assert nothing (`BridgeRoundTripTests.cs`). No code changed.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `9ef6e37`, Release: `Build succeeded.
+0 Warning(s) 0 Error(s)`, 17 projects, 37 `CoreCompile` tasks; Unit 3× → 454/454 each; Fault 269/269; Integration 615
+passed, 1 skipped; `--list-tests` vs `main` 1339 = 1339, nothing removed or added; no `Timing` re-run needed. Manager's
+gate at `9d2a492` (the fixer's tip plus the `-text` commit, rebased over `U-model`), Release: build → 0 warnings, 0 errors;
+suite → 481 + 269 + 615 = 1365 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
+0 added; scan clean; no trailers; `rev-list --count` → 0; CI at `2082091`: run 34140348483 in flight when this section was written (the merge sha is the gated tip rebased over two docs-only commits), its verdict — the windows-latest job above all — recorded in a follow-up commit.
+
+**NOT VERIFIED:** the hosted windows-latest runner itself — the fixer did not open a PR run; the merge sha's CI is the
+proof, recorded here when it completes. **NOT done:** no product code; no box, no ATAS, no money.
