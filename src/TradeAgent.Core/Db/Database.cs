@@ -344,6 +344,49 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','6') ON CONFLICT(key) DO UPDATE SET value='6';");
         }
 
+        if (have < 7)
+        {
+            // THE WAKE QUEUE. One row per reason the AI may take a turn, and the loop takes none
+            // without one.
+            //
+            // What it replaces is nothing at all: `AskedForDelay` returned Zero whenever the AI had
+            // not written `next.json`, so the loop asked for another turn the instant one ended, for
+            // as long as the machine was on. The only thing that ever stopped it was the day's cost
+            // ceiling — an agent with nothing to do burned the whole allowance discovering that.
+            //
+            // `id` IS THE DEDUPLICATION AND IT IS DETERMINISTIC PER SOURCE — `owner:<seq>`,
+            // `inbox:<scan-at>`, `fill:<execution_id>`, `order:<request_id>:<state>`,
+            // `renewal:<local-day>`, `self:<attempt-id>`, `review:<yyyy-MM-ddTHH:mm>`. A second raise
+            // of the same fact is a no-op rather than a second turn, which is what makes a replay of
+            // a whole day's events — a reconnect that serves every execution again, a restart that
+            // re-reads the same scan — cost nothing. A random id here would have made every retry a
+            // paid turn.
+            //
+            // `consumed_by` IS THE ATTEMPT ID, WRITTEN IN THE SAME TRANSACTION AS THE `ai_attempt`
+            // ROW AND BEFORE THE PROCESS STARTS. Consumed after the turn instead, a kill between the
+            // launch and the commit would hand the same events to the next launch and charge for
+            // both. `disposition` is what became of the wake — see `MissionEventStore`.
+            //
+            // WRITTEN BY THE APP ONLY, the rule `material` and `ai_attempt` already keep: there is no
+            // verb and no pipe op that reaches this table, so an agent cannot manufacture a reason to
+            // be paid for another turn, and cannot delete the record of one it was given.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS mission_event(
+              id           TEXT PRIMARY KEY,
+              kind         TEXT NOT NULL,
+              created_at   TEXT NOT NULL,
+              due_at       TEXT NOT NULL,
+              payload      TEXT,
+              consumed_at  TEXT,
+              consumed_by  TEXT,
+              disposition  TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_mission_event_due ON mission_event(consumed_at, due_at);
+            CREATE INDEX IF NOT EXISTS ix_mission_event_kind ON mission_event(kind);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','7') ON CONFLICT(key) DO UPDATE SET value='7';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

@@ -56,8 +56,17 @@ public static class Versions
     /// <c>ai_meter_*</c> kv totals as what the daily ceiling is measured against. Additive — one new
     /// table — and an older database gains it empty, so the first day after an upgrade starts at
     /// zero rather than inheriting a total whose detail nobody kept.
+    ///
+    /// 6 -&gt; 7: the <c>mission_event</c> table. One row per reason the AI is allowed to be woken —
+    /// the owner's message, new material, a fill, an order reaching a terminal state, the day's
+    /// renewal, a delay the AI asked for, a scheduled review — each with a deterministic id, so a
+    /// second raise of the same fact is a no-op and a replay of a whole day's events wakes nothing.
+    /// It is what replaces the immediate re-turn: before it the loop asked for another turn the
+    /// instant one ended, and the only thing that ever stopped it was the day's cost ceiling.
+    /// Additive — one new table — and an older database gains it empty, which is the honest
+    /// starting point: nothing that happened before the upgrade is a reason to wake now.
     /// </summary>
-    public const int DatabaseSchemaVersion = 6;
+    public const int DatabaseSchemaVersion = 7;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

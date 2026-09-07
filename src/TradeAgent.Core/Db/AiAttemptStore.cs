@@ -122,8 +122,15 @@ public sealed class AiAttemptStore(Database db)
     /// <summary>
     /// Writes the LAUNCHED row. Called before the process starts, and its return is the id the end
     /// of the turn completes.
+    ///
+    /// <paramref name="consuming"/> is the wake queue's part of the same commit: the
+    /// <c>mission_event</c> rows this launch is answering are marked <c>consumed_by</c> this attempt
+    /// IN THIS TRANSACTION. Two transactions would leave a window in which the launch is recorded
+    /// and the events are not — a kill there hands the same wake to the next launch and the owner
+    /// pays for both — and a window the other way round in which events are spent on a launch that
+    /// never happened. One commit has neither.
     /// </summary>
-    public string Begin(AiAttempt a) => db.Write(_ =>
+    public string Begin(AiAttempt a, IReadOnlyList<string>? consuming = null) => db.Write(_ =>
     {
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
@@ -135,6 +142,7 @@ public sealed class AiAttemptStore(Database db)
             ("$state", nameof(AiAttemptState.LAUNCHED)), ("$ctx", a.Context),
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash));
         c.ExecuteNonQuery();
+        if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
         return a.Id;
     });
 
