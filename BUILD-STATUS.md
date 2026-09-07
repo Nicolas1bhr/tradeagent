@@ -4669,3 +4669,41 @@ suite → 481 + 269 + 615 = 1365 passed, 0 failed, 1 skipped; names vs `main` �
 
 **NOT VERIFIED:** the hosted windows-latest runner itself — the fixer did not open a PR run; the merge sha's CI is the
 proof, recorded here when it completes. **NOT done:** no product code; no box, no ATAS, no money.
+
+## 2026-09-07 — U-unknown-close landed: an UNKNOWN close on an instrument can no longer be doubled by a press or by the agent
+
+The money path's item (e) — `U-press-inflight`'s stated deviation, "an UNKNOWN closing order on the same instrument can
+still fill after the press's close and reverse the position" — by one fresh builder on `docs/briefs/U-unknown-close.md`
+(a first builder was killed by a usage limit before any change). Merge `acff18a`, 4 commits, 8 files, +731/−14
+(`TradingGateway.cs`, `Stores.cs`, `Errors.cs`, `GatewaySchema.cs`, `CONTRACTS.md`, `USER-GUIDE.md`; `UnknownCloseTests.cs`).
+Rebased three times under `U-model`, `U-crlf-win` and `U-data-binance`'s brief without conflict; `git diff main` deletes
+only the four lines this unit replaces.
+
+- **The press settles before it sends**, per leg, inside its own deadline: the UNKNOWN offsetting order on that instrument
+  is read back by client id — settled if terminal, cancelled if `ACKNOWLEDGED`/`WORKING` — and only then does the leg go
+  out; a leg the platform cannot answer for is REFUSED with a flagged `CREATED` row naming the instrument while every
+  other leg goes out. RED (the reversal reproduced): `orders at the broker : FB-1 Buy 2 FILLED | FB-3 Sell 2 FILLED | FB-4
+  Sell 2 FILLED`, `position at the end : ES -2`; mutant (`UnresolvedReducersOn(symbol, side)` → an empty list) → 3 red,
+  `ES -2` again.
+- **The agent's close and its reduce are refused** while an UNKNOWN close is on the instrument (`CLOSE_UNRESOLVED`, in
+  `CloseAsync` and on `PlaceAsync`'s own position read). RED: `Assert.Throws() Failure: No exception was thrown / Expected:
+  typeof(GatewayDeniedException)` ×3; mutant (`intent.Side == side` → `!=` in `CouldMoveThePositionLike`) → the same 3 red.
+- **Tests:** 8 new in `UnknownCloseTests.cs`, both directions each, none in `Timing` (two 1200 ms stalls inside a 2000 ms
+  budget cannot be made to fit by any runner); P6, `EmergencyPressTests` and `Confirming_one_outcome_does_not_lift_another_
+  requests_pause` untouched and green — the press still writes its row.
+- **Words:** `CONTRACTS.md`'s "what that leaves open" paragraph replaced by the rule; `Stores.cs`'s comment says why UNKNOWN
+  is handled per leg; both codes in `Errors.cs` and `GatewaySchema.cs`; one sentence in the guide. Nothing new on screen.
+- **A deviation, declared and right:** the refusal does NOT name `trade reconcile` as the brief asked — no such verb exists,
+  and `ReconcileAsync` walks only `Unreconciled()`, which excludes the unflagged UNKNOWN row this refuses over, so naming it
+  would have been a false promise. It names the two routes that do settle one: the owner's card, and Close all positions.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `62d00a6`, Release: 0 warnings,
+0 errors; Unit 481 + Fault 277 + Integration 615 = 1373 passed, 0 failed, 1 skipped; touched classes 3× → Fault 37/37 and
+Integration 19/19 each run, no `Timing` red; names vs `main` → 0 removed, 8 added. Manager's gate at `0fb5ed0` (the
+report commit on the gated tip), Release: build → 0 warnings, 0 errors; suite → 481 + 277 + 615 = 1373
+passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 8 added (sets 1153 → 1161; `[Fact]`/`[Theory]`
+1110 → 1118); scan clean; no trailers; `rev-list --count` → 0; CI at `acff18a`: run 34143748994 in flight when this section was written (the merge sha is the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the refused leg's sentence on a running app (`DashboardView` renders `PressOutcome.Summary` verbatim —
+read, not run); the read-back and the cancel against ATAS — the fake connector only. **NOT done:** the reconciler is
+untouched and still never settles a press leg; `U-flatten` (the gateway closing on a breach) comes next; no box, no money.
