@@ -54,6 +54,9 @@ public class CouncilLoopTests
         public string Role => role;
         public List<string> Sent { get; } = [];
         public bool Busy { get; private set; }
+
+        /// <summary>What the agent does during its turn — writing a file into its own <c>out/</c>.</summary>
+        public Action? OnTurn { get; set; }
         public IReadOnlyList<ChatTurn> History => _history.ToArray();
 
         public event Action<ChatTurn>? TurnAdded;
@@ -70,7 +73,7 @@ public class CouncilLoopTests
             Sent.Add(message);
             Busy = true;
             StateChanged?.Invoke();
-            using (concurrency.Enter()) await Task.Delay(2, ct);
+            using (concurrency.Enter()) { OnTurn?.Invoke(); await Task.Delay(2, ct); }
 
             var turn = new ChatTurn(ChatRole.Ai, $"{role} did its turn.", DateTimeOffset.UtcNow);
             _history.Add(turn);
@@ -98,15 +101,19 @@ public class CouncilLoopTests
         readonly string _tag = Guid.NewGuid().ToString("n")[..8];
         int _attempts;
 
+        readonly CouncilRelay _relay;
+
         public CouncilHost(Database db, string root, Concurrency concurrency)
         {
             _db = db;
             Root = root;
             Events = new MissionEventStore(db);
+            _relay = new CouncilRelay(db, HomeFor);
             foreach (var role in CouncilRoles.All)
             {
                 Conversations[role] = new RoleConversation(role, concurrency);
                 Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), ".tradeagent"));
+                Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), WorkspaceBuilder.OutDir));
             }
         }
 
@@ -150,6 +157,15 @@ public class CouncilLoopTests
                 new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
             return id;
         }
+
+        /// <summary>The REAL relay, so what the chair is handed is what the app actually publishes.</summary>
+        public void Relay(string role, string? attempt) => _relay.Run(role, attempt);
+
+        public MissionDelivery? Delivered(string publicationId)
+        {
+            var p = new PublicationStore(_db).Get(publicationId);
+            return p is null ? null : new MissionDelivery(p.Id, p.Kind, p.Role, p.Content);
+        }
     }
 
     static (Database Db, string Root) Workspace()
@@ -174,6 +190,7 @@ public class CouncilLoopTests
         NextTurnReservation = 0.10m,
         Currency = "USD",
         Turns = 1,
+        CanPrice = true,
         ResumesAt = DateTimeOffset.Now.AddHours(1)
     };
 
@@ -318,6 +335,73 @@ public class CouncilLoopTests
             status.WaitingFor);
         Assert.StartsWith($"{CouncilRoles.Title(CouncilRoles.Operations)}: waiting",
             DashboardPage.MissionSentence(status));
+    }
+
+    /// <summary>
+    /// THE WHOLE ROUND TRIP, AND ITEM 4's ORDERING: Research writes a report, the app publishes and
+    /// delivers it, and the chair's next turn is handed the owner's words FIRST and the report
+    /// second — with its id, so what the chair decides can be tied back to the artifact.
+    ///
+    /// RED FIRST. Before this item a report reached the chair as a file it had to notice and open:
+    /// the Situation had no deliveries in it at all, so the turn that was CHARGED for reading the
+    /// report was not told what it said.
+    ///
+    /// The order is the guard, and it is the mutant's target. <c>docs/COUNCIL.md</c> round 4: "Owner
+    /// text enters Operations' agenda first, with receipt, disposition and deadline." Put another
+    /// agent's report above the person waiting for an answer and the chair spends its turn on the
+    /// report — which is the failure the sentence exists to prevent, and which no assertion about
+    /// the presence of either block would catch.
+    /// </summary>
+    [Fact]
+    public async Task Research_reports_and_the_chairs_next_turn_reads_the_owner_first_then_the_report()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var events = host.Events!;
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        foreach (var role in CouncilRoles.All) host.Spending[role] = Reading(role, 0.40m, 5.00m, 0.5m);
+
+        const string report = "The 1-minute bars have a 40-minute gap on 2026-03-09.\nIt is in the archive, not the download.";
+        host.Conversations[CouncilRoles.Research].OnTurn = () => File.WriteAllText(
+            Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.OutDir, "report-1.md"),
+            report);
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        events.Raise(MissionEventIds.ForRole(MissionEventIds.Review(earlier), CouncilRoles.Research),
+            MissionEventKind.Review, earlier, role: CouncilRoles.Research);
+
+        await loop.TurnAsync();                      // Research works, and the app publishes what it left
+
+        var published = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Equal(report, published.Content);
+
+        // The owner types while that is happening. Their words go to the chair, and they go first.
+        events.RecordOwnerMessage("how is the data coming along?", DateTimeOffset.UtcNow);
+
+        await loop.TurnAsync();                      // the chair
+
+        var prompt = Assert.Single(host.Conversations[CouncilRoles.Operations].Sent);
+        var owner = prompt.IndexOf("how is the data coming along?", StringComparison.Ordinal);
+        var delivery = prompt.IndexOf("A report from the Research Director", StringComparison.Ordinal);
+        var whoAmI = prompt.IndexOf($"You are the {CouncilRoles.Title(CouncilRoles.Operations)}",
+            StringComparison.Ordinal);
+
+        Assert.True(owner >= 0, "the chair was not told what the owner typed");
+        Assert.True(delivery >= 0, "the chair was not told what the report said");
+        Assert.True(owner < delivery, "another agent's report was put above the owner's words");
+        Assert.True(delivery < whoAmI, "the delivery was rendered below the state lines");
+
+        // The text, the id and the file, so a decision can be tied back to the artifact it was about.
+        Assert.Contains(report.Split('\n')[0], prompt);
+        Assert.Contains($"{WorkspaceBuilder.InDir}/{published.Id}.md", prompt);
+        Assert.True(File.Exists(Path.Combine(host.HomeFor(CouncilRoles.Operations),
+            WorkspaceBuilder.InDir, $"{published.Id}.md")));
+
+        // And its own share of the day, which is not the day's total.
+        Assert.Contains($"Your share of that limit, as the {CouncilRoles.Title(CouncilRoles.Operations)}",
+            prompt);
     }
 
     /// <summary>

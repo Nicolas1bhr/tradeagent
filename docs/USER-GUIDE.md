@@ -462,6 +462,35 @@ deliberate: reading the market, testing strategies, and writing up what went wro
 job, and they are worth doing precisely when nothing may be traded. If you want it to stop
 altogether, press **Pause the AI** as well.
 
+### The AI is two roles, one at a time
+
+What you talk to on the **Chat** page is the **Operations Director**. It chairs: your words reach it
+first, before anything else it is told, and it decides what happens with what the other one finds.
+
+Beside it is a **Research Director** — hypotheses, data, backtests. It never talks to you and it
+never places an order on your behalf; it writes what it found and hands it up. TradeAgent runs the
+two of them **one at a time**, never together, and carries work between them: the Research Director
+writes a short report, TradeAgent puts it in the Operations Director's folder and wakes it to read
+it; the Operations Director writes a short agenda back down the same way. Neither can write into the
+other's folder, and neither can create work for itself.
+
+Both are the same AI tool with the same permissions. **A role is not a rank**: nothing about being
+the chair lets it trade more, raise a limit or change a setting — the **Safety** page is still the
+only place any of that lives.
+
+Two things about them are yours to set, on the **Safety** page under *What the AI costs*:
+
+- **The model the Research Director runs on.** A cheaper model here buys the research more turns for
+  the same money. Leave it on *TradeAgent's choice* and it runs on whatever the row above says.
+- **The split of the daily limit.** 50/50 out of the box. It divides the limit above between the two
+  roles; it never adds to it. A role that has spent its share stops taking turns and the other one
+  carries on, which is the point — without a split, whichever role woke first would spend the whole
+  day.
+
+Their folders sit side by side: **Open the AI's folder** on the Dashboard gives you the Operations
+Director's, and `research` beside it is the other one's. Each has an `in` folder — what TradeAgent
+delivered to it — and an `out` folder, which is the only way anything leaves.
+
 ### Where its memory lives
 
 Every so often the AI starts a fresh session and remembers nothing of the previous one. It keeps two

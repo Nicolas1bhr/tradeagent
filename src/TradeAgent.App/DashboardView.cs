@@ -946,6 +946,12 @@ sealed class SafetyPage
     /// press they were in the middle of. Rebuilding a tree is not a refresh.
     /// </summary>
     string? _modelRowRuntime;
+
+    /// <summary>The Research Director's two settings: what it runs on, and its slice of the day.</summary>
+    readonly Panel _researchModelRow;
+    readonly NumericUpDown _researchShare;
+    readonly TextBlock _councilNote = Ui.Micro("");
+
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
@@ -1239,6 +1245,11 @@ sealed class SafetyPage
         _modelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
         _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
 
+        _researchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency,
+            m => ChooseRoleModel(CouncilRoles.Research, m));
+        _researchShare = Ui.NumberField(
+            Math.Round(_host.Gateway.Settings.ShareForRole(CouncilRoles.Research) * 100m), 0m, 5m);
+
         // ITS OWN SECTION, AND ITS OWN PRESS. This is not a risk limit: nothing here reaches a
         // broker, and RiskPolicy.Widenings — which decides whether the Save limits press asks twice
         // — has nothing to say about it. Folding it into that button would put a money ceiling
@@ -1284,6 +1295,23 @@ sealed class SafetyPage
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.AiModel, _modelRow),
             _modelNote,
+            Ui.Divider(),
+            // THE COUNCIL'S TWO ROWS, BESIDE THE CEILING THEY DIVIDE. The AI is two roles run one at
+            // a time: a chair, which is the one the Chat page talks to, and a Research Director. The
+            // owner sets what the second one runs on and how the day is split; everything else about
+            // the council is the app's, and neither role can change either number.
+            Ui.Muted("The AI works as two roles, one at a time: the Operations Director, which is who "
+                + "you talk to, and a Research Director that runs hypotheses and backtests and reports "
+                + "to it. These two settings divide the limit above between them and choose what the "
+                + "second one runs on. Neither of them can change either."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.ResearchModel, _researchModelRow),
+            Ui.FieldRow(Labels.ResearchShare, _researchShare,
+                "A split of the limit above, not an addition to it. A cheaper model here buys the "
+                + "research more turns for the same money."),
+            Ui.Spacer(Theme.S2),
+            BuildSaveResearchShare(SaveResearchShare),
+            _councilNote,
             Ui.Divider(),
             Ui.Muted("TradeAgent works out what each turn cost from the tokens your AI tool reports. "
                 + "If you know what you are actually charged, put it here and it is used instead."),
@@ -1433,6 +1461,66 @@ sealed class SafetyPage
             ? $"The AI now runs on {m}"
             : "The AI now runs on whatever its AI tool is configured for");
         RefreshModelRow();
+    }
+
+    /// <summary>
+    /// ONE ROLE'S MODEL. Clearing it — TradeAgent's choice — falls back to the app-wide row above
+    /// rather than to nothing, so an owner who has never opened this row has both roles on the model
+    /// they already chose.
+    ///
+    /// One press, like the row above: a dearer model does not let a role do anything more, it
+    /// reaches the ceiling sooner.
+    /// </summary>
+    void ChooseRoleModel(string role, string? model)
+    {
+        _host.Gateway.Update(s =>
+        {
+            if (model is { Length: > 0 }) s.RoleModel[role] = model;
+            else s.RoleModel.Remove(role);
+        });
+        _host.Gateway.Log.Activity(_host.RequestedModelFor(role) is { Length: > 0 } m
+            ? $"The {CouncilRoles.Title(role)} now runs on {m}"
+            : $"The {CouncilRoles.Title(role)} now runs on whatever its AI tool is configured for");
+        RefreshModelRow();
+    }
+
+    /// <summary>
+    /// THE PRESS THAT SPLITS THE DAY BETWEEN THE TWO ROLES. One press in either direction, because
+    /// it is a reallocation inside a ceiling the owner already set: nothing it can be moved to
+    /// spends more of their money than the limit above already allows, and the AI cannot touch it.
+    ///
+    /// Static and handed what it does, for the same reason the three presses above it are: the rule
+    /// about what asks twice is the whole of what a control like this IS, and a rule that can only
+    /// be exercised by running the app is a rule nobody is checking.
+    /// </summary>
+    internal static Button BuildSaveResearchShare(Action save)
+    {
+        var b = Ui.Button(Labels.SaveResearchShare, save, emphasised: true);
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// What the box says, as the two fractions it would be saved as. Clamped into 0..100 and written
+    /// to BOTH roles, so the two always sum to the whole day: a chair left on an unrelated default
+    /// while the owner moved the other one is a day that does not add up.
+    /// </summary>
+    internal static int PendingResearchPercent(decimal? box, decimal current) =>
+        (int)Math.Clamp(box ?? Math.Round(current * 100m), 0m, 100m);
+
+    void SaveResearchShare()
+    {
+        var percent = PendingResearchPercent(_researchShare.Value,
+            _host.Gateway.Settings.ShareForRole(CouncilRoles.Research));
+        _host.Gateway.Update(s =>
+        {
+            s.RoleShare[CouncilRoles.Research] = percent / 100m;
+            s.RoleShare[CouncilRoles.Operations] = (100 - percent) / 100m;
+        });
+        var said = Labels.SplitReads(percent, CouncilRoles.Title(CouncilRoles.Operations),
+            CouncilRoles.Title(CouncilRoles.Research));
+        _host.Gateway.Log.Activity(said);
+        _councilNote.Text = $"Saved. {said}";
     }
 
     /// <summary>

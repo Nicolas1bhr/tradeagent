@@ -815,6 +815,21 @@ public sealed class AppHost : IAsyncDisposable
         public void Relay(string role, string? attempt) => host.Relay.Run(role, attempt);
 
         /// <summary>
+        /// The artifact one delivered task is about, read out of the app's own publication table
+        /// rather than off the recipient's disk: the row is what the app committed, and the file is
+        /// a copy of it that an agent could have edited.
+        /// </summary>
+        public MissionDelivery? Delivered(string publicationId)
+        {
+            try
+            {
+                var p = new PublicationStore(host._db!).Get(publicationId);
+                return p is null ? null : new MissionDelivery(p.Id, p.Kind, p.Role, p.Content);
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
         /// The one activity line the owner gets when the AI stops for the day, in their words and
         /// naming both numbers. It is written where they already look for what the software did,
         /// rather than only on a card they may not be in front of.

@@ -249,6 +249,16 @@ public interface IMissionHost
     /// nobody's turn produced what is being reconciled.
     /// </summary>
     void Relay(string role, string? attempt) { }
+
+    /// <summary>
+    /// THE ARTIFACT ONE DELIVERED TASK IS ABOUT, or null where it cannot be read. The loop asks for
+    /// exactly the publications named by the wakes it is answering, so the turn is told about what
+    /// it is being charged to act on and about nothing else.
+    ///
+    /// It is on the host because the publication table is the app's; the loop is deliberately
+    /// drivable with no database at all, and a default of null keeps it so.
+    /// </summary>
+    MissionDelivery? Delivered(string publicationId) => null;
 }
 
 /// <summary>
@@ -290,6 +300,21 @@ public sealed record MissionSituation
 
     /// <summary>What the owner typed in the chat while the AI was working. Rendered first.</summary>
     public IReadOnlyList<string> OwnerMessages { get; init; } = [];
+
+    /// <summary>
+    /// WHAT THE APP DELIVERED TO THIS ROLE, AND CHARGED IT A TURN TO READ. The chair's are the
+    /// Research Director's reports; Research's are the chair's briefs.
+    ///
+    /// They are the wakes of THIS turn and nothing else — every one of them is an artifact this turn
+    /// is being paid to act on, and a role handed everything it had ever been sent would re-read the
+    /// whole correspondence every turn at the owner's expense. The text is here as well as in the
+    /// file so the turn does not have to spend a tool call opening it, and the id is here so what it
+    /// says about the report can be tied to the artifact afterwards.
+    ///
+    /// Rendered after the owner's words and before everything else. The owner keeps first place:
+    /// a person waiting for an answer outranks another agent's report.
+    /// </summary>
+    public IReadOnlyList<MissionDelivery> Deliveries { get; init; } = [];
 
     /// <summary>
     /// WHY THIS TURN IS HAPPENING, in the words of the events that caused it.
@@ -353,6 +378,18 @@ public sealed record MissionSituation
             b.AppendLine();
         }
 
+        // THE OTHER ROLE'S WORK, BELOW THE OWNER AND ABOVE EVERYTHING ELSE. The app put the file in
+        // `in/` and is charging this turn for it; quoting it here is what makes the turn able to act
+        // on it without spending a tool call, and naming the id is what lets what it decides be tied
+        // back to the artifact it decided about.
+        foreach (var d in Deliveries)
+        {
+            b.AppendLine($"**{d.Headline()}** It is in `{WorkspaceBuilder.InDir}/{d.Id}.md`.").AppendLine();
+            foreach (var line in d.Text.Replace("\r\n", "\n").TrimEnd().Split('\n'))
+                b.Append("> ").AppendLine(line);
+            b.AppendLine();
+        }
+
         // THE CAUSE, ABOVE THE STATE AND BELOW THE OWNER. The owner's words keep their first place —
         // a person waiting for an answer outranks everything — and then the AI is told what woke it,
         // because that is the one line that tells it where to look first.
@@ -373,6 +410,7 @@ public sealed record MissionSituation
             ? "- Positions: none"
             : $"- Positions: {string.Join("; ", Positions)}");
         if (SpendLine(Spend) is { } spend) b.AppendLine($"- {spend}");
+        if (ShareLine(Spend) is { } share) b.AppendLine($"- {share}");
         if (Loss.Line() is { } loss) b.AppendLine($"- {loss}");
         if (!string.IsNullOrWhiteSpace(Data)) b.AppendLine($"- {Data}");
         if (NewMaterial.Count > 0)
@@ -462,12 +500,51 @@ public sealed record MissionSituation
     }
 
     /// <summary>
+    /// THIS ROLE'S SLICE OF THE DAY, or null where the reading is about no role in particular or
+    /// nothing can be priced.
+    ///
+    /// Its own line rather than a clause inside <see cref="SpendLine"/>, because the two are
+    /// different stops with different repairs: the day's ceiling is the owner's and only they can
+    /// raise it, while a share that has run out is the chair reallocating what is left. A role told
+    /// only the day's figure would plan against money that belongs to the other one.
+    /// </summary>
+    public static string? ShareLine(AiSpendToday spend)
+    {
+        if (spend is not { Metered: true, Role: { Length: > 0 } role } || !spend.CanPrice) return null;
+
+        var line = $"Your share of that limit, as the {CouncilRoles.Title(role)}: "
+                   + $"{Money(spend.RoleRemaining, spend.Currency)} left of "
+                   + $"{Money(spend.RoleCap, spend.Currency)}";
+
+        return line + (spend.RoleAdmitsAnotherTurn
+            ? "."
+            : ". Your share is spent, so your next turn is refused even though the day's limit has "
+              + "room. Nothing starts again until the Operations Director reallocates, or midnight.");
+    }
+
+    /// <summary>
     /// An amount with its currency, or without one where <c>costs.json</c> named none. It moved to
     /// <see cref="Labels.Money"/> in Core when the gateway's loss budgets started printing money
     /// too: one formatter, because two of them is how one screen ends up showing "5 USD" and
     /// "5.0000" for the same kind of figure. Kept here because every call site already says it.
     /// </summary>
     public static string Money(decimal amount, string currency) => Labels.Money(amount, currency);
+}
+
+/// <summary>
+/// ONE ARTIFACT THE APP DELIVERED TO THE ROLE TAKING THIS TURN — its id, what kind of thing it is,
+/// which role produced it, and its text.
+///
+/// The id is the publication's, which is a hash of the content: it names the file in <c>in/</c> and
+/// it is what a later decision can be tied back to. Nothing here is authority — a report is another
+/// agent's account of itself, exactly as the inbox is the owner's material, and neither grants
+/// anything.
+/// </summary>
+public sealed record MissionDelivery(string Id, string Kind, string From, string Text)
+{
+    /// <summary>The sentence that introduces it, naming the kind and who sent it.</summary>
+    public string Headline() =>
+        $"A {Kind} from the {CouncilRoles.Title(From)}, delivered to you by TradeAgent.";
 }
 
 /// <summary>
@@ -814,6 +891,7 @@ public sealed class MissionLoop
         {
             Role = role,
             OwnerMessages = [.. OwnerWords(wake), .. conversation.TakeTyped()],
+            Deliveries = Delivered(wake),
             Wakes = Reasons(wake)
         };
         var prompt = situation.Text();
@@ -1041,6 +1119,27 @@ public sealed class MissionLoop
             catch (Exception) { /* an unreadable payload is not a message */ }
             if (!string.IsNullOrWhiteSpace(text)) yield return text;
         }
+    }
+
+    /// <summary>
+    /// The artifacts THIS turn's wakes are about, in the order they arrived. A wake whose payload
+    /// cannot be read, or whose publication the host cannot produce, is skipped rather than rendered
+    /// as an empty quotation — the wake still says a report arrived, and the file is still in
+    /// <c>in/</c>, so the turn is not left believing nothing happened.
+    /// </summary>
+    IReadOnlyList<MissionDelivery> Delivered(IEnumerable<MissionEvent> wake)
+    {
+        var list = new List<MissionDelivery>();
+        foreach (var e in wake.Where(e => e.Kind is MissionEventKind.Report or MissionEventKind.Brief))
+        {
+            try
+            {
+                if (Json.Read<MissionTask>(e.Payload ?? "")?.Publication is not { Length: > 0 } id) continue;
+                if (_host.Delivered(id) is { } d) list.Add(d);
+            }
+            catch (Exception) { /* an unreadable payload is not a delivery */ }
+        }
+        return list;
     }
 
     /// <summary>Why the turn is happening, one phrase per KIND — six fills are one reason, not six.</summary>

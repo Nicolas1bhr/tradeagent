@@ -105,6 +105,26 @@ public static class Labels
     public const string AiModelDefault = "TradeAgent's choice";
 
     /// <summary>
+    /// THE COUNCIL'S TWO ROWS. The AI is two roles now — a chair and a Research Director, run one at
+    /// a time — and these are the only two things about that the owner sets.
+    ///
+    /// The split is a REALLOCATION and never an addition: it divides the daily limit above rather
+    /// than raising it, and neither role can change it. That is why it saves in one press, exactly
+    /// as the model row does: a press that only moves money between two roles inside a ceiling the
+    /// owner already set is not a grant.
+    /// </summary>
+    public const string ResearchShare = "Of that limit, the Research Director's share, %";
+
+    public const string SaveResearchShare = "Save the split";
+
+    public const string ResearchModel = "The model the Research Director runs on";
+
+    /// <summary>What the split works out to, in the words the owner reads on the page.</summary>
+    public static string SplitReads(int researchPercent, string operations, string research) =>
+        $"{operations} gets {100 - researchPercent}% of the daily limit and {research} gets "
+        + $"{researchPercent}%. It is the same limit either way.";
+
+    /// <summary>
     /// WHAT A TURN WAS CHARGED AT WHEN TRADEAGENT CHOSE THE MODEL AND THE CLI DID NOT SAY WHICH ONE
     /// IT RAN — measured on codex 0.153.4, whose stream names no model even when <c>-m</c> was on
     /// the command line.

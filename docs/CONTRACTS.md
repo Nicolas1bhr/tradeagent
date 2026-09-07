@@ -1027,3 +1027,33 @@ four, so a raw exception can never become the user's primary guidance.
 `OnboardingStep` in order, progress in the database. `Current()` is the first unfinished step, which is
 what makes setup resumable after a crash, an ATAS restart or a Windows restart. Steps the software can
 verify never ask the user to confirm they did them.
+
+## The council's relay — `src/TradeAgent.Core/Db/PublicationStore.cs`
+
+Two roles (`operations`, the chair; `research`) run one at a time by one app instance. A role writes
+a file into its own `out/`; nothing an agent can do publishes, delivers or creates a task. Two tables,
+written by the app only — the rule `material`, `ai_attempt` and `mission_event` already keep:
+
+`publication` — `id · role · attempt · revision · kind · recipients · classification · created_at ·
+source · content`. `id` is SHA-256 over the role, the kind and the text. That is the whole of what
+makes the handoff safe to crash inside: republishing the same content is republishing the same row,
+which the primary key refuses. `content` is the app's own copy, because the role's `out/` file may be
+rewritten or deleted before the delivery is made. `kind` is `report` (Research → the chair, at most
+20 lines) or `brief` (the chair → Research, at most 40); the app rejects a longer one and the last
+valid publication stands. `recipients` is the app's decision, never the publishing role's.
+
+`delivery` — `publication_id · recipient · state · created_at · delivered_at`, primary key
+`(publication_id, recipient)`. `committed` the moment the transaction lands; `delivered` only after
+the file is in the recipient's `in/<publication-id>.md`. There is no state in which a delivery is
+claimed and no file exists.
+
+**One `Database.Write`** commits the publication, its deliveries and ONE `mission_event`
+`task:<publication-id>` (`MissionEventIds.Task`, suffixed per recipient by `ForRole`) of kind `report`
+or `brief` for the recipient. The copy onto disk comes after. `CouncilRelay.Run` reconciles disk
+against the tables on start and after every turn: an unpublished file is published (idempotent by
+hash), a committed delivery with no file is re-copied from `content`. **The property:** a crash after
+the file, after the transaction or after the copy recovers to exactly one task and one file — never
+zero, never two.
+
+`role` on `ai_attempt` and on `mission_event` is nullable and additive; a row that names none is the
+chair's (`CouncilRoles.Or`), because the single agent the council replaces was Operations.

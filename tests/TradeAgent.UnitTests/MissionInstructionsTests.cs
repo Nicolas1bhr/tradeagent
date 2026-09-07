@@ -18,12 +18,13 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class MissionInstructionsTests
 {
-    static string Instructions(bool executionAvailable = true, bool builtInSimulator = false) =>
+    static string Instructions(bool executionAvailable = true, bool builtInSimulator = false,
+        string role = CouncilRoles.Operations) =>
         WorkspaceBuilder.Instructions(new WorkspaceContext(
             "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
             executionAvailable, executionAvailable ? null : "the market is closed",
             new RiskPolicy { InstrumentAllowlist = ["ES"] },
-            ConnectorIsBuiltInSimulator: builtInSimulator));
+            ConnectorIsBuiltInSimulator: builtInSimulator, Role: role));
 
     /// <summary>
     /// Split the mission on either line ending, because the mission does not choose its own.
@@ -261,6 +262,50 @@ public class MissionInstructionsTests
         "the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing",
         "that decides what you may trade."
     ];
+
+    /// <summary>
+    /// EACH ROLE IS TOLD WHAT IT IS FOR, AND THE RELAY IS THE MISSION FILE'S HALF OF THE CONTRACT.
+    ///
+    /// The app publishes only what it finds at the file names below, only up to the line limits
+    /// below, and only to the recipient IT chooses. Every one of those numbers and names is enforced
+    /// in <see cref="CouncilRelay"/> and asked for here, and the two have to agree: a role told to
+    /// write <c>out/summary.md</c>, or told twenty lines while the app enforced ten, would write
+    /// reports that vanish with no error the agent can see.
+    ///
+    /// The last assertion is the one that is easy to leave out. Nothing separates the two folders
+    /// under a vendor CLI running as the owner's own user, and the mission says so in those words
+    /// rather than implying a wall that is not there. Containment (<c>U-containment</c>) is what
+    /// would make it true; until then, claiming it would be the software lying to its own agents.
+    /// </summary>
+    [Fact]
+    public void Each_role_is_told_its_job_its_out_file_its_limit_and_that_the_wall_is_a_convention()
+    {
+        var operations = Instructions(role: CouncilRoles.Operations);
+        var research = Instructions(role: CouncilRoles.Research);
+
+        Assert.Contains("## Your role: the Operations Director", operations);
+        Assert.Contains("The owner's words reach you first", operations);
+        Assert.Contains("You allocate inside the owner's ceiling, and you cannot raise it", operations);
+        Assert.Contains($"out/agenda-<n>.md", operations);
+        Assert.Contains($"at most **{CouncilRelay.AgendaLines} lines**", operations);
+        Assert.Contains($"A file longer than {CouncilRelay.AgendaLines} lines is rejected", operations);
+        Assert.DoesNotContain("## Your role: the Research Director", operations);
+
+        Assert.Contains("## Your role: the Research Director", research);
+        Assert.Contains("Your job is hypotheses, experimental design, data and backtests", research);
+        Assert.Contains("A result measured on a fixture is not evidence", research);
+        Assert.Contains($"out/report-<n>.md", research);
+        Assert.Contains($"at most **{CouncilRelay.ReportLines} lines**", research);
+        Assert.Contains($"A file longer than {CouncilRelay.ReportLines} lines is", research);
+        Assert.DoesNotContain("## Your role: the Operations Director", research);
+
+        foreach (var text in new[] { operations, research })
+        {
+            Assert.Contains("arrives as a file in `in/`", text);
+            Assert.Contains("you never write into their folder", text);
+            Assert.Contains("this is a convention, not a wall", text);
+        }
+    }
 
     /// <summary>
     /// Asking for permission is one sentence and then back to work. The loop does not stop for an
