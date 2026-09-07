@@ -1152,6 +1152,9 @@ public sealed class TradingGateway : IAsyncDisposable
     /// So the position read moved in here WITH the decision — not a second read: the one that was in
     /// the risk check. Inside the gate it is also a fresher reading than the risk check's ever was,
     /// because the dispatch that preceded this one has finished by the time the gate is handed over.
+    /// The read itself now happens in <see cref="PlaceAsync"/> and is HANDED to this method and to
+    /// <see cref="LossBudgetOrThrow"/>, because two gates asking the platform the same question one
+    /// after the other could be told two different answers and refuse on the older of them.
     ///
     /// WHAT COUNTS AS ONE OPEN INSTRUMENT: a non-zero position, or an OPENING request the store
     /// still calls open (<see cref="ExecutionRequestStore.Open"/> — DISPATCHING, ACKNOWLEDGED,
@@ -1165,10 +1168,9 @@ public sealed class TradingGateway : IAsyncDisposable
     /// order that already exists cannot raise it: the instrument that order is in is already one of
     /// the ones counted here.
     /// </summary>
-    async Task OpenPositionCapOrThrow(PlaceIntent intent, string accountId, string requestId, CancellationToken ct)
+    void OpenPositionCapOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions, string requestId)
     {
         var limit = Settings.Risk.MaxOpenPositions;
-        var positions = await Connector.GetPositionsAsync(accountId, ct);
         var open = new HashSet<string>(
             positions.Where(p => p.Quantity != 0).Select(p => p.Symbol), StringComparer.Ordinal);
 
@@ -1183,6 +1185,140 @@ public sealed class TradingGateway : IAsyncDisposable
         if (!open.Contains(intent.Symbol) && open.Count >= limit)
             throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                 $"already holding or opening {open.Count} positions and the limit is {limit}");
+    }
+
+    /// <summary>
+    /// THE LOSS BUDGETS, REFUSING NEW RISK — the only limits in this class that are about what has
+    /// HAPPENED rather than about what is being sent.
+    ///
+    /// Every other gate bounds one order: a quantity, a value, a count of instruments, a minute's
+    /// budget. An agent can lose an account without breaching any of them, one permitted order at a
+    /// time, and there is no human in the loop for real money (decided 2026-09-06) — so this is what
+    /// bounds a losing day, ahead of any broker or prop firm.
+    ///
+    /// IT REFUSES ONLY WHAT CAN INCREASE EXPOSURE. A close, and an order smaller than the position
+    /// it is against, always pass — for the reason the open-position cap lets a close through
+    /// (<see cref="OpenPositionCapOrThrow"/>): a budget that stopped an account being flattened
+    /// would be a trap, and the day it fired would be the day the owner most needs out. This unit
+    /// REFUSES new risk and closes nothing; closing on a breach is its own unit.
+    ///
+    /// IT IS NOT A KILL SWITCH AND REMOVES NO PERMISSION. Nothing is written, the mode is untouched,
+    /// and the next UTC day starts clean — the same day <c>trade pnl</c> and the Performance card
+    /// mean by "today" (<see cref="StartOfDay"/>).
+    ///
+    /// A BUDGET OF ZERO READS NOTHING. Both at zero and the ledger is not touched, the instrument
+    /// list is not asked for and nothing can refuse — the rule <c>MaxNotionalPerOrder</c> has, for
+    /// the same reason: an installation that set no budget must not be stopped from trading by
+    /// metadata no gate is asking for.
+    /// </summary>
+    async Task LossBudgetOrThrow(PlaceIntent intent, AccountInfo account,
+        IReadOnlyList<PositionInfo> positions, CancellationToken ct)
+    {
+        var r = Settings.Risk;
+        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return;
+        if (!CanIncreaseExposure(intent, positions)) return;
+
+        // The multiplier lives in the instrument list, and a cold cache is the state a configured
+        // install is always in. A read that fails is not a zero loss: it is a loss nobody can state.
+        if (_instrumentCache.Count == 0)
+        {
+            try { await InstrumentsAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                    $"the instrument list could not be read ({ex.Message}), so what today has made or " +
+                    "lost cannot be worked out against your loss budget");
+            }
+        }
+
+        var today = LedgerPnl(StartOfDay(Now), "today");
+        var loss = LossBudget.Read(today, positions, LastQuote, _instrumentCache);
+        var currency = account.Currency;
+
+        if (loss.Unknown is { } why)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"{why}, so this order cannot be checked against your loss budget and nothing was sent");
+
+        if (r.MaxDailyLoss > 0m && loss.Loss >= r.MaxDailyLoss)
+        {
+            SayOnceToday(ref _dailyLossSaidFor,
+                $"The AI is down {Labels.Money(loss.Loss, currency)} today, which is the "
+                + $"{Labels.Money(r.MaxDailyLoss, currency)} you set as \u201c{Labels.MaxDailyLoss}\u201d. It is "
+                + "not being allowed to open anything else until midnight UTC. Closing and reducing still work.");
+
+            throw new GatewayDeniedException(ErrorCode.LOSS_BUDGET_REACHED,
+                $"today is down {Labels.Money(loss.Loss, currency)} and your daily loss budget is "
+                + $"{Labels.Money(r.MaxDailyLoss, currency)}, so nothing that could increase exposure is placed "
+                + $"until midnight UTC{Fees(loss)}. Closing or reducing a position is still allowed.");
+        }
+
+        // Absent from the map is a position that is not losing, which is the honest none — see
+        // LossToday.LossBySymbol, where a winner is absent rather than present as a zero.
+        var down = loss.LossBySymbol.GetValueOrDefault(intent.Symbol);
+        if (r.MaxLossPerTrade > 0m && down >= r.MaxLossPerTrade)
+        {
+            SayOnceToday(ref _tradeLossSaidFor,
+                $"The AI's {intent.Symbol} position is down {Labels.Money(down, currency)}, which is the "
+                + $"{Labels.Money(r.MaxLossPerTrade, currency)} you set as \u201c{Labels.MaxLossPerTrade}\u201d. It "
+                + "is not being allowed to add to it. Closing and reducing still work.");
+
+            throw new GatewayDeniedException(ErrorCode.LOSS_BUDGET_REACHED,
+                $"your {intent.Symbol} position is down {Labels.Money(down, currency)} and the most one position "
+                + $"may lose is {Labels.Money(r.MaxLossPerTrade, currency)}, so nothing is added to it"
+                + $"{Fees(loss)}. Closing or reducing it is still allowed.");
+        }
+    }
+
+    /// <summary>
+    /// The one clause every loss sentence carries when it applies, and it applies whenever the
+    /// platform reported no fee for a fill. Those fills count at their GROSS, so the figure being
+    /// refused on is smaller than the truth — said out loud, because a budget that is quietly
+    /// permissive is worse than one that is openly approximate.
+    /// </summary>
+    static string Fees(LossToday loss) =>
+        loss.FeesUnknownFills == 0 ? ""
+            : $" (your platform reported no fee for {loss.FeesUnknownFills} of today's fills, so the real "
+              + "figure is a little worse)";
+
+    /// <summary>
+    /// WHETHER THIS PLACEMENT CAN TAKE ON MORE RISK THAN THE ACCOUNT ALREADY CARRIES.
+    ///
+    /// A declared close never can. An order against a position never can either, up to that
+    /// position's size — that is what reducing IS, and it is sized from something that exists. An
+    /// order BIGGER than the position it is against can: it flattens and then opens the other way,
+    /// so the surplus is new exposure and is checked like any other.
+    ///
+    /// It errs towards checking: a symbol with no position is new exposure by definition, and an
+    /// order in the direction of what is held adds to it whatever the caller called it.
+    /// </summary>
+    static bool CanIncreaseExposure(PlaceIntent intent, IReadOnlyList<PositionInfo> positions)
+    {
+        if (intent.Intent is OrderIntent.Close) return false;
+
+        var held = positions.FirstOrDefault(p =>
+            string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m;
+        if (held == 0m) return true;
+
+        var signed = intent.Side == OrderSide.Buy ? intent.Quantity : -intent.Quantity;
+        return Math.Sign(signed) == Math.Sign(held) || Math.Abs(signed) > Math.Abs(held);
+    }
+
+    /// <summary>
+    /// The UTC day each budget has already been written about, so the owner gets ONE activity line
+    /// per budget per day rather than one per refused order — an agent that works non-stop will hit
+    /// a reached budget on every turn, and a log with four hundred identical lines in it is a log
+    /// nobody reads. Both start unset, and both are in memory: a restart writes the line again,
+    /// which is the right way round, because the owner may not have seen the first one.
+    /// </summary>
+    DateTime? _dailyLossSaidFor;
+    DateTime? _tradeLossSaidFor;
+
+    void SayOnceToday(ref DateTime? saidFor, string line)
+    {
+        var day = Now.UtcDateTime.Date;
+        if (saidFor == day) return;
+        saidFor = day;
+        _log.Activity(line, "warn");
     }
 
     /// <summary>Whether a stored placement was sized from a position rather than taking one on.</summary>
@@ -1313,7 +1449,15 @@ public sealed class TradingGateway : IAsyncDisposable
             // the one risk limit whose answer depends on what the OTHER callers are doing, so it is
             // the one that cannot be decided out there with the reads. Before TryCreate, so that a
             // refusal leaves no row behind — exactly as it did when it lived in the risk check.
-            await OpenPositionCapOrThrow(intent, account.Id, requestId, ct);
+            //
+            // ONE POSITION READ, TWO GATES. The loss budgets are decided on the same reading the
+            // open-position cap is, at the same instant and in the same place, because two reads one
+            // after the other can disagree and a gate refusing on the older of them is a gate
+            // deciding by accident. Both refuse before TryCreate: nothing is placed and no request
+            // row is written.
+            var positions = await Connector.GetPositionsAsync(account.Id, ct);
+            OpenPositionCapOrThrow(intent, positions, requestId);
+            await LossBudgetOrThrow(intent, account, positions, ct);
 
             var (created, stored) = _requests.TryCreate(record);
 
@@ -2024,12 +2168,22 @@ public sealed class TradingGateway : IAsyncDisposable
                     ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice),
                     account, ct);
 
-                // The cap, on the same terms as a placement's — this whole method already runs
-                // inside the dispatch gate, so it is asked here rather than in the risk check. Only
-                // for a placement: see OpenPositionCapOrThrow on why a modification cannot raise a
-                // count of instruments.
+                // The cap and the loss budgets, on the same terms as a placement's — this whole
+                // method already runs inside the dispatch gate, so they are asked here rather than
+                // in the risk check, and off ONE position read for the reason PlaceAsync takes one.
+                // Only for a placement: see OpenPositionCapOrThrow on why a modification cannot
+                // raise a count of instruments, and CanIncreaseExposure on why a close never is.
+                //
+                // THE BUDGETS ARE ASKED AGAIN HERE AND THAT IS THE POINT OF ASKING THEM AT ALL. A
+                // proposal parks until a person answers it, and the day can go past its budget while
+                // it waits — approving an order decided against a morning the account has since lost
+                // is precisely the decision this gate exists to stop being made by default.
                 if (intent is not null)
-                    await OpenPositionCapOrThrow(intent, account.Id, requestId, ct);
+                {
+                    var positions = await Connector.GetPositionsAsync(account.Id, ct);
+                    OpenPositionCapOrThrow(intent, positions, requestId);
+                    await LossBudgetOrThrow(intent, account, positions, ct);
+                }
             }
             catch (GatewayDeniedException ex)
             {

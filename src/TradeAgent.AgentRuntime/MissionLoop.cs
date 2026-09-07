@@ -241,9 +241,13 @@ public sealed record MissionSituation
             : ".");
     }
 
-    /// <summary>An amount with its currency, or without one where <c>costs.json</c> named none.</summary>
-    public static string Money(decimal amount, string currency) =>
-        currency.Length == 0 ? amount.ToString("0.####") : $"{amount:0.####} {currency}";
+    /// <summary>
+    /// An amount with its currency, or without one where <c>costs.json</c> named none. It moved to
+    /// <see cref="Labels.Money"/> in Core when the gateway's loss budgets started printing money
+    /// too: one formatter, because two of them is how one screen ends up showing "5 USD" and
+    /// "5.0000" for the same kind of figure. Kept here because every call site already says it.
+    /// </summary>
+    public static string Money(decimal amount, string currency) => Labels.Money(amount, currency);
 }
 
 /// <summary>

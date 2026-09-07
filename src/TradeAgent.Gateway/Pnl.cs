@@ -287,8 +287,13 @@ public static class Pnl
     /// <summary>
     /// What one unit of this symbol is worth per point of price. Contract size where the platform
     /// reported one, otherwise the value of a point derived from the tick, otherwise 1 and said so.
+    ///
+    /// PUBLIC because the loss budgets value an open position with the same number this report does,
+    /// and two arithmetics for one figure is how the screen and the gate come to disagree about
+    /// whether the day is over. <c>Known</c> false is what the gate refuses on; this report only
+    /// says so in <c>incomplete</c>, because a report may be incomplete and an order may not.
     /// </summary>
-    static (decimal Value, bool Known) MultiplierFor(string symbol, IReadOnlyList<InstrumentInfo> instruments)
+    public static (decimal Value, bool Known) MultiplierFor(string symbol, IReadOnlyList<InstrumentInfo> instruments)
     {
         var info = instruments.FirstOrDefault(x => string.Equals(x.Symbol, symbol, StringComparison.OrdinalIgnoreCase));
         if (info?.ContractSize is { } size and > 0) return (size, true);

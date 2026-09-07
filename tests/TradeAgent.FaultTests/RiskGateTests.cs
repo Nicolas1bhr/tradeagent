@@ -208,6 +208,112 @@ public class RiskGateTests(ITestOutputHelper log)
         await gw.DisposeAsync();
     }
 
+    // ---- the loss budgets: the limits that are about what HAPPENED, not about what is sent -------
+
+    static PlaceIntent Sell(string symbol, decimal qty) =>
+        new(symbol, OrderSide.Sell, OrderType.Market, qty, null, null, TimeInForce.Day, null);
+
+    /// <summary>
+    /// Trades the day into a real loss on the simulator and leaves ONE position open, so that both
+    /// halves of the rule can be asserted against the same account: the day is past its budget, and
+    /// the position that is still open can still be got out of.
+    ///
+    /// The loss is made the only way a loss is really made — a round trip at a worse price. ES is
+    /// bought at 2, the whole market drops twenty points, and the ES position is closed, realising
+    /// 2 x 20 x the ES multiplier of 50. The NQ bought beside it stays open and unrealised.
+    /// </summary>
+    static async Task<decimal> LoseTheDay(TradingGateway gw, RecordingConnector conn)
+    {
+        await gw.PlaceAsync(new AgentContext("a"), "day-es", TestEnv.Buy("ES", 2m));
+        await gw.PlaceAsync(new AgentContext("a"), "day-nq", TestEnv.Buy("NQ", 1m));
+        conn.Broker.PriceOffset = -20m;
+        await gw.CloseAsync(new AgentContext("a"), "day-es-out", "ES");
+        return gw.LedgerPnl(TradingGateway.StartOfDay(DateTimeOffset.UtcNow), "today").Realized;
+    }
+
+    /// <summary>
+    /// THE DAY'S BUDGET REFUSES NEW RISK AND NOTHING ELSE (brief item 2).
+    ///
+    /// Nothing above this gate bounds a day: an agent inside every order limit can lose the account
+    /// one permitted order at a time, and with no human in the loop for real money there is nobody
+    /// to notice. What is asserted is the WIRE — a refusal code says nothing about whether a frame
+    /// went out — and the other half of the rule in the same test: the position that is still open
+    /// is still closable, because a budget that trapped an account would be the worst possible one.
+    /// </summary>
+    [Fact]
+    public async Task A_day_past_its_loss_budget_refuses_a_new_position_and_still_lets_one_be_closed()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var realized = await LoseTheDay(gw, conn);
+        gw.Update(s => s.Risk.MaxDailyLoss = 500m);
+
+        var places = conn.Places;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "after-budget", TestEnv.Buy("NQ")));
+
+        log.WriteLine($"realised today       : {realized}");
+        log.WriteLine($"budget               : {gw.Settings.Risk.MaxDailyLoss}");
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+        log.WriteLine($"places before/after  : {places}/{conn.Places}");
+
+        // THE FIGURE, WORKED OUT AGAIN FROM THE PUBLIC PIECES rather than matched against a string
+        // somebody typed: the day is what the ledger realised plus what the open NQ is down at the
+        // last price this gateway saw, times NQ's contract size of 20. Both numbers and the
+        // account's currency have to be in the sentence — a refusal naming one of the two is one an
+        // owner cannot act on.
+        var nq = conn.Broker.Positions.First(p => p.Symbol == "NQ");
+        var last = gw.LastQuote("NQ")!.Last!.Value;
+        var expected = -(realized + (last - nq.AveragePrice) * nq.Quantity * 20m);
+        log.WriteLine($"day's loss, recomputed: {expected}");
+
+        Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, denied.Code);
+        Assert.Contains("daily loss budget", denied.Message, StringComparison.Ordinal);
+        Assert.Contains(Labels.Money(expected, "USD"), denied.Message, StringComparison.Ordinal);
+        Assert.Contains(Labels.Money(500m, "USD"), denied.Message, StringComparison.Ordinal);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(gw.GetRequest("after-budget"));
+
+        // AND THE WAY OUT IS NOT SHUT. The open NQ is closed after the budget is reached, on the
+        // same gateway, with the budget still breached.
+        var closed = await gw.CloseAsync(new AgentContext("a"), "after-budget-out", "NQ");
+        log.WriteLine($"close after the budget: {closed?.State.ToString() ?? "none"}");
+        Assert.Equal(ExecutionState.FILLED, closed!.State);
+        Assert.Equal(0m, conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "NQ")?.Quantity ?? 0m);
+
+        // One activity line for the day, not one per refused order. An AI that works non-stop will
+        // meet a reached budget on every turn it takes.
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "after-budget-2", TestEnv.Buy("ES")));
+        var said = gw.Log.RecentActivity(200).Count(a => a.Text.Contains(Labels.MaxDailyLoss, StringComparison.Ordinal));
+        log.WriteLine($"activity lines       : {said}");
+        Assert.Equal(1, said);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A day INSIDE its budget is not refused, and the figure is the real one rather than a
+    /// threshold that happens to be crossed by any loss at all. The same trades, a budget wider
+    /// than what they lost, and the next opening order goes to the wire.
+    /// </summary>
+    [Fact]
+    public async Task A_day_inside_its_loss_budget_places_normally()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        await LoseTheDay(gw, conn);
+        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "inside-budget", TestEnv.Buy("ES"));
+        log.WriteLine($"placed               : {placed.State}");
+        Assert.Equal(ExecutionState.FILLED, placed.State);
+
+        await gw.DisposeAsync();
+    }
+
     /// <summary>
     /// AND THE MULTIPLIER IS ONLY REQUIRED BY THE GATE THAT USES IT. <c>MaxNotionalPerOrder</c> is
     /// zero by default and that means "not enforced" (see <c>RiskPolicy</c>): an installation that

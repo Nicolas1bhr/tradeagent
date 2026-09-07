@@ -109,7 +109,16 @@ public sealed class FakeBroker
             if (newQty == 0) _positions.Remove(key);
             else _positions[key] = p with { Quantity = newQty };
         }
-        else _positions[key] = new PositionInfo($"P-{key}", order.AccountId, key, signed, price, 0m);
+        // UNREALISED IS NULL, NOT ZERO, AND THE DIFFERENCE IS A GUARD.
+        //
+        // This simulator does not mark its book to market: it wrote 0 here at the moment of the fill
+        // and never touched it again, so a position 20 points under water reported "unrealised: 0"
+        // for as long as it was held. Nothing read the field until the loss budgets did, and the
+        // first thing they would have read it as is a losing position that is not losing — the
+        // per-position budget dead in PAPER, which is the only mode this product has ever traded in.
+        // Null is the truth about a platform that does not compute one, and LossBudget then values
+        // the position from the last price and the multiplier, exactly as `trade pnl` does.
+        else _positions[key] = new PositionInfo($"P-{key}", order.AccountId, key, signed, price, null);
         Balance -= signed * price * 0.0001m; // token commission so balance moves observably
     }
 
