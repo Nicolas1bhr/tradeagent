@@ -4824,7 +4824,7 @@ tables renumbered to schema 9). Merge `96f29a6`, 6 commits, 30 files, +2760/−1
 touched classes 3× → 186/186 each run; names vs `main` → 19 added, 0 removed. Fixer's gate at `e2eda82`: 0 warnings, 0 errors; Unit 558 + Fault 277 + Integration 621 = 1456 passed, 0 failed, 1 skipped; 26 classes 3× → 194/194 each; names 0 removed, 17 added; four conflicts (`Database.cs`, `Versioning.cs`, `Paths.cs`, `MissionEventTests.cs`) resolved inside the rebase, one commit subject's "schema 8" amended to 9 on an identical tree.
 Manager's gate at `08ac992`, Release: build → 0 warnings, 0 errors; suite → 558 + 277 + 621 = 1456 passed,
 0 failed, 1 skipped; names vs `main` → 0 removed, 19 added (sets 1224 → 1243; `[Fact]`/`[Theory]` 1179 → 1196); scan clean; no trailers; `rev-list --count` → 0;
-CI at `96f29a6`: run 34169374097 in flight when this section was written (the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+CI run 34169374097 at `96f29a6` (the gated tip rebased over docs-only commits): failure | test (macos-latest):success, test (ubuntu-latest):success, test (windows-latest):failure, package:skipped — NOT green; judged below.
 
 **NOT VERIFIED:** the two roles on a screen — no UI run; no real CLI turn under either role. **NOT done:** no grant table
 beyond `publication.recipients` and `classification` — grants are enforced by nothing yet (`U-api-worker`); no leases
