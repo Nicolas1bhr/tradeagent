@@ -1,0 +1,48 @@
+# Line endings, pinned at the root, because the product's text lives in raw string literals.
+#
+# Every word the app ships — the mission file it writes for the agent, the schema text, the guide —
+# is a C# `"""` raw string literal, and a raw string literal keeps the line endings of the SOURCE
+# FILE. So a checkout that writes `.cs` with CRLF (the hosted windows-latest runner's default
+# `core.autocrlf=true`) compiles a different program: every line of that text gains a trailing `\r`,
+# and anything that compares it line by line stops matching. That is what went red on CI run
+# 34073713557, windows-latest only, with macos and ubuntu green on the same tree.
+#
+# `text=auto` alone does NOT fix it: it normalises to LF in the repository but still hands the
+# working tree whatever the platform asks for. `eol=lf` is what pins the bytes on disk, on every
+# platform, so the compiler sees one program everywhere.
+
+# Normalise everything in the repository to LF; the lines below decide the working tree.
+* text=auto
+
+# Source and anything the product's text or the build reads. LF everywhere, no exceptions.
+*.cs        text eol=lf
+*.csproj    text eol=lf
+*.props     text eol=lf
+*.sln       text eol=lf
+*.slnx      text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sh        text eol=lf
+*.py        text eol=lf
+*.txt       text eol=lf
+
+# Windows-only scripts, where CRLF is what the interpreter and the convention expect.
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binaries: none are tracked today. Listed so the first one added is not corrupted by normalisation.
+*.png       -text
+*.jpg       -text
+*.jpeg      -text
+*.gif       -text
+*.ico       -text
+*.pdf       -text
+*.zip       -text
+*.exe       -text
+*.dll       -text
+*.snk       -text
+*.ttf       -text
+*.otf       -text
