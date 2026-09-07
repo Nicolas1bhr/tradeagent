@@ -1069,6 +1069,19 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         id.Length > 0 && id.Length <= MaxRequestIdChars && id.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
 
     /// <summary>
+    /// TEMPORARY MEASUREMENT HOOK — U-sweep-win, removed with its harness. A sweep's answer depends
+    /// on how much of the operation's own deadline is left when its one leg is issued, and that
+    /// number cannot be read from outside the handler. Null in every run but the harness's.
+    /// </summary>
+    public static Action<string>? SweepMark;
+
+    static void SweepStep(string mark) => SweepMark?.Invoke(mark);
+
+    /// <summary>Milliseconds left on the operation's deadline, or -1 where there is none.</summary>
+    static long Left() =>
+        RiskReducingScope.DeadlineAt is { } d ? d - Environment.TickCount64 : -1;
+
+    /// <summary>
     /// Agent-initiated cancel-all still goes through per-order requests so each cancellation is a
     /// durable, reconcilable record rather than one opaque sweep.
     ///
@@ -1100,9 +1113,16 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // this one is still in flight is not a crash to resume from: without the lease it re-ran the
         // plan, read the legs in the DISPATCHING state they were in at that instant, and wrote that
         // transient answer down first (Codex F18). Disposed however this ends, including a throw.
+        SweepStep($"enter={Left()}");
         var composite = await gateway.BeginCompositeAsync(ctx, rid, Core.Ops.CancelAll,
-            async token => (await gateway.OrdersAsync(false, token)).Select(o => o.ConnectorOrderId).ToList(),
+            async token =>
+            {
+                var read = (await gateway.OrdersAsync(false, token)).Select(o => o.ConnectorOrderId).ToList();
+                SweepStep($"read={read.Count}/{Left()}");
+                return read;
+            },
             () => FreshSweepNonce("cancelall"), ct);
+        SweepStep($"composite={composite.Targets.Count}/{Left()}");
         using var owner = composite.Owner;
         if (composite.StoredResultJson is { } answered) return Json.Read<JsonElement>(answered);
         var nonce = composite.Nonce;
@@ -1461,6 +1481,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
             // Checked before every leg, not once: the deadline can pass while earlier legs are in
             // flight, and a leg whose turn never comes must be REPORTED rather than dropped.
+            SweepStep($"leg{i - 1}={Left()}");
             if (RiskReducingScope.DeadlineAt is { } d && Environment.TickCount64 >= d)
             {
                 legs.Add(new Leg(legId, target, LegOutcome.NotSent, null, TransportOutcome.NothingWritten,
