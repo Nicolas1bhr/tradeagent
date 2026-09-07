@@ -691,7 +691,10 @@ public class ApprovalReauthorizationTests
         var instruments = await gw.InstrumentsAsync();
         var contractSize = instruments.Single(i => i.Symbol == "ES").ContractSize!.Value;
         Assert.NotEqual(1m, contractSize);
-        var price = FakeBroker.BasePrice("ES");   // the quote's Last, which is the reference for a market order
+        // The quote's Last, which is what the gateway compares this cap against. Read from the
+        // broker in play rather than from BasePrice: since the simulator snaps its mid to the
+        // instrument's tick, the base price and the quoted price are no longer the same number.
+        var price = conn.Broker.Quote("ES", DateTimeOffset.UtcNow).Last!.Value;
 
         gw.Update(s => s.Risk.MaxNotionalPerOrder = price * 10m);   // 1 < 10 < 50: only the multiplied value breaches it
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
