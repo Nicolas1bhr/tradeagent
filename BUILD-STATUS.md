@@ -4784,7 +4784,7 @@ warnings, 0 errors; Unit 539 + Fault 277 + Integration 621 = 1437 passed, 0 fail
 101/101 and 144/144 each run; names vs `main` → 36 added, 0 removed; scan clean. Manager's gate at `a22939d` (a docs-only
 renumber and the report on the gated tip), Release: build → 0 warnings, 0 errors; suite → 539 + 277 + 621 =
 1437 passed, 0 failed, 1 skipped; names vs `main` → 1 removed (the rename), 39 added (sets 1186 → 1224;
-`[Fact]`/`[Theory]` 1144 → 1179); scan clean; no trailers; `rev-list --count` → 0; CI at `a22939d`: run 34167309186 in flight when this section was written, its verdict recorded in a follow-up commit.
+`[Fact]`/`[Theory]` 1144 → 1179); scan clean; no trailers; `rev-list --count` → 0; CI run 34167309186 at `a22939d`: failure | test (ubuntu-latest):success, test (macos-latest):success, test (windows-latest):failure, package:skipped — NOT green; judged in the next section.
 
 **NOT VERIFIED:** the Settings press on a screen; the twelve-month collection against the vendor — one month only. The
 `U-wakes` test found red within ten minutes of local midnight is not this unit's (fixed with `U-council-thin`). **NOT done:**
