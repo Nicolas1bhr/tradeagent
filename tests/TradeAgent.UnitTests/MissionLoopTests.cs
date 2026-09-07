@@ -400,6 +400,47 @@ public class MissionLoopTests
     }
 
     /// <summary>
+    /// THE OTHER BRANCH OF THE SAME RULE, PINNED SO THAT IT IS TESTED RATHER THAN WAITED FOR. Asked
+    /// at 23:55 the loop returns the RENEWAL'S five minutes and not the ten the AI asked for, and
+    /// that is the product being right: the wait is the queue's MINIMUM, and midnight is the wake
+    /// that tells a role which stopped at its share of the day that it may work again.
+    ///
+    /// It is here because the sister test above went red on a real suite at 23:53 — it read the wall
+    /// clock, so it measured this rule instead of its own and reported a true answer as a failure.
+    /// The fix pinned that test's hour; a pinned hour on its own leaves the other branch untested,
+    /// and an untested branch is how the same clock comes back. Both hours are now facts about the
+    /// test rather than about the minute the suite happened to reach it.
+    /// </summary>
+    [Fact]
+    public async Task Within_five_minutes_of_midnight_the_renewal_beats_the_delay_the_ai_asked_for()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var events = new MissionEventStore(db);
+        var conversation = new FakeConversation(presence);
+        var host = new FakeHost(db, root, presence, conversation) { Events = events };
+        var late = new DateTimeOffset(DateTime.Today.AddHours(23).AddMinutes(55), DateTimeOffset.Now.Offset);
+        events.Raise(MissionEventIds.Review(late), MissionEventKind.Review, late);
+        File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
+            """{"after_seconds": 600}""");
+
+        var wait = await new MissionLoop(host, NoHeartbeat, now: () => late).TurnAsync();
+
+        // To the second, because the clock is pinned: 23:55 to local midnight is five minutes, and
+        // there is nothing here for a range to absorb.
+        Assert.Equal(TimeSpan.FromMinutes(5), wait);
+        Assert.Equal(MissionEventKind.Renewal, events.NextKind());
+
+        // AND THE AI'S OWN REQUEST IS STILL THERE, unconsumed and due at its own ten minutes. The
+        // nearer wake wins the sleep; it does not swallow what the AI asked for.
+        var self = events.OfKind(MissionEventKind.Self).Single();
+        Assert.Equal(MissionEventIds.Self(host.LastAttemptId!), self.Id);
+        Assert.False(self.Consumed);
+        Assert.Equal(late.AddMinutes(10), self.DueAt);
+    }
+
+    /// <summary>
     /// THE SCHEDULED WAKES ARE ALWAYS IN THE FUTURE. The loop arranging its own next look must never
     /// be what makes this moment eligible — otherwise "no eligible event" is unreachable and the
     /// queue is a clock with extra steps. Exactly one of each kind is pending at a time, so an early
