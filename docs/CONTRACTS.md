@@ -864,9 +864,9 @@ anything.** `MaxLossPerTrade` and `MaxDailyLoss` are decimals in the ACCOUNT's c
 either means not enforced** — the reading `MaxNotionalPerOrder` has, and the opposite of
 `AiDailyCostCap`'s. The day is `TradingGateway.StartOfDay` (UTC), the day `trade pnl` means by
 `today`: realized from the fill ledger by the same average-cost book `Pnl` computes, less the fees the
-platform DID report, plus unrealized on every open position — the platform's own `PositionInfo.
-UnrealizedPnl` where it reports one, otherwise the last price this gateway saw times the instrument's
-multiplier. Both budgets are evaluated inside the dispatch gate, off the SAME position read the
+platform DID report, plus unrealized on every open position — the platform's own
+`PositionInfo.UnrealizedPnl` where it reports one, otherwise the last price this gateway saw times
+the instrument's multiplier. Both budgets are evaluated inside the dispatch gate, off the SAME position read the
 open-position cap uses and before `TryCreate`, so a refusal places nothing and writes no request row;
 the approval path re-evaluates them, because a proposal can park across a morning the account has since
 lost. Only an order that could INCREASE exposure is refused: a declared close never is, nor is an
