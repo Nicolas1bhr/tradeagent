@@ -4748,3 +4748,44 @@ clean; no trailers; `rev-list --count` → 0; CI run 34146285162 at `cef122b`: *
 
 **NOT VERIFIED:** the Safety page's interval field and the card's waiting line on a screen — tests only; no screen lists the
 queue. **NOT done:** no box, no ATAS, no money; `U-data-binance` (in flight) and `U-council-thin` (next) read this table.
+
+## 2026-09-08 — U-data-binance landed: the first real dataset, Binance's public 1-minute archives, with provenance the AI cannot edit
+
+The third council-substrate unit (`docs/COUNCIL.md`, "Data"), by one fresh builder on `docs/briefs/U-data-binance.md` (killed
+by a usage limit mid-gate after all five items) and a second re-briefed from the branch, which reproduced every RED and
+mutant itself, made the one real download, ran the gate and wrote the report. Merge `a22939d`, 8 commits, 32 files,
++2657/−16 (new `Data/BinanceArchive.cs`, `KlineNormaliser.cs`, `DatasetReader.cs`, `Db/DatasetStore.cs`, `Provisioning/
+BinanceArchiveClient.cs`, `BinanceDataService.cs`; schema 8, the pipe, the CLI, `SettingsView.cs`; seven new test classes).
+
+- **The download,** twelve complete months of one pair (default `BTCUSDT`, a "Market data" section on Settings, one press)
+  through `Downloader` pinned to the `.CHECKSUM` sidecar, into an app-owned folder no agent can write; a 404 month is
+  "not published". RED (the sidecar guard stripped): `Expected: ChecksumMismatch / Actual: Collected`; mutant
+  (`Integrity.Unverified`) → the same.
+- **The normaliser:** one UTC timeline, the timestamp unit read off each file's own magnitude (milliseconds, microseconds
+  from 2025-01), duplicates dropped and counted, gaps counted and listed, an unclosed bar excluded and counted, nothing
+  filled in. RED (one unit for all): `Expected: 2024-12-31T23:50:00 / Actual: 1970-01-21T02:08:09`; mutant (the unit from
+  the month's date) → `Actual: 1970-01-21T15:59:02.4`. Gaps RED: `Expected: 3 / Actual: 0`; mutant (holes filled) → the same.
+- **Provenance the AI cannot edit:** a `dataset` ledger (schema 8) with every raw file's url, published and computed sha256,
+  bytes, unit, and the normalised file's hash, bar count, first and last bar, gaps, duplicates, incomplete; a raw file whose
+  hash no longer matches makes the dataset REJECTED for good. RED: `Expected: REJECTED / Actual: ACCEPTED`; mutant (the
+  raw-file loop skipped) → `Failed: 1, Passed: 4`, watched; reproducibility mutant → two different sha256s.
+- **Read-only to the AI:** `data-list` and `data-bars` (`trade data …`, at most 10,000 bars, the cap named), declared
+  reply types, the deadline table; one Situation line; the mission's `data/` sentences name `trade data`. RED: `the schema
+  does not name 'data-bars'`; mutant (the cap dropped) → a 20,000-bar ask served, `Expected: False / Actual: True`.
+- **The suite reaches no vendor:** every test on a loopback `HttpListener` serving fake zips and sidecars, and a scan that
+  fails any test naming the vendor's host or the client's default base URL. RED (a planted offender) → named by file and line.
+- **The one real download, by the builder on this Mac, 2026-09-07:** `…/spot/monthly/klines/BTCUSDT/1m/BTCUSDT-1m-2026-08.zip`
+  → HTTP 200, 2,084,946 bytes; the sidecar `acab442e…b843d4` equal to `shasum -a 256`; the month in progress → 404. Through
+  the normaliser once: 44,640 bars, microseconds, no gaps, duplicates or incomplete bars; sha256 `f2dc9add…250b8`. One name
+  removed by rename, judged: `The_schema_carries_the_table_at_version_seven` → `…_seven_or_later` (the floor convention).
+
+**Verified by running (the second builder, quoted; then the manager's gate):** builder's gate at `d333480`, Release: 0
+warnings, 0 errors; Unit 539 + Fault 277 + Integration 621 = 1437 passed, 0 failed, 1 skipped; touched classes 3× →
+101/101 and 144/144 each run; names vs `main` → 36 added, 0 removed; scan clean. Manager's gate at `a22939d` (a docs-only
+renumber and the report on the gated tip), Release: build → 0 warnings, 0 errors; suite → 539 + 277 + 621 =
+1437 passed, 0 failed, 1 skipped; names vs `main` → 1 removed (the rename), 39 added (sets 1186 → 1224;
+`[Fact]`/`[Theory]` 1144 → 1179); scan clean; no trailers; `rev-list --count` → 0; CI at `a22939d`: run 34167309186 in flight when this section was written, its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the Settings press on a screen; the twelve-month collection against the vendor — one month only. The
+`U-wakes` test found red within ten minutes of local midnight is not this unit's (fixed with `U-council-thin`). **NOT done:**
+no box, no ATAS, no order; REST catch-up for recent bars; other venues.
