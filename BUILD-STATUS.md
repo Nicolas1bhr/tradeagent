@@ -4707,3 +4707,44 @@ passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 8 added (sets 1153 �
 **NOT VERIFIED:** the refused leg's sentence on a running app (`DashboardView` renders `PressOutcome.Summary` verbatim —
 read, not run); the read-back and the cancel against ATAS — the fake connector only. **NOT done:** the reconciler is
 untouched and still never settles a press leg; `U-flatten` (the gateway closing on a breach) comes next; no box, no money.
+
+## 2026-09-07 — U-wakes landed: the loop wakes on persisted events, idleness with a reason is healthy, the owner's words survive a restart
+
+The second council-substrate unit (`docs/COUNCIL.md` rule 7, "Never-stopping is a scheduler, not a loop"), by one fresh
+builder on `docs/briefs/U-wakes.md`. Merge `cef122b`, 8 commits, 22 files, +2019/−31 (new `Db/MissionEventStore.cs`;
+`MissionLoop.cs`, `AgentSession.cs`, `AppHost.cs`, `WorkspaceBuilder.cs`, `Database.cs` schema 7, `TradingGateway.cs`,
+`MaterialScanner.cs`, the AI card and the Safety page; four new test classes). Rebased four times, no conflict.
+
+- **`mission_event`, schema 7:** ids deterministic per source (`owner:`, `inbox:`, `fill:`, `order:`, `renewal:`, `self:`,
+  `review:`), a second raise of the same id a no-op, `consumed_by` the attempt id, a `disposition`; app-written only,
+  asserted over `Ops`. RED (no migration): `SQLite Error 1: 'no such table: mission_event'` (7 red); mutant (`ON CONFLICT(id)
+  DO NOTHING` removed): `SQLite Error 19: 'UNIQUE constraint failed: mission_event.id'`.
+- **The loop turns only on a due event,** consuming it inside `AiAttemptStore.Begin`'s own transaction before the process
+  starts; the review tick (`MissionReviewMinutes`, default 30, 0 = off, on the Safety page, lowering asks twice, read at the
+  next start and the note says so) and the local-midnight renewal are scheduled AHEAD; the card names what it waits for.
+  RED (the pre-`U-wakes` loop): `Assert.Empty() Failure: Collection was not empty`; mutant (`MarkConsumed` dropped from
+  `Begin`): that, plus `Assert.True() Failure Expected: True Actual: False` — a restart re-ran the event.
+- **The owner's message is a row, not a memory:** `AgentSession.Queue` writes it through `RecordOwnerMessage`, the row is
+  the only copy, the receipt line unchanged, disposition `answered` or `failed` (re-raised once with the failure), the
+  words still FIRST in the Situation. RED (the in-memory queue): `Assert.Empty() Failure: Collection was not empty
+  Collection: ["stop buying NQ"]`; mutant (the event without its text): `Not found: "> stop buying NQ"`.
+- **The idle language:** turns are caused by named events, a turn with nothing new ends at once, idleness with its reason
+  is healthy, and `.tradeagent/next.json` `{"after_seconds": N}` is named with its 30-minute cap — the AI is told the file
+  exists. RED: `Found: "you have not looked hard enough"` and `Not found: ".tradeagent/next.json"`; mutant (the file
+  unnamed) → `Not found: ".tradeagent/next.json"`.
+- **Quiescence pinned over a real chat child** alive during a pass: RED (the barrier removed): `Expected: InboxUnattested
+  Actual: Inbox`; mutant (`OpenConversation` on a register of its own): `Assert.Same() Failure: Values are not the same
+  instance`. The test owns its `AgentPresence` (`Shared` is sticky); that the product's halves share `Shared` is asserted by identity.
+- **One assertion changed on purpose, declared:** `AiAttemptLedgerTests.The_launch_ledger_is_schema_six_and_starts_empty`
+  pinned `== 6`, now `>= 6` plus the row on disk equalling the build's version, the exact number pinned by the new schema-seven
+  test, the name kept. The manager's regex diff shows one "removed" name, `BeginTurn`: a fake host helper, not a test.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `1a58f1b`, Release: 0 warnings,
+0 errors; Unit 510 + Fault 277 + Integration 615 = 1402 passed, 0 failed, 1 skipped; touched classes 3× → 188/188, 53/53
+and 88/88 each run, no `Timing` red; names vs `main` → nothing removed, 26 added. Manager's gate at `cef122b` (the report
+commit on the gated tip), Release: build → 0 warnings, 0 errors; suite → 510 + 277 + 615 = 1402 passed,
+0 failed, 1 skipped; names vs `main` → 0 tests removed, 26 added (sets 1161 → 1186; `[Fact]`/`[Theory]` 1118 → 1144); scan
+clean; no trailers; `rev-list --count` → 0; CI at `cef122b`: run 34146285162 in flight when this section was written, its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the Safety page's interval field and the card's waiting line on a screen — tests only; no screen lists the
+queue. **NOT done:** no box, no ATAS, no money; `U-data-binance` (in flight) and `U-council-thin` (next) read this table.

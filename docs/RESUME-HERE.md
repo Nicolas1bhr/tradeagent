@@ -40,7 +40,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    three findings of the first screen run); `U-model` LANDED `2504c5b` (the model named and passed, the
    attempt row before launch, the reservation as the admission gate); `U-crlf-win` LANDED `2082091` (a root `.gitattributes`
    pins `.cs` to LF, the test made honest); `U-unknown-close` LANDED `acff18a` (item (e): an UNKNOWN close can no longer be doubled by a press or the agent);
-   `docs/briefs/` holds `U-wakes` and `U-data-binance` (a fresh builder on each) — a desktop-app restart at 02:4x killed two builders
+   `U-wakes` LANDED `cef122b` (the loop wakes on persisted events, the owner's words
+   survive a restart); `docs/briefs/` holds `U-data-binance` (a fresh builder on it) and `U-council-thin` (dispatching) — a desktop-app restart at 02:4x killed two builders
    mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
@@ -72,7 +73,7 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    (the app names and passes the model, persists the attempt and its spending commitment BEFORE launch, measures the turn's
    context by component — today the loop inherited `gpt-6-astra` from `~/.codex/config.toml` at 1.5 USD a turn) → `U-wakes` →
    `U-data-binance` → `U-council-thin` → `U-turn-commit` → `U-budget-reserve` → `U-containment` → `U-api-worker` → `U-runner`
-   (the strategy language) → `U-referee` → `U-council-concurrent` → venues and data → `U-allocator`; `U-model` LANDED `2504c5b`; `U-wakes` IN FLIGHT; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
+   (the strategy language) → `U-referee` → `U-council-concurrent` → venues and data → `U-allocator`; `U-model` LANDED `2504c5b`; `U-wakes` LANDED `cef122b`; `U-data-binance` IN FLIGHT; `U-council-thin` briefed; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that could reverse a position — FIXED per leg by `U-unknown-close` `acff18a` (the press settles or cancels the unknown
    order first, refuses that one leg if the platform cannot answer; the agent's close is refused); `U-flatten` may follow; (f) containment before unattended real money: the agent must not be able to edit the active limits
    or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
