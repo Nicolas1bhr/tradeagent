@@ -33,6 +33,32 @@ public sealed class FakeBroker
         lock (_gate) return _orders.Count(o => o.ClientOrderId == clientOrderId);
     }
 
+    /// <summary>
+    /// WHAT THIS SIMULATED PLATFORM LISTS. One list, read by the connector that publishes it
+    /// (<see cref="FakeConnector.GetInstrumentsAsync"/>) and by <see cref="Quote"/>, which has to put
+    /// its prices on the grid this list declares. Two copies would let the platform quote a price its
+    /// own instrument definition says cannot exist, which is the defect this list was pulled out for.
+    ///
+    /// <c>XYZ</c> is deliberately absent — see the connector's method for why, and
+    /// <see cref="TickSize"/> for what a symbol that is not here gets.
+    /// </summary>
+    public static readonly IReadOnlyList<InstrumentInfo> Instruments =
+    [
+        new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, 50m),
+        new InstrumentInfo("NQ", "E-mini Nasdaq 100", "CME", 0.25m, 5.00m, 20m),
+        new InstrumentInfo("MES", "Micro E-mini S&P 500", "CME", 0.25m, 1.25m, 5m),
+        new InstrumentInfo("YM", "E-mini Dow", "CBOT", 1m, 5.00m, 5m),
+    ];
+
+    /// <summary>
+    /// The grid this platform prices a symbol on, or NULL where it lists no instrument for it —
+    /// which is a real state and not a missing default. Substituting a grid for an unknown symbol
+    /// would make "this platform cannot tell you what that is" indistinguishable from "0.25", and
+    /// that distinction is what <c>XYZ</c> exists in this harness to exercise.
+    /// </summary>
+    public static decimal? TickSize(string symbol) =>
+        Instruments.FirstOrDefault(i => string.Equals(i.Symbol, symbol, StringComparison.OrdinalIgnoreCase))?.TickSize;
+
     public static decimal BasePrice(string symbol)
     {
         // Deterministic, no randomness: same symbol always starts at the same price.
@@ -42,10 +68,27 @@ public sealed class FakeBroker
 
     public decimal PriceOffset { get; set; }
 
+    /// <summary>
+    /// A PRICE THAT COULD EXIST. Deterministic and unmoving as it always was — this is a fixture,
+    /// not a market — but snapped to the instrument's own tick, because <see cref="BasePrice"/>
+    /// yields cents and three of the four symbols here are quoted on a quarter.
+    ///
+    /// The AI met that on 2026-09-07: MES at 107.31 / 107.81 on a 0.25 grid, which no exchange would
+    /// print, and it declined to treat the quotes as evidence of anything. It was right to. A limit
+    /// price, a stop, a fill and every P&amp;L figure downstream all inherit the mid, so a mid off the
+    /// grid is a whole chain of numbers the real venue would have rejected.
+    ///
+    /// The offset a test applies is added BEFORE the snap, so a price a test has pushed is on the
+    /// grid too. A symbol this platform does not list has no grid to snap to and keeps the quarter
+    /// spread it always had.
+    /// </summary>
     public QuoteInfo Quote(string symbol, DateTimeOffset at)
     {
-        var mid = BasePrice(symbol) + PriceOffset;
-        return new QuoteInfo(symbol, mid - 0.25m, mid + 0.25m, mid, 10, 10, at);
+        var raw = BasePrice(symbol) + PriceOffset;
+        var tick = TickSize(symbol);
+        var mid = tick is { } t ? Math.Round(raw / t, MidpointRounding.AwayFromZero) * t : raw;
+        var spread = tick ?? 0.25m;
+        return new QuoteInfo(symbol, mid - spread, mid + spread, mid, 10, 10, at);
     }
 
     /// <summary>Accepts an order into the book. Called only after any injected transport fault decision.</summary>

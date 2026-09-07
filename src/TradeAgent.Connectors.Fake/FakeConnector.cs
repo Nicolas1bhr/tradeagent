@@ -257,17 +257,15 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     /// platform lists no instrument for this", which is a real state and needs a real example — see
     /// <c>TickNormalizedModifyTests.An_unknown_tick_grid_leaves_a_changed_price_for_a_person_to_judge</c>.
     /// A test that trades it therefore sets no value cap, exactly as an owner with no cap has none.
+    ///
+    /// The list itself is <see cref="FakeBroker.Instruments"/>, because <see cref="FakeBroker.Quote"/>
+    /// snaps to the tick sizes declared in it: a platform whose quotes and whose instrument
+    /// definitions came from two lists could publish a price its own grid forbids.
     /// </summary>
     public async Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default)
     {
         await Wire(ct, "instruments");
-        return
-        [
-            new InstrumentInfo("ES", "E-mini S&P 500", "CME", 0.25m, 12.50m, 50m),
-            new InstrumentInfo("NQ", "E-mini Nasdaq 100", "CME", 0.25m, 5.00m, 20m),
-            new InstrumentInfo("MES", "Micro E-mini S&P 500", "CME", 0.25m, 1.25m, 5m),
-            new InstrumentInfo("YM", "E-mini Dow", "CBOT", 1m, 5.00m, 5m),
-        ];
+        return FakeBroker.Instruments;
     }
 
     public async Task<QuoteInfo?> GetQuoteAsync(string symbol, CancellationToken ct = default)
