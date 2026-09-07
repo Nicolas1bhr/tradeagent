@@ -4595,3 +4595,44 @@ suite → 454 + 269 + 615 = 1338 passed, 0 failed, 1 skipped; names vs `main` �
 `AppHost.ConnectorIsBuiltInSimulator` (`Connector.Id == FakeConnector.ConnectorId`), the line that decides whether the
 fixture paragraph applies at all, has no test of its own — it compiles, and the builder flagged it. **NOT done:** no box,
 no ATAS, no real money; the model the AI runs on is `U-model`'s, in flight.
+
+## 2026-09-07 — U-model landed: the app names the model it runs, commits the spend before launch, and measures the turn's context
+
+The first council-substrate unit (`docs/COUNCIL.md`, rules 3 and 4), by one fresh builder on `docs/briefs/U-model.md`
+(killed by a usage limit after all five items and a rebase) and a second re-briefed from the branch, which reproduced
+every RED and mutant itself, made both codex measurements, ran the gate and wrote the report. Merge `2504c5b`, 6 commits,
+26 files, +2266/−104 (new `Db/AiAttemptStore.cs`; `TurnMeter.cs`, `RuntimeManifest.cs`, `AgentSession.cs`, `MissionLoop.cs`,
+`AppHost.cs`, the Safety page, `Trading.cs`, `Database.cs` schema 6, the guide, `CONTRACTS.md`; five new test classes).
+
+- **The model is the app's choice:** `ModelArgs` and `DefaultModel` as manifest data (codex: `-m`, `gpt-5.6-sol`), the flag on
+  the resumed turn as well as the first, `SelectedModelId` chosen on the Safety page from the runtime's price list, one
+  press. RED (`ModelArgs` → `[]`): `Actual: ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-
+  sandbox", "PROMPT"]`; mutant (the flag on the first turn only) → the resumed argv loses `-m`.
+- **An attempt row before launch** — schema 6, `ai_attempt`, written before `Process.Start` and updated on `TurnEnded`; an
+  attempt still `LAUNCHED` when a new meter opens the database becomes `LOST` and keeps its reservation as its cost; the
+  day's totals are sums over the ledger by local start day (the kv counters are gone). RED (the constructor no longer
+  calls `LoseOpen`): `Expected: LOST / Actual: LAUNCHED`; mutant (`LOST` at cost 0): `Expected: 1.28 / Actual: 0`.
+- **The reservation is the admission gate:** a turn runs only if spent + unresolved reservations + its own fits the cap; a
+  cap that cannot fund one turn says so. RED (the check back on `!CapReached`): the fourth turn ran, `Assert.Empty()
+  Failure: Collection was not empty`; mutant (reservations out of the sum) → `Expected: False Actual: True`.
+- **Context by component** from the stream: prompt characters, command items by id, tool-output bytes, cached input, the
+  rest `unattributed`. RED (`TurnContext.Read` empty): `Expected: 1 / Actual: 0`, 4 red; mutant (items per line): 3 red.
+- **Priced at the model asked for** when the stream names none, the row saying so; the dearest-model estimate only where
+  no model can be asked for; the model on the card, on `trade status` (`ai_model`) and in the guide. RED (`askedFor` never
+  set): `Expected: 0.0225072 / Actual: 0.056268`; mutant (asked-for beating the stream's own) → the reverse.
+- **Measured on this Mac** (codex-cli 0.153.4, `gpt-5.6-sol`, one turn each): `exec --json … -m` running `ls` → the
+  `command_execution` item carries `id`, `command`, `aggregated_output` (`"alpha.txt\nbeta.txt\n…"`), `exit_code`, `status`,
+  the same id on `item.started` and `item.completed`; usage `32852 in / 28032 cached / 132 out`; **no model named anywhere
+  in the stream**. `exec resume --last --json … -m` → exit 0, the same `thread_id` resumed, the flag accepted on resume too.
+- **One test name removed, by rename, judged at landing:** `Todays_totals_are_kept_in_kv` → `…_are_sums_over_the_launch_
+  ledger`; the old asserted counters the product no longer keeps, the new asserts the three keys null and sums the ledger.
+
+**Verified by running (the second builder, quoted; then the manager's gate):** builder's gate at `4b4d7ae`, Release: 0
+warnings, 0 errors; Unit 481 + Fault 269 + Integration 615 = 1365 passed, 0 failed, 1 skipped; 11 touched classes 3× →
+70/70 each, no `Timing` red; scan clean. Manager's gate at `2504c5b` (the builder's rebase onto `44ee58d`), Release: build →
+0 warnings, 0 errors; suite → 481 + 269 + 615 = 1365 passed, 0 failed, 1 skipped; names vs
+`main` → 1 removed (the rename above), 29 added (sets 1125 → 1153; `[Fact]`/`[Theory]` 1083 → 1110); scan clean; no
+trailers; `rev-list --count` → 0; CI at `2504c5b`: run 34139262127 in flight when this section was written, its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the Safety page's model row on a screen — no UI run, and no test presses `DashboardView.BuildModelRow`;
+only the card's words, the pipe field and the schema sentence are asserted. **NOT done:** no box, no ATAS, no order.
