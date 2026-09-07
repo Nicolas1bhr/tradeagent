@@ -4555,3 +4555,43 @@ passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 24 added (sets 1088 
 **NOT VERIFIED:** the two Safety rows and the hint on a running app — proved by tests reading `DashboardView.cs`, never seen
 rendering; the day's figure against a real account's currency — only the simulator's. **NOT done:** nothing is flattened
 on a breach (`U-flatten`, after the UNKNOWN close is fixed or disabled); no box, no ATAS, no real money.
+
+## 2026-09-07 — U-seen-1 landed: the card prices the chosen runtime before the first start, the simulator quotes on its tick grid, and the mission says what the simulator is
+
+The three findings of the loop's first run on a screen (the previous section), by one fresh builder on
+`docs/briefs/U-seen-1.md` (killed by a desktop-app restart after three commits, one test edit uncommitted) and a second
+fresh builder re-briefed from the branch, which reproduced every RED and mutant in its own hands, judged the uncommitted
+edit, ran the gate and wrote the report. Merge `06a8636`, 5 commits, 9 files, +473/−18 (`AppHost.cs`, `FakeBroker.cs`,
+`FakeConnector.cs`, `WorkspaceBuilder.cs`; four test files). No schema change, no money path.
+
+- **The meter falls back to the chosen runtime** the way the Safety page already did (`AppHost.cs:106`), so the AI card no
+  longer says the cap "cannot stop it" before the first start. RED (the fallback reverted to the pre-fix probe) → 4 of 5
+  red, `Before_the_first_start_the_cap_is_priced_by_the_runtime_the_owner_chose` → `Assert.True() Failure Expected: True
+  Actual: False`; mutant (precedence inverted) → `What_is_actually_running_prices_the_turns_rather_than_what_was_chosen` →
+  `Expected: "codex" Actual: "custom"`.
+- **The built-in simulator's quotes sit on each instrument's tick grid,** one tick either side of the mid, deterministic,
+  still never moving. RED (the snap reverted) → 3 of 5 red, `Every_quoted_price_sits_on_the_instruments_own_tick_grid` →
+  `Assert.Equal() Failure: Values differ Expected: 0 Actual: 0.24`; mutant (`spread = 0.25m` whatever the grid) → the same
+  test → `Expected: 0 Actual: 0.75`. No test hard-coded an old price (the three `BasePrice` call sites are live reads); the
+  killed leg's uncommitted edit to `ApprovalReauthorizationTests` was clarity, not repair, and as handed over it built a
+  SECOND `FakeBroker` — the two-sources-for-one-price trap it claimed to close; the second builder made it read the broker
+  in play (`conn.Broker.Quote("ES", …).Last`, the field the gateway compares the cap against, `TradingGateway.cs:1049`)
+  and committed it under item 2 as the only updated test.
+- **The mission names the simulator as a fixture** when the connector is the built-in one: prices fixed on the grid, not a
+  market, for order mechanics and the ledger, never for an edge or a result; the allowlist decides what it may touch. RED
+  (the paragraph never emitted) → `Assert.Contains() Failure … Not found: "built-in simulator, and it is not a marke"`;
+  mutant (the condition widened to `ConnectorIsPaper`) → `Nothing_but_the_built_in_simulator_is_described_that_way` →
+  `Assert.DoesNotContain() Failure: Sub-string found … "not a market"`.
+
+**Verified by running (the second builder, quoted; then the manager's gate):** builder's gate at `6406dd9` (rebased onto
+`95d6db6`, docs-only, no conflict), Release: `Build succeeded. 0 Warning(s) 0 Error(s)`; Unit 437 + Fault 261 +
+Integration 615 = 1313 passed, 0 failed, 1 skipped; touched classes 3× → 45/45 (four unit classes) and 30/30
+(`ApprovalReauthorizationTests`) each run; names vs `main` → 0 removed, 13 added; the `U-loss` leg's suite overlapping,
+no `Timing` red. Manager's gate at `6e26872` (rebased over the `U-loss` landing), Release: build → 0 warnings, 0 errors;
+suite → 454 + 269 + 615 = 1338 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
+13 added (sets 1112 → 1125; `[Fact]`/`[Theory]` 1070 → 1083); scan clean; no trailers; `rev-list --count` → 0; CI at `06a8636`: run 34073713557 in flight when this section was written, its verdict recorded in a follow-up commit (the merge sha is the gated tip rebased once more over the U-loss record, docs-only).
+
+**NOT VERIFIED:** the card's new wording and the snapped quotes on a running app — no UI run since the one that found them;
+`AppHost.ConnectorIsBuiltInSimulator` (`Connector.Id == FakeConnector.ConnectorId`), the line that decides whether the
+fixture paragraph applies at all, has no test of its own — it compiles, and the builder flagged it. **NOT done:** no box,
+no ATAS, no real money; the model the AI runs on is `U-model`'s, in flight.

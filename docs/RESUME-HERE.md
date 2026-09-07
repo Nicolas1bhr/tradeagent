@@ -36,8 +36,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    model priced high, the owner's override on the Safety page), and three test-only fixers: `U-typed-catalog` `4d48395` (a
    unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
    `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
-   measured on the runners, no assertion loosened). **`U-loss` LANDED `7b46503` (2026-09-07, the two loss budgets; its section is the last in `BUILD-STATUS.md`); `docs/briefs/` holds
-   `U-seen-1` (gate green, landing) and `U-model` (a fresh builder on it) — a desktop-app restart at 02:4x killed two builders
+   measured on the runners, no assertion loosened). **`U-loss` LANDED `7b46503` (2026-09-07, the two loss budgets; its section is the last in `BUILD-STATUS.md`); `U-seen-1` LANDED (the
+   three findings of the first screen run); `docs/briefs/` holds `U-model` (a fresh builder on it) — a desktop-app restart at 02:4x killed two builders
    mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
