@@ -38,3 +38,17 @@ Not this unit: a venue reduce-only flag (none in `PlaceOrderCommand`); `U-flatte
 Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; the three test projects in Release to a file
 → 0 failed; touched classes 3×; a `Timing` red re-run alone 3×, never loosened. Commit per item, one sentence, no trailers.
 Append `## Report` (≤20 lines): tip sha, the gate counts pasted, one line per item with its RED and mutant, what you did NOT do.
+
+
+## Report
+Code tip `62d00a6`, 3 commits, and the gate below was run there; the commit carrying this report adds nothing but these lines, so it is the branch tip and `62d00a6` is what was measured. Rebased onto `main` 3× (`ba4a85b` → `44ee58d` → `5aed4a4` → `6e46312`), no conflict at any; `git rev-list --count HEAD..main` → 0 and `git diff main` deletes only the four lines this unit replaces, so nothing of U-model, U-crlf-win or U-data-binance was removed.
+Gate at the tip, Release: `dotnet build TradeAgent.sln -c Release --no-incremental` → `0 Warning(s)`, `0 Error(s)`; suites → `Passed: 481` + `Passed: 277` + `Passed: 615` = 1373, `Failed: 0`, 1 skip (the pre-existing `PipeContractTests` one). Touched classes 3× → Fault `Failed: 0, Passed: 37` three times, Integration `Failed: 0, Passed: 19` three times; no `Timing` red, so no re-run needed. Names vs `main` → 0 removed, 8 added (1109 → 1117).
+1. **The press settles before it sends.** RED: `orders at the broker : FB-1 Buy 2 FILLED | FB-3 Sell 2 FILLED | FB-4 Sell 2 FILLED`, `position at the end : ES -2`, `Assert.DoesNotContain() Failure: Filter matched in collection … Quantity = -2`.
+   Mutant `foreach (var req in UnresolvedReducersOn(symbol, side))` → `foreach (var req in new List<ExecutionRequest>())`: 3 RED, `position at the end : ES -2` again.
+2. **The agent's close and its reduce are refused** (`CLOSE_UNRESOLVED`). RED: `Assert.Throws() Failure: No exception was thrown` / `Expected: typeof(TradeAgent.Gateway.GatewayDeniedException)`, on all three tests.
+   Mutant `intent.Side == side` → `intent.Side != side` in `CouldMoveThePositionLike`: the same three RED.
+3. **Tests**: 8 in `UnknownCloseTests.cs`, both directions each; none in `Timing` — 2 × 1200 ms inside a 2000 ms budget cannot be made to fit by any runner. P6, `EmergencyPressTests` and `Confirming_one_outcome_…_pause`: untouched, green.
+4. **Words**: `CONTRACTS.md` (the "what that leaves open" paragraph replaced by the rule), `Stores.cs`, `Errors.cs` and `GatewaySchema.cs` (both codes), `USER-GUIDE.md`. Nothing new on screen, so no `Theme.cs` value was needed.
+
+**NOT `trade reconcile`, and this is a deviation from the brief.** No such verb exists (`Core.Ops` has none; `grep -rn reconcile src/TradeAgent.TradeCli` → comments only), and `ReconcileAsync` only walks `Unreconciled()`, which excludes the unflagged UNKNOWN row this refuses over — it could never settle it, and naming it would be a false promise. The refusal names the two routes that do settle one: the owner's card, and Close all positions (item 1 is what makes that true).
+**NOT DONE**: no box, no ATAS, no money, no UI run (`DashboardView` renders `PressOutcome.Summary` verbatim — read, not run); the reconciler is untouched and still never settles a press leg — a press's own UNKNOWN row refuses a leg here rather than being settled by it.
