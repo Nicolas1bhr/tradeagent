@@ -76,6 +76,19 @@ public sealed class TradingGateway : IAsyncDisposable
     public DatasetStore Datasets => _datasets;
 
     /// <summary>
+    /// THE OWNER'S DAILY REPORT, COMPOSED BY THE APP FROM WHAT IT MEASURED — see
+    /// <see cref="DailyReports"/> and <c>docs/COUNCIL.md</c> rule 10.
+    ///
+    /// It lives on this object because everything it reads is here or beside it, and because
+    /// <c>trade report</c> serves it over the pipe as a READ. It writes no market order, raises no
+    /// wake, and makes no connector call — which is what lets it sit in the handler table at
+    /// <see cref="TimeSpan.Zero"/> and why what is still OPEN is named as absent rather than valued.
+    /// </summary>
+    public DailyReports Reports => _reports;
+
+    readonly DailyReports _reports;
+
+    /// <summary>
     /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
     /// bool behind a delegate, because the gateway must not know what an update is.
     ///
@@ -288,6 +301,9 @@ public sealed class TradingGateway : IAsyncDisposable
         _datasets = new DatasetStore(db);
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
+        // After the settings, because the report reads them; on this gateway's own clock, so a test
+        // that moves time gets the day it asked for rather than the machine's.
+        _reports = new DailyReports(this, db, () => _opt.Clock.GetLocalNow());
 
         _health.Changed += OnHealthChanged;
         Connector.ConnectionChanged += OnConnectionChanged;

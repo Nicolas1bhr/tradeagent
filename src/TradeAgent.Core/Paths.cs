@@ -67,6 +67,17 @@ public static class Paths
     /// </summary>
     public static string Data { get; } = SubOf(State, "data");
 
+    /// <summary>
+    /// THE OWNER'S DAILY REPORTS, ONE FILE PER LOCAL DAY, AND THE APP OWNS THEM.
+    ///
+    /// Under <see cref="State"/> and deliberately NOT under <see cref="Workspace"/>, for the reason
+    /// <see cref="Data"/> is: the agent is broadly free inside its own tree, and a report it could
+    /// rewrite is not a record of what the app measured. There is no verb and no pipe op that writes
+    /// here — <c>trade report</c> reads, and the account owner presses "Write it now" in TradeAgent's
+    /// own window.
+    /// </summary>
+    public static string Reports { get; } = SubOf(State, "reports");
+
     public static string DatabaseFile => Path.Combine(State, "tradeagent.db");
     public static string IpcTokenFile => Path.Combine(State, "ipc.token");
     public static string InstanceLockFile => Path.Combine(State, "gateway.lock");
@@ -92,7 +103,7 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data }
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data, Reports }
                      .Concat(CouncilRoles.All.Select(RoleHome)))
         {
             Directory.CreateDirectory(d);

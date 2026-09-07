@@ -551,6 +551,68 @@ public sealed class AppHost : IAsyncDisposable
             };
         };
 
+    /// <summary>
+    /// WHAT THE DAILY REPORT NEEDS FROM THE TWO LAYERS ABOVE THE GATEWAY, read in one go.
+    ///
+    /// The loop and the meter are here and not there on purpose — the gateway is the execution
+    /// authority and must not learn what a loop is — so the report is HANDED what they know instead
+    /// of reaching for it. Everything else in the report the gateway reads out of its own tables.
+    ///
+    /// The whole-installation reading comes first and each role's after it, which is the order
+    /// <see cref="DailyReports"/> expects: a role is bounded by its share AND by the owner's ceiling,
+    /// and a report showing only the shares would leave the ceiling unaccounted for.
+    /// </summary>
+    public DailyReportInputs ReportInputs()
+    {
+        var spend = new List<AiSpendToday> { SpendToday };
+        if (Meter is { } meter)
+            foreach (var role in CouncilRoles.All) spend.Add(meter.TodayFor(role));
+
+        var status = Mission?.Status;
+        return new DailyReportInputs
+        {
+            MissionState = status?.State.ToString().ToLowerInvariant(),
+            MissionReason = status?.WaitingFor,
+            NextEligibleWake = Wakes?.NextDueAt(),
+            Spending = spend,
+            Runtime = PricingRuntime,
+            NextReviewAt = status?.NextTurnAt,
+            // A REVIEW THAT IS PENDING BECAUSE IT WAS NOT FUNDED, which rule 10 asks for by name. It
+            // is not the same fact as a review that has not come round yet, and an owner reading
+            // "waiting" needs to know which of the two they are looking at.
+            ReviewNotFunded = SpendToday is { Metered: true } s && !s.AdmitsAnotherTurn
+                ? "the day's spending ceiling is reached, so no turn can be taken until it resets"
+                : null
+        };
+    }
+
+    /// <summary>
+    /// WRITES EVERY DAY'S REPORT THAT IS OWED AND HAS NOT BEEN WRITTEN, oldest first.
+    ///
+    /// Called on start and on the slow loop rather than by a timer set for midnight, because the
+    /// machine this ships to is a laptop: it is asleep at midnight most nights, and a report that
+    /// only ever appears if the app happened to be awake at 00:00 is a report the owner cannot rely
+    /// on. Asking "which days have no file" is the same question with an answer that survives being
+    /// switched off.
+    ///
+    /// It never throws: a report is a document, and an app that would not open because it could not
+    /// write one has turned a record into a dependency.
+    /// </summary>
+    public void WriteOwedReports()
+    {
+        try
+        {
+            var inputs = ReportInputs();
+            foreach (var day in Gateway.Reports.Owed(DateTimeOffset.Now))
+                Gateway.Reports.Write(day, inputs);
+        }
+        catch (Exception ex)
+        {
+            try { Gateway.Log.Engineering("Report", "daily_report_failed", "warn", ex: ex); }
+            catch (Exception) { /* the log is the same database the report could not read */ }
+        }
+    }
+
     void OnGatewayStateChanged() => Changed?.Invoke();
 
     public WorkspaceContext WorkspaceContext()
@@ -589,6 +651,12 @@ public sealed class AppHost : IAsyncDisposable
                 // five seconds, and the walk plus a bounded round of hashing is the most expensive
                 // thing in this loop.
                 if (pass % 6 == 0) ScanMaterials(ct);
+
+                // Once at startup, then every five minutes. A day that ended while this machine was
+                // asleep gets its report the first time the app is awake afterwards; a day that ends
+                // while it is running gets one within five minutes of midnight. Cheap: on a day whose
+                // file already exists it is one File.Exists per day looked back over.
+                if (pass % 60 == 0) WriteOwedReports();
 
                 // Once at startup, then every six hours. This only ever lights a banner: nothing in
                 // this loop downloads or installs anything, because a trading application that
