@@ -34,12 +34,13 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    model priced high, the owner's override on the Safety page), and three test-only fixers: `U-typed-catalog` `4d48395` (a
    unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
    `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
-   measured on the runners, no assertion loosened). **`docs/briefs/` is EMPTY** — nothing is in flight; every worktree is removed.
+   measured on the runners, no assertion loosened). **`docs/briefs/` holds `U-loss` and `U-seen-1` (2026-09-07), each with a fresh builder on it** — read the briefs for what is in
+   flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
-   migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **Nothing landed
-   today has run on the box or on any screen** — every card and control is proved by its words, not photographed; the
-   first UI run of the loop (`tools/mac-run.sh`, then the box) is due before the paper run. The morning's open items
+   migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **On 2026-09-07 the four units were run on this Mac's screen** (the last `BUILD-STATUS.md` section): the loop took four
+   turns, the cap paused it at 5.07 USD, no order was placed; the Mac loop is now DRIVABLE — `tools/mac-bundle.sh`, then the
+   desktop's screen control (the memory file says how). Nothing landed since 2026-09-06 has run on the box. The morning's open items
    stand for the third review: the UNKNOWN close that can reverse a position (step 6 (e)); `req.V` checked only on
    `hello`; "Open the AI's folder" pointing at `workspace/`; `Bridge`/`StatusDetail` two readings of the connector;
    an older build refusing a newer home as "damaged"; 0.1.1 writing no activity row for the update press;
@@ -58,8 +59,9 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    (the mission loop, the mission, Guidance, two-press "work on its own") — BOTH LANDED (`U-life` `0ec96c6`, `U-ledger` `640bce5`); `U-typed-catalog` LANDED `4d48395` (the runtime-file harness race);
    `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` LANDED `a167884` (the
    stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` LANDED `4e0d877`; (b) `U-meter` LANDED `902e3da`, and with `U-prices` the daily cap bites out of the box (list
-   prices as dated data, an unknown model priced high, the owner's override on the Safety page); (c) `U-loss`: per-trade and daily loss budgets in account currency, enforced by the gateway from the
-   ledger; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
+   prices as dated data, an unknown model priced high, the owner's override on the Safety page); (c) `U-loss` IN FLIGHT 2026-09-07 (the budgets, refused from the ledger), then `U-flatten` (the gateway closes positions on
+   a breach, after (e)) and `U-model` (the app names the codex model it runs, so the bill is a price and not an estimate — today
+   the loop inherited `gpt-6-astra` from `~/.codex/config.toml` at 1.5 USD a turn); (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
    or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
