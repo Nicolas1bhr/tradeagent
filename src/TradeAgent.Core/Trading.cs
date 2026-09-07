@@ -431,6 +431,13 @@ public sealed record AiSpendToday
     /// <summary>Empty when <c>costs.json</c> could not be read, so a number is never shown bare.</summary>
     public string Currency { get; init; } = "";
 
+    /// <summary>
+    /// THE MODEL TRADEAGENT IS ASKING FOR, or null where it asks for none. It is on this reading
+    /// because it belongs beside the figure: what a turn costs is mostly which model ran it, and an
+    /// owner reading a total that surprises them needs the two facts together.
+    /// </summary>
+    public string? Model { get; init; }
+
     public int Turns { get; init; }
 
     /// <summary>Turns today whose cost is unknown. Above zero, <see cref="Spent"/> is a floor.</summary>
@@ -645,6 +652,16 @@ public sealed record LossToday
 /// <param name="CostToday">What they cost, or null when TradeAgent cannot price them.</param>
 public sealed record AiActivity(string State, int TurnsToday, decimal? CostToday)
 {
+    /// <summary>
+    /// The model TradeAgent asked its AI tool for, or absent where it asked for none. Init-only for
+    /// the reason <see cref="CostEstimated"/> is: every other construction site of this record means
+    /// to say nothing about it.
+    ///
+    /// The agent is told which model is running it because its mission is to cover what it costs and
+    /// the model is most of that arithmetic. It is a READ: there is no verb that changes it.
+    /// </summary>
+    public string? Model { get; init; }
+
     /// <summary>
     /// Present when <see cref="CostToday"/> is an upper bound rather than a bill, and then it is the
     /// sentence saying so — the same sentence the owner reads on the card.

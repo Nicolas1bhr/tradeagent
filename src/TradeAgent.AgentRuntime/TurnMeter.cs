@@ -401,7 +401,7 @@ public sealed class TurnMeter
     /// </summary>
     public void Record(AgentTurnEnded ended)
     {
-        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner());
+        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner(), requestedModel: Safe(_model));
         var record = new TurnRecord
         {
             Started = ended.At - ended.Duration,
@@ -490,8 +490,8 @@ public sealed class TurnMeter
         try
         {
             var allowance = _allowance();
-            var probe = new TurnUsage(allowance.InputTokens, 0, 0, allowance.OutputTokens, 0, Safe(_model));
-            return CostCatalog.Price(probe, _runtimeId(), owner: Owner());
+            var probe = new TurnUsage(allowance.InputTokens, 0, 0, allowance.OutputTokens, 0, null);
+            return CostCatalog.Price(probe, _runtimeId(), owner: Owner(), requestedModel: Safe(_model));
         }
         catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
     }
@@ -568,7 +568,7 @@ public sealed class TurnMeter
             // A turn that HAS priced today settles it the other way: a runtime whose stream names its
             // own model prices without an entry in RuntimeModels, and the probe below cannot know
             // that in advance because it has no model to offer.
-            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner());
+            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner(), Safe(_model));
             var canPrice = probe.Cost is not null || (totals.Turns > 0 && totals.Unpriced < totals.Turns);
 
             return new AiSpendToday
@@ -578,6 +578,7 @@ public sealed class TurnMeter
                 Reserved = totals.Reserved,
                 NextTurnReservation = Reservation().Cost ?? 0m,
                 Cap = _cap(),
+                Model = Safe(_model),
                 Currency = catalogue.Costs?.Currency ?? "",
                 Turns = totals.Turns,
                 UnpricedTurns = totals.Unpriced,

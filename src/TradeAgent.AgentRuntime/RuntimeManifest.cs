@@ -725,8 +725,14 @@ public static class CostCatalog
     /// WHAT THIS TURN COST, or why nobody can say. Every branch that cannot produce a number
     /// produces a sentence instead; none of them produces a zero.
     /// </summary>
+    /// <param name="requestedModel">
+    /// THE MODEL TRADEAGENT PUT ON THE COMMAND LINE, where it put one. It is a stronger claim than
+    /// the dearest-in-the-catalogue fallback and a weaker one than a model the runtime named itself,
+    /// so it sits between them — and the figure is still labelled, because the vendor could serve
+    /// something else and no event in the measured stream would say so.
+    /// </param>
     public static TurnPrice Price(TurnUsage? usage, string? runtimeId, CostCatalogRead? catalogue = null,
-        OwnerPrice? owner = null)
+        OwnerPrice? owner = null, string? requestedModel = null)
     {
         var read = catalogue ?? Read();
         if (read.Unreadable is { } why) return TurnPrice.Unknown(why);
@@ -750,6 +756,16 @@ public static class CostCatalog
 
         var model = usage.Model ?? Declared(costs, runtimeId);
 
+        // THE MODEL TRADEAGENT ASKED FOR, when nothing better is available. Codex 0.153.4 names no
+        // model in any of its events even with `-m` on the command line — measured twice, on
+        // 2026-09-06 and again on 2026-09-07 — so on the runtime this build recommends the requested
+        // model is the only identification there is, and it is a real one: the app wrote it.
+        //
+        // `askedFor` is remembered separately because it decides the LABEL. A figure priced this way
+        // is not a bill, and the sentence says which model it is a list price for.
+        var askedFor = model is null && requestedModel is { Length: > 0 } ? requestedModel : null;
+        model ??= askedFor;
+
         // AN UNKNOWN IS PRICED HIGH, NEVER ZERO AND NEVER ABSENT.
         //
         // Codex names no model in any of its events, so on the runtime this build recommends EVERY
@@ -771,9 +787,20 @@ public static class CostCatalog
         var price = Applicable(costs, runtimeId)
             .FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.OrdinalIgnoreCase));
         if (price is null)
-            return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
+        {
+            // A model TRADEAGENT asked for that this build ships no price for — gpt-5.3-codex-spark
+            // is the live example — falls back to the dearest in the catalogue rather than becoming
+            // unpriced. Over-charging can only stop the AI early; unpriced turns cannot reach the
+            // ceiling at all, which is the one direction nothing undoes.
+            if (askedFor is not null && Highest(costs, runtimeId) is { } fallback)
+                return new TurnPrice(Charge(usage, fallback), costs.Currency, null,
+                    Labels.PricedAtHighestListPrice) { Basis = BasisOf(fallback) };
 
-        return new TurnPrice(Charge(usage, price), costs.Currency, null) { Basis = BasisOf(price) };
+            return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
+        }
+
+        return new TurnPrice(Charge(usage, price), costs.Currency, null,
+            askedFor is null ? null : Labels.PricedAtTheModelAskedFor(askedFor)) { Basis = BasisOf(price) };
     }
 
     /// <summary>What <see cref="TurnPrice.Basis"/> says when the owner's own two numbers were used.</summary>

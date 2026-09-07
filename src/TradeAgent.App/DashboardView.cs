@@ -427,6 +427,10 @@ sealed class DashboardPage
                    + "cheaper model above.";
 
         var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
+        // WHICH MODEL IS SPENDING IT, beside what it has spent. The same turn on gpt-6-astra and on
+        // gpt-5.6-luna differs by a factor of fifty, so a total with no model beside it is a number
+        // the owner cannot act on — and this is the choice they make one press away, on this page.
+        if (spend.Model is { Length: > 0 } model) line += $", running {model}";
         // Where the figure came from, beside the figure. An owner cannot tell an upper bound from a
         // bill by looking at it, and the difference decides whether they should go and correct it —
         // so the third reading is the one where they already have: their own rate, named as theirs,

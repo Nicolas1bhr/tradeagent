@@ -819,7 +819,8 @@ public sealed class TradingGateway : IAsyncDisposable
             AiCostEstimated = ai.CostEstimated,
             LossToday = loss.Enforced && loss.Unknown is null ? loss.Loss : null,
             LossBudgetDay = loss.DayBudget > 0m ? loss.DayBudget : null,
-            LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null
+            LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null,
+            AiModel = ai.Model
         };
     }
 

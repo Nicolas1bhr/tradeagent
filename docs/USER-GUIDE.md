@@ -357,6 +357,32 @@ your positions, and it does not take away any permission — at midnight the day
 and the AI carries on where it left off. You get one line in the **Activity** log saying it happened,
 what it had spent, and when it will start again. If you want it working sooner, raise the limit.
 
+**The limit is applied before a turn runs, not after it.** Before a turn starts, TradeAgent writes
+down that it is about to spend and sets aside the most that turn could cost; the turn only runs if
+what has been spent, plus what is already set aside, plus that amount, still fits inside the limit.
+This is what makes it a limit rather than a report — checked afterwards, the turn that carries the
+day past your number has already run and already been billed, which is how a day capped at 5 came to
+cost 5.07. It has two visible consequences. **A turn that is killed part way stays charged**: the
+work was asked for and your supplier billed for it, so closing TradeAgent mid-turn does not hand the
+money back, and neither does midnight. And **the last part of your limit is held in reserve**, so the
+AI stops a little before the number rather than a little after it.
+
+**If one turn could cost more than your whole daily limit, the AI cannot start at all**, and the card
+says exactly that instead of "waiting until 00:00" — because midnight will not repair it. Raise the
+limit, or choose a cheaper model.
+
+**Which model it runs on is TradeAgent's choice, and it is on the Safety page.** Under *What the AI
+costs*, above the two price boxes, there is a row of models with what each one costs per million
+tokens in and out. One press picks one; *TradeAgent's choice* hands it back to the one this build
+ships as the default. It asks once, because it takes no permission and gives none — the daily limit
+above is unchanged either way, and a dearer model simply reaches it sooner. It is the single biggest
+lever you have over what the AI costs: the dearest model on the list is fifty times the cheapest.
+
+Before this existed the model came from a configuration file belonging to the AI assistant, which
+you have never opened and TradeAgent never mentions — so the model spending your money was whichever
+one that file happened to name. The card's cost line now says which model is running, beside what it
+has spent.
+
 **Where the money figure comes from.** TradeAgent works the cost out from two things: the token
 counts the AI assistant reports at the end of each turn, and a price per million tokens.
 
@@ -375,12 +401,17 @@ Three things follow from that, and it is worth knowing all three:
 - **A price read on a day goes stale on the supplier's schedule, not TradeAgent's.** If the page has
   moved since, the figure on your screen is the old one until TradeAgent ships a new one or you
   correct it yourself.
-- **When the assistant does not say which model it used, the dearest one is charged.** Codex does not
-  name its model anywhere in what it reports, so this is the ordinary case rather than the odd one.
-  The card, the AI's own status and the line in *What the AI is doing* all say
-  *"estimated at the highest list price — the AI did not say which model it used"* beside the figure,
-  so you can tell an upper bound from a measurement. Charging high is deliberate: it can only stop
-  the AI early, and midnight undoes that, while charging low would let the daily limit be walked past.
+- **When the assistant does not say which model it used, the model TradeAgent asked for is charged.**
+  Codex names no model anywhere in what it reports — not even when TradeAgent puts the model on its
+  command line, which was measured twice — so this is the ordinary case rather than the odd one. The
+  figure is then the list price of the model you picked above, and the card says
+  *"priced at &lt;model&gt;, the model TradeAgent asked for — the AI did not say which model it used"*,
+  so you can still tell an upper bound from a measurement.
+  For an assistant TradeAgent cannot choose a model for at all, the **dearest** model in that
+  assistant's list is charged instead and the figure is labelled
+  *"estimated at the highest list price — the AI did not say which model it used"*. Charging high is
+  deliberate in both cases: it can only stop the AI early, and midnight undoes that, while charging
+  low would let the daily limit be walked past.
 
 **If you know what you are actually charged, say so — on the Safety page, under *What the AI
 costs*.** Two boxes, per million tokens in and per million tokens out. They open on the price

@@ -198,6 +198,16 @@ public sealed record GatewayStatus(
 
     /// <summary>The most any one position may lose before it may be added to, or ABSENT when off.</summary>
     public decimal? LossBudgetTrade { get; init; }
+
+    /// <summary>
+    /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the
+    /// tool takes no model flag, or nothing has named one and it runs on its own configuration.
+    ///
+    /// It is the app's choice, not the agent's, and there is no verb that changes it. It is on the
+    /// wire because an agent told to cover what it costs is being told most of that arithmetic: the
+    /// same turn on a different model is a different bill by a factor of fifty.
+    /// </summary>
+    public string? AiModel { get; init; }
 }
 
 public sealed record ReconcileResult(int Resolved, int Inconclusive, IReadOnlyList<string> Details)

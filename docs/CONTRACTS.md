@@ -239,6 +239,19 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   If a command dies without a reply, re-run it with the same `--request-id`; never with a new one.
 - `trade schema --json` serves this contract at runtime, so an agent discovers capabilities instead of
   relying on a prompt that drifts.
+- **`status` carries what the AI's own work has cost, and it is a READ.** `ai_state` (`stopped`,
+  `working`, `waiting`, `paused`), `ai_turns_today` since local midnight, `ai_cost_today` — **ABSENT,
+  never zero, when TradeAgent cannot price the turns** — `ai_cost_estimated`, the sentence saying the
+  figure is an upper bound rather than a bill, and `ai_model`, the model TradeAgent asked the AI tool
+  for (absent where it asked for none: the tool takes no model flag, or nothing has named one).
+  `ai_model` is the app's choice and is composed by the app; there is no verb and no op that changes
+  it, starts or pauses the loop, or moves the daily ceiling — operator authority is deliberately
+  absent from this channel, so what the agent gains is the ability to see its own bill and never to
+  edit it. The model is on the wire because the mission is to cover what the work costs and the model
+  is most of that arithmetic: the same turn on `gpt-6-astra` and on `gpt-5.6-luna` differs by a factor
+  of fifty. Measured on codex-cli 0.153.4 (2026-09-06 and again 2026-09-07): the CLI's own event
+  stream names NO model, even when `-m` was on the command line, so `ai_model` is what the app asked
+  for and `ai_cost_estimated` says as much.
 
 ## Bridge protocol — `src/TradeAgent.Connectors.Atas/BridgeProtocol.cs`
 

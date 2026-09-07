@@ -363,7 +363,8 @@ public sealed class AppHost : IAsyncDisposable
                 // Only ever beside a figure. A label with no number to qualify would tell the agent
                 // its unmeasurable cost was an estimate, which is a claim about a figure that is not
                 // on the wire at all.
-                CostEstimated = spend.CanPrice ? spend.Estimated : null
+                CostEstimated = spend.CanPrice ? spend.Estimated : null,
+                Model = spend.Model
             };
         };
 
