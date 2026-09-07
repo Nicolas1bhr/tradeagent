@@ -186,8 +186,8 @@ public class AiAttemptLedgerTests : IDisposable
     /// later ADDITIVE migration fail here for no reason of its own — <c>U-wakes</c> added
     /// <c>mission_event</c> at 7 and this went red without anything about the launch ledger having
     /// changed. The exact number is still pinned, by
-    /// <c>MissionEventTests.The_schema_carries_the_table_at_version_seven</c>, which is where the
-    /// current version belongs: with the migration that last moved it. What is asserted here is what
+    /// <c>DatasetLedgerTests.The_schema_carries_the_dataset_tables_at_version_eight</c>, which is
+    /// where the current version belongs: with the migration that last moved it. What is asserted here is what
     /// this class is about — 6 is the floor, because below it there is no table at all.
     /// </summary>
     [Fact]

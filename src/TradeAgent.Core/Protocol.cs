@@ -34,6 +34,18 @@ public static class Ops
     /// </summary>
     public const string MaterialList = "material-list", MaterialNote = "material-note";
 
+    /// <summary>
+    /// THE MARKET DATA LEDGER, AND IT IS READ-ONLY ON THIS CHANNEL. <c>DataList</c> serves what this
+    /// installation collected and where every byte of it came from; <c>DataBars</c> serves the bars
+    /// themselves. Neither writes anything, and there is no op on this pipe that collects, normalises,
+    /// rejects or deletes a dataset — the account owner presses that in TradeAgent's own window.
+    ///
+    /// The asymmetry is deliberate and is the same one <c>material</c> makes: an agent that could
+    /// edit the provenance of the data its strategies are judged on could report a clean twelve
+    /// months over three with the holes filled in.
+    /// </summary>
+    public const string DataList = "data-list", DataBars = "data-bars";
+
     public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }

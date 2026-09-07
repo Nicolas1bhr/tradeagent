@@ -248,6 +248,16 @@ public sealed record MissionSituation
     public LossToday Loss { get; init; } = LossToday.NotEnforced;
 
     /// <summary>
+    /// WHAT HISTORY THE APP HOLDS, in one line, or the sentence that says there is none.
+    ///
+    /// An AI told to do its own research and given no idea whether there is any data to research
+    /// spends its first turn finding out — measured on 2026-09-07, when the loop's first run on a
+    /// screen spent a turn discovering what the simulator was. The line is short on purpose: it says
+    /// what there is and where to get it, and `trade data list` says the rest.
+    /// </summary>
+    public string? Data { get; init; }
+
+    /// <summary>
     /// The sentence that ends every turn's message. It is the whole of what makes the loop a mission
     /// rather than a cron job: the AI is told where its memory is and that keeping it is part of
     /// finishing, because a fresh CLI session starts every <see cref="MissionOptions.TurnsPerSession"/>
@@ -289,6 +299,7 @@ public sealed record MissionSituation
             : $"- Positions: {string.Join("; ", Positions)}");
         if (SpendLine(Spend) is { } spend) b.AppendLine($"- {spend}");
         if (Loss.Line() is { } loss) b.AppendLine($"- {loss}");
+        if (!string.IsNullOrWhiteSpace(Data)) b.AppendLine($"- {Data}");
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
         if (!string.IsNullOrWhiteSpace(Guidance))
@@ -296,6 +307,30 @@ public sealed record MissionSituation
 
         b.AppendLine().AppendLine(Continue);
         return b.ToString();
+    }
+
+    /// <summary>
+    /// THE DATA LINE. A function beside <see cref="SpendLine"/> so it can be read back without a
+    /// running loop, and so the three cases are visibly three: history, no history, and history the
+    /// ledger has stopped standing behind.
+    /// </summary>
+    public static string DataLine(DatasetRecord? set)
+    {
+        if (set is null)
+            return "Data: no dataset yet. Your owner collects history in TradeAgent, on the Settings page "
+                   + "under Market data; there is no command you can run that does it.";
+
+        if (set.State == DatasetState.REJECTED)
+            return $"Data: the {set.Pair} {set.Interval} dataset is REJECTED and serves no bars — "
+                   + $"{set.RejectedReason}. Your owner has to collect it again.";
+
+        var period = set.FirstBar is { } first && set.LastBar is { } last
+            ? $"{first.UtcDateTime:yyyy-MM-dd} → {last.UtcDateTime:yyyy-MM-dd}"
+            : "no bars";
+
+        return $"Data: {set.Pair} {set.Interval}, {period}, {set.Bars:N0} bars, {set.Gaps:N0} gaps — "
+               + "`trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
+               + "evidence and establish no fill.";
     }
 
     /// <summary>

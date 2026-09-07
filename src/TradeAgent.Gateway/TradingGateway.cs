@@ -24,6 +24,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly LogStore _log;
     readonly MaterialStore _materials;
     readonly FillStore _fills;
+    readonly DatasetStore _datasets;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -65,6 +66,14 @@ public sealed class TradingGateway : IAsyncDisposable
         try { RaiseMissionWake?.Invoke(id, kind, payload is null ? null : Json.Write(payload)); }
         catch (Exception ex) { _log.TryEngineering("Gateway", "mission_wake_failed", "warn", ex: ex); }
     }
+
+    /// <summary>
+    /// The dataset ledger — what market data this installation collected and where every byte of it
+    /// came from. READ ONLY from here: it is written by the app's own collector
+    /// (<c>BinanceDataService</c>), which the agent-facing pipe cannot reach, and this gateway
+    /// serves it over <c>data-list</c> and <c>data-bars</c> without ever writing a row.
+    /// </summary>
+    public DatasetStore Datasets => _datasets;
 
     /// <summary>
     /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
@@ -276,6 +285,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _log = new LogStore(db);
         _materials = new MaterialStore(db);
         _fills = new FillStore(db);
+        _datasets = new DatasetStore(db);
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
 

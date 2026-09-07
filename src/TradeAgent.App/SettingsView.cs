@@ -5,6 +5,8 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using TradeAgent.Provisioning;
 
@@ -61,6 +63,14 @@ sealed class SettingsPage
     readonly StackPanel _accountList = new() { Spacing = Theme.S3 };
     readonly Button _lookAgain;
     readonly List<(string Id, Border InUse, Button Choose)> _rows = [];
+
+    // ---- market data ----
+    readonly TextBox _dataPair;
+    readonly TextBlock _dataValue = Ui.Mono("—");
+    readonly TextBlock _dataNote = Ui.Muted("");
+    readonly Control _dataBusy = Ui.Busy("Collecting months from Binance's public archive.");
+    readonly Button _collect;
+    bool _collecting;
 
     // ---- updates ----
     readonly TextBlock _versionValue = Ui.Mono("—");
@@ -136,6 +146,33 @@ sealed class SettingsPage
             _accountList,
             Ui.With(_lookAgain, b => b.Margin = new Thickness(0, Theme.S2, 0, 0))));
 
+        // MARKET DATA. ONE press, not two, and that is the whole judgement on this card: fetching a
+        // public archive grants nothing, changes no limit, touches no order and cannot lose money.
+        // The two-press rule is for widening what the AI may do; this widens what it may READ, and
+        // making the owner confirm it twice would teach them to confirm things twice.
+        _dataPair = Ui.TextField(host.Gateway.Settings.MarketDataPair, "BTCUSDT");
+        _dataPair.Width = 180;
+        _dataPair.HorizontalAlignment = HorizontalAlignment.Left;
+        _collect = Ui.Secondary("Download 12 months", CollectDataAsync);
+        _collect.HorizontalAlignment = HorizontalAlignment.Left;
+        _dataBusy.IsVisible = false;
+        _dataNote.IsVisible = false;
+
+        var marketData = Ui.Section("Market data", Ui.Col(Theme.S4,
+            Ui.KeyValueLive("History TradeAgent holds", _dataValue),
+            _dataNote,
+            Ui.Divider(),
+            Ui.FieldRow("Pair", _dataPair, "Upper-case letters and digits, as Binance writes it — BTCUSDT, ETHUSDT."),
+            _collect,
+            _dataBusy,
+            Ui.Divider(),
+            Ui.Muted("TradeAgent downloads the twelve most recent complete months of 1-minute bars from Binance's " +
+                     "public archive and checks every file against the checksum Binance published beside it. A month " +
+                     "that has not been published is recorded as such; a file whose bytes do not match is thrown away."),
+            Ui.Micro("This is history to research with. It is not a trading connection, it does not decide what the AI " +
+                     "may trade — that is the allowlist on the Safety page — and it moves no money. The AI can read " +
+                     "this data and everything recorded about where it came from; it cannot collect, change or delete it.")));
+
         // Updates are here rather than on Checks because this is where somebody looks for "what
         // version am I on". Nothing on this card happens on its own: the automatic half is the
         // asking, and installing is two presses, because it closes the program holding the open
@@ -189,7 +226,7 @@ sealed class SettingsPage
         var bridge = Ui.Section("ATAS bridge", BridgeRepair.Body(_host));
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, bridge, updates)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, marketData, bridge, updates)));
         grid.Children.Add(Pages.Column(1, explain));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -198,6 +235,7 @@ sealed class SettingsPage
             grid));
 
         EnsureAccounts();
+        ApplyMarketData();
         ApplyUpdates();
     }
 
@@ -216,6 +254,87 @@ sealed class SettingsPage
             Ui.With(action, b => b.Margin = new Thickness(0, Theme.S2, 0, 0)));
     }
 
+    /// <summary>
+    /// The owner's one press. It saves the pair, fetches the twelve months, normalises what arrived
+    /// and records the provenance — all off the UI thread, because a twelve-month collection is
+    /// twenty-five megabytes over a domestic line and a frozen window is not a progress indicator.
+    ///
+    /// A failure is a sentence on this card, never an exception into the app: the archive is a
+    /// public bucket and being unable to reach it is an ordinary Tuesday.
+    /// </summary>
+    async Task CollectDataAsync()
+    {
+        if (_collecting) return;
+
+        var pair = (_dataPair.Text ?? "").Trim().ToUpperInvariant();
+        if (!BinanceArchive.IsPair(pair))
+        {
+            _dataNote.IsVisible = true;
+            _dataNote.Foreground = Theme.Caution;
+            _dataNote.Text = $"\u201c{pair}\u201d is not a pair TradeAgent will ask Binance for. Use upper-case letters " +
+                             "and digits, for example BTCUSDT.";
+            return;
+        }
+
+        _collecting = true;
+        _dataPair.Text = pair;
+        _host.Gateway.Update(s => s.MarketDataPair = pair);
+        ApplyMarketData();
+
+        try
+        {
+            var progress = new Progress<ProvisionProgress>(p => Dispatcher.UIThread.Post(() =>
+            {
+                _dataNote.IsVisible = true;
+                _dataNote.Foreground = Theme.TextMuted;
+                _dataNote.Text = p.Message;
+            }));
+
+            var result = await Task.Run(() => _host.MarketData.CollectAsync(pair, DateTimeOffset.UtcNow, progress));
+
+            _dataNote.IsVisible = true;
+            _dataNote.Foreground = Theme.TextMuted;
+            _dataNote.Text = result.Summary;
+        }
+        catch (Exception ex)
+        {
+            _dataNote.IsVisible = true;
+            _dataNote.Foreground = Theme.Caution;
+            _dataNote.Text = $"The months could not be collected: {ex.Message}";
+        }
+        finally
+        {
+            _collecting = false;
+            ApplyMarketData();
+        }
+    }
+
+    /// <summary>
+    /// What this installation holds, read back from the ledger and VERIFIED as it is read, so a
+    /// dataset whose files have changed under it says so here rather than being described as though
+    /// it were still what was measured.
+    /// </summary>
+    void ApplyMarketData()
+    {
+        _dataBusy.IsVisible = _collecting;
+        _collect.IsEnabled = !_collecting;
+        _dataPair.IsEnabled = !_collecting;
+
+        try
+        {
+            var newest = _host.Gateway.Datasets.All().FirstOrDefault();
+            if (newest is null) { _dataValue.Text = "none yet"; return; }
+
+            var set = _host.Gateway.Datasets.Checked(newest);
+            _dataValue.Text = set.State == DatasetState.REJECTED
+                ? $"{set.Pair} {set.Interval} — REJECTED, collect it again"
+                : $"{set.Pair} {set.Interval}, {set.Bars:N0} bars, "
+                  + $"{set.FirstBar?.UtcDateTime:yyyy-MM-dd} to {set.LastBar?.UtcDateTime:yyyy-MM-dd} UTC, "
+                  + $"{set.Gaps:N0} minutes missing";
+        }
+        catch (Exception) { _dataValue.Text = "could not be read"; }
+    }
+
     // ---- refresh -----------------------------------------------------------------------------
 
     public void Update(GatewayStatus status)
@@ -223,6 +342,7 @@ sealed class SettingsPage
         ApplyPlatform(status.ConnectorId, Ui.PlatformLabel(status));
         EnsureAccounts();
         ApplyAccountSelection();
+        ApplyMarketData();
         ApplyUpdates();
     }
 

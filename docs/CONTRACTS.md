@@ -216,6 +216,37 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   bridge says about order history. `by_day` buckets are UTC calendar days and the default window is
   the UTC day; `--since` takes an ISO-8601 date or instant and, present and unreadable, is refused
   rather than read as today; `--all` is everything the ledger holds and cannot be combined with it.
+- **`data-list` and `data-bars` are READS, and there is no write beside them.** They serve the
+  `dataset` and `dataset_file` tables (schema 7) and the normalised file those rows describe. Nothing
+  on this channel collects, normalises, rebuilds, rejects or deletes a dataset: the account owner
+  presses that in TradeAgent, on the Settings page under Market data. The asymmetry is the same one
+  `material` makes and is there for the same reason — an agent that could edit the provenance of the
+  data its strategies are judged on could report a clean twelve months over three with the holes
+  filled in. `data-list` carries, per dataset: source, pair, interval, version, `months_attempted`
+  against `months_present` (the coverage TARGET against what was actually got) and the months not
+  published by name; the normalised file's SHA-256, the bar count, the first and last bar, `gaps`
+  (minutes with no bar INSIDE the covered period, with `gap_runs` bounded at 50 and
+  `gap_runs_truncated` saying when the list was cut), `duplicates` dropped and `incomplete` (bars
+  excluded because their close time was after the archive was read); and per RAW archive file the
+  URL, the SHA-256 the vendor published, the SHA-256 TradeAgent computed, the byte count, the
+  download time and the timestamp `unit` the file turned out to be written in. Every dataset is
+  re-verified as it is listed — every raw file and the normalised file re-hashed against the row — and
+  a disagreement moves it to `state: REJECTED` permanently, with `rejected_reason` in words; a
+  REJECTED dataset serves no bars and is never re-normalised from the changed bytes.
+  **What the bars are NOT**: hypothesis evidence. They establish no fill, no queue position and no
+  intrabar ordering, so a result computed over them is a reason to test something and never a record
+  of a trade, and one venue's bars are not another venue's execution evidence (`docs/COUNCIL.md`,
+  "Data"). Nothing is filled in — a missing minute is missing and is counted. The timestamp unit is
+  decided per raw file **by the magnitude of the number**, never from the month it is named after:
+  Binance moved this column from milliseconds to microseconds in January 2025 and a twelve-month
+  collection straddles that, so a build that read the date would place a millisecond file dated after
+  the change in 1970. `data-bars` takes `pair` (required, upper-case letters and digits) and the
+  inclusive `from`/`to`, which take an ISO-8601 date or instant and, present and unreadable, are
+  refused rather than read as something else — the `pnl --since` rule. **At most 10 000 bars in one
+  call, and a bigger window is REFUSED naming that limit rather than truncated**, because an answer
+  quietly cut short is a different window from the one that was asked for and nothing in the reply
+  would say so. A pair with no dataset, and a REJECTED dataset, are both `MARKET_DATA_UNAVAILABLE`.
+  Both handlers are in the deadline table at **0** — no connector call at all.
 - `material-list` and `material-note` carry the workspace ledger. `material-note` is the only write on
   this channel that is not an order, and it writes to a table of **claims** — it cannot alter what the
   scanner observed, so it is not a route to editing the record of the agent's own work. A note whose
@@ -399,7 +430,7 @@ Three terms, all read off the live connector (`GatewayPipeServer.HandlerPaths`):
 |---|---|---|
 | `status` `schema` `accounts` `account` `instruments` `quote` | **2W** | an account resolution, then the read — `schema` builds the same status `status` does |
 | `positions` `position` `orders` `order` `executions` | **2W** | the account, then the read |
-| `connectors` `material-list` `material-note` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
+| `connectors` `material-list` `material-note` `data-list` `data-bars` | **0** | no connector call at all — in the table anyway, because a handler that is ABSENT is one nobody notices growing a call |
 | `pnl` | **3W** | the account, the positions, then the instruments. The fills cost nothing: they come out of the ledger. Both reads may FAIL without failing the handler — the report names what it could not include |
 | `buy` `sell` | **5W** | a cold placement: account → positions → quote → instruments → place |
 | `modify` | **6W** | one orders read that both resolves the target and takes it as it stands, then everything a cold placement does — account, positions, quote, instruments — and the modify. It is risk-checked on its resulting size, so it pays a placement's chain |
@@ -425,7 +456,7 @@ measured at `W = 300 ms`, `E = 900 ms`: `cancel-all` cost 917 ms against its 900
 separate now, so configuring the write-back window cannot configure away the bound.
 
 **The table is checked against the DISPATCHER, not against a list.** Four handled operations were
-missing from it — `schema`, `connectors`, `material-list` and `material-note` — and `schema` makes a
+missing from it — `schema`, `connectors`, `material-list`, `material-note`, `data-list` and `data-bars` — and `schema` makes a
 connector-backed call, so a hand-written check could not have found them: the omission and the check
 came from the same memory. Every operation in the protocol vocabulary is now driven over the real
 pipe, and an op the dispatcher has no arm for answers `unknown operation '…'`; everything else must

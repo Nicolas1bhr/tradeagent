@@ -130,7 +130,9 @@ public static class WorkspaceBuilder
         is anywhere near them: that an order goes out under a request id and comes back, that a replay
         of the same id does not place a second one, that a fill reaches the ledger, that
         `trade pnl --json` adds up, that a cancel and a close do what you meant. Rehearse all of that
-        here. For anything about a STRATEGY, use real data you have collected into `data/` instead.
+        here. For anything about a STRATEGY, use real history instead: `trade data list` says what the app
+        holds and where every byte of it came from, `trade data bars` serves the bars, and your own
+        working files go in `data/`.
 
         Which instruments you may touch is not this platform's business either: the allowlist below is
         the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing
@@ -216,7 +218,10 @@ public static class WorkspaceBuilder
 
     - read the market, the instruments you are allowed to touch, and what has moved;
     - write a strategy down in `strategies/` precisely enough that it could be executed by someone
-      who is not you, then test it against data in `data/` and record the result;
+      who is not you, then test it against real history — `trade data list` for what there is and how
+      complete it is, `trade data bars --pair P --from D --to D` for the bars, your workings in
+      `data/` — and record the result. Those bars are hypothesis evidence: they establish no fill, no
+      queue position and no intrabar ordering, so say what a result over them is and is not;
     - go back over `JOURNAL.md` and work out why the last thing failed;
     - build the tooling in `scripts/` that makes the next test cheaper than the last one.
 
@@ -374,7 +379,8 @@ public static class WorkspaceBuilder
       actually did and why. These two files are your memory; nothing else survives a fresh session
     - `research/` — market research, sources, working notes
     - `strategies/` — strategy descriptions and their code
-    - `data/` — data you collected or produced
+    - `data/` — your own workings. The APP's collected history is not here and is not yours to write:
+      read it with `trade data list` and `trade data bars`
     - `scripts/` — reusable tools you wrote
     - `logs/` — your own logs
     - `scratch/` — anything disposable

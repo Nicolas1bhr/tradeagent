@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Gateway;
 
@@ -251,6 +253,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.Connectors, TimeSpan.Zero, "the connector's own id and capabilities, in process"),
         new(Core.Ops.MaterialList, TimeSpan.Zero, "the workspace ledger, in process"),
         new(Core.Ops.MaterialNote, TimeSpan.Zero, "the workspace ledger, in process"),
+        new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
+        new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -916,6 +920,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Pnl         => await PnlFor(req, ct),
                 Core.Ops.MaterialList => MaterialList(req),
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
+                Core.Ops.DataList     => DataList(),
+                Core.Ops.DataBars     => DataBars(req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -1762,6 +1768,156 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
         int FeesUnknownFills,
         int Fills);
+
+    /// <summary>
+    /// WHAT MARKET DATA THIS INSTALLATION HOLDS, AND WHERE EVERY BYTE OF IT CAME FROM.
+    ///
+    /// A read, and only a read. The rows are written by the app's own collector; nothing on this
+    /// pipe collects, normalises, rejects or deletes one. Each dataset is re-verified as it is
+    /// listed — every raw archive file and the normalised file re-hashed against what the ledger
+    /// recorded — so a dataset whose bytes have changed under it is reported REJECTED here rather
+    /// than being described as though it were still the thing that was measured.
+    /// </summary>
+    object DataList()
+    {
+        var sets = gateway.Datasets.All().Select(gateway.Datasets.Checked).ToList();
+
+        return new DataListReply(
+            sets.Count,
+            "These are bars, and bars are hypothesis evidence: they establish no fill, no queue position "
+            + "and no intrabar ordering, so a result computed over them is a reason to test something, "
+            + "never a record of a trade. 'state' REJECTED means a file this ledger measured has changed "
+            + "on disk since; those bars are not served. 'months_present' against 'months_attempted' is "
+            + "the real coverage, 'gaps' counts minutes with no bar INSIDE the covered period and nothing "
+            + "was filled in, and 'incomplete' counts bars excluded because they had not closed when the "
+            + "archive was read.",
+            [.. sets.Select(Describe)]);
+    }
+
+    /// <summary>
+    /// The bars themselves, for one pair, between two instants.
+    ///
+    /// Refuses rather than truncates when the window holds more than the cap, and says what the cap
+    /// is: an answer quietly cut short is a different window from the one that was asked for, and
+    /// nothing in the reply would say so.
+    /// </summary>
+    object DataBars(IpcRequest req)
+    {
+        var pair = Require(req, "pair").ToUpperInvariant();
+        if (!BinanceArchive.IsPair(pair))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{pair}' is not a pair this build holds data for. Use 'trade data list' to see what there is.");
+
+        var from = BarInstant(req, "from");
+        var to = BarInstant(req, "to");
+        if (from is { } lo && to is { } hi && lo > hi)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'from' ({lo:O}) is after 'to' ({hi:O}), which is a window with nothing in it.");
+
+        var newest = gateway.Datasets.Newest(pair)
+            ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"TradeAgent holds no {pair} data. The account owner collects it in TradeAgent, on the "
+                + "Settings page under Market data; there is no command here that does it.");
+
+        var set = gateway.Datasets.Checked(newest);
+        if (set.State == DatasetState.REJECTED)
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"The {pair} dataset is REJECTED and its bars are not served: {set.RejectedReason}. "
+                + "The account owner collects the months again in TradeAgent.");
+
+        BarWindow window;
+        try { window = DatasetReader.Read(set.NormalisedPath, from, to); }
+        catch (IOException ex)
+        {
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"The {pair} dataset file could not be read: {ex.Message}");
+        }
+
+        if (window.OverCap)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"That window holds more than {DatasetReader.MaxBars} bars, which is the most one call may "
+                + $"have. Ask for a shorter period with --from and --to; the dataset covers "
+                + $"{set.FirstBar:yyyy-MM-dd HH:mm} to {set.LastBar:yyyy-MM-dd HH:mm} UTC and "
+                + $"{DatasetReader.MaxBars} one-minute bars is about {DatasetReader.MaxBars / 1440} days.");
+
+        return new DataBarsReply(
+            set.Pair, set.Interval, set.Version, set.Source, set.Id,
+            "Closed bars in UTC, ascending, nothing filled in. They are hypothesis evidence and establish "
+            + "no fill, no queue position and no intrabar ordering. A minute that is missing is missing: "
+            + "'gaps_in_dataset' counts them across the whole dataset and 'trade data list' lists where "
+            + "they are.",
+            from, to, window.Bars.Count, set.Gaps, set.Incomplete,
+            [.. window.Bars.Select(b => new DataBarsReplyBar(b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume))]);
+    }
+
+    /// <summary>
+    /// A date on a data request. Absent is null; PRESENT AND UNREADABLE IS A REFUSAL, the same rule
+    /// `pnl --since` follows and for the same reason — a window that quietly became a different
+    /// window is a different answer.
+    /// </summary>
+    static DateTimeOffset? BarInstant(IpcRequest req, string key)
+    {
+        if (req.Args is null || !req.Args.ContainsKey(key)) return null;
+        var raw = req.Str(key);
+
+        if (!DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{key}' is not a date this build can read: {raw}. Send an ISO-8601 instant or date, for "
+                + "example 2026-08-01 or 2026-08-01T13:00:00Z. Reading it as anything else would answer a "
+                + "different question from the one you asked.");
+
+        return parsed;
+    }
+
+    static DataListReplyItem Describe(DatasetRecord set) => new(
+        set.Id, set.Source, set.Pair, set.Interval, set.Version, set.State.ToString(), set.RejectedReason,
+        set.MonthsAttempted, set.MonthsPresent, set.MonthsNotPublished,
+        set.NormalisedSha256, set.Bars, set.FirstBar, set.LastBar,
+        set.Gaps, [.. set.GapRuns.Select(g => new DataListReplyGap(g.From, g.To, g.Minutes))],
+        set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable, set.AcceptedAt,
+        [.. set.Files.Select(f => new DataListReplyFile(f.Month, f.Url, f.PublishedSha256,
+            f.ComputedSha256, f.Bytes, f.DownloadedAt, f.Unit.ToString()))]);
+
+    /// <summary>
+    /// DECLARED TYPES, FOR THE REASON <see cref="PnlReply"/> IS ONE. <c>Json.Options</c> drops a null
+    /// field from an anonymous object, and an absent <c>rejected_reason</c> reads as a field this
+    /// build does not have rather than as "there is no reason because nothing is wrong".
+    /// </summary>
+    sealed record DataListReply(int Count, string Note, IReadOnlyList<DataListReplyItem> Datasets);
+
+    /// <inheritdoc cref="DataListReply"/>
+    sealed record DataListReplyItem(
+        long Id, string Source, string Pair, string Interval, string Version, string State,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? RejectedReason,
+        int MonthsAttempted, int MonthsPresent, IReadOnlyList<string> MonthsNotPublished,
+        string NormalisedSha256, int Bars,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? FirstBar,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastBar,
+        int Gaps, IReadOnlyList<DataListReplyGap> GapRuns, bool GapRunsTruncated,
+        int Duplicates, int Incomplete, int Unreadable, DateTimeOffset AcceptedAt,
+        IReadOnlyList<DataListReplyFile> Files);
+
+    /// <inheritdoc cref="DataListReply"/>
+    sealed record DataListReplyGap(DateTimeOffset From, DateTimeOffset To, int Minutes);
+
+    /// <inheritdoc cref="DataListReply"/>
+    sealed record DataListReplyFile(
+        string Month, string Url, string PublishedSha256, string ComputedSha256, long Bytes,
+        DateTimeOffset DownloadedAt, string Unit);
+
+    /// <inheritdoc cref="DataListReply"/>
+    sealed record DataBarsReply(
+        string Pair, string Interval, string Version, string Source, long DatasetId, string Note,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
+        int Count, int GapsInDataset, int IncompleteExcluded,
+        IReadOnlyList<DataBarsReplyBar> Bars);
+
+    /// <inheritdoc cref="DataListReply"/>
+    sealed record DataBarsReplyBar(
+        DateTimeOffset OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume);
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
     object MaterialList(IpcRequest req)

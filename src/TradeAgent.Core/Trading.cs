@@ -190,6 +190,16 @@ public sealed class TradeAgentSettings
     public string Guidance { get; set; } = "";
 
     /// <summary>
+    /// WHICH PAIR THE OWNER COLLECTS HISTORY FOR, on the Settings page under Market data.
+    ///
+    /// It is NOT a permission and not an instrument allowlist: collecting a public archive grants
+    /// nothing, changes no limit and touches no order, which is why the press beside it is ONE press
+    /// where widening risk is two. What the AI may TRADE is <see cref="RiskPolicy.InstrumentAllowlist"/>
+    /// and has nothing to do with this.
+    /// </summary>
+    public string MarketDataPair { get; set; } = "BTCUSDT";
+
+    /// <summary>
     /// Turns resumed into one agent CLI session before a fresh one starts. Resuming for ever grows
     /// one context until the runtime refuses it or prices it absurdly; nothing is lost by starting
     /// again, because the AI's memory is its files and every turn is told so.

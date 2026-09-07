@@ -243,6 +243,17 @@ public sealed class AppHost : IAsyncDisposable
     public UpdateService Updates { get; } = new(Versions.App);
 
     /// <summary>
+    /// The market-data collector. IN-PROCESS ONLY, like every other control on this object: it is
+    /// reachable from the app's own window and from nothing on the agent-facing pipe. The AI reads
+    /// what it produced through <c>data-list</c> and <c>data-bars</c> and has no way to ask for a
+    /// collection, a rebuild or a deletion.
+    /// </summary>
+    public BinanceDataService MarketData => _marketData
+        ?? throw new InvalidOperationException("the market data service is not available before startup");
+
+    BinanceDataService? _marketData;
+
+    /// <summary>
     /// Whether TradeAgent asks GitHub about new versions on its own.
     ///
     /// Off means never touching the network for this; it does not mean never updating. An update is
@@ -290,6 +301,7 @@ public sealed class AppHost : IAsyncDisposable
             Connector = chosen == "atas" ? new AtasConnector() : new FakeConnector();
 
             Gateway = new TradingGateway(_db, Connector, Health);
+            _marketData = new BinanceDataService(_db);
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
@@ -753,8 +765,24 @@ public sealed class AppHost : IAsyncDisposable
                 NewMaterial = NewInbox(since),
                 Guidance = host.Gateway.Settings.Guidance,
                 Spend = host.SpendToday,
-                Loss = loss
+                Loss = loss,
+                Data = MissionSituation.DataLine(NewestDataset())
             };
+        }
+
+        /// <summary>
+        /// The newest dataset this installation holds, verified as it is read, or null when there
+        /// is none. A failure to read the ledger reads as "no dataset yet" rather than as an
+        /// exception out of the middle of building a turn's message.
+        /// </summary>
+        DatasetRecord? NewestDataset()
+        {
+            try
+            {
+                var newest = host.Gateway.Datasets.All().FirstOrDefault();
+                return newest is null ? null : host.Gateway.Datasets.Checked(newest);
+            }
+            catch (Exception) { return null; }
         }
 
         /// <summary>

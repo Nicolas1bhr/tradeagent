@@ -204,7 +204,9 @@ public class MissionInstructionsTests
         // And what it IS for, so "not a market" does not read as "not worth working with".
         Assert.Contains("mechanics", text);
         Assert.Contains("trade pnl --json", text);
-        Assert.Contains("use real data you have collected into `data/` instead", text);
+        Assert.Contains("For anything about a STRATEGY, use real history instead", text);
+        Assert.Contains("`trade data list` says what the app", text);
+        Assert.Contains("`trade data bars` serves the bars", text);
 
         // The allowlist stays the owner's, on the page where they set it.
         Assert.Contains("the allowlist below is", text);
@@ -252,7 +254,9 @@ public class MissionInstructionsTests
         "is anywhere near them: that an order goes out under a request id and comes back, that a replay",
         "of the same id does not place a second one, that a fill reaches the ledger, that",
         "`trade pnl --json` adds up, that a cancel and a close do what you meant. Rehearse all of that",
-        "here. For anything about a STRATEGY, use real data you have collected into `data/` instead.",
+        "here. For anything about a STRATEGY, use real history instead: `trade data list` says what the app",
+        "holds and where every byte of it came from, `trade data bars` serves the bars, and your own",
+        "working files go in `data/`.",
         "Which instruments you may touch is not this platform's business either: the allowlist below is",
         "the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing",
         "that decides what you may trade."

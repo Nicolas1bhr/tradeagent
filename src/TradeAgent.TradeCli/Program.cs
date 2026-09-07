@@ -178,6 +178,20 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         case "cancel":
             a["id"] = pos.ElementAtOrDefault(0) ?? "";
             return (Ops.Cancel, a);
+        // `trade data list` and `trade data bars --pair BTCUSDT --from 2026-08-01 --to 2026-08-02`.
+        // Both are READS. There is deliberately no `trade data collect`: the account owner presses
+        // that in TradeAgent, and this CLI is the agent's side of the fence.
+        case "data":
+        {
+            var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
+            if (sub is "list" or "ls") return (Ops.DataList, a);
+            if (sub is not "bars") return (null, a);
+
+            a["pair"] = flags.GetValueOrDefault("pair") ?? pos.ElementAtOrDefault(1) ?? "";
+            Opt("from"); Opt("to");
+            return (Ops.DataBars, a);
+        }
+
         case "material":
         {
             var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
@@ -231,6 +245,9 @@ static void Usage()
       trade modify <id> [--quantity Q] [--limit P] [--stop P]
       trade cancel <id> | trade cancel-all
       trade close <symbol> | trade close-all
+
+      trade data list                                what history you have, and where it came from
+      trade data bars --pair BTCUSDT [--from D] [--to D]   the bars themselves, at most 10000 a call
 
       trade material list [--origin inbox|agent]     what the owner gave you, and what you made
       trade material ran <sha> <what it did>         you executed it

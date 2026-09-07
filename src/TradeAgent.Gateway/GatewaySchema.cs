@@ -44,6 +44,13 @@ public static class GatewaySchema
         // execution are the reason `pnl` is worth reading at all; the coverage sentence is the reason
         // it is not a promise about everything that ever happened on the account.
         fill_ledger = "TradeAgent keeps its own record of every execution: one row per fill, written from the platform's execution stream AND from a read of its execution list at every (re)connect and every five minutes, keyed so a fill both sources report is one row and never two. Rows are never updated or deleted, and each carries the request_id and agent session that asked for it, so your own fills are separable from another agent's. It is what 'pnl' is computed from. What it does NOT claim: coverage begins when TradeAgent first read your platform's executions on this installation — on ATAS that is when the bridge started, because the platform serves the strategy's in-session trades — so anything before that is in the ledger only if the platform reported it at that first read. 'pnl' says so in 'incomplete', along with any read of the execution list that failed.",
+        // WHAT THE MARKET DATA IS NOT, said where an agent reads the surface rather than in the one
+        // op description it might skip. Bars support explicitly limited fill simulations
+        // (docs/COUNCIL.md, "Data"): they establish no actual fill, no queue position and no
+        // intrabar ordering, and a backtest over them is a reason to test something rather than a
+        // record of a trade. The provenance half matters as much: coverage is what was collected,
+        // not what was asked for, and a minute with no bar is a minute with no bar.
+        market_data = "TradeAgent can hold historical bars the account owner collected — today Binance's public monthly spot archives, 1-minute closed bars in UTC. 'data-list' says what there is and where every byte of it came from: the URL of every raw archive file, the SHA-256 Binance published for it, the SHA-256 TradeAgent computed, and the counts that say what the file does NOT claim. 'data-bars' serves the bars themselves. What they are NOT: bars are hypothesis evidence. They establish no fill, no queue position and no intrabar ordering, so a result computed over them is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. Nothing is filled in: 'gaps' counts minutes with no bar inside the covered period, 'duplicates' counts rows dropped, and 'incomplete' counts bars excluded because they had not closed when the archive was read. 'months_present' against 'months_attempted' is the real coverage. A dataset whose recorded hashes no longer match the files on disk reads REJECTED and serves no bars. There is no operation here that collects, normalises, deletes or accepts data: the account owner presses that in TradeAgent, and the ledger is a measurement you cannot edit.",
         trading_modes = Enum.GetNames<TradingMode>(),
         current = status,
         operations = Ops(),
@@ -90,6 +97,31 @@ public static class GatewaySchema
             [
                 new("since", "string", false, "ISO-8601 date or instant, e.g. 2026-09-06 or 2026-09-06T13:00:00Z. Present and unreadable is refused, never read as today."),
                 new("all", "bool", false, "Everything the ledger holds. true or false only; cannot be combined with since.")
+            ]),
+
+        new(Core.Ops.DataList, "trade data list", false,
+            "Historical market data this installation holds, with its whole provenance: source, pair, interval, "
+            + "version, the months attempted and the months actually present, and per raw archive file the URL, "
+            + "the SHA-256 the vendor published, the SHA-256 TradeAgent computed, the byte count, when it was "
+            + "downloaded and which unit its timestamps were written in. Then the normalised file's own SHA-256 "
+            + "and the counts that say what it is not: bars, first and last bar, gaps (minutes with no bar inside "
+            + "the covered period, listed in gap_runs and never filled in), duplicates dropped, and bars excluded "
+            + "because they had not closed when the archive was read. 'state' is ACCEPTED or REJECTED; REJECTED "
+            + "means a file this ledger measured has changed on disk since, and those bars are not served. You "
+            + "cannot write any of this — the account owner collects data in TradeAgent.", []),
+        new(Core.Ops.DataBars, "trade data bars --pair P [--from D] [--to D]", false,
+            "Closed bars from that data, ascending, in UTC, with nothing filled in. They are hypothesis evidence: "
+            + "they establish no fill, no queue position and no intrabar ordering, so what you compute over them "
+            + $"is a reason to test something and never a record of a trade. At most {Core.Data.DatasetReader.MaxBars} "
+            + "bars in one call — a longer window is REFUSED naming that limit rather than truncated, because an "
+            + "answer quietly cut short is a different window from the one you asked for. 'from' and 'to' take an "
+            + "ISO-8601 date or instant and are inclusive; present and unreadable is refused, never read as "
+            + "something else. A pair with no dataset, and a dataset whose recorded hashes no longer match the "
+            + "disk, are both refused with MARKET_DATA_UNAVAILABLE.",
+            [
+                new("pair", "string", true, "Which pair, e.g. BTCUSDT. Upper-case letters and digits only."),
+                new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused.")
             ]),
 
         new(Core.Ops.MaterialList, "trade material list", false,
