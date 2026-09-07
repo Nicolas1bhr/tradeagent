@@ -4789,3 +4789,44 @@ renumber and the report on the gated tip), Release: build → 0 warnings, 0 erro
 **NOT VERIFIED:** the Settings press on a screen; the twelve-month collection against the vendor — one month only. The
 `U-wakes` test found red within ten minutes of local midnight is not this unit's (fixed with `U-council-thin`). **NOT done:**
 no box, no ATAS, no order; REST catch-up for recent bars; other venues.
+
+## 2026-09-08 — U-council-thin landed: two roles run serially by the app, handing each other work through a relay that cannot lose or double it
+
+The first visible slice of `docs/COUNCIL.md`, by one fresh builder on `docs/briefs/U-council-thin.md` (killed by a usage
+limit mid-way through item 2), a second re-briefed from the branch (kept its six uncommitted files, verified item 1 itself,
+built items 2–4), and a rebase fixer (`docs/briefs/U-council-thin-rebase.md`: over the landed dataset unit, the council's
+tables renumbered to schema 9). Merge `96f29a6`, 6 commits, 30 files, +2760/−116.
+
+- **Roles as data and folders:** `operations` (the chair; the existing `workspace/agent` is its home, `PLAN.md` and
+  `JOURNAL.md` kept) and `research` (`workspace/research`); `WorkspaceContext.Role`; `Build(role)` writes each role its own
+  mission (shared rules, then a role section); `role` on `ai_attempt` and `mission_event`; a model and a share of the
+  day's cap per role (defaults `gpt-5.6-sol`, 50/50), two Safety rows. RED (`Build` reverted to one home): `Expected:
+  ···"…/research" / Actual: ···"…/agent"`; mutant (`RoleSection` switching on the wrong role) → `Not found: "## Your role:
+  the Research Director"`.
+- **One scheduler, serial:** the next due event across roles, one conversation per role, one process at a time, both on
+  `AgentPresence.Shared`; admission per role AND global; the card names the active role. RED (the loop reverted to
+  `events.Due` + one conversation): `the chair's turn consumed the Research Director's wake`; mutant (the share dropped
+  from `AdmitsAnotherTurn`) → `Expected: False / Actual: True`. Peak concurrent turns measured, not assumed: 1.
+- **The relay, one `Database.Write`:** a Research turn's `out/report-<attempt>.md` (≤ 20 lines, a longer one rejected) →
+  a `publication` row (id = sha256 of the content, role, attempt, revision, recipients, classification), a `delivery` per
+  recipient and ONE uniquely keyed Operations `task:` event, then the copy into `in/`; the agenda goes back as `brief`
+  events; on start and after every turn the app reconciles disk against the tables. RED (the property in `docs/COUNCIL.md`,
+  `CouncilRelay.Run` a no-op): all three boundaries red, `No exception was thrown / Expected: typeof(IOException)`; mutant
+  (the task id from the attempt, not the hash) → `Assert.Single() Failure: The collection contained 2 items`, 5 of 7 red.
+- **The Situation per role:** Operations sees the owner's words FIRST, then its deliveries; Research its briefs; both their
+  role, share remaining and wake reasons. RED (the deliveries block removed): `the chair was not told what the report
+  said`; mutant (deliveries above the owner's words) → `another agent's report was put above the owner's words`.
+- **Judged on the way:** the killed builder's six files kept whole and finished (`IMissionHost.Relay(role, attempt)`, so a
+  publication records its attempt); the `U-wakes` test red near local midnight pinned to a midday clock, assertion unchanged.
+
+**Verified by running (the second builder, then the rebase fixer, quoted; then the manager's gate):** builder's gate at
+`119990c`, Release: 0 warnings, 0 errors; Unit 529 + Fault 277 + Integration 615 = 1421 passed, 0 failed, 1 skipped; 21
+touched classes 3× → 186/186 each run; names vs `main` → 19 added, 0 removed. Fixer's gate at `e2eda82`: 0 warnings, 0 errors; Unit 558 + Fault 277 + Integration 621 = 1456 passed, 0 failed, 1 skipped; 26 classes 3× → 194/194 each; names 0 removed, 17 added; four conflicts (`Database.cs`, `Versioning.cs`, `Paths.cs`, `MissionEventTests.cs`) resolved inside the rebase, one commit subject's "schema 8" amended to 9 on an identical tree.
+Manager's gate at `08ac992`, Release: build → 0 warnings, 0 errors; suite → 558 + 277 + 621 = 1456 passed,
+0 failed, 1 skipped; names vs `main` → 0 removed, 19 added (sets 1224 → 1243; `[Fact]`/`[Theory]` 1179 → 1196); scan clean; no trailers; `rev-list --count` → 0;
+CI at `96f29a6`: run 34169374097 in flight when this section was written (the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the two roles on a screen — no UI run; no real CLI turn under either role. **NOT done:** no grant table
+beyond `publication.recipients` and `classification` — grants are enforced by nothing yet (`U-api-worker`); no leases
+(`U-council-concurrent`); no daily report or the dispositions `delegated`/`blocked`/`superseded` (`U-report`); no snapshot
+id or freshness stamp on the Situation; no box, no ATAS, no order.
