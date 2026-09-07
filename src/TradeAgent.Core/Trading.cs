@@ -354,6 +354,28 @@ public sealed record OwnerPrice(decimal InputPerMillion, decimal OutputPerMillio
 }
 
 /// <summary>
+/// WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, in tokens.
+///
+/// A reservation, not a prediction. Nothing can know what a turn will use until it has used it, and
+/// the cheapest wrong answer is the one that stops the AI a little early: an over-reservation costs
+/// a turn the owner gets back at midnight, and an under-reservation is a ceiling that can be walked
+/// past — which is the failure this whole unit exists to close.
+///
+/// The defaults are an upper bound on the runtime this build recommends rather than an average of
+/// anything. Codex 0.153.4 refuses a request over its model's context window, so a turn cannot
+/// consume unbounded input; 1,200,000 is above the largest current context and 20,000 output covers
+/// a turn that writes at length with reasoning inside it.
+/// </summary>
+public sealed record TurnAllowance(long InputTokens, long OutputTokens)
+{
+    public static readonly TurnAllowance Default = new(1_200_000, 20_000);
+
+    /// <summary>Zero or negative reads as the default: a settings row of zeroes is not an allowance of nothing.</summary>
+    public static TurnAllowance From(long input, long output) =>
+        new(input > 0 ? input : Default.InputTokens, output > 0 ? output : Default.OutputTokens);
+}
+
+/// <summary>
 /// WHAT THE AI HAS COST TODAY, MEASURED AGAINST WHAT IT IS ALLOWED TO COST.
 ///
 /// In <c>Core</c> rather than beside the meter that fills it in, because three layers that cannot
@@ -374,6 +396,20 @@ public sealed record AiSpendToday
 
     /// <summary>What today's PRICED turns came to. Turns nobody could price are not in it.</summary>
     public decimal Spent { get; init; }
+
+    /// <summary>
+    /// WHAT IS COMMITTED TODAY BUT NOT YET RESOLVED — turns that were launched and whose usage has
+    /// not come back. It is beside <see cref="Spent"/> rather than inside it because the two are
+    /// different facts: one is what the vendor has reported, the other is what has been asked of
+    /// them. Both are the owner's money, and only the first can ever be a receipt.
+    /// </summary>
+    public decimal Reserved { get; init; }
+
+    /// <summary>
+    /// What one more turn would commit, at the model TradeAgent is asking for. Zero where nothing
+    /// can price a turn at all — and then the ceiling holds nothing back, which the card says.
+    /// </summary>
+    public decimal NextTurnReservation { get; init; }
 
     public decimal Cap { get; init; }
 

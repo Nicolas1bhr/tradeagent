@@ -118,6 +118,20 @@ public interface IMissionHost
     /// owns the words and the log.
     /// </summary>
     void SpendCapReached(AiSpendToday spend) { }
+
+    /// <summary>
+    /// OPENS THE DURABLE RECORD OF THE TURN ABOUT TO RUN AND COMMITS ITS COST — called by the loop
+    /// immediately before the CLI is started, and for no other reason.
+    ///
+    /// The order is the property. A record written after the turn prices a killed turn at nothing:
+    /// the vendor did the work and billed for it, the app died before the usage event arrived, and
+    /// the day's total never moved — so the allowance came back every time the AI was killed, and
+    /// again at midnight. Written first, it cannot.
+    ///
+    /// A default of nothing, so a host with no meter behind it — a test, a build with no AI prepared
+    /// — keeps turning, exactly as <see cref="Spend"/> defaults to unmetered.
+    /// </summary>
+    void BeginTurn(string prompt) { }
 }
 
 /// <summary>
@@ -500,14 +514,25 @@ public sealed class MissionLoop
         }
 
         var situation = (await _host.SituationAsync(ct)) with { OwnerMessages = conversation.TakeTyped() };
+        var prompt = situation.Text();
 
         lock (_gate) { _working = true; _nextTurnAt = null; }
         Changed?.Invoke();
 
+        // ---- the record and the commitment, BEFORE the process ------------------------------------
+        // The one line in this method whose position is the whole of what it does. Everything above
+        // is preparation and nothing has been spent yet; the next statement starts a program that
+        // bills somebody. A record written on the far side of it is a record that a killed turn
+        // never gets, and a turn nobody recorded is a turn the daily ceiling never sees.
+        //
+        // It is handed the SAME string that is sent, so the hash on the row is of the prompt that
+        // actually entered the model request rather than of a second rendering of the same facts.
+        _host.BeginTurn(prompt);
+
         AgentTurnEnded? ended = null;
         void Watch(AgentTurnEnded e) => ended = e;
         conversation.TurnEnded += Watch;
-        try { await conversation.SendMissionAsync(situation.Text(), ct); }
+        try { await conversation.SendMissionAsync(prompt, ct); }
         // A turn that threw its way out — cancelled, or a runtime that will not start — must not
         // leave the card reading "working" for ever over a turn that is not happening.
         finally { conversation.TurnEnded -= Watch; lock (_gate) _working = false; }

@@ -287,6 +287,63 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','5') ON CONFLICT(key) DO UPDATE SET value='5';");
         }
 
+        if (have < 6)
+        {
+            // THE LAUNCH LEDGER. One row per run of the agent CLI, written BEFORE the process starts.
+            //
+            // What it replaces is a pair of kv counters that were written when a turn FINISHED. That
+            // arrangement priced a killed turn at nothing: the child was started, the tokens were
+            // consumed and billed by the vendor, and because the app died before it saw the usage
+            // event the day's total never moved. An AI that is killed and restarted therefore got its
+            // allowance back every time, and the daily ceiling — the only thing bounding an agent
+            // that works non-stop — was a check on completed spending rather than a cap. Measured on
+            // 2026-09-07: 5.07 USD against a 5 USD ceiling, four turns.
+            //
+            // So the row is written first and carries `reserved_cost`, an upper bound committed
+            // before the launch. `state` is the whole of the mechanism: LAUNCHED means the turn is
+            // out there and its reservation is still committed; ENDED means the usage came back and
+            // `cost` is what it actually came to; LOST means a meter opened this database while the
+            // row was still LAUNCHED — nobody will ever report that turn's usage — and the
+            // reservation becomes the cost rather than being released.
+            //
+            // MEASUREMENT AND CLAIM STAY APART, as they do between `material` and `material_note`:
+            // every column here is written by the app, from the CLI's own event stream or from what
+            // the app itself put on the command line. The agent has no verb that reaches this table.
+            //
+            // `input_hash` and `policy_version` are round 4 of docs/COUNCIL.md: which prompt entered
+            // a model request, and under which grant policy, cannot be reconstructed afterwards.
+            // `effective_model` is NULL when the runtime never named one — which is codex 0.153.4's
+            // behaviour even when TradeAgent put -m on the command line — and NULL there is what
+            // makes a priced row an estimate rather than a bill.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS ai_attempt(
+              id                     TEXT PRIMARY KEY,
+              started_at             TEXT NOT NULL,
+              runtime                TEXT,
+              requested_model        TEXT,
+              pricing_basis          TEXT,
+              reserved_cost          TEXT NOT NULL DEFAULT '0',
+              state                  TEXT NOT NULL,
+              ended_at               TEXT,
+              exit_code              INTEGER,
+              input_tokens           INTEGER,
+              cached_input_tokens    INTEGER,
+              cache_write_input_tokens INTEGER,
+              output_tokens          INTEGER,
+              reasoning_output_tokens INTEGER,
+              effective_model        TEXT,
+              cost                   TEXT,
+              unpriced_reason        TEXT,
+              context                TEXT,
+              policy_version         TEXT,
+              input_hash             TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_attempt_started ON ai_attempt(started_at);
+            CREATE INDEX IF NOT EXISTS ix_attempt_state ON ai_attempt(state);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','6') ON CONFLICT(key) DO UPDATE SET value='6';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

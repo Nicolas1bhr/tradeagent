@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -189,37 +191,49 @@ public sealed record TurnRecord
 /// </summary>
 public sealed class TurnMeter
 {
-    public const string DayKey = "ai_meter_day";
-    public const string CostKey = "ai_meter_cost";
-    public const string TurnsKey = "ai_meter_turns";
-    public const string UnpricedKey = "ai_meter_unpriced";
-
-    /// <summary>Turns today charged at the highest list price because nothing named a model.</summary>
-    public const string EstimatedKey = "ai_meter_estimated";
-
     /// <summary>The per-turn detail, in the app's state directory. Appended to, never rewritten.</summary>
     public static string RecordPath => Path.Combine(Paths.State, "agent-turns.jsonl");
 
     readonly Database _db;
+    readonly AiAttemptStore _attempts;
     readonly Func<string?> _session;
     readonly Func<string?> _runtimeId;
+    readonly Func<string?> _model;
     readonly Func<OwnerPrice?> _owner;
     readonly Func<decimal> _cap;
+    readonly Func<TurnAllowance> _allowance;
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
     readonly Lock _gate = new();
 
+    /// <summary>The attempt this meter opened and has not closed. At most one: turns are serial.</summary>
+    string? _open;
+
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
-        Func<OwnerPrice?>? owner = null)
+        Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null)
     {
         _db = db;
+        _attempts = new AiAttemptStore(db);
         _cap = cap;
         _session = session ?? (() => null);
         _runtimeId = runtimeId ?? (() => null);
+        _model = model ?? (() => null);
         _owner = owner ?? (() => null);
+        _allowance = allowance ?? (() => TurnAllowance.Default);
         _now = now ?? (() => DateTimeOffset.Now);
         _path = recordPath ?? RecordPath;
+
+        // EVERY ATTEMPT LEFT OPEN IS LOST HERE, AND KEEPS ITS RESERVATION AS ITS COST.
+        //
+        // This is the line that makes the ceiling a cap. A meter opening this database is either the
+        // app starting or a second meter being built over the same file; in both cases a row still
+        // LAUNCHED belongs to a process that is gone, and nobody will ever report what that turn
+        // used. The vendor has already done the work and billed for it. Releasing the reservation
+        // here would mean the allowance came back every time the AI was killed mid-turn — which is
+        // exactly what happened before this table existed, and what nothing after it may do.
+        try { _attempts.LoseOpen(_now()); }
+        catch (Exception) { /* a database that cannot be written must not stop the app starting */ }
     }
 
     /// <summary>
@@ -264,12 +278,106 @@ public sealed class TurnMeter
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
-        catch (Exception) { /* the totals below are what the cap reads */ }
+        catch (Exception) { /* the row below is what the cap reads */ }
 
-        try { AddToToday(price.Cost, price.Estimated is not null); }
+        try { Close(ended, price); }
         catch (Exception) { /* a database that cannot be written must not end the turn */ }
 
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// OPENS THE DURABLE RECORD OF THE TURN ABOUT TO RUN, AND COMMITS ITS COST — before the process
+    /// starts, which is the only moment at which committing it means anything.
+    ///
+    /// <paramref name="prompt"/> is hashed, never stored: it is the Situation the app wrote, and
+    /// which prompt entered a model request is one of the things round 4 of <c>docs/COUNCIL.md</c>
+    /// named as unrecoverable afterwards — while the prompt itself carries the owner's own words and
+    /// belongs in no table.
+    ///
+    /// Returns the attempt id, or null when nothing could be written. Null is not a refusal: the
+    /// admission gate is read separately from <see cref="Today"/>, and a turn that could not be
+    /// recorded is a turn whose cost the ceiling will not see, which the card already says out loud.
+    /// </summary>
+    public string? Begin(string prompt)
+    {
+        var reservation = Reservation();
+        var attempt = new AiAttempt
+        {
+            Id = $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
+            StartedAt = _now(),
+            Runtime = Safe(_runtimeId),
+            RequestedModel = Safe(_model),
+            PricingBasis = reservation.Basis,
+            ReservedCost = reservation.Cost ?? 0m,
+            State = AiAttemptState.LAUNCHED,
+            PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture),
+            InputHash = HashOf(prompt)
+        };
+
+        try
+        {
+            lock (_gate)
+            {
+                _attempts.Begin(attempt);
+                _open = attempt.Id;
+            }
+            Changed?.Invoke();
+            return attempt.Id;
+        }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WHAT THE NEXT TURN WOULD COMMIT: the allowance, priced at the model TradeAgent is asking for.
+    ///
+    /// The requested model is handed to the price list as though the runtime had named it, because
+    /// TradeAgent put it on the command line itself — that is a stronger claim than the "dearest in
+    /// the catalogue" fallback, which is what a runtime whose model this software cannot choose
+    /// still gets. A rate nobody can supply reserves nothing, and then the ceiling holds nothing
+    /// back, which the card and the Situation both say rather than hide.
+    /// </summary>
+    public TurnPrice Reservation()
+    {
+        try
+        {
+            var allowance = _allowance();
+            var probe = new TurnUsage(allowance.InputTokens, 0, 0, allowance.OutputTokens, 0, Safe(_model));
+            return CostCatalog.Price(probe, _runtimeId(), owner: Owner());
+        }
+        catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
+    }
+
+    /// <summary>
+    /// Completes this meter's open attempt, or writes a finished row where nothing opened one — the
+    /// owner's own typed turn, which runs through no admission gate and therefore reserves nothing.
+    /// A row a restart already declared LOST is left exactly as it is.
+    /// </summary>
+    void Close(AgentTurnEnded ended, TurnPrice price)
+    {
+        string? id;
+        lock (_gate) { id = _open; _open = null; }
+
+        if (id is null)
+        {
+            var opened = new AiAttempt
+            {
+                Id = $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
+                StartedAt = ended.At - ended.Duration,
+                Runtime = Safe(_runtimeId),
+                RequestedModel = Safe(_model),
+                PricingBasis = price.Basis,
+                ReservedCost = 0m,
+                PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture)
+            };
+            _attempts.Begin(opened);
+            id = opened.Id;
+        }
+
+        _attempts.End(id, ended.ExitCode, ended.At,
+            ended.Usage?.InputTokens, ended.Usage?.CachedInputTokens, ended.Usage?.CacheWriteInputTokens,
+            ended.Usage?.OutputTokens, ended.Usage?.ReasoningOutputTokens,
+            ended.Usage?.Model, price.Cost, price.Unpriced, null, price.Basis);
     }
 
     /// <summary>
@@ -298,7 +406,7 @@ public sealed class TurnMeter
         get
         {
             var now = _now();
-            var (cost, turns, unpriced, estimated) = ReadTotals(Today_(now));
+            var totals = ReadTotals(now);
             var catalogue = CostCatalog.Read();
 
             // ASKED OF THE PRICE LIST, not inferred from the day's history — which on the first turn
@@ -308,22 +416,24 @@ public sealed class TurnMeter
             // own model prices without an entry in RuntimeModels, and the probe below cannot know
             // that in advance because it has no model to offer.
             var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner());
-            var canPrice = probe.Cost is not null || (turns > 0 && unpriced < turns);
+            var canPrice = probe.Cost is not null || (totals.Turns > 0 && totals.Unpriced < totals.Turns);
 
             return new AiSpendToday
             {
                 Metered = true,
-                Spent = cost,
+                Spent = totals.Spent,
+                Reserved = totals.Reserved,
+                NextTurnReservation = Reservation().Cost ?? 0m,
                 Cap = _cap(),
                 Currency = catalogue.Costs?.Currency ?? "",
-                Turns = turns,
-                UnpricedTurns = unpriced,
-                EstimatedTurns = estimated,
+                Turns = totals.Turns,
+                UnpricedTurns = totals.Unpriced,
+                EstimatedTurns = totals.Estimated,
                 // The label describes how THIS INSTALLATION is being priced, so it is the probe's
                 // answer first — true before the day's first turn, which is the moment the card is
                 // most likely to be read — and the day's own history second, for the runtime whose
                 // stream names its model and whose probe therefore cannot know in advance.
-                Estimated = probe.Estimated ?? (estimated > 0 ? Labels.PricedAtHighestListPrice : null),
+                Estimated = probe.Estimated ?? (totals.Estimated > 0 ? Labels.PricedAtHighestListPrice : null),
                 PricedByOwner = probe.ByOwner,
                 CanPrice = canPrice,
                 WhyNoPrice = canPrice ? null : probe.Unpriced,
@@ -332,49 +442,54 @@ public sealed class TurnMeter
         }
     }
 
-    // ---- the kv totals -------------------------------------------------------------------------
+    // ---- the day, summed over the launch ledger ---------------------------------------------------
+    //
+    // The two kv counters this replaces were written when a turn FINISHED, which made a killed turn
+    // free: the vendor had been asked to do the work and had billed for it, and the day's total
+    // never moved. Summing rows that were written BEFORE the launch is what makes the ceiling a cap
+    // rather than a report — and it needs no day-string, because a row carries the instant it
+    // started and the window below is the owner's own local day.
 
-    static string Today_(DateTimeOffset now) => now.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    /// <summary>
+    /// The local day <paramref name="now"/> falls in, as the half-open instant window a row's
+    /// <c>started_at</c> is tested against. Local because the reset belongs at the owner's midnight:
+    /// an owner in Ljubljana whose day rolled over at 01:00 would be reading a today that is not
+    /// theirs. Each boundary takes the offset in force AT that boundary, so the day either side of a
+    /// daylight-saving change is twenty-three or twenty-five hours long rather than silently wrong.
+    /// </summary>
+    static (DateTimeOffset From, DateTimeOffset To) LocalDay(DateTimeOffset now)
+    {
+        var start = now.ToLocalTime().Date;
+        var end = start.AddDays(1);
+        return (new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
+                new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)));
+    }
 
     /// <summary>The next LOCAL midnight — when today's totals stop being today's.</summary>
-    static DateTimeOffset Midnight(DateTimeOffset now)
+    static DateTimeOffset Midnight(DateTimeOffset now) => LocalDay(now).To;
+
+    /// <summary>
+    /// Today's rows, or zeroes when none of them can be read. A read that throws answers zero rather
+    /// than throwing into a card repaint, and a zero here is visibly the same as a day with no turns
+    /// — which is why the card keys its wording on <see cref="AiSpendToday.CanPrice"/> instead.
+    /// </summary>
+    AiAttemptTotals ReadTotals(DateTimeOffset now)
     {
-        var local = now.ToLocalTime();
-        var tomorrow = local.Date.AddDays(1);
-        return new DateTimeOffset(tomorrow, TimeZoneInfo.Local.GetUtcOffset(tomorrow));
+        try
+        {
+            var (from, to) = LocalDay(now);
+            return _attempts.TotalsBetween(from, to);
+        }
+        catch (Exception) { return new AiAttemptTotals(0m, 0m, 0, 0, 0, 0); }
     }
 
     /// <summary>
-    /// The totals, or zeroes when the row is another day's. The stale row is NOT cleared here: a
-    /// read must not write, and the next turn's write replaces it with today's anyway.
+    /// SHA-256 of the prompt, lower-case hex. The prompt itself is never written down: it carries
+    /// the owner's own words, and what the record needs is the ability to say afterwards that THIS
+    /// text was the one that entered the model request.
     /// </summary>
-    (decimal Cost, int Turns, int Unpriced, int Estimated) ReadTotals(string today)
-    {
-        if (!string.Equals(_db.GetKv(DayKey), today, StringComparison.Ordinal)) return (0m, 0, 0, 0);
-        return (Dec(_db.GetKv(CostKey)), Int(_db.GetKv(TurnsKey)),
-                Int(_db.GetKv(UnpricedKey)), Int(_db.GetKv(EstimatedKey)));
-    }
-
-    void AddToToday(decimal? cost, bool estimated)
-    {
-        lock (_gate)
-        {
-            var today = Today_(_now());
-            var (had, turns, unpriced, estimates) = ReadTotals(today);
-
-            _db.SetKv(DayKey, today);
-            _db.SetKv(CostKey, (had + (cost ?? 0m)).ToString(CultureInfo.InvariantCulture));
-            _db.SetKv(TurnsKey, (turns + 1).ToString(CultureInfo.InvariantCulture));
-            _db.SetKv(UnpricedKey, (unpriced + (cost is null ? 1 : 0)).ToString(CultureInfo.InvariantCulture));
-            _db.SetKv(EstimatedKey, (estimates + (estimated ? 1 : 0)).ToString(CultureInfo.InvariantCulture));
-        }
-    }
-
-    static decimal Dec(string? s) =>
-        decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ? d : 0m;
-
-    static int Int(string? s) =>
-        int.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var i) ? i : 0;
+    static string HashOf(string text) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
     static string? Safe(Func<string?> f)
     {

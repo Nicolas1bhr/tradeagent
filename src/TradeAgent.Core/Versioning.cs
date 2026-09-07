@@ -49,8 +49,26 @@ public static class Versions
     /// number somebody can read rather than a line in an activity log. Additive — one new table —
     /// and an older database gains it empty, which is the honest starting point: the ledger covers
     /// what it saw, and <c>trade pnl</c> says from when.
+    ///
+    /// 5 -&gt; 6: the <c>ai_attempt</c> table. One row per launch of the agent CLI, written BEFORE the
+    /// process starts and completed when it ends, so a turn that was killed before its usage came
+    /// back is a charge somebody can see rather than a turn that cost nothing. It replaces the
+    /// <c>ai_meter_*</c> kv totals as what the daily ceiling is measured against. Additive — one new
+    /// table — and an older database gains it empty, so the first day after an upgrade starts at
+    /// zero rather than inheriting a total whose detail nobody kept.
     /// </summary>
-    public const int DatabaseSchemaVersion = 5;
+    public const int DatabaseSchemaVersion = 6;
+
+    /// <summary>
+    /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
+    ///
+    /// 0 is the honest number for this build: there are no grants yet — no roles, no artifact
+    /// revisions, no recipients — so every attempt runs under the same absent policy. The column
+    /// exists now rather than later because a revision cannot be retrofitted onto attempts that ran
+    /// before it: which policy was in force when a model request was made is one of the four things
+    /// round 4 named as unrecoverable if it is not recorded at the time.
+    /// </summary>
+    public const int GrantPolicyVersion = 0;
 
     public static string App =>
         Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)

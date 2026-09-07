@@ -523,6 +523,17 @@ public sealed record RuntimeCatalogRead(IReadOnlyList<RuntimeManifest> Runtimes,
 public sealed record TurnPrice(decimal? Cost, string Currency, string? Unpriced, string? Estimated = null,
     bool ByOwner = false)
 {
+    /// <summary>
+    /// WHERE THE RATE CAME FROM, for the launch ledger's <c>pricing_basis</c>: <c>owner</c> when the
+    /// two numbers on the Safety page were used, and otherwise the day a list price was read and the
+    /// page it was read from. Init-only rather than a sixth positional parameter, so every existing
+    /// site that builds one of these keeps meaning what it meant.
+    ///
+    /// A figure with no basis is a figure nobody can check afterwards, and these go stale on the
+    /// vendor's schedule rather than this repository's.
+    /// </summary>
+    public string? Basis { get; init; }
+
     public static TurnPrice Unknown(string why) => new(null, "", why);
 }
 
@@ -734,7 +745,8 @@ public static class CostCatalog
         // An unreadable costs.json still refuses above, deliberately: that file failing is not the
         // owner saying anything, and a currency read out of it is part of what the figure means.
         if (owner is not null)
-            return new TurnPrice(Charge(usage, owner), costs.Currency, null, null, ByOwner: true);
+            return new TurnPrice(Charge(usage, owner), costs.Currency, null, null, ByOwner: true)
+                { Basis = OwnerBasis };
 
         var model = usage.Model ?? Declared(costs, runtimeId);
 
@@ -752,6 +764,7 @@ public static class CostCatalog
         if (model is null)
             return Highest(costs, runtimeId) is { } highest
                 ? new TurnPrice(Charge(usage, highest), costs.Currency, null, Labels.PricedAtHighestListPrice)
+                    { Basis = BasisOf(highest) }
                 : TurnPrice.Unknown(
                     $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
 
@@ -760,8 +773,21 @@ public static class CostCatalog
         if (price is null)
             return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
 
-        return new TurnPrice(Charge(usage, price), costs.Currency, null);
+        return new TurnPrice(Charge(usage, price), costs.Currency, null) { Basis = BasisOf(price) };
     }
+
+    /// <summary>What <see cref="TurnPrice.Basis"/> says when the owner's own two numbers were used.</summary>
+    public const string OwnerBasis = "owner";
+
+    /// <summary>
+    /// The day a price was read and the page it was read from, as one line for the launch ledger.
+    /// A price the owner wrote carries no date — they know when theirs was true — and then the basis
+    /// names the file rather than claiming a day nobody recorded.
+    /// </summary>
+    static string BasisOf(ModelPrice p) =>
+        p.PricedAt.Length > 0 && p.Source.Length > 0 ? $"{p.PricedAt} {p.Source}"
+        : p.Source.Length > 0 ? p.Source
+        : Labels.CostsFile;
 
     /// <summary>
     /// The same arithmetic on the owner's two numbers, over the same token totals the list-price

@@ -18,8 +18,13 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 internal static class AgentRuntimeProbe
 {
+    /// <param name="sleepSeconds">
+    /// Seconds the child waits before printing anything. Above zero it is a turn that is REALLY in
+    /// flight — a live process holding the presence register — which is what a test about a turn
+    /// killed before its usage arrived needs. Zero is the ordinary case and starts printing at once.
+    /// </param>
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
-        [CallerMemberName] string name = "")
+        int sleepSeconds = 0, Func<string?>? model = null, [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
         Directory.CreateDirectory(dir);
@@ -30,13 +35,17 @@ internal static class AgentRuntimeProbe
         string script;
         if (OperatingSystem.IsWindows())
         {
+            // ping rather than timeout: `timeout` refuses to run with its input redirected, which is
+            // exactly how every child here is started.
+            var wait = sleepSeconds > 0 ? $"ping -n {sleepSeconds + 1} 127.0.0.1 > nul\r\n" : "";
             script = Path.Combine(dir, "runtime.cmd");
-            File.WriteAllText(script, $"@echo off\r\ntype \"{payload}\"\r\n");
+            File.WriteAllText(script, $"@echo off\r\n{wait}type \"{payload}\"\r\n");
         }
         else
         {
+            var wait = sleepSeconds > 0 ? $"sleep {sleepSeconds}\n" : "";
             script = Path.Combine(dir, "runtime.sh");
-            File.WriteAllText(script, $"#!/bin/sh\ncat \"{payload}\"\n");
+            File.WriteAllText(script, $"#!/bin/sh\n{wait}cat \"{payload}\"\n");
             File.SetUnixFileMode(script,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
@@ -57,7 +66,7 @@ internal static class AgentRuntimeProbe
         // every inbox sighting in this assembly to InboxUnattested. Measured: it turned three of
         // MaterialLedgerTests red while both classes passed alone.
         return new AgentSession(manifest, () => script, () => dir, () => new Dictionary<string, string>(),
-            presence: new AgentPresence());
+            presence: new AgentPresence(), model: model);
     }
 }
 
@@ -295,10 +304,17 @@ public class TurnRecordTests : IDisposable
     }
 
     /// <summary>
-    /// The two totals, in <c>kv</c> — no new table, and the file above is the detail behind them.
+    /// TODAY'S TOTALS ARE SUMS OVER THE LAUNCH LEDGER, one row per turn, and the file above is the
+    /// diagnostic mirror beside them.
+    ///
+    /// This test used to be <c>Todays_totals_are_kept_in_kv</c> and asserted two counters in the
+    /// <c>kv</c> table. Those counters were written when a turn FINISHED, which is what made a
+    /// killed turn free — see <c>AiAttemptStore</c>. <c>U-model</c> removed them, so the name and
+    /// the assertions moved with the subject rather than being left describing a table the product
+    /// no longer keeps this in.
     /// </summary>
     [Fact]
-    public void Todays_totals_are_kept_in_kv()
+    public void Todays_totals_are_sums_over_the_launch_ledger()
     {
         CostsAre(input: 1.25m, cached: 0.125m, output: 10m);
         var meter = Meter();
@@ -307,9 +323,29 @@ public class TurnRecordTests : IDisposable
 
         Assert.Equal(2, meter.Today.Turns);
         Assert.Equal(0, meter.Today.UnpricedTurns);
-        Assert.Equal(2, int.Parse(_db.GetKv(TurnMeter.TurnsKey)!));
-        Assert.NotNull(_db.GetKv(TurnMeter.CostKey));
-        Assert.Equal(DateTimeOffset.Now.ToLocalTime().ToString("yyyy-MM-dd"), _db.GetKv(TurnMeter.DayKey));
+
+        var store = new AiAttemptStore(_db);
+        var (from, to) = LocalDayOf(DateTimeOffset.Now);
+        var rows = store.Between(from, to);
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal(AiAttemptState.ENDED, r.State));
+        Assert.All(rows, r => Assert.Equal(17232, r.InputTokens));
+        Assert.Equal(meter.Today.Spent, rows.Sum(r => r.Cost ?? 0m));
+
+        // The kv counters this replaces are gone rather than left running beside the table: two
+        // sources for one number is how they come to disagree.
+        Assert.Null(_db.GetKv("ai_meter_turns"));
+        Assert.Null(_db.GetKv("ai_meter_cost"));
+        Assert.Null(_db.GetKv("ai_meter_day"));
+    }
+
+    /// <summary>The same local-day window the meter sums over. See <c>TurnMeter.LocalDay</c>.</summary>
+    static (DateTimeOffset From, DateTimeOffset To) LocalDayOf(DateTimeOffset now)
+    {
+        var start = now.ToLocalTime().Date;
+        var end = start.AddDays(1);
+        return (new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
+                new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)));
     }
 
     /// <summary>

@@ -263,7 +263,8 @@ public sealed class AppHost : IAsyncDisposable
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,
                 runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
-                owner: () => OwnerPrice.From(Gateway.Settings));
+                owner: () => OwnerPrice.From(Gateway.Settings),
+                model: () => RequestedModel);
             Meter.Changed += () => Changed?.Invoke();
 
             Mission = new MissionLoop(new MissionHost(this),
@@ -571,6 +572,13 @@ public sealed class AppHost : IAsyncDisposable
         public bool InboxChangedSinceLastPass => MissionInbox.ChangedSince(Paths.Workspace, host.LastScanAt);
 
         public AiSpendToday Spend => host.SpendToday;
+
+        /// <summary>
+        /// The launch record and its reservation, written before the CLI starts. Nothing else on
+        /// this interface writes to the database, and this one cannot change a mode, lift the kill
+        /// switch or approve anything — it commits money the AI is about to spend on itself.
+        /// </summary>
+        public void BeginTurn(string prompt) => host.Meter?.Begin(prompt);
 
         /// <summary>
         /// The one activity line the owner gets when the AI stops for the day, in their words and
