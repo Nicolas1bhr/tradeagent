@@ -18,11 +18,12 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class MissionInstructionsTests
 {
-    static string Instructions(bool executionAvailable = true) =>
+    static string Instructions(bool executionAvailable = true, bool builtInSimulator = false) =>
         WorkspaceBuilder.Instructions(new WorkspaceContext(
             "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
             executionAvailable, executionAvailable ? null : "the market is closed",
-            new RiskPolicy { InstrumentAllowlist = ["ES"] }));
+            new RiskPolicy { InstrumentAllowlist = ["ES"] },
+            ConnectorIsBuiltInSimulator: builtInSimulator));
 
     /// <summary>
     /// The purpose, in one sentence, and the number that settles whether it is being met. "Net of
@@ -117,6 +118,83 @@ public class MissionInstructionsTests
         Assert.Contains("a turn ENDS", text);
         Assert.Contains("write its state to a file and pick it up next turn", text);
     }
+
+    /// <summary>
+    /// WHAT THE BUILT-IN SIMULATOR IS, BEFORE A TURN IS SPENT WORKING IT OUT.
+    ///
+    /// On the loop's first run on a screen (2026-09-07) the first turn cost 5.5 minutes and 1.48 USD,
+    /// and a good part of it went on establishing that the practice simulator's quotes are four fixed
+    /// numbers. The software chose that platform; it knew. Two things have to be in the paragraph or
+    /// it is not worth its own words: that a result measured here means nothing, and that the order
+    /// mechanics are nonetheless real and worth rehearsing — otherwise the agent reads "not a market"
+    /// as "nothing here is worth doing" and idles on the one platform it always has.
+    /// </summary>
+    [Fact]
+    public void The_built_in_simulator_is_described_as_a_fixture_and_not_as_a_market()
+    {
+        var text = Instructions(builtInSimulator: true);
+
+        Assert.Contains("built-in simulator, and it is not a market", text);
+        Assert.Contains("one fixed price per symbol, on that instrument's tick grid", text);
+        Assert.Contains("no edge to", text);
+        Assert.Contains("no backtest, statistic or result measured against them means anything", text);
+
+        // And what it IS for, so "not a market" does not read as "not worth working with".
+        Assert.Contains("mechanics", text);
+        Assert.Contains("trade pnl --json", text);
+        Assert.Contains("use real data you have collected into `data/` instead", text);
+
+        // The allowlist stays the owner's, on the page where they set it.
+        Assert.Contains("the allowlist below is", text);
+        Assert.Contains("Safety page in the TradeAgent window", text);
+    }
+
+    /// <summary>
+    /// AND IT IS SAID OF NOTHING ELSE. A broker's own paper account quotes the real market: an agent
+    /// told there that prices are fixtures and results mean nothing would ignore the very data it is
+    /// there to work on — the same sentence, one platform along, in the expensive direction.
+    /// </summary>
+    [Fact]
+    public void Nothing_but_the_built_in_simulator_is_described_that_way()
+    {
+        var text = Instructions();
+
+        Assert.DoesNotContain("not a market", text);
+        Assert.DoesNotContain("fixtures", text);
+        Assert.DoesNotContain("no edge to", text);
+    }
+
+    /// <summary>
+    /// NO OTHER SENTENCE OF THE MISSION MOVED. The paragraph is an insert into the platform section
+    /// and nothing else: everything the two texts do not share is the paragraph itself.
+    /// </summary>
+    [Fact]
+    public void The_paragraph_is_the_only_difference_between_the_two_missions()
+    {
+        var plain = Instructions();
+        var simulator = Instructions(builtInSimulator: true);
+
+        var added = simulator.Split('\n').Except(plain.Split('\n')).ToArray();
+        Assert.NotEmpty(added);
+        Assert.All(added, line => Assert.Contains(line, SimulatorLines));
+    }
+
+    static readonly string[] SimulatorLines =
+    [
+        "**This platform is TradeAgent's built-in simulator, and it is not a market.** Its quotes are",
+        "fixtures: one fixed price per symbol, on that instrument's tick grid, the same every time you",
+        "ask and never moving. They carry no information about the real world, so there is no edge to",
+        "find in them and no backtest, statistic or result measured against them means anything. Do not",
+        "report one as though it did.",
+        "What it is genuinely good for is **mechanics**, and those are worth proving before real money",
+        "is anywhere near them: that an order goes out under a request id and comes back, that a replay",
+        "of the same id does not place a second one, that a fill reaches the ledger, that",
+        "`trade pnl --json` adds up, that a cancel and a close do what you meant. Rehearse all of that",
+        "here. For anything about a STRATEGY, use real data you have collected into `data/` instead.",
+        "Which instruments you may touch is not this platform's business either: the allowlist below is",
+        "the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing",
+        "that decides what you may trade."
+    ];
 
     /// <summary>
     /// Asking for permission is one sentence and then back to work. The loop does not stop for an
