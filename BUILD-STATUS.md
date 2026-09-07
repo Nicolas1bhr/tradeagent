@@ -4702,7 +4702,7 @@ only the four lines this unit replaces.
 Integration 19/19 each run, no `Timing` red; names vs `main` → 0 removed, 8 added. Manager's gate at `0fb5ed0` (the
 report commit on the gated tip), Release: build → 0 warnings, 0 errors; suite → 481 + 277 + 615 = 1373
 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 8 added (sets 1153 → 1161; `[Fact]`/`[Theory]`
-1110 → 1118); scan clean; no trailers; `rev-list --count` → 0; CI at `acff18a`: run 34143748994 in flight when this section was written (the merge sha is the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+1110 → 1118); scan clean; no trailers; `rev-list --count` → 0; CI run 34143748994 at `acff18a` (the gated tip rebased over docs-only commits): all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the refused leg's sentence on a running app (`DashboardView` renders `PressOutcome.Summary` verbatim —
 read, not run); the read-back and the cancel against ATAS — the fake connector only. **NOT done:** the reconciler is
