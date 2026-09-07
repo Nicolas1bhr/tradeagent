@@ -29,6 +29,17 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
     readonly MaterialStore _store = new(db);
     readonly Func<DateTimeOffset, bool> _noAgentSince = noAgentSince ?? AgentPresence.Shared.NoneSince;
 
+    /// <summary>
+    /// THE REGISTER THIS PASS ATTESTS OVER, so that "the scanner and the agent are looking at the
+    /// same one" is a thing a test can assert rather than a thing somebody read in a constructor.
+    ///
+    /// The barrier is worth nothing if the two halves drift apart: a chat session reporting into a
+    /// register nobody reads is a running agent process this pass cannot see, and it would attest a
+    /// window with an agent in it. Delegate identity is the check — same target, same method — and
+    /// the target is what matters, because it is the register.
+    /// </summary>
+    public Func<DateTimeOffset, bool> Attests => _noAgentSince;
+
     /// <summary>Where the account owner drops things. Everything under it is theirs, not the agent's.</summary>
     public const string InboxDir = "inbox";
 

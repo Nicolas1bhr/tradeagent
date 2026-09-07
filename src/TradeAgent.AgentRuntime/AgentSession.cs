@@ -201,6 +201,18 @@ public sealed class AgentSession(
 
     public bool Busy => _busy;
 
+    /// <summary>
+    /// THE REGISTER THIS SESSION'S CHILD PROCESSES REPORT THEMSELVES TO — the process-wide
+    /// <see cref="AgentPresence.Shared"/> unless a test passed its own.
+    ///
+    /// Exposed for the same reason <see cref="MaterialScanner.Attests"/> is: the inbox attestation
+    /// is worth nothing unless the scanner and every agent process are looking at ONE register, and
+    /// a chat session on a register nobody reads is a running agent the ledger cannot see. Reading
+    /// this does not enter the register, which matters — entering the shared one from a test would
+    /// permanently downgrade every inbox sighting in that assembly.
+    /// </summary>
+    public AgentPresence Presence => presence ?? AgentPresence.Shared;
+
     public IReadOnlyList<ChatTurn> History
     {
         get { lock (_historyLock) return _history.ToArray(); }
