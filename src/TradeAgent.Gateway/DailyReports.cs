@@ -196,6 +196,30 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// THE OPERATIONS DIRECTOR'S NOTE FOR ONE DAY, or null — which is the ordinary answer, because a
+    /// note is paid for and is written only when an app predicate changed.
+    ///
+    /// <para>It is looked up, never composed, and it is looked up BY DAY AND BY KIND. Both filters
+    /// are the guard: a page that showed the newest note whatever day it belonged to would present
+    /// last week's commentary as today's, and one that did not check the kind would show the chair's
+    /// agenda to Research as its note on the owner's report. Absent is shown as absent.</para>
+    /// </summary>
+    public Publication? NoteFor(string day)
+    {
+        if (!DateTime.TryParseExact(day, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var parsed)) return null;
+
+        var (from, to) = LocalDay(new DateTimeOffset(parsed, TimeZoneInfo.Local.GetUtcOffset(parsed)));
+        try
+        {
+            return _publications.By(CouncilRoles.Operations)
+                .LastOrDefault(p => p.Kind == PublicationKind.Note
+                                    && p.CreatedAt >= from && p.CreatedAt < to);
+        }
+        catch (Exception) { return null; }
+    }
+
     // ---------------------------------------------------------------- the sections
 
     ReportMission ComposeMission(DailyReportInputs i)

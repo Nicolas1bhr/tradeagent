@@ -36,7 +36,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    enum Page { Chat, Dashboard, Inbox, Safety, Settings, Activity, Checks }
+    enum Page { Chat, Dashboard, Report, Inbox, Safety, Settings, Activity, Checks }
 
     readonly AppHost _host;
 
@@ -130,6 +130,7 @@ public sealed class MainWindow : Window
     readonly Dictionary<Page, Control> _pages = new();
     ChatView? _chat;
     DashboardPage? _dashboard;
+    ReportPage? _report;
     SafetyPage? _safety;
     SettingsPage? _settings;
     InboxPage? _inbox;
@@ -395,6 +396,10 @@ public sealed class MainWindow : Window
     {
         AddNav(Page.Chat, "Chat");
         AddNav(Page.Dashboard, "Dashboard");
+        // Straight after the Dashboard, because it answers the same question over a longer window:
+        // the Dashboard is what is true now, the report is what was true on a day, and an owner who
+        // has just read one is the person looking for the other.
+        AddNav(Page.Report, "Daily report");
         AddNav(Page.Inbox, "Inbox");
         AddNav(Page.Safety, "Safety");
         // Between Safety and the diagnostic tail on purpose. Choosing the platform and the account
@@ -459,6 +464,7 @@ public sealed class MainWindow : Window
     {
         _chat = new ChatView(_host, StartOrStopAgentAsync);
         _dashboard = new DashboardPage(_host, StartOrStopAgentAsync);
+        _report = new ReportPage(_host);
         _inbox = new InboxPage(_host);
         _safety = new SafetyPage(_host);
         _settings = new SettingsPage(_host);
@@ -467,6 +473,7 @@ public sealed class MainWindow : Window
 
         Add(Page.Chat, _chat.Root);
         Add(Page.Dashboard, _dashboard.Root);
+        Add(Page.Report, _report.Root);
         Add(Page.Inbox, _inbox.Root);
         Add(Page.Safety, _safety.Root);
         Add(Page.Settings, _settings.Root);
@@ -532,6 +539,7 @@ public sealed class MainWindow : Window
 
         _chat?.Update();
         _dashboard?.Update(status, waiting);
+        _report?.Update();
         _inbox?.Update();
         _safety?.Update(status);
         _settings?.Update(status);

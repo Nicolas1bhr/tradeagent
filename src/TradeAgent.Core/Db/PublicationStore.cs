@@ -12,6 +12,23 @@ public static class PublicationKind
 
     /// <summary>The chair's agenda, delivered down to Research. At most 40 lines.</summary>
     public const string Brief = "brief";
+
+    /// <summary>
+    /// THE OPERATIONS DIRECTOR'S NOTE ON THE OWNER'S DAILY REPORT, at most 20 lines
+    /// (<c>docs/COUNCIL.md</c>, "The owner's report, every day, from the app").
+    ///
+    /// <para>It is the ONE paid thing anywhere near that report, and it exists only when an app
+    /// predicate changed: "No material change: the app says so and pays nobody." The report itself is
+    /// written by the app from what it measured and costs nothing; a note is a publication like any
+    /// other, so it is recorded, attributed and size-limited by the same machinery rather than being
+    /// pasted into the facts.</para>
+    ///
+    /// <para><b>Nothing in this build produces one.</b> The constant is here because the report page
+    /// and <c>DailyReports.NoteFor</c> LOOK for one and must show its absence honestly — a report
+    /// that silently showed yesterday's note, or the chair's agenda, as today's commentary would be
+    /// exactly the merge of measurement and claim the ledger rules forbid.</para>
+    /// </summary>
+    public const string Note = "note";
 }
 
 /// <summary>
