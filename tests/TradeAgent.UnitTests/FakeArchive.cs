@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -14,12 +16,19 @@ namespace TradeAgent.Tests.Unit;
 /// It answers the two paths the archive has — the monthly zip and its <c>.CHECKSUM</c> sidecar — and
 /// 404 for anything it was not given, which is what the vendor answers for a month it has not
 /// published (measured: 2026-09 on 2026-09-07).
+///
+/// <b>IT KEEPS A MARK PER REQUEST</b> (<see cref="Marks"/>): the method, the path, the answer it
+/// sent, and whether the write and the close actually completed. A harness that stops answering is
+/// indistinguishable from a vendor that has nothing to say unless the harness says what it did, and
+/// on windows-latest this suite once spent thirty minutes proving exactly that.
 /// </summary>
 public sealed class FakeArchive : IDisposable
 {
     readonly HttpListener _http = new();
     readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
+    readonly ConcurrentQueue<string> _marks = new();
+    readonly Stopwatch _clock = Stopwatch.StartNew();
 
     public FakeArchive()
     {
@@ -41,6 +50,8 @@ public sealed class FakeArchive : IDisposable
                 catch (Exception) { return; }
 
                 var path = ctx.Request.Url!.AbsolutePath;
+                var method = ctx.Request.HttpMethod;
+                Mark($"got {method} {path}");
                 try
                 {
                     if (_sidecars.TryGetValue(path, out var text))
@@ -48,19 +59,28 @@ public sealed class FakeArchive : IDisposable
                         var body = Encoding.UTF8.GetBytes(text);
                         ctx.Response.StatusCode = 200;
                         ctx.Response.ContentLength64 = body.Length;
+                        Mark($"answering 200 sidecar, {body.Length} bytes");
                         await ctx.Response.OutputStream.WriteAsync(body);
+                        Mark("write returned");
                     }
                     else if (_files.TryGetValue(path, out var bytes))
                     {
                         ctx.Response.StatusCode = 200;
                         ctx.Response.ContentLength64 = bytes.Length;
+                        Mark($"answering 200 zip, {bytes.Length} bytes");
                         await ctx.Response.OutputStream.WriteAsync(bytes);
+                        Mark("write returned");
                     }
-                    else ctx.Response.StatusCode = 404;
+                    else
+                    {
+                        ctx.Response.StatusCode = 404;
+                        Mark("answering 404");
+                    }
 
                     ctx.Response.Close();
+                    Mark("closed");
                 }
-                catch (Exception) { /* a client that hung up is not this harness's business */ }
+                catch (Exception ex) { Mark($"THREW {ex.GetType().Name}: {One(ex.Message)}"); }
             }
         });
     }
@@ -68,6 +88,13 @@ public sealed class FakeArchive : IDisposable
     public int Port { get; }
     public string BaseUrl => $"http://127.0.0.1:{Port}";
     public Task Serving { get; }
+
+    /// <summary>What this server received and what it did about it, oldest first.</summary>
+    public IReadOnlyList<string> Marks => [.. _marks];
+
+    void Mark(string what) => _marks.Enqueue($"{_clock.ElapsedMilliseconds,7} ms  srv {what}");
+
+    static string One(string s) => s.ReplaceLineEndings(" ");
 
     /// <summary>Publishes a month whose sidecar carries the hash of the bytes actually served.</summary>
     public byte[] Publish(string pair, DateOnly month, string csv)
@@ -98,7 +125,7 @@ public sealed class FakeArchive : IDisposable
         _sidecars[path + ".CHECKSUM"] = $"{sha}  {BinanceArchive.FileName(pair, month)}";
     }
 
-    static string PathOf(string pair, DateOnly month) =>
+    public static string PathOf(string pair, DateOnly month) =>
         $"/data/spot/monthly/klines/{pair}/1m/{BinanceArchive.FileName(pair, month)}";
 
     public static string Sha256(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
