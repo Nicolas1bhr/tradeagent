@@ -4479,3 +4479,38 @@ two hits, both the words "your OpenAI API key" naming the sign-in label; `rev-li
 as read on one day and will drift — the date is in the data and in the guide for that reason. **NOT done:** no box,
 no ATAS, no money; the model the AI actually runs on is still whatever the owner's Codex configuration says, so the
 estimate label is expected on most turns until the app names the model itself (a later unit, if the owner wants it).
+
+## 2026-09-07 — The loop's first run on a screen: the four units seen, the cap bit at 5.07 USD, three findings
+
+The 2026-09-06 landings (`U-life`, `U-ledger`, `U-meter`, `U-prices`) had been proved by their words only. Run on this
+Mac by the manager at `main` `8d7ae97`: the app built Debug and wrapped in a throwaway `.app` bundle so the desktop's
+screen control could click it (`tools/mac-bundle.sh` now), a dev home seeded to setup-complete with the practice
+simulator, `SIM-001` and `codex` chosen (the `kv` `settings` blob is snake_case), codex-cli 0.153.4 on the owner's own
+config (`model = "gpt-6-astra"`, `model_reasoning_effort = "xhigh"`).
+
+- **Seen, as landed:** the Dashboard's "The AI's own work" card with its state words (stopped, paused, working, waiting
+  until 00:00), the turn count and the cost line with the estimate label; "Let the AI work on its own" arming to
+  "Confirm: let the AI keep working without being asked, up to 5 USD a day" on the first press and to "working" on the
+  second, "Pause the AI" one press; the Guidance box; the Performance card's empty state ("No fills yet…"); the Safety
+  page's cost cap (5) and the two price boxes at 10.00 in / 50.00 out naming `gpt-6-astra` and the page read on
+  2026-09-06; `trade status` carrying `ai_state`, `ai_turns_today`, `ai_cost_today`, `ai_cost_estimated`.
+- **The loop ran four turns unattended** (`state/agent-turns.jsonl`, fields verbatim): 336 s in=543,711 cached=491,136
+  out=9,301 → 1.4819 USD; 276 s in=1,091,490 cached=1,037,440 out=6,781 → 1.9170; 183 s → 0.9387; 103 s → 0.7307; total
+  5.0683. Then the activity row `The AI has spent 5.0683 USD today, which is its 5 USD daily limit. It stops taking new
+  turns until 00:00. Raise the limit on the Safety page to let it carry on.` and the card `waiting until 00:00`.
+- **What the AI did with its four turns** (its own `JOURNAL.md`, `PLAN.md`, two research notes, a strategy file, two
+  scripts recorded with `trade material ran`): read status, schema and `trade pnl`; wrote and ran a baseline collector
+  and eleven offline checks; found every simulator quote off its tick grid (MES 107.31/107.81 on a 0.25 grid) and
+  declined to treat them as a market; froze opening-range rules; downloaded a free MES minute-bar sample (16,200 bars)
+  and measured its quality; found Databento needs a key and did not sign up. `fill` 0 rows, `execution_request` 0 rows;
+  it noted once that only the owner can fill the empty allowlist and did not ask again.
+
+**Findings, briefed as `U-seen-1`:** the card's price probe reads only the running agent (`AppHost.cs:228`), so before
+the first start it says the cap "cannot stop it" while the Safety page prices the same runtime; the simulator's quotes
+are off the tick grid and never move (`FakeBroker.BasePrice`); the mission does not say so, which cost the first turn.
+**Queued as `U-model`:** the loop runs on whatever `~/.codex/config.toml` names — here the dearest model, 1.5 USD and
+5.5 minutes a turn, almost all of it cached input.
+
+**NOT VERIFIED:** an order through the loop (none was placed: the allowlist is empty and the AI declined the quotes);
+the price boxes' two-press (not pressed); Guidance (not typed); anything on Windows. The built-in simulator is not a
+paper venue for weeks — ATAS's simulated account on the box has real prices and is.
