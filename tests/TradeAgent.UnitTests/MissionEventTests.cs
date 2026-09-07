@@ -22,16 +22,31 @@ public class MissionEventTests
 {
     static readonly DateTimeOffset At = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// The wake queue arrived at schema 7, this build is at or past it, and the version on disk is
+    /// the one this build writes. It used to read <c>Assert.Equal(7, ...)</c> — the same shape the
+    /// launch ledger's test was already cured of: an ADDITIVE migration that touched nothing about
+    /// <c>mission_event</c> failed here anyway. <c>U-data-binance</c> added <c>dataset</c> at 8 and
+    /// the exact number moved with it, to
+    /// <c>DatasetLedgerTests.The_schema_carries_the_dataset_tables_at_version_eight</c>. 7 is this
+    /// class's floor, because below it there is no wake queue at all.
+    /// </summary>
     [Fact]
-    public void The_schema_carries_the_table_at_version_seven()
+    public void The_schema_carries_the_table_at_version_seven_or_later()
     {
         using var db = TestEnv.NewDb();
 
-        Assert.Equal(7, Versions.DatabaseSchemaVersion);
-        Assert.Equal("7", db.Read(_ =>
+        Assert.True(Versions.DatabaseSchemaVersion >= 7,
+            $"the wake queue needs schema 7 or later; this build says {Versions.DatabaseSchemaVersion}");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), db.Read(_ =>
         {
             using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
             return c.ExecuteScalar() as string;
+        }));
+        Assert.Equal(0L, db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT COUNT(*) FROM mission_event");
+            return Convert.ToInt64(c.ExecuteScalar());
         }));
     }
 

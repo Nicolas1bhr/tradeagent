@@ -387,6 +387,72 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','7') ON CONFLICT(key) DO UPDATE SET value='7';");
         }
 
+        if (have < 8)
+        {
+            // THE DATASET LEDGER. What market data this installation collected, where every byte of
+            // it came from, and everything it does NOT claim — written by the app and by nothing
+            // else, like `material` and `fill` before it.
+            //
+            // There is no verb and no pipe op that writes here. The AI reads these rows through
+            // `data-list` and reads the bars through `data-bars`, and that asymmetry is the point:
+            // an agent that could edit the provenance of its own evidence could report a backtest
+            // over twelve clean months of data that was three months with the gaps filled in.
+            //
+            // TWO TABLES BECAUSE A DATASET HAS TWO SCALES. `dataset` is one accepted normalised file
+            // — the thing a backtest runs over. `dataset_file` is one row per RAW ARCHIVE FILE the
+            // vendor published, carrying the hash Binance printed in its .CHECKSUM sidecar AND the
+            // hash TradeAgent computed off the bytes it kept. Both, not one: the published figure is
+            // what the bytes were checked against on the day, and the computed figure is what a
+            // later read is checked against, which is how a raw file that CHANGED on disk is told
+            // from one that was never right. A dataset whose raw file no longer hashes to its row is
+            // REJECTED and is never re-normalised from those bytes.
+            //
+            // `unit` is per raw file because Binance changed this column from milliseconds to
+            // microseconds in January 2025 and a twelve-month collection straddles that. It records
+            // what the MAGNITUDE said, not what the month implied.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS dataset(
+              id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+              source               TEXT NOT NULL,
+              pair                 TEXT NOT NULL,
+              interval             TEXT NOT NULL,
+              version              TEXT NOT NULL,
+              months_attempted     INTEGER NOT NULL,
+              months_present       INTEGER NOT NULL,
+              months_not_published TEXT NOT NULL,
+              normalised_path      TEXT NOT NULL,
+              normalised_sha256    TEXT NOT NULL,
+              bars                 INTEGER NOT NULL,
+              first_bar            TEXT,
+              last_bar             TEXT,
+              gaps                 INTEGER NOT NULL,
+              gap_runs             TEXT NOT NULL,
+              gap_runs_truncated   INTEGER NOT NULL,
+              duplicates           INTEGER NOT NULL,
+              incomplete           INTEGER NOT NULL,
+              unreadable           INTEGER NOT NULL,
+              accepted_at          TEXT NOT NULL,
+              state                TEXT NOT NULL,
+              rejected_reason      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_dataset_pair ON dataset(pair, accepted_at);
+
+            CREATE TABLE IF NOT EXISTS dataset_file(
+              dataset_id       INTEGER NOT NULL REFERENCES dataset(id),
+              month            TEXT NOT NULL,
+              url              TEXT NOT NULL,
+              published_sha256 TEXT NOT NULL,
+              computed_sha256  TEXT NOT NULL,
+              bytes            INTEGER NOT NULL,
+              downloaded_at    TEXT NOT NULL,
+              unit             TEXT NOT NULL,
+              path             TEXT NOT NULL,
+              PRIMARY KEY(dataset_id, month)
+            );
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','8') ON CONFLICT(key) DO UPDATE SET value='8';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

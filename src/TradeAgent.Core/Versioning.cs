@@ -65,8 +65,15 @@ public static class Versions
     /// instant one ended, and the only thing that ever stopped it was the day's cost ceiling.
     /// Additive — one new table — and an older database gains it empty, which is the honest
     /// starting point: nothing that happened before the upgrade is a reason to wake now.
+    ///
+    /// 7 -&gt; 8: the <c>dataset</c> and <c>dataset_file</c> tables. What market data this installation
+    /// collected, the URL and both hashes of every raw archive file it was built from, and the
+    /// counts that say what the normalised file does not claim — gaps, duplicates, bars that had not
+    /// closed. Written by the app only; there is no verb and no pipe op that reaches them. Additive
+    /// — two new tables — and an older database gains them empty, which reads correctly as "this
+    /// installation has collected no data yet".
     /// </summary>
-    public const int DatabaseSchemaVersion = 7;
+    public const int DatabaseSchemaVersion = 8;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).
