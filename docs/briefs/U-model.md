@@ -38,3 +38,24 @@ the cap is checked on completed spend only (`MissionLoop.cs:452`): 5.07 USD agai
 Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; the three test projects in Release to a file
 → 0 failed; touched classes 3×. Commit per item, one sentence each, no trailers. Append `## Report` (≤20 lines): tip sha,
 the gate counts pasted, one line per item with its RED and mutant output, the two codex measurements, what you did NOT do.
+
+## Report
+
+Tip `4b4d7ae` plus this commit, rebased onto `main` `44ee58d` (docs-only, no conflict); every proof below was re-run in my own hands, and the previous leg's untracked `gate/` was deleted rather than committed.
+Gate, Release: `dotnet build TradeAgent.sln -c Release --no-incremental` → `0 Warning(s)` `0 Error(s)`; unit `Failed: 0, Passed: 481`, fault `Failed: 0, Passed: 269`, integration `Failed: 0, Passed: 615, Skipped: 1` = 1365 passed, 0 failed, 1 skipped.
+Touched classes (11) 3× → `Failed: 0, Passed: 70` on each run, no `Timing` red. Secret scan of the whole diff against `main`: clean.
+Names vs `main`: 28 added and ONE removed — `Todays_totals_are_kept_in_kv`, RENAMED to `Todays_totals_are_sums_over_the_launch_ledger` because the kv counters it asserted are gone from the product; the new test asserts all three keys are null and sums the ledger instead. No assertion loosened.
+
+1. RED (`AgentArgs.ModelArgs` → `[]`): `Actual: ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "PROMPT"]`. Mutant (the flag on the first turn only): `Actual: [···, "--last", "--json", …, "PROMPT"]`.
+2. RED (the constructor no longer calls `LoseOpen`): `Expected: LOST` `Actual: LAUNCHED`. Mutant (`LOST` written at `cost=0`): `Expected: 1.28` `Actual: 0`.
+3. RED (`CappedUntilMidnight` back on `!CapReached`): the fourth turn ran — `Assert.Empty() Failure: Collection was not empty`. Mutant (reservations dropped from the sum): `Assert.False() Failure Expected: False Actual: True`.
+4. RED (`TurnContext.Read` returns an empty record): `Expected: 1` `Actual: 0`, four tests red. Mutant (items counted per line rather than per id): `Expected: 1` `Actual: 2`, three tests red.
+5. RED (`askedFor` never set): `Expected: 0.0225072` `Actual: 0.056268`. Mutant (the asked-for model beating the one the stream names): `Expected: 0.056268` `Actual: 0.0225072`.
+
+Measured here, codex-cli 0.153.4, 2026-09-07, a scratch directory, one turn each. `codex exec --json --skip-git-repo-check -m gpt-5.6-sol "…run ls…"` → exit 0, and the stream:
+`{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}` then the same id again,
+`{"type":"item.completed","item":{"id":"item_1",…,"aggregated_output":"alpha.txt\nbeta.txt\nexec.err\nexec.jsonl\n","exit_code":0,"status":"completed"}}`, `{"type":"turn.completed","usage":{"input_tokens":32852,"cached_input_tokens":28032,"cache_write_input_tokens":0,"output_tokens":132,"reasoning_output_tokens":0}}` — no model named anywhere in it.
+`codex exec resume --last --json --skip-git-repo-check -m gpt-5.6-sol "…"` → exit 0, `{"type":"thread.started","thread_id":"01a07c66-259c-7bc1-91f0-498f6ae7b000"}`: the same thread resumed, the flag accepted on the resume as well.
+
+NOT VERIFIED: no UI run, so the Safety page's model row has been seen on no screen, and no test presses `DashboardView.BuildModelRow` — only the card's words, the pipe field and the schema sentence are asserted.
+NOT DONE, by the brief: no Windows box, no ATAS, no order of any kind, and no second attempt on any item.
