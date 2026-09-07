@@ -71,6 +71,12 @@ public sealed class AppHost : IAsyncDisposable
                 _conversation = runtime.OpenConversation();
                 _conversationOwner = runtime;
                 _metering = Meter?.Attach(_conversation);
+
+                // WHAT THE OWNER TYPES WHILE THE AI IS WORKING GOES TO THE TABLE, not to a list in
+                // memory. Attached here rather than at construction because this is the one place a
+                // conversation is made, and a second one made later must be wired too — the same
+                // reason the meter is attached on this line.
+                if (_conversation is AgentSession session) session.RecordTyped = RecordOwnerMessage;
             }
             return _conversation;
         }
@@ -108,6 +114,34 @@ public sealed class AppHost : IAsyncDisposable
     /// It never throws: every caller is a code path — a fill arriving, a scan finishing, the owner
     /// pressing a button — that must carry on whether or not a queue row could be written.
     /// </summary>
+    /// <summary>
+    /// RECORDS WHAT THE OWNER TYPED WHILE THE AI WAS WORKING, and says whether the row went in.
+    ///
+    /// The answer is what <see cref="AgentSession.Queue"/> uses to decide who holds the message: a
+    /// true here means the table has it and the in-memory list must not, so the next turn cannot be
+    /// handed the same question twice. A false is honest — no queue, or a row that would not
+    /// write — and the words stay in memory exactly as they used to.
+    ///
+    /// The text is the payload and nothing else is: this is the owner's own words, and they are
+    /// carried into the next turn's Situation, where they keep their first place.
+    /// </summary>
+    public bool RecordOwnerMessage(string text)
+    {
+        if (Wakes is null) return false;
+        try
+        {
+            if (!Wakes.RecordOwnerMessage(text, DateTimeOffset.UtcNow)) return false;
+            Mission?.Wake();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try { Gateway.Log.Engineering("Mission", "owner_message_not_recorded", "warn", ex: ex); }
+            catch (Exception) { /* the log is the same database that just refused the row */ }
+            return false;
+        }
+    }
+
     public void RaiseWake(string id, string kind, string? payload = null)
     {
         try

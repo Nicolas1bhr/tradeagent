@@ -174,6 +174,23 @@ public sealed class MissionEventStore(Database db)
         Raise(new MissionEvent { Id = id, Kind = kind, CreatedAt = at, DueAt = dueAt, Payload = payload });
 
     /// <summary>
+    /// WRITES WHAT THE OWNER TYPED WHILE THE AI WAS WORKING, with the next sequence number, and
+    /// answers whether the row went in.
+    ///
+    /// One method rather than a raise at the call site, because the payload is the whole of what
+    /// makes this worth doing: the ROW is the only copy once it exists — <c>AgentSession.Queue</c>
+    /// stops holding the message in memory the moment this answers true — so an event written
+    /// without the owner's words in it is a message that has been silently thrown away, with the
+    /// receipt already shown.
+    /// </summary>
+    public bool RecordOwnerMessage(string text, DateTimeOffset at)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return Raise(MissionEventIds.Owner(NextOwnerSequence()), MissionEventKind.Owner, at,
+            Json.Write(new MissionOwnerMessage(text, at)));
+    }
+
+    /// <summary>
     /// EVERY UNCONSUMED EVENT THAT IS DUE, oldest first. An empty answer is the loop's whole reason
     /// not to spend money.
     /// </summary>

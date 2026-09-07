@@ -269,11 +269,34 @@ public sealed class AgentSession(
         await RunAsync(message, ct);
     }
 
+    /// <summary>
+    /// WRITES THE OWNER'S WORDS SOMEWHERE THAT SURVIVES THIS PROCESS, and answers whether it did.
+    ///
+    /// The queue below it is a list in memory. That was defensible while a queued message was only
+    /// ever a few seconds old — the AI was working and would take it on the next turn — and it stops
+    /// being defensible the moment the loop can be waiting half an hour, or the app can be closed
+    /// and reopened, with a question sitting in it. A restart lost the words AND the receipt the
+    /// owner had already been shown, which is worse than losing them: the software had said it would
+    /// deal with it.
+    ///
+    /// Set by the composition root to the wake queue. Null in every host that has none, and then
+    /// this behaves exactly as it did.
+    /// </summary>
+    public Func<string, bool>? RecordTyped { get; set; }
+
     /// <inheritdoc />
     public void Queue(string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
-        lock (_historyLock) _typedMeanwhile.Add(message.Trim());
+        var text = message.Trim();
+
+        // EXACTLY ONE OF THE TWO HOLDS IT. Writing to both would hand the same words to the next
+        // turn twice — once off the table and once off the list — and an owner who asked one
+        // question would watch it answered twice.
+        var recorded = false;
+        try { recorded = RecordTyped?.Invoke(text) ?? false; }
+        catch (Exception) { recorded = false; }
+        if (!recorded) lock (_historyLock) _typedMeanwhile.Add(text);
 
         // Shown, and said where it went. A message that disappeared into a queue with no
         // acknowledgement reads exactly like a message that was dropped.
