@@ -185,6 +185,20 @@ public class MissionLoopTests
     /// </summary>
     static readonly MissionOptions NoHeartbeat = new() { ReviewEvery = TimeSpan.Zero };
 
+    /// <summary>
+    /// MIDDAY, AND NOT THE HOUR THE SUITE HAPPENED TO REACH THIS FILE AT. Every test whose verdict
+    /// is a wait, or is "no turn happened", is asked at this hour and raises its own events at it.
+    ///
+    /// The loop schedules the day's renewal at LOCAL MIDNIGHT and then sleeps until the nearest
+    /// wake, so a test on the real clock measures the renewal instead of itself for the last minutes
+    /// of every day — and a test that counts turns takes an extra one if midnight falls between two
+    /// of them. Twelve hours from either midnight is not a margin to be widened later; it is a fixed
+    /// point, and the rule itself is pinned on purpose by the pair of wait tests below, one asked at
+    /// this hour and one asked at 23:55.
+    /// </summary>
+    static readonly DateTimeOffset Midday =
+        new(DateTime.Today.AddHours(12), DateTimeOffset.Now.Offset);
+
     static string OwnerSaid(string text) =>
         Json.Write(new MissionOwnerMessage(text, DateTimeOffset.UtcNow));
 
@@ -289,20 +303,20 @@ public class MissionLoopTests
 
         // The day that already happened: one real reason to wake, and the turn that answered it.
         var yesterday = new FakeConversation(presence);
-        events.Raise(MissionEventIds.Owner(1), MissionEventKind.Owner, DateTimeOffset.UtcNow,
+        events.Raise(MissionEventIds.Owner(1), MissionEventKind.Owner, Midday,
             OwnerSaid("how did today go?"));
         await new MissionLoop(new FakeHost(db, root, presence, yesterday) { Events = events },
-            NoHeartbeat).TurnAsync();
+            NoHeartbeat, now: () => Midday).TurnAsync();
         Assert.Single(yesterday.Sent);
 
         // From here nothing new has happened, and nothing may be launched.
         var conversation = new FakeConversation(presence);
         var host = new FakeHost(db, root, presence, conversation) { Events = new MissionEventStore(db) };
-        var restarted = new MissionLoop(host, NoHeartbeat);
+        var restarted = new MissionLoop(host, NoHeartbeat, now: () => Midday);
 
         for (var i = 0; i < 5; i++) await restarted.TurnAsync();          // ticks
         foreach (var e in events.OfKind(MissionEventKind.Owner))          // the day, replayed
-            events.Raise(e.Id, e.Kind, DateTimeOffset.UtcNow, e.Payload);
+            events.Raise(e.Id, e.Kind, Midday, e.Payload);
         for (var i = 0; i < 5; i++) await restarted.TurnAsync();
 
         Assert.Empty(conversation.Sent);
@@ -325,9 +339,9 @@ public class MissionLoopTests
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
         var host = new FakeHost(db, root, presence, conversation) { Events = events };
-        var loop = new MissionLoop(host, NoHeartbeat);
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => Midday);
 
-        events.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, DateTimeOffset.UtcNow);
+        events.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, Midday);
         await loop.TurnAsync();
         await loop.TurnAsync();
 
@@ -380,12 +394,11 @@ public class MissionLoopTests
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
         var host = new FakeHost(db, root, presence, conversation) { Events = events };
-        var noon = new DateTimeOffset(DateTime.Today.AddHours(12), DateTimeOffset.Now.Offset);
-        events.Raise(MissionEventIds.Review(noon), MissionEventKind.Review, noon);
+        events.Raise(MissionEventIds.Review(Midday), MissionEventKind.Review, Midday);
         File.WriteAllText(Path.Combine(host.AgentHome, ".tradeagent", "next.json"),
             """{"after_seconds": 600}""");
 
-        var wait = await new MissionLoop(host, NoHeartbeat, now: () => noon).TurnAsync();
+        var wait = await new MissionLoop(host, NoHeartbeat, now: () => Midday).TurnAsync();
 
         Assert.InRange(wait, TimeSpan.FromSeconds(590), TimeSpan.FromSeconds(600));
         var self = events.OfKind(MissionEventKind.Self).Single();
@@ -395,7 +408,7 @@ public class MissionLoopTests
         // A fresh loop over the same database honours it too, and takes no turn until it is due.
         var later = new FakeConversation(presence);
         await new MissionLoop(new FakeHost(db, root, presence, later) { Events = new MissionEventStore(db) },
-            NoHeartbeat, now: () => noon).TurnAsync();
+            NoHeartbeat, now: () => Midday).TurnAsync();
         Assert.Empty(later.Sent);
     }
 
@@ -460,14 +473,16 @@ public class MissionLoopTests
         var events = new MissionEventStore(db);
         var conversation = new FakeConversation(presence);
         var loop = new MissionLoop(new FakeHost(db, root, presence, conversation) { Events = events },
-            new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) });
+            new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) }, now: () => Midday);
 
         for (var i = 0; i < 4; i++) await loop.TurnAsync();
 
         Assert.Empty(conversation.Sent);
         Assert.Equal(CouncilRoles.All, events.OfKind(MissionEventKind.Review).Select(e => e.For).ToArray());
         Assert.Equal(CouncilRoles.All, events.OfKind(MissionEventKind.Renewal).Select(e => e.For).ToArray());
-        Assert.True(events.NextDueAt() > DateTimeOffset.UtcNow, "a scheduled wake was already due");
+        // AHEAD OF THE LOOP'S OWN NOW, which is what "always in the future" means. Read off the
+        // real clock this compared the product against a second, later reading of a moving one.
+        Assert.True(events.NextDueAt() > Midday, "a scheduled wake was already due");
     }
 
     /// <summary>
@@ -484,7 +499,7 @@ public class MissionLoopTests
         var loop = new MissionLoop(new FakeHost(db, root, presence, conversation)
         { Events = new MissionEventStore(db) },
             new MissionOptions { ReviewEvery = TimeSpan.FromMinutes(30) },
-            delay: (_, ct) => Task.Delay(1, ct));
+            now: () => Midday, delay: (_, ct) => Task.Delay(1, ct));
 
         loop.Start();
         var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
@@ -495,11 +510,10 @@ public class MissionLoopTests
 
         Assert.Empty(conversation.Sent);                    // it waited; it did not work
         Assert.Equal(MissionState.Waiting, status.State);
-        // Whichever of the two scheduled wakes is nearer. A test run at 23:55 has the day turning
-        // over before the next half-hourly look, and pinning one of them would be pinning the hour
-        // the suite happened to run at.
-        Assert.True(status.WaitingFor is "the next scheduled look" or "the day to turn over",
-            $"the card said it was waiting for: {status.WaitingFor}");
+        // THE NEARER OF THE TWO SCHEDULED WAKES, and at a pinned midday that is the half-hourly
+        // look rather than a coin toss with the renewal. Asked at 23:55 the same loop would say "the
+        // day to turn over"; which of the two is nearer is pinned by the wait tests above.
+        Assert.Equal("the next scheduled look", status.WaitingFor);
         Assert.Contains("waiting until", DashboardPage.MissionSentence(status));
         Assert.EndsWith($" for {status.WaitingFor}", DashboardPage.MissionSentence(status));
     }

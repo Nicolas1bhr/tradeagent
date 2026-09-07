@@ -105,6 +105,15 @@ public class MissionOwnerMessageTests
     static readonly MissionOptions NoHeartbeat = new() { ReviewEvery = TimeSpan.Zero };
 
     /// <summary>
+    /// MIDDAY, for the one test here that counts turns. The loop schedules the day's renewal at
+    /// local midnight, so a second turn taken on the real clock is a turn the renewal caused
+    /// whenever midnight falls between the two — see MissionLoopTests.Midday, which says the same
+    /// thing where the rule itself is pinned.
+    /// </summary>
+    static readonly DateTimeOffset Midday =
+        new(DateTime.Today.AddHours(12), DateTimeOffset.Now.Offset);
+
+    /// <summary>
     /// RED FIRST, AND THE RED IS THE PRODUCT DEFECT: a question typed at a working AI, then a new
     /// host over the same database, and the words are gone. Today they live in a list on the session
     /// object that the restart destroyed — along with the receipt the owner was shown.
@@ -119,7 +128,7 @@ public class MissionOwnerMessageTests
         var typed = new MissionEventStore(db);
         // The product's own writer, so that what is asserted below is what the app does — see
         // AppHost.RecordOwnerMessage, which is this call and a nudge to the loop.
-        var session = Session(text => typed.RecordOwnerMessage(text, DateTimeOffset.UtcNow));
+        var session = Session(text => typed.RecordOwnerMessage(text, Midday));
 
         session.Queue("stop buying NQ");
 
@@ -128,7 +137,8 @@ public class MissionOwnerMessageTests
 
         // A new host over the same database. Nothing of the session above survives into it.
         var conversation = new Recording();
-        var loop = new MissionLoop(new Host(new MissionEventStore(db), conversation), NoHeartbeat);
+        var loop = new MissionLoop(new Host(new MissionEventStore(db), conversation), NoHeartbeat,
+            now: () => Midday);
         await loop.TurnAsync();
 
         var sent = conversation.Sent.Single();
