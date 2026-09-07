@@ -225,3 +225,106 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
         await gw.DisposeAsync();
     }
 }
+
+// =================================================================================================
+// Item 2 — the agent's own close, and its reduce, are refused while an UNKNOWN one is unsettled
+// =================================================================================================
+
+public class AgentCloseOverAnUnknownCloseTests(ITestOutputHelper Out)
+{
+    /// <summary>
+    /// (c) TWO CLOSES IN THE BOOK, REFUSED. The owner has confirmed the unconfirmed card WITHOUT
+    /// being able to say what happened — the one route by which an UNKNOWN record stops pausing
+    /// trading while still being UNKNOWN — so the gate lets the agent through and the position is
+    /// unchanged, which is exactly what makes the stale-close check agree with it.
+    /// </summary>
+    [Fact]
+    public async Task The_agents_second_close_is_refused_while_the_first_is_still_unknown()
+    {
+        var (gw, c, db, lost) = await Unresolved.WithALostClose();
+        using var dbh = db;
+        await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+        Assert.True(gw.TryAuthorizeExecution(new AgentContext("ai"), out _));   // the gate is open again
+
+        var refused = await Assert.ThrowsAsync<GatewayDeniedException>(
+            () => gw.CloseAsync(new AgentContext("ai"), "uc-second", "ES"));
+        Out.WriteLine($"agent close             : {refused.Code} — {refused.Message}");
+        Out.WriteLine($"orders at the broker    : {Unresolved.Book(c)}");
+
+        Assert.Equal(ErrorCode.CLOSE_UNRESOLVED, refused.Code);
+        Assert.Contains(lost.RequestId, refused.Message);
+        Assert.Equal(2, c.Inner.Broker.Orders.Count);        // the open and the first close. No second one.
+        Assert.Null(gw.GetRequest("uc-second"));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A REDUCE THAT IS NOT A CLOSE OBEYS THE SAME RULE. It is sized against the same position and
+    /// the unresolved order moves it the same way, so a sell under a long is refused whether or not
+    /// the agent called it a close.
+    /// </summary>
+    [Fact]
+    public async Task An_agents_reduce_on_the_same_side_is_refused_too()
+    {
+        var (gw, c, db, lost) = await Unresolved.WithALostClose();
+        using var dbh = db;
+        await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+
+        var refused = await Assert.ThrowsAsync<GatewayDeniedException>(
+            () => gw.PlaceAsync(new AgentContext("ai"), "uc-reduce",
+                new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 1m, null, null, TimeInForce.Day, null)));
+        Out.WriteLine($"agent reduce            : {refused.Code} — {refused.Message}");
+
+        Assert.Equal(ErrorCode.CLOSE_UNRESOLVED, refused.Code);
+        Assert.Equal(2, c.Inner.Broker.Orders.Count);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// BOTH OTHER DIRECTIONS, because a guard that refused these would be useless. An order that can
+    /// only ADD to the position is not sized from it and cannot be doubled by the unresolved one; and
+    /// another instrument is another book entirely.
+    /// </summary>
+    [Fact]
+    public async Task An_opening_order_and_another_instrument_are_untouched()
+    {
+        var (gw, c, db, lost) = await Unresolved.WithALostClose();
+        using var dbh = db;
+        await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+
+        var added = await gw.PlaceAsync(new AgentContext("ai"), "uc-add", TestEnv.Buy("ES", 1m));
+        Assert.Equal(ExecutionState.FILLED, added.State);
+
+        await gw.PlaceAsync(new AgentContext("ai"), "uc-nq", TestEnv.Buy("NQ", 1m));
+        var closed = await gw.CloseAsync(new AgentContext("ai"), "uc-nq-close", "NQ");
+        Out.WriteLine($"NQ close                : {closed?.State.ToString() ?? "null"}");
+        Assert.Equal(ExecutionState.FILLED, closed!.State);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND THE WAY OUT IS REAL. An outcome for the unresolved record — the owner saying on the card
+    /// what the platform showed them — lifts the refusal, and the close goes out as it always did.
+    /// A refusal with no route out of it would be a worse defect than the one it prevents.
+    /// </summary>
+    [Fact]
+    public async Task An_outcome_for_the_unknown_record_lifts_the_refusal()
+    {
+        var (gw, c, db, lost) = await Unresolved.WithALostClose();
+        using var dbh = db;
+        await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+        await Assert.ThrowsAsync<GatewayDeniedException>(
+            () => gw.CloseAsync(new AgentContext("ai"), "uc-blocked", "ES"));
+
+        // The owner looked again and can now say what happened to it.
+        c.Inner.Broker.Cancel(c.Inner.Broker.Orders.First(o => o.ClientOrderId == lost.ClientOrderId).ConnectorOrderId);
+        gw.ForceResolve(lost.RequestId, ExecutionState.CANCELLED, "checked in ATAS: it never worked");
+        await gw.RefreshHealthAsync();
+
+        var closed = await gw.CloseAsync(new AgentContext("ai"), "uc-after", "ES");
+        Out.WriteLine($"agent close after        : {closed?.State.ToString() ?? "null"}");
+        Assert.Equal(ExecutionState.FILLED, closed!.State);
+        Assert.DoesNotContain(await c.GetPositionsAsync(c.Inner.Broker.AccountId), p => p.Symbol == "ES" && p.Quantity != 0);
+        await gw.DisposeAsync();
+    }
+}

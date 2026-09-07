@@ -1521,6 +1521,16 @@ public sealed class TradingGateway : IAsyncDisposable
             // row is written.
             var positions = await Connector.GetPositionsAsync(account.Id, ct);
             OpenPositionCapOrThrow(intent, positions, requestId);
+
+            // A THIRD GATE ON THE SAME READING, and it is here for the same reason the other two
+            // are: it is a question about the POSITION, and a second read to ask it could disagree
+            // with this one. A close and a reduce are sized from what is here; an order this gateway
+            // cannot account for on the same instrument would move that position the same way, so
+            // sending on top of it closes the position twice. `close` is refused a step earlier, in
+            // CloseAsync; this is the reduce the agent did not call a close, and the placement whose
+            // blocker appeared while these reads were in flight.
+            RefuseAnUnresolvedReducerOrThrow(intent, positions);
+
             await LossBudgetOrThrow(intent, account, positions, ct);
 
             var (created, stored) = _requests.TryCreate(record);
@@ -2046,6 +2056,46 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception) { return true; }
     }
 
+    /// <summary>
+    /// Refuses an order that is SIZED FROM A POSITION while this gateway is holding an order on the
+    /// same instrument that it cannot account for.
+    ///
+    /// It names the record and the way out, because the agent can do nothing about the record itself:
+    /// only the owner's card and the emergency press can settle one, and the press settles it by
+    /// reading it back rather than by trusting it (see <see cref="SettleAnUnresolvedReducerOrRefuse"/>).
+    /// A refusal an agent cannot act on would send it into a retry loop against a position it is
+    /// already at risk of doubling.
+    /// </summary>
+    void RefuseAnUnresolvedReducerOrThrow(string symbol, OrderSide side)
+    {
+        if (UnresolvedReducersOn(symbol, side).FirstOrDefault() is not { } blocker) return;
+        throw new GatewayDeniedException(ErrorCode.CLOSE_UNRESOLVED,
+            $"{blocker.RequestId} is an earlier order on {symbol} that TradeAgent could not confirm, and it " +
+            $"would move the position the same way this one would, so this one is not sent: sized from the " +
+            $"position as it reads now it could close {symbol} twice. Nothing was sent and the position is " +
+            $"untouched. It goes out once {blocker.RequestId} has an outcome — the account owner confirms it " +
+            "on the Dashboard, or presses Close all positions, which reads that order back and stops it first.");
+    }
+
+    /// <summary>
+    /// <see cref="RefuseAnUnresolvedReducerOrThrow"/> for an ordinary placement, which has to work out
+    /// whether it is a reduce at all.
+    ///
+    /// A REDUCE THAT IS NOT A CLOSE OBEYS THE SAME RULE, and nothing on the intent says so: an agent
+    /// that sells 1 under a long 2 has sized that 1 against the same position a close would be sized
+    /// against, and it is doubled by the same unresolved order. What tells them apart is the position
+    /// the caller already read — this is decided on <see cref="PlaceAsync"/>'s own reading, at the
+    /// same instant and inside the same gate as the open-position cap, rather than paying a second
+    /// read that could disagree with the first.
+    /// </summary>
+    void RefuseAnUnresolvedReducerOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions)
+    {
+        var live = positions.FirstOrDefault(p => p.Symbol == intent.Symbol)?.Quantity ?? 0m;
+        var reduces = intent.Intent is OrderIntent.Close
+                      || (live > 0m && intent.Side == OrderSide.Sell)
+                      || (live < 0m && intent.Side == OrderSide.Buy);
+        if (reduces) RefuseAnUnresolvedReducerOrThrow(intent.Symbol, intent.Side);
+    }
 
     async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
@@ -2719,8 +2769,17 @@ public sealed class TradingGateway : IAsyncDisposable
         var accountId = await RequireAccountId(ct);
         var pos = (await Connector.GetPositionsAsync(accountId, ct)).FirstOrDefault(p => p.Symbol == symbol && p.Quantity != 0);
         if (pos is null) return null;
+        var side = pos.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy;
+
+        // BEFORE ANY OF PlaceAsync'S READS, because there is nothing to read: the record that
+        // refuses this is in our own store. `RefuseAStaleCloseOrThrow` cannot catch it — it compares
+        // this close's size to the LIVE position, and while the earlier close is still resting at the
+        // broker those two agree exactly, which is what let a second sell 2 go out beside the first
+        // and turn a long 2 into a short 2. See RefuseAnUnresolvedReducerOrThrow.
+        RefuseAnUnresolvedReducerOrThrow(symbol, side);
+
         return await PlaceAsync(ctx, requestId, new PlaceIntent(symbol,
-            pos.Quantity > 0 ? OrderSide.Sell : OrderSide.Buy, OrderType.Market, Math.Abs(pos.Quantity),
+            side, OrderType.Market, Math.Abs(pos.Quantity),
             null, null, TimeInForce.Day, "close position") { Intent = OrderIntent.Close }, ct);
     }
 
