@@ -294,6 +294,98 @@ public class RiskGateTests(ITestOutputHelper log)
     }
 
     /// <summary>
+    /// THE PER-POSITION BUDGET REFUSES AN ADD AND ALLOWS A REDUCE (brief item 3).
+    ///
+    /// Averaging down into a loser is the shape this exists for: every order is inside every order
+    /// limit, the position cap is untouched because the instrument is already counted, and the
+    /// account is lost one permitted order at a time. What is asserted is the WIRE both ways round —
+    /// the add reaches nothing, and the sell against the same position, at the same moment, on the
+    /// same breached budget, goes out.
+    ///
+    /// The DAY'S budget is off throughout, so what is measured here is this gate and not the other.
+    /// </summary>
+    [Fact]
+    public async Task Adding_to_a_position_past_its_own_loss_budget_is_refused_and_reducing_it_is_not()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        await gw.PlaceAsync(new AgentContext("a"), "add-open", TestEnv.Buy("ES", 2m));
+        conn.Broker.PriceOffset = -20m;
+        gw.Update(s => { s.Risk.MaxLossPerTrade = 500m; s.Risk.MaxDailyLoss = 0m; });
+
+        var places = conn.Places;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "add-more", TestEnv.Buy("ES")));
+
+        var es = conn.Broker.Positions.First(p => p.Symbol == "ES");
+        var last = gw.LastQuote("ES")!.Last!.Value;
+        var down = -((last - es.AveragePrice) * es.Quantity * 50m);
+
+        log.WriteLine($"ES held              : {es.Quantity} at {es.AveragePrice}, last {last}");
+        log.WriteLine($"position is down     : {down}");
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+        log.WriteLine($"places before/after  : {places}/{conn.Places}");
+
+        Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, denied.Code);
+        Assert.Contains("ES position is down", denied.Message, StringComparison.Ordinal);
+        Assert.Contains(Labels.Money(down, "USD"), denied.Message, StringComparison.Ordinal);
+        Assert.Contains(Labels.Money(500m, "USD"), denied.Message, StringComparison.Ordinal);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(gw.GetRequest("add-more"));
+
+        // THE OTHER HALF, ON THE SAME BREACHED BUDGET. Selling one of the two is smaller than the
+        // position it is against, so it reduces — and a budget that refused that would be a budget
+        // that holds an owner in a losing trade.
+        var reduced = await gw.PlaceAsync(new AgentContext("a"), "add-reduce", Sell("ES", 1m));
+        log.WriteLine($"reduce               : {reduced.State}");
+        Assert.Equal(ExecutionState.FILLED, reduced.State);
+        Assert.Equal(1m, conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity);
+
+        // And the whole of what is left can still be closed.
+        var closed = await gw.CloseAsync(new AgentContext("a"), "add-close", "ES");
+        log.WriteLine($"close                : {closed?.State.ToString() ?? "none"}");
+        Assert.Equal(ExecutionState.FILLED, closed!.State);
+
+        var said = gw.Log.RecentActivity(200).Count(a => a.Text.Contains(Labels.MaxLossPerTrade, StringComparison.Ordinal));
+        log.WriteLine($"activity lines       : {said}");
+        Assert.Equal(1, said);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A position INSIDE its budget is added to normally, and a losing position in ONE instrument
+    /// does not refuse an order in another. The budget is per position, and a gate that read the
+    /// day's total here would be the daily budget wearing the wrong name.
+    /// </summary>
+    [Fact]
+    public async Task A_position_inside_its_budget_is_added_to_and_another_instrument_is_untouched()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        await gw.PlaceAsync(new AgentContext("a"), "ok-open", TestEnv.Buy("ES", 2m));
+        conn.Broker.PriceOffset = -20m;
+        gw.Update(s => { s.Risk.MaxLossPerTrade = 100_000m; s.Risk.MaxDailyLoss = 0m; });
+
+        var added = await gw.PlaceAsync(new AgentContext("a"), "ok-add", TestEnv.Buy("ES"));
+        log.WriteLine($"add inside the budget: {added.State}");
+        Assert.Equal(ExecutionState.FILLED, added.State);
+
+        // Now tighten it: ES is far past the budget, NQ has no position at all and is not refused.
+        gw.Update(s => s.Risk.MaxLossPerTrade = 500m);
+        var elsewhere = await gw.PlaceAsync(new AgentContext("a"), "ok-nq", TestEnv.Buy("NQ"));
+        log.WriteLine($"another instrument   : {elsewhere.State}");
+        Assert.Equal(ExecutionState.FILLED, elsewhere.State);
+
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "ok-add-2", TestEnv.Buy("ES")));
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
     /// A day INSIDE its budget is not refused, and the figure is the real one rather than a
     /// threshold that happens to be crossed by any loss at all. The same trades, a budget wider
     /// than what they lost, and the next opening order goes to the wire.
