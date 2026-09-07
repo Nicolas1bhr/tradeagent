@@ -47,8 +47,7 @@ public sealed class BinanceDataService(Database db, BinanceArchiveClient? client
                               .ToList();
 
         if (collected.Count == 0)
-            return new DataCollection(null, months,
-                $"Binance published none of the {months.Count} months asked for, so there is no dataset to record.");
+            return new DataCollection(null, months, NothingArrived(months));
 
         // THE EARLIEST download time in the collection is what an incomplete bar is measured
         // against, not the latest: a bar is only provably closed if it closed before the EARLIEST
@@ -117,7 +116,7 @@ public sealed class BinanceDataService(Database db, BinanceArchiveClient? client
         var record = new DatasetRecord(
             0, BinanceArchive.Source, pair, BinanceArchive.Interval, version,
             months.Count, collected.Count,
-            [.. months.Where(m => m.Outcome != MonthOutcome.Collected).Select(m => m.Month)],
+            [.. months.Where(m => m.Outcome != MonthOutcome.Collected).Select(Missing)],
             set.Path, set.Sha256, set.Bars, set.FirstBar, set.LastBar,
             set.Gaps, set.GapRuns, set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable,
             acceptedAt, DatasetState.ACCEPTED, null,
@@ -128,20 +127,57 @@ public sealed class BinanceDataService(Database db, BinanceArchiveClient? client
     }
 
     /// <summary>
+    /// WHAT BECAME OF A MONTH THAT PRODUCED NO FILE, written into the ledger beside its name.
+    ///
+    /// The row records the months that are not in the dataset; a bare month name in that list reads
+    /// as "the vendor has no such month", and for three of the four ways a month can be missing that
+    /// is not what happened. A month nobody could reach in particular is a hole in the network, and
+    /// a coverage figure that calls it a hole in the archive is a measurement of the wrong thing.
+    /// </summary>
+    static string Missing(MonthResult month) => month.Outcome switch
+    {
+        MonthOutcome.NotPublished => month.Month,
+        MonthOutcome.ChecksumNotPublished => $"{month.Month} (published with no checksum)",
+        MonthOutcome.ChecksumMismatch => $"{month.Month} (checksum mismatch)",
+        _ => $"{month.Month} (Binance could not be reached)"
+    };
+
+    /// <summary>
+    /// The sentence for a press that produced nothing at all. "Binance published none of them" is
+    /// only true when Binance actually answered; when it did not, saying so is the whole point.
+    /// </summary>
+    static string NothingArrived(IReadOnlyList<MonthResult> months)
+    {
+        var unreachable = months.Count(m => m.Outcome == MonthOutcome.Unreachable);
+
+        return unreachable == 0
+            ? $"Binance published none of the {months.Count} months asked for, so there is no dataset to record."
+            : $"None of the {months.Count} months asked for arrived, and {unreachable} of them could not be reached " +
+              "at all, so nothing was recorded. That is not evidence that Binance has no data for them.";
+    }
+
+    /// <summary>
     /// The owner's sentence. It states the coverage TARGET and what was actually got, because a
     /// twelve-month ask that found eleven is a normal day at this vendor and a figure with no
-    /// denominator beside it is the one an owner misreads as complete.
+    /// denominator beside it is the one an owner misreads as complete. A month nobody could reach is
+    /// counted separately, because it is the one number here that is about this machine's network
+    /// rather than about the archive.
     /// </summary>
     static string Describe(DatasetRecord set, IReadOnlyList<MonthResult> months)
     {
         var missing = months.Count == 0 ? set.MonthsNotPublished.Count : months.Count - set.MonthsPresent;
+        var unreachable = months.Count(m => m.Outcome == MonthOutcome.Unreachable);
         var period = set.FirstBar is { } first && set.LastBar is { } last
             ? $"{first.UtcDateTime:yyyy-MM-dd HH:mm} to {last.UtcDateTime:yyyy-MM-dd HH:mm} UTC"
             : "no bars";
 
         return $"{set.Pair} {set.Interval}: {set.Bars:N0} bars, {period}. " +
                $"{set.MonthsPresent} of {set.MonthsAttempted} months collected" +
-               (missing > 0 ? $" ({missing} not published)" : "") +
+               (missing > 0
+                   ? unreachable > 0
+                       ? $" ({missing} missing, {unreachable} of them because Binance could not be reached)"
+                       : $" ({missing} not published)"
+                   : "") +
                $". {set.Gaps:N0} minutes missing inside that period, {set.Duplicates:N0} duplicate rows dropped, " +
                $"{set.Incomplete:N0} bars excluded because they had not closed when the archive was read.";
     }

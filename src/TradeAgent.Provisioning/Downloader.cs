@@ -456,24 +456,50 @@ public static class Downloader
     }
 
     /// <summary>
-    /// What the server says about a URL without fetching its body, or null when it could not be
-    /// asked at all.
+    /// WHAT THE SERVER SAID ABOUT A URL, OR — WHEN IT SAID NOTHING — WHY NOT, IN WORDS.
+    ///
+    /// <see cref="Status"/> is null when the request never got an answer: the leash expired, the
+    /// connection dropped, the name did not resolve. That is not a fact about the URL and a caller
+    /// must never read it as one. <see cref="Because"/> carries the reason so the caller can say
+    /// what actually happened instead of inventing a verdict; the same rule the ATAS adapter states
+    /// for a broker refusal (<c>IAtasAdapter</c> rule 3), applied to a download.
+    /// </summary>
+    public readonly record struct UrlStatus(HttpStatusCode? Status, string? Because)
+    {
+        /// <summary>True when a server answered at all. False is evidence about the network only.</summary>
+        public bool Answered => Status is not null;
+    }
+
+    /// <summary>
+    /// What the server says about a URL without fetching its body, on a leash of its own.
     ///
     /// It exists so "the vendor has not published this month" and "the vendor published the file and
     /// not its checksum" can be told apart without pulling two megabytes of a file that is going to
     /// be refused anyway. A HEAD is the whole request; nothing is written to disk by it.
+    ///
+    /// <paramref name="timeout"/> is the caller's, because the shared client's is thirty minutes and
+    /// a caller that only wants to know whether a file exists should not be able to spend that. A
+    /// suite that talks to a loopback server passes seconds; nothing else changes.
     /// </summary>
-    public static async Task<HttpStatusCode?> TryStatusAsync(string url, CancellationToken ct = default)
+    public static async Task<UrlStatus> StatusAsync(string url, TimeSpan timeout, CancellationToken ct = default)
     {
+        using var leash = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        leash.CancelAfter(timeout);
+
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Head, url);
-            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-            return response.StatusCode;
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, leash.Token);
+            return new UrlStatus(response.StatusCode, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception) { return null; }
+        catch (OperationCanceledException) { return new UrlStatus(null, $"it did not answer within {Plainly(timeout)}"); }
+        catch (Exception ex) { return new UrlStatus(null, ex.Message.ReplaceLineEndings(" ")); }
     }
+
+    /// <summary>A timeout as the owner would say it, for a sentence on the owner's screen.</summary>
+    static string Plainly(TimeSpan timeout) =>
+        timeout.TotalSeconds < 90 ? $"{timeout.TotalSeconds:N0} seconds" : $"{timeout.TotalMinutes:N0} minutes";
 
     /// <summary>Fetches a text file (checksum manifests, version indexes). Null when unreachable.</summary>
     public static async Task<string?> TryGetStringAsync(string url, CancellationToken ct = default)
