@@ -56,6 +56,52 @@ public class MissionInstructionsTests
     }
 
     /// <summary>
+    /// A TURN HAS A CAUSE, AND THE AI IS TOLD TO READ IT FIRST.
+    ///
+    /// RED FIRST, on the sentence that is gone: "if you have nothing to do, you have not looked hard
+    /// enough at what is not working yet." That was true of a loop that re-turned the instant a turn
+    /// ended — there was no other reason to be awake, so an idle turn WAS a failure to look. It is
+    /// false of a loop that wakes on events, and it is expensive: an AI told that idleness is its own
+    /// fault will manufacture work rather than end a turn, and every manufactured turn is charged to
+    /// the owner at the same rate as a useful one.
+    ///
+    /// <c>docs/COUNCIL.md</c> rule 7: justified idleness launches no inference. The AI cannot enforce
+    /// that — the loop does — but an AI arguing against it every turn is what the loop would be
+    /// enforcing it against.
+    /// </summary>
+    [Fact]
+    public void Idleness_with_a_reason_is_healthy_and_the_old_reproach_is_gone()
+    {
+        var text = Instructions();
+
+        Assert.DoesNotContain("you have not looked hard enough", text);
+        Assert.DoesNotContain("There is no such thing as \"waiting for instructions\"", text);
+
+        Assert.Contains("A turn happens because", text);
+        Assert.Contains("Why you are awake", text);
+        Assert.Contains("If there is genuinely nothing to do, say why in one line and finish the turn",
+            text);
+        Assert.Contains("An idle turn with its reason stated is a healthy outcome and not a fault.", text);
+    }
+
+    /// <summary>
+    /// AND THE FILE THAT ASKS FOR THE NEXT WAKE IS NAMED. It has existed since the loop did, and
+    /// nothing ever told the AI about it: <c>MissionLoop.AskedForDelay</c> reads
+    /// <c>.tradeagent/next.json</c> after every turn, and an AI that has never heard of it can only
+    /// ever be woken on somebody else's schedule. Both halves are asserted — the path and the one
+    /// field — because a name without its shape is not usable.
+    /// </summary>
+    [Fact]
+    public void The_file_that_asks_for_the_next_wake_is_named_with_its_field_and_its_cap()
+    {
+        var text = Instructions();
+
+        Assert.Contains(".tradeagent/next.json", text);
+        Assert.Contains("after_seconds", text);
+        Assert.Contains("The delay is capped at thirty minutes", text);
+    }
+
+    /// <summary>
     /// AN UNKNOWN IS NEVER A ZERO, said to the reader of the number as well as enforced by whatever
     /// produces it. A missing fee makes the headline larger than the truth, and an AI that plans off
     /// the headline compounds the error every turn.
