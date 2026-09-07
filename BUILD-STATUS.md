@@ -4744,7 +4744,7 @@ builder on `docs/briefs/U-wakes.md`. Merge `cef122b`, 8 commits, 22 files, +2019
 and 88/88 each run, no `Timing` red; names vs `main` → nothing removed, 26 added. Manager's gate at `cef122b` (the report
 commit on the gated tip), Release: build → 0 warnings, 0 errors; suite → 510 + 277 + 615 = 1402 passed,
 0 failed, 1 skipped; names vs `main` → 0 tests removed, 26 added (sets 1161 → 1186; `[Fact]`/`[Theory]` 1118 → 1144); scan
-clean; no trailers; `rev-list --count` → 0; CI at `cef122b`: run 34146285162 in flight when this section was written, its verdict recorded in a follow-up commit.
+clean; no trailers; `rev-list --count` → 0; CI run 34146285162 at `cef122b`: failure | test (ubuntu-latest):success, test (macos-latest):success, test (windows-latest):failure, package:skipped — NOT green; judged in the next section.
 
 **NOT VERIFIED:** the Safety page's interval field and the card's waiting line on a screen — tests only; no screen lists the
 queue. **NOT done:** no box, no ATAS, no money; `U-data-binance` (in flight) and `U-council-thin` (next) read this table.
