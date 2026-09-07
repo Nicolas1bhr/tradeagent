@@ -523,7 +523,7 @@ public sealed record LossToday
         line += ".";
 
         if (FeesUnknownFills > 0)
-            line += $" Your platform reported no fee for {FeesUnknownFills} of today\u2019s fills, so the real "
+            line += $" Your platform reported no fee for {FeesUnknownFills} of today's fills, so the real "
                     + "figure is a little worse than that.";
 
         if (DayReached)

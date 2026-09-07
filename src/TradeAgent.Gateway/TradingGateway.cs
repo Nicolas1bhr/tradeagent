@@ -596,9 +596,12 @@ public sealed class TradingGateway : IAsyncDisposable
             }
         }
 
-        // The multiplier lives in the instrument list. A refresh that fails leaves whatever was
-        // cached, and LossBudget refuses on any symbol it still cannot size.
-        try { await InstrumentsAsync(ct); } catch (Exception) { /* the reading names what it cannot size */ }
+        // The multiplier lives in the instrument list, and only a COLD cache is filled here. This
+        // runs on the five-second status tick, and a refresh on every one of those would spend a
+        // connector round trip a tick to re-read a list that does not change — see
+        // ContractSizeOrThrow, which fills a cold cache and no more, for the same reason.
+        if (_instrumentCache.Count == 0)
+            try { await InstrumentsAsync(ct); } catch (Exception) { /* the reading names what it cannot size */ }
 
         return LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(Now), "today"),
             positions, LastQuote, _instrumentCache);
