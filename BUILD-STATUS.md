@@ -4632,7 +4632,7 @@ warnings, 0 errors; Unit 481 + Fault 269 + Integration 615 = 1365 passed, 0 fail
 70/70 each, no `Timing` red; scan clean. Manager's gate at `2504c5b` (the builder's rebase onto `44ee58d`), Release: build →
 0 warnings, 0 errors; suite → 481 + 269 + 615 = 1365 passed, 0 failed, 1 skipped; names vs
 `main` → 1 removed (the rename above), 29 added (sets 1125 → 1153; `[Fact]`/`[Theory]` 1083 → 1110); scan clean; no
-trailers; `rev-list --count` → 0; CI at `2504c5b`: run 34139262127 in flight when this section was written, its verdict recorded in a follow-up commit.
+trailers; `rev-list --count` → 0; CI run 34139262127 at `2504c5b`: **RED on windows-latest only** (failure | test (ubuntu-latest):success, test (windows-latest):failure, test (macos-latest):success, package:skipped) — the one failure is `MissionInstructionsTests.The_paragraph_is_the_only_difference_between_the_two_missions`, the CRLF-checkout red already recorded at `06a8636` and fixed by `U-crlf-win` at `2082091`, whose own run is the proof; nothing of `U-model`'s went red.
 
 **NOT VERIFIED:** the Safety page's model row on a screen — no UI run, and no test presses `DashboardView.BuildModelRow`;
 only the card's words, the pipe field and the schema sentence are asserted. **NOT done:** no box, no ATAS, no order.
