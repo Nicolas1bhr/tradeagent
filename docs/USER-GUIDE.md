@@ -255,7 +255,7 @@ of anything it could not work out.
 Drag files onto the page, or press **Choose files…**. Everything that arrives is recorded
 automatically. There is a section on this page below.
 
-**Safety** — the trading mode, the five limits, and the three emergency buttons. Everything on this
+**Safety** — the trading mode, the seven limits, and the three emergency buttons. Everything on this
 page belongs to you; the AI cannot reach any of it and has no way to ask.
 
 **Settings** — which trading platform is in use, which account the AI may trade, and which version of
