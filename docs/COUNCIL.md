@@ -182,6 +182,57 @@ The Operations Director adds a paid note of at most 20 lines only when an app pr
 matters, the decision within existing authority, the alternative rejected, the next task with owner, budget and
 deadline, the evidence, the uncertainty left. No material change: the app says so and pays nobody.
 
+**Access, accountability and evolution** (round 4, 2026-09-07, on the owner's question "why aren't we just adopting higher
+level clearance — like literally a directory higher — for report, accountability and sensitive non-performing-work
+managers, since evolution will need it anyway?"). The answer is yes to the contract, no to the primitive. Astra's
+amendment, pasted as written:
+> Worker/director/app bands describe organization; directory depth grants no authority.
+> The app grants named artifact revisions and operations to authenticated roles, teams, tasks and attempts; default deny.
+> Role folders are views of those grants; peers remain compartmented and independent assessments stay sealed until release.
+> Agents propose staged output; only the app validates, publishes and commits recipient-scoped artifacts.
+> Record identities, input hashes, grants, policy versions and observed deliveries; unrestricted CLI reads remain unobserved.
+> Downward briefs use releasable inputs; provenance stamps neither grant authority nor prove absence of private leakage.
+> App-owned measurements and separately attributed judgments retain lineage, opportunity, costs, uncertainty and decisions.
+> Teams receive their operational record and actionable feedback; private evaluation disclosures remain referee-budgeted.
+> Directors receive authorized cross-team summaries, never credentials or unrestricted private evaluation evidence.
+> Owner text enters Operations' agenda first, with receipt, disposition and deadline; workers receive scoped briefs.
+> Owner text grants nothing; in-process controls and app protection never wait for director review.
+> Retirement follows fixed code policy and bounded independent review, preserving evidence, trial history and reconciliation.
+> Evolution adds versioned parentage, comparable trials, exploration and bounded replacement; directors are evaluated too.
+> Adopt this contract in the thin slice; unrestricted same-user CLI execution does not satisfy it, and containment covers seniors.
+
+What that settles beyond the manager's position. A grant record — principal, role, team incarnation, task, attempt,
+operation, artifact revision or resource scope, limits, expiry and fencing generation, policy version — is the harness's
+contract; the app derives identity from the invocation, never from a model-supplied role; knowing an artifact id grants
+nothing; workers cannot mint or delegate grants. Three ranks cannot express what the doctrine needs (peers compartmented,
+the directors' assessments sealed from each other, the Trader's execution grants that no Strategist has), so rank is
+organisation and grants are access. What cannot be recovered later is not the layout but unrecorded exposure (which
+revision entered a model request), lost provenance (which attempt produced an artifact, which strategy or allocation
+caused an operation), precommitment (that criteria, budgets and assessments were fixed before the outcome was known) and
+contaminated evidence (a leaked holdout cannot become unseen) — so `U-model`'s launch record carries the grant-policy
+revision and an input manifest, and every publication records source, hash, revision, recipients, classification and
+the relay event. Attribution today is weaker than the manager claimed: `agent_session` on a fill is NULLABLE
+(`Database.cs`, "or never"), and a session is not research credit; the accountability record is the app's, in its
+database outside every workspace, measurement and judgment in separate tables as `CLAUDE.md` already requires, with a
+team reading its own operational record and a sanitised reason for a judgment (never the sealed deliberation, never a
+rival's raw record), and rivals' explicitly published findings shareable so research is not wasted. Survival of the
+fittest needs what the allocator as first specified did not give: a heritable candidate definition (model, mission,
+tools, memory seed may vary; permission ceilings, scorer and supervisor never), comparable opportunity, a fixed selection
+protocol with registered review times, exploration and diversity budgets, bounded births and turnover with probation and
+rollback — and a retirement-candidate EVENT: evidence frozen, two sealed assessments, one bounded challenge, code applies
+the disposition; retirement stops new assignments and fences attempts, it never erases history, cancels reconciliation
+or kills a deployed strategy, which has its own lifecycle; the directors' own recommendations, forecasts and timeliness
+are recorded against declared baselines. Retirement executes an already-authorised lifecycle policy — it is not a new
+agent-reachable permission operation, and `CLAUDE.md`'s two-press rule keeps its scope over the owner's own changes to
+authority. The owner's words: recorded with receipt, first in the Operations agenda with an id and a deadline,
+dispositioned (answered, delegated, blocked, superseded) with a link to the resulting brief, answered through the owner's
+interface without waiting for the daily report; a pause or kill-switch press never waits for anyone. Containment:
+one OS account per level is feasible with privilege but wrong (peers would share an identity; low integrity is
+no-write-up, not no-read-up); the candidates are an AppContainer with brokered IPC and Job Objects on Windows and a
+sandboxed XPC helper on macOS, neither verified for a vendor CLI; the honest simpler alternative is harness-only
+execution for every role, seniors included, and a CLI that cannot be contained is disabled in the protected
+configuration rather than kept beside credentials and private evidence.
+
 ## The unit order
 
 The money path keeps its safety dependencies and its live-release gates: `U-loss` (in flight) → the UNKNOWN close fixed or
@@ -194,11 +245,13 @@ test proves:
 - `U-model` — the model named and passed, the requested model, effective identity when reported, usage and versioned
   pricing basis persisted per attempt; one bounded fresh session per task; the observable components of a turn's context
   measured from the event stream with the remainder labelled unattributed (`TurnMeter.cs` sees aggregate usage only); the
-  attempt-and-spending record written before launch, with admission against unresolved usage. **Proves:** every launched
+  attempt-and-spending record written before launch, with admission against unresolved usage, carrying the grant-policy
+  revision and an input manifest (round 4). **Proves:** every launched
   attempt has a durable identity and spending commitment, and killing it before its usage arrives, then restarting across
   midnight, cannot make that allowance available again.
 - `U-wakes` — persisted, deduplicated events with identity replace the immediate re-turn; the idle language of the mission
-  fixed (justified idleness is healthy, not a failure to look hard enough); the scanner's quiescence barrier. **Proves:**
+  fixed (justified idleness is healthy, not a failure to look hard enough); the scanner's quiescence barrier; the owner's
+  message recorded with receipt and a disposition (round 4). **Proves:**
   with no eligible unconsumed event, ticks, a restart and a replay of completed events launch zero paid processes.
 - `U-data-binance` — the first real dataset with provenance and quality checks. **Proves:** an accepted normalised dataset
   is reproducible from its recorded raw hashes, with timestamp units, gaps, duplicates and incomplete bars classified
@@ -206,13 +259,17 @@ test proves:
 - `U-council-thin` — two role workspaces run SERIALLY by one app instance (the previous process tree proven terminated,
   accepted publication app-only, the owner's chat serialised with them, so leases can wait); the report-to-agenda relay
   as an immutable report publication followed by one transaction committing its reference, the source event's
-  consumption and one uniquely keyed Operations task; per-role model and budget; the factual daily report. **Proves:** a
-  crash at each handoff boundary recovers to exactly one committed report-to-Operations task, neither lost nor doubled.
-- then `U-turn-commit` (staged output, immutable publication, committed transitions, fenced replacement, generalised
-  from the thin slice) → `U-budget-reserve` (the generalised, concurrent reservation machinery; the durable unresolved
-  spending itself is `U-model`'s) → `U-containment` → `U-api-worker` (the harness, one provider, one worker task) →
-  `U-runner` (the language runner) → `U-referee` (its referee; Wasm deferred) → `U-council-concurrent` → the remaining
-  venue and data units → `U-allocator` (evolution).
+  consumption and one uniquely keyed Operations task; per-role model and budget; the factual daily report; the access
+  contract of round 4 in its minimum form — grants to named artifact revisions, recipient-scoped publication, the first
+  accountability tables. **Proves:** a crash at each handoff boundary recovers to exactly one committed
+  report-to-Operations task, neither lost nor doubled.
+- then `U-turn-commit` (staged output, immutable recipient-aware publication, committed transitions, fenced replacement,
+  generalised from the thin slice) → `U-budget-reserve` (the generalised, concurrent reservation machinery; the durable
+  unresolved spending itself is `U-model`'s) → `U-containment` (isolates principals and resources, never ranks; a CLI that
+  cannot be contained is disabled in the protected configuration) → `U-api-worker` (the harness, one provider, one worker
+  task, capabilities authorised by grant) → `U-runner` (the language runner) → `U-referee` (its referee; Wasm deferred) →
+  `U-council-concurrent` → the remaining venue and data units → `U-allocator` (evolution: versioned parentage, comparable
+  trials, exploration, bounded replacement, the retirement-candidate event, the directors evaluated too).
 
 ## The debate's record, from the answer files only
 
@@ -227,3 +284,9 @@ need the minimal record even in serial execution; the harness verdict (app-owned
 sandbox as its first proposal; Binance data first; the report; the ten rules.
 Round 3: Astra's 32 corrections to the first draft of this file, all applied above; language first for strategies, Wasm
 deferred; the four red-first properties; and no blocker to adopting the corrected doctrine as the build plan.
+Round 4: the owner's clearance question. The manager proposed a three-level lattice by directory depth adopted now as
+layout; Astra: grants to named artifacts with directories as the view, adopt the contract now because exposure,
+provenance, precommitment and contaminated evidence are what cannot be recovered (the layout can), the fill ledger's
+attribution is nullable and not research credit, evolution needs a selection protocol the allocator did not yet have,
+one OS user per level is the wrong containment default, and harness-only execution for every role is the honest
+alternative. Its 15-line amendment is pasted above as written.
