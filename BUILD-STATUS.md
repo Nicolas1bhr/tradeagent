@@ -4550,7 +4550,7 @@ warnings, 0 errors (41 `CoreCompile` targets at `-v:n`); Unit 441 + Fault 269 + 
 `U-seen-1`'s suite overlapping, no `Timing` red. Manager's gate at `7b46503` (rebased over three docs-only commits),
 Release: build → 0 warnings, 0 errors, the Release DLLs rebuilt at 03:12; suite → 441 + 269 + 615 = 1325
 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 24 added (sets 1088 → 1112; `[Fact]`/`[Theory]`
-1046 → 1070); scan clean; no trailers; `rev-list --count` → 0; CI at `7b46503`: run 34072945394 in flight when this section was written, its verdict recorded in a follow-up commit.
+1046 → 1070); scan clean; no trailers; `rev-list --count` → 0; CI run 34072945394 at `7b46503`: all three platforms and `package` SUCCESS.
 
 **NOT VERIFIED:** the two Safety rows and the hint on a running app — proved by tests reading `DashboardView.cs`, never seen
 rendering; the day's figure against a real account's currency — only the simulator's. **NOT done:** nothing is flattened
