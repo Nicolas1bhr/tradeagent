@@ -42,8 +42,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    pins `.cs` to LF, the test made honest); `U-unknown-close` LANDED `acff18a` (item (e): an UNKNOWN close can no longer be doubled by a press or the agent);
    `U-wakes` LANDED `cef122b` (the loop wakes on persisted events, the owner's words
    survive a restart); `U-data-binance` LANDED `a22939d` (the first real dataset, Binance's public 1-minute archives); `U-council-thin` LANDED `96f29a6` (two
-   roles run serially by the app, the relay that cannot lose or double a handoff, schema 9); `docs/briefs/` holds `U-sweep-win` and
-   `U-archive-win` (fixers measuring on the runners), `U-midnight-test` (a fixer on it) and `U-report` (queued) — a desktop-app restart at 02:4x killed two builders
+   roles run serially by the app, the relay that cannot lose or double a handoff, schema 9); `U-midnight-test` LANDED `baeff48` (the loop's tests read a clock they
+   control); `docs/briefs/` holds `U-sweep-win` and `U-archive-win` (fixers measuring on the runners) and `U-report` (a fresh builder on it) — a desktop-app restart at 02:4x killed two builders
    mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
@@ -63,7 +63,7 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    (measure on the runners first, no assertion loosened) in flight; recorded red until it lands. **`a22939d` (`U-data-binance`) RED on
    windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
    request hung to the downloader's 30-minute timeout; fixer `U-archive-win` (measure first; a timeout must never read as "not
-   published") in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   published") in flight; recorded red until it lands. `96f29a6` (`U-council-thin`) RED on windows-latest on that same archive test only. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed

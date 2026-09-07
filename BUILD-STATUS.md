@@ -4824,9 +4824,39 @@ tables renumbered to schema 9). Merge `96f29a6`, 6 commits, 30 files, +2760/−1
 touched classes 3× → 186/186 each run; names vs `main` → 19 added, 0 removed. Fixer's gate at `e2eda82`: 0 warnings, 0 errors; Unit 558 + Fault 277 + Integration 621 = 1456 passed, 0 failed, 1 skipped; 26 classes 3× → 194/194 each; names 0 removed, 17 added; four conflicts (`Database.cs`, `Versioning.cs`, `Paths.cs`, `MissionEventTests.cs`) resolved inside the rebase, one commit subject's "schema 8" amended to 9 on an identical tree.
 Manager's gate at `08ac992`, Release: build → 0 warnings, 0 errors; suite → 558 + 277 + 621 = 1456 passed,
 0 failed, 1 skipped; names vs `main` → 0 removed, 19 added (sets 1224 → 1243; `[Fact]`/`[Theory]` 1179 → 1196); scan clean; no trailers; `rev-list --count` → 0;
-CI run 34169374097 at `96f29a6` (the gated tip rebased over docs-only commits): failure | test (macos-latest):success, test (ubuntu-latest):success, test (windows-latest):failure, package:skipped — NOT green; judged below.
+CI run 34169374097 at `96f29a6` (the gated tip rebased over docs-only commits): **RED on windows-latest only**, macos and ubuntu green — the one failure is the SAME `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` (`Expected: ChecksumNotPublished / Actual: NotPublished`, the Unit suite again 30 m 16 s) already recorded at `a22939d` with fixer `U-archive-win` in flight; Fault 272/272 and Integration 533/534 green on that runner, the sweep test included; nothing of this unit's went red.
 
 **NOT VERIFIED:** the two roles on a screen — no UI run; no real CLI turn under either role. **NOT done:** no grant table
 beyond `publication.recipients` and `classification` — grants are enforced by nothing yet (`U-api-worker`); no leases
 (`U-council-concurrent`); no daily report or the dispositions `delegated`/`blocked`/`superseded` (`U-report`); no snapshot
 id or freshness stamp on the Situation; no box, no ATAS, no order.
+
+## 2026-09-08 — U-midnight-test landed: the loop's tests read a clock they control, and the midnight branch has its own assertion
+
+A `U-wakes` test (`MissionLoopTests.The_delay_the_ai_asks_for_becomes_an_event_that_survives_the_loop`) went red on this
+Mac at 23:53:56 during the `U-data-binance` gate (`Range: (00:09:50 - 00:10:00) / Actual: 00:06:03`): the loop returns
+the earliest due event, and within ten minutes of local midnight the renewal beats the AI's ten-minute request. The product
+is right; the fixture read the wall clock. `U-council-thin`'s builder pinned that test to midday; this fixer, on
+`docs/briefs/U-midnight-test.md`, finished the job. Merge `baeff48`, 3 commits, test-only: `git diff main -- src/` empty.
+
+- **The midnight branch asserted on its own:** `Within_five_minutes_of_midnight_the_renewal_beats_the_delay_the_ai_asked_for`
+  — at a pinned 23:55 the wait is exactly five minutes, `NextKind()` is `renewal`, the AI's own self wake stays unconsumed
+  at +10 min. RED first, 23:55 against the old range assertion: `Assert.InRange() Failure: Value not in range / Range:
+  (00:09:50 - 00:10:00) / Actual: 00:05:00`; mutant (`LocalMidnightAfter` a day late): `Expected: 00:05:00 / Actual:
+  00:10:00`, 1 of 32 red — and not the midday test, which is why the branch needed its own assertion.
+- **The sweep, 40 tests in four classes:** a shared pinned `Midday` injected into the six whose verdict depends on the
+  wall clock (five in `MissionLoopTests`, one in `MissionOwnerMessageTests`); two assertions TIGHTENED on the way (a
+  `> DateTimeOffset.UtcNow` that compared the product against a second read of a moving clock → `> Midday`; a two-way
+  `or` on the card's waiting text → one string). Not at risk, with the reason: sixteen loop tests with no event queue
+  (`Schedule`/`Idle` never run), four single-turn tests (no renewal exists before the turn's own `Schedule`), nine
+  `MissionEventTests` with no loop, three `QuiescenceBarrierTests` whose `UtcNow` is a 20-second poll deadline. No test
+  joined `Timing`; none of the four classes carries the trait.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `2ec874f`, Release: 0 warnings, 0
+errors; Unit 3× → 559/559 each; Unit 559 + Fault 277 + Integration 621 = 1457 passed, 0 failed, 1 skipped; names vs
+`main` → 0 removed, 1 added; `U-sweep-win`'s Integration suite overlapping, nothing failed. Manager's gate at `61e43ec`,
+Release: build → 0 warnings, 0 errors; suite → 559 + 277 + 621 = 1457 passed, 0 failed, 1
+skipped; names vs `main` → 0 removed, 1 added (sets 1243 → 1244); scan clean; no trailers; `rev-list --count` → 0; CI at `baeff48`: run 34171543978 in flight when this section was written (the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+
+**NOT done:** no product code; no box, no ATAS, no money. What this closes: a red the hosted runners would have hit on any
+run reaching that test between 23:50 and 00:00 UTC.
