@@ -264,7 +264,9 @@ public sealed class AppHost : IAsyncDisposable
                 session: () => (Conversation as AgentSession)?.ThreadId,
                 runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
                 owner: () => OwnerPrice.From(Gateway.Settings),
-                model: () => RequestedModel);
+                model: () => RequestedModel,
+                allowance: () => TurnAllowance.From(
+                    Gateway.Settings.AiTurnAllowanceInputTokens, Gateway.Settings.AiTurnAllowanceOutputTokens));
             Meter.Changed += () => Changed?.Invoke();
 
             Mission = new MissionLoop(new MissionHost(this),
@@ -589,9 +591,15 @@ public sealed class AppHost : IAsyncDisposable
         {
             var money = MissionSituation.Money(spend.Spent, spend.Currency);
             var cap = MissionSituation.Money(spend.Cap, spend.Currency);
-            host.Gateway.Log.Activity(
-                $"The AI has spent {money} today, which is its {cap} daily limit. It stops taking new "
-                + $"turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety page to let it carry on.",
+            var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
+            host.Gateway.Log.Activity(spend.CapCannotFundATurn
+                    // Midnight does not repair this one, so the line must not promise that it will.
+                    ? $"One AI turn can cost up to {reservation}, which is more than the whole {cap} daily limit, so "
+                      + "the AI cannot start a turn at all. Raise the limit on the Safety page, or choose a cheaper "
+                      + "model there."
+                    : $"The AI has spent {money} today, and the next turn would take it past its {cap} daily limit. "
+                      + $"It stops taking new turns until {spend.ResumesAt:HH:mm}. Raise the limit on the Safety "
+                      + "page to let it carry on.",
                 "warn");
             host.Changed?.Invoke();
         }

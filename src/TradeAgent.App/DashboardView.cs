@@ -418,6 +418,14 @@ sealed class DashboardPage
         if (!spend.CanPrice)
             return $"Cost today: unknown — {spend.WhyNoPrice}. Your {cap} daily limit cannot stop it.";
 
+        // THE ONE READING MIDNIGHT DOES NOT REPAIR. A ceiling smaller than one turn's worst case
+        // admits no turn today and none tomorrow, so the card must not say "starts again at 00:00".
+        if (spend.CapCannotFundATurn)
+            return $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap} — but one turn "
+                   + $"can cost up to {MissionSituation.Money(spend.NextTurnReservation, spend.Currency)}, which is "
+                   + "more than the whole limit, so the AI cannot start a turn at all. Raise the limit, or choose a "
+                   + "cheaper model above.";
+
         var line = $"Cost today: {MissionSituation.Money(spend.Spent, spend.Currency)} of {cap}";
         // Where the figure came from, beside the figure. An owner cannot tell an upper bound from a
         // bill by looking at it, and the difference decides whether they should go and correct it —
@@ -426,7 +434,11 @@ sealed class DashboardPage
         if (spend.PricedByOwner) line += $" — {Labels.PricedByYou}";
         else if (spend.Estimated is { } estimated) line += $" — {estimated}";
         if (spend.UnpricedTurns > 0) line += $" — {spend.UnpricedTurns} turns could not be priced, so it is at least that";
-        if (spend.CapReached) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
+        if (spend.Reserved > 0m)
+            line += $" — including {MissionSituation.Money(spend.Reserved, spend.Currency)} committed to a turn still running";
+        // Not CapReached: the ceiling is applied BEFORE a turn now, so the card has to say the limit
+        // is reached at the moment the next turn is refused rather than one turn later.
+        if (!spend.AdmitsAnotherTurn) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
         return line + ".";
     }
 

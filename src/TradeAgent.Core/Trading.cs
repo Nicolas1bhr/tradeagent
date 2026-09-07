@@ -197,6 +197,21 @@ public sealed class TradeAgentSettings
     public int MissionTurnsPerSession { get; set; } = 20;
 
     /// <summary>
+    /// WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, in input tokens. See
+    /// <see cref="TurnAllowance"/>: it is an upper bound, not a prediction, and the direction is
+    /// deliberate — reserving too much costs a turn the owner gets back at midnight, reserving too
+    /// little is a ceiling that can be walked past.
+    ///
+    /// A setting rather than a constant because the right bound depends on the model: a runtime with
+    /// a small context window can never use this much, and an owner who has measured their own turns
+    /// can say so. Zero or less reads as the shipped default; it is not an allowance of nothing.
+    /// </summary>
+    public long AiTurnAllowanceInputTokens { get; set; } = TurnAllowance.Default.InputTokens;
+
+    /// <summary>The other half of the allowance, in output tokens. Reasoning is inside it.</summary>
+    public long AiTurnAllowanceOutputTokens { get; set; } = TurnAllowance.Default.OutputTokens;
+
+    /// <summary>
     /// THE MOST THE AI MAY SPEND ON ITSELF IN ONE LOCAL DAY, in <c>costs.json</c>'s currency.
     ///
     /// The AI's mission is to make at least enough to pay for itself, and half of that sentence is
@@ -472,6 +487,41 @@ public sealed record AiSpendToday
     /// they have to be able to see that rather than infer it from an AI that never stops.
     /// </summary>
     public bool CapReached => Metered && Spent >= Cap;
+
+    /// <summary>
+    /// THE ADMISSION GATE: may one more turn be launched at all?
+    ///
+    /// <c>spent + reserved + this turn ≤ cap</c>. It is the difference between a cap and a report.
+    /// <see cref="CapReached"/> asks whether money already gone has passed the ceiling, which can
+    /// only ever be answered after the turn that passed it has run — measured on 2026-09-07, 5.07
+    /// USD against a 5 USD ceiling, because the fourth turn was admitted on a total that did not yet
+    /// include the fourth turn. This asks the question the moment it can still change the outcome.
+    ///
+    /// <see cref="CapReached"/> still stands beside it rather than being folded in, because the two
+    /// are different facts the owner reads differently: one says the day is over, the other says the
+    /// next turn will not be started. A day at exactly the ceiling is both.
+    ///
+    /// <see cref="NextTurnReservation"/> is zero where nothing can price a turn, and then this is
+    /// the old comparison again — an unpriced day is not stopped, because stopping on a number
+    /// nobody measured is worse than not stopping.
+    /// </summary>
+    public bool AdmitsAnotherTurn =>
+        !Metered || (!CapReached && Spent + Reserved + NextTurnReservation <= Cap);
+
+    /// <summary>
+    /// THE OWNER'S CEILING IS SMALLER THAN ONE TURN'S WORST CASE, so no turn will ever be admitted —
+    /// not today, and not tomorrow either, because midnight resets the total and not the arithmetic.
+    ///
+    /// It is a separate reading from a day that has run out, and the screens say a different
+    /// sentence for it, because the repair is different: a day that ran out starts again at
+    /// midnight, and this one never does until the owner raises the limit or chooses a cheaper
+    /// model. An AI that silently took no turns for ever, under a card reading "waiting until
+    /// 00:00", would be the worst version of this.
+    ///
+    /// It is a consequence of reserving an ENFORCEABLE bound rather than a guess: the bound is a
+    /// model's whole context window, and a small daily ceiling cannot cover one of those.
+    /// </summary>
+    public bool CapCannotFundATurn => Metered && NextTurnReservation > Cap && Cap > 0m;
 }
 
 /// <summary>

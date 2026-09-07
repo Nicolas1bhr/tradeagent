@@ -103,7 +103,9 @@ public interface IMissionHost
 
     /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
-    /// turn and takes none while <see cref="AiSpendToday.CapReached"/> is true.
+    /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
+    /// the ceiling has room for the turn about to run, rather than whether the money already gone
+    /// has passed it.
     ///
     /// A default of <see cref="AiSpendToday.NotMetered"/> so that a host with no meter behind it —
     /// a test, a build with no AI prepared — keeps working and keeps turning. That default is
@@ -250,6 +252,13 @@ public sealed record MissionSituation
                    + $"Your owner's daily limit of {Money(spend.Cap, spend.Currency)} cannot be applied to that, "
                    + "so nothing is holding your spending back but you.";
 
+        if (spend.CapCannotFundATurn)
+            return $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
+                   + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}. One turn can cost up to "
+                   + $"{Money(spend.NextTurnReservation, spend.Currency)}, which is more than that whole limit, so "
+                   + "your owner has to raise it or choose a cheaper model before you can work again. Midnight "
+                   + "will not change it.";
+
         var spent = $"What you have cost today: {Money(spend.Spent, spend.Currency)} of a "
                     + $"{Money(spend.Cap, spend.Currency)} daily limit, over {turns}";
 
@@ -262,9 +271,18 @@ public sealed record MissionSituation
         if (spend.UnpricedTurns > 0)
             spent += $" — and {spend.UnpricedTurns} of those could not be priced, so the real figure is higher";
 
-        return spent + (spend.CapReached
-            ? ". You are at the limit: this is the last turn until midnight."
-            : ".");
+        if (spend.Reserved > 0m)
+            spent += $" — {Money(spend.Reserved, spend.Currency)} of that is committed to turns whose "
+                     + "usage has not come back";
+
+        // THE CEILING IS APPLIED BEFORE A TURN, so the AI is told that rather than being told it is
+        // in the middle of its last one. The distinction is not decoration: an agent that believes
+        // the current turn is its last finishes what it is doing, and an agent that knows the next
+        // one will be refused writes down where it got to.
+        return spent + (spend.AdmitsAnotherTurn
+            ? "."
+            : ". You are at the limit, and it is applied BEFORE a turn runs: the next one is refused "
+              + "rather than cut short, and nothing starts again until midnight.");
     }
 
     /// <summary>
@@ -588,7 +606,14 @@ public sealed class MissionLoop
     }
 
     /// <summary>
-    /// HOW LONG TO WAIT BECAUSE THE DAY'S SPENDING HAS REACHED THE OWNER'S CAP, or null to carry on.
+    /// HOW LONG TO WAIT BECAUSE THE NEXT TURN WOULD PASS THE OWNER'S CAP, or null to carry on.
+    ///
+    /// <b>Before the turn, not after it.</b> This used to compare the day's COMPLETED spending with
+    /// the ceiling, which is a report rather than a cap: the turn that carries the total past the
+    /// number is always admitted, because when it is admitted the total does not include it yet.
+    /// Measured on 2026-09-07 — 5.07 USD against a 5 USD ceiling. The comparison is now
+    /// <see cref="AiSpendToday.AdmitsAnotherTurn"/>: what has been spent, plus what is committed and
+    /// unresolved, plus what THIS turn would commit, against the ceiling.
     ///
     /// The wait is until local MIDNIGHT rather than the backoff's half hour, because that is when
     /// the number this refuses on stops being today's — waking every thirty minutes to re-read the
@@ -604,7 +629,9 @@ public sealed class MissionLoop
     TimeSpan? CappedUntilMidnight()
     {
         var spend = _host.Spend;
-        if (!spend.CapReached) { _reportedCap = false; return null; }
+        // ASKED BEFORE THE TURN, ABOUT THE TURN. `CapReached` alone could only ever be answered
+        // after the turn that passed the ceiling had already run and been billed.
+        if (spend.AdmitsAnotherTurn) { _reportedCap = false; return null; }
 
         if (!_reportedCap)
         {
