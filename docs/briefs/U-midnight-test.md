@@ -13,11 +13,10 @@ earlier event); the fixture read the real clock. Not in `Timing`, and it must no
 clock, it needs a clock it controls. On the hosted runners "local" is UTC, so this red would land on any CI run that
 reaches this test between 23:50 and 00:00 UTC.
 
-1. **Reproduce RED under a controlled clock, then fix the fixture:** `MissionLoop` takes `now:` (`MissionLoop.cs`, the ctor's
-   `Func<DateTimeOffset>? now`); the test must inject a `now` — pick 12:00 local, and ALSO assert the other branch
-   explicitly: with `now` at 23:55, the wait returned is the renewal's (≈ 5 min), because that is the product's rule. RED
-   first with `now` = 23:55 and the old assertion (quote the range failure), then GREEN with both cases; mutant (the renewal
-   scheduled a day late) → the 23:55 case red. Every existing assertion of the test stays byte-identical for the 12:00 case.
+1. **The 12:00 pin landed with `U-council-thin`** (its builder pinned this test's clock to midday, assertion unchanged) —
+   verify it is on `main`, then ADD the other branch explicitly: with `now` at 23:55 local the wait returned is the
+   renewal's (≈ 5 min), because that is the product's rule. RED first with `now` = 23:55 against the old range assertion
+   (quote the range failure), then GREEN with both cases; mutant (the renewal scheduled a day late) → the 23:55 case red.
 2. **Sweep the class:** every test in `MissionLoopTests.cs`, `MissionEventTests.cs`, `MissionOwnerMessageTests.cs` and
    `QuiescenceBarrierTests.cs` that reads the real clock through a loop or store without injecting `now` (grep `new
    MissionLoop(` without `now:`, `DateTimeOffset.Now`, `UtcNow` in those files); list them; inject a fixed clock where the
