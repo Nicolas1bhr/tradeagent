@@ -49,9 +49,9 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_sweep_cannot_collide_with_an_id_the_agent_chose_itself()
     {
-        // LeaveWorking, or the fake broker fills every order on arrival, the working list is empty
-        // and a sweep with nothing to sweep passes every assertion vacuously.
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        // ReadyWithBudget leaves orders working, or the fake broker fills every one on arrival, the
+        // working list is empty and a sweep with nothing to sweep passes every assertion vacuously.
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -91,7 +91,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task Every_id_the_gateway_mints_is_in_the_conservative_charset()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -213,12 +213,16 @@ public class SweepRequestIdTests
 
     // -------------------------------------------- ONE deadline for the operation (round 8, F1)
 
-    /// <summary>A gateway over a simulator whose emergency budget and latency the test chooses.</summary>
-    static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> ReadyWithBudget(
-        TimeSpan budget, int latencyMs = 0)
+    /// <summary>
+    /// A gateway over a simulator whose emergency budget, latency and fill behaviour the test
+    /// chooses. <c>internal</c>, and the fill is a parameter, because every sweep fixture in this
+    /// file needs it — see <see cref="SweepBudget"/>.
+    /// </summary>
+    internal static async Task<(TradingGateway Gw, FakeConnector Conn, Database Db)> ReadyWithBudget(
+        TimeSpan budget, int latencyMs = 0, FillBehaviour fill = FillBehaviour.LeaveWorking)
     {
         var db = TestEnv.NewDb();
-        var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = FillBehaviour.LeaveWorking })
+        var conn = new FakeConnector(new FakeBroker(), new FaultProfile { Fill = fill })
         {
             EmergencyBudget = budget
         };
@@ -254,14 +258,36 @@ public class SweepRequestIdTests
     const int WaveIssueRoom = 750;
 
     /// <summary>
-    /// The operation budget for that same test — nine sweeps' worth of the 3 x
-    /// <see cref="WaveIssueRoom"/> it actually spends. Wide on purpose and in the other direction:
-    /// the simulator clips its wait at the deadline like the shipped connector does, and a clipped
-    /// leg can only ever report <c>PossiblyWritten</c>, so a budget this sweep could run into would
-    /// turn a <c>confirmed</c> leg into <c>sent-not-confirmed</c> for a reason that is about the
-    /// runner and not about the product.
+    /// THE OPERATION BUDGET FOR EVERY FIXTURE IN THIS FILE THAT IS NOT ABOUT THE BUDGET — which is
+    /// most of them, and until U-sweep-win only one of them said so.
+    ///
+    /// It began as one test's number: nine sweeps' worth of the 3 x <see cref="WaveIssueRoom"/> that
+    /// test actually spends, wide on purpose because the simulator clips its wait at the deadline
+    /// like the shipped connector does, so a budget a sweep could run into turns a <c>confirmed</c>
+    /// leg into something else for a reason that is about the runner and not about the product.
+    ///
+    /// The rest of the file took the simulator's default two seconds by accident, and that is a wall
+    /// clock kept by the RUNNER inside the verdict of tests about id minting, counting and replay.
+    /// The whole of a sweep — the composite row, the book read, each leg's two write-ahead rows —
+    /// is inside that budget, and those are durable SQLite commits at <c>synchronous=FULL</c>. A
+    /// sweep whose deadline goes while its composite row is being committed issues no leg at all
+    /// and answers <c>attempted=0</c> — correctly, and with the order named <c>not-sent</c> — which
+    /// is the reply that failed <see cref="Two_sweeps_mint_different_ids"/> on windows-latest at the
+    /// U-wakes merge (CI run 34146285162).
+    ///
+    /// MEASURED, on a throwaway harness over 96 windows-latest sweeps (U-sweep-win, CI runs
+    /// 34164725697 and 34165321766): the book read captured the order every time, and the step
+    /// between that read and the leg — the composite commit — spent 15-32 ms of the 2000. The
+    /// outlier that closes a 2 s budget in one commit is not in those runs; it is in
+    /// U-press-win-3's, on the same runner image: ten bare one-row commits measured 16-2234 ms,
+    /// a spread of 140.
+    ///
+    /// Twenty seconds takes that clock out of the verdict entirely: every one of these tests waits
+    /// at most ten seconds for its reply, so the client's own patience now expires first and the
+    /// operation deadline can no longer decide anything. Nothing is loosened — an assertion that
+    /// used to hold still holds, byte for byte.
     /// </summary>
-    static readonly TimeSpan SweepBudget = TimeSpan.FromSeconds(20);
+    internal static readonly TimeSpan SweepBudget = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// THE CLOCK BELONGS TO THE OPERATION, NOT TO EACH RPC INSIDE IT.
@@ -935,7 +961,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_definite_broker_refusal_reads_rejected_and_needs_no_reconciliation()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1280,7 +1306,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_close_leg_whose_order_rests_reads_still_working_not_unknown()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget, fill: FillBehaviour.FillImmediately);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1328,7 +1354,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_close_leg_parked_for_approval_reads_not_sent_and_is_not_counted_as_attempted()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget, fill: FillBehaviour.FillImmediately);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1384,7 +1410,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_repeated_sweep_nonce_is_detected_and_the_second_sweep_still_cancels()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
 
@@ -1427,7 +1453,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_minted_sweep_id_still_fits_the_client_order_id_budget()
     {
-        var (gw, _, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, _, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1561,7 +1587,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task A_sweep_that_could_not_cancel_everything_reports_only_what_landed()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1636,7 +1662,7 @@ public class SweepRequestIdTests
     [Fact]
     public async Task Two_sweeps_mint_different_ids()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1672,9 +1698,9 @@ public class SweepRequestIdTests
     [Fact]
     public async Task The_count_is_what_landed_not_what_was_attempted()
     {
-        // LeaveWorking, or the fake broker fills every order on arrival, the working list is empty
-        // and a sweep with nothing to sweep passes every assertion vacuously.
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        // ReadyWithBudget leaves orders working, or the fake broker fills every one on arrival, the
+        // working list is empty and a sweep with nothing to sweep passes every assertion vacuously.
+        var (gw, conn, db) = await ReadyWithBudget(SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1738,7 +1764,7 @@ public class ReplayedSweepSendsNothingTests
     [Fact]
     public async Task A_replayed_cancel_all_cancels_nothing_and_returns_the_original_answer()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await SweepRequestIdTests.ReadyWithBudget(SweepRequestIdTests.SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1775,7 +1801,8 @@ public class ReplayedSweepSendsNothingTests
     [Fact]
     public async Task A_replayed_close_all_closes_nothing_and_returns_the_original_answer()
     {
-        var (gw, conn, db) = await TestEnv.Ready();
+        var (gw, conn, db) = await SweepRequestIdTests.ReadyWithBudget(
+            SweepRequestIdTests.SweepBudget, fill: FillBehaviour.FillImmediately);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1812,7 +1839,7 @@ public class ReplayedSweepSendsNothingTests
     [Fact]
     public async Task Every_mutating_op_dispatches_once_for_one_request_id()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await SweepRequestIdTests.ReadyWithBudget(SweepRequestIdTests.SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1858,7 +1885,7 @@ public class ReplayedSweepSendsNothingTests
     [Fact]
     public async Task A_different_request_id_really_does_sweep()
     {
-        var (gw, conn, db) = await TestEnv.Ready(faults: new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, conn, db) = await SweepRequestIdTests.ReadyWithBudget(SweepRequestIdTests.SweepBudget);
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
