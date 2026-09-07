@@ -26,6 +26,22 @@ public class MissionInstructionsTests
             ConnectorIsBuiltInSimulator: builtInSimulator));
 
     /// <summary>
+    /// Split the mission on either line ending, because the mission does not choose its own.
+    ///
+    /// <c>WorkspaceBuilder</c> holds every word of it in <c>"""</c> raw string literals, and a raw
+    /// string literal keeps the line endings of the SOURCE FILE. On a checkout that writes <c>.cs</c>
+    /// with CRLF — the hosted windows-latest runner's default <c>core.autocrlf</c> — every line of the
+    /// mission therefore ends <c>\r\n</c>, and a split on a bare <c>'\n'</c> hands back lines with a
+    /// trailing <c>'\r'</c> that match none of the literals written below. That is precisely how this
+    /// file went red on CI run 34073713557, windows-latest alone, with macos and ubuntu green on the
+    /// same tree: 13 of 13 items, every one of them "Item not found in collection".
+    ///
+    /// The repository's <c>.gitattributes</c> pins <c>.cs</c> to LF and is the fix at the root. This
+    /// is the belt: a test whose verdict depends on how git happened to write the file is not a test.
+    /// </summary>
+    static string[] Lines(string text) => text.Split(["\r\n", "\n"], StringSplitOptions.None);
+
+    /// <summary>
     /// The purpose, in one sentence, and the number that settles whether it is being met. "Net of
     /// what you cost to run" is the whole of the claim: an AI that made money and spent more of the
     /// owner's on API calls has not paid for itself, and would say it had.
@@ -174,7 +190,7 @@ public class MissionInstructionsTests
         var plain = Instructions();
         var simulator = Instructions(builtInSimulator: true);
 
-        var added = simulator.Split('\n').Except(plain.Split('\n')).ToArray();
+        var added = Lines(simulator).Except(Lines(plain)).ToArray();
         Assert.NotEmpty(added);
         Assert.All(added, line => Assert.Contains(line, SimulatorLines));
     }
