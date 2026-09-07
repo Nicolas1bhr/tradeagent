@@ -23,8 +23,10 @@ and the same-user containment hole becomes load-bearing the day the app holds th
 
 **Session closed 2026-09-06 (evening). Restart in this order, and you are working within ten minutes:**
 
-1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process) and the `## 2026-09-06` sections at the end of
-   `BUILD-STATUS.md` (one ≤40-line section per landing, every claim with its run).
+1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process), **`docs/COUNCIL.md`** (2026-09-07: the product doctrine for the
+   never-stopping mission — a council of roles, settled with GPT-6 Astra in three written rounds, its unit order at the end) and
+   the `## 2026-09-06` and `## 2026-09-07` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing, every
+   claim with its run).
 2. **`main` is `a167884` plus the docs commits after it, clean, pushed.** Landed today against the vision above, each
    with its section: `U-life` `0ec96c6` (the mission loop — the AI runs turn after turn on a `## Situation` the app
    writes; "Let the AI work on its own" is two presses, "Pause" one; its instructions are a mission), `U-ledger`
@@ -34,8 +36,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    model priced high, the owner's override on the Safety page), and three test-only fixers: `U-typed-catalog` `4d48395` (a
    unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
    `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
-   measured on the runners, no assertion loosened). **`docs/briefs/` holds `U-loss` and `U-seen-1` (2026-09-07), each with a fresh builder on it** — read the briefs for what is in
-   flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
+   measured on the runners, no assertion loosened). **`docs/briefs/` holds `U-loss` and `U-seen-1` (2026-09-07); a desktop-app restart at 02:4x killed both builders mid-gate and each was
+   re-briefed to a FRESH builder at 02:50 — the branches kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
    migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **On 2026-09-07 the four units were run on this Mac's screen** (the last `BUILD-STATUS.md` section): the loop took four
@@ -60,8 +62,12 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` LANDED `a167884` (the
    stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` LANDED `4e0d877`; (b) `U-meter` LANDED `902e3da`, and with `U-prices` the daily cap bites out of the box (list
    prices as dated data, an unknown model priced high, the owner's override on the Safety page); (c) `U-loss` IN FLIGHT 2026-09-07 (the budgets, refused from the ledger), then `U-flatten` (the gateway closes positions on
-   a breach, after (e)) and `U-model` (the app names the codex model it runs, so the bill is a price and not an estimate — today
-   the loop inherited `gpt-6-astra` from `~/.codex/config.toml` at 1.5 USD a turn); (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
+   a breach, after (e)); **the council line runs BESIDE the money path from here, in the order `docs/COUNCIL.md` fixes:** `U-model`
+   (the app names and passes the model, persists the attempt and its spending commitment BEFORE launch, measures the turn's
+   context by component — today the loop inherited `gpt-6-astra` from `~/.codex/config.toml` at 1.5 USD a turn) → `U-wakes` →
+   `U-data-binance` → `U-council-thin` → `U-turn-commit` → `U-budget-reserve` → `U-containment` → `U-api-worker` → `U-runner`
+   (the strategy language) → `U-referee` → `U-council-concurrent` → venues and data → `U-allocator`; `U-model` is briefed the
+   moment a leg slot frees; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
    close that can still reverse a position (U-press-inflight's stated deviation) fixed, or that path disabled, before
    any live order; (f) containment before unattended real money: the agent must not be able to edit the active limits
    or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
