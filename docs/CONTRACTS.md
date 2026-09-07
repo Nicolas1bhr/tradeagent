@@ -217,7 +217,7 @@ BEFORE the `hello` check, so the peer that spends it need not have authenticated
   the UTC day; `--since` takes an ISO-8601 date or instant and, present and unreadable, is refused
   rather than read as today; `--all` is everything the ledger holds and cannot be combined with it.
 - **`data-list` and `data-bars` are READS, and there is no write beside them.** They serve the
-  `dataset` and `dataset_file` tables (schema 7) and the normalised file those rows describe. Nothing
+  `dataset` and `dataset_file` tables (schema 8) and the normalised file those rows describe. Nothing
   on this channel collects, normalises, rebuilds, rejects or deletes a dataset: the account owner
   presses that in TradeAgent, on the Settings page under Market data. The asymmetry is the same one
   `material` makes and is there for the same reason — an agent that could edit the provenance of the
