@@ -40,26 +40,22 @@ Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; 
 Append `## Report` (≤20 lines): tip sha, gate counts, one line per item with its RED and mutant, what you did NOT do.
 
 ## Report
-Tip `896ea28`, on `main` `f40f833`. Gate, all in Release on the rebased tip: `dotnet build TradeAgent.sln -c Release
---no-incremental` → `0 Warning(s) / 0 Error(s)`; unit `Failed: 0, Passed: 529`; integration `Failed: 0, Passed: 615,
-Skipped: 1`; fault `Failed: 0, Passed: 277`; the 21 touched test classes 3× → `Failed: 0, Passed: 186` each time, no
-re-runs needed. Test names vs `main`: 19 added, **0 removed**. Schema is **8**: `U-data-binance` had not landed at my
-final rebase (`main` still reads `DatabaseSchemaVersion = 7`), so 8 is mine — whoever lands second renumbers.
-1. **Roles as data and folders** — verified, not taken on trust. RED (`Build` reverted to one home): `Assert.Equal()
-   Failure: Strings differ | Expected: ···"…/research" | Actual: ···"…/agent"`. Mutant (`RoleSection` switching on
-   `CouncilRoles.Operations`): `Assert.Contains() Failure: Sub-string not found | Not found: "## Your role: the Research
-   Director"`. Its two Safety rows were **missing**; I built them in item 4.
-2. **One scheduler, serial** — RED (loop reverted to `events.Due` + `_host.Conversation`): `the chair's turn consumed the
-   Research Director's wake`. Mutant (`AdmitsAnotherTurn => AdmitsGlobally`, the share dropped): `Assert.False() Failure
-   | Expected: False | Actual: True`. Peak concurrent turns measured, not assumed: 1.
-3. **The relay, one `Database.Write`** — RED (`CouncilRelay.Run` a no-op, the pre-unit state): all three boundaries red,
-   `Assert.Throws() Failure: No exception was thrown | Expected: typeof(System.IO.IOException)`. Mutant (task id from
-   `p.Attempt`, not the hash): `Assert.Single() Failure: The collection contained 2 items`, 5 of 7 relay tests red.
-4. **The Situation per role** — RED (deliveries block removed): `the chair was not told what the report said`. Mutant
-   (deliveries rendered above the owner's words): `another agent's report was put above the owner's words`.
-Uncommitted files from the killed builder: **all six kept**; only `IMissionHost.Relay()` changed, to `Relay(string role,
-string? attempt)`, so a publication records which attempt produced it. Nothing discarded.
-NOT DONE: no Windows box, no ATAS, no order, no real CLI run — every claim above is this Mac's suite. No grant table
-beyond `publication.recipients`/`classification` and the `role` columns; grants are still enforced by nothing
-(`U-api-worker`). No leases (`U-council-concurrent`), no daily report or dispositions (`U-report`). The Situation has no
-snapshot id or freshness stamp. The relay's source-event consumption is still `AiAttemptStore.Begin`'s, from `U-wakes`.
+Built at `896ea28` on `main` `f40f833`; rebased over `main` `9b4de6f` (`U-data-binance`, schema 8) to **`e2eda82`**.
+Gate on the rebased tip, Release: `dotnet build TradeAgent.sln -c Release --no-incremental` → `0 Warning(s), 0 Error(s)`;
+unit `Failed: 0, Passed: 558`; fault `Failed: 0, Passed: 277`; integration `Failed: 0, Passed: 621, Skipped: 1`; the 21
+council + 5 dataset unit classes 3× → `Failed: 0, Passed: 194` each and `DataOverPipeTests` 3× → `Passed: 6` each, no
+re-runs needed. Test names, one extractor over both revs: 1179 → 1196, 17 added, **0 removed**.
+**Schema is 9**, not 8: `U-data-binance` took 8 first, so the council's `if (have < 9)`, its `Versioning.cs` paragraph, its
+pin (`CouncilRoleTests.The_role_columns_arrive_at_schema_nine…`) and item 1's subject say 9; the dataset stays at 8.
+Conflicts, resolved inside the rebase, both sides kept by name: `Database.cs` (dataset at 8, then the council at 9);
+`Versioning.cs` (both paragraphs); `Paths.cs` (`Data` and `.Concat(CouncilRoles.All.Select(RoleHome))` in one `foreach`);
+`MissionEventTests.cs` (both empty-table assertions, one merged comment). `CONTRACTS.md`, `WorkspaceBuilder.cs`,
+`AppHost.cs`, `MissionLoop.cs`, `Trading.cs`, `MissionInstructionsTests.cs` auto-merged; every `data-*`, `MarketData`
+and `Paths.Data` line of `main`'s checked present. Deliberately replaced: `DatasetLedgerTests`' `Assert.Equal(8, …)` →
+the floor form `>= 8` its own comment calls the convention (its NAME is kept, so no test name is removed), and the
+pointer comments in `AiAttemptLedgerTests` and `MissionEventTests`, which now name the council's test.
+Items unchanged — 1 roles (RED `Actual: ···"…/agent"`, mutant `Not found: "## Your role: the Research Director"`);
+2 scheduler (RED `the chair's turn consumed the Research Director's wake`, mutant `Expected: False | Actual: True`);
+3 relay (RED three boundaries, `No exception was thrown`, mutant `contained 2 items`); 4 Situation (RED `the chair was
+not told what the report said`, mutant `above the owner's words`). NOT DONE: no box/ATAS/order/CLI run; no grants
+enforced (`U-api-worker`), no leases, no daily report; the rebase adds no behaviour.
