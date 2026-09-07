@@ -232,3 +232,68 @@ public class LossStatusFieldsTests
         Assert.Contains("\"loss_budget_day\":2000", json, StringComparison.Ordinal);
     }
 }
+
+/// <summary>
+/// THE TWO BOXES ON THE SAFETY PAGE, AND THE TWO DOCUMENTS THAT PROMISE THEM.
+///
+/// The gate and the sentences are exercised above; this is the composition and the paperwork — the
+/// lines no test off a running app can reach, which catch a revert or a deletion rather than a
+/// rewrite (the pattern <c>TwoPressGrantTests.The_safety_page_builds_all_three_controls</c> uses).
+///
+/// The guide is included because the loss budgets are the first limits whose effect the owner meets
+/// as an AI that stopped trading rather than as an order that was refused, and a guide that does not
+/// say "closing still works" is a guide that turns a working budget into a support call.
+/// </summary>
+public class LossBudgetCompositionTests
+{
+    static string Repo()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
+
+    [Fact]
+    public void The_safety_page_puts_both_budgets_in_the_limits_block_through_the_shared_widgets()
+    {
+        var text = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "DashboardView.cs"));
+
+        Assert.Contains("_maxLossPerTrade = Ui.NumberField(r.MaxLossPerTrade", text, StringComparison.Ordinal);
+        Assert.Contains("_maxDailyLoss = Ui.NumberField(r.MaxDailyLoss", text, StringComparison.Ordinal);
+        Assert.Contains("Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint)", text, StringComparison.Ordinal);
+        Assert.Contains("Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint)", text, StringComparison.Ordinal);
+
+        // Saved by the same press as the other five, so RiskPolicy.Widenings decides the second one.
+        Assert.Contains("MaxLossPerTrade = _maxLossPerTrade.Value", text, StringComparison.Ordinal);
+        Assert.Contains("MaxDailyLoss = _maxDailyLoss.Value", text, StringComparison.Ordinal);
+        Assert.Contains("s.Risk.MaxLossPerTrade = pending.MaxLossPerTrade;", text, StringComparison.Ordinal);
+        Assert.Contains("s.Risk.MaxDailyLoss = pending.MaxDailyLoss;", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>The hint names the account's currency once the platform has said what it is.</summary>
+    [Fact]
+    public void The_hint_says_what_a_zero_means_and_names_the_currency_only_when_it_is_known()
+    {
+        Assert.Equal("0 means not enforced.", Labels.LossBudgetHint());
+        Assert.Contains("in USD", Labels.LossBudgetHint("USD"), StringComparison.Ordinal);
+        Assert.DoesNotContain("in ", Labels.LossBudgetHint(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_guide_and_the_contract_say_what_the_budgets_do_and_what_they_never_do()
+    {
+        var guide = File.ReadAllText(Path.Combine(Repo(), "docs", "USER-GUIDE.md"));
+        Assert.Contains("lose on one position", guide, StringComparison.Ordinal);
+        Assert.Contains("lose in one day", guide, StringComparison.Ordinal);
+        Assert.Contains("Closing or reducing a position is never refused by them", guide, StringComparison.Ordinal);
+        Assert.Contains("not enforced", guide, StringComparison.Ordinal);
+        Assert.DoesNotContain("The five safety limits", guide, StringComparison.Ordinal);
+
+        var contracts = File.ReadAllText(Path.Combine(Repo(), "docs", "CONTRACTS.md"));
+        Assert.Contains("loss_today", contracts, StringComparison.Ordinal);
+        Assert.Contains("loss_budget_day", contracts, StringComparison.Ordinal);
+        Assert.Contains("LOSS_BUDGET_REACHED", contracts, StringComparison.Ordinal);
+        Assert.Contains("absent rather than zero", contracts, StringComparison.Ordinal);
+    }
+}
