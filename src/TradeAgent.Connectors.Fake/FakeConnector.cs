@@ -12,7 +12,13 @@ public sealed class FakeConnector(FakeBroker? broker = null, FaultProfile? fault
     public FakeBroker Broker { get; } = broker ?? new FakeBroker();
     public FaultProfile Faults { get; } = faults ?? new FaultProfile();
 
-    public string Id => "fake";
+    /// <summary>
+    /// The id the rest of the app recognises this platform by — spelled once, because what the
+    /// agent's instruction file says about a platform depends on it being THIS one.
+    /// </summary>
+    public const string ConnectorId = "fake";
+
+    public string Id => ConnectorId;
 
     /// <summary>
     /// In-process and unbounded by any wire, so the only thing that can make one call take time is a

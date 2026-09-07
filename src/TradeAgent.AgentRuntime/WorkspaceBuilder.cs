@@ -2,8 +2,18 @@ using TradeAgent.Core;
 
 namespace TradeAgent.AgentRuntime;
 
+/// <summary>
+/// The world the agent is told about, as it is at the moment its instruction file is written.
+///
+/// <see cref="ConnectorIsBuiltInSimulator"/> is NOT <see cref="ConnectorIsPaper"/> narrowed. A broker's
+/// own demo account is paper and quotes the real market; TradeAgent's built-in simulator is paper and
+/// quotes four fixed numbers. Told apart because the agent's answer to "is a result from this platform
+/// worth anything?" differs completely between them, and the default is false — a platform this build
+/// does not recognise is not described as a fixture.
+/// </summary>
 public sealed record WorkspaceContext(string ConnectorName, bool ConnectorIsPaper, string? AccountId,
-    TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk);
+    TradingMode Mode, bool ExecutionAvailable, string? ExecutionBlockedReason, RiskPolicy Risk,
+    bool ConnectorIsBuiltInSimulator = false);
 
 /// <summary>
 /// Creates and maintains the agent's home. The agent is broadly free inside that directory — shell,
@@ -91,6 +101,43 @@ public static class WorkspaceBuilder
         };
     }
 
+    /// <summary>
+    /// WHAT THE BUILT-IN SIMULATOR IS, said before the agent spends a turn working it out.
+    ///
+    /// On the loop's first run on a screen (2026-09-07) the first turn — 5.5 minutes and 1.48 USD —
+    /// went on discovering that the practice simulator's quotes are four fixed numbers rather than a
+    /// market. The AI's conclusion was correct and it was reached honestly; it was also knowable in
+    /// advance by the software that CHOSE that platform, which makes the turn a cost this file can
+    /// simply remove.
+    ///
+    /// It says what the fixture is good for as well as what it is not. "This is not a market" alone
+    /// invites the reading that the platform is useless, and it is not: the order path, the request
+    /// id, the fill ledger and <c>trade pnl</c> are all real here, and they are what the agent should
+    /// be rehearsing while the owner has not yet named a venue.
+    ///
+    /// Only for the built-in simulator. Against a broker's paper account these sentences would be a
+    /// lie in the expensive direction — an agent told to disregard real quotes as fixtures.
+    /// </summary>
+    const string SimulatorParagraph = """
+
+        **This platform is TradeAgent's built-in simulator, and it is not a market.** Its quotes are
+        fixtures: one fixed price per symbol, on that instrument's tick grid, the same every time you
+        ask and never moving. They carry no information about the real world, so there is no edge to
+        find in them and no backtest, statistic or result measured against them means anything. Do not
+        report one as though it did.
+
+        What it is genuinely good for is **mechanics**, and those are worth proving before real money
+        is anywhere near them: that an order goes out under a request id and comes back, that a replay
+        of the same id does not place a second one, that a fill reaches the ledger, that
+        `trade pnl --json` adds up, that a cancel and a close do what you meant. Rehearse all of that
+        here. For anything about a STRATEGY, use real data you have collected into `data/` instead.
+
+        Which instruments you may touch is not this platform's business either: the allowlist below is
+        the account owner's, set on the Safety page in the TradeAgent window, and it is the only thing
+        that decides what you may trade.
+
+        """;
+
     public static string Instructions(WorkspaceContext c) => $"""
     # Your workspace
 
@@ -175,7 +222,7 @@ public static class WorkspaceBuilder
     | Account | {c.AccountId ?? "not selected"} |
     | Mode | {c.Mode} |
     | Execution | {(c.ExecutionAvailable ? "available" : $"NOT available — {c.ExecutionBlockedReason}")} |
-
+    {(c.ConnectorIsBuiltInSimulator ? SimulatorParagraph : "")}
     Safety limits that will refuse your orders if you exceed them:
 
     - at most **{c.Risk.MaxOrderQuantity}** per order
