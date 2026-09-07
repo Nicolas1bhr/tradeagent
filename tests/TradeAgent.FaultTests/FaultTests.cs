@@ -268,6 +268,8 @@ public class RestartTests
         using (var db = new Database(file))
         {
             var gw = new TradingGateway(db, new FakeConnector(), new HealthRegistry());
+            // Before the mode, because SetMode refuses a real-money mode while the day has no bound.
+            gw.Update(s => s.Risk.MaxDailyLoss = 750m);
             gw.SetMode(TradingMode.LIVE_CONFIRM);
             gw.ActivateLive(true);
             gw.Update(s => s.Risk.MaxOrderQuantity = 4m);
@@ -278,6 +280,7 @@ public class RestartTests
             Assert.Equal(TradingMode.LIVE_CONFIRM, gw.Settings.Mode);
             Assert.True(gw.Settings.LiveActivated);
             Assert.Equal(4m, gw.Settings.Risk.MaxOrderQuantity);
+            Assert.Equal(750m, gw.Settings.Risk.MaxDailyLoss);
         }
     }
 }
@@ -511,7 +514,13 @@ public class PolicyGateTests
     [Fact]
     public async Task Leaving_live_mode_re_arms_the_safety()
     {
-        var (gw, _, db) = await TestEnv.Ready(s => s.Mode = TradingMode.LIVE_AUTONOMOUS);
+        // The day's budget is what makes LIVE_AUTONOMOUS selectable at all now (SetMode), and it is
+        // set here for that reason and no other: what this test is about is the real-money switch.
+        var (gw, _, db) = await TestEnv.Ready(s =>
+        {
+            s.Mode = TradingMode.LIVE_AUTONOMOUS;
+            s.Risk.MaxDailyLoss = 1_000_000m;
+        });
         using var dbh = db;
         gw.ActivateLive(true);
         gw.SetMode(TradingMode.PAPER);
