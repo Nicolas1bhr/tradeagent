@@ -45,6 +45,16 @@ public static class Paths
     /// <summary>Where a downloaded TradeAgent installer waits to be run. One release per subfolder.</summary>
     public static string Updates { get; } = Sub("updates");
 
+    /// <summary>
+    /// MARKET DATA THE APP COLLECTED, AND THE APP OWNS IT.
+    ///
+    /// Under <see cref="State"/> and deliberately NOT under <see cref="Workspace"/>: the agent is
+    /// broadly free inside its own tree, and a dataset it could rewrite is one whose provenance row
+    /// describes bytes that are no longer there. There is no verb and no pipe op that writes here.
+    /// The AI reads what comes out of it through <c>data-list</c> and <c>data-bars</c>.
+    /// </summary>
+    public static string Data { get; } = SubOf(State, "data");
+
     public static string DatabaseFile => Path.Combine(State, "tradeagent.db");
     public static string IpcTokenFile => Path.Combine(State, "ipc.token");
     public static string InstanceLockFile => Path.Combine(State, "gateway.lock");
@@ -70,7 +80,7 @@ public static class Paths
     /// <summary>Touches every managed directory so a broken install fails here rather than mid-trade.</summary>
     public static void EnsureAllVerbose()
     {
-        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates })
+        foreach (var d in new[] { Home, Tools, Workspace, Inbox, AgentHome, Bin, Logs, State, BridgeDir, Updates, Data })
         {
             Directory.CreateDirectory(d);
             if (!Directory.Exists(d)) throw new TradeAgentException(ErrorCode.WORKSPACE_CORRUPT, $"cannot create {d}");

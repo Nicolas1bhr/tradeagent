@@ -455,6 +455,26 @@ public static class Downloader
         catch (Exception) { return null; }
     }
 
+    /// <summary>
+    /// What the server says about a URL without fetching its body, or null when it could not be
+    /// asked at all.
+    ///
+    /// It exists so "the vendor has not published this month" and "the vendor published the file and
+    /// not its checksum" can be told apart without pulling two megabytes of a file that is going to
+    /// be refused anyway. A HEAD is the whole request; nothing is written to disk by it.
+    /// </summary>
+    public static async Task<HttpStatusCode?> TryStatusAsync(string url, CancellationToken ct = default)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Head, url);
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            return response.StatusCode;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception) { return null; }
+    }
+
     /// <summary>Fetches a text file (checksum manifests, version indexes). Null when unreachable.</summary>
     public static async Task<string?> TryGetStringAsync(string url, CancellationToken ct = default)
     {
