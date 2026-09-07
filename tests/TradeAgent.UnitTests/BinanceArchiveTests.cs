@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -101,6 +102,82 @@ public class BinanceArchiveTests
         Assert.Equal(11, results.Count(r => r.Outcome == MonthOutcome.Collected));
         Assert.All(results.Where(r => r.Outcome == MonthOutcome.Collected),
             r => Assert.StartsWith(BinanceArchive.RawDir("XRPUSDT"), r.File!.Path));
+    }
+
+    /// <summary>
+    /// RED FIRST — the money-path defect. Before the fix a server that accepted the request and
+    /// never answered produced <c>NotPublished</c>, word for word "Binance has not published
+    /// BTCUSDT-1m-2026-08.zip": a timeout wearing the words of the vendor's own answer, written into
+    /// the coverage a strategy is judged on. It is <c>IAtasAdapter</c> rule 3 on the data path —
+    /// ambiguity is reported as ambiguity or it is not reported at all.
+    ///
+    /// The token is this test's own backstop, not the product's: if the client ever stops honouring
+    /// the timeout it was handed, this fails in twenty seconds with a cancellation instead of
+    /// sitting on the shared client's thirty minutes.
+    /// </summary>
+    [Fact]
+    public async Task A_server_that_never_answers_is_unreachable_and_is_never_called_a_month_the_vendor_has_not_published()
+    {
+        using var archive = new FakeArchive(answers: false);
+        using var backstop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        var result = await new BinanceArchiveClient(archive.BaseUrl, TimeSpan.FromSeconds(2))
+            .FetchMonthAsync(Pair, Month, Scratch(), null, backstop.Token);
+
+        Assert.Equal(MonthOutcome.Unreachable, result.Outcome);
+        Assert.Contains("could not be asked about", result.Detail);
+        Assert.Contains("2 seconds", result.Detail);
+        Assert.DoesNotContain("has not published", result.Detail);
+
+        // Both requests really did reach the server, so this is a silence and not a wrong URL.
+        Assert.Equal(2, archive.Marks.Count(m => m.Contains("got ", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// RED FIRST — the thirty minutes. Under the same never-answering server the whole call used to
+    /// run to <c>Downloader</c>'s shared 30-minute client timeout; one such request is what turned a
+    /// one-minute Unit suite into 30 m 48 s on windows-latest (CI run 34167309186 at a22939d).
+    ///
+    /// TIMING CATEGORY, ARGUED WITH THE NUMBERS. Its verdict needs the runner to keep a wall clock:
+    /// it measures a duration and asserts a ceiling on it. What it measures is deterministic — two
+    /// cancellation leashes of 2 s each, one after the other — so the floor is 4 s of timer and the
+    /// rest is a loopback connect. Measured end to end at the fix: 4.0 s on this Mac, and the
+    /// runners' figures are in the unit's report. The ceiling is 10 s, a 2.4x margin over the floor,
+    /// and it is a ceiling on the CLIENT'S OWN leash rather than on how fast the runner is.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Timing")]
+    public async Task A_server_that_never_answers_costs_seconds_and_not_the_clients_thirty_minutes()
+    {
+        using var archive = new FakeArchive(answers: false);
+        var clock = Stopwatch.StartNew();
+
+        var result = await new BinanceArchiveClient(archive.BaseUrl, TimeSpan.FromSeconds(2))
+            .FetchMonthAsync(Pair, Month, Scratch());
+
+        clock.Stop();
+        Assert.Equal(MonthOutcome.Unreachable, result.Outcome);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10),
+            $"a loopback server that never answers cost {clock.Elapsed.TotalSeconds:N1} s");
+    }
+
+    /// <summary>
+    /// A vendor that answers something other than 200 or 404 has told us nothing about the month.
+    /// This branch fell through to "Binance has not published it" as well: only a 404 is the archive
+    /// saying the month does not exist, and a CDN having a bad afternoon is not a 404.
+    /// </summary>
+    [Fact]
+    public async Task A_vendor_that_answers_five_hundred_and_three_has_not_said_the_month_is_missing()
+    {
+        using var archive = new FakeArchive { AlwaysAnswer = HttpStatusCode.ServiceUnavailable };
+        archive.PublishWithoutSidecar(Pair, Month, TwoRows);
+
+        var result = await new BinanceArchiveClient(archive.BaseUrl, TimeSpan.FromSeconds(5))
+            .FetchMonthAsync(Pair, Month, Scratch());
+
+        Assert.Equal(MonthOutcome.Unreachable, result.Outcome);
+        Assert.Contains("503", result.Detail);
+        Assert.DoesNotContain("has not published", result.Detail);
     }
 
     [Fact]
