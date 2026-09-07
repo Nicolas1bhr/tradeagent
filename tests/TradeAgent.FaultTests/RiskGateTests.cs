@@ -63,6 +63,14 @@ public class RiskGateTests(ITestOutputHelper log)
         };
     }
 
+    /// <summary>A clock the test moves by hand, so "yesterday" needs no sleeping through a night.</summary>
+    sealed class TestClock : TimeProvider
+    {
+        DateTimeOffset _now = DateTimeOffset.UtcNow;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
+    }
+
     static async Task<string> SwallowAsync(Task<ExecutionRequest> t)
     {
         try { var r = await t; return $"ok — {r.State}"; }
@@ -350,6 +358,195 @@ public class RiskGateTests(ITestOutputHelper log)
         var said = gw.Log.RecentActivity(200).Count(a => a.Text.Contains(Labels.MaxLossPerTrade, StringComparison.Ordinal));
         log.WriteLine($"activity lines       : {said}");
         Assert.Equal(1, said);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A SYMBOL TRADED TODAY WHOSE MULTIPLIER NOBODY CAN STATE REFUSES THE ORDER (brief item 4).
+    ///
+    /// Realised profit is <c>(price - average) x quantity x multiplier</c>, so on a futures contract
+    /// a missing multiplier is not a rounding error — on ES it is the day's answer divided by fifty,
+    /// always in the direction that says the day is fine. <c>trade pnl</c> reports that as
+    /// <c>incomplete</c> and prints the figure anyway, which is right for a report and wrong for a
+    /// gate: an unknown on the money path is refused, never waved through as a zero.
+    ///
+    /// XYZ is the simulator's deliberate hole — it quotes and trades a symbol its instrument list
+    /// does not describe (see <c>FakeConnector.GetInstrumentsAsync</c>) — so this is the real shape
+    /// of the failure rather than a mock of it. RISK_CHECK_UNAVAILABLE and not LOSS_BUDGET_REACHED:
+    /// no budget was reached, TradeAgent could not work out whether one had been.
+    /// </summary>
+    [Fact]
+    public async Task A_symbol_traded_today_with_no_contract_size_refuses_instead_of_valuing_the_day_wrong()
+    {
+        // No value cap, because XYZ has no contract size and that gate would refuse first for its
+        // own reasons — exactly as an owner who trades an undescribed symbol has to set none.
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        using var _1 = db;
+
+        await gw.PlaceAsync(new AgentContext("a"), "xyz-open", TestEnv.Buy("XYZ"));
+        conn.Broker.PriceOffset = -20m;
+        await gw.CloseAsync(new AgentContext("a"), "xyz-out", "XYZ");
+        gw.Update(s => s.Risk.MaxDailyLoss = 500m);
+
+        var places = conn.Places;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "after-xyz", TestEnv.Buy("ES")));
+
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+        log.WriteLine($"places before/after  : {places}/{conn.Places}");
+        log.WriteLine($"row written          : {gw.GetRequest("after-xyz")?.State.ToString() ?? "none"}");
+
+        Assert.Equal(ErrorCode.RISK_CHECK_UNAVAILABLE, denied.Code);
+        Assert.Contains("XYZ", denied.Message, StringComparison.Ordinal);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(gw.GetRequest("after-xyz"));
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AN OPEN POSITION THIS GATEWAY CANNOT VALUE REFUSES TOO, and the case is a restart rather than
+    /// a contrivance: TradeAgent stops with a position open, starts again, and has seen no price for
+    /// that instrument yet. The platform does not mark its own book either (the simulator reports a
+    /// null unrealised, which is what a platform that does not compute one says), so there is no
+    /// figure anywhere — and treating that as flat is the software deciding a position it cannot see
+    /// is a position that is not losing.
+    ///
+    /// The allowlist puts NQ first so the health probe's one quote read is NQ's: it is the ES
+    /// position that must be unpriced, and the probe would otherwise have priced it.
+    /// </summary>
+    [Fact]
+    public async Task An_open_position_with_no_price_and_no_mark_refuses_rather_than_counting_as_flat()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+        await gw.PlaceAsync(new AgentContext("a"), "restart-open", TestEnv.Buy("ES", 2m));
+        await gw.DisposeAsync();
+
+        using var db2 = TestEnv.NewDb();
+        var restarted = new TradingGateway(db2, conn, new HealthRegistry());
+        restarted.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = ["NQ", "ES"];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 10_000_000m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 500m;
+        });
+        await restarted.RefreshHealthAsync();
+
+        log.WriteLine($"ES held              : {conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity}");
+        log.WriteLine($"ES marked by platform: {conn.Broker.Positions.First(p => p.Symbol == "ES").UnrealizedPnl?.ToString() ?? "null"}");
+        log.WriteLine($"ES quote seen        : {restarted.LastQuote("ES")?.Last?.ToString() ?? "none"}");
+
+        var places = conn.Places;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            restarted.PlaceAsync(new AgentContext("a"), "after-restart", TestEnv.Buy("NQ")));
+
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+
+        Assert.Null(restarted.LastQuote("ES"));
+        Assert.Equal(ErrorCode.RISK_CHECK_UNAVAILABLE, denied.Code);
+        Assert.Contains("ES", denied.Message, StringComparison.Ordinal);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(restarted.GetRequest("after-restart"));
+
+        await restarted.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND THE THIRD WAY A POSITION CANNOT BE VALUED: the price is there and the MULTIPLIER is not.
+    ///
+    /// It is its own branch and its own test because it is the one that looks answerable. A price
+    /// exists, the arithmetic runs, and it produces <c>(price - average) x quantity x 1</c> — which
+    /// on a futures contract is the position's loss divided by its contract size, in the direction
+    /// that says the budget has not been reached. That is the substitution REVIEW 2026-09-05b Codex
+    /// F2 found in the notional cap, reached from the loss budget's side.
+    ///
+    /// XYZ is OPEN and was traded YESTERDAY, on a clock the test moves: a symbol that traded today
+    /// is caught by the refusal above and this branch is never reached. Overnight is also the shape
+    /// this really has — a position held through a session, valued the next morning.
+    /// </summary>
+    [Fact]
+    public async Task An_open_position_with_a_price_but_no_contract_size_refuses_too()
+    {
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        using var _1 = db;
+        await gw.PlaceAsync(new AgentContext("a"), "xyz-held", TestEnv.Buy("XYZ"));
+        await gw.DisposeAsync();
+
+        // Tomorrow, with the position still open: the fill is in the ledger and outside the day.
+        var clock = new TestClock();
+        clock.Advance(TimeSpan.FromDays(1));
+        using var db2 = TestEnv.NewDb();
+        var restarted = new TradingGateway(db2, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        restarted.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = ["XYZ", "ES"];   // the health probe prices XYZ, and only XYZ
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 500m;
+        });
+        await restarted.RefreshHealthAsync();
+
+        var today = TradingGateway.StartOfDay(clock.GetUtcNow());
+        log.WriteLine($"XYZ quote seen       : {restarted.LastQuote("XYZ")?.Last?.ToString() ?? "none"}");
+        log.WriteLine($"fills held / today   : {restarted.LedgerPnl(null, "all").Fills} / {restarted.LedgerPnl(today, "today").Fills}");
+
+        var places = conn.Places;
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            restarted.PlaceAsync(new AgentContext("a"), "after-xyz-held", TestEnv.Buy("ES")));
+
+        log.WriteLine($"refusal              : {denied.Code} — {denied.Message}");
+
+        Assert.NotNull(restarted.LastQuote("XYZ"));          // the PRICE is there
+        Assert.Equal(0, restarted.LedgerPnl(today, "today").Fills);   // and nothing traded TODAY
+        Assert.Equal(ErrorCode.RISK_CHECK_UNAVAILABLE, denied.Code);
+        Assert.Contains("one contract of it is worth", denied.Message, StringComparison.Ordinal);
+        Assert.Contains("XYZ", denied.Message, StringComparison.Ordinal);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(restarted.GetRequest("after-xyz-held"));
+
+        await restarted.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND NEITHER BUDGET IS ASKED FOR WHEN NEITHER IS SET — the rule <c>MaxNotionalPerOrder</c> has
+    /// and for the same reason (see <c>No_notional_cap_means_the_missing_contract_size_is_not_asked
+    /// _for</c>). Both budgets at zero mean not enforced, so the ledger is not read, the instrument
+    /// list is not demanded, and the day's undescribed symbol refuses nothing.
+    ///
+    /// This is the test that stops a loss budget nobody set from becoming a reason a working
+    /// installation cannot trade.
+    /// </summary>
+    [Fact]
+    public async Task No_loss_budget_means_the_day_is_never_read_and_nothing_is_refused()
+    {
+        var (gw, conn, db) = await Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        using var _1 = db;
+
+        await gw.PlaceAsync(new AgentContext("a"), "free-xyz", TestEnv.Buy("XYZ"));
+        conn.Broker.PriceOffset = -20m;
+        await gw.CloseAsync(new AgentContext("a"), "free-xyz-out", "XYZ");
+
+        // The platform stops answering about instruments altogether. Nothing may ask it.
+        conn.InstrumentsThrow = new ConnectorTransportException("the platform did not answer");
+
+        var placed = await gw.PlaceAsync(new AgentContext("a"), "free-again", TestEnv.Buy("XYZ"));
+        log.WriteLine($"budgets              : trade {gw.Settings.Risk.MaxLossPerTrade}, day {gw.Settings.Risk.MaxDailyLoss}");
+        log.WriteLine($"placed               : {placed.State}");
+
+        Assert.Equal(0m, gw.Settings.Risk.MaxDailyLoss);
+        Assert.Equal(0m, gw.Settings.Risk.MaxLossPerTrade);
+        Assert.Equal(ExecutionState.FILLED, placed.State);
 
         await gw.DisposeAsync();
     }
