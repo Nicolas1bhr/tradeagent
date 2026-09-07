@@ -4514,3 +4514,44 @@ are off the tick grid and never move (`FakeBroker.BasePrice`); the mission does 
 **NOT VERIFIED:** an order through the loop (none was placed: the allowlist is empty and the AI declined the quotes);
 the price boxes' two-press (not pressed); Guidance (not typed); anything on Windows. The built-in simulator is not a
 paper venue for weeks — ATAS's simulated account on the box has real prices and is.
+
+## 2026-09-07 — U-loss landed: a per-position and a daily loss budget in the account's currency, refused by the gateway from the fill ledger
+
+The first money-path unit after the vision session ("no human in the loop" means the app bounds the loss ahead of any broker
+or prop firm), by one fresh builder on `docs/briefs/U-loss.md` (killed by a desktop-app restart mid-gate after ten commits)
+and a second re-briefed from the branch, which reproduced every RED and mutant itself, ran the gate and wrote the report.
+Merge `7b46503`, 11 commits, 22 files, +1593/−43 (new `Gateway/LossBudget.cs`; `Trading.cs`, `TradingGateway.cs`,
+`MissionLoop.cs`, the Safety page, `GatewayTypes.cs`, `GatewaySchema.cs`, `Errors.cs`, `CONTRACTS.md`, `USER-GUIDE.md`; tests).
+
+- **Two budgets on `RiskPolicy`:** `MaxLossPerTrade` and `MaxDailyLoss` in the account's currency, 0 = not enforced, one
+  `Widens()` for the three zero-means-off caps (raising asks twice, lowering saves at once), `Unreadable()` leaves both at
+  0. Persistence: a throwaway probe read `…"max_loss_per_trade":123.5,"max_daily_loss":777.25…` back from the blob.
+- **The day's budget bites at the order** (`LossBudgetOrThrow`, both call sites): today's loss is the realized figure from
+  `_fills.Since(StartOfDay)` by the average-cost book plus the unrealized on open positions; an order that could increase
+  exposure is refused with `LOSS_BUDGET_REACHED`, a close or reduce never. RED (the check removed from both sites):
+  `Assert.Throws() Failure: No exception was thrown`; mutant (`Loss = day > 0m ? day : 0m`, a loss read as profit) → the same.
+- **The per-position budget** refuses an add to a position already down `MaxLossPerTrade`. RED (the `TradeReached` block
+  deleted) → the same failure; mutant (`CanIncreaseExposure` → `Math.Abs(signed) > Math.Abs(held)`, so a same-direction
+  add stops counting as new risk) → the same red.
+- **Fail closed, never on a guess:** a traded symbol whose multiplier is unknown, or an open position that cannot be valued,
+  refuses with `RISK_CHECK_UNAVAILABLE`, places nothing and writes no row; a budget of 0 reads nothing. RED (`CannotBeRead`
+  returning null) → `Failed: 3, Passed: 0` across the three unknown-value tests; mutant (an unpriceable position marked at
+  its own average) → red.
+- **A real-money mode cannot be selected while the daily budget is 0** (`SetMode`). RED (the guard removed) → `No exception
+  was thrown`; mutant (`<= 0m` → `< 0m`) → the same red.
+- **Surfaces:** two Safety rows with the currency hint, the Situation line beside the cost line, `loss_today` /
+  `loss_budget_day` / `loss_budget_trade` on `trade status` ABSENT when unknown, the schema, `CONTRACTS.md`, the guide,
+  `AGENTS.md`, one activity line per budget per day; 24 tests added, 0 removed; three fixture edits add a wide
+  `MaxDailyLoss`, one assertion added, none loosened.
+
+**Verified by running (the second builder, quoted; then the manager's gate):** builder's gate at `54f99e4`, Release: 0
+warnings, 0 errors (41 `CoreCompile` targets at `-v:n`); Unit 441 + Fault 269 + Integration 615 = 1325 passed, 0 failed,
+1 skipped, exit 0 each; touched classes 3× → 70/70 and 34/34; names vs `main` → 0 removed, 24 added; scan clean;
+`U-seen-1`'s suite overlapping, no `Timing` red. Manager's gate at `7b46503` (rebased over three docs-only commits),
+Release: build → 0 warnings, 0 errors, the Release DLLs rebuilt at 03:12; suite → 441 + 269 + 615 = 1325
+passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 24 added (sets 1088 → 1112; `[Fact]`/`[Theory]`
+1046 → 1070); scan clean; no trailers; `rev-list --count` → 0; CI at `7b46503`: run 34072945394 in flight when this section was written, its verdict recorded in a follow-up commit.
+
+**NOT VERIFIED:** the two Safety rows and the hint on a running app — proved by tests reading `DashboardView.cs`, never seen
+rendering; the day's figure against a real account's currency — only the simulator's. **NOT done:** nothing is flattened
+on a breach (`U-flatten`, after the UNKNOWN close is fixed or disabled); no box, no ATAS, no real money.
