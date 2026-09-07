@@ -56,7 +56,9 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    closed); every later merge through `7b46503` (`U-loss`, run 34072945394) green on all three platforms and `package`;
    **`06a8636` (`U-seen-1`) and the docs commits after it are RED on windows-latest only** — a test splitting a raw-string
    paragraph on `'\n'` against the runner's CRLF checkout; fixer `U-crlf-win` LANDED `2082091`, whose CI run 34140348483 is green on all three
-   platforms and `package`: `main` is green again from that sha. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   platforms and `package`; `acff18a` (`U-unknown-close`) green; **`cef122b` (`U-wakes`) RED on windows-latest only** —
+   `SweepRequestIdTests.Two_sweeps_mint_different_ids` saw 0 working where 1 was placed, green everywhere else; fixer `U-sweep-win`
+   (measure on the runners first, no assertion loosened) in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
