@@ -1994,6 +1994,59 @@ public sealed class TradingGateway : IAsyncDisposable
             $"{intent.Side} {intent.Quantity} would not flatten it; nothing was sent. Ask again with a new request id.");
     }
 
+    // ------------------------------------------- an order this gateway cannot account for, on this
+    //                                             instrument, that would move the position the same way
+
+    /// <summary>
+    /// EVERY RECORD ON ONE INSTRUMENT THAT IS STILL <see cref="ExecutionState.UNKNOWN"/> AND WOULD
+    /// MOVE THE POSITION THE SAME WAY THE CALLER IS ABOUT TO.
+    ///
+    /// This is the other half of <see cref="RefuseAStaleCloseOrThrow"/> and of the press's drift
+    /// re-read, and neither of them can see it. Both compare POSITIONS, so both see a fill that has
+    /// LANDED; an order the broker ACCEPTED and never acknowledged has moved no position yet and
+    /// reads as nothing at all. It is in this table, in the one state that means "we do not know" —
+    /// so the question is asked of the store rather than of the platform.
+    ///
+    /// WHY IT MATTERS ONLY FOR AN ORDER SIZED FROM A POSITION. A close and a reduce are the two
+    /// placements whose size and side are a CLAIM about something that moves. Send one on top of an
+    /// unresolved order that offsets the same way and the position is closed twice: long 2 becomes
+    /// short 2, which is what `U-press-inflight` stated it was leaving open and what probe P6
+    /// measured from the DISPATCHING side. An opening order asserts nothing about a position and is
+    /// not doubled by anything.
+    ///
+    /// UNKNOWN AND NOT ALSO FLAGGED, and that distinction is the reachable state rather than a
+    /// widening. A flagged record pauses trading, so the agent never gets this far; what does not
+    /// pause trading is a record the owner has confirmed on the card WITHOUT being able to say what
+    /// happened to it (<see cref="ForceResolve"/>'s <c>from == finalState</c> arm clears the flag and
+    /// leaves the state alone). That record is still an order that can fill, and it is the one the
+    /// emergency press meets too — the press does not consult the gate at all.
+    ///
+    /// SIDE, NOT INTENT, because the danger is what the order would DO. A record written as a plain
+    /// sell under a long offsets exactly as a record written as a close does, and a record whose
+    /// parameters this build cannot read is counted rather than excused: an order that cannot be
+    /// described is precisely the one that must not be doubled.
+    ///
+    /// PLACE only. A cancel or a modify transmits somebody else's order id and moves no position of
+    /// its own — the same exclusion <see cref="ExecutionRequestStore.TryCreateFlagged"/>'s wire
+    /// clause makes, for the same reason.
+    /// </summary>
+    List<ExecutionRequest> UnresolvedReducersOn(string instrument, OrderSide side) =>
+        _requests.Query("instrument = $i AND intent = 'PLACE' AND execution_state = 'UNKNOWN'", ("$i", instrument))
+            .Where(r => CouldMoveThePositionLike(r, side))
+            .ToList();
+
+    /// <summary>
+    /// Would this record's order, if the broker has it, push the position the same way an order on
+    /// <paramref name="side"/> would? Unreadable parameters answer YES — see
+    /// <see cref="UnresolvedReducersOn"/> for why that is the safe direction.
+    /// </summary>
+    static bool CouldMoveThePositionLike(ExecutionRequest r, OrderSide side)
+    {
+        try { return Json.Read<PlaceIntent>(r.ParametersJson) is not { } intent || intent.Side == side; }
+        catch (Exception) { return true; }
+    }
+
+
     async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
         // A CLOSE IS SIZED HERE, not where it was decided. See RefuseAStaleCloseOrThrow: an
@@ -3100,6 +3153,10 @@ public sealed class TradingGateway : IAsyncDisposable
         ExecutionState.CANCEL_PENDING => "the platform says the cancel is pending",
         ExecutionState.UNKNOWN or ExecutionState.RECONCILING => "not confirmed — check ATAS",
         ExecutionState.DISPATCHING => "sent, and nothing has come back yet",
+        // NOTHING WAS SENT, AND THE ROW CARRIES WHY. A press leg refused before the wire keeps its
+        // write-ahead record precisely so this target appears on the card with the position beside
+        // it; the reason it was refused is the one thing the state cannot say.
+        ExecutionState.CREATED => r.LastError ?? "nothing was sent for it",
         _ => $"the record says {r.State}"
     };
 
@@ -3188,10 +3245,20 @@ public sealed class TradingGateway : IAsyncDisposable
     ///
     /// Returns null with <paramref name="waitingOn"/> set when the leg is refused; nothing was
     /// written and nothing will be sent under this id.
+    ///
+    /// <paramref name="sending"/> IS FALSE FOR A LEG THAT IS ALREADY REFUSED, and the row is written
+    /// anyway. That is the difference between the two ways a leg can be turned away here. A leg
+    /// blocked by the wire clause never gets a row: something else is already flying an order for
+    /// that instrument and IT will be reconciled. A leg refused because the instrument carries an
+    /// order this gateway cannot account for has nothing else standing for it — so the row is its
+    /// account, written flagged by the same insert, naming the instrument on the card with the
+    /// position beside it, and left in CREATED because nothing was dispatched. CREATED is the state
+    /// <see cref="RefuseAStaleCloseOrThrow"/> already leaves a refused close in, and it is what makes
+    /// "not sent" readable rather than inferred.
     /// </summary>
     ExecutionRequest? OpenPressRow(string requestId, string accountId, RequestIntent intent,
         string instrument, string parametersJson, string paused, string? claims,
-        string? waitsForWorkOn, out ExecutionRequest? waitingOn)
+        string? waitsForWorkOn, out ExecutionRequest? waitingOn, bool sending = true)
     {
         waitingOn = null;
         if (!IsSendableId(requestId))
@@ -3233,7 +3300,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"{requestId} already exists; nothing was sent");
 
         LatchUnconfirmed(requestId, paused);
-        return _requests.Transition(requestId, ExecutionState.CREATED, ExecutionState.DISPATCHING);
+        return sending
+            ? _requests.Transition(requestId, ExecutionState.CREATED, ExecutionState.DISPATCHING)
+            : _requests.Get(requestId);
     }
 
     /// <summary>
@@ -3369,6 +3438,149 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE PRESS SETTLES BEFORE IT SENDS. For one instrument: every record on it this gateway cannot
+    /// account for and that would offset the same way this leg is about to, read back from the
+    /// platform and given an outcome — or, when it cannot be, the sentence that refuses this leg.
+    ///
+    /// WHY THE PRESS DOES THIS AT ALL, when nothing else may. `U-press-inflight` put DISPATCHING in
+    /// <see cref="ExecutionRequestStore.TryCreateFlagged"/>'s wire clause and deliberately left
+    /// UNKNOWN out, because refusing the WHOLE press on an UNKNOWN record re-imposes the pause these
+    /// controls exist to bypass — an UNKNOWN record is the ordinary state of the emergency somebody
+    /// is pressing the button about. That reasoning is still right about REFUSING and was never an
+    /// argument for sending: the order is resting at the broker, the press reads the position as
+    /// still open because nothing has filled, and the market sell it sizes lands beside the one
+    /// already there. Long 2 becomes SHORT 2, after the press whose whole purpose is to flatten.
+    ///
+    /// So the press does the work instead of refusing: it asks the platform what became of that
+    /// order, stops it if it is still live, and closes on the re-read position. PER LEG — an
+    /// instrument that cannot be settled is the only one refused, and every other position is still
+    /// closed.
+    ///
+    /// EVERY CALL IS CHARGED TO THE PRESS'S OWN DEADLINE, exactly as its close is: they are ordinary
+    /// <c>orders</c>, <c>executions</c> and <c>cancel</c> RPCs made inside the
+    /// <see cref="RiskReducingScope"/> the press opened, and the deadline is checked again before
+    /// each record so a leg whose turn comes after it is REFUSED rather than started
+    /// (<c>OperatorPressIsAnEmergencyTests</c>).
+    ///
+    /// WHAT COUNTS AS AN ANSWER, and this is safety rule 3 stated for this method. A terminal state
+    /// at the platform is one. A definite cancel is one. A timeout, a disconnect, an order the
+    /// platform does not list, an answer that is itself UNKNOWN or CANCEL_PENDING, a partial fill
+    /// half way through — none of them is, and every one of them refuses the leg with the record left
+    /// exactly as it was. Absence is NOT read as "it never landed" here: the reconciler's absence
+    /// rule needs a grace window this press does not have, and inside an emergency "no order with
+    /// that id" is silence rather than proof.
+    ///
+    /// A PRESS'S OWN ROW IS NEVER SETTLED HERE. A press is resolved by the person who made it, and
+    /// nothing else may take that from them — so an unresolved press record on the instrument refuses
+    /// this leg rather than being read back and written off.
+    /// </summary>
+    async Task<string?> SettleAnUnresolvedReducerOrRefuse(string symbol, OrderSide side, CancellationToken ct)
+    {
+        foreach (var req in UnresolvedReducersOn(symbol, side))
+        {
+            if (IsPressRecord(req.RequestId))
+                return $"{symbol} is waiting on {req.RequestId}, which only you can resolve";
+
+            if (RiskReducingScope.DeadlineAt is { } deadline && Environment.TickCount64 >= deadline)
+                return $"{symbol} is waiting on {req.RequestId}, and this press ran out of time before it could settle it";
+
+            OrderInfo? match;
+            decimal filled;
+            try
+            {
+                // The same window and the same two questions ReconcileAsync asks of a PLACE: the
+                // order carrying our client id, and then the fills carrying it, for a platform that
+                // has already dropped the order off its book.
+                var since = req.CreatedAt - TimeSpan.FromMinutes(5);
+                match = (await Connector.GetOrdersAsync(req.AccountId, true, since, ct))
+                    .FirstOrDefault(o => o.ClientOrderId == req.ClientOrderId);
+                filled = match is not null ? 0m
+                    : (await Connector.GetExecutionsAsync(req.AccountId, since, ct))
+                        .Where(f => f.ClientOrderId == req.ClientOrderId).Sum(f => f.Quantity);
+            }
+            catch (Exception ex)
+            {
+                // Rule 3. A read that did not come back says nothing about the order — least of all
+                // that it is not there — so the record is untouched and the leg is refused.
+                return $"{symbol} is waiting on {req.RequestId}, and the platform did not answer about it ({ex.Message})";
+            }
+
+            if (match is null)
+            {
+                if (filled <= 0m)
+                    return $"{symbol} is waiting on {req.RequestId}, and the platform lists no order and no fill for it";
+                if (!SettleTheUnresolved(req, ExecutionState.FILLED, filled, null,
+                        "the platform's fills account for this order; settled by an emergency press"))
+                    return $"{symbol} is waiting on {req.RequestId}, whose outcome could not be written down";
+                continue;
+            }
+
+            if (OrderStateMachine.IsTerminal(match.State))
+            {
+                if (!SettleTheUnresolved(req, match.State, match.FilledQuantity, match.ConnectorOrderId,
+                        $"the platform holds this order as {match.State}; settled by an emergency press"))
+                    return $"{symbol} is waiting on {req.RequestId}, whose outcome could not be written down";
+                continue;
+            }
+
+            // STILL LIVE AT THE PLATFORM, so it is stopped before anything is sent on top of it. Only
+            // the two states a cancel settles cleanly: a PARTIALLY_FILLED order has already moved the
+            // position and recording it CANCELLED would erase that, and CANCEL_PENDING is the
+            // platform saying it has not decided.
+            if (match.State is not (ExecutionState.ACKNOWLEDGED or ExecutionState.WORKING))
+                return $"{symbol} is waiting on {req.RequestId}, which the platform answers {match.State} for — that settles nothing";
+
+            try
+            {
+                using var dispatch = TransportLedger.MarkDispatch();
+                await Connector.CancelOrderAsync(match.ConnectorOrderId, ct);
+            }
+            catch (Exception ex)
+            {
+                // Includes a DEFINITE refusal of the cancel, which is the platform saying the order
+                // is still live. Either way this leg proceeds on nothing.
+                return $"{symbol} is waiting on {req.RequestId}, which is still live at the platform and would not cancel ({ex.Message})";
+            }
+
+            if (!SettleTheUnresolved(req, ExecutionState.CANCELLED, null, match.ConnectorOrderId,
+                    "the platform accepted the cancel of this order; settled by an emergency press"))
+                return $"{symbol} is waiting on {req.RequestId}, whose outcome could not be written down";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Writes a platform answer onto an UNKNOWN record, by the two steps
+    /// <see cref="ReconcileAsync"/> takes and no others: <c>UNKNOWN → RECONCILING</c>, then the
+    /// state the platform is asserting, unflagged and marked reconciled. One record cannot be
+    /// settled two different ways, so this does not invent a third.
+    ///
+    /// False means the store refused the write. The record is then left as it was and the caller
+    /// refuses its leg — the direction that sends nothing.
+    /// </summary>
+    bool SettleTheUnresolved(ExecutionRequest req, ExecutionState to, decimal? filled,
+        string? connectorOrderId, string why)
+    {
+        try
+        {
+            _requests.Transition(req.RequestId, ExecutionState.UNKNOWN, ExecutionState.RECONCILING);
+            _requests.Transition(req.RequestId, ExecutionState.RECONCILING, to,
+                connectorOrderId: connectorOrderId, filled: filled,
+                needsReconciliation: false, markReconciled: true, error: why);
+            ClearLatch(req.RequestId);
+            _log.Engineering("Gateway", "press_settled_unresolved", requestId: req.RequestId,
+                metadataJson: Json.Write(new { state = to.ToString(), why }));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Engineering("Gateway", "press_settle_unresolved_failed", "warn", requestId: req.RequestId, ex: ex);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Also deliberately separate: this one does move money, so it is never the same button.
     ///
     /// One write-ahead execution request per position, keyed by the press — the same machinery the
@@ -3423,6 +3635,14 @@ public sealed class TradingGateway : IAsyncDisposable
         // leg's write-ahead row (REVIEW 2026-09-05b finding 2, probe P6).
         var waited = new List<string>();
 
+        // AND THE THIRD, WHICH IS NEITHER OF THOSE TWO. `drifted` is a position that already changed
+        // and `waited` is an order a handler is inside the connector call for right now; this is an
+        // order that is OVER with no answer and may still be resting at the broker. It is the state
+        // U-press-inflight stated it was leaving open, and the press now tries to settle it before it
+        // sends rather than either refusing on it or closing on top of it. What is listed here is the
+        // instrument where that could not be done.
+        var unsettled = new List<string>();
+
         // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
         // position — so the claim rides on the first row this press actually writes, and only that
         // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
@@ -3431,6 +3651,30 @@ public sealed class TradingGateway : IAsyncDisposable
         for (var i = 0; i < captured.Count; i++)
         {
             var (symbol, quantity) = captured[i];
+            var closingSide = quantity > 0 ? OrderSide.Sell : OrderSide.Buy;
+            var rid = PressLegId(ClosePress, nonce, i);
+
+            // SETTLED BEFORE ANYTHING IS READ FOR THIS LEG, because what it settles CHANGES the
+            // reading. An unresolved order that turns out to have filled has moved the position, and
+            // the drift re-read below is then the honest look at what is actually there; one that
+            // turns out to be resting is cancelled here, so the close this press sends is the only
+            // one on the instrument. See SettleAnUnresolvedReducerOrRefuse.
+            if (await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct) is { } stuck)
+            {
+                // REFUSED, AND THE ROW IS ITS ACCOUNT. Nothing is sent for this instrument and the
+                // position may still be open, so the leg leaves a flagged record naming it rather
+                // than a line in a summary nobody has to acknowledge: the press stays the owner's to
+                // resolve, and this is the target they have to look at.
+                var refusal = $"nothing was sent for {symbol}: {stuck}. Your {symbol} position may still be open.";
+                var refused = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol,
+                    Json.Write(new PlaceIntent(symbol, closingSide, OrderType.Market, Math.Abs(quantity),
+                        null, null, TimeInForce.Day, "close position (you)") { Intent = OrderIntent.Close }),
+                    refusal, claims: claimed ? null : ClosePress, waitsForWorkOn: null, out _, sending: false);
+                if (refused is not null) claimed = true;
+                unsettled.Add(stuck);
+                continue;
+            }
+
             // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
             // changed sends nothing for that instrument (Codex round-3 F10).
             //
@@ -3463,8 +3707,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 continue;
             }
 
-            var rid = PressLegId(ClosePress, nonce, i);
-            var intent = new PlaceIntent(symbol, quantity > 0 ? OrderSide.Sell : OrderSide.Buy,
+            var intent = new PlaceIntent(symbol, closingSide,
                 OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
                 { Intent = OrderIntent.Close };
             var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
@@ -3537,13 +3780,25 @@ public sealed class TradingGateway : IAsyncDisposable
               $"the wire, so nothing was sent for {(waited.Count == 1 ? "it" : "them")}: " +
               $"{string.Join("; ", waited)}. Press again once that order has an answer.";
 
+        // SAID SEPARATELY AGAIN, and it is the worst news of the three, so it says the consequence
+        // rather than only the cause: this instrument was NOT closed and the owner has to go and
+        // look at it. Drift and the wire both end in "press again"; this one cannot, until the
+        // record it names has an outcome.
+        var stuckOn = unsettled.Count == 0 ? ""
+            : $" {(unsettled.Count == 1 ? "1 position" : $"{unsettled.Count} positions")} could not be " +
+              $"closed, because TradeAgent is holding an order on the instrument that it cannot account " +
+              $"for and could not settle: {string.Join("; ", unsettled)}. " +
+              $"{(unsettled.Count == 1 ? "That position" : "Those positions")} may still be open — " +
+              "check the platform, confirm that order on the Dashboard, then press again.";
+
         var outcome = await PressOutcomeAsync(ClosePress, nonce, ct);
         // A press that wrote no rows at all has only the drift and the waits to report; "Nothing was
         // sent." twice over is not a sentence anybody should have to read.
         outcome = outcome with
         {
-            Summary = ((outcome.Targets.Count == 0 && (drift.Length > 0 || waiting.Length > 0) ? "" : outcome.Summary)
-                      + drift + waiting).Trim()
+            Summary = ((outcome.Targets.Count == 0 && (drift.Length > 0 || waiting.Length > 0 || stuckOn.Length > 0)
+                            ? "" : outcome.Summary)
+                      + drift + waiting + stuckOn).Trim()
         };
         CompleteComposite(PressPrefix(ClosePress, nonce), Json.Write(outcome));
         _log.Activity($"You asked to close {captured.Count} position(s). {outcome.Summary}" +

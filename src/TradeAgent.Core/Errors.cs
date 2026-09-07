@@ -20,6 +20,13 @@ public enum ErrorCode
     // true will halve its size and try again, all day.
     LOSS_BUDGET_REACHED,
     EMERGENCY_PRESS_UNRESOLVED, POSITION_MOVED,
+    // AN ORDER THAT IS STILL UNKNOWN ON THE INSTRUMENT A CLOSE IS BEING SIZED FROM, and the two
+    // codes are the two callers rather than two rules. POSITION_MOVED is about a position that has
+    // ALREADY changed; these are about one that is about to, by an order this gateway recorded and
+    // never got an answer for. CLOSE_UNRESOLVED refuses the agent's own close or reduce;
+    // CLOSE_UNRESOLVED_ON_INSTRUMENT is the word on the emergency press's leg, which refuses ONE
+    // instrument and still closes the others.
+    CLOSE_UNRESOLVED, CLOSE_UNRESOLVED_ON_INSTRUMENT,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
@@ -360,6 +367,18 @@ public static class Errors
         // doubles it. Nothing was sent, and it is a changed decision rather than a broken machine —
         // which is why the repair is "ask again", not "check something".
         [ErrorCode.POSITION_MOVED]                 = ("The position moved while TradeAgent was preparing to close it, so the closing order no longer matched it.", "Nothing was sent and your position is untouched. Ask again and it will be sized against the position as it is now.", false),
+        // THE OTHER HALF OF POSITION_MOVED, and the owner has to be told which half this is. Above:
+        // the position already changed. Here: TradeAgent is holding an earlier order on the same
+        // instrument that it never got an answer for, and that order can still fill and move the
+        // position the same way this close would. Sending a second one sized from the position as it
+        // reads NOW is how a long 2 becomes a short 2. The repair is an outcome for that order, and
+        // there are two places one comes from: the unconfirmed card, and Close all positions, which
+        // reads the order back and stops it before it closes anything.
+        [ErrorCode.CLOSE_UNRESOLVED]               = ("TradeAgent has an earlier order on this instrument that it could not confirm, and that order could still move the position, so it refused to send a second one sized from the position as it looks now.", "Nothing was sent and your position is untouched. Confirm the unconfirmed order on the Dashboard, or press Close all positions — it reads that order back and stops it first.", false),
+        // The same fact, said about ONE LEG of an emergency press. It is a different sentence because
+        // it prescribes a different reading: the press did close every other instrument, so what the
+        // owner is being told is that this one is the exception and may still be open.
+        [ErrorCode.CLOSE_UNRESOLVED_ON_INSTRUMENT] = ("One instrument was left alone by the emergency press: TradeAgent has an earlier order on it that it could not confirm and could not stop, so it sent nothing rather than close on top of it. That position may still be open.", "Every other position was closed. Open ATAS and look at this instrument, confirm the unconfirmed order on the Dashboard, then press Close all positions again.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
         // NOT the same sentence as a breached order limit, and not the same repair. Nothing about
