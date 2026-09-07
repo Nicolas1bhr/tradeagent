@@ -46,3 +46,6 @@
 *.snk       -text
 *.ttf       -text
 *.otf       -text
+
+# Vendor material stays byte-for-byte as the vendor shipped it: no normalisation, no diff noise.
+docs/atas-api-*.txt -text
