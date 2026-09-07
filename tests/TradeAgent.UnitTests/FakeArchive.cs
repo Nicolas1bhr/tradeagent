@@ -24,14 +24,23 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public sealed class FakeArchive : IDisposable
 {
+    /// <summary>The methods that carry an entity body. A HEAD answer is headers and nothing else.</summary>
+    const string Head = "HEAD";
+
     readonly HttpListener _http = new();
     readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
     readonly ConcurrentQueue<string> _marks = new();
     readonly Stopwatch _clock = Stopwatch.StartNew();
 
-    public FakeArchive()
+    /// <param name="answers">
+    /// False makes this server ACCEPT every request and answer none of them, for the one thing a
+    /// downloader must never read as a verdict about the vendor. Nothing else about it changes.
+    /// </param>
+    public FakeArchive(bool answers = true)
     {
+        Answers = answers;
+
         for (var attempt = 0; ; attempt++)
         {
             Port = 18000 + Random.Shared.Next(2000);
@@ -52,35 +61,64 @@ public sealed class FakeArchive : IDisposable
                 var path = ctx.Request.Url!.AbsolutePath;
                 var method = ctx.Request.HttpMethod;
                 Mark($"got {method} {path}");
+
+                if (!Answers) { Mark("answering nothing, on purpose"); continue; }
+
                 try
                 {
+                    if (AlwaysAnswer is { } always)
+                    {
+                        ctx.Response.StatusCode = (int)always;
+                        Mark($"answering {(int)always} to everything, on purpose");
+                        continue;
+                    }
+
+                    byte[]? body = null;
+                    var what = "404";
+
                     if (_sidecars.TryGetValue(path, out var text))
                     {
-                        var body = Encoding.UTF8.GetBytes(text);
-                        ctx.Response.StatusCode = 200;
-                        ctx.Response.ContentLength64 = body.Length;
-                        Mark($"answering 200 sidecar, {body.Length} bytes");
-                        await ctx.Response.OutputStream.WriteAsync(body);
-                        Mark("write returned");
+                        body = Encoding.UTF8.GetBytes(text);
+                        what = "200 sidecar";
                     }
                     else if (_files.TryGetValue(path, out var bytes))
                     {
-                        ctx.Response.StatusCode = 200;
-                        ctx.Response.ContentLength64 = bytes.Length;
-                        Mark($"answering 200 zip, {bytes.Length} bytes");
-                        await ctx.Response.OutputStream.WriteAsync(bytes);
+                        body = bytes;
+                        what = "200 zip";
+                    }
+
+                    ctx.Response.StatusCode = body is null ? 404 : 200;
+                    if (body is not null) ctx.Response.ContentLength64 = body.Length;
+
+                    // A HEAD IS ANSWERED WITH THE HEADERS AND NOTHING ELSE. Writing the entity body
+                    // to a HEAD response is what cost windows-latest thirty minutes: the write did
+                    // not come back, so `Close` never ran, so the response was never finished, so
+                    // the client sat on the shared 30-minute client timeout and then read the
+                    // silence as "the vendor has not published this month". Every other runner let
+                    // the write through and nobody noticed the harness was writing a body nobody
+                    // had asked for.
+                    if (body is not null && !string.Equals(method, Head, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Mark($"answering {what}, {body.Length} bytes");
+                        await ctx.Response.OutputStream.WriteAsync(body);
                         Mark("write returned");
                     }
                     else
                     {
-                        ctx.Response.StatusCode = 404;
-                        Mark("answering 404");
+                        Mark(body is null
+                            ? "answering 404"
+                            : $"answering {what}, {body.Length} bytes declared, no body because this is a HEAD");
                     }
-
-                    ctx.Response.Close();
-                    Mark("closed");
                 }
                 catch (Exception ex) { Mark($"THREW {ex.GetType().Name}: {One(ex.Message)}"); }
+                finally
+                {
+                    // THE CLOSE IS THE ANSWER, so it is not optional and it is not inside the try. A
+                    // handler that threw halfway still owes the client a finished response; leaving
+                    // one open turns a harness fault into a client-side timeout somewhere else.
+                    try { ctx.Response.Close(); Mark("closed"); }
+                    catch (Exception ex) { Mark($"close THREW {ex.GetType().Name}: {One(ex.Message)}"); }
+                }
             }
         });
     }
@@ -88,6 +126,15 @@ public sealed class FakeArchive : IDisposable
     public int Port { get; }
     public string BaseUrl => $"http://127.0.0.1:{Port}";
     public Task Serving { get; }
+
+    /// <inheritdoc cref="FakeArchive(bool)"/>
+    public bool Answers { get; }
+
+    /// <summary>
+    /// When set, every request is answered with this status and no body — a CDN having a bad
+    /// afternoon. It is not 404: a vendor that says 503 has said nothing about the month.
+    /// </summary>
+    public HttpStatusCode? AlwaysAnswer { get; set; }
 
     /// <summary>What this server received and what it did about it, oldest first.</summary>
     public IReadOnlyList<string> Marks => [.. _marks];
