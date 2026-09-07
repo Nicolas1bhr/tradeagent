@@ -14,6 +14,11 @@ public enum ErrorCode
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, RISK_CHECK_UNAVAILABLE, TRADING_PAUSED_UNRECONCILED,
+    // Its own code rather than RISK_LIMIT_EXCEEDED, because the two say different things to whoever
+    // reads them: a breached ORDER limit is answered by asking for a smaller order, and a reached
+    // LOSS budget is answered by not asking again today. An agent told the first when the second is
+    // true will halve its size and try again, all day.
+    LOSS_BUDGET_REACHED,
     EMERGENCY_PRESS_UNRESOLVED, POSITION_MOVED,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
@@ -94,6 +99,17 @@ public static class Labels
 
     /// <summary>The page holding the mode, the real-money switch, the limits and the allowlist.</summary>
     public const string SafetyPage = "Safety";
+
+    /// <summary>
+    /// AN AMOUNT WITH ITS CURRENCY, OR WITHOUT ONE WHERE NOTHING NAMED A CURRENCY.
+    ///
+    /// In Core because four layers that cannot see each other print money in the owner's words —
+    /// the mission's Situation block, the Dashboard, the gateway's own refusals, and the agent's
+    /// error text — and two formatters for one figure is how "5 USD" and "5.0000" end up on one
+    /// screen. An empty currency prints the bare number rather than a guessed symbol.
+    /// </summary>
+    public static string Money(decimal amount, string currency) =>
+        currency.Length == 0 ? amount.ToString("0.####") : $"{amount:0.####} {currency}";
 
     /// <summary>
     /// WHAT THE OWNER READS WHEN THE SAVED SETTINGS ROW CANNOT BE PARSED.
@@ -327,6 +343,11 @@ public static class Errors
         [ErrorCode.POSITION_MOVED]                 = ("The position moved while TradeAgent was preparing to close it, so the closing order no longer matched it.", "Nothing was sent and your position is untouched. Ask again and it will be sized against the position as it is now.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
+        // NOT the same sentence as a breached order limit, and not the same repair. Nothing about
+        // this order was wrong; the day, or the position, is already down as far as the owner said
+        // it may go. Closing and reducing are untouched, which is the half an owner has to be told
+        // — a refusal that reads as "trading is off" is one they would answer by raising the budget.
+        [ErrorCode.LOSS_BUDGET_REACHED]            = ("The AI has lost as much as you allow it to, so it is not being allowed to take on any more risk.", $"Nothing was sent. Closing or reducing a position is still allowed, and the day starts again at midnight UTC. Change the budget on the {Labels.SafetyPage} page if it is too tight.", false),
         // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
         // broken — TradeAgent could not work out whether one would be. A change to an order it
         // cannot read is a change whose effect on your exposure is unknown; so is an order in an

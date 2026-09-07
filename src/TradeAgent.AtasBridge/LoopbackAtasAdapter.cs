@@ -129,7 +129,10 @@ public sealed class LoopbackAtasAdapter : IAtasAdapter
             var q = p.Quantity + signed;
             if (q == 0) _positions.Remove(o.Symbol); else _positions[o.Symbol] = p with { Quantity = q };
         }
-        else _positions[o.Symbol] = new PositionInfo($"LBP-{o.Symbol}", o.AccountId, o.Symbol, signed, price, 0m);
+        // Null rather than 0, for the reason FakeBroker.ApplyFill gives: this adapter does not mark
+        // its book either, and a stale zero read as an unrealised figure is a losing position
+        // reporting that it is not losing.
+        else _positions[o.Symbol] = new PositionInfo($"LBP-{o.Symbol}", o.AccountId, o.Symbol, signed, price, null);
         ExecutionReceived?.Invoke(fill);
     }
 
