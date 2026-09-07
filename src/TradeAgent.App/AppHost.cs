@@ -103,7 +103,23 @@ public sealed class AppHost : IAsyncDisposable
     /// is prepared the choice on the Settings page is the honest answer to "what is this priced as".
     /// </summary>
     public ModelPrice? ShippedRate =>
-        CostCatalog.Highest(Agent?.Current?.Id ?? Gateway.Settings.SelectedRuntimeId);
+        CostCatalog.Highest(PricedRuntimeId(Agent?.Current?.Id, Gateway.Settings.SelectedRuntimeId));
+
+    /// <summary>
+    /// WHICH RUNTIME'S CATALOGUE PRICES THIS INSTALLATION — the one question the Safety page and the
+    /// AI card must never answer differently, which is why it is asked in one place.
+    ///
+    /// The prepared agent's id first, the owner's chosen runtime after. Before the first start there
+    /// IS no prepared agent, and reading only that says "nobody can price this" about an installation
+    /// whose runtime was chosen during setup and is priced on the Safety page one click away. On a
+    /// screen that meant the card announcing the daily cap "cannot stop it" while the page beside it
+    /// showed the rate it would be stopped by (the run of 2026-09-07).
+    ///
+    /// Overcharging is not the risk here: the fallback picks a catalogue, and the price taken from it
+    /// is the DEAREST entry, labelled an estimate wherever it is shown.
+    /// </summary>
+    public static string? PricedRuntimeId(string? preparedAgentId, string? chosenRuntimeId) =>
+        preparedAgentId is { Length: > 0 } ? preparedAgentId : chosenRuntimeId;
 
     /// <summary>
     /// THE LOOP THAT KEEPS THE AI WORKING. Composed here, beside the gateway, because that is where
@@ -226,7 +242,7 @@ public sealed class AppHost : IAsyncDisposable
             Meter = new TurnMeter(_db,
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,
-                runtimeId: () => Agent.Current?.Id,
+                runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId),
                 owner: () => OwnerPrice.From(Gateway.Settings));
             Meter.Changed += () => Changed?.Invoke();
 

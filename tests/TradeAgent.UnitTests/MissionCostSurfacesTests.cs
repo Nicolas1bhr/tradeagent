@@ -3,6 +3,7 @@ using Avalonia.Interactivity;
 using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using Xunit;
 
@@ -411,6 +412,127 @@ public class MissionCostSurfacesTests
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
         Assert.NotNull(dir);
         return dir.FullName;
+    }
+}
+
+/// <summary>
+/// WHOSE CATALOGUE PRICES AN AI THAT HAS NEVER BEEN STARTED.
+///
+/// Seen on a screen on 2026-09-07: before the first press, the card said the daily cap "cannot stop
+/// it" while the Safety page one click away showed the rate for the very runtime the owner had
+/// chosen during setup. Two surfaces, one question, two answers — and the alarming one was on the
+/// card. The meter's probe read only the PREPARED agent, and before the first start there is none.
+///
+/// It builds a real <see cref="TurnMeter"/> over the shipped catalogue rather than an
+/// <see cref="AiSpendToday"/> written by hand, because the defect was in what the meter asked, not
+/// in what the card did with the answer. That means it reads <c>costs.json</c> off the shared test
+/// home, so it joins the collection that owns those files.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class PricingAnAiThatHasNotStartedYetTests : IDisposable
+{
+    readonly Database _db = TestEnv.NewDb();
+    readonly string _records = Path.Combine(TestEnv.Home, $"turns-{Guid.NewGuid():n}.jsonl");
+
+    public PricingAnAiThatHasNotStartedYetTests() => NoCosts();
+
+    public void Dispose()
+    {
+        NoCosts();
+        _db.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>No owner override, so what answers is this build's own shipped list price.</summary>
+    static void NoCosts()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+    }
+
+    TurnMeter Meter(string? preparedAgentId, string? chosenRuntimeId) =>
+        new(_db, cap: () => 5m, recordPath: _records,
+            runtimeId: () => AppHost.PricedRuntimeId(preparedAgentId, chosenRuntimeId));
+
+    /// <summary>
+    /// THE READING THE ITEM TURNS ON. Nothing has been started; the owner chose <c>codex</c> during
+    /// setup; the card shows the ceiling rather than announcing that nothing can hold it back.
+    /// </summary>
+    [Fact]
+    public void Before_the_first_start_the_cap_is_priced_by_the_runtime_the_owner_chose()
+    {
+        var today = Meter(preparedAgentId: null, chosenRuntimeId: "codex").Today;
+
+        Assert.True(today.CanPrice);
+        Assert.Null(today.WhyNoPrice);
+
+        var line = DashboardPage.MissionCost(today);
+        Assert.Contains(" of 5 USD", line);
+        Assert.DoesNotContain("cannot stop it", line);
+    }
+
+    /// <summary>
+    /// And the card and the Safety page's default are the same answer, because they are now the same
+    /// question. This is the pair that disagreed on the screen.
+    /// </summary>
+    [Fact]
+    public void The_card_and_the_safety_pages_default_rate_agree_before_the_first_start()
+    {
+        var id = AppHost.PricedRuntimeId(preparedAgentId: null, chosenRuntimeId: "codex");
+
+        Assert.NotNull(CostCatalog.Highest(id));
+        Assert.True(Meter(preparedAgentId: null, chosenRuntimeId: "codex").Today.CanPrice);
+    }
+
+    /// <summary>
+    /// A RUNNING AGENT STILL WINS. The fallback is for the gap before one exists, not a second
+    /// opinion about a runtime that is actually running: an owner who switched their choice on the
+    /// Settings page after preparing an agent would otherwise be billed against the catalogue of a
+    /// runtime no turn is being taken on.
+    /// </summary>
+    [Fact]
+    public void What_is_actually_running_prices_the_turns_rather_than_what_was_chosen()
+    {
+        Assert.Equal("codex", AppHost.PricedRuntimeId("codex", "custom"));
+        Assert.Equal("custom", AppHost.PricedRuntimeId(null, "custom"));
+        Assert.Equal("custom", AppHost.PricedRuntimeId("", "custom"));
+        Assert.Null(AppHost.PricedRuntimeId(null, null));
+    }
+
+    /// <summary>
+    /// And with no choice made either — an install that has not been through setup — nothing is
+    /// invented. "Cost unknown" is the honest answer there, and it is the one the card gives.
+    /// </summary>
+    [Fact]
+    public void With_no_runtime_chosen_at_all_the_card_still_says_it_cannot_price_the_ai()
+    {
+        var today = Meter(preparedAgentId: null, chosenRuntimeId: null).Today;
+
+        Assert.False(today.CanPrice);
+        Assert.Contains("cannot stop it", DashboardPage.MissionCost(today));
+    }
+
+    /// <summary>
+    /// AND THE METER IS ACTUALLY WIRED THROUGH IT — the line the defect was on.
+    ///
+    /// Asserted against the SOURCE, which is not how anything else here is proved and needs its
+    /// reason: the wiring is one argument inside <c>StartAsync</c>, which composes a database, a
+    /// pipe server, a gateway and a connector before it reaches that argument. There is no seam to
+    /// build it at, and the tests above would all still pass with the meter reading the prepared
+    /// agent alone — which is exactly the state the card was in on the screen. So the composition
+    /// root is read as text, the same way the vendor-file collection guard in this assembly reads it.
+    /// </summary>
+    [Fact]
+    public void The_meter_asks_the_same_question_the_safety_page_asks()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+
+        var source = File.ReadAllText(Path.Combine(dir.FullName, "src", "TradeAgent.App", "AppHost.cs"));
+
+        Assert.Contains("runtimeId: () => PricedRuntimeId(Agent.Current?.Id, Gateway.Settings.SelectedRuntimeId)",
+            source, StringComparison.Ordinal);
+        Assert.DoesNotContain("runtimeId: () => Agent.Current?.Id,", source, StringComparison.Ordinal);
     }
 }
 
