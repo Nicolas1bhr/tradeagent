@@ -423,6 +423,118 @@ public sealed record AiSpendToday
 }
 
 /// <summary>
+/// WHAT TODAY HAS LOST, MEASURED AGAINST WHAT THE OWNER ALLOWS IT TO — or the reason nobody can say.
+///
+/// In <c>Core</c> for the reason <see cref="AiSpendToday"/> is: three layers that cannot see each
+/// other read this one figure. The gateway REFUSES on it, the mission's Situation block tells the AI
+/// what it has left, and the agent-facing status carries it over the pipe.
+///
+/// <para><see cref="Unknown"/> is the field the rest of the type is subordinate to. While it is set,
+/// every number here is meaningless and a caller reading <see cref="Loss"/> anyway would read a zero
+/// that means "the arithmetic did not finish" as though it meant "the day is flat". That is the one
+/// direction a loss figure must never be wrong in, because it is the figure a gate refuses on — so
+/// an unknown REFUSES rather than being drawn as nothing.</para>
+///
+/// <para><see cref="Loss"/> is POSITIVE when money is down and zero when the day is flat or ahead,
+/// so the comparison reads the way the owner's own sentence does: "the most it may lose".</para>
+/// </summary>
+public sealed record LossToday
+{
+    /// <summary>Neither budget is set, so nothing is measured and nothing can be refused.</summary>
+    public static readonly LossToday NotEnforced = new();
+
+    /// <summary>False when both budgets are zero. Then nothing below means anything.</summary>
+    public bool Enforced { get; init; }
+
+    /// <summary>Why the day's loss could not be worked out, in the owner's words. Null when it was.</summary>
+    public string? Unknown { get; init; }
+
+    /// <summary>What the day is down, as a positive number. Zero when it is flat or ahead.</summary>
+    public decimal Loss { get; init; }
+
+    /// <summary>Realised today, less the fees the platform DID report. Positive is a profit.</summary>
+    public decimal Realized { get; init; }
+
+    /// <summary>Unrealised on everything open. Positive is a profit.</summary>
+    public decimal Unrealized { get; init; }
+
+    /// <summary>
+    /// What each open position is DOWN, positive, symbol by symbol. A position that is ahead is
+    /// absent rather than present as a zero, because the per-position budget asks one question of
+    /// this map — "how much is this one losing" — and an absent key is the honest none.
+    /// </summary>
+    public IReadOnlyDictionary<string, decimal> LossBySymbol { get; init; } =
+        new Dictionary<string, decimal>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Fills today the platform reported no fee for. Their GROSS is counted and their cost is not,
+    /// so the day's loss is understated by exactly those fees. This is the one place these budgets
+    /// are knowingly permissive, and every surface that shows the figure says so rather than
+    /// inventing a fee — an unknown is never a zero, and it is not a guess either.
+    /// </summary>
+    public int FeesUnknownFills { get; init; }
+
+    /// <summary><see cref="RiskPolicy.MaxDailyLoss"/> as it stood when this was read. 0 is off.</summary>
+    public decimal DayBudget { get; init; }
+
+    /// <summary><see cref="RiskPolicy.MaxLossPerTrade"/> as it stood when this was read. 0 is off.</summary>
+    public decimal TradeBudget { get; init; }
+
+    /// <summary>The account's currency, or "" while the platform has not said what it is.</summary>
+    public string Currency { get; init; } = "";
+
+    /// <summary>
+    /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
+    /// a ceiling and not a threshold to cross — so it is <c>&gt;=</c>, and an UNKNOWN is never
+    /// "reached": it is refused by its own branch, with its own sentence, because "we could not work
+    /// it out" and "you have lost too much" are different things to be told.
+    /// </summary>
+    public bool DayReached => Unknown is null && DayBudget > 0m && Loss >= DayBudget;
+
+    /// <summary>What one position is down, and whether that is as much as it may be.</summary>
+    public decimal LossOn(string symbol) => LossBySymbol.GetValueOrDefault(symbol);
+
+    public bool TradeReached(string symbol) =>
+        Unknown is null && TradeBudget > 0m && LossOn(symbol) >= TradeBudget;
+
+    /// <summary>
+    /// THE SENTENCE, or null when there is nothing enforced to say. A method so it can be read back
+    /// without a running loop, and so the three cases are visibly three — the same shape, and for
+    /// the same reason, as <c>MissionSituation.SpendLine</c>.
+    ///
+    /// The unknown case is spelled out rather than shortened to a number, because "0 lost today"
+    /// beside an AI whose next order is about to be refused is the one reading that is actively
+    /// misleading: it says the day is fine when what happened is that nobody could price it.
+    /// </summary>
+    public string? Line()
+    {
+        if (!Enforced) return null;
+
+        if (Unknown is { } why)
+            return "What you have lost today could not be worked out — " + why
+                   + "; new positions are refused until it can be. Closing or reducing a position still works.";
+
+        var line = DayBudget > 0m
+            ? $"What you have lost today: {Labels.Money(Loss, Currency)} of a {Labels.Money(DayBudget, Currency)} daily budget"
+            : $"What you have lost today: {Labels.Money(Loss, Currency)}, against no daily budget";
+
+        if (TradeBudget > 0m)
+            line += $", and no one position may lose more than {Labels.Money(TradeBudget, Currency)}";
+        line += ".";
+
+        if (FeesUnknownFills > 0)
+            line += $" Your platform reported no fee for {FeesUnknownFills} of today\u2019s fills, so the real "
+                    + "figure is a little worse than that.";
+
+        if (DayReached)
+            line += " You are at the daily budget: no new positions until tomorrow (UTC). "
+                    + "Closing or reducing a position still works.";
+
+        return line;
+    }
+}
+
+/// <summary>
 /// The three facts about the AI's own work that the agent-facing status carries. Composed by the
 /// app, because the gateway cannot see the mission loop and must not learn to.
 /// </summary>

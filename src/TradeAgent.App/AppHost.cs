@@ -571,12 +571,20 @@ public sealed class AppHost : IAsyncDisposable
             // because a call failed would be a turn reasoning about an account it cannot see, so the
             // failure is said in the words the AI reads rather than rendered as an empty list.
             IReadOnlyList<string> positions;
+            IReadOnlyList<ConnectorSdk.PositionInfo>? held = null;
             try
             {
-                positions = (await host.Gateway.PositionsAsync(ct))
-                    .Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0} at {p.AveragePrice}").ToArray();
+                held = await host.Gateway.PositionsAsync(ct);
+                positions = held.Select(p => $"{p.Symbol} {p.Quantity:+#;-#;0} at {p.AveragePrice}").ToArray();
             }
             catch (Exception ex) { positions = [$"could not be read — {ex.Message}"]; }
+
+            // The day's loss is worked out from the positions ALREADY read above rather than from a
+            // second round trip: a turn that asked the platform the same question twice would pay a
+            // whole connector deadline for an answer nobody would prefer. A read that failed passes
+            // null, and the reading comes back saying so — which is what the AI needs to be told,
+            // because its next order is going to be refused for exactly that reason.
+            var loss = await host.Gateway.LossTodayAsync(held, ct);
 
             return new MissionSituation
             {
@@ -590,7 +598,8 @@ public sealed class AppHost : IAsyncDisposable
                 UnconfirmedRequests = status.UnreconciledRequests,
                 NewMaterial = NewInbox(since),
                 Guidance = host.Gateway.Settings.Guidance,
-                Spend = host.SpendToday
+                Spend = host.SpendToday,
+                Loss = loss
             };
         }
 

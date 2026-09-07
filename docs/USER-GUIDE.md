@@ -558,7 +558,7 @@ If instead you see *"could not be read, so the operation was not started. Nothin
 cancelled"*, that is the other kind: TradeAgent could not even read what it needed before starting,
 and nothing went anywhere. Different sentence, different meaning, on purpose.
 
-## The five safety limits
+## The seven safety limits
 
 On the **Safety** page. Change a number, press **Save limits**, and it applies to the next order.
 These are enforced before anything reaches your broker. The AI cannot raise them and has no command
@@ -567,16 +567,28 @@ to ask.
 **Lowering one saves in a press. Raising one asks twice** — the button turns red and names the limit
 you widened, *"Confirm: widen “Most orders per minute”"*, or counts them if you changed several. A
 raised cap is the same act as choosing a real-money mode, done with a number instead of a button.
-Note the one field where "wider" is not "larger": **0** in the money box means *not enforced*, so
-setting it to 0 is the widest that limit gets and asks twice, while a smaller number saves at once.
+Note the three fields where "wider" is not "larger": **0** in the money box and in the two loss boxes
+means *not enforced*, so setting one of them to 0 is the widest that limit gets and asks twice, while
+a smaller number saves at once.
 
-The five:
+The seven:
 
 - the most it can buy or sell in **one order**;
 - the most **money** one order may be worth (off by default — see below);
 - how many **positions** it may hold at once;
 - how many **orders per minute**;
+- the most it may **lose on one position**;
+- the most it may **lose in one day**;
 - **which instruments** it may touch at all.
+
+**The two loss limits are the only ones about what has happened rather than about what is being
+sent**, and they are in your account's currency: once the day is down by the amount you set — money
+already lost plus what your open positions are down right now — the AI is refused every order that
+could take on more, until midnight UTC, and once one position is down by the per-position amount it
+may not be added to. **Closing or reducing a position is never refused by them, and TradeAgent does
+not close anything for you**: they stop new risk, they do not tidy up. Both start at **0**, which
+means not enforced — but you cannot choose either real-money mode until you have set a daily one, and
+the refusal says so, because nobody is watching the day for you.
 
 The defaults are deliberately small. Start there.
 

@@ -59,7 +59,15 @@ public static class GatewaySchema
             + "to cover what you cost, so treat an absent figure as a cost you cannot see rather than one you did not "
             + "incur. When ai_cost_estimated is present, ai_cost_today is an UPPER BOUND and that field says why: your "
             + "CLI did not report which model it used, so TradeAgent charged the dearest model that runtime has a list "
-            + "price for. Your real bill is at most that, and the account owner can correct the rate in TradeAgent.", []),
+            + "price for. Your real bill is at most that, and the account owner can correct the rate in TradeAgent. "
+            + "loss_today is what the TRADING has lost today, realized and unrealized together, in the account's "
+            + "currency, and loss_budget_day and loss_budget_trade are the most the account owner allows you to lose "
+            + "in a day and on any one position. All three are ABSENT rather than zero: a budget that is absent is "
+            + "not enforced at all, and an absent loss_today means TradeAgent could not work the figure out — never "
+            + "that nothing was lost. Reaching either budget REFUSES every order that could increase exposure, with "
+            + "LOSS_BUDGET_REACHED, until midnight UTC for the day's budget; closing or reducing a position is never "
+            + "refused by them, and nothing is closed for you. A day whose loss cannot be worked out refuses new "
+            + "positions too, with RISK_CHECK_UNAVAILABLE and a sentence saying what was missing.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),

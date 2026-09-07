@@ -4,52 +4,6 @@ using TradeAgent.Core;
 namespace TradeAgent.Gateway;
 
 /// <summary>
-/// WHAT TODAY HAS LOST, IN THE ACCOUNT'S CURRENCY — or the reason nobody can say.
-///
-/// <para><see cref="Unknown"/> is the whole point of the type. Every other field is meaningless
-/// while it is set, and a caller that read <see cref="Loss"/> anyway would be reading a zero that
-/// means "the arithmetic did not finish" as though it meant "the day is flat". That is the one
-/// direction a loss figure must never be wrong in, because it is the figure a gate refuses on.</para>
-///
-/// <para><see cref="Loss"/> is POSITIVE when money is down, and zero when the day is flat or up.
-/// Budgets are stated as "the most it may lose", so the comparison the gate makes reads the way the
-/// owner's own sentence does.</para>
-/// </summary>
-public sealed record LossToday
-{
-    /// <summary>Set when nothing else here may be read. The sentence is in the owner's words.</summary>
-    public string? Unknown { get; init; }
-
-    /// <summary>What the day is down, as a positive number. Zero when it is flat or ahead.</summary>
-    public decimal Loss { get; init; }
-
-    /// <summary>Realised today, less the fees the platform DID report. Positive is a profit.</summary>
-    public decimal Realized { get; init; }
-
-    /// <summary>Unrealised on everything open. Positive is a profit.</summary>
-    public decimal Unrealized { get; init; }
-
-    /// <summary>
-    /// What each open position is DOWN, positive, symbol by symbol. A position that is ahead is
-    /// absent rather than present as a zero, because the per-position budget asks one question of
-    /// this map — "how much is this one losing" — and an absent key is the honest none.
-    /// </summary>
-    public IReadOnlyDictionary<string, decimal> LossBySymbol { get; init; } =
-        new Dictionary<string, decimal>(StringComparer.Ordinal);
-
-    /// <summary>
-    /// Fills today the platform reported no fee for. Their GROSS is counted and their cost is not,
-    /// so the day's loss is understated by exactly those fees — the surfaces say how many there
-    /// were rather than inventing a number, and a budget is reached slightly later than it truly is.
-    /// This is the one place these budgets are knowingly permissive, and it is stated everywhere it
-    /// is shown.
-    /// </summary>
-    public int FeesUnknownFills { get; init; }
-
-    public static LossToday CannotBeRead(string why) => new() { Unknown = why };
-}
-
-/// <summary>
 /// THE DAY'S LOSS, ASSEMBLED FROM THE LEDGER AND THE OPEN POSITIONS — and refusing to answer rather
 /// than guessing at either half.
 ///
@@ -82,12 +36,17 @@ public static class LossBudget
     /// has nothing to close and reads as opening a short, which is not a smaller answer but a wrong
     /// one. <see cref="PnlInputs.AllFills"/> says the same thing at the source.
     /// </summary>
-    public static LossToday Read(PnlReport today, IReadOnlyList<PositionInfo> positions,
-        Func<string, QuoteInfo?> lastQuote, IReadOnlyList<InstrumentInfo> instruments)
+    public static LossToday Read(RiskPolicy risk, string currency, PnlReport today,
+        IReadOnlyList<PositionInfo> positions, Func<string, QuoteInfo?> lastQuote,
+        IReadOnlyList<InstrumentInfo> instruments)
     {
+        // NEITHER BUDGET SET READS NOTHING. The rule MaxNotionalPerOrder has: an installation that
+        // asked for no budget must not be stopped from trading by metadata no gate is asking for.
+        if (risk.MaxDailyLoss <= 0m && risk.MaxLossPerTrade <= 0m) return LossToday.NotEnforced;
+
         foreach (var s in today.BySymbol)
             if (s.Fills > 0 && !s.MultiplierKnown)
-                return LossToday.CannotBeRead(
+                return CannotBeRead(risk, currency,
                     $"your platform did not say what one contract of {s.Symbol} is worth, and {s.Symbol} " +
                     "has traded today, so what today has made or lost cannot be worked out");
 
@@ -114,14 +73,14 @@ public static class LossBudget
             {
                 var quote = lastQuote(p.Symbol);
                 if ((quote?.Last ?? quote?.Bid ?? quote?.Ask) is not { } last)
-                    return LossToday.CannotBeRead(
+                    return CannotBeRead(risk, currency,
                         $"your platform does not say what your open {Math.Abs(p.Quantity)} {p.Symbol} is " +
                         "worth and TradeAgent has never seen a price for it, so what today has made or " +
                         "lost cannot be worked out");
 
                 var multiplier = Pnl.MultiplierFor(p.Symbol, instruments);
                 if (!multiplier.Known)
-                    return LossToday.CannotBeRead(
+                    return CannotBeRead(risk, currency,
                         $"your platform does not say what your open {Math.Abs(p.Quantity)} {p.Symbol} is " +
                         "worth, and did not say what one contract of it is worth either, so what today " +
                         "has made or lost cannot be worked out");
@@ -136,11 +95,30 @@ public static class LossBudget
         var day = realized + unrealized;
         return new LossToday
         {
+            Enforced = true,
             Loss = day < 0m ? -day : 0m,
             Realized = realized,
             Unrealized = unrealized,
             LossBySymbol = lossBySymbol,
-            FeesUnknownFills = today.FeesUnknownFills
+            FeesUnknownFills = today.FeesUnknownFills,
+            DayBudget = risk.MaxDailyLoss,
+            TradeBudget = risk.MaxLossPerTrade,
+            Currency = currency
         };
     }
+
+    /// <summary>
+    /// A reading that could not be taken, carrying the budgets it was to be measured against — so
+    /// that every surface can still say WHAT is being enforced while saying that the figure is not
+    /// available. <see cref="LossToday.Enforced"/> stays true: something IS in force, and the reason
+    /// it cannot be applied is exactly the news.
+    /// </summary>
+    public static LossToday CannotBeRead(RiskPolicy risk, string currency, string why) => new()
+    {
+        Enforced = true,
+        Unknown = why,
+        DayBudget = risk.MaxDailyLoss,
+        TradeBudget = risk.MaxLossPerTrade,
+        Currency = currency
+    };
 }

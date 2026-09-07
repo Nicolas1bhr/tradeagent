@@ -568,6 +568,42 @@ public sealed class TradingGateway : IAsyncDisposable
         });
     }
 
+    /// <summary>
+    /// THE DAY'S LOSS AGAINST THE BUDGETS, FOR THE SURFACES — the Situation block the AI reads, the
+    /// status it can ask for, and anything on screen. The same reading the gate refuses on, from the
+    /// same code, so the number the AI plans against and the number that stops it are one number.
+    ///
+    /// <paramref name="positions"/> is for a caller that has JUST read them — the mission turn reads
+    /// the account's positions to render them anyway, and asking the platform twice in one turn is a
+    /// second round trip for an answer nobody would prefer. Null reads them here.
+    ///
+    /// A read that FAILS is an unknown, not a flat day: the reading comes back with its reason, the
+    /// surfaces say so, and the gate refuses. Nothing is asked at all while both budgets are zero.
+    /// </summary>
+    public async Task<LossToday> LossTodayAsync(IReadOnlyList<PositionInfo>? positions = null,
+        CancellationToken ct = default)
+    {
+        var r = Settings.Risk;
+        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced;
+
+        if (positions is null)
+        {
+            try { positions = await PositionsAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return LossBudget.CannotBeRead(r, AccountCurrency,
+                    $"your open positions could not be read ({ex.Message})");
+            }
+        }
+
+        // The multiplier lives in the instrument list. A refresh that fails leaves whatever was
+        // cached, and LossBudget refuses on any symbol it still cannot size.
+        try { await InstrumentsAsync(ct); } catch (Exception) { /* the reading names what it cannot size */ }
+
+        return LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(Now), "today"),
+            positions, LastQuote, _instrumentCache);
+    }
+
     public FillCoverage? Coverage() =>
         _db.GetKv(FillCoverageKey) is { } json ? Json.Read<FillCoverage>(json) : null;
 
@@ -761,6 +797,13 @@ public sealed class TradingGateway : IAsyncDisposable
         try { ai = Ai?.Invoke() ?? AiActivity.None; }
         catch (Exception) { ai = AiActivity.None; }
 
+        // The day's loss, and only when a budget is set: with neither set nothing is measured and
+        // the platform is not asked, so a status on an installation with no budgets costs exactly
+        // what it always did. A read that fails leaves the figure ABSENT, never zero.
+        var loss = LossToday.NotEnforced;
+        try { loss = await LossTodayAsync(ct: ct); }
+        catch (Exception) { /* status must render even with the wire down */ }
+
         return new GatewayStatus(
             Versions.ProtocolVersion.ToString(), Versions.App, Settings.Mode, Settings.AiTradingStopped,
             Settings.LiveActivated, available, blocked, Connector.Id, Connector.DisplayName,
@@ -770,7 +813,10 @@ public sealed class TradingGateway : IAsyncDisposable
             AiState = ai.State,
             AiTurnsToday = ai.TurnsToday,
             AiCostToday = ai.CostToday,
-            AiCostEstimated = ai.CostEstimated
+            AiCostEstimated = ai.CostEstimated,
+            LossToday = loss.Enforced && loss.Unknown is null ? loss.Loss : null,
+            LossBudgetDay = loss.DayBudget > 0m ? loss.DayBudget : null,
+            LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null
         };
     }
 
@@ -1245,15 +1291,15 @@ public sealed class TradingGateway : IAsyncDisposable
             }
         }
 
-        var today = LedgerPnl(StartOfDay(Now), "today");
-        var loss = LossBudget.Read(today, positions, LastQuote, _instrumentCache);
-        var currency = account.Currency;
+        var loss = LossBudget.Read(r, account.Currency, LedgerPnl(StartOfDay(Now), "today"),
+            positions, LastQuote, _instrumentCache);
+        var currency = loss.Currency;
 
         if (loss.Unknown is { } why)
             throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
                 $"{why}, so this order cannot be checked against your loss budget and nothing was sent");
 
-        if (r.MaxDailyLoss > 0m && loss.Loss >= r.MaxDailyLoss)
+        if (loss.DayReached)
         {
             SayOnceToday(ref _dailyLossSaidFor,
                 $"The AI is down {Labels.Money(loss.Loss, currency)} today, which is the "
@@ -1268,8 +1314,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // Absent from the map is a position that is not losing, which is the honest none — see
         // LossToday.LossBySymbol, where a winner is absent rather than present as a zero.
-        var down = loss.LossBySymbol.GetValueOrDefault(intent.Symbol);
-        if (r.MaxLossPerTrade > 0m && down >= r.MaxLossPerTrade)
+        var down = loss.LossOn(intent.Symbol);
+        if (loss.TradeReached(intent.Symbol))
         {
             SayOnceToday(ref _tradeLossSaidFor,
                 $"The AI's {intent.Symbol} position is down {Labels.Money(down, currency)}, which is the "
