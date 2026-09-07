@@ -182,10 +182,17 @@ public static class WorkspaceBuilder
     - {(c.Risk.MaxNotionalPerOrder > 0 ? $"at most **{c.Risk.MaxNotionalPerOrder:N0}** order value" : "order value is not capped — the quantity limit above is the binding one")}
     - at most **{c.Risk.MaxOpenPositions}** open positions
     - at most **{c.Risk.MaxOrdersPerMinute}** orders per minute
+    - {(c.Risk.MaxLossPerTrade > 0 ? $"a position that is down **{c.Risk.MaxLossPerTrade:N0}** may not be added to" : "no per-position loss budget is set")}
+    - {(c.Risk.MaxDailyLoss > 0 ? $"once the day is down **{c.Risk.MaxDailyLoss:N0}** — realised and unrealised together — every order that could increase exposure is refused until midnight UTC" : "no daily loss budget is set")}
     - instruments: {(c.Risk.InstrumentAllowlist.Count == 0 ? "**none** — the owner has not named any, so every order will be refused" : string.Join(", ", c.Risk.InstrumentAllowlist))}
 
     These are not suggestions you can negotiate. There is no command that raises them — only the
     account owner can, in the TradeAgent window.
+
+    The two loss budgets never refuse a close or a reduce, and TradeAgent closes nothing for you:
+    they stop new risk and leave what is open to you. `trade status` carries `loss_today`,
+    `loss_budget_day` and `loss_budget_trade` — each ABSENT rather than zero, and an absent
+    `loss_today` means the figure could not be worked out, which refuses new positions too.
 
     ## Rules that matter
 
