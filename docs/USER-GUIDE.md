@@ -561,6 +561,13 @@ leave stuck forever — the record is the press, and a person ends it.
 **Close all positions re-reads your position immediately before it sends anything.** If it has moved
 since you pressed, it stops and asks you again rather than closing a number that is no longer true.
 
+**And if an earlier order on that instrument was never confirmed, it deals with that order first** —
+it asks ATAS what became of it and cancels it if it is still sitting there, because an unconfirmed
+order that fills after the press would undo the flattening and leave you the other way round. When it
+cannot get an answer about that order it closes every other position and leaves that one alone, and
+the line it writes says so by name: *"nothing was sent for ES … your ES position may still be open."*
+Open ATAS, look at that instrument, clear the line with what you saw, and press again.
+
 **None of this survives in the app's memory.** Close TradeAgent in the middle of an emergency and
 reopen it: the lines are still there, and trading is still paused. That is the point of writing them
 down first.

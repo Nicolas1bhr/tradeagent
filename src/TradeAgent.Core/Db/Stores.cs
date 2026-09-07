@@ -101,7 +101,16 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     /// then would re-impose on the emergency controls exactly the pause `docs/CONTRACTS.md` says
     /// they bypass on purpose — measured: `UnconfirmedLatchTests.Confirming_one_outcome_does_not_lift_another_requests_pause`
     /// presses Close all positions with an UNKNOWN ES row on disk and the press wrote no row at all.
-    /// What UNKNOWN still leaves open is stated in `docs/CONTRACTS.md` rather than hidden.
+    ///
+    /// AND UNKNOWN IS NOW HANDLED PER LEG INSTEAD, WHICH IS WHY IT STILL IS NOT HERE. This clause is
+    /// one statement over the whole insert: whatever it names, it can only REFUSE, and refusing on
+    /// UNKNOWN is the thing that broke the button. But an UNKNOWN order that would offset the same
+    /// way is a real hazard — it is resting at the broker, so the press reads the position as still
+    /// open and closes it a second time (long 2 to short 2, by the route `U-press-inflight` stated it
+    /// was leaving open). So the press SETTLES it before it sends — reads it back, cancels it if it
+    /// is live, refuses only that instrument when it cannot — and that is work with wire calls in it,
+    /// which is not something an INSERT can do. `TradingGateway.SettleAnUnresolvedReducerOrRefuse`
+    /// owns it; this clause keeps the half that is genuinely one statement.
     ///
     /// Cancels are excluded because they are the one verb that cannot move a position: a cancel in
     /// flight can only stop a resting order, never add to what is there. Every other intent blocks,

@@ -711,10 +711,34 @@ drag a row the platform answered plainly through `UNKNOWN` on the way.
   is **per leg**: the other instruments of the same press are still closed. `DISPATCHING` and not
   also `UNKNOWN`, deliberately: an UNKNOWN record is a dispatch that is over with no answer and is
   the ordinary state of the emergency somebody is pressing the button about, so refusing on it would
-  re-impose exactly the pause these controls bypass on purpose. **What that leaves open, stated:** an
-  UNKNOWN closing order on the same instrument can still fill after the press's close and reverse the
-  position. The press's records are flagged, trading is paused and the card names both, which is the
-  same footing every other UNKNOWN record is on.
+  re-impose exactly the pause these controls bypass on purpose.
+- **An `UNKNOWN` order on the instrument is SETTLED before the leg sends, and is never sent over.**
+  That reasoning was right about refusing and was never an argument for sending. An order the broker
+  accepted with the acknowledgement lost is RESTING at the platform: the press reads the position as
+  still open because nothing has filled, sizes its market sell against it, and both fill — long 2 to
+  **short 2** again, by a different route. So for each leg, and inside the press's own deadline, every
+  record on that instrument that is `UNKNOWN` and would offset the same way the leg would is read back
+  by its client order id (`GetOrdersAsync`, then the fills). **Terminal at the platform** → the record
+  is settled the two steps `ReconcileAsync` settles it in (`UNKNOWN → RECONCILING →` the platform's
+  own state) and the leg proceeds on the re-read position. **`ACKNOWLEDGED` or `WORKING`** → it is
+  cancelled, and the leg proceeds only on a cancel that returned. **Anything else** — a timeout, a
+  disconnect, a refused cancel, an order the platform does not list, an answer that is itself
+  `UNKNOWN`, `CANCEL_PENDING` or partially filled, a deadline already gone — is not an answer: the
+  record is left exactly as it was and **that leg is refused** with `CLOSE_UNRESOLVED_ON_INSTRUMENT`.
+  Absence is not read as "it never landed" here; the reconciler's absence rule needs a grace window a
+  press does not have. A refused leg still **writes its row**, flagged, in `CREATED` with the reason
+  in it, so the card names the instrument beside the position that may still be open; every other leg
+  goes out; and the press stays the owner's to resolve. A press's own row is never settled this way —
+  only the person who made it may resolve one. Every call here is charged to the press's deadline
+  exactly as its close is.
+- **And the agent's own `close` or reduce is refused while such a record exists** —
+  `CLOSE_UNRESOLVED`, naming the record. It is the same doubling reached from the agent's side:
+  `RefuseAStaleCloseOrThrow` compares this close's size to the LIVE position, and while the earlier
+  close is still resting at the broker those two agree exactly. A flagged `UNKNOWN` record already
+  pauses trading; what does not is one the owner has confirmed on the card WITHOUT being able to say
+  what happened to it, and that record is still an order that can fill. The refusal lifts when the
+  record gets an outcome — the owner confirming it as filled, cancelled or rejected, or an emergency
+  press settling it by the rule above.
 - **The two controls are not symmetrical here, and only close-all needs the guard.** A close leg
   computes a side and a size from a reading and sends a market order for them, so a reading that is
   stale by one in-flight fill makes the press itself add exposure. A cancel leg computes nothing: it
