@@ -1,3 +1,4 @@
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
 using Xunit;
@@ -64,5 +65,170 @@ public class LiveModeNeedsADailyBudgetTests
         Assert.Equal(TradingMode.LIVE_CONFIRM, gw.Settings.Mode);
         gw.SetMode(TradingMode.LIVE_AUTONOMOUS);
         Assert.Equal(TradingMode.LIVE_AUTONOMOUS, gw.Settings.Mode);
+    }
+}
+
+/// <summary>
+/// THE SENTENCE THE AI READS ABOUT WHAT IT HAS LOST, and the three fields it can ask for.
+///
+/// The AI's mission is to make at least enough to pay for itself, and the day's budget is the thing
+/// that can stop it doing so. An agent that is not told the figure plans a day it will not be
+/// allowed to have and reads the refusals as the software being broken — so the block says what has
+/// been lost, what it is allowed to lose, and, when the figure cannot be worked out at all, that new
+/// positions are refused until it can be. Never a zero standing in for an unknown.
+/// </summary>
+public class LossSituationTests
+{
+    static LossToday Lost(decimal loss, decimal day = 2_000m, decimal trade = 500m, int feesUnknown = 0) => new()
+    {
+        Enforced = true, Loss = loss, DayBudget = day, TradeBudget = trade,
+        Currency = "USD", FeesUnknownFills = feesUnknown
+    };
+
+    static string Situation(LossToday loss) =>
+        new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER", Loss = loss }.Text();
+
+    [Fact]
+    public void The_block_says_what_the_day_has_lost_and_what_it_is_allowed_to_lose()
+    {
+        var text = Situation(Lost(1_200m));
+
+        Assert.Contains("1200 USD", text, StringComparison.Ordinal);
+        Assert.Contains("2000 USD daily budget", text, StringComparison.Ordinal);
+        Assert.Contains("no one position may lose more than 500 USD", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("no new positions until tomorrow", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Once the day's budget is reached the block says so in the words the refusal uses, AND says
+    /// what still works. An AI told only "no" would spend its remaining turns retrying; an AI told
+    /// it may still close is one that can act on the situation it is actually in.
+    /// </summary>
+    [Fact]
+    public void A_day_at_its_budget_says_no_new_positions_until_tomorrow_and_that_closing_still_works()
+    {
+        var text = Situation(Lost(2_000m));
+
+        Assert.Contains("no new positions until tomorrow (UTC)", text, StringComparison.Ordinal);
+        Assert.Contains("Closing or reducing a position still works", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE CASE A NUMBER WOULD LIE ABOUT. A day nobody could price is not a day that lost nothing,
+    /// and the AI is about to have its next order refused for exactly that reason — so the block
+    /// says the reason and says that new positions are refused until it can be worked out.
+    /// </summary>
+    [Fact]
+    public void A_day_that_could_not_be_worked_out_says_why_and_says_new_positions_are_refused()
+    {
+        var text = Situation(new LossToday
+        {
+            Enforced = true,
+            Unknown = "your platform did not say what one contract of XYZ is worth",
+            DayBudget = 2_000m,
+            Currency = "USD"
+        });
+
+        Assert.Contains("could not be worked out", text, StringComparison.Ordinal);
+        Assert.Contains("one contract of XYZ", text, StringComparison.Ordinal);
+        Assert.Contains("new positions are refused until it can be", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 USD", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>Fills with no reported fee make the figure a little kind, and it says so.</summary>
+    [Fact]
+    public void Fills_with_no_reported_fee_are_named_rather_than_counted_as_free()
+    {
+        Assert.Contains("no fee for 3 of today", Situation(Lost(900m, feesUnknown: 3)), StringComparison.Ordinal);
+    }
+
+    /// <summary>With neither budget set there is no line at all — nothing is enforced to say.</summary>
+    [Fact]
+    public void No_budget_means_no_line_in_the_block()
+    {
+        Assert.Null(LossToday.NotEnforced.Line());
+        Assert.DoesNotContain("lost today", Situation(LossToday.NotEnforced), StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// The three fields on the status the agent can ask for. ABSENT is the whole convention: an absent
+/// budget is one that is not enforced, and an absent <c>loss_today</c> means TradeAgent could not
+/// work the figure out. A zero would say "the day is flat" — which is the plan the agent would make
+/// right up to the moment its next order is refused.
+/// </summary>
+public class LossStatusFieldsTests
+{
+    [Fact]
+    public async Task The_status_carries_the_day_and_the_two_budgets()
+    {
+        var (gw, _, db) = await TestEnv.Ready(s =>
+        {
+            s.Risk.MaxDailyLoss = 2_000m;
+            s.Risk.MaxLossPerTrade = 500m;
+        });
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var status = await gw.StatusAsync();
+
+        Assert.Equal(0m, status.LossToday);          // nothing traded, and that IS zero
+        Assert.Equal(2_000m, status.LossBudgetDay);
+        Assert.Equal(500m, status.LossBudgetTrade);
+
+        var json = Json.Write(status);
+        Assert.Contains("\"loss_today\":0", json, StringComparison.Ordinal);
+        Assert.Contains("\"loss_budget_day\":2000", json, StringComparison.Ordinal);
+        Assert.Contains("\"loss_budget_trade\":500", json, StringComparison.Ordinal);
+
+        // The pipe server serves this record through `with { … }` to recompute two fields for the
+        // caller's own authority. Positional parameters would survive that; init-only properties
+        // have to be carried by the copy, and a regression here would blank the figures on the wire
+        // while leaving them right on the Dashboard.
+        var forCaller = status with { ExecutionAvailable = false, ExecutionBlockedReason = "test" };
+        Assert.Equal(0m, forCaller.LossToday);
+        Assert.Equal(2_000m, forCaller.LossBudgetDay);
+        Assert.Equal(500m, forCaller.LossBudgetTrade);
+
+        Assert.Contains("loss_budget_day", Json.Write(GatewaySchema.Describe(status)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_budget_that_is_not_enforced_is_absent_from_the_wire_and_so_is_the_figure()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var _2 = gw;
+
+        var json = Json.Write(await gw.StatusAsync());
+
+        Assert.DoesNotContain("loss_today", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("loss_budget_day", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("loss_budget_trade", json, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A budget IS set, and the day cannot be worked out: the budget is on the wire and the figure
+    /// is absent. The two facts are separate and both are news — an agent told a budget with no
+    /// figure knows it is flying blind against one, which is exactly its situation.
+    /// </summary>
+    [Fact]
+    public async Task A_day_that_cannot_be_worked_out_is_absent_while_the_budget_is_still_named()
+    {
+        // XYZ is the symbol the simulator trades and does not describe, so the day cannot be sized.
+        var (gw, _, db) = await TestEnv.Ready(s => s.Risk.MaxNotionalPerOrder = 0m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        await gw.PlaceAsync(new AgentContext("a"), "status-xyz", TestEnv.Buy("XYZ"));
+        gw.Update(s => s.Risk.MaxDailyLoss = 2_000m);
+
+        var status = await gw.StatusAsync();
+        var json = Json.Write(status);
+
+        Assert.Null(status.LossToday);
+        Assert.Equal(2_000m, status.LossBudgetDay);
+        Assert.DoesNotContain("loss_today", json, StringComparison.Ordinal);
+        Assert.Contains("\"loss_budget_day\":2000", json, StringComparison.Ordinal);
     }
 }

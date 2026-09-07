@@ -161,6 +161,17 @@ public sealed record MissionSituation
     public AiSpendToday Spend { get; init; } = AiSpendToday.NotMetered;
 
     /// <summary>
+    /// WHAT THE TRADING HAS LOST TODAY, against what the owner allows it to lose.
+    ///
+    /// Beside <see cref="Spend"/> because they are the two halves of the same sentence the AI was
+    /// given as its mission — make at least enough to pay for yourself — and because this one is the
+    /// half that can STOP it: reaching the day's budget refuses every order that could increase
+    /// exposure. An AI that is not told the figure will plan a day it is not going to be allowed to
+    /// have, and will read the refusals as the software being broken.
+    /// </summary>
+    public LossToday Loss { get; init; } = LossToday.NotEnforced;
+
+    /// <summary>
     /// The sentence that ends every turn's message. It is the whole of what makes the loop a mission
     /// rather than a cron job: the AI is told where its memory is and that keeping it is part of
     /// finishing, because a fresh CLI session starts every <see cref="MissionOptions.TurnsPerSession"/>
@@ -195,6 +206,7 @@ public sealed record MissionSituation
             ? "- Positions: none"
             : $"- Positions: {string.Join("; ", Positions)}");
         if (SpendLine(Spend) is { } spend) b.AppendLine($"- {spend}");
+        if (Loss.Line() is { } loss) b.AppendLine($"- {loss}");
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
         if (!string.IsNullOrWhiteSpace(Guidance))

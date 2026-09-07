@@ -859,6 +859,35 @@ understate the exposure, it erases it. The multiplier is asked for **only when a
 `MaxNotionalPerOrder` is zero by default and that means not enforced, so an installation that set no
 value cap is not stopped by metadata nothing is going to multiply.
 
+**The loss budgets are the only limits about what HAPPENED, and they refuse new risk without closing
+anything.** `MaxLossPerTrade` and `MaxDailyLoss` are decimals in the ACCOUNT's currency, and **zero on
+either means not enforced** — the reading `MaxNotionalPerOrder` has, and the opposite of
+`AiDailyCostCap`'s. The day is `TradingGateway.StartOfDay` (UTC), the day `trade pnl` means by
+`today`: realized from the fill ledger by the same average-cost book `Pnl` computes, less the fees the
+platform DID report, plus unrealized on every open position — the platform's own `PositionInfo.
+UnrealizedPnl` where it reports one, otherwise the last price this gateway saw times the instrument's
+multiplier. Both budgets are evaluated inside the dispatch gate, off the SAME position read the
+open-position cap uses and before `TryCreate`, so a refusal places nothing and writes no request row;
+the approval path re-evaluates them, because a proposal can park across a morning the account has since
+lost. Only an order that could INCREASE exposure is refused: a declared close never is, nor is an
+order against a position and no larger than it — an order LARGER than the position it is against
+flips it and is checked, because the surplus is new exposure. Reaching a budget is
+`LOSS_BUDGET_REACHED` and not `RISK_LIMIT_EXCEEDED`, because the two have different answers: a
+breached order limit is answered by asking for a smaller order and a reached budget by not asking
+again today. **Nothing is flattened** — that is `U-flatten`. **An unknown refuses rather than
+counting as zero**: a symbol traded today whose multiplier the platform will not state, an open
+position with neither a mark nor a price, or one with a price and no multiplier, all refuse with
+`RISK_CHECK_UNAVAILABLE` and a sentence naming what was missing — `trade pnl` reports the same gaps in
+`incomplete` and prints a figure anyway, which is right for a report and wrong for a gate. **Fills the
+platform reported no fee for count at their gross**, so the loss is understated by exactly those fees;
+every sentence that shows the figure says how many there were. With both budgets at zero the ledger is
+not read and the instrument list is not asked for at all. `status` carries `loss_today`,
+`loss_budget_day` and `loss_budget_trade`, each **absent rather than zero** on the `ai_cost_today`
+convention: an absent budget is not enforced, and an absent `loss_today` means the figure could not be
+worked out. Finally, **a real-money mode cannot be SELECTED while `MaxDailyLoss` is zero**
+(`TradingGateway.SetMode`, `INVALID_REQUEST`, the sentence names the field): there is no human in the
+loop for real money, so an unattended agent with no bound on the day must not be one button away.
+
 **The open-position cap counts what is on its way to being a position, and is decided inside the
 dispatch gate.** `MaxOpenPositions` used to count the positions the platform had already FILLED, read
 before the gate. Both halves were permissive in the same direction: two placements arriving together

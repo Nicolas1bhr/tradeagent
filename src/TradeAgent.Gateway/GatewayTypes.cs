@@ -174,6 +174,30 @@ public sealed record GatewayStatus(
     /// Absent means the figure was priced against a model something actually named.
     /// </summary>
     public string? AiCostEstimated { get; init; }
+
+    /// <summary>
+    /// WHAT THE TRADING HAS LOST TODAY, realised and unrealised, in the account's currency — or
+    /// ABSENT when TradeAgent could not work it out, which is the same convention
+    /// <see cref="AiCostToday"/> has and for a sharper version of the same reason.
+    ///
+    /// A zero here would tell the agent the day is flat. It is the figure its next order is about to
+    /// be refused on, so a zero it could not distinguish from a real one is a plan made against a
+    /// budget that has already been reached. Absent means unknown and never means "nothing lost".
+    ///
+    /// Absent also while no budget is set: nothing is measured then, and a figure nobody asked for
+    /// is not computed (the rule <see cref="RiskPolicy.MaxNotionalPerOrder"/> has).
+    /// </summary>
+    public decimal? LossToday { get; init; }
+
+    /// <summary>
+    /// The most the day may lose before orders that could increase exposure are refused, or ABSENT
+    /// when that budget is not enforced. Absent is "there is no limit here", which is the honest
+    /// reading of a zero on <see cref="RiskPolicy.MaxDailyLoss"/> and is not a limit of nothing.
+    /// </summary>
+    public decimal? LossBudgetDay { get; init; }
+
+    /// <summary>The most any one position may lose before it may be added to, or ABSENT when off.</summary>
+    public decimal? LossBudgetTrade { get; init; }
 }
 
 public sealed record ReconcileResult(int Resolved, int Inconclusive, IReadOnlyList<string> Details)
