@@ -60,7 +60,10 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    paragraph on `'\n'` against the runner's CRLF checkout; fixer `U-crlf-win` LANDED `2082091`, whose CI run 34140348483 is green on all three
    platforms and `package`; `acff18a` (`U-unknown-close`) green; **`cef122b` (`U-wakes`) RED on windows-latest only** —
    `SweepRequestIdTests.Two_sweeps_mint_different_ids` saw 0 working where 1 was placed, green everywhere else; fixer `U-sweep-win`
-   (measure on the runners first, no assertion loosened) in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   (measure on the runners first, no assertion loosened) in flight; recorded red until it lands. **`a22939d` (`U-data-binance`) RED on
+   windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
+   request hung to the downloader's 30-minute timeout; fixer `U-archive-win` (measure first; a timeout must never read as "not
+   published") in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
