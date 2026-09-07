@@ -4,4 +4,11 @@
     <ProjectReference Include="../TradeAgent.Security/TradeAgent.Security.csproj" />
     <ProjectReference Include="../TradeAgent.Provisioning/TradeAgent.Provisioning.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The relay's crash boundaries are an internal seam: the property this unit is built on is
+         "a crash at each handoff boundary recovers to exactly one task", and it cannot be asked
+         without a way to make the process die exactly there. Test-only visibility, the same
+         arrangement TradeAgent.App already has, rather than a public member the product could use. -->
+    <InternalsVisibleTo Include="TradeAgent.UnitTests" />
+  </ItemGroup>
 </Project>

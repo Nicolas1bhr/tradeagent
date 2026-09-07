@@ -170,6 +170,13 @@ public sealed class AppHost : IAsyncDisposable
     public MissionEventStore? Wakes { get; private set; }
 
     /// <summary>
+    /// THE RELAY BETWEEN THE TWO ROLES. Publishes what a role left in its <c>out/</c>, commits the
+    /// delivery and the recipient's one task in a single transaction, and copies the text into the
+    /// recipient's <c>in/</c>. Written by this process and by nothing else.
+    /// </summary>
+    public CouncilRelay Relay { get; private set; } = null!;
+
+    /// <summary>
     /// Writes one reason to wake and, when the row is new, ends whatever sleep the loop is in. A
     /// repeat writes nothing and wakes nobody, which is what makes the fill ledger's two sources and
     /// every reconnect free.
@@ -413,6 +420,15 @@ public sealed class AppHost : IAsyncDisposable
 
             Wakes = new MissionEventStore(_db);
 
+            // THE APP CARRYING WORK BETWEEN THE ROLES, AND THE ONLY THING THAT MAY. A role writes a
+            // file into its own `out/`; nothing it can do publishes, delivers or creates a task.
+            // Composed here, beside the gateway, and reachable from the loop only through
+            // IMissionHost.Relay — there is no pipe op and no `trade` verb that touches it.
+            Relay = new CouncilRelay(_db, HomeFor)
+            {
+                Rejected = text => Gateway.Log.Activity(text, "warn")
+            };
+
             Mission = new MissionLoop(new MissionHost(this),
                 new MissionOptions
                 {
@@ -437,6 +453,15 @@ public sealed class AppHost : IAsyncDisposable
             _ = Task.Run(() => BackgroundAsync(_loop.Token));
 
             Gateway.Log.Activity("TradeAgent started");
+
+            // ON START, BEFORE THE LOOP TAKES A TURN. A crash between a role's publication and the
+            // copy into the recipient's folder leaves a task pointing at a file that is not there;
+            // this is the pass that puts it there, and it is idempotent, so a clean start does
+            // nothing at all. Never fatal: a relay that could not run is a delivery that is late,
+            // not an app that will not open.
+            try { Relay.Run(); }
+            catch (Exception ex) { Gateway.Log.Engineering("Council", "relay_start_failed", "warn", ex: ex); }
+
             ResumeMissionIfItWasWorking();
             return true;
         }
@@ -781,6 +806,13 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         public string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) =>
             host.Meter?.Begin(prompt, wakes, role);
+
+        /// <summary>
+        /// What the turn left in <c>out/</c>, published and delivered — and anything an earlier
+        /// crash left half done, finished. It writes to the relay's two tables and to the roles'
+        /// folders, and to nothing that decides what the AI is allowed to do.
+        /// </summary>
+        public void Relay(string role, string? attempt) => host.Relay.Run(role, attempt);
 
         /// <summary>
         /// The one activity line the owner gets when the AI stops for the day, in their words and

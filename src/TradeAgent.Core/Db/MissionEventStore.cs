@@ -30,6 +30,17 @@ public static class MissionEventKind
 
     /// <summary>Nothing happened and the owner still wants it to look. The heartbeat, and a setting.</summary>
     public const string Review = "review";
+
+    /// <summary>
+    /// ANOTHER ROLE'S WORK ARRIVED, delivered by the app. The two kinds are the two directions —
+    /// <c>report</c> up to the chair, <c>brief</c> down to Research — and both are written ONLY by
+    /// <see cref="PublicationStore.Commit"/>, in the same transaction as the artifact they are
+    /// about. A role cannot raise one, so neither can hand itself work or a paid turn.
+    /// </summary>
+    public const string Report = PublicationKind.Report;
+
+    /// <inheritdoc cref="Report"/>
+    public const string Brief = PublicationKind.Brief;
 }
 
 /// <summary>What became of a wake, once the turn that took it has ended.</summary>
@@ -163,7 +174,15 @@ public static class MissionEventIds
 /// </summary>
 public sealed class MissionEventStore(Database db)
 {
-    const string Cols =
+    const string Cols = EventCols;
+
+    /// <summary>
+    /// The row's columns, in order, so the ONE other writer of this table — the relay's transaction
+    /// in <see cref="PublicationStore.Commit"/>, which has to insert an event and a publication
+    /// together — spells them the same way this class does rather than keeping a second copy that
+    /// can drift.
+    /// </summary>
+    internal const string EventCols =
         "id, kind, created_at, due_at, payload, consumed_at, consumed_by, disposition, role";
 
     /// <summary>Events handed to one turn. A wake with more behind it leaves the rest for the next one.</summary>

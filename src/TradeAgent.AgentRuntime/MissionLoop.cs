@@ -243,8 +243,12 @@ public interface IMissionHost
     /// It is on the host rather than inside the loop because the relay needs the database and the
     /// role folders, and the loop is deliberately drivable with neither. A default of nothing keeps
     /// every existing host turning.
+    ///
+    /// <paramref name="role"/> is the role whose turn just ended and <paramref name="attempt"/> is
+    /// its launch record — provenance for anything published in this pass, and null on start, when
+    /// nobody's turn produced what is being reconciled.
     /// </summary>
-    void Relay() { }
+    void Relay(string role, string? attempt) { }
 }
 
 /// <summary>
@@ -858,7 +862,7 @@ public sealed class MissionLoop
         // just wrote. It runs whether the turn succeeded or failed: a report written by a turn that
         // then fell over is still the role's work, and the publication is idempotent by content, so
         // running it after every turn costs a hash of a small file.
-        Relay();
+        Relay(role, attemptId);
 
         var failed = ended?.Failed ?? true;
         int errors;
@@ -954,9 +958,9 @@ public sealed class MissionLoop
     /// relay is bookkeeping, and a loop that stopped over it would turn a lost copy into an AI that
     /// stopped working.
     /// </summary>
-    void Relay()
+    void Relay(string role, string? attempt)
     {
-        try { _host.Relay(); }
+        try { _host.Relay(role, attempt); }
         catch (Exception) { /* the next turn reconciles; the host has already logged it */ }
     }
 
@@ -1052,6 +1056,8 @@ public sealed class MissionLoop
         MissionEventKind.Renewal => "the day turned over, so your spending allowance is a new one",
         MissionEventKind.Self => "you asked to be woken now",
         MissionEventKind.Review => "a scheduled look; nothing else has happened",
+        MissionEventKind.Report => "a report from the Research Director arrived in `in/`",
+        MissionEventKind.Brief => "a brief from the Operations Director arrived in `in/`",
         _ => kind
     };
 
