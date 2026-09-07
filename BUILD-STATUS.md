@@ -4665,7 +4665,7 @@ the_two_missions`, `13 out of 13 items … did not pass`), by one fresh fixer on
 passed, 1 skipped; `--list-tests` vs `main` 1339 = 1339, nothing removed or added; no `Timing` re-run needed. Manager's
 gate at `9d2a492` (the fixer's tip plus the `-text` commit, rebased over `U-model`), Release: build → 0 warnings, 0 errors;
 suite → 481 + 269 + 615 = 1365 passed, 0 failed, 1 skipped; names vs `main` → 0 removed,
-0 added; scan clean; no trailers; `rev-list --count` → 0; CI at `2082091`: run 34140348483 in flight when this section was written (the merge sha is the gated tip rebased over two docs-only commits), its verdict — the windows-latest job above all — recorded in a follow-up commit.
+0 added; scan clean; no trailers; `rev-list --count` → 0; CI run 34140348483 at `2082091` (the gated tip rebased over two docs-only commits): **all three platforms and `package` SUCCESS** — the windows-latest job green on the tree that was red at `06a8636`; `main` is green again.
 
 **NOT VERIFIED:** the hosted windows-latest runner itself — the fixer did not open a PR run; the merge sha's CI is the
 proof, recorded here when it completes. **NOT done:** no product code; no box, no ATAS, no money.
