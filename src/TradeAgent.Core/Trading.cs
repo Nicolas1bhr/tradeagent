@@ -34,6 +34,40 @@ public sealed class RiskPolicy
     public decimal MaxNotionalPerOrder { get; set; }
     public int MaxOpenPositions { get; set; } = 2;
     public int MaxOrdersPerMinute { get; set; } = 6;
+
+    /// <summary>
+    /// THE MOST ONE POSITION MAY BE DOWN BEFORE THE AI MAY ADD TO IT, in the account's currency.
+    ///
+    /// Everything above this line bounds ONE order. Nothing above it bounds a POSITION that is
+    /// already losing: a quantity cap of one and a value cap of nothing between them permit an
+    /// agent to average down into the same losing trade all day, one allowed order at a time.
+    ///
+    /// Zero means NOT ENFORCED, the same reading <see cref="MaxNotionalPerOrder"/> has and the
+    /// opposite of the reading <see cref="TradeAgentSettings.AiDailyCostCap"/> has. The reason is
+    /// the same as the notional cap's: there is no number here that is right for both a micro
+    /// future and a share, so a default that is not zero would refuse ordinary orders on some
+    /// account nobody has attached yet — and it is the ORDER-side caps above that are the binding
+    /// ones out of the box. It is not the value <see cref="TradeAgentSettings.Unreadable"/> falls
+    /// to for anything, so nothing can arrive at zero by way of a row that could not be read.
+    /// </summary>
+    public decimal MaxLossPerTrade { get; set; }
+
+    /// <summary>
+    /// THE MOST THE WHOLE ACCOUNT MAY BE DOWN ON THE DAY BEFORE NEW RISK IS REFUSED, in the
+    /// account's currency, realised and unrealised together.
+    ///
+    /// This is the only limit in this class that is about the DAY rather than about an order, and it
+    /// is the one a prop firm would enforce from the outside. Nobody is in the loop for real money
+    /// (decided 2026-09-06), so the app is what bounds a losing day, ahead of any broker: reaching
+    /// it refuses every order that could increase exposure until UTC midnight. It never refuses a
+    /// close or a reduce, and it does not flatten anything — closing on a breach is its own unit.
+    ///
+    /// Zero means not enforced, exactly as on <see cref="MaxLossPerTrade"/>. What that costs is
+    /// stated where it can be acted on: a real-money mode cannot be SELECTED while this is zero
+    /// (<c>TradingGateway.SetMode</c>), because an unattended agent trading real money with no
+    /// bound on the day is the one configuration this product must not be able to reach quietly.
+    /// </summary>
+    public decimal MaxDailyLoss { get; set; }
     /// <summary>
     /// THE INSTRUMENTS THE AI MAY TOUCH. AN EMPTY LIST IS NOT A WILDCARD.
     ///
@@ -63,8 +97,9 @@ public sealed class RiskPolicy
     /// save that widens and once for a save that narrows, and this is the comparison that decides
     /// which — here rather than at the widget, because "wider" is not "larger" on every field:
     ///
-    ///   * <see cref="MaxNotionalPerOrder"/> alone reads ZERO as "not enforced", so zero is the
-    ///     WIDEST value it has, and nothing can widen a cap that is already zero.
+    ///   * <see cref="MaxNotionalPerOrder"/>, <see cref="MaxLossPerTrade"/> and
+    ///     <see cref="MaxDailyLoss"/> read ZERO as "not enforced", so zero is the WIDEST value each
+    ///     of them has, and nothing can widen one that is already zero.
     ///   * zero on the other three refuses everything, so there larger is wider, always.
     ///   * an allowlist is wider when it names an instrument the current one does not; dropping
     ///     names, including clearing the box, only ever narrows.
@@ -76,17 +111,25 @@ public sealed class RiskPolicy
         if (to.MaxOrderQuantity > from.MaxOrderQuantity) wider.Add(Labels.MaxOrderQuantity);
 
         // Unenforced is the widest there is, so it widens anything bounded and nothing widens it.
-        var wasUnenforced = from.MaxNotionalPerOrder <= 0m;
-        var isUnenforced = to.MaxNotionalPerOrder <= 0m;
-        if (!wasUnenforced && (isUnenforced || to.MaxNotionalPerOrder > from.MaxNotionalPerOrder))
-            wider.Add(Labels.MaxNotionalPerOrder);
+        if (Widens(from.MaxNotionalPerOrder, to.MaxNotionalPerOrder)) wider.Add(Labels.MaxNotionalPerOrder);
 
         if (to.MaxOpenPositions > from.MaxOpenPositions) wider.Add(Labels.MaxOpenPositions);
         if (to.MaxOrdersPerMinute > from.MaxOrdersPerMinute) wider.Add(Labels.MaxOrdersPerMinute);
+        if (Widens(from.MaxLossPerTrade, to.MaxLossPerTrade)) wider.Add(Labels.MaxLossPerTrade);
+        if (Widens(from.MaxDailyLoss, to.MaxDailyLoss)) wider.Add(Labels.MaxDailyLoss);
         if (to.InstrumentAllowlist.Any(i => !from.InstrumentAllowed(i))) wider.Add(Labels.InstrumentAllowlist);
 
         return wider;
     }
+
+    /// <summary>
+    /// The comparison for a cap whose ZERO means "not enforced" — the notional cap and both loss
+    /// budgets. Spelled once rather than three times because it is the rule that is easy to get
+    /// backwards: raising the number widens, and so does turning the cap OFF, which is the case a
+    /// plain <c>&gt;</c> reads as a narrowing and lets through on one press.
+    /// </summary>
+    static bool Widens(decimal from, decimal to) =>
+        from > 0m && (to <= 0m || to > from);
 }
 
 public sealed class TradeAgentSettings
@@ -231,9 +274,12 @@ public sealed class TradeAgentSettings
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
     ///
-    /// <c>MaxNotionalPerOrder</c> stays at 0, which for that field alone means "not enforced": it has
-    /// no floor, and a quantity cap of zero has already refused every order before a notional is
-    /// computed. The emergency controls are deliberately still reachable — they take no mode, no
+    /// <c>MaxNotionalPerOrder</c>, <c>MaxLossPerTrade</c> and <c>MaxDailyLoss</c> stay at 0, which on
+    /// those three fields alone means "not enforced": none of them has a floor, and a quantity cap of
+    /// zero has already refused every order before a notional or a loss is computed. Leaving them is
+    /// also the only reading that does not make an unreadable row the event that starts refusing
+    /// CLOSES — they bound new risk, and a row nobody could read must not trap a live position.
+    /// The emergency controls are deliberately still reachable — they take no mode, no
     /// allowlist and no cap, and an owner holding a live position needs them most on the day the
     /// software cannot read its own settings.
     ///

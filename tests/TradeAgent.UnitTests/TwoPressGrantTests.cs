@@ -169,11 +169,12 @@ public class TwoPressGrantTests
     // ---- 3. a raised cap is a grant (Codex F12) --------------------------------------------------
 
     static RiskPolicy Policy(decimal qty = 1m, decimal notional = 500m, int positions = 2,
-        int perMinute = 6, string[]? allow = null) =>
+        int perMinute = 6, string[]? allow = null, decimal trade = 200m, decimal daily = 500m) =>
         new()
         {
             MaxOrderQuantity = qty, MaxNotionalPerOrder = notional, MaxOpenPositions = positions,
-            MaxOrdersPerMinute = perMinute, InstrumentAllowlist = [.. allow ?? ["ES"]]
+            MaxOrdersPerMinute = perMinute, InstrumentAllowlist = [.. allow ?? ["ES"]],
+            MaxLossPerTrade = trade, MaxDailyLoss = daily
         };
 
     [Fact]
@@ -234,6 +235,85 @@ public class TwoPressGrantTests
             Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
                 $"{what}: saved {saved}, button says {b.Content}");
         }
+    }
+
+    /// <summary>
+    /// THE TWO LOSS BUDGETS ARE GRANTS IN BOTH THE WAYS THE OTHER MONEY CAP IS.
+    ///
+    /// Raising one lets the AI lose more before anything refuses it, and setting one to ZERO — which
+    /// on these two fields, as on the notional cap, means "not enforced" — removes the bound
+    /// altogether. The second is the one a plain "is the number bigger" comparison reads as a
+    /// narrowing and saves on a single press, which is how a day's budget disappears by accident.
+    /// </summary>
+    [Fact]
+    public void A_save_that_widens_a_loss_budget_takes_two_presses_and_names_it()
+    {
+        (RiskPolicy Pending, string Named)[] cases =
+        [
+            (Policy(trade: 300m), Labels.MaxLossPerTrade),
+            (Policy(trade: 0m), Labels.MaxLossPerTrade),
+            (Policy(daily: 600m), Labels.MaxDailyLoss),
+            (Policy(daily: 0m), Labels.MaxDailyLoss)
+        ];
+
+        foreach (var (pending, named) in cases)
+        {
+            var saved = 0;
+            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
+
+            Press(b);
+            Assert.Equal($"{named}: {0}", $"{named}: {saved}");
+            Assert.Equal($"Confirm: widen \u201c{named}\u201d", b.Content);
+
+            Press(b);
+            Assert.Equal($"{named}: {1}", $"{named}: {saved}");
+            Assert.Equal(Labels.SaveLimits, b.Content);
+        }
+    }
+
+    /// <summary>
+    /// And the other direction on the same two fields: a SMALLER budget is less room, and an owner
+    /// tightening the day's loss after a bad morning is not arguing with the software about it.
+    /// </summary>
+    [Fact]
+    public void A_smaller_loss_budget_saves_in_one_press()
+    {
+        (RiskPolicy Pending, string What)[] cases =
+        [
+            (Policy(trade: 100m), "a smaller per-position loss budget"),
+            (Policy(daily: 100m), "a smaller daily loss budget"),
+            (Policy(trade: 100m, daily: 100m), "both tightened together")
+        ];
+
+        foreach (var (pending, what) in cases)
+        {
+            var saved = 0;
+            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
+
+            Press(b);
+
+            Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
+                $"{what}: saved {saved}, button says {b.Content}");
+        }
+    }
+
+    /// <summary>
+    /// The comparison alone, on the two fields where turning the limit OFF is the widest thing the
+    /// owner can do to it — and where nothing, however large, widens a limit that is already off.
+    /// </summary>
+    [Fact]
+    public void Zero_is_the_widest_value_both_loss_budgets_have()
+    {
+        Assert.Equal(new[] { Labels.MaxLossPerTrade },
+            RiskPolicy.Widenings(Policy(trade: 200m), Policy(trade: 0m)));
+        Assert.Equal(new[] { Labels.MaxDailyLoss },
+            RiskPolicy.Widenings(Policy(daily: 500m), Policy(daily: 0m)));
+
+        Assert.Empty(RiskPolicy.Widenings(Policy(trade: 0m), Policy(trade: 1_000_000m)));
+        Assert.Empty(RiskPolicy.Widenings(Policy(daily: 0m), Policy(daily: 1_000_000m)));
+
+        Assert.Equal(new[] { Labels.MaxLossPerTrade, Labels.MaxDailyLoss },
+            RiskPolicy.Widenings(Policy(), Policy(trade: 0m, daily: 0m)));
     }
 
     /// <summary>Five limit names on one button is a sentence nobody reads, so several are counted.</summary>

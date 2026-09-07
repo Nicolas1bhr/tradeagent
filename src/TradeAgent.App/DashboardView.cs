@@ -880,6 +880,14 @@ sealed class SafetyPage
     readonly Button _liveButton;
     readonly Button _stopButton;
     readonly NumericUpDown _maxQty, _maxNotional, _maxPositions, _maxPerMinute;
+    readonly NumericUpDown _maxLossPerTrade, _maxDailyLoss;
+
+    /// <summary>
+    /// The two loss hints, kept because they name the ACCOUNT'S currency and the account has not
+    /// answered when this page is built. <see cref="Update"/> writes it in when it has.
+    /// </summary>
+    readonly TextBlock _tradeLossHint = Ui.Micro(Labels.LossBudgetHint());
+    readonly TextBlock _dailyLossHint = Ui.Micro(Labels.LossBudgetHint());
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
     readonly NumericUpDown _priceIn, _priceOut;
@@ -1089,6 +1097,8 @@ sealed class SafetyPage
         _maxNotional = Ui.NumberField(r.MaxNotionalPerOrder, 0m, 1000m);
         _maxPositions = Ui.NumberField(r.MaxOpenPositions);
         _maxPerMinute = Ui.NumberField(r.MaxOrdersPerMinute);
+        _maxLossPerTrade = Ui.NumberField(r.MaxLossPerTrade, 0m, 50m);
+        _maxDailyLoss = Ui.NumberField(r.MaxDailyLoss, 0m, 50m);
         // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
         // rather than everything is. It said "any".
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
@@ -1141,6 +1151,11 @@ sealed class SafetyPage
                 "0 means not enforced. For futures this is the right default — one contract is worth far more on paper than it costs to trade."),
             Ui.FieldRow(Labels.MaxOpenPositions, _maxPositions),
             Ui.FieldRow(Labels.MaxOrdersPerMinute, _maxPerMinute),
+            // THE TWO THAT ARE ABOUT WHAT IS LOST RATHER THAN WHAT IS SENT. Every limit above them
+            // bounds one order and none of them bounds a day: an agent may lose the account one
+            // permitted order at a time and break nothing above this line.
+            Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint),
+            Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint),
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
@@ -1204,6 +1219,10 @@ sealed class SafetyPage
         Ui.Relabel(_liveButton,
             status.LiveActivated ? "Switch real-money trading OFF" : "Switch real-money trading ON",
             status.LiveActivated ? "Confirm: switch real money off" : "Confirm: allow real money");
+
+        // The unit of the two loss budgets, once the platform has said what it is. Read from the
+        // gateway rather than from `status`, which carries the limits but not the account's currency.
+        _tradeLossHint.Text = _dailyLossHint.Text = Labels.LossBudgetHint(_host.Gateway.AccountCurrency);
 
         // Through SetResting, never by assigning Content: a half-pressed RESUME must survive the
         // five-second tick, and the fill it wears while armed is registered with the control.
@@ -1299,6 +1318,8 @@ sealed class SafetyPage
             MaxNotionalPerOrder = _maxNotional.Value ?? now.MaxNotionalPerOrder,
             MaxOpenPositions = (int)(_maxPositions.Value ?? now.MaxOpenPositions),
             MaxOrdersPerMinute = (int)(_maxPerMinute.Value ?? now.MaxOrdersPerMinute),
+            MaxLossPerTrade = _maxLossPerTrade.Value ?? now.MaxLossPerTrade,
+            MaxDailyLoss = _maxDailyLoss.Value ?? now.MaxDailyLoss,
             InstrumentAllowlist = (_allowlist.Text ?? "")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList()
@@ -1314,6 +1335,8 @@ sealed class SafetyPage
             s.Risk.MaxNotionalPerOrder = pending.MaxNotionalPerOrder;
             s.Risk.MaxOpenPositions = pending.MaxOpenPositions;
             s.Risk.MaxOrdersPerMinute = pending.MaxOrdersPerMinute;
+            s.Risk.MaxLossPerTrade = pending.MaxLossPerTrade;
+            s.Risk.MaxDailyLoss = pending.MaxDailyLoss;
             s.Risk.InstrumentAllowlist = pending.InstrumentAllowlist;
         });
         _host.Gateway.Log.Activity("You changed the safety limits");

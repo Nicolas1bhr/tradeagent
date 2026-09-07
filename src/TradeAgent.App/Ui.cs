@@ -566,14 +566,22 @@ static class Ui
     public static Control KeyValue(string key, string value) =>
         KeyValueLive(key, new TextBlock { Text = value });
 
-    public static Control FieldRow(string label, Control editor, string? hint = null)
+    public static Control FieldRow(string label, Control editor, string? hint = null) =>
+        FieldRow(label, editor, hint is null ? null : Micro(hint));
+
+    /// <summary>
+    /// The same row with a hint the PAGE keeps a handle on, for the one hint that is not fixed at
+    /// build time: a loss budget is in the account's currency, and the account has not answered when
+    /// this page is built. The five-second tick writes the currency into it once the platform says.
+    /// </summary>
+    public static Control FieldRow(string label, Control editor, TextBlock? hint)
     {
         var text = Col(2, new TextBlock
         {
             Text = label, FontSize = Theme.Small, Foreground = Theme.Text,
             TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center
         });
-        if (hint is not null) text.Children.Add(Micro(hint));
+        if (hint is not null) text.Children.Add(hint);
 
         var g = new Grid
         {
