@@ -738,7 +738,7 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         var available = TryAuthorizeExecution(AgentContext.Operator, out var blocked);
         AccountInfo? acct = null;
-        try { acct = Settings.SelectedAccountId is { } id ? await Connector.GetAccountAsync(id, ct) : (await Connector.GetAccountsAsync(ct)).FirstOrDefault(); }
+        try { acct = Remember(Settings.SelectedAccountId is { } id ? await Connector.GetAccountAsync(id, ct) : (await Connector.GetAccountsAsync(ct)).FirstOrDefault()); }
         catch (Exception) { /* status must render even with the wire down */ }
 
         // Asked, never cached: the loop's state changes between two five-second ticks, and a status
@@ -763,9 +763,25 @@ public sealed class TradingGateway : IAsyncDisposable
     public Task<IReadOnlyList<AccountInfo>> AccountsAsync(CancellationToken ct = default) => Connector.GetAccountsAsync(ct);
 
     public async Task<AccountInfo?> AccountAsync(CancellationToken ct = default) =>
-        Settings.SelectedAccountId is { } id
+        Remember(Settings.SelectedAccountId is { } id
             ? await Connector.GetAccountAsync(id, ct)
-            : (await Connector.GetAccountsAsync(ct)).FirstOrDefault();
+            : (await Connector.GetAccountsAsync(ct)).FirstOrDefault());
+
+    /// <summary>
+    /// THE CURRENCY THE LOSS BUDGETS ARE IN, or "" while the platform has not said what it is.
+    ///
+    /// The Safety page is built before anything is connected, so the two loss boxes cannot name
+    /// their unit at build time — and a money limit with no currency beside it is a number the owner
+    /// has to guess the meaning of. Empty is said as nothing rather than as a guess: see
+    /// <c>MissionSituation.Money</c>, which prints an amount bare when nothing named a currency.
+    /// </summary>
+    public string AccountCurrency { get; private set; } = "";
+
+    AccountInfo? Remember(AccountInfo? account)
+    {
+        if (account?.Currency is { Length: > 0 } c) AccountCurrency = c;
+        return account;
+    }
 
     public async Task<IReadOnlyList<InstrumentInfo>> InstrumentsAsync(CancellationToken ct = default)
     {

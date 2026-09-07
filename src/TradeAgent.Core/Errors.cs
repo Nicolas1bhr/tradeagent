@@ -207,13 +207,44 @@ public static class Labels
     /// <summary>The mode that proposes real orders. Still real money, still a grant, still two.</summary>
     public const string ModeAskFirstArmed = "Confirm: let the AI propose real orders";
 
-    // The five safety limits, named once. The Safety page labels its fields with these and the
+    // The seven safety limits, named once. The Safety page labels its fields with these and the
     // armed save sentence names the one that widened, so the two cannot drift apart.
     public const string MaxOrderQuantity = "Most it may buy or sell in one order";
     public const string MaxNotionalPerOrder = "Most money one order may be worth";
     public const string MaxOpenPositions = "Most positions it may hold at once";
     public const string MaxOrdersPerMinute = "Most orders per minute";
+
+    /// <summary>The per-position loss budget. Everything else on the page bounds an ORDER.</summary>
+    public const string MaxLossPerTrade = "Most it may lose on one position";
+
+    /// <summary>The day's loss budget — the one limit that is about the day rather than an order.</summary>
+    public const string MaxDailyLoss = "Most it may lose in one day";
+
+    /// <summary>
+    /// What both loss boxes say under them: which reading a zero has, and what unit the number is
+    /// in. The currency is the ACCOUNT'S and arrives only once the platform has answered, so it is
+    /// named when it is known and left out when it is not — a money limit labelled with a guessed
+    /// currency is worse than one labelled with none.
+    /// </summary>
+    public static string LossBudgetHint(string currency = "") =>
+        currency.Length == 0
+            ? "0 means not enforced."
+            : $"0 means not enforced. This is in {currency}, your account's currency.";
+
     public const string InstrumentAllowlist = "Instruments it may touch";
+
+    /// <summary>
+    /// WHY A REAL-MONEY MODE CANNOT BE CHOSEN WHILE THE DAY HAS NO BOUND, named where it is refused
+    /// and quoted by the test that proves the refusal.
+    ///
+    /// There is no human in the loop for real money (decided 2026-09-06), so the day's budget is the
+    /// only thing between an agent that trades non-stop and an account that ends the day empty. The
+    /// sentence names the field the owner has to fill in, because a refusal that does not is a
+    /// refusal they cannot act on.
+    /// </summary>
+    public static string LiveNeedsADailyLossBudget(string mode) =>
+        $"{mode} places real orders and nothing here is watching the day, so it cannot be chosen "
+        + $"while “{MaxDailyLoss}” is 0. Set that limit on the " + SafetyPage + " page first.";
 
     /// <summary>
     /// What the second press of <see cref="SaveLimits"/> will do, when the values in the boxes give
