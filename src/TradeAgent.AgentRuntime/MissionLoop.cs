@@ -578,6 +578,14 @@ public sealed record MissionSituation
         if (spend.UnpricedTurns > 0)
             spent += $" — and {spend.UnpricedTurns} of those could not be priced, so the real figure is higher";
 
+        // AND THE OTHER DIRECTION, WHICH IS NOT THE SAME SENTENCE. A turn that never reported what
+        // it used is charged what it reserved, so its part of the figure is a worst case rather than
+        // a bill — the opposite correction to the line above, and an agent told only one of them
+        // would plan against a number it cannot reason about.
+        if (spend.UnreportedTurns > 0)
+            spent += $" — and {spend.UnreportedTurns} never reported what they used and are charged "
+                     + "what they reserved, which is the most they could have cost";
+
         if (spend.Reserved > 0m)
             spent += $" — {Money(spend.Reserved, spend.Currency)} of that is committed to turns whose "
                      + "usage has not come back";

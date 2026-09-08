@@ -531,6 +531,18 @@ public sealed record AiSpendToday
     public int EstimatedTurns { get; init; }
 
     /// <summary>
+    /// TURNS INSIDE <see cref="Spent"/> WHOSE FIGURE IS A RESERVATION AND NOT A BILL — a turn that
+    /// ended without reporting what it used, and a turn a restart declared lost. Above zero,
+    /// <see cref="Spent"/> is an UPPER bound on part of the day rather than a measurement of it.
+    ///
+    /// It is beside <see cref="UnpricedTurns"/> and not folded into it because the two point in
+    /// opposite directions and the screens say opposite sentences: an unpriced turn is money the
+    /// total does not contain, so the real figure is higher, and one of these is money the total
+    /// contains at its worst case, so the real figure is lower.
+    /// </summary>
+    public int UnreportedTurns { get; init; }
+
+    /// <summary>
     /// THE LABEL A FIGURE THAT IS AN UPPER BOUND HAS TO CARRY, or null when it is a bill.
     ///
     /// <see cref="Spent"/> beside a cap, with no word about where the number came from, is the

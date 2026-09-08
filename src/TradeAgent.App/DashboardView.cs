@@ -464,6 +464,10 @@ sealed class DashboardPage
         if (spend.PricedByOwner) line += $" — {Labels.PricedByYou}";
         else if (spend.Estimated is { } estimated) line += $" — {estimated}";
         if (spend.UnpricedTurns > 0) line += $" — {spend.UnpricedTurns} turns could not be priced, so it is at least that";
+        // The correction the other way: a turn that never reported what it used is charged what it
+        // reserved, so that part of the figure is the most it could have cost rather than a bill.
+        if (spend.UnreportedTurns > 0)
+            line += $" — {spend.UnreportedTurns} never reported what they used and are charged what they reserved";
         if (spend.Reserved > 0m)
             line += $" — including {MissionSituation.Money(spend.Reserved, spend.Currency)} committed to a turn still running";
         // Not CapReached: the ceiling is applied BEFORE a turn now, so the card has to say the limit

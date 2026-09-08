@@ -238,6 +238,65 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// A TURN THAT ENDED WITHOUT REPORTING WHAT IT USED KEEPS ITS RESERVATION AS ITS COST.
+    ///
+    /// The non-crash half of rule 3. <c>Reserved</c> sums only LAUNCHED rows, so an ENDED row with a
+    /// null cost released the whole commitment and put nothing in its place: the vendor had been
+    /// asked to do the work, and the day's total never moved. A turn that fails to start, or is
+    /// cancelled, or prints nothing this parser recognises, is exactly that turn.
+    /// </summary>
+    [Fact]
+    public void A_turn_that_ends_without_reporting_its_usage_is_charged_what_it_reserved()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(50m, () => now);
+
+        var id = meter.Begin("## Situation", role: CouncilRoles.Operations).Id!;
+
+        // The process ended and said nothing about what it used — no usage event at all.
+        meter.Record(new AgentTurnEnded(1, TimeSpan.FromSeconds(2), "the AI tool could not be reached", now),
+            CouncilRoles.Operations);
+
+        var row = new AiAttemptStore(_db).Get(id)!;
+        Assert.Equal(AiAttemptState.ENDED, row.State);
+        Assert.Equal(Reservation, row.ReservedCost);
+        Assert.Equal(Reservation, row.Cost);
+        Assert.Equal(AiAttemptStore.UnreportedReason, row.UnpricedReason);
+
+        var spend = meter.Today;
+        Assert.Equal(Reservation, spend.Spent);
+        Assert.Equal(0m, spend.Reserved);          // resolved, and resolved AT the reservation
+        Assert.Equal(1, spend.Turns);
+        Assert.Equal(1, spend.UnreportedTurns);    // so the total is not read as a bill
+        Assert.Equal(0, spend.UnpricedTurns);
+    }
+
+    /// <summary>
+    /// AND AN INSTALLATION THAT CANNOT PRICE A TURN AT ALL IS NOT FILLED WITH ZEROES. A reservation
+    /// of nothing is not a charge: the row stays unpriced, which is the reading whose sentence says
+    /// the total is a floor.
+    /// </summary>
+    [Fact]
+    public void A_turn_with_nothing_reserved_stays_unpriced_rather_than_being_charged_zero()
+    {
+        var now = DateTimeOffset.Now;
+        // No owner rate and a runtime nothing ships a price for: the reservation is unpriceable.
+        var meter = new TurnMeter(_db, () => 50m, runtimeId: () => "nothing-prices-this",
+            now: () => now, recordPath: _records, share: _ => 1m);
+
+        var id = meter.Begin("## Situation", role: CouncilRoles.Operations).Id!;
+        Assert.Equal(0m, new AiAttemptStore(_db).Get(id)!.ReservedCost);
+
+        meter.Record(new AgentTurnEnded(1, TimeSpan.FromSeconds(2), "", now), CouncilRoles.Operations);
+
+        var row = new AiAttemptStore(_db).Get(id)!;
+        Assert.Null(row.Cost);
+        Assert.NotEqual(AiAttemptStore.UnreportedReason, row.UnpricedReason);
+        Assert.Equal(1, meter.Today.UnpricedTurns);
+        Assert.Equal(0, meter.Today.UnreportedTurns);
+    }
+
+    /// <summary>
     /// AND THE LOOP OBEYS IT: a turn the reservation refused is never sent to the AI tool, even when
     /// the host's own reading says there is room. That reading is the stale one this unit exists for.
     /// </summary>

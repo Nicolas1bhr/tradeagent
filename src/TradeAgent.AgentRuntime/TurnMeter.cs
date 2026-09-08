@@ -812,6 +812,7 @@ public sealed class TurnMeter
                 Currency = catalogue.Costs?.Currency ?? "",
                 Turns = totals.Turns,
                 UnpricedTurns = totals.Unpriced,
+                UnreportedTurns = totals.Unreported,
                 EstimatedTurns = totals.Estimated,
                 // The label describes how THIS INSTALLATION is being priced, so it is the probe's
                 // answer first — true before the day's first turn, which is the moment the card is

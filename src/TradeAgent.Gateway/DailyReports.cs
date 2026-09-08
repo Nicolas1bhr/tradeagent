@@ -378,6 +378,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Cap = whole is { Metered: true } ? whole.Cap : null,
             Turns = whole is { Metered: true } ? whole.Turns : null,
             UnpricedTurns = whole is { Metered: true } ? whole.UnpricedTurns : null,
+            UnreportedTurns = whole is { Metered: true } ? whole.UnreportedTurns : null,
             Currency = whole?.Currency ?? "",
             Runtime = i.Runtime,
             // RULE 4, SAID EVERY DAY. Three figures, never one — and this build has only the third.
@@ -514,8 +515,12 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         try
         {
+            // ENDED-WITH-NO-USAGE IS ON THIS LIST TOO. It is the same unresolved commitment as a
+            // LOST one — the app never heard what the turn used and charged the reservation — and
+            // leaving it off would make "reserved and unresolved" above read as the whole of it.
             foreach (var a in _attempts.Between(from, to)
-                         .Where(a => a.State is AiAttemptState.LAUNCHED or AiAttemptState.LOST))
+                         .Where(a => a.State is AiAttemptState.LAUNCHED or AiAttemptState.LOST
+                                     || a.UnpricedReason == AiAttemptStore.UnreportedReason))
                 interrupted.Add($"{CouncilRoles.Title(CouncilRoles.Or(a.Role))} attempt {a.Id[..Math.Min(a.Id.Length, 20)]} "
                                 + $"is {a.State} — its reservation stands as its cost");
         }

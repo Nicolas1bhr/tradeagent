@@ -94,8 +94,14 @@ public sealed record AiAttempt
 /// turn it is about to take: the admission rule is <c>spent + reserved + this turn ≤ cap</c>, which
 /// is a cap, where <c>spent ≥ cap</c> alone is only a check on money already gone.
 /// </summary>
+/// <param name="Unreported">
+/// Resolved turns charged their RESERVATION because nothing ever said what they used — a turn the
+/// app saw end with no usage event, and a turn a restart declared LOST. Their money is in
+/// <paramref name="Spent"/>, and this is what stops that total reading as a bill.
+/// </param>
 public sealed record AiAttemptTotals(
-    decimal Spent, decimal Reserved, int Turns, int Unpriced, int Estimated, int Open);
+    decimal Spent, decimal Reserved, int Turns, int Unpriced, int Estimated, int Open,
+    int Unreported = 0);
 
 /// <summary>
 /// THE CEILING A LAUNCH IS ADMITTED AGAINST, handed to <see cref="AiAttemptStore.Begin"/> so that
@@ -306,12 +312,29 @@ public sealed class AiAttemptStore(Database db)
         long? cacheWrite, long? output, long? reasoning, string? effectiveModel, decimal? cost,
         string? unpricedReason, string? context, string? pricingBasis = null) => db.Write(_ =>
     {
+        // A TURN THAT ENDED WITHOUT SAYING WHAT IT USED KEEPS ITS RESERVATION AS ITS COST.
+        //
+        // This is the non-crash half of the same rule LoseOpen keeps. A turn whose process exited
+        // with no usage event — it failed to start, it was cancelled, the runtime printed nothing
+        // this parser recognised — became ENDED with a null cost, and `Reserved` sums only LAUNCHED
+        // rows, so the whole commitment was released and NOTHING replaced it. The vendor had still
+        // been asked to do the work. Kill a turn early enough and the allowance came back, which is
+        // exactly what docs/COUNCIL.md rule 3 forbids on every path, not only on the crash path.
+        //
+        // A reservation of zero is not a charge, and such a row stays unpriced: an installation that
+        // cannot price a turn at all must not have its ceiling filled with zeroes that look measured.
         using var c = db.Cmd("""
             UPDATE ai_attempt SET
               state='ENDED', ended_at=$end, exit_code=$exit,
               input_tokens=$in, cached_input_tokens=$cached, cache_write_input_tokens=$write,
               output_tokens=$out, reasoning_output_tokens=$reason,
-              effective_model=$model, cost=$cost, unpriced_reason=$why,
+              effective_model=$model,
+              cost=COALESCE($cost, CASE WHEN $in IS NULL AND $out IS NULL
+                                             AND CAST(reserved_cost AS REAL) > 0
+                                        THEN reserved_cost END),
+              unpriced_reason=CASE WHEN $cost IS NULL AND $in IS NULL AND $out IS NULL
+                                        AND CAST(reserved_cost AS REAL) > 0
+                                   THEN $unreported ELSE $why END,
               context=COALESCE($ctx, context),
               pricing_basis=COALESCE($basis, pricing_basis)
             WHERE id=$id AND state='LAUNCHED'
@@ -319,9 +342,18 @@ public sealed class AiAttemptStore(Database db)
             ("$end", Sql.T(endedAt)), ("$exit", exitCode), ("$in", input), ("$cached", cached),
             ("$write", cacheWrite), ("$out", output), ("$reason", reasoning),
             ("$model", effectiveModel), ("$cost", cost is null ? null : Sql.D(cost.Value)),
-            ("$why", unpricedReason), ("$ctx", context), ("$basis", pricingBasis), ("$id", id));
+            ("$why", unpricedReason), ("$unreported", UnreportedReason),
+            ("$ctx", context), ("$basis", pricingBasis), ("$id", id));
         return c.ExecuteNonQuery() == 1;
     });
+
+    /// <summary>
+    /// What <c>unpriced_reason</c> says on a turn charged its reservation because its usage never
+    /// arrived. A constant because three surfaces read the row and one of them is the owner's daily
+    /// report, where "its reservation stands as its cost" is the whole of what they need to know.
+    /// </summary>
+    public const string UnreportedReason =
+        "the turn ended without reporting what it used; the reservation stands as its cost";
 
     /// <summary>
     /// What <c>pricing_basis</c> says when the owner's own two numbers priced the turn. A row with
@@ -383,7 +415,11 @@ public sealed class AiAttemptStore(Database db)
               SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NULL THEN 1 ELSE 0 END),
               SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NOT NULL AND effective_model IS NULL
                             AND COALESCE(pricing_basis,'') <> 'owner' THEN 1 ELSE 0 END),
-              SUM(CASE WHEN state='LAUNCHED' THEN 1 ELSE 0 END)
+              SUM(CASE WHEN state='LAUNCHED' THEN 1 ELSE 0 END),
+              -- Charged a RESERVATION rather than a bill: a cost with a reason it could not be
+              -- priced is exactly that, and it is what keeps `Spent` from reading as an invoice.
+              SUM(CASE WHEN state<>'LAUNCHED' AND cost IS NOT NULL AND unpriced_reason IS NOT NULL
+                       THEN 1 ELSE 0 END)
             FROM ai_attempt WHERE started_at >= $from AND started_at < $to
               AND ($role IS NULL OR COALESCE(role,$chair) = $role)
             """, ("$from", Sql.T(from)), ("$to", Sql.T(to)), ("$role", role),
@@ -397,7 +433,7 @@ public sealed class AiAttemptStore(Database db)
         // owner reads are never routed through this.
         return new AiAttemptTotals(
             (decimal)r.GetDouble(0), (decimal)r.GetDouble(1),
-            Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5));
+            Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5), Int(r, 6));
     }
 
     static int Int(SqliteDataReader r, int i) => r.IsDBNull(i) ? 0 : Convert.ToInt32(r.GetValue(i));

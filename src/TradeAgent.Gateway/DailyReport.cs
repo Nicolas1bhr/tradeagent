@@ -135,6 +135,13 @@ public sealed record ReportSpending
     public decimal? Cap { get; init; }
     public int? Turns { get; init; }
     public int? UnpricedTurns { get; init; }
+
+    /// <summary>
+    /// Turns inside <see cref="Spent"/> charged their RESERVATION because their usage never arrived.
+    /// On the report because rule 4 keeps enforcement apart from billing, and a total the owner
+    /// cannot tell a worst case from is exactly the reading that rule forbids.
+    /// </summary>
+    public int? UnreportedTurns { get; init; }
     public string Currency { get; init; } = "";
     public string? Runtime { get; init; }
 
@@ -383,7 +390,9 @@ public static class DailyReportText
         Kv(b, "reserved and unresolved", Money(r.Spending.Reserved, r.Spending.Currency));
         Kv(b, "daily ceiling", Money(r.Spending.Cap, r.Spending.Currency));
         Kv(b, "turns", Whole(r.Spending.Turns)
-                       + (r.Spending.UnpricedTurns is int unpriced and > 0 ? $", {unpriced} of them unpriced" : ""));
+                       + (r.Spending.UnpricedTurns is int unpriced and > 0 ? $", {unpriced} of them unpriced" : "")
+                       + (r.Spending.UnreportedTurns is int held and > 0
+                           ? $", {held} charged at their reservation because no usage was ever reported" : ""));
         Kv(b, "runtime", r.Spending.Runtime ?? Unknown);
         foreach (var role in r.Spending.Roles)
             Kv(b, role.Role, $"{Money(role.Spent, r.Spending.Currency)} spent, "
