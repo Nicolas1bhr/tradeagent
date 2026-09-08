@@ -4860,3 +4860,38 @@ skipped; names vs `main` → 0 removed, 1 added (sets 1243 → 1244); scan clean
 
 **NOT done:** no product code; no box, no ATAS, no money. What this closes: a red the hosted runners would have hit on any
 run reaching that test between 23:50 and 00:00 UTC.
+
+## 2026-09-08 — U-sweep-win landed: the sweep never lost the order; the Windows runner's disk ate the budget inside one composite commit
+
+The windows-only red at `cef122b` (run 34146285162: `SweepRequestIdTests.Two_sweeps_mint_different_ids`, `Expected: 1 /
+Actual: 0`), by one fresh fixer on `docs/briefs/U-sweep-win.md` (a first was killed by a usage limit before any change).
+Merge `324a11b`, 5 commits, test-only: `git diff main -- src/` empty. Draft PR #14 for the measurement, closed after.
+
+- **HEADLINE: the product does not race.** Measured on PR #14 (runs 34164725697 and 34165321766; 24 place-then-sweep pairs
+  per runner per run, 144 sweeps, plus a control each): the sweep's book read never lost the order — `nothing_to_do=False`,
+  one target in the plan, the broker holding it — every time on every runner. What varied was the budget left of the
+  2000 ms operation deadline at the leg: windows min/median 1968/1985 ms, ubuntu 1999/1999, macos 1996/1999; the one step
+  inside that window is the composite row's commit, and a Windows disk can hold one such commit for seconds (the
+  `U-press-win-3` finding, now seen a second time). A sweep that cannot issue its leg names the order `not-sent`, which is
+  the contract — so the red's own value was the product's honest answer on a runner whose disk had spent the budget.
+  CONTROL on all three runners (a connector that answers the read correctly then holds until the deadline goes) reproduces
+  the red exactly: `attempted=0 cancelled=0 nothing_to_do=False not_sent=1`. No red-first test and no mutant: nothing in
+  the product changed.
+- **Fixed once, in the fixture:** the fourteen sweep fixtures whose verdict needs a leg on the wire but is NOT about the
+  emergency budget now take the file's existing 20-second `SweepBudget` (`ReadyWithBudget`, made `internal` and taking
+  the fill), so no assertion depends on the runner's disk; every assertion byte-identical; the budget tests untouched.
+  One of the fourteen, `A_sweep_cannot_collide…`, was found vacuous rather than red and now asserts what it names.
+- **Siblings:** the ten cancel-all/close-all tests in `SweepRequestIdTests` and the four in `ReplayedSweepSendsNo…` moved
+  onto the budget; the rest named as not at risk (their verdict is the budget itself, or no leg is sent). The measuring
+  harness and its budget hook are removed from the tip.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `f1faf13` and again at `640c5b7`
+after two rebases (over `U-data-binance` and `U-council-thin`, no conflict), Release: 0 warnings, 0 errors; Integration 3×
+→ 621/621 each; the three suites → 0 failed; names vs `main` → nothing removed. Manager's gate at `324a11b (the report tip rebased over five docs-and-test commits)`, Release: build →
+0 warnings, 0 errors; suite → 559 + 277 + 621 = 1457 passed, 0 failed, 1 skipped; names vs
+`main` → 0 removed, 0 added (sets 1244 = 1244); scan clean; no trailers; `rev-list --count` → 0; PR #14's runners at the tip: 34166551105 at `f1faf13` green on all three and `package`; 34168445545 and 34170462786 at the two rebased tips — ubuntu and macos green, windows Integration 533/533 both times, its one Unit red the known archive test `U-archive-win` is fixing; CI at
+`324a11b`: run 34173019618 in flight when this section was written, its verdict recorded in a follow-up commit (the archive red on windows-latest is expected until `U-archive-win` lands).
+
+**Carried forward, for the product rather than the test, a second time:** a Windows disk can hold one composite commit for
+most of a two-second emergency budget; the press's platform calls are cut at the deadline every time, so the guard holds
+and the leg reads `not-sent`. **NOT done:** no product code; no `Timing` membership; no box, no ATAS, no money.

@@ -43,7 +43,8 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    `U-wakes` LANDED `cef122b` (the loop wakes on persisted events, the owner's words
    survive a restart); `U-data-binance` LANDED `a22939d` (the first real dataset, Binance's public 1-minute archives); `U-council-thin` LANDED `96f29a6` (two
    roles run serially by the app, the relay that cannot lose or double a handoff, schema 9); `U-midnight-test` LANDED `baeff48` (the loop's tests read a clock they
-   control); `docs/briefs/` holds `U-sweep-win` and `U-archive-win` (fixers measuring on the runners) and `U-report` (a fresh builder on it) — a desktop-app restart at 02:4x killed two builders
+   control); `U-sweep-win` LANDED `324a11b` (the sweep never lost the order; fourteen fixtures onto the file's 20-second budget);
+   `docs/briefs/` holds `U-archive-win` (a fixer measuring on the runners) and `U-report` (a fresh builder on it) — a desktop-app restart at 02:4x killed two builders
    mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
@@ -60,7 +61,7 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    paragraph on `'\n'` against the runner's CRLF checkout; fixer `U-crlf-win` LANDED `2082091`, whose CI run 34140348483 is green on all three
    platforms and `package`; `acff18a` (`U-unknown-close`) green; **`cef122b` (`U-wakes`) RED on windows-latest only** —
    `SweepRequestIdTests.Two_sweeps_mint_different_ids` saw 0 working where 1 was placed, green everywhere else; fixer `U-sweep-win`
-   (measure on the runners first, no assertion loosened) in flight; recorded red until it lands. **`a22939d` (`U-data-binance`) RED on
+   LANDED `324a11b` — measured on the runners: the product never lost the order, the runner's disk spent the budget in one commit. **`a22939d` (`U-data-binance`) RED on
    windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
    request hung to the downloader's 30-minute timeout; fixer `U-archive-win` (measure first; a timeout must never read as "not
    published") in flight; recorded red until it lands. `96f29a6` (`U-council-thin`) RED on windows-latest on that same archive test only. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
