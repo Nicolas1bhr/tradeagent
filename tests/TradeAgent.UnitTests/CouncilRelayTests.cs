@@ -372,6 +372,30 @@ public class CouncilRelayTests
     }
 
     /// <summary>
+    /// THE TURN IS TOLD THE NAME, AND THE NAME ROUND-TRIPS. The fence is only fair if the message
+    /// the turn is charged to read says which id its output must carry — an agent that is not told
+    /// cannot write a file this app will publish — and the name the Situation gives has to be
+    /// exactly the one the relay reads back.
+    /// </summary>
+    [Theory]
+    [InlineData(CouncilRoles.Research)]
+    [InlineData(CouncilRoles.Operations)]
+    public void The_situation_names_the_attempt_and_the_file_name_it_gives_round_trips(string role)
+    {
+        const string attempt = "turn-20260908120000000-abcdef";
+        var name = MissionSituation.OutputName(role, attempt);
+
+        var text = new MissionSituation { Role = role, Attempt = attempt }.Text();
+        Assert.Contains($"This turn is attempt `{attempt}`", text);
+        Assert.Contains($"{WorkspaceBuilder.OutDir}/{name}", text);
+
+        Assert.Equal(attempt, CouncilRelay.AttemptIn(name, CouncilRelay.KindFor(role)));
+
+        // And a Situation with no id names none, rather than inventing one nothing will recognise.
+        Assert.DoesNotContain("This turn is attempt", new MissionSituation { Role = role }.Text());
+    }
+
+    /// <summary>
     /// THE STALE-PROCESS CASE, which is the one the pass's own launch id is still needed for. A row
     /// still LAUNCHED that is not the turn whose pass this is belongs to a process the app is not
     /// accounting for — its own restart turns every open row LOST before the first pass — so a file

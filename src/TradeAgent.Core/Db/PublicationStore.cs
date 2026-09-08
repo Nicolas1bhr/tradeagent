@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace TradeAgent.Core.Db;
@@ -129,8 +127,7 @@ public sealed record Publication
     /// attempt, the clock or a counter, which is the property that matters.
     /// </summary>
     public static string IdOf(string role, string kind, string content) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{role}\n{kind}\n{content}")))
-            .ToLowerInvariant();
+        Sha256Hex.Of($"{role}\n{kind}\n{content}");
 }
 
 /// <summary>One recipient's copy of a publication, and whether the file has actually been written.</summary>

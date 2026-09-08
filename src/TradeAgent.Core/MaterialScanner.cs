@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core;
@@ -227,7 +226,7 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
                 using var fs = File.Open(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 if (!IsStill(fs, m)) continue;
 
-                var digest = Convert.ToHexString(SHA256.HashData(fs)).ToLowerInvariant();
+                var digest = Sha256Hex.Of(fs);
                 if (!IsStill(fs, m)) continue;
 
                 _store.SetHash(m.Id, digest);

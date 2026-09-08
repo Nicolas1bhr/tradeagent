@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.IO.Compression;
-using System.Security.Cryptography;
 using System.Text;
 
 namespace TradeAgent.Core.Data;
@@ -237,6 +236,6 @@ public static class KlineNormaliser
     static string Sha256(string file)
     {
         using var stream = File.OpenRead(file);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
+        return Sha256Hex.Of(stream);
     }
 }

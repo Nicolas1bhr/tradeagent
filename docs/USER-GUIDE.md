@@ -498,6 +498,11 @@ files in its own folder so that this costs nothing — a plan, and a journal of 
 happened, and what the money did. You can read both: **Open the AI's folder** on the Dashboard, then
 `trading`. They are ordinary text files, written for a person.
 
+TradeAgent keeps a copy of both at the end of every turn, so what the AI planned last week is still
+readable after it has rewritten the file — and it holds each one to a size, because the AI reads them
+in full every turn and pays for every line: if a plan or a journal grows past that size TradeAgent
+refuses the new version, puts the last one it accepted back, and tells the AI so on its next turn.
+
 ## The four modes
 
 Set on the **Safety** page.

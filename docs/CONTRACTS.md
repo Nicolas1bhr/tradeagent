@@ -1058,6 +1058,40 @@ zero, never two.
 `role` on `ai_attempt` and on `mission_event` is nullable and additive; a row that names none is the
 chair's (`CouncilRoles.Or`), because the single agent the council replaces was Operations.
 
+## A turn's staged output, its revisions and its one commit — `src/TradeAgent.AgentRuntime/CouncilRelay.cs`
+
+**A file is attributed by the attempt id in its NAME.** The `## Situation` names the launch id and the
+agent writes `out/report-<attempt>.md` or `out/agenda-<attempt>.md`; the relay reads the id back out.
+A file whose id is not in `ai_attempt`, or names a launch made for another role, or names one still
+`LAUNCHED` that is not the pass's own turn, is MOVED to `out/quarantine/` with an activity line and
+never published. `ENDED` and `LOST` both publish: a killed turn's report is the work of THAT turn, and
+attribution by whichever launch happened to run the pass named the wrong one.
+
+**`publication` also holds each role's own memory, versioned.** `kind` `plan` (`trading/PLAN.md`, at
+most 60 non-empty lines) and `journal` (`trading/JOURNAL.md`, at most 200; older entries go to
+`trading/archive/`), `recipients` = the role itself, `classification` `private`. No delivery and no
+`mission_event` come with them — `PublicationStore.Record`, not `Commit` — because a role woken to read
+its own plan is the owner paying for the app to hand an agent its own memory back. An unchanged file
+raises no revision (the id is the content hash). An over-cap or unreadable file is REJECTED, the last
+valid revision is written back over it, and the role's next `## Situation` says so. `revision` is
+assigned inside the transaction that inserts the row. `ix_publication_kind (role, kind, revision)` is
+what the restore reads; it is the whole of schema 11.
+
+**One `Database.Write` per turn** (`CouncilRelay.CommitTurn`, `IMissionHost.CommitTurn`): the launch
+record closed (`AiAttemptStore.End`), what the turn published, its two revisions, and the dispositions
+of the wakes it consumed. `Database.Write` is re-entrant — a nested call joins the transaction already
+open rather than starting a second. The disk work is after the commit: the copy into `in/`, and the
+restore of a refused plan. **The property:** a crash either side of it leaves exactly one revision per
+file and the attempt in one identifiable state — `LOST` (nothing of the transition landed; the next
+meter to open the database turns every open row `LOST` and the reconcile pass publishes that attempt's
+files under it) or `ENDED` (all of it landed) — never an `ENDED` attempt whose work is nowhere, and
+never a wake answered by a turn the ledger did not close.
+
+**The material pass walks every role's home** (`MaterialScanner.RolePaths`): each role's tracked
+folders plus `in/` and `out/`, all under one `agent` origin so `MarkMissing` never invents a deletion.
+What a role was handed and what it published are measured facts in `material`, which the agent cannot
+edit, beside the relay's own record of the same artifacts.
+
 ## The owner's daily report — `src/TradeAgent.Gateway/DailyReports.cs`
 
 One file per LOCAL calendar day at `state/reports/<yyyy-MM-dd>.md`, LF, at most 120 lines, written by

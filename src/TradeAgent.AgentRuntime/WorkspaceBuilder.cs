@@ -252,10 +252,17 @@ public static class WorkspaceBuilder
 
     - **`PLAN.md`** — what you are trying to do and why, what you have ruled out, what is next.
       Read it first, every turn. Update it before you finish.
+      **At most {WorkspaceRevisions.PlanLines} non-empty lines.**
     - **`JOURNAL.md`** — what you actually tried, what happened, and the number it moved. One
       entry per attempt, dated, with the P&L figure from `trade pnl --json` rather than an
       adjective. An entry saying "improved the strategy" is worth nothing to the version of you
-      that reads it next week.
+      that reads it next week. **At most {WorkspaceRevisions.JournalLines} non-empty lines** — move
+      older entries to `{WorkspaceRevisions.ArchiveDir}/`, which is tracked and is not capped.
+
+    **TradeAgent keeps a copy of both at the end of every turn, and enforces those two limits.** A
+    file over its limit is not kept: the last version TradeAgent accepted is written back over it,
+    and your next `## Situation` says which file and why. So a long plan does not get you a long
+    plan — it gets you last turn's. Trim it yourself, in the turn that writes it.
 
     ### When you cannot trade, the job does not stop
 
@@ -424,7 +431,8 @@ public static class WorkspaceBuilder
 
     - `../inbox` — what the owner gave you. Read it, copy out of it, do not write into it.
     - `trading/` — **`PLAN.md` and `JOURNAL.md` live here**, plus order plans and notes on what you
-      actually did and why. These two files are your memory; nothing else survives a fresh session
+      actually did and why. These two files are your memory; nothing else survives a fresh session.
+      `trading/archive/` is where journal entries go once they no longer fit
     - `research/` — market research, sources, working notes
     - `strategies/` — strategy descriptions and their code
     - `data/` — your own workings. The APP's collected history is not here and is not yours to write:
@@ -492,10 +500,13 @@ public static class WorkspaceBuilder
               do and the work you ask Research for; your `## Situation` names what is left.
             - **Research reports to you.** A report arrives as a file in `in/`, and its text and its
               id are in your `## Situation` as well. Act on it, or say why not.
-            - **You send work down by writing `out/agenda-<n>.md`** — at most **40 lines**, a new
-              file name each time. TradeAgent reads it, publishes it and delivers it to Research;
+            - **You send work down by writing `out/agenda-<attempt>.md`**, where `<attempt>` is
+              the attempt id your `## Situation` names for THIS turn — at most **40 lines**.
+              TradeAgent reads it, publishes it and delivers it to Research;
               you never write into their folder. **A file longer than 40 lines is rejected** and the
-              last valid one stands, so keep it short rather than losing it.
+              last valid one stands, so keep it short rather than losing it. **A file whose name
+              does not carry this turn's attempt id is not published at all** — it is moved to
+              `out/quarantine/`, because TradeAgent cannot say which turn wrote it.
             - **What you may read and write: your own folder, and `in/`.** Not the Research
               Director's folder. Nothing stops you today — this is a convention, not a wall — and
               breaking it means neither of you can tell what the other actually decided.
@@ -519,11 +530,13 @@ public static class WorkspaceBuilder
               every time you report one, and say what is missing from it.
             - **Operations sends you work as a brief.** It arrives as a file in `in/`, and it is in
               your `## Situation` too.
-            - **You report upward by writing `out/report-<n>.md`** — at most **20 lines**, a new file
-              name each time. TradeAgent reads it, publishes it and delivers it to the Operations
-              Director; you never write into their folder. **A file longer than 20 lines is
-              rejected** and the last valid one stands, so a short report that lands beats a long
-              one that does not.
+            - **You report upward by writing `out/report-<attempt>.md`**, where `<attempt>` is the
+              attempt id your `## Situation` names for THIS turn — at most **20 lines**. TradeAgent
+              reads it, publishes it and delivers it to the Operations Director;
+              you never write into their folder. **A file longer than 20 lines is rejected** and the
+              last valid one stands, so a short report that lands beats a long one that does not.
+              **A file whose name does not carry this turn's attempt id is not published at all** —
+              it is moved to `out/quarantine/`, because TradeAgent cannot say which turn wrote it.
             - **What you may read and write: your own folder, and `in/`.** Not the Operations
               Director's folder. Nothing stops you today — this is a convention, not a wall — and
               breaking it means neither of you can tell what the other actually decided.

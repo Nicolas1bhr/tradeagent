@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using TradeAgent.Core.Data;
 
@@ -201,16 +200,7 @@ public sealed class DatasetStore(Database db)
         return c.ExecuteNonQuery();
     });
 
-    public static string? Sha256(string file)
-    {
-        try
-        {
-            using var stream = File.OpenRead(file);
-            return Convert.ToHexStringLower(SHA256.HashData(stream));
-        }
-        catch (IOException) { return null; }
-        catch (UnauthorizedAccessException) { return null; }
-    }
+    public static string? Sha256(string file) => Sha256Hex.OfFile(file);
 
     List<DatasetRecord> ReadAll(SqliteCommand c)
     {

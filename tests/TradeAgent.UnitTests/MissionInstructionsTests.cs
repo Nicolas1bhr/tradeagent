@@ -18,6 +18,24 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public class MissionInstructionsTests
 {
+    /// <summary>
+    /// THE TWO CAPS THE APP ENFORCES, SAID IN THE MISSION FILE. A limit the agent is not told about
+    /// is a limit it discovers by losing a turn's writing to it — and the sentence that matters most
+    /// is the consequence: over the cap, the previous version comes back, so a long plan does not
+    /// get you a long plan, it gets you last turn's.
+    /// </summary>
+    [Fact]
+    public void The_mission_names_both_memory_caps_and_what_happens_over_them()
+    {
+        var text = Instructions();
+
+        Assert.Contains($"At most {WorkspaceRevisions.PlanLines} non-empty lines.", text);
+        Assert.Contains($"At most {WorkspaceRevisions.JournalLines} non-empty lines", text);
+        Assert.Contains($"`{WorkspaceRevisions.ArchiveDir}/`", text);
+        Assert.Contains("the last version TradeAgent accepted is written back over it", text);
+        Assert.Contains("your next `## Situation` says which file and why", text);
+    }
+
     static string Instructions(bool executionAvailable = true, bool builtInSimulator = false,
         string role = CouncilRoles.Operations) =>
         WorkspaceBuilder.Instructions(new WorkspaceContext(
@@ -286,15 +304,23 @@ public class MissionInstructionsTests
         Assert.Contains("## Your role: the Operations Director", operations);
         Assert.Contains("The owner's words reach you first", operations);
         Assert.Contains("You allocate inside the owner's ceiling, and you cannot raise it", operations);
-        Assert.Contains($"out/agenda-<n>.md", operations);
+        Assert.Contains("out/agenda-<attempt>.md", operations);
         Assert.Contains($"at most **{CouncilRelay.AgendaLines} lines**", operations);
         Assert.Contains($"A file longer than {CouncilRelay.AgendaLines} lines is rejected", operations);
         Assert.DoesNotContain("## Your role: the Research Director", operations);
 
+        // THE NAME THE APP REQUIRES, and what happens to a file that does not carry it. An agent
+        // told to write `out/report-<n>.md` writes a file nothing will publish.
+        foreach (var text in new[] { operations, research })
+        {
+            Assert.Contains("attempt id your `## Situation` names for THIS turn", text);
+            Assert.Contains($"{WorkspaceBuilder.OutDir}/{CouncilRelay.QuarantineDir}/", text);
+        }
+
         Assert.Contains("## Your role: the Research Director", research);
         Assert.Contains("Your job is hypotheses, experimental design, data and backtests", research);
         Assert.Contains("A result measured on a fixture is not evidence", research);
-        Assert.Contains($"out/report-<n>.md", research);
+        Assert.Contains("out/report-<attempt>.md", research);
         Assert.Contains($"at most **{CouncilRelay.ReportLines} lines**", research);
         Assert.Contains($"A file longer than {CouncilRelay.ReportLines} lines is", research);
         Assert.DoesNotContain("## Your role: the Operations Director", research);

@@ -2,7 +2,6 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -248,8 +247,7 @@ public static class Downloader
 
     const string PartMark = ".part";
 
-    static string UrlKey(string url) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(url)))[..16];
+    static string UrlKey(string url) => Sha256Hex.Of(url)[..16];
 
     /// <summary>
     /// The one part file beside <paramref name="destFile"/> that may be resumed for
@@ -594,8 +592,7 @@ public static class Downloader
     public static async Task<string> Sha256Async(string file, CancellationToken ct = default)
     {
         await using var stream = File.OpenRead(file);
-        var hash = await SHA256.HashDataAsync(stream, ct);
-        return Convert.ToHexStringLower(hash);
+        return await Sha256Hex.OfAsync(stream, ct);
     }
 
     static string FileNameFromUrl(string url)

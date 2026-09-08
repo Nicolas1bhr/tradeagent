@@ -86,12 +86,12 @@ public class CouncilRoleTests
 
         Assert.Contains("## Your role: the Operations Director", operations);
         Assert.DoesNotContain("## Your role: the Research Director", operations);
-        Assert.Contains("out/agenda-<n>.md", operations);
+        Assert.Contains("out/agenda-<attempt>.md", operations);
         Assert.Contains("at most **40 lines**", operations);
 
         Assert.Contains("## Your role: the Research Director", research);
         Assert.DoesNotContain("## Your role: the Operations Director", research);
-        Assert.Contains("out/report-<n>.md", research);
+        Assert.Contains("out/report-<attempt>.md", research);
         Assert.Contains("at most **20 lines**", research);
 
         // The convention is stated AS a convention in both, because nothing enforces it under a

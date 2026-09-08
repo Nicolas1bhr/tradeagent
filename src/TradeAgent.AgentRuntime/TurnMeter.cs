@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
@@ -771,8 +770,7 @@ public sealed class TurnMeter
     /// the owner's own words, and what the record needs is the ability to say afterwards that THIS
     /// text was the one that entered the model request.
     /// </summary>
-    static string HashOf(string text) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+    static string HashOf(string text) => Sha256Hex.Of(text);
 
     /// <summary>The open attempt's prompt length, read WITHOUT closing it — the row is closed later.</summary>
     int? PromptCharsOfOpenAttempt()
