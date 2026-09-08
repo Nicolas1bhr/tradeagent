@@ -74,7 +74,7 @@ public sealed class FakeArchive : IDisposable
                     }
 
                     byte[]? body = null;
-                    var what = "404";
+                    var what = "200";
 
                     if (_sidecars.TryGetValue(path, out var text))
                     {
@@ -91,12 +91,14 @@ public sealed class FakeArchive : IDisposable
                     if (body is not null) ctx.Response.ContentLength64 = body.Length;
 
                     // A HEAD IS ANSWERED WITH THE HEADERS AND NOTHING ELSE. Writing the entity body
-                    // to a HEAD response is what cost windows-latest thirty minutes: the write did
-                    // not come back, so `Close` never ran, so the response was never finished, so
-                    // the client sat on the shared 30-minute client timeout and then read the
-                    // silence as "the vendor has not published this month". Every other runner let
-                    // the write through and nobody noticed the harness was writing a body nobody
-                    // had asked for.
+                    // to a HEAD response is what cost windows-latest thirty minutes, measured on the
+                    // runner: http.sys allows no body on a HEAD, so the write threw
+                    // `ProtocolViolationException: Bytes to be written to the stream exceed the
+                    // Content-Length bytes size specified.`, the throw skipped the `Close` that was
+                    // then inside this `try`, the response was never finished, and the client sat on
+                    // the shared 30-minute client timeout before reading the silence as "the vendor
+                    // has not published this month". ubuntu and macOS let the write through, so
+                    // nobody noticed the harness was sending a body nobody had asked for.
                     if (body is not null && !string.Equals(method, Head, StringComparison.OrdinalIgnoreCase))
                     {
                         Mark($"answering {what}, {body.Length} bytes");
