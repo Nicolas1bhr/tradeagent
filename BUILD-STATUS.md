@@ -4894,3 +4894,41 @@ after two rebases (over `U-data-binance` and `U-council-thin`, no conflict), Rel
 **Carried forward, for the product rather than the test, a second time:** a Windows disk can hold one composite commit for
 most of a two-second emergency budget; the press's platform calls are cut at the deadline every time, so the guard holds
 and the leg reads `not-sent`. **NOT done:** no product code; no `Timing` membership; no box, no ATAS, no money.
+
+## 2026-09-08 — U-report landed: the owner's daily report, written by the app from what it measured, nothing inferred
+
+Rule 10 of `docs/COUNCIL.md`, by one fresh builder on `docs/briefs/U-report.md` (killed by a usage limit mid-gate after all
+four items) and a second re-briefed from the branch, which reproduced every RED and mutant itself, found and closed one gap,
+ran the gate and wrote the report. Merge `3003b89`, 7 commits, 26 files, +2559/−18 (new `Gateway/DailyReport.cs`,
+`DailyReports.cs`, `App/ReportView.cs`; `MissionEventStore.cs`, `PublicationStore.cs`, `CouncilRelay.cs`, `MissionLoop.cs`,
+`AppHost.cs`, `MainWindow.cs`, the pipe, the schema, the CLI, `Database.cs` schema 10, `CONTRACTS.md`; four new test classes).
+
+- **The report as data and as a file:** ten sections composed from ONE timestamped snapshot (the only clock reads in
+  `DailyReports.cs` are the constructor's `_now` and `WriteNow`, never a section), every unknown a labelled dash, written at
+  local midnight and on demand to `state/reports/<date>.md`, app-owned. RED (the withheld net reverted to realised minus
+  known fees): `Assert.Null() Failure: Value of type 'Nullable<decimal>' has a value`; mutant (the missing cost dropped from
+  the text) → `Not found: "did not report a fee"`.
+- **A Daily report page in the rail:** words only, `Theme.cs` only (the one literal a `Thickness` of theme spacings), the
+  day picker, "Write it now", the Operations Director's note shown only when a `note` publication exists for that day. RED
+  (the day bound out of `NoteFor`): yesterday's note returned as today's; mutant (the kind check dropped) → an agenda shown
+  as a note (`Kind = brief`).
+- **Dispositions completed:** `delegated` (links the publication id), `blocked` (the reason), `superseded` join `answered`/
+  `failed`; every owner message of the day is listed with its disposition and the doctrine's reply deadline (a setting,
+  default 24 h; overdue is a line on the report, never a paid turn). RED (the still-owed clause out of `ComposeDecisions`):
+  `Assert.Single() Failure: The collection was empty` — a 30-hour-old unanswered message absent; mutant (`at >= due`
+  inverted) → that, plus a fresh message reported overdue.
+- **`trade report --json`:** read-only, the `pnl` pattern, a declared reply type with `JsonIgnoreCondition.Never` on all 41
+  nullables over 10 records, the deadline table at zero. RED (`Never` off `Net`): `Not found: ""net":null"`; mutant (an
+  unreadable day quietly becoming today) → `Assert.False() Failure`. The gap the builder found: the agent's guide never
+  named `trade report` — added test-first, RED `Not found: "trade report"`, then the paragraph.
+
+**Verified by running (the second builder, quoted; then the manager's gate):** builder's gate at `151ea01`, Release: 0
+warnings, 0 errors (17 projects); Unit 585 + Fault 277 + Integration 627 = 1489 passed, 0 failed, 1 skipped; touched
+classes 3× → 31/31 and 6/6 each run, no `Timing` red; names vs `main` → 32 added, 0 removed; the previous builder's three
+gate files read, not trusted, deleted. Manager's gate at `3003b89`, Release: build → 0 warnings, 0 errors; suite → 585 +
+277 + 627 = 1489 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 32 added (sets 1244 →
+1276; `[Fact]`/`[Theory]` 1197 → 1229); scan clean; no trailers; `rev-list --count` → 0; CI at `3003b89`: run 34186596626 in flight when this section was written, its verdict recorded in a follow-up commit (the archive red on windows-latest expected until `U-archive-win` lands next).
+
+**NOT VERIFIED:** the page on a screen and its update-in-place (a signature gate at `ReportView.cs:117,131`, read, not run —
+nothing in the suite runs Avalonia); a DST-length day, a midnight write and a `note` publication end to end — no build
+produces one yet. **NOT done:** no box, no ATAS, no order.
