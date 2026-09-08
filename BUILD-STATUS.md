@@ -4932,3 +4932,38 @@ gate files read, not trusted, deleted. Manager's gate at `3003b89`, Release: bui
 **NOT VERIFIED:** the page on a screen and its update-in-place (a signature gate at `ReportView.cs:117,131`, read, not run —
 nothing in the suite runs Avalonia); a DST-length day, a midnight write and a `note` publication end to end — no build
 produces one yet. **NOT done:** no box, no ATAS, no order.
+
+## 2026-09-08 — U-archive-win landed: a download nobody could complete is Unreachable, never "the vendor has no such month"
+
+The windows-only red at `a22939d` (run 34167309186: `BinanceArchiveTests.A_month_with_no_sidecar_at_all…`, `Expected:
+ChecksumNotPublished / Actual: NotPublished`, the Windows Unit suite 30 m 48 s), by one fresh fixer on
+`docs/briefs/U-archive-win.md` (killed by a usage limit while drafting its report, its five commits kept) and a second
+re-briefed from the branch. Merge `8197163`, 6 commits: the fake server, `BinanceArchiveClient.cs`, `BinanceDataService.cs`,
+`Downloader.cs`, three tests added; draft PR #15 for the measurement, closed after.
+
+- **Measured, both sides** (probe run 34169530998, a mark per request on every runner): on windows-latest the fake server,
+  asked `HEAD` for the sidecar, answered `200 zip, 268 bytes` and at 153 ms THREW `ProtocolViolationException: Bytes to be
+  written to the stream exceed the Content-Length bytes size specified`, never closed the response, and the client waited to
+  its cancellation at 15 s; ubuntu and macos wrote, closed, `200 OK` in 29 and 8 ms. http.sys alone refuses a body on a HEAD
+  response. The hang reproduced on this Mac with the throw injected: `cli THREW TaskCanceledException after 5.0 s`.
+- **The harness:** a `HEAD` is answered with headers and nothing else, and the response is closed in a `finally`, so a fault
+  in the fake can never hold a client open again.
+- **The product** (money-path grade — a timeout was read as an answer): a download that could not be completed is reported
+  `Unreachable` with the reason in words; ONLY a 404 means the month does not exist; `Downloader.StatusAsync` returns null
+  on cancellation instead of a status. RED (the classification reverted to `status is OK ? ChecksumNotPublished :
+  NotPublished`): `Failed: 3, Passed: 7`, each `Expected: Unreachable / Actual: NotPublished`; mutant (the cancellation
+  catch returning `NotFound` instead of null) → `Failed: 2, Passed: 8`, the same message.
+- **The thirty minutes cannot recur:** the client's request timeout is injectable (`DefaultRequestTimeout` = production's
+  30 min, honoured; an injected 2 s honoured); a never-answering fake fails in 4.0 s as `Unreachable`, "…could not be asked
+  about: it did not answer within 2 seconds".
+
+**Verified by running (the second fixer, quoted; then the manager's gate):** fixer's gate at `1e2dc97` and again at
+`110a77d`, Release: 0 warnings, 0 errors; Unit 3× → 562/562 each; Unit 562 + Fault 277 + Integration 621 = 1460 passed, 0
+failed, 1 skipped; names vs `main` → 0 removed, 3 added; scan clean. CI run 34172964688 at `8676ba7`: all four jobs green —
+ubuntu 11 m 26 s, macos 15 m 11 s, windows 17 m 40 s, `package` 4 m 10 s; **the Windows Unit assembly 1 m 40 s for 561 tests
+against 30 m 48 s for 539 at `a22939d`**. Manager's gate at `ceff6ec (the report tip rebased over the `U-report` landing)`, Release: build → 0 warnings, 0 errors; suite → 588 +
+277 + 627 = 1492 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 4 added (sets 1244 → 1248 before the report landing); scan clean; no
+trailers; `rev-list --count` → 0; CI at `8197163`: run 34187380076 in flight when this section was written (the gated tip rebased over docs-only commits) — the proof that `main` is green on all three runners again, recorded in a follow-up commit.
+
+**NOT VERIFIED:** the http.sys behaviour on a Windows box — read off the runner's marks, not reproduced on hardware. **NOT
+done:** no ATAS, no money, no real download, no vendor reached, no assertion loosened.

@@ -45,7 +45,9 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    roles run serially by the app, the relay that cannot lose or double a handoff, schema 9); `U-midnight-test` LANDED `baeff48` (the loop's tests read a clock they
    control); `U-sweep-win` LANDED `324a11b` (the sweep never lost the order; fourteen fixtures onto the file's 20-second budget);
    `U-report` LANDED `3003b89` (the owner's daily report, no inference; the dispositions completed; schema 10);
-   `docs/briefs/` holds `U-archive-win` (fixed on both sides, landing) and `U-turn-commit` (dispatching) — a desktop-app restart at 02:4x killed two builders
+   `U-archive-win` LANDED `8197163` (the harness answered a HEAD with a body on
+   http.sys and hung; a download nobody could complete is now Unreachable, never "not published"); `docs/briefs/` holds
+   `U-turn-commit` and `U-budget-reserve` (a fresh builder on each) — a desktop-app restart at 02:4x killed two builders
    mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
 3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
    release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
@@ -64,8 +66,9 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    `SweepRequestIdTests.Two_sweeps_mint_different_ids` saw 0 working where 1 was placed, green everywhere else; fixer `U-sweep-win`
    LANDED `324a11b` — measured on the runners: the product never lost the order, the runner's disk spent the budget in one commit. **`a22939d` (`U-data-binance`) RED on
    windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
-   request hung to the downloader's 30-minute timeout; fixer `U-archive-win` (measure first; a timeout must never read as "not
-   published") in flight; recorded red until it lands. `96f29a6` (`U-council-thin`) RED on windows-latest on that same archive test only. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   request hung to the downloader's 30-minute timeout; fixer `U-archive-win`
+   LANDED `8197163` — both sides fixed, its draft PR green on all runners with the Windows Unit suite back to 1 m 40 s; the shas
+   `a22939d`, `96f29a6`, `cef122b`, `baeff48`, `324a11b`, `3003b89` were red on windows-latest on that one test only. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
