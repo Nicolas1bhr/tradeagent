@@ -182,11 +182,113 @@ public class ZPressSettleWinMeasurementTests
         return line;
     }
 
+    /// <summary>
+    /// THE SWEEP OF THE CLASS'S SIBLINGS, under the same marks rather than by assumption. A 1 ms
+    /// declared latency makes the simulator take its own wait on EVERY wire call, and the wait
+    /// samples the ambient <see cref="RiskReducingScope"/> from inside the connector — which is the
+    /// only place the answer is not a guess, because the scope is an `AsyncLocal` that flows INTO
+    /// the call and is invisible from the test's own frame.
+    ///
+    /// `deadlines=[none]` means no operation clock exists on that path at all, so no commit can run
+    /// into one and the fixture's verdict cannot depend on the runner's disk. A number is the budget
+    /// the wire actually saw.
+    /// </summary>
+    static async Task<string> SiblingSweep(string name, TimeSpan? budget,
+        Func<TradingGateway, RecoveryConnector, ExecutionRequest, Task> body,
+        Func<TimeSpan?, Task<(TradingGateway, RecoveryConnector, Database, ExecutionRequest)>>? make = null)
+    {
+        var (gw, c, db, lost) = await (make ?? (b => Unresolved.WithALostClose(budget: b)))(budget);
+        using var _1 = db;
+
+        var seen = new List<string>();
+        c.Inner.Faults.LatencyMs = 1;
+        c.Inner.Faults.Wait = (d, ct) =>
+        {
+            lock (seen) seen.Add(RiskReducingScope.DeadlineAt is { } x ? $"{x - Environment.TickCount64}" : "none");
+            return Task.Delay(d, ct);
+        };
+
+        string outcome;
+        try { await body(gw, c, lost); outcome = "ran"; }
+        catch (Exception ex) { outcome = ex.GetType().Name; }
+
+        string calls;
+        lock (seen) calls = $"n={seen.Count} deadlines=[{string.Join(",", seen.Distinct())}]";
+        await gw.DisposeAsync();
+        return $"SWEEP {name} {outcome} {calls}";
+    }
+
+    /// <summary>
+    /// `An_unknown_order_on_the_other_side_does_not_hold_the_press_up`'s own fixture, which is not
+    /// <see cref="Unresolved.WithALostClose"/>: the UNKNOWN order is a BUY under a long, so the
+    /// press's settle finds no reducer to settle and goes straight to its leg.
+    /// </summary>
+    static async Task<(TradingGateway, RecoveryConnector, Database, ExecutionRequest)> TheOtherSide(TimeSpan? budget)
+    {
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: budget);
+        await gw.PlaceAsync(new AgentContext("ai"), "sw-os-open", TestEnv.Buy("ES", 2m));
+        c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
+        c.ThrowAfterPlace = new ConnectorTransportException("connection lost after the order was accepted");
+        var buy = await gw.PlaceAsync(new AgentContext("ai"), "sw-os-buy",
+            new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
+        c.ThrowAfterPlace = null;
+        c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
+        return (gw, c, db, buy);
+    }
+
+    static async Task<List<string>> TheSiblings()
+    {
+        var lines = new List<string>();
+
+        // The three presses now on the file's own budget: the wire should see ~20 s, not 2.
+        lines.Add(await SiblingSweep("press-flat-book", Unresolved.PressBudget,
+            async (gw, _, _) => await gw.OperatorCloseAllAsync()));
+        lines.Add(await SiblingSweep("press-hidden-history", Unresolved.PressBudget,
+            async (gw, c, _) => { c.Inner.Faults.HideOrderHistory = true; await gw.OperatorCloseAllAsync(); },
+            make: b => Unresolved.WithALostClose(alsoOpen: "NQ", budget: b)));
+        lines.Add(await SiblingSweep("press-other-side", Unresolved.PressBudget,
+            async (gw, _, _) => await gw.OperatorCloseAllAsync(), make: TheOtherSide));
+
+        // The fixture that IS about the budget keeps the simulator's two seconds.
+        lines.Add(await SiblingSweep("press-deadline-runs-out", null,
+            async (gw, c, _) => { c.Inner.Faults.LatencyMs = 1200; await gw.OperatorCloseAllAsync(); }));
+
+        // The four in AgentCloseOverAnUnknownCloseTests. No press, so no scope, so no clock.
+        lines.Add(await SiblingSweep("agent-second-close", null, async (gw, _, lost) =>
+        {
+            await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+            await gw.CloseAsync(new AgentContext("ai"), "sw-second", "ES");
+        }));
+        lines.Add(await SiblingSweep("agent-reduce", null, async (gw, _, lost) =>
+        {
+            await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+            await gw.PlaceAsync(new AgentContext("ai"), "sw-reduce",
+                new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 1m, null, null, TimeInForce.Day, null));
+        }));
+        lines.Add(await SiblingSweep("agent-open-and-other-instrument", null, async (gw, _, lost) =>
+        {
+            await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+            await gw.PlaceAsync(new AgentContext("ai"), "sw-add", TestEnv.Buy("ES", 1m));
+            await gw.PlaceAsync(new AgentContext("ai"), "sw-nq", TestEnv.Buy("NQ", 1m));
+            await gw.CloseAsync(new AgentContext("ai"), "sw-nq-close", "NQ");
+        }));
+        lines.Add(await SiblingSweep("agent-outcome-lifts-refusal", null, async (gw, c, lost) =>
+        {
+            await Unresolved.ResolveWithoutAnOutcome(gw, lost.RequestId);
+            c.Inner.Broker.Cancel(c.Inner.Broker.Orders.First(o => o.ClientOrderId == lost.ClientOrderId).ConnectorOrderId);
+            gw.ForceResolve(lost.RequestId, ExecutionState.CANCELLED, "checked in ATAS: it never worked");
+            await gw.RefreshHealthAsync();
+            await gw.CloseAsync(new AgentContext("ai"), "sw-after", "ES");
+        }));
+        return lines;
+    }
+
     [Fact]
     public async Task Zz_where_the_presss_own_leg_goes()
     {
         var lines = new List<string> { await TheControl() };
         for (var i = 0; i < Presses; i++) lines.Add(await OnePress(i));
+        lines.AddRange(await TheSiblings());
         Assert.Fail("MEASUREMENT || " + string.Join(" |||| ", lines));
     }
 }
