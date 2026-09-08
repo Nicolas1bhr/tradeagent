@@ -370,6 +370,21 @@ public sealed class TurnMeter
     /// </summary>
     string? _minted;
 
+    /// <summary>
+    /// THE CLOSE OF A TURN THE MISSION LOOP OWNS, METERED AND NOT YET COMMITTED.
+    ///
+    /// <para>A turn's END belongs in the same transaction as what that turn published and what
+    /// became of the wakes it consumed (<c>docs/COUNCIL.md</c> rule 6, "one committed transition").
+    /// The runtime reports its usage part-way through <see cref="Record"/>, which is before the
+    /// relay has even looked at what the turn wrote — so the close is measured here and held until
+    /// <see cref="CommitStaged"/> runs it inside the turn's own commit.</para>
+    ///
+    /// <para><b>Nothing is lost if it is never committed.</b> The row stays LAUNCHED, and the next
+    /// meter to open this database turns it LOST with its reservation as its cost. That is the
+    /// conservative reading and it is the one this whole table exists to keep.</para>
+    /// </summary>
+    Action? _staged;
+
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
@@ -447,10 +462,46 @@ public sealed class TurnMeter
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
         catch (Exception) { /* the row below is what the cap reads */ }
 
-        try { Close(ended, price); }
-        catch (Exception) { /* a database that cannot be written must not end the turn */ }
+        // WHOSE TURN THIS WAS, TAKEN NOW. The id has to be captured at this instant rather than
+        // read again at commit time: a close held for the loop's transaction that later read
+        // `_open` would close whichever attempt happened to be open by then.
+        string? id;
+        int? promptChars;
+        lock (_gate) { id = _open; promptChars = _openPromptChars; _open = null; _openPromptChars = null; }
+
+        void Write() => Close(id, promptChars, ended, price);
+
+        // A TURN THE MISSION LOOP OPENED IS CLOSED BY THE MISSION LOOP'S COMMIT, not here. A turn
+        // nobody opened — the owner typing in the chat window — runs through no admission gate and
+        // no relay pass, so there is no transition for it to be part of and it is written at once.
+        if (id is null)
+        {
+            try { Write(); }
+            catch (Exception) { /* a database that cannot be written must not end the turn */ }
+        }
+        else lock (_gate) _staged = Write;
 
         Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// COMMITS THE HELD CLOSE, inside whatever transaction is open on this thread. Returns whether
+    /// there was one.
+    ///
+    /// The mission loop calls this as the first step of the turn's committed transition, so
+    /// <c>ai_attempt.state</c> moving to ENDED and the artifacts that turn produced land together.
+    /// Called with nothing held it does nothing, which is the right answer for a turn that was
+    /// never metered at all.
+    /// </summary>
+    public bool CommitStaged()
+    {
+        Action? write;
+        lock (_gate) { write = _staged; _staged = null; }
+        if (write is null) return false;
+
+        write();
+        Changed?.Invoke();
+        return true;
     }
 
     /// <summary>
@@ -474,6 +525,14 @@ public sealed class TurnMeter
     public string? Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
     {
         var reservation = Reservation(role);
+
+        // A CLOSE NOBODY COMMITTED BELONGS TO A TURN THAT IS OVER. It can only be here because the
+        // transition that should have carried it never ran — a cancelled turn, a host with no
+        // commit behind it — and writing it now is late rather than wrong. Leaving it would hold a
+        // whole reservation against the day's ceiling for a turn that has already ended.
+        try { CommitStaged(); }
+        catch (Exception) { /* the row stays LAUNCHED and the next restart loses it, which is safe */ }
+
         string id;
         lock (_gate) { id = _minted ?? NewId(); _minted = null; }
 
@@ -554,12 +613,8 @@ public sealed class TurnMeter
     /// owner's own typed turn, which runs through no admission gate and therefore reserves nothing.
     /// A row a restart already declared LOST is left exactly as it is.
     /// </summary>
-    void Close(AgentTurnEnded ended, TurnPrice price)
+    void Close(string? id, int? promptChars, AgentTurnEnded ended, TurnPrice price)
     {
-        string? id;
-        int? promptChars;
-        lock (_gate) { id = _open; promptChars = _openPromptChars; _open = null; _openPromptChars = null; }
-
         // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
         // TurnContext: what the stream does not show is named rather than divided up.
         var context = Json.Write(TurnContext.Read(ended.Raw, promptChars, ended.Usage));

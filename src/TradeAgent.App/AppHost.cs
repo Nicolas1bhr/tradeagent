@@ -885,6 +885,15 @@ public sealed class AppHost : IAsyncDisposable
         public void Relay(string role, string? attempt) => host.Relay.Run(role, attempt);
 
         /// <summary>
+        /// THE TURN'S ONE COMMITTED TRANSITION. The meter's held close, the relay's publications,
+        /// the role's plan and journal revisions and the loop's dispositions, in one
+        /// <c>Database.Write</c>. It writes to the launch ledger, the relay's tables and the wake
+        /// queue, and to nothing that decides what the AI is allowed to do.
+        /// </summary>
+        public void CommitTurn(string role, string? attempt, Action dispositions) =>
+            host.Relay.CommitTurn(role, attempt, () => host.Meter?.CommitStaged(), dispositions);
+
+        /// <summary>
         /// The id the next launch will carry, minted by the meter so the turn's message can name it.
         /// It commits nothing — the launch record is <see cref="BeginTurn"/>'s — and it cannot change
         /// a mode, lift the kill switch or approve anything.

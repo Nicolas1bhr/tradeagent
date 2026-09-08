@@ -118,6 +118,12 @@ public class AiAttemptLedgerTests : IDisposable
             Usage = new TurnUsage(17232, 12928, 0, 6, 0, null)
         });
 
+        // THE CLOSE IS HELD FOR THE TURN'S OWN TRANSITION. A turn the loop opened ends in the same
+        // Database.Write as what it published and what became of its wakes, so the row moves to
+        // ENDED here rather than the moment the runtime reported its usage.
+        Assert.Equal(AiAttemptState.LAUNCHED, new AiAttemptStore(_db).Get(id)!.State);
+        Assert.True(meter.CommitStaged());
+
         var row = new AiAttemptStore(_db).Get(id)!;
         Assert.Equal(AiAttemptState.ENDED, row.State);
         Assert.Equal(Reservation, row.ReservedCost);

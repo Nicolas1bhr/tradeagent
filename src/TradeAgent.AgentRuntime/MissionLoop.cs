@@ -253,6 +253,27 @@ public interface IMissionHost
     void Relay(string role, string? attempt) { }
 
     /// <summary>
+    /// THE TURN'S ONE COMMITTED TRANSITION: the launch record closed, what the turn published, its
+    /// memory files versioned, and <paramref name="dispositions"/> — the loop's own account of what
+    /// became of each wake — all inside one <c>Database.Write</c>.
+    ///
+    /// <para><c>docs/COUNCIL.md</c> rule 6. Three commits in a row leave two windows a crash can
+    /// land in: an attempt marked ENDED whose work is nowhere, or work published against an attempt
+    /// that never ended and whose wakes are still owed an answer. A crash BEFORE this leaves the row
+    /// LAUNCHED, which the next start turns LOST and reconciles.</para>
+    ///
+    /// <para>The dispositions are passed in rather than done by the host because deciding what
+    /// became of a wake — answered, failed, an owner's message re-raised once — is the loop's
+    /// judgment about its own turn; the host owns only the transaction it lands in. The default runs
+    /// the two halves separately, so a host with no database behind it behaves exactly as it did.</para>
+    /// </summary>
+    void CommitTurn(string role, string? attempt, Action dispositions)
+    {
+        Relay(role, attempt);
+        dispositions();
+    }
+
+    /// <summary>
     /// THE ID THE NEXT LAUNCH WILL CARRY, minted before the turn's message is composed so that the
     /// message can NAME it — <c>out/report-&lt;attempt&gt;.md</c> is how staged output is bound to
     /// the launch that produced it, and an agent cannot write that name without being told the id.
@@ -1006,23 +1027,35 @@ public sealed class MissionLoop
         void Watch(AgentTurnEnded e) => ended = e;
         conversation.TurnEnded += Watch;
         try { await conversation.SendMissionAsync(prompt, ct); }
-        // A turn that threw its way out — cancelled, or a runtime that will not start — must not
-        // leave the card reading "working" for ever over a turn that is not happening.
-        finally { conversation.TurnEnded -= Watch; lock (_gate) _working = false; }
+        finally
+        {
+            // A turn that threw its way out — cancelled, or a runtime that will not start — must not
+            // leave the card reading "working" for ever over a turn that is not happening.
+            conversation.TurnEnded -= Watch;
+            lock (_gate) _working = false;
+
+            // ---- THE TURN'S ONE COMMITTED TRANSITION ------------------------------------------
+            // The launch record closed, what the turn left in `out/` published, its plan and journal
+            // versioned, and what became of each wake — one Database.Write. It runs whether the turn
+            // succeeded or failed: a report written by a turn that then fell over is still the
+            // role's work, and everything in the commit is idempotent, so a pass over an unchanged
+            // folder costs a hash of a small file.
+            //
+            // IN THE FINALLY, because a turn that was cancelled has still been LAUNCHED and has
+            // still cost money. Leaving that row open until the app next starts would hold its whole
+            // reservation against the day's ceiling for a turn that has already ended.
+            Commit(role, attemptId, events, wake, ended);
+        }
 
         // ---- close the scanner's window behind this turn -----------------------------------------
         // The pass above can only attest because a pass ran AFTER the previous turn: the window a
         // pass measures starts at the previous pass, so one taken while the loop is idle is what
         // moves that start past the agent's last breath. Without this line the pass before the next
         // turn still measures a window this turn is inside, and attests nothing.
+        //
+        // After the commit, so what it records is where the files ended up: a file the fence moved
+        // to `out/quarantine/` is recorded there rather than at a path that no longer exists.
         await _host.ScanAsync(ct);
-
-        // ---- and what the turn left in `out/` ----------------------------------------------------
-        // After the turn rather than before it, because the file this publishes is the one the turn
-        // just wrote. It runs whether the turn succeeded or failed: a report written by a turn that
-        // then fell over is still the role's work, and the publication is idempotent by content, so
-        // running it after every turn costs a hash of a small file.
-        Relay(role, attemptId);
 
         var failed = ended?.Failed ?? true;
         int errors;
@@ -1034,11 +1067,6 @@ public sealed class MissionLoop
             _lastFirstLine = FirstLineOfLastReply(conversation) ?? _lastFirstLine;
         }
         Changed?.Invoke();
-
-        // WHAT BECAME OF EACH WAKE, written after the turn rather than assumed by it. An owner's
-        // message whose turn failed is re-raised once, so a runtime that fell over does not swallow
-        // the one thing in the block that was waiting for an answer.
-        if (events is not null) Settle(events, wake, failed, ended);
 
         return failed ? Backoff(errors) : NextWait(events, attemptId, role);
     }
@@ -1151,6 +1179,29 @@ public sealed class MissionLoop
     {
         try { _host.Relay(role, attempt); }
         catch (Exception) { /* the next turn reconciles; the host has already logged it */ }
+    }
+
+    /// <summary>
+    /// THE TURN'S ONE COMMITTED TRANSITION, and the loop's half of it: what became of each wake.
+    ///
+    /// Never throws. A transition that could not be committed leaves the launch record LAUNCHED,
+    /// which the next start turns LOST and reconciles — the fail-safe direction, and the only one
+    /// that does not let a killed turn's allowance come back. A loop that stopped over it would turn
+    /// a bookkeeping failure into an AI that stopped working.
+    /// </summary>
+    void Commit(string role, string? attempt, MissionEventStore? events,
+        IReadOnlyList<MissionEvent> wake, AgentTurnEnded? ended)
+    {
+        var failed = ended?.Failed ?? true;
+        try
+        {
+            // WHAT BECAME OF EACH WAKE, written with the turn rather than assumed by it. An owner's
+            // message whose turn failed is re-raised once, so a runtime that fell over does not
+            // swallow the one thing in the block that was waiting for an answer.
+            _host.CommitTurn(role, attempt,
+                () => { if (events is not null) Settle(events, wake, failed, ended); });
+        }
+        catch (Exception) { /* the row stays LAUNCHED; the next start loses it and reconciles */ }
     }
 
     /// <summary>The next LOCAL midnight, on the offset in force at that boundary.</summary>

@@ -106,6 +106,18 @@ public class TurnAllowanceTests : IDisposable
             return meter.Begin(prompt, wakes);
         }
 
+        /// <summary>
+        /// THE TURN'S ONE COMMITTED TRANSITION, the way the composition root wires it. The meter
+        /// holds the close of a turn the loop opened until this runs, so a host that never commits
+        /// is a host whose turns stay LAUNCHED — which is what the app does after a crash, and not
+        /// what it does after a turn that ended.
+        /// </summary>
+        public void CommitTurn(string role, string? attempt, Action dispositions)
+        {
+            meter.CommitStaged();
+            dispositions();
+        }
+
         /// <summary>Meters this conversation the way the composition root does, so a turn that runs closes its row.</summary>
         public Host Metered() { meter.Attach(Conv); return this; }
     }

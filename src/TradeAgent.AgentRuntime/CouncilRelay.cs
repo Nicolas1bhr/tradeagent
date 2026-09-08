@@ -72,6 +72,7 @@ public sealed class CouncilRelay
     /// </summary>
     public const string QuarantineDir = "quarantine";
 
+    readonly Database _db;
     readonly PublicationStore _store;
     readonly MissionEventStore _events;
     readonly AiAttemptStore _attempts;
@@ -81,6 +82,7 @@ public sealed class CouncilRelay
 
     public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null)
     {
+        _db = db;
         _store = new PublicationStore(db);
         _events = new MissionEventStore(db);
         _attempts = new AiAttemptStore(db);
@@ -98,11 +100,62 @@ public sealed class CouncilRelay
     public WorkspaceRevisions Revisions => _revisions;
 
     /// <summary>
-    /// A SEAM FOR THE PROPERTY TEST, AND FOR NOTHING ELSE. Called at each of the three boundaries
-    /// with its name; the test throws from it to simulate the app dying exactly there. Null in the
-    /// product, where the three boundaries are just three consecutive statements.
+    /// A SEAM FOR THE PROPERTY TESTS, AND FOR NOTHING ELSE. Called at each boundary with its name;
+    /// a test throws from it to simulate the app dying exactly there. Null in the product, where the
+    /// boundaries are just consecutive statements.
+    ///
+    /// The names are <c>file</c> and <c>transaction</c> inside a publication, and
+    /// <see cref="BeforeCommit"/> and <see cref="AfterCommit"/> either side of the turn's own
+    /// commit.
     /// </summary>
     internal Action<string>? Boundary { get; set; }
+
+    /// <summary>The instant before the turn's transaction opens. Nothing of the turn is committed.</summary>
+    internal const string BeforeCommit = "before-commit";
+
+    /// <summary>The instant after it commits, and before anything is copied onto disk.</summary>
+    internal const string AfterCommit = "after-commit";
+
+    /// <summary>
+    /// THE TURN'S ONE COMMITTED TRANSITION — <c>docs/COUNCIL.md</c> rule 6, "one committed
+    /// transition"; the <c>U-turn-commit</c> line's property.
+    ///
+    /// <para>Four things happen to the database at the end of a turn: the launch record is CLOSED
+    /// (<paramref name="endAttempt"/>), what the turn staged in <c>out/</c> is PUBLISHED, its two
+    /// memory files are SNAPSHOTTED, and the wakes it consumed get their DISPOSITIONS
+    /// (<paramref name="dispositions"/>). They used to be three separate commits in a row, with two
+    /// windows a crash could land in: an attempt recorded as ENDED whose work is nowhere, or work
+    /// published against an attempt that never ended and whose wakes are still owed an answer. Here
+    /// they are one <see cref="Database.Write"/>, so the turn either happened or did not.</para>
+    ///
+    /// <para><b>What a crash before the commit leaves is a LAUNCHED row</b>, which the next meter to
+    /// open the database turns LOST with its reservation as its cost — and the reconcile pass then
+    /// publishes that attempt's staged files under it, because a file's provenance is the launch its
+    /// NAME carries. Nothing is lost and nothing is doubled: the publication's id is the hash of its
+    /// content, so re-publishing is a row the primary key already holds.</para>
+    ///
+    /// <para><b>The disk work is outside the transaction and after it</b>, for the reason the relay
+    /// has always had: a rollback cannot un-write a file. The copy into the recipient's <c>in/</c>
+    /// and the restore of a refused plan are both idempotent and both re-made on the next pass.</para>
+    /// </summary>
+    public void CommitTurn(string role, string? attempt, Action endAttempt, Action dispositions)
+    {
+        Boundary?.Invoke(BeforeCommit);
+
+        var restores = _db.Write(_ =>
+        {
+            endAttempt();
+            Publish(role, attempt);
+            var refused = _revisions.Snapshot(role, attempt);
+            dispositions();
+            return refused;
+        });
+
+        Boundary?.Invoke(AfterCommit);
+
+        Deliver();
+        WorkspaceRevisions.Apply(restores);
+    }
 
     /// <summary>What a rejected file was, so the app can say so once. Never throws out of the relay.</summary>
     public Action<string>? Rejected { get; set; }
@@ -125,13 +178,21 @@ public sealed class CouncilRelay
     /// </summary>
     public void Run(string? role = null, string? attempt = null)
     {
-        foreach (var r in role is { Length: > 0 } one ? [one] : CouncilRoles.All)
-            Publish(r, r == role ? attempt : null);
+        var restores = new List<WorkspaceRevisions.Restore>();
 
-        // THE ROLE'S OWN MEMORY, AND ONLY THE ROLE THAT JUST TURNED. A pass on start names no role
-        // and snapshots nothing: nobody wrote anything, and versioning an untouched file on every
-        // launch of the app would fill the table with revisions of the same bytes.
-        var restores = role is { Length: > 0 } turned ? _revisions.Snapshot(turned, attempt) : [];
+        foreach (var r in role is { Length: > 0 } one ? [one] : CouncilRoles.All)
+        {
+            var launch = r == role ? attempt : null;
+            Publish(r, launch);
+
+            // THE ROLE'S OWN MEMORY, RECONCILED WITH THE REST. A pass on start names no launch, and
+            // the revision it records says so: the app cannot know which turn wrote a file it found
+            // after a crash. What it must not do is leave that file undecided — the next turn reads
+            // its plan first, and a plan the app has neither recorded nor refused is one nobody can
+            // afterwards say the role held. An unchanged file raises no new revision, because the
+            // publication's id is the hash of what is in it.
+            restores.AddRange(_revisions.Snapshot(r, launch));
+        }
 
         Deliver();
         WorkspaceRevisions.Apply(restores);

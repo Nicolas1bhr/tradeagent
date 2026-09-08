@@ -41,15 +41,45 @@ public sealed class Database : IDisposable
         c.ExecuteNonQuery();
     }
 
-    /// <summary>All writes funnel through here, transactionally, so a process never self-collides.</summary>
+    /// <summary>
+    /// How many <see cref="Write{T}"/> calls are on this thread's stack. Only ever touched with
+    /// <see cref="_gate"/> held, and the gate is held for the whole of the outermost call, so no
+    /// other thread can ever see it above zero.
+    /// </summary>
+    int _depth;
+
+    /// <summary>
+    /// All writes funnel through here, transactionally, so a process never self-collides.
+    ///
+    /// <para><b>A NESTED CALL JOINS THE TRANSACTION ALREADY OPEN; it does not start a second one.</b>
+    /// That is what lets a whole turn's transition — the launch record closed, the artifacts
+    /// published, the wakes dispositioned — be ONE commit while each of those stays a store method
+    /// that is correct called on its own. Without it the outer call would have to be written in raw
+    /// SQL that duplicates three stores, or the turn would land in three commits with two windows in
+    /// between: <c>docs/COUNCIL.md</c> rule 6 asks for one committed transition, and a crash in
+    /// either window is an attempt that ended with its work unrecorded, or work recorded against an
+    /// attempt that never ended.</para>
+    ///
+    /// <para>An exception out of a nested body still unwinds through the outer one, so the whole
+    /// transaction rolls back — which is the point: a partly-applied turn is exactly what this
+    /// prevents. A nested body that swallows its own failure has decided that fact is not worth the
+    /// commit, and that decision belongs at the call site, not here.</para>
+    /// </summary>
     public T Write<T>(Func<SqliteConnection, T> body)
     {
         lock (_gate)
         {
+            if (_depth > 0) return body(_conn);
+
             using var tx = _conn.BeginTransaction();
-            var r = body(_conn);
-            tx.Commit();
-            return r;
+            _depth++;
+            try
+            {
+                var r = body(_conn);
+                tx.Commit();
+                return r;
+            }
+            finally { _depth--; }
         }
     }
 

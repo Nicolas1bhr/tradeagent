@@ -137,6 +137,7 @@ public class TurnContextTests
         {
             Usage = LsUsage
         });
+        meter.CommitStaged();          // a turn the loop opened ends in the turn's own transition
 
         var row = new AiAttemptStore(db).Get(id)!;
         var context = Json.Read<TurnContext>(row.Context!)!;
