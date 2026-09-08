@@ -32,10 +32,49 @@ namespace TradeAgent.Tests.Fault;
 // one that runs the deadline out does it with 2 × 1200 ms of declared latency inside a 2000 ms
 // budget: a slow runner only makes the deadline pass sooner, and no runner can make two 1.2 s waits
 // fit in 2 s. There is no wall clock in an assertion below.
+//
+// THAT LAST SENTENCE WAS NOT TRUE OF THE FIXTURE, and U-press-settle-win is what it cost. A press
+// that judges what the product DID still has to reach the step that does it, and everything between
+// the deadline opening and the leg going out is durable SQLite at `synchronous=FULL`. On
+// windows-latest at the U-archive-win merge (run 34187380076) the budget was gone before the leg's
+// turn, the leg was refused — correctly — and the book ended `ES 2`. `PressBudget` is what takes
+// the runner's disk back out of the verdict; the numbers are argued there.
 // =================================================================================================
 
 static class Unresolved
 {
+    /// <summary>
+    /// THE OPERATION BUDGET FOR EVERY FIXTURE HERE WHOSE VERDICT IS THE BOOK RATHER THAN THE
+    /// TWO-SECOND PROMISE — which is three of the four presses below, and until U-press-settle-win
+    /// none of them said so.
+    ///
+    /// They took the simulator's default two seconds by accident, and that is a wall clock kept by
+    /// the RUNNER inside the verdict of tests about what a press cancelled and what it then closed.
+    /// A close-all press makes at least four durable commits between the instant its deadline opens
+    /// and the instant its leg reaches the wire — the composite row, the two transitions
+    /// `SettleTheUnresolved` writes, and the leg's own write-ahead insert — and a press whose
+    /// deadline goes inside any of them sends nothing for that instrument and leaves a flagged
+    /// record, which is the contract and is the answer that failed
+    /// <see cref="PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close_before_it_closes_and_the_book_ends_flat"/>.
+    ///
+    /// MEASURED, on a throwaway harness over 24 presses of that test's own fixture, 8 per runner
+    /// (U-press-settle-win, CI run 34188680175): the press reached its leg and sent it every time on
+    /// every runner, so nothing here races. What varied was the budget left of the 2000 ms at the
+    /// leg — ubuntu 1993-1997 ms, macos 1916-1998, windows 1687-1765 — and all of the spend was
+    /// record-keeping: on windows the two settle transitions cost 78-141 ms and the leg's
+    /// write-ahead 79-172, against 20 bare one-row commits on the same disk measuring med 16-47 and
+    /// max 47-110 ms. `gcPause` was 0 and a 20 ms tick arrived at 32-47 ms, so the process was
+    /// running: it is the disk. The outlier that closes a 2 s budget in one commit is not in that
+    /// run; it is in U-press-win-3's, on the same runner image — ten bare one-row commits measured
+    /// 16-2234 ms.
+    ///
+    /// Twenty seconds takes that clock out of the verdict entirely: no fixture here waits on
+    /// anything but the press itself, and thirteen of the worst commit ever measured on this runner
+    /// image still fit inside it. Nothing is loosened — an assertion that used to hold still holds,
+    /// byte for byte, and the fixture that IS about the budget keeps the simulator's two seconds.
+    /// </summary>
+    public static readonly TimeSpan PressBudget = TimeSpan.FromSeconds(20);
+
     /// <summary>
     /// A long position, and an agent's close of it that the broker ACCEPTED and never acknowledged:
     /// the order is RESTING at the platform and the record is UNKNOWN.
@@ -50,10 +89,14 @@ static class Unresolved
     /// trading, so a position opened after it would be refused by the gate rather than by anything
     /// this file is about.
     /// </param>
+    /// <param name="budget">
+    /// The emergency budget the press that follows will run under. Null is the simulator's own two
+    /// seconds; <see cref="PressBudget"/> is what a fixture whose verdict is the book takes, and why.
+    /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db, ExecutionRequest Lost)> WithALostClose(
-        string symbol = "ES", decimal qty = 2m, string? alsoOpen = null)
+        string symbol = "ES", decimal qty = 2m, string? alsoOpen = null, TimeSpan? budget = null)
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: budget);
         c.SortPositionsBySymbol = true;
         await gw.PlaceAsync(new AgentContext("ai"), $"uc-open-{symbol}", TestEnv.Buy(symbol, qty));
         if (alsoOpen is not null)
@@ -96,11 +139,15 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
     /// The book is filled afterwards the way a real one would fill a resting market order — which is
     /// the step that produces the reversal when the guard is not there, and is a no-op once the
     /// order has been cancelled.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: the verdict is the flat book, so the press must reach
+    /// its leg, and on the default two seconds that took a Windows runner's disk fitting four
+    /// durable commits inside them.
     /// </summary>
     [Fact]
     public async Task A_press_cancels_the_unknown_close_before_it_closes_and_the_book_ends_flat()
     {
-        var (gw, c, db, lost) = await Unresolved.WithALostClose();
+        var (gw, c, db, lost) = await Unresolved.WithALostClose(budget: Unresolved.PressBudget);
         using var dbh = db;
 
         Out.WriteLine($"before the press        : {await Unresolved.Pos(c)} — {Unresolved.Book(c)}");
@@ -136,11 +183,14 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
     /// serve the history the unresolved order would be read out of, so the press cannot settle it and
     /// cannot know whether it is live — and a close sent on top of it could reverse the position. ES
     /// is refused, ES's row is still written so the card names it, and NQ is still closed.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: NQ's close is the half of the verdict that has to reach
+    /// the wire, and it is the SECOND leg — behind ES's refusal and its flagged row.
     /// </summary>
     [Fact]
     public async Task A_leg_whose_unknown_close_cannot_be_read_is_refused_and_the_other_instrument_is_closed()
     {
-        var (gw, c, db, lost) = await Unresolved.WithALostClose(alsoOpen: "NQ");
+        var (gw, c, db, lost) = await Unresolved.WithALostClose(alsoOpen: "NQ", budget: Unresolved.PressBudget);
         using var dbh = db;
 
         c.Inner.Faults.HideOrderHistory = true;      // the read the settle needs cannot be served
@@ -171,6 +221,10 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
     /// (b, second reading) THE READ THAT RUNS THE PRESS'S OWN DEADLINE OUT. Same refusal, reached the
     /// other way: the platform is stalled, so the settle's read is stopped by the deadline the press
     /// opened rather than answered. Nothing is sent, and the leg is refused rather than left to guess.
+    ///
+    /// THE ONE FIXTURE HERE THAT KEEPS THE SIMULATOR'S TWO SECONDS, because the budget is what it is
+    /// about: 2 × 1200 ms of declared latency cannot fit in 2000 ms on any runner, and a slower one
+    /// only makes the deadline pass sooner. <see cref="Unresolved.PressBudget"/> would delete it.
     /// </summary>
     [Fact]
     public async Task A_settle_that_runs_out_of_the_presss_deadline_refuses_the_leg_and_sends_nothing()
@@ -200,11 +254,14 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
     /// instrument that would move the position the OTHER way — an unconfirmed BUY under a long — is
     /// not something a sell can double, and the press closes exactly as it always did. It is the
     /// shape `Confirming_one_outcome_does_not_lift_another_requests_pause` presses over.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: "closes exactly as it always did" is a close on the
+    /// wire, so this fixture needs the press to reach its leg for the same reason the first one does.
     /// </summary>
     [Fact]
     public async Task An_unknown_order_on_the_other_side_does_not_hold_the_press_up()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(new AgentContext("ai"), "os-open", TestEnv.Buy("ES", 2m));
 
@@ -228,6 +285,17 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
 
 // =================================================================================================
 // Item 2 — the agent's own close, and its reduce, are refused while an UNKNOWN one is unsettled
+//
+// NOT AT RISK FROM THE RUNNER'S DISK, and swept under U-press-settle-win's marks to say so rather
+// than assumed. No test in this class presses anything: they call `CloseAsync` and `PlaceAsync`
+// directly, which open no `RiskReducingScope`, so `RiskReducingScope.DeadlineAt` is null throughout
+// and `FakeConnector.HonourTheOperationDeadline` returns before it waits on anything. There is no
+// operation deadline for a slow commit to run into, and none of these fixtures declares a latency.
+// The three whose verdict is a refusal never reach the wire at all; the two closes that do reach it
+// (`An_opening_order_and_another_instrument_are_untouched`,
+// `An_outcome_for_the_unknown_record_lifts_the_refusal`) are ordinary agent orders under no clock.
+// So they keep the simulator's default budget: giving them `PressBudget` would change nothing and
+// would say, falsely, that something here depends on it.
 // =================================================================================================
 
 public class AgentCloseOverAnUnknownCloseTests(ITestOutputHelper Out)

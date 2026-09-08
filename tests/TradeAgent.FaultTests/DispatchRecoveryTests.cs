@@ -217,13 +217,24 @@ sealed class RecoveryConnector(FakeConnector inner) : ITradingConnector
 
 static class Recovery
 {
-    /// <summary>A gateway over the scriptable connector, healthy and allowed to trade.</summary>
+    /// <summary>
+    /// A gateway over the scriptable connector, healthy and allowed to trade.
+    /// </summary>
+    /// <param name="emergencyBudget">
+    /// How long the whole of a risk-reducing operation gets, for a fixture whose verdict is what an
+    /// emergency press DID rather than how long it took: everything a press does inside its budget
+    /// is durable SQLite at <c>synchronous=FULL</c>, and on a hosted runner that is a wall clock
+    /// kept by the disk. Null leaves the simulator's own two seconds, which is what a fixture about
+    /// the budget itself needs. See <c>UnknownCloseTests</c>' <c>PressBudget</c>.
+    /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
         FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
-        Database? db = null)
+        Database? db = null, TimeSpan? emergencyBudget = null)
     {
         db ??= TestEnv.NewDb();
-        var c = new RecoveryConnector(new FakeConnector(new FakeBroker(), faults));
+        var c = new RecoveryConnector(emergencyBudget is { } budget
+            ? new FakeConnector(new FakeBroker(), faults) { EmergencyBudget = budget }
+            : new FakeConnector(new FakeBroker(), faults));
         var gw = new TradingGateway(db, c, new HealthRegistry(), options);
         gw.Update(s =>
         {
