@@ -667,12 +667,15 @@ public sealed class TurnMeter
     {
         try
         {
-            var allowance = _allowance();
-            var probe = new TurnUsage(allowance.InputTokens, 0, 0, allowance.OutputTokens, 0, null);
+            // CostCatalog.Reserve, not Price: a bound is not a bill, and the difference is the input
+            // rate. Priced as a turn that used its whole allowance as ordinary input, a vendor whose
+            // CACHE WRITES cost more than plain input bills above the reservation, and the ceiling is
+            // walked past by exactly that difference. See CostCatalog.Reserve for the formula.
+            //
             // The ROLE'S model, because that is the one its next turn will actually be run on. A
             // reservation priced at another role's model is a commitment against a rate nobody is
             // going to be charged, in whichever direction that rate happens to differ.
-            return CostCatalog.Price(probe, _runtimeId(), owner: Owner(),
+            return CostCatalog.Reserve(_allowance(), _runtimeId(), owner: Owner(),
                 requestedModel: ModelOf(role));
         }
         catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }

@@ -1092,6 +1092,42 @@ folders plus `in/` and `out/`, all under one `agent` origin so `MarkMissing` nev
 What a role was handed and what it published are measured facts in `material`, which the agent cannot
 edit, beside the relay's own record of the same artifacts.
 
+## The AI's spending — `src/TradeAgent.Core/Db/AiAttemptStore.cs`
+
+One `ai_attempt` row per launch of the agent CLI, written by the app only — the rule `material`,
+`fill`, `mission_event` and `publication` keep — BEFORE the process starts. `LAUNCHED` with a
+reservation; `ENDED` when the app sees it end; `LOST` the next time a meter opens the database with
+it still open. Nothing releases a reservation.
+
+**The reservation formula** (`CostCatalog.Reserve`), stated here, on the Safety page and in the user
+guide: `allowance input tokens × the DEARER of the plain and cache-write rates + allowance output
+tokens × the output rate`, reasoning inside output. The dearer of the two because a bound that
+assumed the cheaper of two rates the same tokens can be billed at is not a bound — on this build's
+own list `gpt-5.6-sol` writes cache at 5.00 against 4.00 plain — and a maximum rather than a sum
+because those tokens are charged at one of the two, never both. The owner's own two numbers have no
+cache-write rate, so for them it is that one input rate. The allowance is
+`AiTurnAllowanceInputTokens` / `…OutputTokens`, two boxes on the Safety page, one press, zero reading
+as the shipped default (1,200,000 / 20,000).
+
+**Admission is inside the transaction that writes the reservation.** `AiAttemptStore.Begin(attempt,
+consuming, admit)` reads the day's totals and the role's, compares
+`AiSpendToday.AdmitsAnotherTurn` — `spent + reserved + this turn ≤ cap`, globally AND for the role's
+share — and INSERTS NOTHING when either has no room, returning the refusal (which ceiling, by how
+much, `ResumesAt`). The loop's own look before it is a cheap first filter and never the gate: it is
+taken sixty lines earlier, so two launches could both be told there was room and both take it. A
+refused launch consumes no `mission_event` and starts no process. **Every** launch passes it — the
+owner's typed chat turn through `AgentSession.Admit`, which shows the refusal as a System line and
+keeps their words, exactly as a message typed while the AI is working is kept.
+
+**A turn that ends without reporting what it used is charged its reservation** (`unpriced_reason` =
+`AiAttemptStore.UnreportedReason`), on the ordinary path as well as after a crash; a reservation of
+zero is not a charge and such a row stays unpriced. `AiSpendToday.UnreportedTurns` counts them, so
+`Spent` is never read as a bill: an unpriced turn means the real figure is HIGHER, one of these means
+that part of it is the most it could have been.
+
+`TurnMeter` holds one open attempt PER ROLE — one conversation per role, and the owner can type into
+the chair's while another role's turn is in flight — and `Close` writes the row it opened, by id.
+
 ## The owner's daily report — `src/TradeAgent.Gateway/DailyReports.cs`
 
 One file per LOCAL calendar day at `state/reports/<yyyy-MM-dd>.md`, LF, at most 120 lines, written by

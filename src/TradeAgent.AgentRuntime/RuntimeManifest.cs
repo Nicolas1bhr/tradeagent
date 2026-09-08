@@ -732,14 +732,52 @@ public static class CostCatalog
     /// something else and no event in the measured stream would say so.
     /// </param>
     public static TurnPrice Price(TurnUsage? usage, string? runtimeId, CostCatalogRead? catalogue = null,
-        OwnerPrice? owner = null, string? requestedModel = null)
+        OwnerPrice? owner = null, string? requestedModel = null) =>
+        Compute(usage is null ? null : new Bill(usage), usage?.Model, runtimeId, catalogue, owner,
+            requestedModel, "the AI tool did not report how many tokens the turn used");
+
+    /// <summary>
+    /// WHAT ONE TURN MAY COST AT MOST, on the same model resolution the bill above uses — the number
+    /// committed before the process starts.
+    ///
+    /// <para><b>The formula, stated once here and in <c>CONTRACTS.md</c> and the guide:</b> the
+    /// allowance's input tokens at the DEARER of the uncached and cache-write rates, plus its output
+    /// tokens at the output rate, reasoning inside output.</para>
+    ///
+    /// <para><b>Why the dearer of the two.</b> A reservation is an enforceable BOUND, and a bound
+    /// that assumed the cheaper of two rates the same tokens can be billed at is not one: a vendor
+    /// whose cache writes cost more than plain input would bill a turn above its own reservation,
+    /// and the ceiling would be walked past by the difference. The direction is the whole design —
+    /// over-reserving costs a turn the owner gets back at midnight, under-reserving is a cap that
+    /// does not hold. It is a maximum rather than a sum because the same input tokens are charged at
+    /// one of the two rates and not at both; adding them would reserve twice the input a turn can
+    /// have and make the shipped ceiling unable to fund a single turn.</para>
+    ///
+    /// <para>The owner's own two numbers have no cache-write rate — they gave one input rate, and
+    /// <see cref="Bill"/> charges cache writes at it too — so for them the maximum is that rate.</para>
+    /// </summary>
+    public static TurnPrice Reserve(TurnAllowance allowance, string? runtimeId,
+        CostCatalogRead? catalogue = null, OwnerPrice? owner = null, string? requestedModel = null) =>
+        Compute(new Bound(allowance), null, runtimeId, catalogue, owner, requestedModel, "");
+
+    /// <summary>
+    /// THE MODEL RESOLUTION BOTH QUESTIONS SHARE, with the arithmetic as the parameter.
+    ///
+    /// One method rather than two because "which model, and at whose rate" is the part that has to
+    /// agree: a reservation resolved against one model and a bill against another would commit
+    /// against a rate nobody is charged, in whichever direction the two happened to differ.
+    /// </summary>
+    /// <param name="charge">The arithmetic — a bill over reported tokens, or a bound over an allowance.</param>
+    /// <param name="namedModel">The model the RUNTIME'S OWN STREAM named, where it named one.</param>
+    static TurnPrice Compute(Charge? charge, string? namedModel, string? runtimeId,
+        CostCatalogRead? catalogue, OwnerPrice? owner, string? requestedModel, string whenNothingToCharge)
     {
         var read = catalogue ?? Read();
         if (read.Unreadable is { } why) return TurnPrice.Unknown(why);
 
         var costs = read.Costs ?? BuiltIn();
-        if (usage is null)
-            return TurnPrice.Unknown("the AI tool did not report how many tokens the turn used");
+        if (charge is null)
+            return TurnPrice.Unknown(whenNothingToCharge);
 
         // THE OWNER'S OWN RATE IS THE LAST WORD, and it is checked before the model is even looked
         // for. They are the only party who can see the bill; a list price is this build quoting a
@@ -751,10 +789,10 @@ public static class CostCatalog
         // An unreadable costs.json still refuses above, deliberately: that file failing is not the
         // owner saying anything, and a currency read out of it is part of what the figure means.
         if (owner is not null)
-            return new TurnPrice(Charge(usage, owner), costs.Currency, null, null, ByOwner: true)
+            return new TurnPrice(charge.Of(owner), costs.Currency, null, null, ByOwner: true)
                 { Basis = OwnerBasis };
 
-        var model = usage.Model ?? Declared(costs, runtimeId);
+        var model = namedModel ?? Declared(costs, runtimeId);
 
         // THE MODEL TRADEAGENT ASKED FOR, when nothing better is available. Codex 0.153.4 names no
         // model in any of its events even with `-m` on the command line — measured twice, on
@@ -779,7 +817,7 @@ public static class CostCatalog
         // it low, or nothing, lets the cap be walked past, which nothing undoes.
         if (model is null)
             return Highest(costs, runtimeId) is { } highest
-                ? new TurnPrice(Charge(usage, highest), costs.Currency, null, Labels.PricedAtHighestListPrice)
+                ? new TurnPrice(charge.Of(highest), costs.Currency, null, Labels.PricedAtHighestListPrice)
                     { Basis = BasisOf(highest) }
                 : TurnPrice.Unknown(
                     $"the AI tool did not say which model it used, and {Labels.CostsFile} does not name one for it");
@@ -793,13 +831,13 @@ public static class CostCatalog
             // unpriced. Over-charging can only stop the AI early; unpriced turns cannot reach the
             // ceiling at all, which is the one direction nothing undoes.
             if (askedFor is not null && Highest(costs, runtimeId) is { } fallback)
-                return new TurnPrice(Charge(usage, fallback), costs.Currency, null,
+                return new TurnPrice(charge.Of(fallback), costs.Currency, null,
                     Labels.PricedAtHighestListPrice) { Basis = BasisOf(fallback) };
 
             return TurnPrice.Unknown($"{Labels.CostsFile} has no price for {model}");
         }
 
-        return new TurnPrice(Charge(usage, price), costs.Currency, null,
+        return new TurnPrice(charge.Of(price), costs.Currency, null,
             askedFor is null ? null : Labels.PricedAtTheModelAskedFor(askedFor)) { Basis = BasisOf(price) };
     }
 
@@ -817,27 +855,54 @@ public static class CostCatalog
         : Labels.CostsFile;
 
     /// <summary>
-    /// The same arithmetic on the owner's two numbers, over the same token totals the list-price
-    /// overload bills. CACHED INPUT IS CHARGED AT THE FULL INPUT RATE here, because they gave a rate
-    /// for input and did not give a discount for cache reads, and inventing one would under-charge
-    /// every turn — the direction that lets the cap be walked past. An owner whose vendor discounts
-    /// cache reads has <c>costs.json</c>, which takes all four figures.
+    /// TOKENS INTO MONEY — the one part of pricing that differs between a bill and a bound, and the
+    /// reason <see cref="Compute"/> takes it as a parameter instead of existing twice.
     /// </summary>
-    static decimal Charge(TurnUsage usage, OwnerPrice owner) =>
-        (usage.InputTokens * owner.InputPerMillion +
-         usage.CacheWriteInputTokens * owner.InputPerMillion +
-         usage.OutputTokens * owner.OutputPerMillion) / 1_000_000m;
+    abstract class Charge
+    {
+        public abstract decimal Of(ModelPrice price);
+        public abstract decimal Of(OwnerPrice owner);
+    }
 
     /// <summary>
-    /// The arithmetic, on one price. Cached input is a SUBSET of the input count and reasoning
-    /// output a subset of the output count, so each is billed exactly once — see
-    /// <see cref="TurnUsage"/>, where both subsets were measured rather than assumed.
+    /// WHAT A TURN ACTUALLY COST, over the tokens the runtime reported. Cached input is a SUBSET of
+    /// the input count and reasoning output a subset of the output count, so each is billed exactly
+    /// once — see <see cref="TurnUsage"/>, where both subsets were measured rather than assumed.
+    ///
+    /// The owner's own two numbers charge CACHED INPUT AT THE FULL INPUT RATE, because they gave a
+    /// rate for input and did not give a discount for cache reads, and inventing one would
+    /// under-charge every turn — the direction that lets the cap be walked past. An owner whose
+    /// vendor discounts cache reads has <c>costs.json</c>, which takes all four figures.
     /// </summary>
-    static decimal Charge(TurnUsage usage, ModelPrice price) =>
-        (usage.UncachedInputTokens * price.InputPerMillion +
-         usage.CachedInputTokens * (price.CachedInputPerMillion ?? price.InputPerMillion) +
-         usage.CacheWriteInputTokens * (price.CacheWritePerMillion ?? price.InputPerMillion) +
-         usage.OutputTokens * price.OutputPerMillion) / 1_000_000m;
+    sealed class Bill(TurnUsage usage) : Charge
+    {
+        public override decimal Of(ModelPrice price) =>
+            (usage.UncachedInputTokens * price.InputPerMillion +
+             usage.CachedInputTokens * (price.CachedInputPerMillion ?? price.InputPerMillion) +
+             usage.CacheWriteInputTokens * (price.CacheWritePerMillion ?? price.InputPerMillion) +
+             usage.OutputTokens * price.OutputPerMillion) / 1_000_000m;
+
+        public override decimal Of(OwnerPrice owner) =>
+            (usage.InputTokens * owner.InputPerMillion +
+             usage.CacheWriteInputTokens * owner.InputPerMillion +
+             usage.OutputTokens * owner.OutputPerMillion) / 1_000_000m;
+    }
+
+    /// <summary>
+    /// WHAT A TURN MAY COST AT MOST. See <see cref="Reserve"/> for why the input rate is the DEARER
+    /// of the two the same tokens can be billed at, and why it is a maximum rather than a sum.
+    /// </summary>
+    sealed class Bound(TurnAllowance allowance) : Charge
+    {
+        public override decimal Of(ModelPrice price) =>
+            (allowance.InputTokens * Math.Max(price.InputPerMillion,
+                                              price.CacheWritePerMillion ?? price.InputPerMillion) +
+             allowance.OutputTokens * price.OutputPerMillion) / 1_000_000m;
+
+        public override decimal Of(OwnerPrice owner) =>
+            (allowance.InputTokens * owner.InputPerMillion +
+             allowance.OutputTokens * owner.OutputPerMillion) / 1_000_000m;
+    }
 
     static string? Declared(AgentCosts costs, string? runtimeId) =>
         runtimeId is { Length: > 0 } id && costs.RuntimeModels.TryGetValue(id, out var m) && m.Length > 0

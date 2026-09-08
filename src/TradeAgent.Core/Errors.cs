@@ -100,6 +100,32 @@ public static class Labels
     public const string HeldWhileTheAiIsWorking =
         "The AI is working. It will see this at the start of its next turn.";
 
+    /// <summary>
+    /// THE TWO BOXES THAT SET WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, beside the ceiling
+    /// they are measured against. They are an upper bound rather than a prediction, and the note on
+    /// the page says which way the arithmetic runs: a bigger allowance means fewer turns fit the day.
+    /// </summary>
+    public const string TurnAllowanceIn = "The most one turn may use, input tokens";
+
+    public const string TurnAllowanceOut = "The most one turn may use, output tokens (reasoning included)";
+
+    public const string SaveTurnAllowance = "Save what one turn may use";
+
+    /// <summary>
+    /// The formula, in the owner's words, on the page that sets it. Stated in one place because it
+    /// is stated in three: here, <c>CONTRACTS.md</c> and the user guide.
+    /// </summary>
+    public const string TurnAllowanceHint =
+        "TradeAgent sets this much aside before each turn: the input tokens at the dearer of the "
+        + "plain and cache-write rates, plus the output tokens at the output rate. A bigger "
+        + "allowance is a safer limit and fewer turns a day; a smaller one buys more turns and holds "
+        + "less back. 0 in either box means the shipped default.";
+
+    /// <summary>What the page says once the two boxes are written, naming what it works out to.</summary>
+    public static string TurnAllowanceReads(long input, long output, string reservation) =>
+        $"Saved. One turn now sets aside up to {reservation}: {input:N0} input tokens and "
+        + $"{output:N0} output tokens.";
+
     /// <summary>How often the AI is woken when nothing has happened, and the press that writes it.</summary>
     public const string ReviewEvery = "Wake the AI to look around every, minutes (0 = only when something happens)";
 

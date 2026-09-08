@@ -936,6 +936,8 @@ sealed class SafetyPage
     readonly TextBlock _dailyLossHint = Ui.Micro(Labels.LossBudgetHint());
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
+    readonly NumericUpDown _allowanceIn, _allowanceOut;
+    readonly TextBlock _allowanceNote = Ui.Micro("");
     readonly NumericUpDown _reviewEvery;
     readonly TextBlock _reviewNote = Ui.Micro("");
     readonly NumericUpDown _priceIn, _priceOut;
@@ -1235,6 +1237,13 @@ sealed class SafetyPage
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
 
         _dailyCap = Ui.NumberField(_host.Gateway.Settings.AiDailyCostCap, 0m, 0.5m);
+        // THE OTHER HALF OF THE CEILING'S ARITHMETIC. The limit above is only a limit because a
+        // number is set aside before each turn, and this is that number in tokens. The boxes open on
+        // what is in force, so an owner correcting it can see what they are correcting.
+        var allowance = TurnAllowance.From(_host.Gateway.Settings.AiTurnAllowanceInputTokens,
+            _host.Gateway.Settings.AiTurnAllowanceOutputTokens);
+        _allowanceIn = Ui.NumberField(allowance.InputTokens, 0m, 100_000m);
+        _allowanceOut = Ui.NumberField(allowance.OutputTokens, 0m, 5_000m);
         _reviewEvery = Ui.NumberField(_host.Gateway.Settings.MissionReviewMinutes, 0m, 5m);
 
         // THE BOXES OPEN ON WHAT THE AI IS ACTUALLY BEING CHARGED, not on empty. An owner correcting
@@ -1269,6 +1278,20 @@ sealed class SafetyPage
             BuildSaveDailyCap(() => _host.Gateway.Settings.AiDailyCostCap, () => PendingCap(),
                 () => _host.SpendToday.Currency, SaveDailyCap),
             _capNote,
+            Ui.Divider(),
+            // BESIDE THE CEILING, because the two are one arithmetic: what is set aside before each
+            // turn is what decides how many turns fit inside the limit above. It takes no permission
+            // and gives none — the ceiling is unchanged either way — so it saves in one press, and
+            // the hint says which direction each box moves.
+            Ui.Muted("Before every turn TradeAgent sets aside the most that turn could cost, and the "
+                + "turn runs only if it still fits under the limit above. This is how much a turn is "
+                + "allowed to use."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.TurnAllowanceIn, _allowanceIn),
+            Ui.FieldRow(Labels.TurnAllowanceOut, _allowanceOut, Labels.TurnAllowanceHint),
+            Ui.Spacer(Theme.S2),
+            BuildSaveTurnAllowance(SaveTurnAllowance),
+            _allowanceNote,
             Ui.Divider(),
             // BESIDE THE CEILING, because this is the other half of what the AI costs: the limit
             // above is what it may spend, and this is how often it spends anything at all when
@@ -1497,6 +1520,20 @@ sealed class SafetyPage
     /// about what asks twice is the whole of what a control like this IS, and a rule that can only
     /// be exercised by running the app is a rule nobody is checking.
     /// </summary>
+    /// <summary>
+    /// THE PRESS THAT WRITES WHAT ONE TURN IS ALLOWED TO USE. One press in both directions: it takes
+    /// no permission and gives none, the ceiling above is unchanged either way, and neither number
+    /// reaches a broker. What it changes is how many turns fit under a limit the owner already set.
+    ///
+    /// A factory, like the four beside it, so a test presses the control the owner sees.
+    /// </summary>
+    internal static Button BuildSaveTurnAllowance(Action save)
+    {
+        var b = Ui.Button(Labels.SaveTurnAllowance, save, emphasised: true);
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
     internal static Button BuildSaveResearchShare(Action save)
     {
         var b = Ui.Button(Labels.SaveResearchShare, save, emphasised: true);
@@ -1604,6 +1641,39 @@ sealed class SafetyPage
         var money = MissionSituation.Money(cap, _host.SpendToday.Currency);
         _host.Gateway.Log.Activity($"The AI may now spend up to {money} a day");
         _capNote.Text = $"Saved. The AI may spend up to {money} a day.";
+    }
+
+    /// <summary>
+    /// What the two boxes say, as the allowance they would be saved as. Zero or less in either box
+    /// reads as the shipped default rather than as an allowance of nothing, which is the same rule
+    /// <see cref="TurnAllowance.From"/> keeps — a settings row of zeroes must not stop the AI.
+    /// </summary>
+    internal static TurnAllowance PendingAllowance(decimal? input, decimal? output,
+        TurnAllowance current) =>
+        TurnAllowance.From((long)(input ?? current.InputTokens), (long)(output ?? current.OutputTokens));
+
+    TurnAllowance PendingTurnAllowance() => PendingAllowance(_allowanceIn.Value, _allowanceOut.Value,
+        TurnAllowance.From(_host.Gateway.Settings.AiTurnAllowanceInputTokens,
+            _host.Gateway.Settings.AiTurnAllowanceOutputTokens));
+
+    /// <summary>
+    /// Writes what one turn may use, and says what that works out to in money at the model in force —
+    /// which is the number the owner actually has to weigh against the ceiling above.
+    /// </summary>
+    void SaveTurnAllowance()
+    {
+        var allowance = PendingTurnAllowance();
+        _host.Gateway.Update(s =>
+        {
+            s.AiTurnAllowanceInputTokens = allowance.InputTokens;
+            s.AiTurnAllowanceOutputTokens = allowance.OutputTokens;
+        });
+
+        var spend = _host.SpendToday;
+        var reservation = MissionSituation.Money(spend.NextTurnReservation, spend.Currency);
+        _host.Gateway.Log.Activity($"One AI turn now sets aside up to {reservation}");
+        _allowanceNote.Text = Labels.TurnAllowanceReads(
+            allowance.InputTokens, allowance.OutputTokens, reservation);
     }
 
     int PendingReviewEvery() =>

@@ -1,4 +1,7 @@
+using Avalonia.Controls;
+using Avalonia.Interactivity;
 using TradeAgent.AgentRuntime;
+using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using Xunit;
@@ -313,6 +316,72 @@ public class BudgetReservationTests : IDisposable
         Assert.Empty(host.Conv.Sent);
         Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
         Assert.True(wait > TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// THE RESERVATION CHARGES INPUT AT THE DEARER OF THE TWO RATES THE SAME TOKENS CAN BE BILLED AT.
+    ///
+    /// <c>gpt-5.6-sol</c>, on this build's own shipped list, costs 4.00 per million input and 5.00
+    /// per million for CACHE WRITES. Reserved at the plain input rate, a turn that wrote its whole
+    /// input to cache would be billed above its own reservation, and the ceiling would be walked
+    /// past by exactly that difference — which is a bound that is not one.
+    /// </summary>
+    [Fact]
+    public void The_reservation_charges_input_at_the_dearer_of_the_plain_and_cache_write_rates()
+    {
+        var reserved = CostCatalog.Reserve(TurnAllowance.Default, "codex", requestedModel: "gpt-5.6-sol");
+
+        Assert.Equal((1_200_000m * 5.00m + 20_000m * 20.00m) / 1_000_000m, reserved.Cost);
+        Assert.Null(reserved.Unpriced);
+
+        // AND IT REALLY IS THE WORST CASE: a turn whose whole input was a cache write costs exactly
+        // the reservation, so nothing this catalogue can bill exceeds what was set aside.
+        var worst = CostCatalog.Price(new TurnUsage(0, 0, 1_200_000, 20_000, 0, null), "codex",
+            requestedModel: "gpt-5.6-sol");
+        Assert.Equal(reserved.Cost, worst.Cost);
+
+        // A bound, not a bill: the ordinary turn is cheaper than what was committed for it.
+        var ordinary = CostCatalog.Price(new TurnUsage(1_200_000, 0, 0, 20_000, 0, null), "codex",
+            requestedModel: "gpt-5.6-sol");
+        Assert.True(ordinary.Cost < reserved.Cost);
+    }
+
+    /// <summary>And that is the number the ledger commits, not one the price list was asked for separately.</summary>
+    [Fact]
+    public void The_row_commits_what_the_formula_says_a_turn_may_cost()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = new TurnMeter(_db, () => 50m, runtimeId: () => "codex", now: () => now,
+            recordPath: _records, model: () => "gpt-5.6-sol", share: _ => 1m);
+
+        const decimal bound = (1_200_000m * 5.00m + 20_000m * 20.00m) / 1_000_000m;   // 6.40
+        Assert.Equal(bound, meter.Today.NextTurnReservation);
+
+        var id = meter.Begin("## Situation", role: CouncilRoles.Operations).Id!;
+        Assert.Equal(bound, new AiAttemptStore(_db).Get(id)!.ReservedCost);
+    }
+
+    /// <summary>
+    /// The two boxes that set the allowance save in ONE press — they take no permission and give
+    /// none — and a zero in either reads as the shipped default rather than as an allowance of
+    /// nothing, which would be a reservation of nothing and a ceiling holding nothing back.
+    /// </summary>
+    [Fact]
+    public void The_turn_allowance_saves_in_one_press_and_a_zero_box_reads_as_the_default()
+    {
+        var saved = 0;
+        var b = SafetyPage.BuildSaveTurnAllowance(() => saved++);
+        b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal(1, saved);
+        Assert.Equal(Labels.SaveTurnAllowance, b.Content);
+
+        Assert.Equal(TurnAllowance.Default,
+            SafetyPage.PendingAllowance(0m, 0m, TurnAllowance.Default));
+        Assert.Equal(new TurnAllowance(400_000, 8_000),
+            SafetyPage.PendingAllowance(400_000m, 8_000m, TurnAllowance.Default));
+        // An empty box is "leave it as it is", not "nothing".
+        Assert.Equal(new TurnAllowance(400_000, TurnAllowance.Default.OutputTokens),
+            SafetyPage.PendingAllowance(400_000m, null, TurnAllowance.Default));
     }
 
     /// <summary>

@@ -367,9 +367,29 @@ work was asked for and your supplier billed for it, so closing TradeAgent mid-tu
 money back, and neither does midnight. And **the last part of your limit is held in reserve**, so the
 AI stops a little before the number rather than a little after it.
 
+**How much is set aside, and the two boxes that change it.** Before each turn TradeAgent reserves
+*the most tokens a turn may use, priced at the dearest rate the same tokens can be billed at*: the
+input allowance at whichever is higher of the plain and cache-write rates, plus the output allowance
+at the output rate, with reasoning counted inside output. Assuming the cheaper of the two would let a
+turn be billed above its own reservation, and the limit would be passed by the difference. The two
+allowances are on the **Safety** page under *What the AI costs*, right below the limit. They save in
+one press — they take no permission and give none — and the direction is the trade: a bigger
+allowance is a safer limit and fewer turns a day, a smaller one buys more turns and holds less back.
+A zero in either box means the shipped default.
+
+**Your own typed questions are counted too.** A message you send on the Chat page is a run of the AI
+tool like any other, so it is reserved before it is sent and charged when it comes back. If the
+day's limit has no room for it, nothing is sent, your message is kept, and the chat says so in one
+line — rather than going quiet as though the AI had broken.
+
+**A turn that ends without saying what it used is charged what was set aside for it.** The work was
+asked for and your supplier billed for it, so the reservation stands as the cost. The card and the
+daily report both say how many turns that was, because for those turns the figure is the *most* they
+could have cost rather than what they did.
+
 **If one turn could cost more than your whole daily limit, the AI cannot start at all**, and the card
 says exactly that instead of "waiting until 00:00" — because midnight will not repair it. Raise the
-limit, or choose a cheaper model.
+limit, choose a cheaper model, or lower the turn allowance.
 
 **Which model it runs on is TradeAgent's choice, and it is on the Safety page.** Under *What the AI
 costs*, above the two price boxes, there is a row of models with what each one costs per million
