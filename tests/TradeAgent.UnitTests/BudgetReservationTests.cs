@@ -307,15 +307,25 @@ public class BudgetReservationTests : IDisposable
     public async Task A_turn_the_reservation_refused_is_never_sent_to_the_AI_tool()
     {
         var now = DateTimeOffset.Now;
-        var meter = Meter(2m, () => now);
+        var cap = 2m;
+        var meter = new TurnMeter(_db, () => cap, runtimeId: () => "codex", now: () => now,
+            recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol", share: _ => 1m);
         Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
 
         var host = new StaleHost(meter);
-        var wait = await new MissionLoop(host).TurnAsync();
+        host.Conv.Typed.Add("what are you doing?");
+        var loop = new MissionLoop(host);
 
+        var wait = await loop.TurnAsync();
         Assert.Empty(host.Conv.Sent);
         Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
         Assert.True(wait > TimeSpan.Zero);
+
+        // AND THEIR QUESTION IS NOT LOST WITH THE TURN. It was taken off the conversation's list to
+        // build a Situation nobody ever sent, so the next turn is the one that carries it.
+        cap = 50m;                          // the owner raises the limit on the Safety page
+        await loop.TurnAsync();
+        Assert.Contains("what are you doing?", Assert.Single(host.Conv.Sent));
     }
 
     /// <summary>
@@ -434,8 +444,17 @@ public class BudgetReservationTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public IReadOnlyList<string> TakeTyped() => [];
-        public void Queue(string message) { }
+        /// <summary>What the owner typed while the AI was working, as the real session keeps it.</summary>
+        public List<string> Typed { get; } = [];
+
+        public IReadOnlyList<string> TakeTyped()
+        {
+            var taken = Typed.ToArray();
+            Typed.Clear();
+            return taken;
+        }
+
+        public void Queue(string message) => Typed.Add(message);
         public Task CancelAsync() => Task.CompletedTask;
         public Task StopAsync() => Task.CompletedTask;
     }

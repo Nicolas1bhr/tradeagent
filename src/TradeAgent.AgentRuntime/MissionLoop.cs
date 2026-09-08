@@ -745,6 +745,15 @@ public sealed class MissionLoop
     /// <summary>Whether the owner has already been told about THIS spell of being over the cap.</summary>
     bool _reportedCap;
 
+    /// <summary>
+    /// WORDS THE OWNER TYPED INTO A TURN THAT WAS THEN REFUSED. They were taken off the
+    /// conversation's own list to build the Situation, and the turn never ran, so without this they
+    /// would be gone: the ledger's refusal would have cost the owner their question. The wake rows
+    /// are safe by construction — a refused launch consumes none — and this is the in-memory half of
+    /// the same promise.
+    /// </summary>
+    readonly List<string> _typedForARefusedTurn = [];
+
     public MissionLoop(IMissionHost host, MissionOptions? options = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
@@ -997,6 +1006,13 @@ public sealed class MissionLoop
         // queue behind it `AgentSession.Queue` writes the row instead of the list, so exactly one of
         // the two holds any given message; without one the list is still where they are, and this
         // reads the same as it always did.
+        List<string> typed;
+        lock (_gate)
+        {
+            typed = [.. _typedForARefusedTurn, .. conversation.TakeTyped()];
+            _typedForARefusedTurn.Clear();
+        }
+
         // THE LAUNCH ID, MINTED BEFORE THE MESSAGE IT GOES INTO. The turn has to be told the id it
         // must name its output after, and BeginTurn hashes the prompt — so an id handed back by
         // that call could never be in the prompt it is hashed with. Minting is not recording:
@@ -1007,7 +1023,7 @@ public sealed class MissionLoop
         {
             Role = role,
             Attempt = attemptId,
-            OwnerMessages = [.. OwnerWords(wake), .. conversation.TakeTyped()],
+            OwnerMessages = [.. OwnerWords(wake), .. typed],
             Deliveries = Delivered(wake),
             Wakes = Reasons(wake)
         };
@@ -1040,7 +1056,13 @@ public sealed class MissionLoop
         // not wasted either — `TurnMeter.Mint` hands the same one to the next `Begin`.
         if (!admission.Admitted)
         {
-            lock (_gate) { _working = false; _role = null; }
+            lock (_gate) { _working = false; _role = null; _typedForARefusedTurn.AddRange(typed); }
+
+            // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it —
+            // the same line the pre-check writes, because the outcome is the same one.
+            if (events is not null && admission.Refusal is { Length: > 0 } why)
+                BlockOwnerMessages(events, why);
+
             Changed?.Invoke();
             return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
         }
