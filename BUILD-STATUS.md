@@ -4927,7 +4927,7 @@ warnings, 0 errors (17 projects); Unit 585 + Fault 277 + Integration 627 = 1489 
 classes 3× → 31/31 and 6/6 each run, no `Timing` red; names vs `main` → 32 added, 0 removed; the previous builder's three
 gate files read, not trusted, deleted. Manager's gate at `3003b89`, Release: build → 0 warnings, 0 errors; suite → 585 +
 277 + 627 = 1489 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 32 added (sets 1244 →
-1276; `[Fact]`/`[Theory]` 1197 → 1229); scan clean; no trailers; `rev-list --count` → 0; CI at `3003b89`: run 34186596626 in flight when this section was written, its verdict recorded in a follow-up commit (the archive red on windows-latest expected until `U-archive-win` lands next).
+1276; `[Fact]`/`[Theory]` 1197 → 1229); scan clean; no trailers; `rev-list --count` → 0; CI run 34186596626 at `3003b89`: failure | test (macos-latest):success, test (ubuntu-latest):success, test (windows-latest):failure, package:skipped — the windows-latest failure judged in the follow-up commit that names it.
 
 **NOT VERIFIED:** the page on a screen and its update-in-place (a signature gate at `ReportView.cs:117,131`, read, not run —
 nothing in the suite runs Avalonia); a DST-length day, a midnight write and a `note` publication end to end — no build
