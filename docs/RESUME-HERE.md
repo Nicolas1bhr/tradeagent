@@ -68,7 +68,10 @@ and the same-user containment hole becomes load-bearing the day the app holds th
    windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
    request hung to the downloader's 30-minute timeout; fixer `U-archive-win`
    LANDED `8197163` — both sides fixed, its draft PR green on all runners with the Windows Unit suite back to 1 m 40 s; the shas
-   `a22939d`, `96f29a6`, `cef122b`, `baeff48`, `324a11b`, `3003b89` were red on windows-latest on that one test only. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
+   `a22939d`, `96f29a6`, `cef122b`, `baeff48`, `324a11b`, `3003b89` were red on windows-latest on that one test only; at `8197163` the
+   Windows Unit suite is green in 2 m 35 s, and a NEW windows-only red appeared in Fault — `PressSettlesAnUnknownCloseTests.A_press_
+   cancels_the_unknown_close…` (the press's two-second budget spent by the runner's disk after the cancel; the product refused
+   honestly); fixer `U-press-settle-win` (measure first, the `U-sweep-win` way) in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
    runner or harness red → a fixer on top, the sha recorded red until it lands.
 5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
    downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed

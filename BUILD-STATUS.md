@@ -4963,7 +4963,7 @@ failed, 1 skipped; names vs `main` → 0 removed, 3 added; scan clean. CI run 34
 ubuntu 11 m 26 s, macos 15 m 11 s, windows 17 m 40 s, `package` 4 m 10 s; **the Windows Unit assembly 1 m 40 s for 561 tests
 against 30 m 48 s for 539 at `a22939d`**. Manager's gate at `ceff6ec (the report tip rebased over the `U-report` landing)`, Release: build → 0 warnings, 0 errors; suite → 588 +
 277 + 627 = 1492 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 4 added (sets 1244 → 1248 before the report landing); scan clean; no
-trailers; `rev-list --count` → 0; CI at `8197163`: run 34187380076 in flight when this section was written (the gated tip rebased over docs-only commits) — the proof that `main` is green on all three runners again, recorded in a follow-up commit.
+trailers; `rev-list --count` → 0; CI run 34187380076 at `8197163`: ubuntu and macos green; **windows-latest: the Unit suite GREEN in 2 m 35 s** (the thirty-minute hang and the archive test gone — this unit's fix proven on `main`'s own runner), Integration 539/540 green, **Fault RED on one test**, `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close_before_it_closes_and_the_book_ends_flat` (`U-unknown-close`, green at its own merge sha): the press cancelled the unknown close and then had no budget left for its own leg — refused at the deadline, the book still long 2; the runner's disk again; fixer `U-press-settle-win` measures first; recorded red until it lands.
 
 **NOT VERIFIED:** the http.sys behaviour on a Windows box — read off the runner's marks, not reproduced on hardware. **NOT
 done:** no ATAS, no money, no real download, no vendor reached, no assertion loosened.
