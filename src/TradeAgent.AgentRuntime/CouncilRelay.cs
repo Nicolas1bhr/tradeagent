@@ -75,6 +75,7 @@ public sealed class CouncilRelay
     readonly PublicationStore _store;
     readonly MissionEventStore _events;
     readonly AiAttemptStore _attempts;
+    readonly WorkspaceRevisions _revisions;
     readonly Func<string, string> _homeOf;
     readonly Func<DateTimeOffset> _now;
 
@@ -83,9 +84,18 @@ public sealed class CouncilRelay
         _store = new PublicationStore(db);
         _events = new MissionEventStore(db);
         _attempts = new AiAttemptStore(db);
+        _revisions = new WorkspaceRevisions(db, homeOf, now);
         _homeOf = homeOf;
         _now = now ?? (() => DateTimeOffset.Now);
     }
+
+    /// <summary>
+    /// The role's own memory, versioned at the end of its turn. Composed here rather than beside
+    /// this class because it is the same pass, the same transaction and the same size-budget rule —
+    /// <c>docs/COUNCIL.md</c>'s "an invalid publication is rejected and the last valid plan stands"
+    /// is one sentence covering both halves.
+    /// </summary>
+    public WorkspaceRevisions Revisions => _revisions;
 
     /// <summary>
     /// A SEAM FOR THE PROPERTY TEST, AND FOR NOTHING ELSE. Called at each of the three boundaries
@@ -118,7 +128,13 @@ public sealed class CouncilRelay
         foreach (var r in role is { Length: > 0 } one ? [one] : CouncilRoles.All)
             Publish(r, r == role ? attempt : null);
 
+        // THE ROLE'S OWN MEMORY, AND ONLY THE ROLE THAT JUST TURNED. A pass on start names no role
+        // and snapshots nothing: nobody wrote anything, and versioning an untouched file on every
+        // launch of the app would fill the table with revisions of the same bytes.
+        var restores = role is { Length: > 0 } turned ? _revisions.Snapshot(turned, attempt) : [];
+
         Deliver();
+        WorkspaceRevisions.Apply(restores);
     }
 
     /// <summary>

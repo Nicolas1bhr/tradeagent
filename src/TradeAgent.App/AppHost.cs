@@ -429,6 +429,7 @@ public sealed class AppHost : IAsyncDisposable
                 Rejected = text => Gateway.Log.Activity(text, "warn"),
                 Quarantined = text => Gateway.Log.Activity(text, "warn")
             };
+            Relay.Revisions.Rejected = text => Gateway.Log.Activity(text, "warn");
 
             Mission = new MissionLoop(new MissionHost(this),
                 new MissionOptions
@@ -943,7 +944,15 @@ public sealed class AppHost : IAsyncDisposable
         /// spend, and a role handed the whole day's figure would plan against another role's money.
         /// </summary>
         public async Task<MissionSituation> SituationAsync(string role, CancellationToken ct) =>
-            (await SituationAsync(ct)) with { Role = role, Spend = SpendFor(role) };
+            (await SituationAsync(ct)) with
+            {
+                Role = role,
+                Spend = SpendFor(role),
+                // WHAT THE APP REFUSED AND PUT BACK SINCE THIS ROLE LAST TURNED. A plan restored
+                // under an agent that is not told is the app editing its memory behind its back,
+                // and the next turn would spend itself wondering where its work went.
+                Restored = host._db is { } db ? WorkspaceRevisions.Notices(db, role) : []
+            };
 
         public async Task<MissionSituation> SituationAsync(CancellationToken ct)
         {

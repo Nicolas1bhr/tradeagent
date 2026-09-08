@@ -342,6 +342,18 @@ public sealed record MissionSituation
     public IReadOnlyList<MissionDelivery> Deliveries { get; init; } = [];
 
     /// <summary>
+    /// WHAT THE APP REFUSED AND PUT BACK, one line per file, since this role last turned.
+    ///
+    /// A revision of <c>trading/PLAN.md</c> or <c>trading/JOURNAL.md</c> that broke its size budget
+    /// is not recorded, and the last valid one is written back over it
+    /// (<see cref="WorkspaceRevisions"/>). The turn that opens that file next has to be told, or the
+    /// app is editing an agent's memory behind its back and the agent spends its turn working out
+    /// where its writing went. Rendered high, under the owner's words: it is about the very first
+    /// thing the turn is instructed to read.
+    /// </summary>
+    public IReadOnlyList<string> Restored { get; init; } = [];
+
+    /// <summary>
     /// WHY THIS TURN IS HAPPENING, in the words of the events that caused it.
     ///
     /// A turn used to have no cause at all: the previous one ended, so this one started. An AI told
@@ -412,6 +424,18 @@ public sealed record MissionSituation
             b.AppendLine($"**{d.Headline()}** It is in `{WorkspaceBuilder.InDir}/{d.Id}.md`.").AppendLine();
             foreach (var line in d.Text.Replace("\r\n", "\n").TrimEnd().Split('\n'))
                 b.Append("> ").AppendLine(line);
+            b.AppendLine();
+        }
+
+        // WHAT THE APP PUT BACK. Above the state and below the other role's work, because it is
+        // about `PLAN.md` — the file the last line of every one of these messages tells the turn to
+        // read first — and a turn that reads a restored plan without being told it was restored will
+        // conclude the app lost its work.
+        if (Restored.Count > 0)
+        {
+            b.AppendLine("**TradeAgent refused what you last wrote to these files and put the version "
+                         + "before it back.**").AppendLine();
+            foreach (var line in Restored) b.AppendLine($"- {line}");
             b.AppendLine();
         }
 

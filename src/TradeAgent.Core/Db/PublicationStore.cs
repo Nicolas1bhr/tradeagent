@@ -29,6 +29,16 @@ public static class PublicationKind
     /// exactly the merge of measurement and claim the ledger rules forbid.</para>
     /// </summary>
     public const string Note = "note";
+
+    /// <summary>
+    /// ONE REVISION OF A ROLE'S <c>trading/PLAN.md</c>. Its own memory, not a handoff: the recipient
+    /// is the role itself, the classification is <see cref="PublicationClass.Private"/>, and no
+    /// delivery and no paid turn come with it. <c>docs/COUNCIL.md</c>, "Memory in four tiers".
+    /// </summary>
+    public const string Plan = "plan";
+
+    /// <summary>One revision of a role's <c>trading/JOURNAL.md</c>, on the same terms as the plan.</summary>
+    public const string Journal = "journal";
 }
 
 /// <summary>
@@ -43,6 +53,14 @@ public static class PublicationClass
 {
     /// <summary>Between council roles and the app. Not the owner's, and not any outside party's.</summary>
     public const string Council = "council";
+
+    /// <summary>
+    /// THE ROLE'S OWN, AND NOBODY ELSE'S. A revision of its plan or its journal: recorded so that
+    /// what a role held can be shown afterwards, addressed to the role that wrote it and delivered
+    /// to nobody. The distinction is on the row rather than inferred from the kind, because a later
+    /// build that shares a plan upward must not be able to do it by accident.
+    /// </summary>
+    public const string Private = "private";
 }
 
 /// <summary>How far a publication has got towards the recipient's <c>in/</c> folder.</summary>
@@ -188,6 +206,46 @@ public sealed class PublicationStore(Database db)
         }
 
         return fresh;
+    });
+
+    /// <summary>
+    /// RECORDS ONE ARTIFACT AND NOTHING ELSE: no delivery, no wake, nobody charged a turn.
+    ///
+    /// <para>This is the private half of the table — a role's own plan or journal revision. It goes
+    /// through the same insert, the same content-addressed id and the same revision counter as a
+    /// publication that is handed over, and it deliberately does NOT go through
+    /// <see cref="Commit"/>: that call schedules the recipient's paid turn, and the recipient of a
+    /// plan is the role that wrote it. A role woken to read its own plan would be the owner paying
+    /// for the app to hand an agent its own memory back.</para>
+    ///
+    /// <para>Returns true when the row was new. An unchanged file hashes to the id already there,
+    /// the primary key refuses the second insert, and no revision is spent on a turn that changed
+    /// nothing.</para>
+    /// </summary>
+    public bool Record(Publication p, DateTimeOffset at) => db.Write(_ =>
+    {
+        using var c = db.Cmd($"""
+            INSERT INTO publication({Cols})
+            VALUES($id,$role,$attempt,$rev,$kind,$to,$class,$at,$src,$content)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            ("$id", p.Id), ("$role", p.Role), ("$attempt", p.Attempt), ("$rev", NextRevision(p.Role)),
+            ("$kind", p.Kind), ("$to", p.Recipients), ("$class", p.Classification),
+            ("$at", Sql.T(at)), ("$src", p.Source), ("$content", p.Content));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
+    /// THE NEWEST REVISION OF ONE KIND THIS ROLE PUBLISHED, or null when it has published none.
+    /// What "the last valid plan stands" reads to find what to put back.
+    /// </summary>
+    public Publication? Latest(string role, string kind) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {Cols} FROM publication WHERE role=$role AND kind=$kind "
+            + "ORDER BY revision DESC, rowid DESC LIMIT 1", ("$role", role), ("$kind", kind));
+        using var r = c.ExecuteReader();
+        return r.Read() ? Read(r) : null;
     });
 
     /// <summary>

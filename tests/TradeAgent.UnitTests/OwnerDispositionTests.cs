@@ -66,8 +66,17 @@ public class OwnerDispositionTests
     public async Task The_disposition_detail_arrives_at_schema_ten()
     {
         var (_, _, db) = await TestEnv.Ready();
-        Assert.Equal(10, Versions.DatabaseSchemaVersion);
-        Assert.Equal("10", db.Read(_ =>
+
+        // 10 IS THIS CLASS'S FLOOR, not the build's number. It used to read
+        // Assert.Equal(10, Versions.DatabaseSchemaVersion), which made every later ADDITIVE migration
+        // fail here for no reason of its own — U-turn-commit added ix_publication_kind at 11 and this
+        // went red without anything about the disposition detail having changed. The same move
+        // CouncilRoleTests and AiAttemptLedgerTests already made, for the same reason; the exact
+        // number belongs with the migration that last moved it. The row on disk is still asserted to
+        // equal what this build writes, so an upgrade that did not run is still caught.
+        Assert.True(Versions.DatabaseSchemaVersion >= 10,
+            $"the disposition detail needs schema 10 or later; this build says {Versions.DatabaseSchemaVersion}");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), db.Read(_ =>
         {
             using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
             return c.ExecuteScalar() as string;

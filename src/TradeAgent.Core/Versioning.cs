@@ -86,8 +86,15 @@ public static class Versions
     /// app reaches without a turn — the publication an owner's message was delegated into, the later
     /// message that superseded it, the reason nothing could take it. Additive: one nullable column,
     /// and every row written before it reads as a disposition that points at nothing, which it did.
+    ///
+    /// 10 -&gt; 11: <c>ix_publication_kind</c>. A role's <c>trading/PLAN.md</c> and
+    /// <c>trading/JOURNAL.md</c> become revisions in <c>publication</c> — no new column, because a
+    /// revision IS an artifact and a second table would put two answers to "what did this role
+    /// publish" in two places — and the restore that puts the last valid plan back reads the newest
+    /// revision of ONE kind for ONE role at the end of every turn. Index only: an older database
+    /// gains it and loses nothing.
     /// </summary>
-    public const int DatabaseSchemaVersion = 10;
+    public const int DatabaseSchemaVersion = 11;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

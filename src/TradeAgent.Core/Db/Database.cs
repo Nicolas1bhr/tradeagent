@@ -538,6 +538,22 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','10') ON CONFLICT(key) DO UPDATE SET value='10';");
         }
 
+        if (have < 11)
+        {
+            // A ROLE'S OWN MEMORY, VERSIONED. `publication` gains no column: a revision of
+            // `trading/PLAN.md` is an artifact like any other — content-addressed id, role, attempt,
+            // revision number, recipients, classification — and giving the private half its own
+            // table would put two answers to "what did this role publish" in two places.
+            //
+            // What it gains is the index the restore reads. "An invalid publication is rejected and
+            // the last valid plan stands" (docs/COUNCIL.md) is a lookup of the newest revision of
+            // ONE kind for ONE role, run at the end of every turn; ix_publication_role orders by
+            // revision but does not narrow by kind, so without this the newest plan is found by
+            // walking every report and brief the role ever published.
+            Exec("CREATE INDEX IF NOT EXISTS ix_publication_kind ON publication(role, kind, revision);");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','11') ON CONFLICT(key) DO UPDATE SET value='11';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

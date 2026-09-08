@@ -72,6 +72,11 @@ public static class WorkspaceBuilder
         if (ctx.Role == CouncilRoles.Operations) MoveOlderLayout(ws, home);
         Directory.CreateDirectory(home);
         foreach (var d in SubDirs) Directory.CreateDirectory(Path.Combine(home, d));
+        // WHERE THE JOURNAL'S OLDER ENTRIES GO. The app caps `trading/JOURNAL.md` and refuses one
+        // that has outgrown the cap, so the agent needs somewhere to put what no longer fits that
+        // is still tracked — this folder, which nothing caps and nothing versions.
+        Directory.CreateDirectory(Path.Combine(home,
+            WorkspaceRevisions.ArchiveDir.Replace('/', Path.DirectorySeparatorChar)));
         Directory.CreateDirectory(Path.Combine(home, InDir));
         Directory.CreateDirectory(Path.Combine(home, OutDir));
         Directory.CreateDirectory(Path.Combine(home, ".tradeagent"));
