@@ -351,15 +351,24 @@ public sealed class TurnMeter
     readonly string _path;
     readonly Lock _gate = new();
 
-    /// <summary>The attempt this meter opened and has not closed. At most one: turns are serial.</summary>
-    string? _open;
-
     /// <summary>
-    /// Characters of the prompt that attempt was launched with. Null when nothing opened an attempt
-    /// — the owner's own typed turn — and then the context record says so rather than reporting a
-    /// zero-length prompt that nobody wrote.
+    /// THE ATTEMPT EACH CONVERSATION HAS OPEN, AND THE LENGTH OF THE PROMPT IT WAS LAUNCHED WITH.
+    ///
+    /// One per role, because one conversation per role is what the app runs and the owner can type
+    /// into the chair's while another role's mission turn is in flight. A single slot handed that
+    /// chat turn the OTHER role's row to close — the mission turn's reservation resolved by the
+    /// chat's usage — and then left the mission turn to open a fresh row with nothing reserved on
+    /// it. Two turns, one reservation, and the day's ceiling short by a whole turn.
+    ///
+    /// A role with no entry is a turn nothing opened, and the context record says so rather than
+    /// reporting a zero-length prompt that nobody wrote.
+    ///
+    /// <c>HeldForTheLoop</c> is whether this launch's CLOSE belongs in the mission loop's committed
+    /// transition (<see cref="CommitStaged"/>) or is written the moment the turn ends. The owner's
+    /// typed turn is admitted and reserved like any other but publishes nothing and consumes no
+    /// wake, so it has no transition to be part of.
     /// </summary>
-    int? _openPromptChars;
+    readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop)> _open = [];
 
     /// <summary>
     /// AN ID MINTED AND NOT YET LAUNCHED UNDER. <see cref="Mint"/> puts one here so the turn's
@@ -433,9 +442,14 @@ public sealed class TurnMeter
     /// would be a bill that stops the work — so a file that cannot be appended to costs the DETAIL
     /// of one turn, and the totals the cap reads are written separately and still move.
     /// </summary>
-    public void Record(AgentTurnEnded ended)
+    /// <param name="role">
+    /// WHOSE CONVERSATION THIS TURN RAN ON, so the row it closes is that conversation's own open
+    /// attempt. <see cref="Attach"/> supplies it; a caller that names none is the chair's, which is
+    /// what a launch with no role has always meant.
+    /// </param>
+    public void Record(AgentTurnEnded ended, string? role = null)
     {
-        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner(), requestedModel: Safe(_model));
+        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner(), requestedModel: ModelOf(role));
         var record = new TurnRecord
         {
             Started = ended.At - ended.Duration,
@@ -455,25 +469,32 @@ public sealed class TurnMeter
             Unpriced = price.Unpriced,
             Estimated = price.Estimated,
             PricedByOwner = price.ByOwner,
-            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(), ended.Usage)
+            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(role), ended.Usage)
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
         catch (Exception) { /* the row below is what the cap reads */ }
 
-        // WHOSE TURN THIS WAS, TAKEN NOW. The id has to be captured at this instant rather than
-        // read again at commit time: a close held for the loop's transaction that later read
-        // `_open` would close whichever attempt happened to be open by then.
-        string? id;
-        int? promptChars;
-        lock (_gate) { id = _open; promptChars = _openPromptChars; _open = null; _openPromptChars = null; }
+        // WHOSE TURN THIS WAS, TAKEN NOW, AND OUT OF THE MAP. The id has to be captured at this
+        // instant rather than read again at commit time: a close held for the loop's transaction
+        // that later read `_open` would close whichever attempt happened to be open by then. Taken
+        // out so a second end for the same conversation cannot resolve one row twice, and matched by
+        // id from here on — End writes only the row it names, and only while it is still LAUNCHED.
+        string? id = null;
+        int? promptChars = null;
+        var held = false;
+        lock (_gate)
+            if (_open.Remove(Key(role), out var open))
+                (id, promptChars, held) = (open.Id, open.PromptChars, open.HeldForTheLoop);
 
-        void Write() => Close(id, promptChars, ended, price);
+        void Write() => Close(id, promptChars, ended, price, role);
 
         // A TURN THE MISSION LOOP OPENED IS CLOSED BY THE MISSION LOOP'S COMMIT, not here. A turn
-        // nobody opened — the owner typing in the chat window — runs through no admission gate and
-        // no relay pass, so there is no transition for it to be part of and it is written at once.
-        if (id is null)
+        // the loop does not own is written at once: the owner typing in the chat window is admitted
+        // and reserved like any other now, but it publishes nothing and consumes no wake, so there
+        // is no transition for its close to be part of — and holding it in a slot the next mission
+        // turn also writes to is how one of the two closes gets lost. So is a turn nothing opened.
+        if (!held)
         {
             try { Write(); }
             catch (Exception) { /* a database that cannot be written must not end the turn */ }
@@ -528,7 +549,15 @@ public sealed class TurnMeter
     /// the row below. One transaction rather than two: a kill in between would hand the same wake to
     /// the next launch and charge the owner for both.
     /// </param>
-    public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
+    /// <param name="heldForTheLoop">
+    /// Whether the CLOSE of this launch waits for the mission loop's committed transition. True for
+    /// the loop's own turns, whose end belongs in the same <c>Database.Write</c> as what they
+    /// published; false for the owner's typed turn, which has no such transition — and which must
+    /// not be held in a slot the next mission turn writes to, because one of the two closes would
+    /// then be lost.
+    /// </param>
+    public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null,
+        bool heldForTheLoop = true)
     {
         var reservation = Reservation(role);
 
@@ -560,8 +589,8 @@ public sealed class TurnMeter
         try
         {
             admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation));
-            if (admission.Id is { } id)
-                lock (_gate) { _open = id; _openPromptChars = prompt.Length; }
+            if (admission.Id is { } written)
+                lock (_gate) _open[Key(role)] = (written, prompt.Length, heldForTheLoop);
         }
         catch (Exception) { return AiAdmission.Unrecorded; }
 
@@ -657,7 +686,7 @@ public sealed class TurnMeter
     /// owner's own typed turn, which runs through no admission gate and therefore reserves nothing.
     /// A row a restart already declared LOST is left exactly as it is.
     /// </summary>
-    void Close(string? id, int? promptChars, AgentTurnEnded ended, TurnPrice price)
+    void Close(string? id, int? promptChars, AgentTurnEnded ended, TurnPrice price, string? role)
     {
         // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
         // TurnContext: what the stream does not show is named rather than divided up.
@@ -670,10 +699,11 @@ public sealed class TurnMeter
                 Id = NewId(),
                 StartedAt = ended.At - ended.Duration,
                 Runtime = Safe(_runtimeId),
-                RequestedModel = Safe(_model),
+                RequestedModel = ModelOf(role),
                 PricingBasis = price.Basis,
                 ReservedCost = 0m,
-                PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture)
+                PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture),
+                Role = role
             };
             // Ungated: nothing admitted this turn, so nothing may refuse it after the vendor has
             // already done the work. The row exists so the bill is recorded, not to decide anything.
@@ -688,14 +718,39 @@ public sealed class TurnMeter
     }
 
     /// <summary>
-    /// Subscribes to a conversation's turns. Returns the unsubscribe, so a meter attached to a
-    /// conversation that is replaced does not go on metering the old one.
+    /// Subscribes to a conversation's turns, AND MAKES THE OWNER'S OWN TURNS PASS THE SAME GATE the
+    /// mission's do. Returns the unsubscribe, so a meter attached to a conversation that is replaced
+    /// does not go on metering the old one — or admitting for it.
+    ///
+    /// <para><b>Why the owner's chat is admitted at all.</b> It was metered and never reserved:
+    /// their typed question started the CLI with no row written first, so it could run beside a
+    /// mission turn, take the last of the day's allowance, and be recorded only once the vendor had
+    /// already been paid. Rule 3 of <c>docs/COUNCIL.md</c> is "every inference launch" — the owner's
+    /// included, because the bill does not care who typed.</para>
+    ///
+    /// <para>It refuses rather than queues nothing: <see cref="AgentSession.Admit"/> keeps the words
+    /// and says why, so a chat that goes quiet at the ceiling still answers the person typing.</para>
     /// </summary>
-    public IDisposable Attach(IAgentConversation conversation)
+    /// <param name="role">
+    /// The council role this conversation belongs to. The chair's IS the Chat page's, so the owner's
+    /// turns are charged to Operations, which is where their agenda lives.
+    /// </param>
+    public IDisposable Attach(IAgentConversation conversation, string? role = null)
     {
-        void OnEnded(AgentTurnEnded e) => Record(e);
+        void OnEnded(AgentTurnEnded e) => Record(e, role);
         conversation.TurnEnded += OnEnded;
-        return new Detach(() => conversation.TurnEnded -= OnEnded);
+
+        // THE OWNER'S TURN IS NOT HELD FOR A TRANSITION IT IS NOT PART OF. It is admitted and
+        // reserved exactly as the loop's is; it is closed the moment it ends, because nothing
+        // publishes for it and no wake is waiting on it.
+        if (conversation is AgentSession session)
+            session.Admit = prompt => Begin(prompt, role: role, heldForTheLoop: false);
+
+        return new Detach(() =>
+        {
+            conversation.TurnEnded -= OnEnded;
+            if (conversation is AgentSession s) s.Admit = null;
+        });
     }
 
     sealed class Detach(Action off) : IDisposable
@@ -820,10 +875,17 @@ public sealed class TurnMeter
     static string HashOf(string text) => Sha256Hex.Of(text);
 
     /// <summary>The open attempt's prompt length, read WITHOUT closing it — the row is closed later.</summary>
-    int? PromptCharsOfOpenAttempt()
+    int? PromptCharsOfOpenAttempt(string? role)
     {
-        lock (_gate) return _openPromptChars;
+        lock (_gate) return _open.TryGetValue(Key(role), out var held) ? held.PromptChars : null;
     }
+
+    /// <summary>
+    /// WHICH OPEN ATTEMPT A TURN BELONGS TO. A launch with no role named is the chair's, for the
+    /// same reason a ledger row with no role is: the single agent the council replaced was
+    /// Operations, and a turn attributed to nobody is a bill nobody can allocate.
+    /// </summary>
+    static string Key(string? role) => CouncilRoles.Or(role);
 
     static string? Safe(Func<string?> f)
     {

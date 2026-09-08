@@ -92,6 +92,14 @@ public static class Labels
         $"The {role} has used its share of today's AI spending limit, so this turn was not started. "
         + "Nothing was sent to the AI tool. The split is on the Safety page.";
 
+    /// <summary>
+    /// What the Chat page says when the owner types while the AI is working. Beside the two refusals
+    /// above because all three are the same promise: their words were kept, and here is what happens
+    /// next.
+    /// </summary>
+    public const string HeldWhileTheAiIsWorking =
+        "The AI is working. It will see this at the start of its next turn.";
+
     /// <summary>How often the AI is woken when nothing has happened, and the press that writes it.</summary>
     public const string ReviewEvery = "Wake the AI to look around every, minutes (0 = only when something happens)";
 

@@ -23,8 +23,14 @@ internal static class AgentRuntimeProbe
     /// flight — a live process holding the presence register — which is what a test about a turn
     /// killed before its usage arrived needs. Zero is the ordinary case and starts printing at once.
     /// </param>
+    /// <param name="marker">
+    /// A path the child TOUCHES before it prints anything. A test that has to prove no process was
+    /// started asserts the file's absence, which is evidence about the operating system rather than
+    /// about this class's own bookkeeping.
+    /// </param>
     public static AgentSession SessionOverStream(string stream, bool streaming = true,
-        int sleepSeconds = 0, Func<string?>? model = null, [CallerMemberName] string name = "")
+        int sleepSeconds = 0, Func<string?>? model = null, string? marker = null,
+        [CallerMemberName] string name = "")
     {
         var dir = Path.Combine(TestEnv.Home, "meter", name);
         Directory.CreateDirectory(dir);
@@ -38,14 +44,16 @@ internal static class AgentRuntimeProbe
             // ping rather than timeout: `timeout` refuses to run with its input redirected, which is
             // exactly how every child here is started.
             var wait = sleepSeconds > 0 ? $"ping -n {sleepSeconds + 1} 127.0.0.1 > nul\r\n" : "";
+            var touch = marker is null ? "" : $"type nul > \"{marker}\"\r\n";
             script = Path.Combine(dir, "runtime.cmd");
-            File.WriteAllText(script, $"@echo off\r\n{wait}type \"{payload}\"\r\n");
+            File.WriteAllText(script, $"@echo off\r\n{touch}{wait}type \"{payload}\"\r\n");
         }
         else
         {
             var wait = sleepSeconds > 0 ? $"sleep {sleepSeconds}\n" : "";
+            var touch = marker is null ? "" : $": > \"{marker}\"\n";
             script = Path.Combine(dir, "runtime.sh");
-            File.WriteAllText(script, $"#!/bin/sh\n{wait}cat \"{payload}\"\n");
+            File.WriteAllText(script, $"#!/bin/sh\n{touch}{wait}cat \"{payload}\"\n");
             File.SetUnixFileMode(script,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }

@@ -109,7 +109,7 @@ public class TurnCommitTests
             wakes.Raise("review:1", MissionEventKind.Review, world.At, role: CouncilRoles.Research);
 
             attempt = meter.Mint();
-            Assert.Equal(attempt, meter.Begin("## Situation", ["review:1"], CouncilRoles.Research));
+            Assert.Equal(attempt, meter.Begin("## Situation", ["review:1"], CouncilRoles.Research).Id);
 
             world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
             world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);

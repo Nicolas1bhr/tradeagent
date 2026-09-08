@@ -70,7 +70,9 @@ public sealed class AppHost : IAsyncDisposable
                 _metering?.Dispose();
                 _conversation = runtime.OpenConversation();
                 _conversationOwner = runtime;
-                _metering = Meter?.Attach(_conversation);
+                // The CHAIR's, named: the Chat page talks to the Operations Director, so the
+                // owner's own turns are reserved and charged against that role's share.
+                _metering = Meter?.Attach(_conversation, CouncilRoles.Operations);
 
                 // WHAT THE OWNER TYPES WHILE THE AI IS WORKING GOES TO THE TABLE, not to a list in
                 // memory. Attached here rather than at construction because this is the one place a
@@ -120,7 +122,7 @@ public sealed class AppHost : IAsyncDisposable
             workspace: () => HomeFor(role),
             environment: () => WorkspaceBuilder.EnvironmentFor(Agent?.SessionId ?? "", HomeFor(role)),
             model: () => Gateway.Settings.ModelForRole(role));
-        _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation));
+        _roleConversations[role] = (runtime, conversation, Meter?.Attach(conversation, role));
         return conversation;
     }
 

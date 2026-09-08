@@ -161,6 +161,83 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// THE OWNER'S OWN TURN IS RESERVED TOO, AND CLOSES ITS OWN ROW.
+    ///
+    /// It ran beside a Research turn — the chair's session is not busy while another role's process
+    /// is — and the meter held ONE open attempt, so the chat's usage resolved the Research
+    /// Director's reservation and the Research turn then opened a second row with nothing reserved
+    /// on it. Two launches, one commitment, and a day's ceiling short by a whole turn.
+    /// </summary>
+    [Fact]
+    public async Task The_owners_chat_turn_beside_a_research_turn_reserves_and_closes_its_own_row()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(50m, () => now);                      // room for several turns
+        var store = new AiAttemptStore(_db);
+
+        // The Research Director is mid-turn: its row is open and its allowance committed.
+        var research = meter.Begin("## Situation", role: CouncilRoles.Research);
+        Assert.True(research.Admitted);
+
+        // The owner types into the chair's conversation while that is still running.
+        var chat = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream);
+        using var metering = meter.Attach(chat, CouncilRoles.Operations);
+        await chat.SendAsync("what are you doing?");
+
+        // The Research turn then ends, with its own usage.
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(4), "", now)
+        {
+            Usage = new TurnUsage(1_000, 0, 0, 10, 0, null)
+        }, CouncilRoles.Research);
+
+        var rows = store.Between(now.AddDays(-1), now.AddDays(1));
+        Assert.Equal(2, rows.Count);
+
+        // NEITHER of them is a turn nobody committed for.
+        Assert.All(rows, r => Assert.Equal(Reservation, r.ReservedCost));
+        Assert.All(rows, r => Assert.Equal(AiAttemptState.ENDED, r.State));
+
+        var mission = Assert.Single(rows, r => r.Id == research.Id);
+        Assert.Equal(CouncilRoles.Research, mission.Role);
+        Assert.Equal((1_000m * 1m + 10m * 4m) / 1_000_000m, mission.Cost);
+
+        var typed = Assert.Single(rows, r => r.Id != research.Id);
+        Assert.Equal(CouncilRoles.Operations, typed.Role);
+        Assert.Equal((17_232m * 1m + 6m * 4m) / 1_000_000m, typed.Cost);
+    }
+
+    /// <summary>
+    /// A CHAT TURN THE CEILING REFUSES STARTS NO PROCESS AND SAYS SO. The marker file is the
+    /// evidence: the child touches it before it prints anything, so its absence is the operating
+    /// system's word rather than this software's.
+    /// </summary>
+    [Fact]
+    public async Task A_chat_turn_the_ceiling_refuses_starts_no_process_and_says_so_in_the_chat()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(2m, () => now);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Research).Admitted);
+
+        var marker = Path.Combine(TestEnv.Home, $"ran-{Guid.NewGuid():n}.txt");
+        var chat = AgentRuntimeProbe.SessionOverStream(TurnMeterTests.CodexStream, marker: marker);
+        using var metering = meter.Attach(chat, CouncilRoles.Operations);
+
+        await chat.SendAsync("place a trade for me");
+
+        Assert.False(File.Exists(marker), "the AI tool was started for a turn the ceiling refused");
+        Assert.Null(chat.ThreadId);
+        Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.Equal(0, Rows(nameof(AiAttemptState.ENDED)));
+
+        // Their words are still theirs, and the last thing said is which ceiling stopped it.
+        var history = chat.History;
+        Assert.Contains(history, t => t is { Role: ChatRole.You, Text: "place a trade for me" });
+        var said = history[^1];
+        Assert.Equal(ChatRole.System, said.Role);
+        Assert.Equal(Labels.DailySpendingLimitReached, said.Text);
+    }
+
+    /// <summary>
     /// AND THE LOOP OBEYS IT: a turn the reservation refused is never sent to the AI tool, even when
     /// the host's own reading says there is room. That reading is the stale one this unit exists for.
     /// </summary>

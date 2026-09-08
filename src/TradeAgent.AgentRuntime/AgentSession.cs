@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -277,9 +278,39 @@ public sealed class AgentSession(
         if (string.IsNullOrWhiteSpace(message)) return;
         if (_busy) { Queue(message); return; }
 
+        // THE OWNER'S TURN IS ADMITTED AND RESERVED LIKE ANY OTHER, BEFORE ANYTHING IS STARTED.
+        //
+        // It used to be metered and never reserved: this line started the CLI, and the row was
+        // written when the usage came back. So a typed question could run beside a mission turn,
+        // spend the last of the day's allowance and be recorded only after the vendor had been paid
+        // — and, holding the meter's single open slot, resolve the OTHER turn's reservation with its
+        // own usage. Every launch has a commitment made before it (docs/COUNCIL.md rule 3), and the
+        // person typing is not an exception to a bill they are the one paying.
+        var admission = Admit?.Invoke(message) ?? AiAdmission.Unrecorded;
+        if (!admission.Admitted)
+        {
+            // NOT LAUNCHED, NOT LOST. Their words are held exactly as a message typed while the AI
+            // is working is held, and the System line says which ceiling stopped it rather than
+            // leaving a chat that simply went quiet.
+            Hold(message, admission.Refusal!);
+            return;
+        }
+
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
         await RunAsync(message, ct);
     }
+
+    /// <summary>
+    /// OPENS THE DURABLE RECORD AND COMMITS THE COST OF A TURN THE OWNER TYPED, before it is
+    /// started, and answers whether it may be started at all.
+    ///
+    /// Set by <see cref="TurnMeter.Attach"/>, which is the one place a conversation is metered.
+    /// Null in every host that has no meter — a test, a build with no AI prepared — and then this
+    /// behaves exactly as it did: the turn runs and the row is written when it ends. That default is
+    /// the permissive one for the same reason the loop's is, and for the same reason: a chat that
+    /// refused to work because nobody was counting would refuse for ever.
+    /// </summary>
+    public Func<string, AiAdmission>? Admit { get; set; }
 
     /// <summary>
     /// WRITES THE OWNER'S WORDS SOMEWHERE THAT SURVIVES THIS PROCESS, and answers whether it did.
@@ -297,7 +328,15 @@ public sealed class AgentSession(
     public Func<string, bool>? RecordTyped { get; set; }
 
     /// <inheritdoc />
-    public void Queue(string message)
+    public void Queue(string message) => Hold(message, Labels.HeldWhileTheAiIsWorking);
+
+    /// <summary>
+    /// KEEPS THE OWNER'S WORDS AND SAYS WHERE THEY WENT. Two callers, one behaviour: the AI is busy,
+    /// or the day's ceiling refused the turn. The words are recorded the same way in both — the
+    /// difference is one sentence, and a message that disappeared into a queue with no
+    /// acknowledgement reads exactly like a message that was dropped.
+    /// </summary>
+    void Hold(string message, string said)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
         var text = message.Trim();
@@ -310,11 +349,8 @@ public sealed class AgentSession(
         catch (Exception) { recorded = false; }
         if (!recorded) lock (_historyLock) _typedMeanwhile.Add(text);
 
-        // Shown, and said where it went. A message that disappeared into a queue with no
-        // acknowledgement reads exactly like a message that was dropped.
         Append(new ChatTurn(ChatRole.You, message, DateTimeOffset.UtcNow));
-        Append(new ChatTurn(ChatRole.System,
-            "The AI is working. It will see this at the start of its next turn.", DateTimeOffset.UtcNow));
+        Append(new ChatTurn(ChatRole.System, said, DateTimeOffset.UtcNow));
     }
 
     /// <inheritdoc />
