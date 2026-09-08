@@ -4856,7 +4856,7 @@ is right; the fixture read the wall clock. `U-council-thin`'s builder pinned tha
 errors; Unit 3× → 559/559 each; Unit 559 + Fault 277 + Integration 621 = 1457 passed, 0 failed, 1 skipped; names vs
 `main` → 0 removed, 1 added; `U-sweep-win`'s Integration suite overlapping, nothing failed. Manager's gate at `61e43ec`,
 Release: build → 0 warnings, 0 errors; suite → 559 + 277 + 621 = 1457 passed, 0 failed, 1
-skipped; names vs `main` → 0 removed, 1 added (sets 1243 → 1244); scan clean; no trailers; `rev-list --count` → 0; CI at `baeff48`: run 34171543978 in flight when this section was written (the gated tip rebased over docs-only commits), its verdict recorded in a follow-up commit.
+skipped; names vs `main` → 0 removed, 1 added (sets 1243 → 1244); scan clean; no trailers; `rev-list --count` → 0; CI run 34171543978 at `baeff48`: RED on windows-latest only, ubuntu and macos green — the one failure the known archive test (`BinanceArchiveTests.A_month_with_no_sidecar_at_all…`) that `U-archive-win` fixes, green on its draft PR #15; nothing of this unit's went red.
 
 **NOT done:** no product code; no box, no ATAS, no money. What this closes: a red the hosted runners would have hit on any
 run reaching that test between 23:50 and 00:00 UTC.
@@ -4889,8 +4889,7 @@ Merge `324a11b`, 5 commits, test-only: `git diff main -- src/` empty. Draft PR #
 after two rebases (over `U-data-binance` and `U-council-thin`, no conflict), Release: 0 warnings, 0 errors; Integration 3×
 → 621/621 each; the three suites → 0 failed; names vs `main` → nothing removed. Manager's gate at `324a11b (the report tip rebased over five docs-and-test commits)`, Release: build →
 0 warnings, 0 errors; suite → 559 + 277 + 621 = 1457 passed, 0 failed, 1 skipped; names vs
-`main` → 0 removed, 0 added (sets 1244 = 1244); scan clean; no trailers; `rev-list --count` → 0; PR #14's runners at the tip: 34166551105 at `f1faf13` green on all three and `package`; 34168445545 and 34170462786 at the two rebased tips — ubuntu and macos green, windows Integration 533/533 both times, its one Unit red the known archive test `U-archive-win` is fixing; CI at
-`324a11b`: run 34173019618 in flight when this section was written, its verdict recorded in a follow-up commit (the archive red on windows-latest is expected until `U-archive-win` lands).
+`main` → 0 removed, 0 added (sets 1244 = 1244); scan clean; no trailers; `rev-list --count` → 0; PR #14's runners at the tip: 34166551105 at `f1faf13` green on all three and `package`; 34168445545 and 34170462786 at the two rebased tips — ubuntu and macos green, windows Integration 533/533 both times, its one Unit red the known archive test `U-archive-win` is fixing; CI run 34173019618 at `324a11b`: RED on windows-latest only, ubuntu and macos green — the one failure the known archive test (`BinanceArchiveTests.A_month_with_no_sidecar_at_all…`) that `U-archive-win` fixes, green on its draft PR #15; nothing of this unit's went red.
 
 **Carried forward, for the product rather than the test, a second time:** a Windows disk can hold one composite commit for
 most of a two-second emergency budget; the press's platform calls are cut at the deadline every time, so the guard holds
