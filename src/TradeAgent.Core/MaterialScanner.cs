@@ -44,8 +44,10 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
     public const string InboxDir = "inbox";
 
     /// <summary>
-    /// The agent's tree, beside <see cref="InboxDir"/> rather than around it. Every tracked agent
-    /// directory below is relative to THIS, so a recorded path reads <c>agent/scripts/x.py</c>.
+    /// The CHAIR's tree, beside <see cref="InboxDir"/> rather than around it. A recorded path reads
+    /// <c>agent/scripts/x.py</c>. It is the same string as
+    /// <see cref="CouncilRoles.HomeDir"/> for Operations, and every OTHER role's home is walked
+    /// under its own name — see <see cref="RolePaths"/>.
     /// </summary>
     public const string AgentDir = "agent";
 
@@ -63,6 +65,35 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
     /// in AGENTS.md — anything it wants on the record goes in a tracked folder.
     /// </summary>
     public static readonly string[] TrackedAgentDirs = ["trading", "research", "strategies", "data", "scripts"];
+
+    /// <summary>
+    /// EVERY DIRECTORY THIS PASS WALKS INSIDE ONE ROLE'S HOME: the role's own tracked folders, plus
+    /// the two the APP owns — <c>in/</c>, what was delivered to it, and <c>out/</c>, what it handed
+    /// back and what the fence refused.
+    ///
+    /// <para>Those last two are the reason this array exists. A published report is the most
+    /// consequential file a role writes and it was the one file nothing recorded: the relay's tables
+    /// say an artifact was committed, and the ledger — the app's own measurement of what is on disk,
+    /// which the agent cannot edit — said nothing at all. Same for a brief the role was handed. The
+    /// two records answer different questions and the second is the one that survives a role
+    /// deleting its own copy.</para>
+    /// </summary>
+    public static readonly string[] TrackedRoleDirs =
+        [.. TrackedAgentDirs, CouncilRoles.InDir, CouncilRoles.OutDir];
+
+    /// <summary>
+    /// EVERY ROLE'S HOME AND EVERY DIRECTORY IN IT, as (home, directory) pairs relative to the
+    /// workspace root.
+    ///
+    /// <para>This used to be the chair's home alone. The council gave the Research Director its own
+    /// folder and nothing walked it, so everything that role read, wrote or was handed was outside
+    /// the one record the agent cannot edit — and <c>docs/COUNCIL.md</c>'s "measured facts, the
+    /// app's tables, read-only to agents" covered half a council.</para>
+    /// </summary>
+    public static IEnumerable<(string Home, string Dir)> RolePaths() =>
+        from role in CouncilRoles.All
+        from dir in TrackedRoleDirs
+        select (CouncilRoles.HomeDir(role), dir);
 
     /// <summary>Build output and package caches. Present by the tens of thousands or not at all.</summary>
     static readonly HashSet<string> NoiseDirs = new(StringComparer.OrdinalIgnoreCase)
@@ -97,18 +128,21 @@ public sealed class MaterialScanner(Database db, string? workspaceRoot = null, F
         // is no previous one, and MinValue is the honest window: "since before anything happened".
         var since = Sql.TimeN(db.GetKv(LastScanKey)) ?? DateTimeOffset.MinValue;
 
-        foreach (var (origins, root, dirs) in new (MaterialOrigin[], string, string[])[]
+        // ONE GROUP PER ORIGIN, and every role's home inside the agent group. `present` and
+        // MarkMissing are per GROUP, so the roles have to be walked together: marking missing after
+        // one role's walk would delete the other role's rows on every pass.
+        foreach (var (origins, paths) in new (MaterialOrigin[], (string Home, string Dir)[])[]
                  {
-                     ([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested], "", [InboxDir]),
-                     ([MaterialOrigin.Agent], AgentDir, TrackedAgentDirs)
+                     ([MaterialOrigin.Inbox, MaterialOrigin.InboxUnattested], [("", InboxDir)]),
+                     ([MaterialOrigin.Agent], [.. RolePaths()])
                  })
         {
             var present = new List<long>();
             var complete = true;
 
-            foreach (var dir in dirs)
+            foreach (var (home, dir) in paths)
             {
-                var full = Path.Combine(_root, root, dir);
+                var full = Path.Combine(_root, home, dir);
                 if (!Directory.Exists(full)) continue;
 
                 foreach (var file in Walk(full, 0, ref skipped, ct))

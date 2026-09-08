@@ -30,6 +30,64 @@ public class MaterialLedgerTests
         File.WriteAllText(full, content);
     }
 
+    /// <summary>
+    /// RED FIRST: the pass walked the chair's home and nothing else, so every file the Research
+    /// Director read, wrote or was handed was outside the one record the agent cannot edit. The
+    /// council gave that role its own folder in <c>U-council-thin</c>; the ledger did not follow.
+    ///
+    /// <para><c>in/</c> and <c>out/</c> are the half that matters most and the half that was missing
+    /// even for the chair. A published report is the most consequential file a role writes: the
+    /// relay's tables say an artifact was committed, and the ledger — the app's own measurement of
+    /// what is on disk — said nothing at all, so a role that deleted its copy left the two records
+    /// with nothing to check each other against. Same for a brief it was handed, and for a file the
+    /// fence moved to <c>out/quarantine/</c>.</para>
+    /// </summary>
+    [Fact]
+    public void Every_role_home_is_walked_including_what_it_was_handed_and_what_it_handed_back()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/data/march.csv", "open,high,low");
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/{CouncilRoles.OutDir}/report-turn-a.md", "what I found");
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/{CouncilRoles.InDir}/abc123.md", "what you asked for");
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Operations)}/{CouncilRoles.OutDir}/agenda-turn-b.md", "do this next");
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Operations)}/{CouncilRoles.OutDir}/quarantine/report-1.md", "who wrote this");
+
+        new MaterialScanner(db, root).Scan();
+
+        var seen = new MaterialStore(db).Present(MaterialOrigin.Agent).Select(m => m.RelPath).Order().ToArray();
+        Assert.Equal(
+        [
+            "agent/out/agenda-turn-b.md",
+            "agent/out/quarantine/report-1.md",
+            "research/data/march.csv",
+            "research/in/abc123.md",
+            "research/out/report-turn-a.md"
+        ], seen);
+    }
+
+    /// <summary>
+    /// AND A SECOND PASS DOES NOT INVENT A DELETION. Every role is walked inside ONE origin group,
+    /// so the roles are marked missing against a list that has all of them in it; walking them as
+    /// separate groups would have each pass delete the other role's rows.
+    /// </summary>
+    [Fact]
+    public void A_second_pass_over_two_role_homes_reports_nothing_removed()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Research)}/data/march.csv", "open,high,low");
+        Drop(root, $"{CouncilRoles.HomeDir(CouncilRoles.Operations)}/trading/PLAN.md", "what I am doing");
+
+        new MaterialScanner(db, root).Scan();
+        var again = new MaterialScanner(db, root).Scan();
+
+        Assert.Equal(0, again.Removed);
+        Assert.Equal(0, again.Added);
+        Assert.Equal(2, new MaterialStore(db).Present(MaterialOrigin.Agent).Count);
+    }
+
     [Fact]
     public void A_file_the_owner_drops_is_recorded_with_a_hash_we_computed_ourselves()
     {

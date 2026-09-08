@@ -37,14 +37,14 @@ public static class WorkspaceBuilder
     /// brief sent down to it — and read by the agent. It is inside the role's own folder rather
     /// than in a shared place precisely so the two roles' deliveries cannot be confused.
     /// </summary>
-    public const string InDir = "in";
+    public const string InDir = CouncilRoles.InDir;
 
     /// <summary>
     /// WHAT THE ROLE HANDS BACK, and the only path out of a role's folder. The agent writes a file
     /// here; the app validates it, publishes it and delivers it. The agent never writes into
     /// another role's folder and has no command that would.
     /// </summary>
-    public const string OutDir = "out";
+    public const string OutDir = CouncilRoles.OutDir;
 
     /// <summary>Where one role's home is, given the recorded tree. See <see cref="CouncilRoles.HomeDir"/>.</summary>
     public static string HomeOf(string root, string role) => Path.Combine(root, CouncilRoles.HomeDir(role));

@@ -68,4 +68,16 @@ public static class CouncilRoles
     /// silently choose between two versions of a file.
     /// </summary>
     public static string HomeDir(string role) => role == Research ? Research : "agent";
+
+    /// <summary>
+    /// WHAT THE APP DELIVERS INTO, inside each role's home. Here rather than on
+    /// <c>WorkspaceBuilder</c> — which is where the agent-facing copy of it lives — because
+    /// <see cref="MaterialScanner"/> is in this assembly and has to walk it: what a role was HANDED
+    /// is half of "what did this role read and write", and a ledger that recorded only the half the
+    /// agent typed would be a record of the conversation with one side missing.
+    /// </summary>
+    public const string InDir = "in";
+
+    /// <summary>What the role hands back, and the only path out of its folder. See <see cref="InDir"/>.</summary>
+    public const string OutDir = "out";
 }
