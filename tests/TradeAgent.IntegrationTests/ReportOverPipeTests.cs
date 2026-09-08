@@ -141,7 +141,7 @@ public class ReportOverPipeTests(ITestOutputHelper log)
         await using var _2 = server;
         await using var _3 = client;
 
-        var row = Assert.Single(((GatewayPipeServer)server).HandlerPaths.Where(p => p.Handler == Ops.Report));
+        var row = Assert.Single(((GatewayPipeServer)server).HandlerPaths, p => p.Handler == Ops.Report);
         Assert.Equal(TimeSpan.Zero, row.Path);
         Assert.Contains("in process", row.Why);
         _ = gw;

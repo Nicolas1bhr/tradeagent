@@ -56,6 +56,29 @@ public class OwnerDispositionTests
         Assert.DoesNotContain("OVERDUE", DailyReportText.Render(gw.Reports.Compose(at)));
     }
 
+    /// <summary>
+    /// THE MIGRATION, AND THE PLACE THE CURRENT SCHEMA NUMBER IS PINNED EXACTLY. It belongs with the
+    /// migration that last moved it — the convention <c>U-wakes</c> set and <c>U-council-thin</c>
+    /// carried, so that an additive migration turns exactly one assertion red rather than every
+    /// version pin in the suite.
+    /// </summary>
+    [Fact]
+    public async Task The_disposition_detail_arrives_at_schema_ten()
+    {
+        var (_, _, db) = await TestEnv.Ready();
+        Assert.Equal(10, Versions.DatabaseSchemaVersion);
+        Assert.Equal("10", db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+            return c.ExecuteScalar() as string;
+        }));
+
+        // Additive: every row written before it reads as a disposition that points at nothing.
+        var events = new MissionEventStore(db);
+        events.RecordOwnerMessage("anything at all", Midday());
+        Assert.Null(events.OfKind(MissionEventKind.Owner)[0].DispositionDetail);
+    }
+
     [Fact]
     public void The_deadline_ships_at_a_day()
     {

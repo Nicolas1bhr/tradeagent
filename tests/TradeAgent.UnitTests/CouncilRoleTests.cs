@@ -125,12 +125,28 @@ public class CouncilRoleTests
     /// <summary>
     /// The two columns and the two tables, additive at schema nine, and the reading a row that
     /// names no role gets: the chair's. The single agent this replaces WAS Operations.
+    ///
+    /// It used to read <c>Assert.Equal(9, Versions.DatabaseSchemaVersion)</c>, which made every later
+    /// ADDITIVE migration fail here for no reason of its own — <c>U-report</c> added
+    /// <c>mission_event.disposition_detail</c> at 10 and this went red without anything about the
+    /// role columns having changed. This is the same move <c>U-wakes</c> made on
+    /// <c>AiAttemptLedgerTests.The_launch_ledger_is_schema_six_and_starts_empty</c>, and for the same
+    /// reason: 9 is this class's FLOOR, because below it there are no role columns at all, and the
+    /// exact number belongs with the migration that last moved it —
+    /// <c>OwnerDispositionTests.The_disposition_detail_arrives_at_schema_ten</c>. The row on disk is
+    /// still asserted to equal what this build writes, so an upgrade that did not run is still caught.
     /// </summary>
     [Fact]
     public void The_role_columns_arrive_at_schema_nine_and_an_unnamed_row_is_the_chairs()
     {
         using var db = TestEnv.NewDb();
-        Assert.Equal(9, Versions.DatabaseSchemaVersion);
+        Assert.True(Versions.DatabaseSchemaVersion >= 9,
+            $"the role columns need schema 9 or later; this build says {Versions.DatabaseSchemaVersion}");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
+            return c.ExecuteScalar() as string;
+        }));
 
         var events = new MissionEventStore(db);
         var attempts = new AiAttemptStore(db);
