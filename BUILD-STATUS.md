@@ -4927,7 +4927,7 @@ warnings, 0 errors (17 projects); Unit 585 + Fault 277 + Integration 627 = 1489 
 classes 3× → 31/31 and 6/6 each run, no `Timing` red; names vs `main` → 32 added, 0 removed; the previous builder's three
 gate files read, not trusted, deleted. Manager's gate at `3003b89`, Release: build → 0 warnings, 0 errors; suite → 585 +
 277 + 627 = 1489 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 32 added (sets 1244 →
-1276; `[Fact]`/`[Theory]` 1197 → 1229); scan clean; no trailers; `rev-list --count` → 0; CI run 34186596626 at `3003b89`: failure | test (macos-latest):success, test (ubuntu-latest):success, test (windows-latest):failure, package:skipped — the windows-latest failure judged in the follow-up commit that names it.
+1276; `[Fact]`/`[Theory]` 1197 → 1229); scan clean; no trailers; `rev-list --count` → 0; CI run 34186596626 at `3003b89`: macos and ubuntu green; windows-latest RED on the one known archive test (`BinanceArchiveTests.A_month…`, the Unit suite 31 m 46 s — this sha predates `U-archive-win`'s fix, proven green at `8197163`); Fault 272/272 and Integration 539/540 green on that runner, the press-settles test included, which makes its red at `8197163` a runner flake of the disk class. Nothing of this unit's went red.
 
 **NOT VERIFIED:** the page on a screen and its update-in-place (a signature gate at `ReportView.cs:117,131`, read, not run —
 nothing in the suite runs Avalonia); a DST-length day, a midnight write and a `note` publication end to end — no build
