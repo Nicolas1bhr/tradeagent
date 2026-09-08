@@ -38,3 +38,24 @@ report itself; an incomplete net figure never reads as a complete profitability 
 Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; the three test projects in Release to a file
 → 0 failed; touched classes 3×; a `Timing` red re-run alone 3×, never loosened. Commit per item, one sentence, no trailers.
 Append `## Report` (≤20 lines): tip sha, gate counts, one line per item with its RED and mutant, what you did NOT do.
+
+## Report
+
+Tip `151ea01`, rebased onto `main` `a342015` after `U-archive-win`; this report commit sits on it, tree clean. Gate, Release, every run mine:
+`--no-incremental` build → `0 Warning(s)  0 Error(s)`; unit `Failed: 0, Passed: 585`; integration `Failed: 0, Passed: 627, Skipped: 1`; fault
+`Failed: 0, Passed: 277`; touched classes 3x → 31 and 6 passed every run, no `Timing` red. Test names against `main`: 32 added, none removed.
+1. VERIFIED. RED, the withheld net reverted to realised minus known fees: `Assert.Null() Failure: Value of type 'Nullable<decimal>' has a
+   value`. Mutant, the missing cost dropped from the text: `Assert.Contains() Failure`, `Not found: "did not report a fee"` — the dash with
+   nothing accounting for it. One snapshot: the only clock reads in `DailyReports.cs` are the ctor's `_now` and `WriteNow`, never a section.
+2. VERIFIED. RED, the day bound out of `NoteFor`: `Assert.Null() Failure: Value is not null`, `Kind = note, CreatedAt = 09/07/2026` —
+   yesterday's note as today's. Mutant, the kind check dropped: `Kind = brief, Content = an agenda for Research`. Words and `Theme.cs` only:
+   the one literal in `ReportView.cs` is `new Thickness(0, 0, Theme.S2, Theme.S2)`. Built once, then a signature gate at `ReportView.cs:117,131`
+   — READ, NOT VERIFIED by a run: nothing in this suite runs Avalonia.
+3. VERIFIED. RED, the still-owed clause out of `ComposeDecisions`: `Assert.Single() Failure: The collection was empty` — a message 30 hours
+   old and unanswered, absent. Mutant, `at >= due` inverted: that, and `Assert.False() Failure  Expected: False  Actual: True` on a fresh one.
+4. VERIFIED. RED, `JsonIgnoreCondition.Never` off `Net`: `Assert.Contains() Failure`, `Not found: ""net":null"`. Mutant, an unreadable day
+   quietly becoming today: `Assert.False() Failure  Expected: False  Actual: True`. 41 nullables over 10 declared reply records, none without
+   the attribute; `HandlerPaths` at `TimeSpan.Zero`. The guide was the one part of this item not on the branch: added, its test RED first,
+   `Not found: "trade report"`.
+NOT DONE: no box, no ATAS, no order, no money. No run proves the page updates in place. Nothing exercises a DST-length day, a midnight
+write, or a `note` end to end — no build produces one.
