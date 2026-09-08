@@ -200,6 +200,18 @@ public static class WorkspaceBuilder
     never a zero** — if it says a fee is missing, your profit is smaller than the headline by an
     amount nobody knows, and a plan built on the headline is a plan built on a guess.
 
+    What your owner reads about the day is a report TradeAgent writes itself:
+
+    ```
+    trade report --json
+    ```
+
+    What was traded and what it cost, what you spent, and every message they typed with what became
+    of it. **You cannot write it** — there is no operation that does, because it is the record your
+    own work is judged by. Read it the way you read `pnl`: a null is an unknown and never a zero,
+    `missing` names each one in their words, and what is still OPEN is not valued in it, so ask
+    `trade pnl` when you need the open side.
+
     ### Every turn has a cause, and being idle is not a failure
 
     You are not sitting in a conversation waiting to be told what to do. A turn happens because

@@ -1,3 +1,4 @@
+using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -158,6 +159,28 @@ public class DailyReportTests
         Assert.True(draft.Lines <= DailyReportText.MaxLines);
         // Nothing was shortened behind the reader's back: the file is the refusal, not a trimmed report.
         Assert.DoesNotContain("message 0", draft.Text);
+    }
+
+    /// <summary>
+    /// U-report item 4, the third of its three surfaces. The schema text and <c>CONTRACTS.md</c>
+    /// are read by whoever is looking for them; the guide is what the agent is handed every turn,
+    /// and a command nobody is told about is a command nobody runs. The precedent is
+    /// <c>DataOpsTests.The_missions_data_folder_sentences_name_the_command_that_serves_the_data</c>,
+    /// which named <c>trade data</c> there for the same reason.
+    ///
+    /// <para>What it must also say is that this one is a READ. An agent that believed it could
+    /// write the report would be an agent that believed it could write its own assessment.</para>
+    /// </summary>
+    [Fact]
+    public void The_guide_names_the_report_and_says_the_agent_cannot_write_it()
+    {
+        var guide = WorkspaceBuilder.Instructions(new WorkspaceContext(
+            "Practice simulator", ConnectorIsPaper: true, "SIM-1", TradingMode.PAPER,
+            ExecutionAvailable: true, null, new RiskPolicy { InstrumentAllowlist = ["ES"] },
+            ConnectorIsBuiltInSimulator: true));
+
+        Assert.Contains("trade report", guide);
+        Assert.Contains("You cannot write it", guide);
     }
 
     [Fact]
