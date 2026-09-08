@@ -1057,3 +1057,49 @@ zero, never two.
 
 `role` on `ai_attempt` and on `mission_event` is nullable and additive; a row that names none is the
 chair's (`CouncilRoles.Or`), because the single agent the council replaces was Operations.
+
+## The owner's daily report — `src/TradeAgent.Gateway/DailyReports.cs`
+
+One file per LOCAL calendar day at `state/reports/<yyyy-MM-dd>.md`, LF, at most 120 lines, written by
+the app and by nothing else — the rule `material`, `fill`, `ai_attempt`, `mission_event` and
+`publication` already keep. `trade report [--day yyyy-MM-dd]` serves it; there is no op and no verb
+that writes, rewrites or deletes one, because it is the record the AI's own work is judged by. The
+account owner presses **Write it now** on the Daily report page; the background loop writes any day
+that has passed with no file, so a laptop asleep at midnight still gets one.
+
+**Composed from ONE snapshot, and nothing in it is inferred.** Ten sections
+(`docs/COUNCIL.md` rule 10): identity · mission state · trading readiness · capital and performance ·
+execution health · AI spending · other operating costs · research evidence · decisions and changes ·
+recovery and next work. Every field is nullable-and-labelled and **never defaulted**: a figure the app
+could not work out is `null` in the reply, a `—` in the document, and a named line in `missing`. The
+sharpest case is `net`, which is withheld whenever any fill that day carried no fee — a net computed
+as though an unreported cost were zero is wrong in the owner's favour every time.
+
+**No paid turn and no connector call.** No `mission_event` is raised by writing a report: every row in
+that queue is a reason to spend the owner's money, and a document the app already finished writing is
+not one. That is also why `report` sits in the handler table at `TimeSpan.Zero`. The price is stated
+rather than hidden: `exposure`, `unrealized` and the remaining loss allowance are absent, with a
+`missing` line saying the report asks the platform nothing — `pnl` is the op that does.
+
+**An over-long draft is refused by the app itself.** A rendering past 120 lines is not trimmed: the
+file becomes a refusal naming the line count, and `rejected` carries it. The same rule the relay
+applies to a role's publication, applied to the app's own output.
+
+**The Operations Director's note is beside the facts, never inside them.** A `publication` of kind
+`note` by `operations`, looked up BY DAY AND BY KIND; a day with none says so. Nothing in this build
+produces one — it is the one paid thing near this page and exists only when an app predicate changed.
+
+**`mission_event.disposition` and `disposition_detail` (schema 10).** `answered` and `failed` are what
+a TURN made of a wake. The other three are outcomes the app reaches WITHOUT one, and
+`MissionEventStore.SettleWithoutTurn` refuses the first two for exactly that reason: `delegated` (the
+launch that consumed the owner's message published a brief — the detail is that publication's id, a
+measured co-occurrence and never a reading of either text; `Settle` will not overwrite it, because the
+relay runs before the loop settles), `blocked` (nothing could take it and the detail is why; the row
+stays UNCONSUMED, so the message is still owed a turn) and `superseded` (the same words arrived again
+before anybody looked, and the detail is the later event's id — EXACT text only, because "the same
+subject" is a judgment this software is not entitled to make).
+
+**The deadline is a line, never a wake.** `OwnerReplyDeadlineHours` (default 24) from the moment a
+message was received; the report lists the day's messages plus any older one still unsettled and past
+due, marked `OVERDUE`. It buys no turn: priority a task claims for itself is what rule 7 forbids, and
+a backlog that manufactured wakes would spend tomorrow's allowance at midnight.

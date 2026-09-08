@@ -153,6 +153,14 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             Opt("since");
             return (Ops.Pnl, a);
 
+        // `trade report` and `trade report --day 2026-09-08`. A READ, like `data`: there is no
+        // `trade report write`, because the report is the record the agent's work is judged by and
+        // the account owner presses Write it now in TradeAgent's own window.
+        case "report":
+            if (flags.ContainsKey("day")) Opt("day");
+            else if (pos.ElementAtOrDefault(0) is { Length: > 0 } d) a["day"] = d;
+            return (Ops.Report, a);
+
         case "quote":
             a["symbol"] = pos.ElementAtOrDefault(0) ?? flags.GetValueOrDefault("symbol") ?? "";
             return (Ops.Quote, a);
@@ -239,6 +247,7 @@ static void Usage()
       trade orders [--all] | order <id>
       trade executions
       trade pnl [--since 2026-09-06] [--all]     what it made or lost, and what that figure misses
+      trade report [--day 2026-09-08]            the owner's daily report, exactly as they read it
 
       trade buy  <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]
       trade sell <symbol> <qty> [--limit P] [--stop P] [--tif TIF] [--request-id ID]

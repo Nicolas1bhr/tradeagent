@@ -255,6 +255,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.MaterialNote, TimeSpan.Zero, "the workspace ledger, in process"),
         new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
         new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
+        new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -922,6 +923,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
                 Core.Ops.DataList     => DataList(),
                 Core.Ops.DataBars     => DataBars(req),
+                Core.Ops.Report       => ReportFor(req),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -1768,6 +1770,175 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
         int FeesUnknownFills,
         int Fills);
+
+    /// <summary>
+    /// THE OWNER'S DAILY REPORT, AS THE OWNER READS IT.
+    ///
+    /// <para>A READ, and only a read. The document is composed by the app from tables it wrote; there
+    /// is no op here that writes, rewrites or deletes one, which is the same asymmetry
+    /// <c>material</c> and <c>data-list</c> make and for a sharper reason: this is the record the AI's
+    /// own work is judged by, and an agent that could edit it could report a day it did not have.</para>
+    ///
+    /// <para>NO CONNECTOR CALL, which is why this handler's row in the table above is
+    /// <see cref="TimeSpan.Zero"/>. The price is real and is in the answer rather than hidden: open
+    /// positions are not valued in a report written from the ledger alone, and <c>missing</c> names
+    /// that where the figure would have stood. <c>pnl</c> is the op that asks the platform.</para>
+    /// </summary>
+    object ReportFor(IpcRequest req)
+    {
+        var dayArg = req.Args is not null && req.Args.ContainsKey("day") ? req.Str("day") : null;
+        DateTimeOffset at;
+
+        if (dayArg is null) at = DateTimeOffset.Now;
+        else
+        {
+            // PRESENT AND UNREADABLE IS A REFUSAL, the same rule `pnl --since` follows: a day that
+            // quietly became today is a different day's report from the one that was asked for.
+            if (!DateTime.TryParseExact(dayArg, "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var parsed))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'day' is not a date this build can read: {dayArg}. Send a local calendar day as " +
+                    "yyyy-MM-dd, for example 2026-09-08. Reading it as today would answer a different " +
+                    "question from the one you asked.");
+            at = new DateTimeOffset(parsed.AddHours(12), TimeZoneInfo.Local.GetUtcOffset(parsed));
+        }
+
+        var r = gateway.Reports.Compose(at);
+        var draft = DailyReportText.Draft(r);
+
+        return new ReportReply(
+            r.Identity.Day, r.Identity.SnapshotAt, r.Identity.Timezone, r.Identity.From, r.Identity.To,
+            r.Identity.AppVersion, r.Identity.SchemaVersion,
+            "a null figure is an UNKNOWN and never a zero. 'net' is withheld whenever any fill in the "
+            + "day has no fee; 'unrealized' and 'exposure' are absent because this report asks your "
+            + "platform nothing — use 'pnl' for those. 'missing' names every gap in the owner's own "
+            + "words, and 'text' is the document they read, verbatim. Nothing here is inferred and no "
+            + "AI turn produced it. You cannot write it: there is no operation that does.",
+            new ReportReplyMission(r.Mission.State, r.Mission.Reason, r.Mission.NextEligibleWake),
+            new ReportReplyReadiness(r.Readiness.Connector, r.Readiness.ConnectorIsPaper,
+                r.Readiness.Account, r.Readiness.Mode, r.Readiness.ExecutionAvailable,
+                r.Readiness.ExecutionBlockedReason),
+            new ReportReplyPerformance(r.Performance.Realized, r.Performance.Fees,
+                r.Performance.FeesUnknownFills, r.Performance.Net, r.Performance.Unrealized,
+                r.Performance.Exposure, r.Performance.Drawdown, r.Performance.Fills,
+                r.Performance.LossBudgetDay, r.Performance.Currency),
+            new ReportReplyExecution(r.Execution.OrdersToday, r.Execution.FillsToday,
+                r.Execution.RejectionsToday, r.Execution.OpenRequests, r.Execution.Unreconciled,
+                [.. r.Execution.Unknown.Select(u => new ReportReplyUnknown(u.RequestId, u.Instrument,
+                    u.Since, (int)u.Age.TotalSeconds))]),
+            new ReportReplySpending(r.Spending.Spent, r.Spending.Reserved, r.Spending.Cap,
+                r.Spending.Turns, r.Spending.UnpricedTurns, r.Spending.Currency, r.Spending.Runtime,
+                r.Spending.Basis,
+                [.. r.Spending.Roles.Select(x => new ReportReplyRole(x.Role, x.Model, x.Turns, x.Spent,
+                    x.Reserved, x.Cap, x.Estimated))]),
+            [.. r.Decisions.OwnerMessages.Select(m => new ReportReplyMessage(m.Text, m.ReceivedAt,
+                m.Disposition, m.DispositionDetail, m.DueBy, m.Overdue))],
+            [.. r.AllGaps.Select(g => new ReportReplyGap(g.Field, g.Why))],
+            draft.Text, draft.Lines, draft.Rejected);
+    }
+
+    /// <summary>
+    /// A NULL FIELD HAS TO ARRIVE AS <c>null</c>, WHICH IS WHY THIS IS A DECLARED TYPE — the reason
+    /// <see cref="PnlReply"/> is one, and it matters more here: this document's whole subject is what
+    /// the app could not measure. <c>Json.Options</c> drops a null field of an anonymous object
+    /// entirely, so an absent <c>net</c> would read as a field this build does not have rather than as
+    /// "TradeAgent cannot compute this", and the one figure a profitability claim rests on would
+    /// disappear exactly when it was withheld on purpose.
+    /// </summary>
+    sealed record ReportReply(
+        string Day,
+        DateTimeOffset SnapshotAt,
+        string Timezone,
+        DateTimeOffset From,
+        DateTimeOffset To,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? AppVersion,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? SchemaVersion,
+        string Note,
+        ReportReplyMission Mission,
+        ReportReplyReadiness Readiness,
+        ReportReplyPerformance Performance,
+        ReportReplyExecution Execution,
+        ReportReplySpending Spending,
+        IReadOnlyList<ReportReplyMessage> OwnerMessages,
+        IReadOnlyList<ReportReplyGap> Missing,
+        string Text,
+        int Lines,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Rejected);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyMission(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? State,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Reason,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? NextEligibleWake);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyReadiness(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Connector,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? ConnectorIsPaper,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Account,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Mode,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? ExecutionAvailable,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ExecutionBlockedReason);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyPerformance(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Realized,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? FeesUnknownFills,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Net,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Unrealized,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Exposure,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Drawdown,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Fills,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? LossBudgetDay,
+        string Currency);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyExecution(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? OrdersToday,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? FillsToday,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? RejectionsToday,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? OpenRequests,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Unreconciled,
+        IReadOnlyList<ReportReplyUnknown> Unknown);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyUnknown(string RequestId, string Instrument, DateTimeOffset Since, int AgeSeconds);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplySpending(
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Spent,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Reserved,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Cap,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Turns,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? UnpricedTurns,
+        string Currency,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Runtime,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Basis,
+        IReadOnlyList<ReportReplyRole> Roles);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyRole(
+        string Role,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Model,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Turns,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Spent,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Reserved,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Cap,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Estimated);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyMessage(
+        string Text,
+        DateTimeOffset ReceivedAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Disposition,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DispositionDetail,
+        DateTimeOffset DueBy,
+        bool Overdue);
+
+    /// <inheritdoc cref="ReportReply"/>
+    sealed record ReportReplyGap(string Field, string Why);
 
     /// <summary>
     /// WHAT MARKET DATA THIS INSTALLATION HOLDS, AND WHERE EVERY BYTE OF IT CAME FROM.

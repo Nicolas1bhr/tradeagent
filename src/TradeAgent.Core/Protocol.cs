@@ -46,6 +46,17 @@ public static class Ops
     /// </summary>
     public const string DataList = "data-list", DataBars = "data-bars";
 
+    /// <summary>
+    /// THE OWNER'S DAILY REPORT, AND IT IS A READ. The app composes it from what it measured; this op
+    /// hands the AI the same document the owner reads, so the two are never working from different
+    /// accounts of the same day.
+    ///
+    /// There is no op that writes one, and there is deliberately none: the report is the record the
+    /// AI is judged by, and an agent that could edit it could report a day it did not have. The
+    /// account owner presses "Write it now" in TradeAgent's own window.
+    /// </summary>
+    public const string Report = "report";
+
     public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }

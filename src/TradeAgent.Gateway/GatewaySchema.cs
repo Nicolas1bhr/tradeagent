@@ -51,6 +51,11 @@ public static class GatewaySchema
         // record of a trade. The provenance half matters as much: coverage is what was collected,
         // not what was asked for, and a minute with no bar is a minute with no bar.
         market_data = "TradeAgent can hold historical bars the account owner collected — today Binance's public monthly spot archives, 1-minute closed bars in UTC. 'data-list' says what there is and where every byte of it came from: the URL of every raw archive file, the SHA-256 Binance published for it, the SHA-256 TradeAgent computed, and the counts that say what the file does NOT claim. 'data-bars' serves the bars themselves. What they are NOT: bars are hypothesis evidence. They establish no fill, no queue position and no intrabar ordering, so a result computed over them is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. Nothing is filled in: 'gaps' counts minutes with no bar inside the covered period, 'duplicates' counts rows dropped, and 'incomplete' counts bars excluded because they had not closed when the archive was read. 'months_present' against 'months_attempted' is the real coverage. A dataset whose recorded hashes no longer match the files on disk reads REJECTED and serves no bars. There is no operation here that collects, normalises, deletes or accepts data: the account owner presses that in TradeAgent, and the ledger is a measurement you cannot edit.",
+        // WHAT THE OWNER READS, said where an agent reads the surface. docs/COUNCIL.md rule 10: the
+        // app generates the daily factual report itself. It is here so an agent asked to cover what
+        // it costs works from the same account of the day the account owner does, and so that it
+        // knows the document is not one it can edit.
+        daily_report = "TradeAgent writes the account owner a factual report of every local day, from what it measured: mission state, trading readiness, capital and performance, execution health, AI spending, other costs, research evidence, decisions including the owner's own messages, and recovery. 'report' serves it to you. Nothing in it is inferred and no AI turn produces it, which is why it can be served without asking your platform anything — and that is also its limit: what is still OPEN is not valued in it, and 'missing' says so where the figure would have stood. Use 'pnl' when you need the open side. Every null in the answer is an UNKNOWN and never a zero, most sharply 'net', which is withheld whenever any fill that day carried no fee. There is no operation that writes, rewrites or deletes a report: it is the record your work is judged by, and the account owner presses Write it now in TradeAgent.",
         trading_modes = Enum.GetNames<TradingMode>(),
         current = status,
         operations = Ops(),
@@ -122,6 +127,22 @@ public static class GatewaySchema
                 new("pair", "string", true, "Which pair, e.g. BTCUSDT. Upper-case letters and digits only."),
                 new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
                 new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused.")
+            ]),
+
+        new(Core.Ops.Report, "trade report [--day 2026-09-08]", false,
+            "The account owner's daily report for a local calendar day, exactly as they read it: the "
+            + "rendered document in 'text' and the same figures structured beside it. Defaults to "
+            + "today; --day takes a local calendar day as yyyy-MM-dd, and one this build cannot read "
+            + "is refused rather than treated as today. READ THE NULLS AND `missing`: a null field is "
+            + "an UNKNOWN and never a zero. `net` is null whenever any fill that day carried no fee, "
+            + "`unrealized` and `exposure` are null because this report asks your platform nothing — "
+            + "ask `pnl` for those — and `missing` names every gap in the owner's own words. "
+            + "`owner_messages` carries what the account owner typed, its disposition and its "
+            + "deadline; `overdue` is a line in their report and never a reason for you to take a "
+            + "turn. This is a READ: there is no operation here that writes, rewrites or deletes a "
+            + "report, because it is the record your work is judged by.",
+            [
+                new("day", "string", false, "A local calendar day, yyyy-MM-dd. Present and unreadable is refused, never read as today.")
             ]),
 
         new(Core.Ops.MaterialList, "trade material list", false,
