@@ -46,11 +46,18 @@ public class CouncilRelayTests
 
         public string Home(string role) => WorkspaceBuilder.HomeOf(Root, role);
 
-        /// <summary>A NEW connection to the same file. This is what "restart" means here.</summary>
+        /// <summary>
+        /// A NEW connection to the same file. This is what "restart" means here — and a restart
+        /// turns every attempt still LAUNCHED into a LOST one, because that is what a meter opening
+        /// this database does (<see cref="AiAttemptStore.LoseOpen"/>, called from the
+        /// <c>TurnMeter</c> constructor before the app's first relay pass). Without it this world
+        /// would be a restart that left the previous process's turns looking alive.
+        /// </summary>
         public Database Open()
         {
             var db = new Database(DbFile);
             _open.Add(db);
+            new AiAttemptStore(db).LoseOpen(DateTimeOffset.UtcNow);
             return db;
         }
 
@@ -58,6 +65,39 @@ public class CouncilRelayTests
 
         public void Write(string role, string file, string content) =>
             File.WriteAllText(Path.Combine(Home(role), WorkspaceBuilder.OutDir, file), content);
+
+        /// <summary>
+        /// A LAUNCH THIS APP RECORDED, and the name the turn's output has to carry. The relay
+        /// attributes a file by the attempt id in its name and refuses one naming no launch, so a
+        /// test that wants a publication has to have a row in <c>ai_attempt</c> first.
+        /// </summary>
+        public string Launched(Database db, string role, string id)
+        {
+            new AiAttemptStore(db).Begin(new AiAttempt
+            {
+                Id = id,
+                StartedAt = DateTimeOffset.UtcNow,
+                Role = role
+            });
+            return id;
+        }
+
+        /// <summary>The file name one role's output carries for one launch. The app's rule, not the role's.</summary>
+        public static string Named(string role, string attempt) =>
+            CouncilRelay.Pattern(CouncilRelay.KindFor(role)).Replace("*", attempt);
+
+        /// <summary>Writes one turn's output under the name that turn is required to use.</summary>
+        public void WriteFor(string role, string attempt, string content) =>
+            Write(role, Named(role, attempt), content);
+
+        /// <summary>What the fence moved aside, oldest name first.</summary>
+        public string[] Quarantined(string role)
+        {
+            var dir = Path.Combine(Home(role), WorkspaceBuilder.OutDir, CouncilRelay.QuarantineDir);
+            return Directory.Exists(dir)
+                ? [.. Directory.EnumerateFiles(dir).Select(Path.GetFileName).OfType<string>().Order(StringComparer.Ordinal)]
+                : [];
+        }
 
         public string[] Delivered(string role) =>
             [.. Directory.EnumerateFiles(Path.Combine(Home(role), WorkspaceBuilder.InDir), "*.md")
@@ -96,7 +136,8 @@ public class CouncilRelayTests
         // ---- the host that dies ------------------------------------------------------------
         using (var dying = world.Open())
         {
-            world.Write(CouncilRoles.Research, "report-1.md", text);
+            world.Launched(dying, CouncilRoles.Research, "turn-a");
+            world.WriteFor(CouncilRoles.Research, "turn-a", text);
             var relay = world.RelayOver(dying);
             relay.Boundary = at => { if (at == boundary) throw new IOException($"killed after the {at}"); };
 
@@ -145,7 +186,8 @@ public class CouncilRelayTests
     {
         using var world = new World();
         using var db = world.Open();
-        world.Write(CouncilRoles.Research, "report-1.md", Report(5));
+        world.Launched(db, CouncilRoles.Research, "turn-a");
+        world.WriteFor(CouncilRoles.Research, "turn-a", Report(5));
 
         world.RelayOver(db).Run(CouncilRoles.Research, "turn-a");
         world.RelayOver(db).Run(CouncilRoles.Research, "turn-b");
@@ -168,19 +210,21 @@ public class CouncilRelayTests
         using var db = world.Open();
         var rejected = new List<string>();
 
-        world.Write(CouncilRoles.Research, "report-1.md", Report(CouncilRelay.ReportLines));
+        world.Launched(db, CouncilRoles.Research, "turn-a");
+        world.WriteFor(CouncilRoles.Research, "turn-a", Report(CouncilRelay.ReportLines));
         var relay = new CouncilRelay(db, world.Home) { Rejected = rejected.Add };
         relay.Run(CouncilRoles.Research, "turn-a");
 
         var good = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
 
-        world.Write(CouncilRoles.Research, "report-2.md", Report(CouncilRelay.ReportLines + 1));
+        world.Launched(db, CouncilRoles.Research, "turn-b");
+        world.WriteFor(CouncilRoles.Research, "turn-b", Report(CouncilRelay.ReportLines + 1));
         relay.Run(CouncilRoles.Research, "turn-b");
 
         Assert.Equal([good.Id], new PublicationStore(db).By(CouncilRoles.Research).Select(p => p.Id));
         Assert.Equal([$"{good.Id}.md"], world.Delivered(CouncilRoles.Operations));
         Assert.Single(rejected);
-        Assert.Contains("report-2.md", rejected[0]);
+        Assert.Contains(World.Named(CouncilRoles.Research, "turn-b"), rejected[0]);
     }
 
     /// <summary>
@@ -194,7 +238,8 @@ public class CouncilRelayTests
         using var world = new World();
         using var db = world.Open();
         var agenda = Report(35);
-        world.Write(CouncilRoles.Operations, "agenda-1.md", agenda);
+        world.Launched(db, CouncilRoles.Operations, "turn-a");
+        world.WriteFor(CouncilRoles.Operations, "turn-a", agenda);
 
         world.RelayOver(db).Run(CouncilRoles.Operations, "turn-a");
 
@@ -202,7 +247,7 @@ public class CouncilRelayTests
         Assert.Equal(PublicationKind.Brief, p.Kind);
         Assert.Equal([CouncilRoles.Research], p.RecipientList);
         Assert.Equal(PublicationClass.Council, p.Classification);
-        Assert.Equal($"{WorkspaceBuilder.OutDir}/agenda-1.md", p.Source);
+        Assert.Equal($"{WorkspaceBuilder.OutDir}/{World.Named(CouncilRoles.Operations, "turn-a")}", p.Source);
         Assert.Equal("turn-a", p.Attempt);
 
         var wake = Assert.Single(new MissionEventStore(db).OfKind(MissionEventKind.Brief));
@@ -224,14 +269,16 @@ public class CouncilRelayTests
         using var world = new World();
         using var db = world.Open();
         var text = Report(6);
-        world.Write(CouncilRoles.Research, "report-1.md", text);
+        world.Launched(db, CouncilRoles.Research, "turn-a");
+        world.WriteFor(CouncilRoles.Research, "turn-a", text);
 
         var relay = world.RelayOver(db);
         relay.Boundary = at => { if (at == "transaction") throw new IOException("killed after the transaction"); };
         Assert.Throws<IOException>(() => relay.Run(CouncilRoles.Research, "turn-a"));
 
         // The agent tidied up after itself. The app must still be able to deliver.
-        File.Delete(Path.Combine(world.Home(CouncilRoles.Research), WorkspaceBuilder.OutDir, "report-1.md"));
+        File.Delete(Path.Combine(world.Home(CouncilRoles.Research), WorkspaceBuilder.OutDir,
+            World.Named(CouncilRoles.Research, "turn-a")));
         world.RelayOver(db).Run();
 
         var p = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
@@ -239,5 +286,111 @@ public class CouncilRelayTests
             File.ReadAllText(Path.Combine(world.Home(CouncilRoles.Operations),
                 WorkspaceBuilder.InDir, $"{p.Id}.md")));
         Assert.Single(Tasks(db));
+    }
+
+    // ---- the fence: a file is the work of the launch its NAME carries -------------------------
+
+    /// <summary>
+    /// RED FIRST. A turn writes its report and is killed before its own relay pass runs. The pass
+    /// that eventually publishes it is the NEXT turn's — and until this unit the publication was
+    /// stamped with whichever launch happened to be running the pass, so the record said a turn
+    /// that never wrote the file had produced it.
+    ///
+    /// <para>Provenance that can name the wrong launch is provenance nobody can use: round 4 of
+    /// <c>docs/COUNCIL.md</c> lists "which attempt produced an artifact" among the four things that
+    /// cannot be recovered afterwards. The work is real, so it is published — under the killed
+    /// turn's own id, in the state the restart honestly left that turn in, which is LOST.</para>
+    /// </summary>
+    [Fact]
+    public void A_killed_turns_report_is_published_under_its_own_attempt_not_the_next_turns()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var text = Report(9);
+
+        // The turn that did the work, and was killed before anything published it.
+        world.Launched(db, CouncilRoles.Research, "turn-killed");
+        world.WriteFor(CouncilRoles.Research, "turn-killed", text);
+
+        // THE RESTART. This is what a meter opening the database does, and it is what makes the
+        // killed turn identifiable at all: nobody will ever report its usage, so it is LOST.
+        new AiAttemptStore(db).LoseOpen(DateTimeOffset.UtcNow);
+
+        // The next turn runs, and ITS pass is the one that finds the file.
+        world.Launched(db, CouncilRoles.Research, "turn-next");
+        world.RelayOver(db).Run(CouncilRoles.Research, "turn-next");
+
+        var p = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Equal(text, p.Content);
+        Assert.Equal("turn-killed", p.Attempt);
+        Assert.Equal(AiAttemptState.LOST, new AiAttemptStore(db).Get("turn-killed")!.State);
+    }
+
+    /// <summary>
+    /// THE FENCE. A file naming no launch this app made is never published — it is moved aside, and
+    /// the owner is told once.
+    ///
+    /// <para>Without it a process the app believes is gone can still drop a file into a role's
+    /// <c>out/</c> and have the app publish it as that role's work, with a real artifact id and a
+    /// delivery and a paid turn behind it. Moved rather than deleted: the bytes are evidence, they
+    /// stay in the role's own folder, and the scanner records them where they now are.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("report-.md")]                       // names nothing at all
+    [InlineData("report-1.md")]                      // names an id this app never launched
+    [InlineData("report-turn-of-the-other-role.md")] // names the chair's launch, in Research's folder
+    public void A_file_naming_no_launch_of_this_role_is_quarantined_and_never_published(string file)
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var said = new List<string>();
+
+        // FINISHED, not open: a launch that has ended is one the fence would otherwise let through
+        // on its state alone, so what refuses this one is that it was made for the OTHER role.
+        world.Launched(db, CouncilRoles.Operations, "turn-of-the-other-role");
+        new AiAttemptStore(db).LoseOpen(DateTimeOffset.UtcNow);
+
+        world.Write(CouncilRoles.Research, file, Report(4));
+
+        var relay = new CouncilRelay(db, world.Home) { Quarantined = said.Add };
+        relay.Run(CouncilRoles.Research, "turn-mine");
+
+        Assert.Empty(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Empty(world.Delivered(CouncilRoles.Operations));
+        Assert.Empty(Tasks(db));
+
+        Assert.Equal([file], world.Quarantined(CouncilRoles.Research));
+        Assert.False(File.Exists(Path.Combine(world.Home(CouncilRoles.Research),
+            WorkspaceBuilder.OutDir, file)));
+        Assert.Contains(file, Assert.Single(said));
+
+        // AND IT IS NOT READ AGAIN. A refused file left where it was would be read, refused and
+        // logged on every turn for the rest of the installation's life.
+        said.Clear();
+        relay.Run(CouncilRoles.Research, "turn-mine");
+        Assert.Empty(said);
+    }
+
+    /// <summary>
+    /// THE STALE-PROCESS CASE, which is the one the pass's own launch id is still needed for. A row
+    /// still LAUNCHED that is not the turn whose pass this is belongs to a process the app is not
+    /// accounting for — its own restart turns every open row LOST before the first pass — so a file
+    /// naming one arrived from somewhere the app cannot vouch for.
+    /// </summary>
+    [Fact]
+    public void A_file_naming_a_launch_that_is_still_open_and_is_not_this_pass_is_quarantined()
+    {
+        using var world = new World();
+        using var db = world.Open();
+
+        world.Launched(db, CouncilRoles.Research, "turn-open");
+        world.WriteFor(CouncilRoles.Research, "turn-open", Report(4));
+
+        world.Launched(db, CouncilRoles.Research, "turn-mine");
+        world.RelayOver(db).Run(CouncilRoles.Research, "turn-mine");
+
+        Assert.Empty(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Equal([World.Named(CouncilRoles.Research, "turn-open")],
+            world.Quarantined(CouncilRoles.Research));
     }
 }

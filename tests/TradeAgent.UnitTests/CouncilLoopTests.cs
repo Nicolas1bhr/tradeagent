@@ -152,11 +152,20 @@ public class CouncilLoopTests
         public string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
         {
             Opened.Add((role, prompt));
-            var id = $"turn-{_tag}-{++_attempts}";
+            var id = Minted ?? NextAttemptId()!;
             new AiAttemptStore(_db).Begin(
                 new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
             return id;
         }
+
+        /// <summary>
+        /// The id the turn about to run will carry. Minted before the prompt, exactly as the meter
+        /// does it, so a conversation writing into <c>out/</c> can name the file after it.
+        /// </summary>
+        public string? NextAttemptId() => Minted = $"turn-{_tag}-{++_attempts}";
+
+        /// <summary>The id minted for the turn in flight, for a conversation that has to name it.</summary>
+        public string? Minted { get; private set; }
 
         /// <summary>The REAL relay, so what the chair is handed is what the app actually publishes.</summary>
         public void Relay(string role, string? attempt) => _relay.Run(role, attempt);
@@ -364,8 +373,11 @@ public class CouncilLoopTests
         foreach (var role in CouncilRoles.All) host.Spending[role] = Reading(role, 0.40m, 5.00m, 0.5m);
 
         const string report = "The 1-minute bars have a 40-minute gap on 2026-03-09.\nIt is in the archive, not the download.";
+        // NAMED AFTER THE TURN THAT WRITES IT, which is what the app now requires: the relay
+        // attributes a file by the attempt id in its name and quarantines one naming no launch.
         host.Conversations[CouncilRoles.Research].OnTurn = () => File.WriteAllText(
-            Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.OutDir, "report-1.md"),
+            Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.OutDir,
+                $"report-{host.Minted}.md"),
             report);
 
         var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);

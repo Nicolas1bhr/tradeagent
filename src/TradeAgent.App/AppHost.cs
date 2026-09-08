@@ -426,7 +426,8 @@ public sealed class AppHost : IAsyncDisposable
             // IMissionHost.Relay — there is no pipe op and no `trade` verb that touches it.
             Relay = new CouncilRelay(_db, HomeFor)
             {
-                Rejected = text => Gateway.Log.Activity(text, "warn")
+                Rejected = text => Gateway.Log.Activity(text, "warn"),
+                Quarantined = text => Gateway.Log.Activity(text, "warn")
             };
 
             Mission = new MissionLoop(new MissionHost(this),
@@ -881,6 +882,13 @@ public sealed class AppHost : IAsyncDisposable
         /// folders, and to nothing that decides what the AI is allowed to do.
         /// </summary>
         public void Relay(string role, string? attempt) => host.Relay.Run(role, attempt);
+
+        /// <summary>
+        /// The id the next launch will carry, minted by the meter so the turn's message can name it.
+        /// It commits nothing — the launch record is <see cref="BeginTurn"/>'s — and it cannot change
+        /// a mode, lift the kill switch or approve anything.
+        /// </summary>
+        public string? NextAttemptId() => host.Meter?.Mint();
 
         /// <summary>
         /// The artifact one delivered task is about, read out of the app's own publication table

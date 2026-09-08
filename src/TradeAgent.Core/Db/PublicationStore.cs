@@ -78,7 +78,12 @@ public sealed record Publication
     /// <summary>The launch that produced it, where the app knew which. Provenance, never authority.</summary>
     public string? Attempt { get; init; }
 
-    /// <summary>This role's nth publication. For a person reading the table, and for an ordering.</summary>
+    /// <summary>
+    /// This role's nth publication, ASSIGNED BY <see cref="PublicationStore.Commit"/> INSIDE THE
+    /// TRANSACTION that inserts the row. Whatever a caller puts here is overwritten: a number read
+    /// before the transaction is a number two publications in one turn can both get, and a caller
+    /// that had to remember to ask for it is a caller that can forget.
+    /// </summary>
     public int Revision { get; init; }
 
     public required string Kind { get; init; }
@@ -151,7 +156,7 @@ public sealed class PublicationStore(Database db)
             VALUES($id,$role,$attempt,$rev,$kind,$to,$class,$at,$src,$content)
             ON CONFLICT(id) DO NOTHING
             """,
-            ("$id", p.Id), ("$role", p.Role), ("$attempt", p.Attempt), ("$rev", p.Revision),
+            ("$id", p.Id), ("$role", p.Role), ("$attempt", p.Attempt), ("$rev", NextRevision(p.Role)),
             ("$kind", p.Kind), ("$to", p.Recipients), ("$class", p.Classification),
             ("$at", Sql.T(p.CreatedAt)), ("$src", p.Source), ("$content", p.Content));
         var fresh = pub.ExecuteNonQuery() == 1;
@@ -243,7 +248,11 @@ public sealed class PublicationStore(Database db)
         return list;
     });
 
-    /// <summary>This role's next revision number. Taken from the rows, so nothing else has to survive.</summary>
+    /// <summary>
+    /// This role's next revision number. Taken from the rows, so nothing else has to survive — and
+    /// read INSIDE <see cref="Commit"/>'s transaction, so two publications committed in one turn
+    /// cannot both be handed the same number by a read that happened before either insert.
+    /// </summary>
     public int NextRevision(string role) => db.Read(_ =>
     {
         using var c = db.Cmd("SELECT COALESCE(MAX(revision), 0) FROM publication WHERE role=$role",

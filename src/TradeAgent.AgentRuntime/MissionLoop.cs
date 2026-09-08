@@ -245,10 +245,25 @@ public interface IMissionHost
     /// every existing host turning.
     ///
     /// <paramref name="role"/> is the role whose turn just ended and <paramref name="attempt"/> is
-    /// its launch record — provenance for anything published in this pass, and null on start, when
-    /// nobody's turn produced what is being reconciled.
+    /// its launch. The attempt no longer ATTRIBUTES anything — a file's provenance is the launch its
+    /// NAME carries — but it still says which launch this pass belongs to, which is what lets the
+    /// relay tell this turn's own output from a file dropped by a process the app is not accounting
+    /// for. Null on start, when nobody's turn produced what is being reconciled.
     /// </summary>
     void Relay(string role, string? attempt) { }
+
+    /// <summary>
+    /// THE ID THE NEXT LAUNCH WILL CARRY, minted before the turn's message is composed so that the
+    /// message can NAME it — <c>out/report-&lt;attempt&gt;.md</c> is how staged output is bound to
+    /// the launch that produced it, and an agent cannot write that name without being told the id.
+    ///
+    /// It has to be minted here rather than returned by <see cref="BeginTurn"/>, because that call
+    /// hashes the prompt: an id handed back afterwards could not be in the prompt it is hashed with.
+    /// Null where nothing records launches, and then the Situation names no id and the relay
+    /// quarantines whatever the turn writes — which is the honest outcome of a turn the app could
+    /// not record at all.
+    /// </summary>
+    string? NextAttemptId() => null;
 
     /// <summary>
     /// THE ARTIFACT ONE DELIVERED TASK IS ABOUT, or null where it cannot be read. The loop asks for
@@ -282,6 +297,16 @@ public sealed record MissionSituation
     /// serial council cannot afford: two roles, one account, and only one of them chairs.
     /// </summary>
     public string? Role { get; init; }
+
+    /// <summary>
+    /// THE ID OF THIS TURN'S LAUNCH, and the name the turn must write its output under.
+    ///
+    /// The app binds staged output to the attempt that produced it by the FILE NAME, so a turn that
+    /// is not told its own id cannot publish anything: the relay quarantines a file naming no launch
+    /// it made. Null where nothing records launches — a test, a build with no meter — and then the
+    /// line is absent rather than inventing an id nothing will recognise.
+    /// </summary>
+    public string? Attempt { get; init; }
 
     public DateTimeOffset LocalTime { get; init; }
     public string Mode { get; init; } = "";
@@ -399,6 +424,14 @@ public sealed record MissionSituation
         if (Role is { Length: > 0 } role)
             b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
 
+        // THE ID THE TURN'S OUTPUT HAS TO CARRY. Above the state lines because it is an instruction
+        // rather than a fact about the account, and spelled out with the file name because a bare id
+        // is a fact the turn has to work out what to do with.
+        if (Attempt is { Length: > 0 } attempt)
+            b.AppendLine($"- This turn is attempt `{attempt}`. Anything you publish this turn must be "
+                         + $"named after it — `{WorkspaceBuilder.OutDir}/{OutputName(Role, attempt)}` — "
+                         + "or TradeAgent cannot tell which turn wrote it and will not publish it.");
+
         b.AppendLine($"- Local time: {LocalTime.LocalDateTime:yyyy-MM-dd HH:mm}");
         b.AppendLine($"- Trading mode: {Mode}");
         b.AppendLine(ExecutionAvailable
@@ -421,6 +454,14 @@ public sealed record MissionSituation
         b.AppendLine().AppendLine(Continue);
         return b.ToString();
     }
+
+    /// <summary>
+    /// THE FILE NAME THIS TURN'S OUTPUT MUST CARRY. The app decides it, from the role and the
+    /// launch: a role does not choose what its output IS (<see cref="CouncilRelay.KindFor"/>) and it
+    /// does not choose which turn it is attributed to either.
+    /// </summary>
+    public static string OutputName(string? role, string attempt) =>
+        CouncilRelay.Pattern(CouncilRelay.KindFor(role ?? CouncilRoles.Default)).Replace("*", attempt);
 
     /// <summary>
     /// THE DATA LINE. A function beside <see cref="SpendLine"/> so it can be read back without a
@@ -896,9 +937,16 @@ public sealed class MissionLoop
         // queue behind it `AgentSession.Queue` writes the row instead of the list, so exactly one of
         // the two holds any given message; without one the list is still where they are, and this
         // reads the same as it always did.
+        // THE LAUNCH ID, MINTED BEFORE THE MESSAGE IT GOES INTO. The turn has to be told the id it
+        // must name its output after, and BeginTurn hashes the prompt — so an id handed back by
+        // that call could never be in the prompt it is hashed with. Minting is not recording:
+        // nothing is committed until BeginTurn below, and an id nobody launched under names no row.
+        var attemptId = Mint();
+
         var situation = (await _host.SituationAsync(role, ct)) with
         {
             Role = role,
+            Attempt = attemptId,
             OwnerMessages = [.. OwnerWords(wake), .. conversation.TakeTyped()],
             Deliveries = Delivered(wake),
             Wakes = Reasons(wake)
@@ -919,13 +967,14 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var attemptId = _host.BeginTurn(prompt, wakeIds, role);
+        var recorded = _host.BeginTurn(prompt, wakeIds, role);
+        attemptId = recorded ?? attemptId;
 
         // A LAUNCH NOBODY COULD RECORD STILL SPENDS ITS WAKE. Leaving the events unconsumed because
         // the attempt row could not be written would hand the same wake to the next turn, and the
         // next, for as long as the database stayed unwritable — an unbounded number of paid turns
         // out of one reason to take one.
-        if (attemptId is null && events is not null && wakeIds.Length > 0)
+        if (recorded is null && events is not null && wakeIds.Length > 0)
             try { events.Consume(wakeIds, Unrecorded, _now()); }
             catch (Exception) { /* the same failure that lost the attempt row; the turn still runs */ }
 
@@ -1049,6 +1098,17 @@ public sealed class MissionLoop
     {
         try { return events.RolesDue(_now()); }
         catch (Exception) { return []; }
+    }
+
+    /// <summary>
+    /// THE ID THE NEXT LAUNCH WILL CARRY, or null where nothing records launches. Never throws: a
+    /// host whose ledger cannot be reached gives the turn no id, the turn's output is quarantined
+    /// rather than published under a launch nobody recorded, and the loop keeps working.
+    /// </summary>
+    string? Mint()
+    {
+        try { return _host.NextAttemptId(); }
+        catch (Exception) { return null; }
     }
 
     /// <summary>This role's reading of today's spending, or the whole day's where the host has none.</summary>

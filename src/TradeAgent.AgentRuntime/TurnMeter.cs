@@ -362,6 +362,14 @@ public sealed class TurnMeter
     /// </summary>
     int? _openPromptChars;
 
+    /// <summary>
+    /// AN ID MINTED AND NOT YET LAUNCHED UNDER. <see cref="Mint"/> puts one here so the turn's
+    /// message can name it; <see cref="Begin"/> takes it. Nothing is committed while it sits here —
+    /// a minted id nobody launched under names no row, which is why the relay's fence refuses a
+    /// file naming one.
+    /// </summary>
+    string? _minted;
+
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
@@ -466,9 +474,12 @@ public sealed class TurnMeter
     public string? Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
     {
         var reservation = Reservation(role);
+        string id;
+        lock (_gate) { id = _minted ?? NewId(); _minted = null; }
+
         var attempt = new AiAttempt
         {
-            Id = $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
+            Id = id,
             StartedAt = _now(),
             Runtime = Safe(_runtimeId),
             RequestedModel = ModelOf(role),
@@ -493,6 +504,23 @@ public sealed class TurnMeter
         }
         catch (Exception) { return null; }
     }
+
+    /// <summary>
+    /// THE ID THE NEXT <see cref="Begin"/> WILL USE, minted now so the turn's message can name it.
+    ///
+    /// The message has to carry the id — staged output is bound to its launch by the file name — and
+    /// <see cref="Begin"/> hashes that message, so the id cannot be something that call hands back
+    /// afterwards. Nothing is written here: a minted id that never reaches <see cref="Begin"/> is an
+    /// id no row carries, and the relay's fence refuses a file naming one, which is the correct
+    /// reading of "a turn the app could not record".
+    /// </summary>
+    public string Mint()
+    {
+        lock (_gate) return _minted ??= NewId();
+    }
+
+    /// <summary>44 characters: the minute it started, so a person can read the table, and a guid.</summary>
+    string NewId() => $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44];
 
     /// <summary>
     /// WHAT THE NEXT TURN WOULD COMMIT: the allowance, priced at the model TradeAgent is asking for.
@@ -540,7 +568,7 @@ public sealed class TurnMeter
         {
             var opened = new AiAttempt
             {
-                Id = $"turn-{_now().UtcDateTime:yyyyMMddHHmmssfff}-{Guid.NewGuid():n}"[..44],
+                Id = NewId(),
                 StartedAt = ended.At - ended.Duration,
                 Runtime = Safe(_runtimeId),
                 RequestedModel = Safe(_model),
