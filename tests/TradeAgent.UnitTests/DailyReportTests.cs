@@ -147,7 +147,7 @@ public class DailyReportTests
             Decisions = new ReportDecisions
             {
                 OwnerMessages = [.. Enumerable.Range(0, 300)
-                    .Select(n => new ReportOwnerMessage($"message {n}", at, null))]
+                    .Select(n => new ReportOwnerMessage($"message {n}", at, null, null, at.AddDays(1), false))]
             }
         };
 

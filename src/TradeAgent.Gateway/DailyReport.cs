@@ -166,13 +166,20 @@ public sealed record ReportResearch
 }
 
 /// <summary>
-/// ONE MESSAGE THE OWNER TYPED, AND WHAT BECAME OF IT.
+/// ONE MESSAGE THE OWNER TYPED, WITH WHAT BECAME OF IT AND WHEN AN ANSWER WAS DUE.
 ///
 /// <para>Round 4: "Owner text enters Operations' agenda first, with receipt, disposition and
 /// deadline." <see cref="Disposition"/> is null while nothing has become of it yet, which is a
-/// different fact from any of the recorded outcomes and is printed as one.</para>
+/// different fact from any of the recorded outcomes and is printed as one.
+/// <see cref="DispositionDetail"/> is what that outcome points at — the publication the message was
+/// delegated into, the later message that superseded it, the reason nothing could take it.</para>
+///
+/// <para><see cref="Overdue"/> is the app comparing two instants it wrote down itself. It costs no
+/// turn and wakes nobody: an overdue message that bought a turn would let a backlog spend tomorrow's
+/// allowance the moment the day turned over.</para>
 /// </summary>
-public sealed record ReportOwnerMessage(string Text, DateTimeOffset ReceivedAt, string? Disposition);
+public sealed record ReportOwnerMessage(string Text, DateTimeOffset ReceivedAt, string? Disposition,
+    string? DispositionDetail, DateTimeOffset DueBy, bool Overdue);
 
 public sealed record ReportDecisions
 {
@@ -397,7 +404,12 @@ public static class DailyReportText
         Section(b, "9. Decisions and changes");
         foreach (var m in r.Decisions.OwnerMessages)
             Kv(b, "you said", $"\"{OneLine(m.Text)}\" at {Instant(m.ReceivedAt)} — "
-                              + $"{m.Disposition ?? "nothing yet"}");
+                              + $"{m.Disposition ?? "nothing yet"}"
+                              + (m.DispositionDetail is { Length: > 0 } detail ? $" ({OneLine(detail)})" : "")
+                              + $", due by {Instant(m.DueBy)}"
+                              // OVERDUE IS SAID OUT LOUD. A message the owner is still waiting on,
+                              // printed exactly like one that was answered, is a backlog nobody sees.
+                              + (m.Overdue ? " — OVERDUE" : ""));
         List(b, "changes", r.Decisions.Changes);
         Gaps(b, r.Decisions.Missing);
 

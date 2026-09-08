@@ -116,7 +116,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Spending = ComposeSpending(i),
             OtherCosts = ComposeOtherCosts(),
             Research = ComposeResearch(from, to),
-            Decisions = ComposeDecisions(from, to),
+            Decisions = ComposeDecisions(from, to, at, gateway.Settings.OwnerReplyDeadlineHours),
             Recovery = ComposeRecovery(from, to, i)
         };
     }
@@ -435,29 +435,48 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     }
 
     /// <summary>
-    /// EVERY MESSAGE THE OWNER TYPED ON THE DAY, WITH WHAT BECAME OF IT.
+    /// EVERY MESSAGE THE OWNER TYPED ON THE DAY, WITH ITS DISPOSITION AND ITS DEADLINE.
     ///
     /// <para>Round 4: "Owner text enters Operations' agenda first, with receipt, disposition and
-    /// deadline." The receipt and the disposition are here; the deadline is <c>U-report</c> item 3.
-    /// The rows are read, never composed: the wake queue is the only copy of what the owner
+    /// deadline." The deadline is <c>TradeAgentSettings.OwnerReplyDeadlineHours</c> from the moment
+    /// the message was received, and OVERDUE is this method comparing that instant with the snapshot.
+    /// It is a LINE, not a wake: an overdue message must never be what buys a turn.</para>
+    ///
+    /// <para>The rows are read, never composed — the wake queue is the only copy of what the owner
     /// typed.</para>
     /// </summary>
-    ReportDecisions ComposeDecisions(DateTimeOffset from, DateTimeOffset to)
+    ReportDecisions ComposeDecisions(DateTimeOffset from, DateTimeOffset to, DateTimeOffset at,
+        int deadlineHours)
     {
         var gaps = new List<ReportGap>();
         var messages = new List<ReportOwnerMessage>();
+        var deadline = TimeSpan.FromHours(deadlineHours > 0 ? deadlineHours : 24);
 
         try
         {
-            foreach (var e in _events.OfKind(MissionEventKind.Owner)
-                         .Where(e => e.CreatedAt >= from && e.CreatedAt < to))
+            foreach (var e in _events.OfKind(MissionEventKind.Owner))
             {
                 var said = e.Payload is { Length: > 0 } p ? Json.Read<MissionOwnerMessage>(p) : null;
+                var received = said?.ReceivedAt ?? e.CreatedAt;
+                var due = received + deadline;
+
+                // THE DEADLINE CHECK, AND ITS DIRECTION IS THE GUARD. A message nothing has settled,
+                // at or past its due instant, is overdue; inverting this comparison hides exactly the
+                // messages the owner is still waiting on and shows the ones nobody is waiting for.
+                var overdue = e.Disposition is null && at >= due;
+
+                // THE DAY'S MESSAGES, AND ANY OLDER ONE STILL OWED AN ANSWER. Without the second
+                // clause a message sent yesterday can never be reported overdue at all: a deadline of
+                // a day or more expires outside the window of the report that listed it, so the
+                // backlog would be visible on exactly the day it was not yet late.
+                if (!(e.CreatedAt >= from && e.CreatedAt < to) && !overdue) continue;
+
                 messages.Add(new ReportOwnerMessage(
                     said?.Text ?? "(this message's text was not recorded)",
-                    said?.ReceivedAt ?? e.CreatedAt,
-                    e.Disposition));
+                    received, e.Disposition, e.DispositionDetail, due, overdue));
             }
+
+            messages = [.. messages.OrderBy(m => m.ReceivedAt)];
         }
         catch (Exception ex)
         {

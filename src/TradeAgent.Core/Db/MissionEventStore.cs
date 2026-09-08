@@ -43,7 +43,16 @@ public static class MissionEventKind
     public const string Brief = PublicationKind.Brief;
 }
 
-/// <summary>What became of a wake, once the turn that took it has ended.</summary>
+/// <summary>
+/// WHAT BECAME OF A WAKE.
+///
+/// <para>The first two are the outcomes of a TURN and are written after one has run. The other three
+/// are outcomes the APP reached without one, and that is the whole reason they exist: an owner's
+/// message the software delegated, refused for want of allowance, or replaced by the same words sent
+/// again is a message with a real answer, and paying for a turn to say so would be spending the
+/// owner's money to tell them what the app already knew (<c>docs/COUNCIL.md</c> rule 10, and round
+/// 4's "Owner text enters Operations' agenda first, with receipt, disposition and deadline").</para>
+/// </summary>
 public static class MissionEventDisposition
 {
     /// <summary>The turn that consumed it ended with a reply.</summary>
@@ -51,6 +60,31 @@ public static class MissionEventDisposition
 
     /// <summary>The turn that consumed it failed. An owner's message is re-raised once; see the store.</summary>
     public const string Failed = "failed";
+
+    /// <summary>
+    /// THE APP TURNED IT INTO WORK FOR ANOTHER ROLE. Written by <c>CouncilRelay</c> when the turn
+    /// that consumed the message published a brief, with that publication's id as the detail.
+    ///
+    /// <para>It is the strongest thing this software can say and it is a MEASURED co-occurrence, not
+    /// a reading of the text: the same attempt consumed this wake and produced that artifact. The
+    /// report says exactly that and no more.</para>
+    /// </summary>
+    public const string Delegated = "delegated";
+
+    /// <summary>
+    /// NOTHING COULD TAKE IT YET, and the detail is why — today the day's spending ceiling. The row
+    /// stays UNCONSUMED, so the message is still owed a turn; this is a standing reason, replaced by
+    /// the real outcome the moment one runs.
+    /// </summary>
+    public const string Blocked = "blocked";
+
+    /// <summary>
+    /// THE SAME WORDS ARRIVED AGAIN BEFORE ANYBODY LOOKED, and the later event's id is the detail.
+    /// Only ever written on an EXACT text match, because "the same subject" is a judgment and this
+    /// software is not entitled to make it — a message quietly superseded by one that merely looked
+    /// similar is a question the owner asked and nobody answered.
+    /// </summary>
+    public const string Superseded = "superseded";
 }
 
 /// <summary>
@@ -89,6 +123,16 @@ public sealed record MissionEvent
     public string? ConsumedBy { get; init; }
 
     public string? Disposition { get; init; }
+
+    /// <summary>
+    /// WHAT THE DISPOSITION POINTS AT, where it points at something: the publication a message was
+    /// delegated into, the later event that superseded it, the reason nothing could take it.
+    ///
+    /// A column rather than a suffix on <see cref="Disposition"/> because the disposition is a closed
+    /// vocabulary a query filters on and the detail is free text a person reads; one field carrying
+    /// both would make every future filter a LIKE.
+    /// </summary>
+    public string? DispositionDetail { get; init; }
 
     /// <summary>
     /// WHICH COUNCIL ROLE THIS WAKE IS FOR. Null on every row written before the council existed,
@@ -183,7 +227,8 @@ public sealed class MissionEventStore(Database db)
     /// can drift.
     /// </summary>
     internal const string EventCols =
-        "id, kind, created_at, due_at, payload, consumed_at, consumed_by, disposition, role";
+        "id, kind, created_at, due_at, payload, consumed_at, consumed_by, disposition, role, "
+        + "disposition_detail";
 
     /// <summary>Events handed to one turn. A wake with more behind it leaves the rest for the next one.</summary>
     public const int BatchLimit = 50;
@@ -197,7 +242,7 @@ public sealed class MissionEventStore(Database db)
     {
         using var c = db.Cmd($"""
             INSERT INTO mission_event({Cols})
-            VALUES($id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role)
+            VALUES($id,$kind,$created,$due,$payload,NULL,NULL,NULL,$role,NULL)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", e.Id), ("$kind", e.Kind), ("$created", Sql.T(e.CreatedAt)),
@@ -243,8 +288,38 @@ public sealed class MissionEventStore(Database db)
         // THE CHAIR'S, ALWAYS. docs/COUNCIL.md round 4: "Owner text enters Operations' agenda first,
         // with receipt, disposition and deadline; workers receive scoped briefs." A message routed
         // to whichever role happened to be next would be a person waiting on the research queue.
-        return Raise(MissionEventIds.Owner(NextOwnerSequence()), MissionEventKind.Owner, at,
-            Json.Write(new MissionOwnerMessage(text, at)), CouncilRoles.Operations);
+        var id = MissionEventIds.Owner(NextOwnerSequence());
+        if (!Raise(id, MissionEventKind.Owner, at, Json.Write(new MissionOwnerMessage(text, at)),
+                CouncilRoles.Operations)) return false;
+
+        SupersedeIdentical(text, id);
+        return true;
+    }
+
+    /// <summary>
+    /// MARKS EVERY EARLIER MESSAGE THAT SAID EXACTLY THIS, AND THAT NOBODY HAS TAKEN, SUPERSEDED BY
+    /// <paramref name="by"/>.
+    ///
+    /// <para>The owner pressing send twice is the case, and without this each copy buys its own paid
+    /// turn to answer the same question. EXACT text only: "the same subject" is a judgment about
+    /// meaning, and a message dropped because it merely resembled another is a question the owner
+    /// asked that nobody ever answers. A consumed message is left alone — a turn already has it.</para>
+    ///
+    /// <para>It never throws. The message itself is safely written by the time this runs, and losing
+    /// a de-duplication costs a turn where losing the words costs the owner their question.</para>
+    /// </summary>
+    void SupersedeIdentical(string text, string by)
+    {
+        try
+        {
+            foreach (var e in OfKind(MissionEventKind.Owner))
+            {
+                if (e.Id == by || e.Consumed || e.Disposition is not null) continue;
+                if (Json.Read<MissionOwnerMessage>(e.Payload ?? "")?.Text != text) continue;
+                SettleWithoutTurn(e.Id, MissionEventDisposition.Superseded, by);
+            }
+        }
+        catch (Exception) { /* a de-duplication that did not happen costs a turn, not a message */ }
     }
 
     /// <summary>
@@ -386,15 +461,80 @@ public sealed class MissionEventStore(Database db)
     }
 
     /// <summary>
-    /// Records what became of a wake. Only a CONSUMED row is written, because a disposition on an
-    /// event nobody has taken would be a verdict on a turn that never happened.
+    /// RECORDS WHAT A TURN MADE OF A WAKE. Only a CONSUMED row is written, because a disposition on
+    /// an event nobody has taken would be a verdict on a turn that never happened.
+    ///
+    /// <para><b>It never overwrites <see cref="MissionEventDisposition.Delegated"/>.</b> The relay
+    /// runs BEFORE this — the file a turn wrote is published at the end of that turn — so without the
+    /// guard the ordinary <c>answered</c> written a moment later would erase the one fact the owner
+    /// most wants from a message they sent: which brief it became. Both are true of such a turn and
+    /// the stronger one is kept, which also makes a re-run of the relay a no-op.</para>
     /// </summary>
-    public bool Settle(string id, string disposition) => db.Write(_ =>
+    public bool Settle(string id, string disposition, string? detail = null) => db.Write(_ =>
     {
-        using var c = db.Cmd(
-            "UPDATE mission_event SET disposition=$d WHERE id=$id AND consumed_at IS NOT NULL",
-            ("$d", disposition), ("$id", id));
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition=$d, disposition_detail=$x
+             WHERE id=$id AND consumed_at IS NOT NULL
+               AND (disposition IS NULL OR disposition <> $delegated)
+            """,
+            ("$d", disposition), ("$x", detail), ("$id", id),
+            ("$delegated", MissionEventDisposition.Delegated));
         return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
+    /// RECORDS AN OUTCOME THE APP REACHED WITHOUT A TURN — the three dispositions that exist for
+    /// exactly that: <see cref="MissionEventDisposition.Delegated"/>,
+    /// <see cref="MissionEventDisposition.Blocked"/>, <see cref="MissionEventDisposition.Superseded"/>.
+    ///
+    /// <para><b>It refuses <c>answered</c> and <c>failed</c>.</b> Those are claims about a turn, and a
+    /// claim about a turn that never ran is the one thing this table must never hold: the whole
+    /// ledger's value is that a disposition is evidence rather than an assumption.</para>
+    ///
+    /// <para>It writes only where nothing has settled the row yet, so it is idempotent and cannot
+    /// erase a real outcome. The row is left CONSUMED or UNCONSUMED exactly as it was: a blocked
+    /// message is still owed a turn, and this is the standing reason it has not had one.</para>
+    /// </summary>
+    public bool SettleWithoutTurn(string id, string disposition, string? detail = null)
+    {
+        if (disposition is MissionEventDisposition.Answered or MissionEventDisposition.Failed)
+            throw new ArgumentException(
+                $"'{disposition}' is what a TURN made of a wake and cannot be recorded without one",
+                nameof(disposition));
+
+        return db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                UPDATE mission_event SET disposition=$d, disposition_detail=$x
+                 WHERE id=$id AND disposition IS NULL
+                """,
+                ("$d", disposition), ("$x", detail), ("$id", id));
+            return c.ExecuteNonQuery() == 1;
+        });
+    }
+
+    /// <summary>
+    /// RECORDS THAT THE APP TURNED THE OWNER'S WORDS INTO WORK FOR ANOTHER ROLE, for every owner
+    /// message the given launch consumed. Returns how many rows were written.
+    ///
+    /// <para>The link is a MEASUREMENT and nothing more: this attempt consumed those wakes and this
+    /// attempt produced that publication. Nothing here reads the message or the brief, because
+    /// deciding that a brief is ABOUT a message is a judgment, and a disposition that rests on one is
+    /// not evidence. The report prints the pair and lets the owner draw the conclusion.</para>
+    ///
+    /// <para>The FIRST publication of a turn keeps the link, so re-running the relay over the same
+    /// files writes nothing the second time.</para>
+    /// </summary>
+    public int Delegated(string attemptId, string publicationId) => db.Write(_ =>
+    {
+        using var c = db.Cmd("""
+            UPDATE mission_event SET disposition=$d, disposition_detail=$pub
+             WHERE kind=$owner AND consumed_by=$attempt
+               AND (disposition IS NULL OR disposition <> $d)
+            """,
+            ("$d", MissionEventDisposition.Delegated), ("$pub", publicationId),
+            ("$owner", MissionEventKind.Owner), ("$attempt", attemptId));
+        return c.ExecuteNonQuery();
     });
 
     /// <summary>One event by id, or null.</summary>
@@ -439,6 +579,7 @@ public sealed class MissionEventStore(Database db)
         ConsumedAt = Sql.TimeN(r.GetValue(5)),
         ConsumedBy = Sql.S(r.GetValue(6)),
         Disposition = Sql.S(r.GetValue(7)),
-        Role = Sql.S(r.GetValue(8))
+        Role = Sql.S(r.GetValue(8)),
+        DispositionDetail = Sql.S(r.GetValue(9))
     };
 }

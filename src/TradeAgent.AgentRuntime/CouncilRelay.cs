@@ -51,12 +51,14 @@ public sealed class CouncilRelay
     public const int PerPass = 10;
 
     readonly PublicationStore _store;
+    readonly MissionEventStore _events;
     readonly Func<string, string> _homeOf;
     readonly Func<DateTimeOffset> _now;
 
     public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null)
     {
         _store = new PublicationStore(db);
+        _events = new MissionEventStore(db);
         _homeOf = homeOf;
         _now = now ?? (() => DateTimeOffset.Now);
     }
@@ -137,6 +139,18 @@ public sealed class CouncilRelay
             Boundary?.Invoke("file");
 
             _store.Commit(p, _now());
+
+            // WHAT THE OWNER ASKED FOR, TURNED INTO WORK FOR SOMEBODY ELSE. The chair's agenda is
+            // the only kind that carries the owner's words downward, and the link recorded here is a
+            // MEASUREMENT and nothing more: this attempt consumed those messages and this attempt
+            // produced this artifact. Nothing reads either text — deciding that a brief is ABOUT a
+            // message is a judgment, and a disposition resting on one is not evidence.
+            //
+            // Idempotent, like everything else in this pass: the first publication of a turn keeps
+            // the link and a re-run writes nothing.
+            if (kind == PublicationKind.Brief && attempt is { Length: > 0 } launch)
+                try { _events.Delegated(launch, p.Id); }
+                catch (Exception) { /* a disposition is a record; losing one must not stop the relay */ }
 
             // ---- boundary 2: the artifact, its delivery and the task are committed; no copy yet --
             Boundary?.Invoke("transaction");

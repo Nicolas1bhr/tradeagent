@@ -172,7 +172,7 @@ public sealed class PublicationStore(Database db)
             // turn every time the app restarted.
             using var e = db.Cmd($"""
                 INSERT INTO mission_event({MissionEventStore.EventCols})
-                VALUES($id,$kind,$at,$at,$payload,NULL,NULL,NULL,$role)
+                VALUES($id,$kind,$at,$at,$payload,NULL,NULL,NULL,$role,NULL)
                 ON CONFLICT(id) DO NOTHING
                 """,
                 ("$id", MissionEventIds.ForRole(MissionEventIds.Task(p.Id), recipient)),

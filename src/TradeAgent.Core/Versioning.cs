@@ -80,8 +80,14 @@ public static class Versions
     /// its history to nobody would lose the one thing round 4 called unrecoverable. A publication's
     /// id is the SHA-256 of its content, which is what makes a crash inside the relay recover to
     /// exactly one committed task rather than to none or to two.
+    ///
+    /// 9 -&gt; 10: <c>mission_event.disposition_detail</c>. The wake queue could say WHAT became of a
+    /// wake and not what that pointed at, which is the whole of the answer for the three outcomes the
+    /// app reaches without a turn — the publication an owner's message was delegated into, the later
+    /// message that superseded it, the reason nothing could take it. Additive: one nullable column,
+    /// and every row written before it reads as a disposition that points at nothing, which it did.
     /// </summary>
-    public const int DatabaseSchemaVersion = 9;
+    public const int DatabaseSchemaVersion = 10;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

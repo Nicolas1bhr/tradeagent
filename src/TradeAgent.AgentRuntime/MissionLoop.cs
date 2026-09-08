@@ -836,7 +836,16 @@ public sealed class MissionLoop
 
             // The first role whose own share AND the owner's ceiling both have room for a turn.
             var affordable = due.FirstOrDefault(r => Spend(r).AdmitsAnotherTurn);
-            if (affordable is null) return CappedUntilMidnight(Spend(due[0])) ?? _options.BusyRetry;
+            if (affordable is null)
+            {
+                // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it.
+                // The message stays unconsumed and is still owed a turn; this is the standing reason
+                // it has not had one, and recording it costs nothing — which is the point, because
+                // the thing that stopped the turn is that there is no money left to spend on one.
+                BlockOwnerMessages(events, "the day's AI spending ceiling is reached, so no turn can "
+                                           + "be taken until it resets");
+                return CappedUntilMidnight(Spend(due[0])) ?? _options.BusyRetry;
+            }
             role = affordable;
         }
 
@@ -1012,6 +1021,24 @@ public sealed class MissionLoop
             // A queue that cannot be written must not stop the loop. The turn that follows reads
             // whatever is there, and a missing scheduled wake costs a look, not the mission.
         }
+    }
+
+    /// <summary>
+    /// Records, on every DUE owner message nothing has settled, the reason no turn can take it.
+    ///
+    /// It writes a disposition and leaves the row unconsumed, so the message is still owed a turn and
+    /// gets one the moment the day turns over. Never throws: a disposition is a record, and a loop
+    /// that stopped over one would turn bookkeeping into an AI that stopped working.
+    /// </summary>
+    void BlockOwnerMessages(MissionEventStore events, string why)
+    {
+        try
+        {
+            foreach (var e in events.Due(_now()))
+                if (e.Kind == MissionEventKind.Owner)
+                    events.SettleWithoutTurn(e.Id, MissionEventDisposition.Blocked, why);
+        }
+        catch (Exception) { /* the same queue the turn could not be afforded out of */ }
     }
 
     /// <summary>

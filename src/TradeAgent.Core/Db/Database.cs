@@ -518,6 +518,26 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','9') ON CONFLICT(key) DO UPDATE SET value='9';");
         }
 
+        if (have < 10)
+        {
+            // WHAT A DISPOSITION POINTS AT, and the three dispositions that need it.
+            //
+            // `disposition` said what became of a wake in one closed word, and two of them —
+            // `answered`, `failed` — are outcomes of a TURN. The owner's own messages need three the
+            // APP reaches without one: `delegated` (the turn that took it published a brief, and the
+            // brief's id is here), `blocked` (nothing could take it and this is why) and `superseded`
+            // (the same words arrived again before anybody looked, and the later event's id is here).
+            // Paying for a turn to record any of those would be spending the owner's money to tell
+            // them what the app already knew.
+            //
+            // A COLUMN RATHER THAN A SUFFIX on the word itself: the disposition is a closed
+            // vocabulary a query filters on and the detail is free text a person reads, and one field
+            // carrying both makes every later filter a LIKE. Additive and nullable — every row
+            // written before this reads as a disposition that points at nothing, which it did.
+            Exec("ALTER TABLE mission_event ADD COLUMN disposition_detail TEXT;");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','10') ON CONFLICT(key) DO UPDATE SET value='10';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

@@ -262,6 +262,21 @@ public sealed class TradeAgentSettings
     public int MissionReviewMinutes { get; set; } = 30;
 
     /// <summary>
+    /// HOW LONG A MESSAGE THE OWNER TYPED MAY GO WITHOUT AN OUTCOME BEFORE THE DAILY REPORT CALLS IT
+    /// OVERDUE (<c>docs/COUNCIL.md</c> round 4: "Owner text enters Operations' agenda first, with
+    /// receipt, disposition and deadline").
+    ///
+    /// <para><b>It buys nothing and it wakes nobody.</b> Passing it is a LINE in the report, not a
+    /// reason to take a turn: an overdue message that manufactured a wake would let a backlog spend
+    /// tomorrow's allowance the instant the day turned over, and priority a task claims for itself is
+    /// exactly what rule 7 forbids. The AI is never told a message is overdue; the OWNER is.</para>
+    ///
+    /// <para>Zero or less reads as the shipped 24 hours. It is not a risk limit — nothing is refused
+    /// by it — so it does not ask twice on the Safety page.</para>
+    /// </summary>
+    public int OwnerReplyDeadlineHours { get; set; } = 24;
+
+    /// <summary>
     /// WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, in input tokens. See
     /// <see cref="TurnAllowance"/>: it is an upper bound, not a prediction, and the direction is
     /// deliberate — reserving too much costs a turn the owner gets back at midnight, reserving too
