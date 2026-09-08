@@ -223,17 +223,24 @@ public interface IMissionHost
     /// handed to this call rather than written by the loop before or after it: two commits leave a
     /// window in which a kill hands the same wake to the next launch and the owner pays twice.
     ///
-    /// Returns the attempt id, or null where nothing was recorded. The loop uses it to name the
-    /// <c>self</c> event when the AI asks to be woken later, and to spend the wakes anyway when
-    /// nothing could be written — a wake nobody consumed would buy an unbounded number of turns.
+    /// <b>IT IS ALSO THE GATE.</b> The reading above is a cheap first look and cannot be the gate:
+    /// it is taken here and the row goes in sixty lines later, so two launches can both read "there
+    /// is room for one" and both then take it. <see cref="AiAttemptStore.Begin"/> compares the
+    /// ceiling inside the transaction that writes the reservation, and a refusal from there means
+    /// no process may be started — nothing was written and the wakes were not consumed.
+    ///
+    /// <see cref="AiAdmission.Id"/> null WITHOUT a refusal is a host that recorded nothing. The loop
+    /// uses the id to name the <c>self</c> event when the AI asks to be woken later, and spends the
+    /// wakes anyway when nothing could be written — a wake nobody consumed would buy an unbounded
+    /// number of turns.
     /// </summary>
-    string? BeginTurn(string prompt, IReadOnlyList<string> wakes) => null;
+    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) => AiAdmission.Unrecorded;
 
     /// <summary>
     /// The same, naming the role being charged. The role is on the launch record so the day's
     /// spending can be allocated at all; a bill nobody can allocate cannot be shared.
     /// </summary>
-    string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => BeginTurn(prompt, wakes);
+    AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) => BeginTurn(prompt, wakes);
 
     /// <summary>
     /// EVERYTHING THE APP OWES THE FILESYSTEM AFTER A TURN, AND ON START: an unpublished report
@@ -1012,7 +1019,28 @@ public sealed class MissionLoop
         // It also carries the wakes this turn is answering, which are marked consumed in the same
         // commit — see IMissionHost.BeginTurn.
         var wakeIds = wake.Select(e => e.Id).ToArray();
-        var recorded = _host.BeginTurn(prompt, wakeIds, role);
+        var admission = _host.BeginTurn(prompt, wakeIds, role);
+
+        // THE TRANSACTION'S ANSWER OUTRANKS THE LOOK TAKEN ABOVE. Between that look and this commit
+        // another launch can have taken the room — the owner's own chat turn, or a second role — and
+        // the ledger is where that is settled. Nothing was written, the wakes stayed unconsumed and
+        // no process was started, so this returns exactly as a capped turn does: the reason to take
+        // a turn is still owed one, at midnight or once the owner raises the limit.
+        //
+        // BEFORE the `finally` below exists, so a refused turn commits no transition: there is no
+        // launch to close, nothing was published and no wake was consumed. The id minted above is
+        // not wasted either — `TurnMeter.Mint` hands the same one to the next `Begin`.
+        if (!admission.Admitted)
+        {
+            lock (_gate) { _working = false; _role = null; }
+            Changed?.Invoke();
+            return CappedUntilMidnight(Spend(role)) ?? _options.BusyRetry;
+        }
+
+        // THE ID THE ROW ACTUALLY CARRIES. Null is a host that recorded nothing — not a refusal — and
+        // then the minted id stands, which is what the turn was already told to name its output
+        // after; the relay's fence is what refuses a file naming a launch no row carries.
+        var recorded = admission.Id;
         attemptId = recorded ?? attemptId;
 
         // A LAUNCH NOBODY COULD RECORD STILL SPENDS ITS WAKE. Leaving the events unconsumed because

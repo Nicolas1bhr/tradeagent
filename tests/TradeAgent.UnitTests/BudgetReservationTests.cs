@@ -1,0 +1,237 @@
+using TradeAgent.AgentRuntime;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using Xunit;
+
+namespace TradeAgent.Tests.Unit;
+
+/// <summary>
+/// TWO ADMITTED TURNS CANNOT BOTH SPEND THE SAME ALLOWANCE — the property <c>docs/COUNCIL.md</c>
+/// rule 3 states as "budgets are reserved, not checked", and Astra's round-1 wording for this unit.
+///
+/// The defect it closes is not a rounding error and is not the crash path <c>U-model</c> closed.
+/// Admission read the day's totals in the loop and the row went in sixty lines later, under a
+/// different lock: two launches could both be told "there is room for one" and both then take it.
+/// The owner's own chat turn made that ordinary rather than exotic — it is a second launch, on a
+/// second conversation, that no gate ever saw.
+///
+/// The race below is run with TWO REAL THREADS against ONE <see cref="Database"/>, because "both
+/// were admitted" is a fact about two callers and a shared table and a stand-in for either would
+/// exercise neither.
+/// </summary>
+[Collection(VendorOverrideFiles.Name)]
+public class BudgetReservationTests : IDisposable
+{
+    readonly Database _db = TestEnv.NewDb();
+    readonly string _records = Path.Combine(TestEnv.Home, $"reserve-{Guid.NewGuid():n}.jsonl");
+
+    public void Dispose()
+    {
+        if (File.Exists(CostCatalog.OverridePath)) File.Delete(CostCatalog.OverridePath);
+        _db.Dispose();
+    }
+
+    /// <summary>The owner's own rate, so the reservation has one right answer: 1.20 M in at 1.00 and 20 k out at 4.00.</summary>
+    static readonly OwnerPrice Rate = new(1m, 4m);
+
+    const decimal Reservation = (1_200_000m * 1m + 20_000m * 4m) / 1_000_000m;   // 1.28
+
+    /// <summary>
+    /// A meter whose role shares are the WHOLE day unless a test says otherwise, so a test about the
+    /// owner's ceiling is not silently answered by a role's half of it.
+    /// </summary>
+    TurnMeter Meter(decimal cap, Func<DateTimeOffset> now, Func<string, decimal>? share = null) =>
+        new(_db, () => cap, runtimeId: () => "codex", now: now, recordPath: _records,
+            owner: () => Rate, model: () => "gpt-5.6-sol", share: share ?? (_ => 1m));
+
+    int Rows(string state)
+    {
+        using var c = _db.Cmd("SELECT COUNT(*) FROM ai_attempt WHERE state=$s", ("$s", state));
+        return Convert.ToInt32(c.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// THE GUARD. A ceiling with room for exactly one reservation, two threads that have BOTH been
+    /// told there is room, and one reservation row at the end of it.
+    ///
+    /// The barrier is what makes this a race rather than a sequence: neither thread reaches
+    /// <see cref="TurnMeter.Begin"/> until both have taken the loop's cheap first look and been
+    /// answered yes. With the comparison outside the transaction that is enough for both to commit.
+    /// </summary>
+    [Fact]
+    public void Two_admissions_racing_on_one_database_write_exactly_one_reservation()
+    {
+        var now = DateTimeOffset.Now;
+        // 1.28 fits under 2.00 and 2.56 does not, so the ledger has room for exactly one.
+        var meter = Meter(2m, () => now);
+
+        var looked = new bool[2];
+        var admissions = new AiAdmission[2];
+        using var read = new Barrier(2);
+
+        void Admit(int i)
+        {
+            looked[i] = meter.Today.AdmitsAnotherTurn;   // the loop's pre-check, on an empty ledger
+            read.SignalAndWait();                        // neither commits until both have looked
+            admissions[i] = meter.Begin("## Situation", role: CouncilRoles.Operations);
+        }
+
+        var a = new Thread(() => Admit(0));
+        var b = new Thread(() => Admit(1));
+        a.Start();
+        b.Start();
+        Assert.True(a.Join(TimeSpan.FromSeconds(30)), "the first admission never finished");
+        Assert.True(b.Join(TimeSpan.FromSeconds(30)), "the second admission never finished");
+
+        // Both were told there was room. That is the race, not a defect: it is what a cheap first
+        // look can honestly say, and it is why the look cannot be the gate.
+        Assert.Equal([true, true], looked);
+
+        Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.Equal(Reservation, meter.Today.Reserved);
+
+        var admitted = Assert.Single(admissions, x => x.Admitted);
+        Assert.NotNull(admitted.Id);
+
+        var refused = Assert.Single(admissions, x => !x.Admitted);
+        Assert.Null(refused.Id);
+        Assert.Equal(AiAdmission.Day, refused.Ceiling);
+        Assert.Equal(Labels.DailySpendingLimitReached, refused.Refusal);
+        // 0 spent + 1.28 committed + 1.28 asked for, against 2.00.
+        Assert.Equal(0.56m, refused.Over);
+    }
+
+    /// <summary>
+    /// The gate is the transaction's OWN reading and not the caller's: a look taken while the ledger
+    /// was empty does not admit a turn once the room it saw has gone.
+    /// </summary>
+    [Fact]
+    public void A_look_taken_before_the_room_went_does_not_admit_the_turn_it_said_yes_to()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(2m, () => now);
+
+        var stale = meter.Today;
+        Assert.True(stale.AdmitsAnotherTurn);
+
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+
+        var refused = meter.Begin("## Situation", role: CouncilRoles.Operations);
+        Assert.False(refused.Admitted);
+        Assert.Null(refused.Id);
+        Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
+    }
+
+    /// <summary>
+    /// A ROLE'S SHARE REFUSES ON ITS OWN, and says so as its own ceiling: the day's money is not
+    /// gone, one role's slice of it is, and the two have different repairs on the Safety page.
+    /// </summary>
+    [Fact]
+    public void A_roles_share_refuses_the_launch_while_the_day_still_has_room()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(10m, () => now, share: _ => 0.1m);   // 1.00 of a 10.00 day
+
+        var refused = meter.Begin("## Situation", role: CouncilRoles.Research);
+
+        Assert.False(refused.Admitted);
+        Assert.Equal(CouncilRoles.Research, refused.Ceiling);
+        Assert.Equal(Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Research)), refused.Refusal);
+        Assert.Equal(0.28m, refused.Over);          // 1.28 asked for against a 1.00 share
+        Assert.Equal(0, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.True(meter.Today.AdmitsAnotherTurn); // the DAY is nowhere near its ceiling
+    }
+
+    /// <summary>
+    /// A REFUSED LAUNCH CONSUMES NOTHING. The reason to take a turn is still owed one: spending the
+    /// wake on a turn that never ran would lose it at midnight along with the money that refused it.
+    /// </summary>
+    [Fact]
+    public void A_refused_launch_leaves_its_wakes_unconsumed()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("owner:1", MissionEventKind.Owner, now);
+
+        var meter = Meter(2m, () => now);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+
+        Assert.False(meter.Begin("## Situation", ["owner:1"], CouncilRoles.Operations).Admitted);
+        Assert.Null(events.Get("owner:1")!.ConsumedBy);
+    }
+
+    /// <summary>
+    /// AND THE LOOP OBEYS IT: a turn the reservation refused is never sent to the AI tool, even when
+    /// the host's own reading says there is room. That reading is the stale one this unit exists for.
+    /// </summary>
+    [Fact]
+    public async Task A_turn_the_reservation_refused_is_never_sent_to_the_AI_tool()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(2m, () => now);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+
+        var host = new StaleHost(meter);
+        var wait = await new MissionLoop(host).TurnAsync();
+
+        Assert.Empty(host.Conv.Sent);
+        Assert.Equal(1, Rows(nameof(AiAttemptState.LAUNCHED)));
+        Assert.True(wait > TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// A host whose own reading of the day ALWAYS admits — an unmetered one, which is the permissive
+    /// default — so the only thing that can stop the turn below is the reservation's transaction.
+    /// </summary>
+    sealed class StaleHost(TurnMeter meter) : IMissionHost
+    {
+        public Recording Conv { get; } = new();
+
+        public IAgentConversation? Conversation => Conv;
+        public string AgentHome { get; } = Path.Combine(TestEnv.Home, $"reserve-home-{Guid.NewGuid():n}");
+        public bool InboxChangedSinceLastPass => false;
+        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
+            Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
+
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
+            meter.Begin(prompt, wakes, CouncilRoles.Operations);
+    }
+
+    /// <summary>A conversation that records what it was sent, and answers every turn the same way.</summary>
+    sealed class Recording : IAgentConversation
+    {
+        readonly List<ChatTurn> _history = [];
+        public List<string> Sent { get; } = [];
+
+        public bool Busy => false;
+        public IReadOnlyList<ChatTurn> History => _history.ToArray();
+
+        public event Action<ChatTurn>? TurnAdded;
+        public event Action<string>? Delta;
+        public event Action? StateChanged;
+        public event Action<AgentTurnEnded>? TurnEnded;
+
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task SendAsync(string message, CancellationToken ct = default) => Run(message);
+        public Task SendMissionAsync(string message, CancellationToken ct = default) => Run(message);
+
+        Task Run(string message)
+        {
+            Sent.Add(message);
+            StateChanged?.Invoke();
+            Delta?.Invoke("");
+            var turn = new ChatTurn(ChatRole.Ai, "Did some work.", DateTimeOffset.UtcNow);
+            _history.Add(turn);
+            TurnAdded?.Invoke(turn);
+            TurnEnded?.Invoke(new AgentTurnEnded(0, TimeSpan.FromSeconds(1), "", DateTimeOffset.UtcNow));
+            return Task.CompletedTask;
+        }
+
+        public IReadOnlyList<string> TakeTyped() => [];
+        public void Queue(string message) { }
+        public Task CancelAsync() => Task.CompletedTask;
+        public Task StopAsync() => Task.CompletedTask;
+    }
+}

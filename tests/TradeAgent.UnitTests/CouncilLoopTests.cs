@@ -146,16 +146,15 @@ public class CouncilLoopTests
         public Task<MissionSituation> SituationAsync(string role, CancellationToken ct) =>
             Task.FromResult(new MissionSituation { Role = role, Spend = SpendFor(role) });
 
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
             BeginTurn(prompt, wakes, CouncilRoles.Default);
 
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
         {
             Opened.Add((role, prompt));
             var id = Minted ?? NextAttemptId()!;
-            new AiAttemptStore(_db).Begin(
+            return new AiAttemptStore(_db).Begin(
                 new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
-            return id;
         }
 
         /// <summary>

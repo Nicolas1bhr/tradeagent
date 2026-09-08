@@ -57,7 +57,7 @@ public class AiAttemptLedgerTests : IDisposable
         var meter = Meter(() => now);
 
         // BEFORE the process, which is the whole of the mechanism.
-        var id = meter.Begin("## Situation\n\nContinue your mission.");
+        var id = meter.Begin("## Situation\n\nContinue your mission.").Id;
         Assert.NotNull(id);
 
         var store = new AiAttemptStore(_db);
@@ -111,7 +111,7 @@ public class AiAttemptLedgerTests : IDisposable
     {
         var now = DateTimeOffset.Now;
         var meter = Meter(() => now);
-        var id = meter.Begin("## Situation")!;
+        var id = meter.Begin("## Situation").Id!;
 
         meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(9), "…", now)
         {
@@ -144,7 +144,7 @@ public class AiAttemptLedgerTests : IDisposable
     {
         var now = DateTimeOffset.Now;
         var meter = Meter(() => now);
-        var id = meter.Begin("## Situation")!;
+        var id = meter.Begin("## Situation").Id!;
 
         var store = new AiAttemptStore(_db);
         store.LoseOpen(now);

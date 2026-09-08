@@ -867,15 +867,15 @@ public sealed class AppHost : IAsyncDisposable
         /// this one cannot change a mode, lift the kill switch or approve anything — it commits
         /// money the AI is about to spend on itself.
         /// </summary>
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
-            host.Meter?.Begin(prompt, wakes);
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
+            host.Meter?.Begin(prompt, wakes) ?? AiAdmission.Unrecorded;
 
         /// <summary>
         /// The same, naming the role being charged, so the day's spending can be allocated at all —
         /// a bill nobody can allocate cannot be shared between two roles.
         /// </summary>
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) =>
-            host.Meter?.Begin(prompt, wakes, role);
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role) =>
+            host.Meter?.Begin(prompt, wakes, role) ?? AiAdmission.Unrecorded;
 
         /// <summary>
         /// What the turn left in <c>out/</c>, published and delivered — and anything an earlier

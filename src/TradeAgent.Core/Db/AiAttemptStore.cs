@@ -98,6 +98,103 @@ public sealed record AiAttemptTotals(
     decimal Spent, decimal Reserved, int Turns, int Unpriced, int Estimated, int Open);
 
 /// <summary>
+/// THE CEILING A LAUNCH IS ADMITTED AGAINST, handed to <see cref="AiAttemptStore.Begin"/> so that
+/// the comparison is made INSIDE the transaction that writes the reservation.
+///
+/// It carries everything the arithmetic needs EXCEPT the day's totals, and that omission is the
+/// whole design: the totals are the one part that another launch can change between a caller's look
+/// and this launch's commit, so they are read where nothing can move them. A rule that carried a
+/// reading would be the defect this unit closes, wearing a different name.
+///
+/// <see cref="Metered"/> false is a host with no price list at all: every launch is admitted, which
+/// is what <see cref="AiSpendToday.AdmitsGlobally"/> has always answered for an unmetered build.
+/// </summary>
+public sealed record AiAdmissionRule
+{
+    /// <summary>The owner's local day, as the half-open window a row's <c>started_at</c> is in.</summary>
+    public required DateTimeOffset From { get; init; }
+
+    public required DateTimeOffset To { get; init; }
+
+    /// <summary>The role being charged, or null for a launch attributed to nobody.</summary>
+    public string? Role { get; init; }
+
+    /// <summary>The owner's ceiling for the whole day, across every role.</summary>
+    public decimal Cap { get; init; }
+
+    /// <summary>That role's slice of it. Meaningless, and unread, when <see cref="Role"/> is null.</summary>
+    public decimal RoleCap { get; init; }
+
+    /// <summary>What THIS launch commits — the number about to be written as its reservation.</summary>
+    public decimal Reservation { get; init; }
+
+    /// <summary>The local midnight the day's totals expire at, for the refusal's own sentence.</summary>
+    public DateTimeOffset ResumesAt { get; init; }
+
+    public bool Metered { get; init; } = true;
+
+    /// <summary>
+    /// The reading the admission is decided on: the day's own rows, the role's own rows, and this
+    /// launch's reservation. Built here rather than in the store so that ONE record answers the
+    /// question — <see cref="AiSpendToday.AdmitsAnotherTurn"/> — for the loop's cheap first look and
+    /// for the transaction alike. Two comparisons that could drift apart would be two caps.
+    /// </summary>
+    internal AiSpendToday Reading(AiAttemptTotals day, AiAttemptTotals mine) => new()
+    {
+        Metered = Metered,
+        Role = Role,
+        Spent = day.Spent,
+        Reserved = day.Reserved,
+        RoleSpent = mine.Spent,
+        RoleReserved = mine.Reserved,
+        NextTurnReservation = Reservation,
+        Cap = Cap,
+        RoleCap = RoleCap,
+        ResumesAt = ResumesAt
+    };
+}
+
+/// <summary>
+/// WHETHER A LAUNCH MAY HAPPEN, AND WHAT IT COMMITTED — decided and written in one transaction.
+///
+/// <see cref="Admitted"/> is keyed on the REFUSAL and not on the id, because the two absences mean
+/// opposite things. A refusal is "do not start the process": some ceiling has no room. A null id
+/// with no refusal is "nothing could be recorded" — a host that keeps no ledger, or a database that
+/// would not take the row — and the turn still runs, because a launch the app failed to write down
+/// is not a launch the app may silently decline to make.
+/// </summary>
+public sealed record AiAdmission
+{
+    /// <summary>Nothing was written and nothing refused it. The caller carries on.</summary>
+    public static readonly AiAdmission Unrecorded = new();
+
+    /// <summary>The attempt id to complete at the end of the turn, or null when none was written.</summary>
+    public string? Id { get; init; }
+
+    public bool Admitted => Refusal is null;
+
+    /// <summary>Why the launch was refused, in the owner's words. Null when it was admitted.</summary>
+    public string? Refusal { get; init; }
+
+    /// <summary>
+    /// WHICH CEILING REFUSED IT: <see cref="Day"/> for the owner's whole-day limit, or the role id
+    /// whose share ran out. The two have different repairs — the day's limit is raised on the Safety
+    /// page and a role's share is a reallocation — so a caller that said one when it meant the other
+    /// would send the owner to the wrong screen.
+    /// </summary>
+    public string? Ceiling { get; init; }
+
+    /// <summary>What <see cref="Ceiling"/> says for the owner's whole-day limit.</summary>
+    public const string Day = "day";
+
+    /// <summary>By how much this launch would have passed that ceiling. Never negative.</summary>
+    public decimal Over { get; init; }
+
+    /// <summary>The local midnight the refusing day's totals expire at.</summary>
+    public DateTimeOffset ResumesAt { get; init; }
+}
+
+/// <summary>
 /// THE LAUNCH LEDGER: one row per run of the agent CLI, written before the process starts.
 ///
 /// <para><b>Why it exists.</b> The meter it replaces wrote its totals when a turn FINISHED, so a
@@ -127,18 +224,41 @@ public sealed class AiAttemptStore(Database db)
         """;
 
     /// <summary>
-    /// Writes the LAUNCHED row. Called before the process starts, and its return is the id the end
-    /// of the turn completes.
+    /// ADMITS THE LAUNCH AND WRITES ITS RESERVATION, OR WRITES NOTHING — one transaction, one answer.
+    ///
+    /// <para><b>Why the ceiling is compared here.</b> The caller's own look at the day is a cheap
+    /// first filter and cannot be the gate: it reads the totals and the row goes in some lines
+    /// later, so two launches can both read "there is room for one" and both then take it. That is
+    /// not a hypothetical — it is what <c>docs/COUNCIL.md</c> rule 3 requires reserved rather than
+    /// checked, and the ledger's own arithmetic cannot fix a comparison made against a number that
+    /// was already stale when it was read. Inside <see cref="Database.Write"/> the totals below are
+    /// read under the same lock and the same transaction as the INSERT, so the second of two racing
+    /// launches sees the first one's reservation and is refused.</para>
+    ///
+    /// <paramref name="admit"/> null is an ungated write: the owner's own recorded turn before any
+    /// ceiling existed, and a test that is asserting about rows rather than about admission.
     ///
     /// <paramref name="consuming"/> is the wake queue's part of the same commit: the
     /// <c>mission_event</c> rows this launch is answering are marked <c>consumed_by</c> this attempt
     /// IN THIS TRANSACTION. Two transactions would leave a window in which the launch is recorded
     /// and the events are not — a kill there hands the same wake to the next launch and the owner
     /// pays for both — and a window the other way round in which events are spent on a launch that
-    /// never happened. One commit has neither.
+    /// never happened. One commit has neither. A REFUSED launch consumes nothing, because it never
+    /// happened and the reason to take it is still owed a turn.
     /// </summary>
-    public string Begin(AiAttempt a, IReadOnlyList<string>? consuming = null) => db.Write(_ =>
+    public AiAdmission Begin(AiAttempt a, IReadOnlyList<string>? consuming = null,
+        AiAdmissionRule? admit = null) => db.Write(_ =>
     {
+        // READ HERE, NOT BY THE CALLER. This is the whole of the guard: same transaction, same lock,
+        // same connection as the INSERT below.
+        if (admit is { } rule)
+        {
+            var day = Totals(rule.From, rule.To, null);
+            var mine = rule.Role is null ? day : Totals(rule.From, rule.To, rule.Role);
+            var reading = rule.Reading(day, mine);
+            if (!reading.AdmitsAnotherTurn) return Refuse(rule, reading);
+        }
+
         using var c = db.Cmd($"""
             INSERT INTO ai_attempt({Cols})
             VALUES($id,$started,$rt,$req,$basis,$res,$state,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
@@ -150,8 +270,31 @@ public sealed class AiAttemptStore(Database db)
             ("$policy", a.PolicyVersion), ("$hash", a.InputHash), ("$role", a.Role));
         c.ExecuteNonQuery();
         if (consuming is { Count: > 0 }) MissionEventStore.MarkConsumed(db, consuming, a.Id, a.StartedAt);
-        return a.Id;
+        return new AiAdmission { Id = a.Id, ResumesAt = admit?.ResumesAt ?? default };
     });
+
+    /// <summary>
+    /// The refusal, in the owner's words, naming the ceiling that had no room and by how much. It
+    /// carries no money formatting: this layer does not know the currency, and a sentence that
+    /// guessed one would put a wrong symbol on the owner's screen.
+    /// </summary>
+    static AiAdmission Refuse(AiAdmissionRule rule, AiSpendToday reading)
+    {
+        var global = !reading.AdmitsGlobally;
+        var over = global
+            ? reading.Spent + reading.Reserved + reading.NextTurnReservation - reading.Cap
+            : reading.RoleSpent + reading.RoleReserved + reading.NextTurnReservation - reading.RoleCap;
+
+        return new AiAdmission
+        {
+            Refusal = global
+                ? Labels.DailySpendingLimitReached
+                : Labels.RoleShareReached(CouncilRoles.Title(CouncilRoles.Or(rule.Role))),
+            Ceiling = global ? AiAdmission.Day : rule.Role,
+            Over = over > 0m ? over : 0m,
+            ResumesAt = rule.ResumesAt
+        };
+    }
 
     /// <summary>
     /// Completes one attempt. ONLY a row still LAUNCHED is written: if a restart already declared it
@@ -221,7 +364,16 @@ public sealed class AiAttemptStore(Database db)
     /// than one this build inferred.
     /// </summary>
     public AiAttemptTotals TotalsBetween(DateTimeOffset from, DateTimeOffset to, string? role = null) =>
-        db.Read(_ =>
+        db.Read(_ => Totals(from, to, role));
+
+    /// <summary>
+    /// The same query with NO lock of its own, so <see cref="Begin"/> can run it inside the
+    /// transaction it is about to insert into. Every caller is already holding the database's gate —
+    /// either through <see cref="Database.Read"/> above or through <see cref="Database.Write"/> —
+    /// and that is the point: an admission decided outside that gate is decided on a number another
+    /// launch is free to change before the row lands.
+    /// </summary>
+    AiAttemptTotals Totals(DateTimeOffset from, DateTimeOffset to, string? role)
     {
         using var c = db.Cmd("""
             SELECT
@@ -246,7 +398,7 @@ public sealed class AiAttemptStore(Database db)
         return new AiAttemptTotals(
             (decimal)r.GetDouble(0), (decimal)r.GetDouble(1),
             Int(r, 2), Int(r, 3), Int(r, 4), Int(r, 5));
-    });
+    }
 
     static int Int(SqliteDataReader r, int i) => r.IsDBNull(i) ? 0 : Convert.ToInt32(r.GetValue(i));
 

@@ -512,16 +512,23 @@ public sealed class TurnMeter
     /// named as unrecoverable afterwards — while the prompt itself carries the owner's own words and
     /// belongs in no table.
     ///
-    /// Returns the attempt id, or null when nothing could be written. Null is not a refusal: the
-    /// admission gate is read separately from <see cref="Today"/>, and a turn that could not be
-    /// recorded is a turn whose cost the ceiling will not see, which the card already says out loud.
+    /// <b>IT IS ALSO THE ADMISSION GATE.</b> The ceiling is compared inside the transaction that
+    /// writes the reservation (<see cref="AiAttemptStore.Begin"/>), so two launches cannot both take
+    /// the last turn of the day by both reading the total before either commits. The loop's own look
+    /// at <see cref="Today"/> stays where it is as a cheap first filter; this is the gate.
+    ///
+    /// Returns the admission: an id when the row went in, a refusal when some ceiling had no room,
+    /// and <see cref="AiAdmission.Unrecorded"/> when nothing could be written at all. That last one
+    /// is not a refusal — a turn whose row could not be written is a turn whose cost the ceiling
+    /// will not see, which the card already says out loud, and stopping the AI on a database that
+    /// will not take a row would be a new way to lose the mission.
     /// </summary>
     /// <param name="consuming">
     /// The <c>mission_event</c> ids this launch is answering, marked consumed in the same commit as
     /// the row below. One transaction rather than two: a kill in between would hand the same wake to
     /// the next launch and charge the owner for both.
     /// </param>
-    public string? Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
+    public AiAdmission Begin(string prompt, IReadOnlyList<string>? consuming = null, string? role = null)
     {
         var reservation = Reservation(role);
 
@@ -549,18 +556,56 @@ public sealed class TurnMeter
             Role = role
         };
 
+        AiAdmission admission;
         try
         {
-            lock (_gate)
-            {
-                _attempts.Begin(attempt, consuming);
-                _open = attempt.Id;
-                _openPromptChars = prompt.Length;
-            }
-            Changed?.Invoke();
-            return attempt.Id;
+            admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation));
+            if (admission.Id is { } id)
+                lock (_gate) { _open = id; _openPromptChars = prompt.Length; }
         }
-        catch (Exception) { return null; }
+        catch (Exception) { return AiAdmission.Unrecorded; }
+
+        Changed?.Invoke();
+        return admission;
+    }
+
+    /// <summary>
+    /// THE CEILING THIS LAUNCH IS ADMITTED AGAINST, as the owner has it set at this instant. Every
+    /// number is read through the functions the composition root handed over rather than captured,
+    /// because the owner changes the limit and the split on the Safety page while the AI is working
+    /// and the turn about to start is the one that has to obey.
+    ///
+    /// It carries no totals. Those are read inside the transaction, which is the whole of the fix.
+    /// </summary>
+    AiAdmissionRule RuleFor(string? role, TurnPrice reservation)
+    {
+        var now = _now();
+        var (from, to) = LocalDay(now);
+        var cap = Cap();
+        return new AiAdmissionRule
+        {
+            From = from,
+            To = to,
+            Role = role,
+            Cap = cap,
+            RoleCap = role is null ? cap : cap * Share(role),
+            Reservation = reservation.Cost ?? 0m,
+            ResumesAt = Midnight(now)
+        };
+    }
+
+    /// <summary>The owner's ceiling, or zero where the settings could not be read. Never a throw into a launch.</summary>
+    decimal Cap()
+    {
+        try { return _cap(); }
+        catch (Exception) { return 0m; }
+    }
+
+    /// <summary>One role's fraction of the ceiling, or an equal share where the settings would not read.</summary>
+    decimal Share(string role)
+    {
+        try { return _share(role); }
+        catch (Exception) { return 1m / CouncilRoles.All.Length; }
     }
 
     /// <summary>
@@ -630,6 +675,8 @@ public sealed class TurnMeter
                 ReservedCost = 0m,
                 PolicyVersion = Versions.GrantPolicyVersion.ToString(CultureInfo.InvariantCulture)
             };
+            // Ungated: nothing admitted this turn, so nothing may refuse it after the vendor has
+            // already done the work. The row exists so the bill is recorded, not to decide anything.
             _attempts.Begin(opened);
             id = opened.Id;
         }

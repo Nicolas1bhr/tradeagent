@@ -69,6 +69,29 @@ public static class Labels
     public static string RaiseDailyCapArmed(string amount) =>
         $"Confirm: let the AI spend up to {amount} a day";
 
+    /// <summary>
+    /// WHAT THE OWNER IS TOLD WHEN A TURN IS REFUSED BY THE CEILING, in the transaction that would
+    /// otherwise have reserved it. One sentence in one place because three surfaces say it: the
+    /// Chat page as a System line when their own message is the turn that cannot run, the mission
+    /// card, and the report.
+    ///
+    /// It says nothing was started, because that is the half an owner cannot see for themselves —
+    /// a chat that simply went quiet reads like a broken AI rather than a limit doing its job.
+    /// </summary>
+    public const string DailySpendingLimitReached =
+        "The AI has reached the most it may spend on itself today, so this turn was not started. "
+        + "Nothing was sent to the AI tool. It starts again after midnight, or sooner if you raise "
+        + "the daily limit on the Safety page.";
+
+    /// <summary>
+    /// The same refusal from a ROLE's share rather than the owner's whole day. A different sentence
+    /// because it has a different repair: the day's money is not gone, one role's share of it is,
+    /// and the owner changes a split rather than a ceiling.
+    /// </summary>
+    public static string RoleShareReached(string role) =>
+        $"The {role} has used its share of today's AI spending limit, so this turn was not started. "
+        + "Nothing was sent to the AI tool. The split is on the Safety page.";
+
     /// <summary>How often the AI is woken when nothing has happened, and the press that writes it.</summary>
     public const string ReviewEvery = "Wake the AI to look around every, minutes (0 = only when something happens)";
 

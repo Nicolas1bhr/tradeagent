@@ -132,7 +132,7 @@ public class TurnContextTests
         var meter = new TurnMeter(db, () => 500m, runtimeId: () => "codex", recordPath: records,
             owner: () => new OwnerPrice(4m, 20m), model: () => "gpt-5.6-sol");
 
-        var id = meter.Begin("## Situation\n\nContinue your mission.")!;
+        var id = meter.Begin("## Situation\n\nContinue your mission.").Id!;
         meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(8), LsStream, DateTimeOffset.Now)
         {
             Usage = LsUsage

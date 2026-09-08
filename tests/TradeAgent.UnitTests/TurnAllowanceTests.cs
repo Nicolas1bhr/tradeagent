@@ -100,7 +100,7 @@ public class TurnAllowanceTests : IDisposable
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
             Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER", Spend = meter.Today });
 
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
         {
             Opened.Add(prompt);
             return meter.Begin(prompt, wakes);

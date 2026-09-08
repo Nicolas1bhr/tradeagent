@@ -62,10 +62,10 @@ public class MissionOwnerMessageTests
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
             Task.FromResult(new MissionSituation { LocalTime = DateTimeOffset.Now, Mode = "PAPER" });
 
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
         {
             Prompts.Add(prompt);
-            return null;
+            return AiAdmission.Unrecorded;
         }
     }
 

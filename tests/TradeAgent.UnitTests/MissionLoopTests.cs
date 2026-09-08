@@ -140,15 +140,16 @@ public class MissionLoopTests
         /// A host with no queue records nothing and answers null, exactly as the interface's default
         /// does.
         /// </summary>
-        public string? BeginTurn(string prompt, IReadOnlyList<string> wakes)
+        public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes)
         {
             Opened.Add(prompt);
-            if (Events is null) return null;
+            if (Events is null) return AiAdmission.Unrecorded;
 
             var id = $"turn-{_tag}-{++_attempts}";
-            new AiAttemptStore(_db).Begin(
+            var admission = new AiAttemptStore(_db).Begin(
                 new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow }, wakes);
-            return LastAttemptId = id;
+            LastAttemptId = id;
+            return admission;
         }
 
         public Task<MissionSituation> SituationAsync(CancellationToken ct) => Task.FromResult(Next);
