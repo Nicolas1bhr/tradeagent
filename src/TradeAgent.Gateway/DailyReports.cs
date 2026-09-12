@@ -389,6 +389,13 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         };
     }
 
+    /// <summary>A hash as it is shown in a report: the first twelve characters, or all of a short id.</summary>
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
+
+    /// <summary>A figure, or the report's own dash. A null is an UNKNOWN here as it is everywhere else.</summary>
+    static string Figure(decimal? value) =>
+        value is { } d ? d.ToString(CultureInfo.InvariantCulture) : DailyReportText.Unknown;
+
     static ReportOtherCosts ComposeOtherCosts() => new()
     {
         Missing =
@@ -414,6 +421,22 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         }
         catch (Exception ex) { gaps.Add(new ReportGap("datasets", $"the dataset ledger could not be read ({ex.Message})")); }
 
+        // WHAT THIS BUILD HAS MEASURED ABOUT A STRATEGY, and it goes in "measured by TradeAgent"
+        // rather than in "claimed by an agent" because the app computed every figure in it from its
+        // own trace. An agent's own account of a backtest is a publication and stays on the other
+        // side of that line, where it can be compared with this rather than merged into it.
+        var runs = 0;
+        try
+        {
+            runs = gateway.Strategies.RunCount;
+            foreach (var run in gateway.Strategies.Runs(ListShown))
+                metrics.Add($"backtest {Short(run.Id)} of version {Short(run.VersionId)} over dataset "
+                            + $"{run.DatasetId} ({run.ExecutionModel}): {run.Bars} bars, {run.Trades} "
+                            + $"trades, net {Figure(run.NetPnl)}, worst drawdown {Figure(run.MaxDrawdown)}, "
+                            + $"{run.Outcome}");
+        }
+        catch (Exception ex) { gaps.Add(new ReportGap("backtests", $"the strategy ledger could not be read ({ex.Message})")); }
+
         try
         {
             foreach (var role in CouncilRoles.All)
@@ -422,7 +445,11 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         }
         catch (Exception ex) { gaps.Add(new ReportGap("publications", $"the relay's tables could not be read ({ex.Message})")); }
 
-        if (metrics.Count == 0)
+        // THE GAP LINE GOES WHEN A RUN EXISTS, AND NOT WHEN A DATASET DOES. It used to fire on
+        // `metrics.Count == 0`, which the dataset lines above already satisfied: an installation that
+        // had collected twelve months and backtested nothing read as though it had evidence. Having
+        // the data is not having measured anything with it.
+        if (runs == 0)
             gaps.Add(new ReportGap("evaluation evidence",
                 "nothing has been backtested or promoted by this build, so there is no measured "
                 + "evidence for or against any strategy"));

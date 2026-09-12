@@ -56,6 +56,13 @@ public static class GatewaySchema
         // it costs works from the same account of the day the account owner does, and so that it
         // knows the document is not one it can edit.
         daily_report = "TradeAgent writes the account owner a factual report of every local day, from what it measured: mission state, trading readiness, capital and performance, execution health, AI spending, other costs, research evidence, decisions including the owner's own messages, and recovery. 'report' serves it to you. Nothing in it is inferred and no AI turn produces it, which is why it can be served without asking your platform anything — and that is also its limit: what is still OPEN is not valued in it, and 'missing' says so where the figure would have stood. Use 'pnl' when you need the open side. Every null in the answer is an UNKNOWN and never a zero, most sharply 'net', which is withheld whenever any fill that day carried no fee. There is no operation that writes, rewrites or deletes a report: it is the record your work is judged by, and the account owner presses Write it now in TradeAgent.",
+        // WHAT A BACKTEST IS AND WHAT IT CANNOT PROVE, said where an agent reads the surface rather
+        // than only in the op's own description. docs/COUNCIL.md, "Data": bars support explicitly
+        // limited fill simulations and establish no actual fill, queue position or intrabar ordering.
+        // The declared half matters as much: every number in a result depends on the fees, the
+        // slippage, the increment and the capital that were DECLARED for that run, and a result
+        // reported without them is not reproducible by anybody.
+        backtests = "TradeAgent can run a strategy program you wrote against the history it holds: 'backtest' takes the path of a program inside your own role folder and a dataset id, and the APP parses it, runs it, computes the metrics from its own trace and records the version and the run. A program is identified by a hash of its meaning, so the same rule set offered twice is one version with one lineage; a run is identified by a hash of the version, the dataset, that dataset's own sha256, the window and the execution model, so the same request always reproduces the same run id and a changed fee is a different run. WHAT A RUN CANNOT PROVE: it is computed over BARS. It establishes no actual fill, no queue position and no intrabar ordering, so it is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. What it models, it models by DECLARATION and not by measurement: a fill at the next bar's open plus the slippage you declared, a fee on every fill at the rate you declared, a size rounded DOWN to the increment you declared (the dataset carries none), and a bar that touched both the stop and the target counted as the stop because bars carry no intrabar ordering. Read the nulls and 'missing': a null is an UNKNOWN and never a zero, 'net_pnl' covers CLOSED trades only, and a position still open at the last bar is in the equity the drawdown is measured on rather than in it. You cannot write, edit or delete a version, a run or a trade — they are the record your work is judged by — and a backtest places no order and grants you no authority of any kind.",
         trading_modes = Enum.GetNames<TradingMode>(),
         current = status,
         operations = Ops(),
@@ -143,6 +150,34 @@ public static class GatewaySchema
             + "report, because it is the record your work is judged by.",
             [
                 new("day", "string", false, "A local calendar day, yyyy-MM-dd. Present and unreadable is refused, never read as today.")
+            ]),
+
+        new(Core.Ops.Backtest,
+            "trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D] [--fees F] [--slippage S] [--increment Q] [--capital C]",
+            false,
+            "Run a strategy program of yours over the history this installation holds, and record it. "
+            + "'strategy' is a path INSIDE YOUR OWN ROLE FOLDER — relative to it is simplest — and a path "
+            + "outside it is refused: this reads a program from your folder and from nowhere else. "
+            + "'dataset' is a ledger id from 'trade data list'; a dataset whose recorded hashes no longer "
+            + "match the disk is REJECTED and serves no run. The app parses the program and a refusal "
+            + "names the line. The four model numbers are DECLARED by you and are part of the run's "
+            + "identity: fees and slippage are FRACTIONS (0.001 is ten basis points, not a tenth of a "
+            + "per cent), the increment is what a size is rounded DOWN to, and capital is what the run "
+            + "starts with. Omit them and the run declares NO friction, whole units and 10,000 — an upper "
+            + "bound on a frictionless market, which the answer says out loud. What comes back is the run "
+            + "id, the version id, the metrics the app computed from its own trace, 'missing' naming every "
+            + "figure it could not compute and why, and the closed trades. One run at a time per role. It "
+            + "is a READ as far as trading is concerned: no order is placed, nothing is granted, and there "
+            + "is no operation that edits or deletes a run.",
+            [
+                new("strategy", "string", true, "Path of the program file inside your own role folder, e.g. strategies/ma-crossover.strategy. A path outside it is refused."),
+                new("dataset", "number", true, "The dataset's ledger id, from 'trade data list'. A whole number."),
+                new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("fees", "number", false, "Fee per fill as a FRACTION of its notional, e.g. 0.001 for ten basis points. 0 when omitted."),
+                new("slippage", "number", false, "Slippage as a FRACTION of the price, adverse on every fill. 0 when omitted."),
+                new("increment", "number", false, "Quantity increment. A size is rounded DOWN to it and a size that rounds to nothing is no trade, with the reason. 1 when omitted."),
+                new("capital", "number", false, "What the run starts with. An entry it cannot pay for is no trade, with the reason. 10000 when omitted.")
             ]),
 
         new(Core.Ops.MaterialList, "trade material list", false,

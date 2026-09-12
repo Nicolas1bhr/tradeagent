@@ -277,6 +277,13 @@ public static class WorkspaceBuilder
       complete it is, `trade data bars --pair P --from D --to D` for the bars, your workings in
       `data/` — and record the result. Those bars are hypothesis evidence: they establish no fill, no
       queue position and no intrabar ordering, so say what a result over them is and is not;
+    - when the strategy is written in the strategy language, `trade backtest --strategy
+      strategies/x.strategy --dataset <id>` has TradeAgent run it and record the result itself: the
+      metrics come back computed from the app's own trace rather than from your arithmetic, which is
+      the difference between evidence and a claim. Declare the model you want measured —
+      `--fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000` — because without those a run
+      is an upper bound on a frictionless market. It still proves nothing about a FILL: a backtest is a
+      reason to test something and never a record of a trade;
     - go back over `JOURNAL.md` and work out why the last thing failed;
     - build the tooling in `scripts/` that makes the next test cheaper than the last one.
 

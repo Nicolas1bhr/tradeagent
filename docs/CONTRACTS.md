@@ -1301,3 +1301,54 @@ stopped — which is how a TIMEOUT is defined without a clock in the evaluator. 
 EVENT and not per rule, and it is set above what any program the parser accepts can cost, so the two
 limits cannot contradict each other. Nothing throws out of the evaluator: the program was written by a
 cheap model, and a text it can produce that crashes the app would be the app's defect.
+
+## The backtest — `src/TradeAgent.Core/Strategy/Backtest.cs`, `src/TradeAgent.Gateway/Backtests.cs`
+
+**A backtest places no order and grants no authority.** Nothing on this path touches a connector, reads
+the mode, checks the kill switch or could change one. `trade backtest --strategy <file in your own role
+folder> --dataset <id> [--from] [--to] [--fees] [--slippage] [--increment] [--capital]` is the only way
+in, it is READ-ONLY for the gateway, and it is not in `Ops.Mutating` — that word on this channel means
+"sends something to a broker". What it DOES write is the app's own measurement: `strategy_version`,
+`strategy_run` and `strategy_trade` at schema 12, app-owned like `dataset` and `fill`. **There is no op
+that writes, edits or deletes one of those rows**, because a record of how a strategy performed is the
+evidence its author is judged on.
+
+**The execution model is DECLARED per run and is part of the run's identity.** Fees and slippage are
+FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to — the
+dataset carries none, so the run's is the only one there is — and the capital is what the run starts
+with. Declared nothing, a run is frictionless with whole units and 10,000, and the answer says so in
+those words rather than letting a zero fee read as a measurement.
+
+**Signals fill at the next bar's open. Protection fills where protection fires.** A signal is computed
+from a bar's CLOSE, so the earliest price it can be acted on is the next bar's open plus adverse
+slippage, with a fee on every fill. A stop or a target is not a decision taken at a close — it is an
+order already resting at the venue — so it fires intrabar at its own price; a bar that OPENED through
+the stop fills at that open, and a bar that touched BOTH the stop and the target counts as the **stop**,
+because bars carry no intrabar ordering and the other reading invents a winning trade. The maximum
+holding time is protection too, taken at the close of the bar that reaches the limit and checked BEFORE
+the evaluator is asked anything on that bar — so the account it reads is already flat and the evaluator
+emits nothing for it. A size that rounds down to nothing, an entry the declared capital cannot pay for
+and a signal the window ended before are each **no trade with the reason**, on the record.
+
+**Metrics come from the trace and from nothing else.** `BacktestMetrics.Of(trace)` takes one argument on
+purpose: a figure read off the program's text would be a claim about the program rather than a
+measurement of the run. Every unknown is a labelled dash — a null is an UNKNOWN, never a zero — and
+`Missing` names the figure and the reason. `net_pnl` covers CLOSED trades only; a position still open at
+the last bar is in the **equity** the drawdown is measured on, which is where a drawdown that ignored it
+would read 0 for a run 40% under water.
+
+**Deterministic and refusable.** The run id is `sha256(version id \n dataset id \n the dataset's
+normalised sha256 \n window \n execution model)` and no clock is read inside a run, so the same request
+reproduces the same trace byte for byte and the same id; a changed fee is a different run. The dataset's
+verdict is taken ONCE, at the start (`BarFeed.Open`), and a `REJECTED` dataset serves nothing; the sha
+the run actually fed on is copied onto the run row, so a rejection discovered later is traceable to every
+run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused rather than queued, and
+a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
+
+**The program is read from inside a role home and nowhere else.** The path is normalised first and
+compared afterwards, so `../../state/tradeagent.db` is refused; the role recorded on the version and the
+run is the role whose home the file was actually in, a measurement rather than a claim, because the pipe
+does not yet carry an authenticated role. **What a run cannot prove:** it is computed over bars, which
+establish no actual fill, no queue position and no intrabar ordering (`docs/COUNCIL.md`, "Data"). It is a
+reason to test something and never a record of a trade, and a result on one venue's bars is not
+execution evidence for another venue.

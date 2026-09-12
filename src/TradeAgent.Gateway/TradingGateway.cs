@@ -89,6 +89,25 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly DailyReports _reports;
 
     /// <summary>
+    /// THE BACKTEST RUNNER, AND IT IS A READ AS FAR AS THIS CLASS IS CONCERNED.
+    ///
+    /// <para>It lives here for the reason <see cref="Reports"/> does — the pipe serves it, and
+    /// everything it reads is here or beside it — and it is in the handler table at
+    /// <see cref="TimeSpan.Zero"/> because it makes no connector call at all. It places no order,
+    /// reads no mode and grants nothing: <c>CLAUDE.md</c> says a backtest places no order and grants
+    /// no authority, and there is nothing in it that could.</para>
+    /// </summary>
+    public Backtests Backtests => _backtests;
+
+    readonly Backtests _backtests;
+
+    /// <summary>
+    /// What this installation has measured about its own strategies — versions, runs and their trades.
+    /// READ ONLY from here: <see cref="Backtests"/> is the only writer, and no pipe op reaches it.
+    /// </summary>
+    public StrategyStore Strategies => _backtests.Strategies;
+
+    /// <summary>
     /// Whether the app is in the middle of replacing itself. Set by the updater through AppHost; a
     /// bool behind a delegate, because the gateway must not know what an update is.
     ///
@@ -304,6 +323,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // After the settings, because the report reads them; on this gateway's own clock, so a test
         // that moves time gets the day it asked for rather than the machine's.
         _reports = new DailyReports(this, db, () => _opt.Clock.GetLocalNow());
+        // On this gateway's own clock too, and in UTC: a run's `created_at` is a record of when the
+        // app measured it, and it is deliberately NOT an input to the run — nothing inside a run reads
+        // a clock at all.
+        _backtests = new Backtests(this, db, () => _opt.Clock.GetUtcNow());
 
         _health.Changed += OnHealthChanged;
         Connector.ConnectionChanged += OnConnectionChanged;

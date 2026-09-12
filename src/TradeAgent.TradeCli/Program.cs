@@ -206,6 +206,15 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             return (Ops.DataBars, a);
         }
 
+        // `trade backtest --strategy strategies/x.strategy --dataset 3`. A READ as far as trading is
+        // concerned: it places no order and grants nothing. The path is resolved inside the caller's
+        // own role folder by the gateway, which refuses anything outside it.
+        case "backtest":
+            a["strategy"] = flags.GetValueOrDefault("strategy") ?? pos.ElementAtOrDefault(0) ?? "";
+            a["dataset"] = flags.GetValueOrDefault("dataset") ?? pos.ElementAtOrDefault(1) ?? "";
+            Opt("from"); Opt("to"); Opt("fees"); Opt("slippage"); Opt("increment"); Opt("capital");
+            return (Ops.Backtest, a);
+
         case "material":
         {
             var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
@@ -263,6 +272,11 @@ static void Usage()
 
       trade data list                                what history you have, and where it came from
       trade data bars --pair BTCUSDT [--from D] [--to D]   the bars themselves, at most 10000 a call
+      trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D]
+                     [--fees 0.001] [--slippage 0.0005] [--increment 0.001] [--capital 10000]
+                     run one of your own programs over that history and record it. The four
+                     model numbers are yours to declare and are part of the run's identity;
+                     omitted, the run declares no friction at all and says so
 
       trade material list [--origin inbox|agent]     what the owner gave you, and what you made
       trade material ran <sha> <what it did>         you executed it

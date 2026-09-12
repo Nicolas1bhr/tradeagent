@@ -280,6 +280,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
         new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
+        new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
 
         new(Core.Ops.Buy, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
         new(Core.Ops.Sell, OrdinaryHandlerPath, "a cold placement: account -> positions -> quote -> instruments -> place"),
@@ -1030,6 +1031,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.DataList     => DataList(),
                 Core.Ops.DataBars     => DataBars(req),
                 Core.Ops.Report       => ReportFor(req),
+                Core.Ops.Backtest     => BacktestFor(req, ct),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -2045,6 +2047,114 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
     /// <inheritdoc cref="ReportReply"/>
     sealed record ReportReplyGap(string Field, string Why);
+
+    /// <summary>
+    /// A BACKTEST THE APP RUNS AND RECORDS — a READ as far as trading is concerned.
+    ///
+    /// <para>No order, no mode check beyond what every read here does, no connector call, nothing that
+    /// grants or removes authority. The app reads the program from inside the caller's own role folder,
+    /// parses it (a refusal names the line), declares the execution model from what was asked for,
+    /// streams the dataset's own hashed bars, computes the metrics from its own trace and writes the
+    /// version and the run. What comes back is the run's id and those metrics.</para>
+    ///
+    /// <para><paramref name="ct"/> is the server's lifetime, and it is passed INTO the run: a shutdown
+    /// halts it at the bar it has reached — a defined outcome — instead of holding the drain open for
+    /// a window nobody is waiting for any more. A run the app stopped is not recorded.</para>
+    /// </summary>
+    object BacktestFor(IpcRequest req, CancellationToken ct)
+    {
+        var ran = gateway.Backtests.Run(new BacktestAsk(
+            Require(req, "strategy"),
+            DatasetId(req),
+            BarInstant(req, "from"),
+            BarInstant(req, "to"),
+            req.Dec("fees"),
+            req.Dec("slippage"),
+            req.Dec("increment"),
+            req.Dec("capital")), ct);
+
+        var result = ran.Result;
+        var m = result.Metrics;
+
+        return new BacktestReply(
+            result.RunId, result.VersionId, ran.Role, ran.Program.Instrument, ran.Program.WarmUpBars,
+            result.Request.DatasetId, ran.Dataset.Pair, ran.Dataset.Interval, ran.Dataset.Version,
+            result.Request.DatasetSha256, result.Request.From, result.Request.To,
+            result.Request.Model.Canonical, result.Outcome.ToString(), result.FaultReason,
+            "This is a measurement over BARS, and bars establish no actual fill, no queue position and "
+            + "no intrabar ordering: what a run says is a reason to test something and never a record "
+            + "of a trade. Fills are modelled at the next bar's open plus the declared slippage, a fee "
+            + "is charged on every fill, a bar that touched both the stop and the target counts as the "
+            + "stop, and a size is rounded DOWN to the declared increment. Read the nulls and 'missing': "
+            + "a null is an UNKNOWN and never a zero. 'net_pnl' covers CLOSED trades only — a position "
+            + "still open at the last bar is in the equity the drawdown is measured on, not in it. "
+            + (result.Request.Model.Frictionful
+                ? "This run declared friction: see 'execution_model'."
+                : "THIS RUN DECLARED NO FEE AND NO SLIPPAGE, so it is an upper bound on a frictionless "
+                  + "market — pass --fees and --slippage for a figure that is about a venue."),
+            new BacktestReplyMetrics(
+                m.Bars, m.ExposureBars, m.Signals, m.Fills, m.NoTrades, m.Trades, m.Wins, m.WinRate,
+                m.GrossPnl, m.Fees, m.NetPnl, m.MaxDrawdown, m.FinalEquity, m.MissingMinutes, m.Gaps,
+                m.Faults, m.PositionOpenAtEnd),
+            [.. m.Missing.Select(g => new BacktestReplyGap(g.Field, g.Why))],
+            result.Trades.Count,
+            [.. result.Trades.Take(Backtests.TradesShown).Select(t => new BacktestReplyTrade(
+                t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice, t.Quantity,
+                t.Reason.ToString(), t.Fees, t.Pnl))],
+            result.Trace.Sha256);
+    }
+
+    /// <summary>
+    /// A DATASET'S LEDGER ID, WHICH IS A WHOLE NUMBER AND NOT A PRICE. Present and unreadable is a
+    /// refusal, the rule every other numeric field on this wire follows.
+    /// </summary>
+    static long DatasetId(IpcRequest req)
+    {
+        var raw = req.Dec("dataset")
+            ?? throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                "'dataset' is required: the ledger id of the data to run over. 'trade data list' has them.");
+
+        if (raw != decimal.Truncate(raw) || raw <= 0m)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'dataset' is a ledger id — a whole number above 0 — and '{raw}' is not one. "
+                + "'trade data list' has them.");
+
+        return (long)raw;
+    }
+
+    /// <inheritdoc cref="BacktestFor"/>
+    sealed record BacktestReply(
+        string RunId, string VersionId, string Role, string Instrument, int WarmUpBars,
+        long DatasetId, string Pair, string Interval, string DatasetVersion, string DatasetSha256,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
+        string ExecutionModel, string Outcome,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FaultReason,
+        string Note, BacktestReplyMetrics Metrics, IReadOnlyList<BacktestReplyGap> Missing,
+        int TradeCount, IReadOnlyList<BacktestReplyTrade> Trades, string TraceSha256);
+
+    /// <summary>
+    /// DECLARED TYPES AND NEVER AN ANONYMOUS OBJECT, for the reason <see cref="PnlReply"/> is one:
+    /// <c>Json.Options</c> drops a null field, and an absent <c>win_rate</c> would read as a field this
+    /// build does not have rather than as a figure no trade was closed to compute.
+    /// </summary>
+    sealed record BacktestReplyMetrics(
+        long Bars, long ExposureBars, long Signals, int Fills, int NoTrades, int Trades, int Wins,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? WinRate,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? GrossPnl,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? Fees,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? NetPnl,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? MaxDrawdown,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] decimal? FinalEquity,
+        long MissingMinutes, int Gaps, int Faults, bool PositionOpenAtEnd);
+
+    /// <inheritdoc cref="BacktestReplyMetrics"/>
+    sealed record BacktestReplyGap(string Field, string Why);
+
+    /// <inheritdoc cref="BacktestReplyMetrics"/>
+    sealed record BacktestReplyTrade(
+        int Ordinal, DateTimeOffset EntryBar, decimal EntryPrice, DateTimeOffset ExitBar,
+        decimal ExitPrice, decimal Quantity, string Reason, decimal Fees, decimal Pnl);
 
     /// <summary>
     /// WHAT MARKET DATA THIS INSTALLATION HOLDS, AND WHERE EVERY BYTE OF IT CAME FROM.

@@ -304,6 +304,21 @@ public sealed record BacktestRequest(
 public static class Backtest
 {
     /// <summary>
+    /// THE MOST BARS ONE RUN TRACES BEFORE IT HALTS, AND SAYS SO.
+    ///
+    /// <para>Every bar puts a line in the trace, and the trace is what every figure is computed from,
+    /// so a run holds one event per bar in memory while it goes. 200,000 one-minute bars is about
+    /// 139 days and tens of megabytes of trace, which is a bound a low-spec laptop can carry; a full
+    /// twelve months is four windows of a quarter each, and the halt's reason says so.</para>
+    ///
+    /// <para>It HALTS rather than truncating, exactly as `DatasetReader`'s own cap REFUSES rather than
+    /// truncating: a result quietly computed over the first part of a window is a result about a period
+    /// nobody chose and cannot see the edge of. The halt is a defined fault, so the metrics carry
+    /// "the run halted at bar 200000" in their own list of what is missing.</para>
+    /// </summary>
+    public const int MaxTracedBars = 200_000;
+
+    /// <summary>
     /// One run over bars in ascending order. Everything it answers is computed here from those bars;
     /// nothing is read from a clock, a file, the network or a random number, so the same inputs give
     /// the same trace on every machine and in a year.
@@ -346,6 +361,16 @@ public static class Backtest
             if (stop.IsCancellationRequested)
             {
                 fault = $"the run was stopped after {ordinal - 1} bars, before the bar at {bar.OpenTime:O}";
+                trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault));
+                break;
+            }
+
+            if (ordinal > MaxTracedBars)
+            {
+                fault = $"this window holds more than the {MaxTracedBars} bars one run may trace " +
+                        $"(about {MaxTracedBars / 1440} days of one-minute bars), so the run halted at " +
+                        $"the bar before {bar.OpenTime:O}. Ask for a shorter window with --from and --to; " +
+                        "a year is four runs of a quarter each.";
                 trace.Add(BacktestEvent.Fault(ordinal, bar.OpenTime, fault));
                 break;
             }

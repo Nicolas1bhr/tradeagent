@@ -213,3 +213,22 @@ max_hold_bars 60
 exit when momentum > recovered
 entry when momentum < oversold
 ```
+
+## Running one — the backtest
+
+`trade backtest --strategy strategies/x.strategy --dataset 3` runs a program over the history the app
+holds and records it. The app parses the file (a refusal names the line), streams the dataset's own
+hashed bars, and computes every figure from its own trace: `docs/CONTRACTS.md` has the whole contract.
+The four numbers a run DECLARES — fees and slippage as fractions, the quantity increment a size is
+rounded down to, the capital it starts with — are part of the run's identity, because every figure
+depends on them.
+
+The rules that decide a result, stated once here: a signal from a bar's close fills at the **next bar's
+open** plus adverse slippage, with a fee on every fill; a stop or a target fires **intrabar** at its own
+price, and a bar that touched both counts as the **stop**; a bar that opened through the stop fills at
+that open; `max_hold_bars` is taken at the close of the bar that reaches it, by the backtest's own
+protection, before the evaluator is asked anything on that bar — so the evaluator emits nothing for it.
+A size that rounds down to nothing is no trade, with the reason.
+
+**What a run cannot prove.** It is computed over bars, and bars establish no actual fill, no queue
+position and no intrabar ordering. A run is a reason to test something and never a record of a trade.

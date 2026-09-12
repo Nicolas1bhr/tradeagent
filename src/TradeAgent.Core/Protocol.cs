@@ -57,6 +57,24 @@ public static class Ops
     /// </summary>
     public const string Report = "report";
 
+    /// <summary>
+    /// THE BACKTEST. The agent asks; the APP parses the program, runs it over its own hashed bars,
+    /// computes the metrics from its own trace and records the version and the run.
+    ///
+    /// It places no order, reads no mode, touches no connector and grants nothing — <c>CLAUDE.md</c>:
+    /// a backtest places no order and grants no authority. It is not in <see cref="Mutating"/>,
+    /// because that word on this channel means "sends something to a broker" and nothing here does;
+    /// it does WRITE, and what it writes is the app's own measurement of a run the agent asked for.
+    /// There is no op that writes, edits or deletes a strategy version, a run or a trade, for the
+    /// reason the dataset ledger has none: a record of how a strategy performed is the evidence its
+    /// author is judged on.
+    ///
+    /// What it cannot prove is part of the op. Bars support explicitly limited fill simulations and
+    /// establish no actual fill, no queue position and no intrabar ordering, so a run is a reason to
+    /// test something and never a record of a trade.
+    /// </summary>
+    public const string Backtest = "backtest";
+
     public static readonly string[] Mutating = [Buy, Sell, Modify, Cancel, CancelAll, Close, CloseAll];
     public static bool IsMutating(string op) => Mutating.Contains(op);
 }

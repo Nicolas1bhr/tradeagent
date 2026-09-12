@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace TradeAgent.Core.Strategy;
@@ -191,8 +192,29 @@ public sealed class BacktestTrace(IReadOnlyList<BacktestEvent> events)
         }
     }
 
-    /// <summary>The SHA-256 of <see cref="Text"/>, which is what two runs are compared by.</summary>
-    public string Sha256 => Sha256Hex.Of(Text);
+    /// <summary>
+    /// The SHA-256 of <see cref="Text"/>, which is what two runs are compared by — computed line by
+    /// line rather than over one string.
+    ///
+    /// <para>The string form of a long run is tens of megabytes, and building it only to hash it would
+    /// double that in transient memory on a machine this product is meant to run on. The bytes hashed
+    /// are exactly <see cref="Text"/>'s: each line's UTF-8, each followed by one newline.</para>
+    /// </summary>
+    public string Sha256
+    {
+        get
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (var e in Events)
+            {
+                hash.AppendData(Encoding.UTF8.GetBytes(e.Line));
+                hash.AppendData(Newline);
+            }
+            return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+    }
+
+    static readonly byte[] Newline = "\n"u8.ToArray();
 
     /// <summary>Every event of one kind, in order. For a reader and for the metrics.</summary>
     public IEnumerable<BacktestEvent> Of(BacktestEventKind kind) => Events.Where(e => e.Kind == kind);
