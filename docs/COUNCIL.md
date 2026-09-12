@@ -271,6 +271,22 @@ test proves:
   `U-council-concurrent` → the remaining venue and data units → `U-allocator` (evolution: versioned parentage, comparable
   trials, exploration, bounded replacement, the retirement-candidate event, the directors evaluated too).
 
+**`U-containment` landed 2026-09-12**, and what it did and did not close is worth stating here because the
+harness, the referee and every later increment rest on it. Closed: the agent process is held in a Windows job
+object that dies with the app (breakaway refused) or, on macOS and Linux, in a session of its own, so a turn the
+app cancels is over including the parts of it that detached; the child gets a whitelisted environment rather than
+a copy of the app's, so a credential exported around TradeAgent no longer reaches the AI; the pipe knows WHICH
+LAUNCH is calling, from a per-attempt grant handed only through that process's environment, so rule 2's "another
+role's writable state" has a subject at last — a caller with no grant is roleless and may not trade, Research's
+own grant may not trade, and the peer holding the connection must be the app's own `trade` at the path and hash
+it deployed; and the armed live configuration refuses to start an uncontained runtime at all. **Still open, as
+`U-contain-2`:** the agent is the SAME OS USER, so same-user reads *and writes* of `state/` stand — the database,
+the datasets, the reports and the recorded CLI hash are all reachable by it — a job object is not a sandbox, and
+`Containment.Sandbox()` says `NONE` on every platform this builds on rather than implying otherwise. The Unix
+session is escapable by a process that calls `setsid` itself. That is precisely why round 4's honest alternative —
+harness-only execution for every role — is still on the table, and why the owner's decision (b) in
+`docs/RESUME-HERE.md` has not been pre-empted by this unit.
+
 ## The debate's record, from the answer files only
 
 Round 1: the manager proposed one Chair on the smart model, three memory tiers, an event scheduler, files as the only

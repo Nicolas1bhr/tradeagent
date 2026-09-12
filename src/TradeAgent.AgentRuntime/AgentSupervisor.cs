@@ -16,8 +16,12 @@ namespace TradeAgent.AgentRuntime;
 /// runtime this supervisor prepares so that the grant a turn's process carries names the attempt its
 /// cost is committed against. Per role, because the meter holds one open attempt per role.
 /// </param>
+/// <param name="launchRefusal">
+/// The protected configuration's answer, asked at every launch: a sentence when no AI runtime may be
+/// started at all, null when one may. Handed to every runtime this supervisor prepares.
+/// </param>
 public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
-    Func<string, string?>? attemptId = null)
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null)
 {
     readonly SemaphoreSlim _gate = new(1, 1);
     IAgentRuntime? _runtime;
@@ -52,7 +56,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId);
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal);
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,

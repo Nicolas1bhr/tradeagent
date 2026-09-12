@@ -408,7 +408,11 @@ public sealed class AppHost : IAsyncDisposable
                 // The attempt the meter opened for the launch about to happen. A function, because
                 // the launch is minutes away from this line and the attempt it belongs to does not
                 // exist yet.
-                attemptId: role => Meter?.OpenAttemptIdFor(role));
+                attemptId: role => Meter?.OpenAttemptIdFor(role),
+                // THE PROTECTED CONFIGURATION. Read at every launch rather than captured, because
+                // the owner arms real money on the Dashboard while the AI is working.
+                launchRefusal: () => Containment.RefusalToLaunch(
+                    Gateway.Settings.ModeIsLive, Gateway.Settings.LiveActivated));
             Meter = new TurnMeter(_db,
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,

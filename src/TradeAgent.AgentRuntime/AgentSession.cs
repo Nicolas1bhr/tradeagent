@@ -196,6 +196,11 @@ public static class AgentArgs
 /// Where launch grants are minted. The process-wide register by default — the same one the pipe
 /// server checks against.
 /// </param>
+/// <param name="launchRefusal">
+/// THE PROTECTED CONFIGURATION, asked at every launch: a sentence when this build will not start the
+/// vendor's CLI at all, null when it will. A function because the owner arms and disarms real money
+/// while the AI is working, and the turn that has to obey is the next one.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
@@ -205,7 +210,8 @@ public sealed class AgentSession(
     Func<string?>? model = null,
     string role = CouncilRoles.Operations,
     Func<string?>? attempt = null,
-    AgentGrants? grants = null) : IAgentConversation
+    AgentGrants? grants = null,
+    Func<string?>? launchRefusal = null) : IAgentConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
@@ -457,6 +463,16 @@ public sealed class AgentSession(
 
     async Task<(int ExitCode, string Raw, TurnUsage? Usage)> RunTurnAsync(string exe, string message, CancellationToken ct)
     {
+        // REFUSED BEFORE ANYTHING IS STARTED, AND THIS IS THE ONLY PLACE A TURN BEGINS.
+        //
+        // The armed live configuration will not run an AI runtime that no operating-system sandbox
+        // confines — see Containment.RefusalToLaunch. It throws rather than returning quietly: the
+        // caller turns a TradeAgentException into a System turn in the conversation, so the owner
+        // reads the sentence in the window where they armed the switch, which is the only place it
+        // means anything.
+        if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
+
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
