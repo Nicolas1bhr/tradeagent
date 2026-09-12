@@ -4967,3 +4967,43 @@ trailers; `rev-list --count` → 0; CI run 34187380076 at `8197163`: ubuntu and 
 
 **NOT VERIFIED:** the http.sys behaviour on a Windows box — read off the runner's marks, not reproduced on hardware. **NOT
 done:** no ATAS, no money, no real download, no vendor reached, no assertion loosened.
+
+## 2026-09-12 — U-turn-commit landed: a turn's output is bound to its attempt, the plan and journal are capped revisions, and a turn ends in one transaction
+
+Rules 5 and 6 of `docs/COUNCIL.md`, by one fresh builder on `docs/briefs/U-turn-commit.md` (killed by the weekly usage limit
+with all five items committed, before its gate) and a second re-briefed from the branch, which reproduced every RED and
+mutant itself, found and closed one gap, ran the gate and wrote the report. Merge `0da64d7`, 7 commits, 30 files,
++1998/−117 (`CouncilRelay.cs`, `PublicationStore.cs`, `AiAttemptStore.cs`, `MissionLoop.cs`, `TurnMeter.cs`,
+`MaterialScanner.cs`, `WorkspaceBuilder.cs`, `AppHost.cs`, a new `Core/Sha256Hex`, `Database.cs` schema 11, `CONTRACTS.md`,
+the guide, the mission text; new `TurnCommitTests`, `WorkspaceRevisionTests`).
+
+- **Staged output is bound to its attempt, and fenced:** the Situation names the attempt id, `out/report-<attempt>.md` is
+  attributed by the id in its name, a LOST attempt's file is published under that LOST id, and a file naming no known
+  launch of the role goes to `out/quarantine/` with an activity line. Mutant (attribution by whoever ran the relay):
+  `Expected: "turn-killed" / Actual: "turn-next"`; the fence deleted → 4 red, `Assert.Empty() Failure: Collection was not
+  empty` (`Attempt = turn-open`).
+- **The plan and the journal are private revisions with caps** (60 and 200 non-empty lines): content-hashed, numbered,
+  an over-cap or unreadable file REJECTED and the last valid revision written back after the commit, the next Situation
+  saying so. RED (the cap removed): `Assert.Single() Failure: The collection contained 2 items` — the 80-line `PLAN.md`
+  versioned; mutant (journal cap 200 → 400): the same assertion, a 300-line journal accepted.
+- **One committed transition per turn:** `End`, the publications and the wake dispositions in ONE `Database.Write`; a
+  crash before it leaves LAUNCHED, `LoseOpen` marks LOST on the next start and the reconcile pass publishes the staged
+  files under that id. RED (the meter's close written at once, as before): `Expected: LOST / Actual: ENDED`; mutant (`End`
+  outside the transaction): `Expected: LAUNCHED / Actual: ENDED`, every publication rolled back. **Gap the builder found
+  and closed:** `NextRevision` was read outside the transaction; now inside — mutant (read once before the inserts):
+  `Expected: [1, 2, 3] / Actual: [1, 2, 2]`.
+- **The scanner walks every role's home** plus `in/` and `out/`. RED (the chair's home alone): `Expected: [5 paths] /
+  Actual: []`; mutant (`out/` dropped): the published report unrecorded.
+- **One hash helper** replaces seven copies, byte-identical at each old call site (RED, case drift; mutant, UTF-16).
+- **Judged at landing:** the killed builder widened `OwnerDispositionTests.The_disposition_detail_arrives_at_schema_ten`
+  from `== 10` to `>= 10` plus the on-disk row compared to the build's value; kept, because the exact number is pinned by
+  the new `…arrive_at_schema_eleven` test — the same move `CouncilRoleTests` made. No test name removed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `358659e`, Release: 0 warnings,
+0 errors (17 projects); 12 touched classes 3× → 96/96 each; Unit 615 + Fault 277 + Integration 627 = 1519 passed, 0
+failed, 1 skipped; names vs `main` → 23 added, 0 removed. Manager's gate at `0da64d7`, Release: build → 0 warnings, 0 errors;
+suite → 615 + 277 + 627 = 1519 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 23 added (sets 1232 → 1255); scan clean (`CancellationToken` and a doc
+comment, judged); no trailers; `rev-list --count` → 0; CI run 34698051503 at `0da64d7`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT VERIFIED:** `AppHost`'s wiring of `Quarantined`/`Revisions.Rejected` to the activity log — read at the composition
+root, no test runs it (none covered `Rejected` on `main` either). **NOT done:** no box, no ATAS, no money.
