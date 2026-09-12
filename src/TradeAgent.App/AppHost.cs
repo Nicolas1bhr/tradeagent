@@ -78,7 +78,7 @@ public sealed class AppHost : IAsyncDisposable
                 // memory. Attached here rather than at construction because this is the one place a
                 // conversation is made, and a second one made later must be wired too — the same
                 // reason the meter is attached on this line.
-                if (_conversation is AgentSession session) session.RecordTyped = RecordOwnerMessage;
+                if (_conversation is IAdmittedConversation admitted) admitted.RecordTyped = RecordOwnerMessage;
             }
             return _conversation;
         }

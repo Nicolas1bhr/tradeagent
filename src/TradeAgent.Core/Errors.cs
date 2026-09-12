@@ -36,6 +36,17 @@ public enum ErrorCode
     // MODE_FORBIDS_EXECUTION, which is about an ORDER this mode will not send: this is about the
     // assistant's own program not being started at all, and the repair is a different one.
     CONTAINMENT_REQUIRED,
+    // A TURN THAT REACHED ITS OWN BOUND, and stopped before the request that would have passed it.
+    // Its own code because it is not a failure and not a refusal of anything the owner asked for: the
+    // turn did work, that work is kept, and the repair is either a larger allowance on the Safety
+    // page or a task split in two. It is the bound the app-owned harness enforces INSIDE a turn,
+    // which is the thing a vendor CLI's advisory caps could never do.
+    CONTEXT_BUDGET_EXCEEDED,
+    // A WORKER ASKED FOR A TOOL ITS LAUNCH WAS NOT GRANTED, or for a path outside its own folder.
+    // Not IPC_UNAUTHENTICATED and not ROLE_MAY_NOT_TRADE: the first reads "your credential is wrong"
+    // and the second is specifically about moving money, while this covers every tool the surface
+    // denies — and the answer to it is never "ask again", because there is nothing to ask.
+    TOOL_NOT_GRANTED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -107,6 +118,35 @@ public static class Labels
     /// </summary>
     public const string HeldWhileTheAiIsWorking =
         "The AI is working. It will see this at the start of its next turn.";
+
+    /// <summary>
+    /// WHAT A ROLE ON THE APP-OWNED HARNESS SAYS WHEN NO KEY IS HELD, and why holding it in memory is
+    /// the choice rather than an omission.
+    ///
+    /// It is one sentence rather than a repair code because it appears in three places that must not
+    /// word it differently: the conversation the turn did not start in, the health row, and the box on
+    /// the Safety page.
+    /// </summary>
+    public const string HarnessKeyNotHeld =
+        "No API key is held for TradeAgent's own worker, so it started nothing. Paste one on the "
+        + "Safety page — it is kept in memory for this session only and never written to disk.";
+
+    /// <summary>The box the key is pasted into. Masked, and the sentence beside it says why.</summary>
+    public const string HarnessKey = "API key for TradeAgent's own worker";
+
+    /// <summary>
+    /// WHY THE KEY IS NOT SAVED, said beside the box rather than in a document nobody opens. It is the
+    /// round-4 rule in the owner's words: a key is "not retained beside an unsandboxed CLI process
+    /// until containment lands", and `Containment.Sandbox()` still says NONE on every platform this
+    /// builds on.
+    /// </summary>
+    public const string HarnessKeyHint =
+        "Kept in memory for this session only. TradeAgent never writes it to disk and clears it when "
+        + "it closes, because nothing on this computer yet confines the AI's own process from reading "
+        + "the files TradeAgent keeps. Paste it again after a restart.";
+
+    /// <summary>What the daily report's AI-spending section says about the key. Two words, no key.</summary>
+    public static string HarnessKeyLine(bool held) => held ? "held" : "not held";
 
     /// <summary>
     /// THE TWO BOXES THAT SET WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, beside the ceiling
@@ -443,6 +483,10 @@ public static class Errors
         [ErrorCode.IPC_UNAUTHENTICATED]            = ("A program tried to use trading without permission.", "No action needed. The request was refused.", false),
         [ErrorCode.ROLE_MAY_NOT_TRADE]             = ("A part of the AI that is not allowed to trade asked to place, change or cancel an order.", "No action needed. The request was refused and recorded.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
+        // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
+        // turn starts fresh. The two boxes named here are the ones on the Safety page.
+        [ErrorCode.CONTEXT_BUDGET_EXCEEDED]        = ("One AI turn reached the most it is allowed to read and write, so TradeAgent stopped it before its next request.", $"Nothing was lost. Raise “{Labels.TurnAllowanceIn}” on the Safety page if its work needs more room.", false),
+        [ErrorCode.TOOL_NOT_GRANTED]               = ("The AI asked for something TradeAgent does not let that part of it do.", "No action needed. The request was refused and recorded.", false),
         // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
         // what it does not share is the shape of the conversation, and telling its owner to go
         // looking for a permission problem sends them after a fault that is not there. It is the

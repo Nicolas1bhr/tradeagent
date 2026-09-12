@@ -109,6 +109,22 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// that builds one of these keeps compiling and keeps meaning what it meant: silence.
     /// </summary>
     public TurnUsage? Usage { get; init; }
+
+    /// <summary>
+    /// HOW THE TURN ENDED, AS A CODED WORD THE APP CHOSE, or null where the runtime has no such word.
+    ///
+    /// <para>A vendor CLI ends with an exit code and nothing else, so null is the honest answer for
+    /// one. The app-owned harness knows more than that — it stopped the turn itself, before a request
+    /// it had decided not to send — and <see cref="ErrorCode.CONTEXT_BUDGET_EXCEEDED"/> is a fact
+    /// about that turn that the launch ledger has to carry: "the row saying so" is the difference
+    /// between a turn that was bounded and a turn that failed, and an exit code of 1 cannot tell them
+    /// apart.</para>
+    ///
+    /// <para>It travels into <c>ai_attempt.context</c> rather than a new column, because that column
+    /// is already the app's free-form account of what it could see of a turn and a schema change per
+    /// fact is how a table stops being readable.</para>
+    /// </summary>
+    public string? Outcome { get; init; }
 }
 
 /// <summary>

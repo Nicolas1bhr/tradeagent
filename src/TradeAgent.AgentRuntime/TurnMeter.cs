@@ -84,9 +84,9 @@ public sealed record TurnUsage(
         {
             var input = Num(container, "input_tokens", "prompt_tokens", "input");
             var output = Num(container, "output_tokens", "completion_tokens", "output");
-            var cached = Num(container, "cached_input_tokens", "cache_read_input_tokens", "cached_tokens");
-            var write = Num(container, "cache_write_input_tokens", "cache_creation_input_tokens");
-            var reasoning = Num(container, "reasoning_output_tokens", "reasoning_tokens");
+            var cached = Nested(container, "cached_input_tokens", "cache_read_input_tokens", "cached_tokens");
+            var write = Nested(container, "cache_write_input_tokens", "cache_creation_input_tokens");
+            var reasoning = Nested(container, "reasoning_output_tokens", "reasoning_tokens");
 
             if (input is null && output is null && cached is null && write is null) continue;
 
@@ -126,6 +126,36 @@ public sealed record TurnUsage(
             if (!e.TryGetProperty(name, out var v)) continue;
             if (v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n)) return n;
             if (v.ValueKind == JsonValueKind.String && long.TryParse(v.GetString(), out var s)) return s;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// THE SAME LOOKUP, THEN ONE LEVEL DOWN INTO THE VENDOR'S BREAKDOWN OBJECTS.
+    ///
+    /// The three SUBSET figures — cached input, cache writes, reasoning output — are the ones a
+    /// provider tends to nest: the OpenAI-compatible chat-completions body puts cached input at
+    /// <c>usage.prompt_tokens_details.cached_tokens</c> and reasoning at
+    /// <c>usage.completion_tokens_details.reasoning_tokens</c>, one level below the totals beside them.
+    /// The flat name still wins, so nothing measured on codex 0.153.4 changes; this is only consulted
+    /// when the flat name is absent.
+    ///
+    /// It is only worth doing for the subsets. A missing TOTAL is "the runtime said nothing", which is
+    /// already handled honestly; a missing cached figure charges every cached token at the full input
+    /// rate, which over-states the bill for a discount the vendor DID publish and the app CAN see.
+    /// </summary>
+    static long? Nested(JsonElement e, params string[] names)
+    {
+        if (Num(e, names) is { } flat) return flat;
+
+        foreach (var details in new[]
+                 {
+                     "prompt_tokens_details", "input_tokens_details",
+                     "completion_tokens_details", "output_tokens_details"
+                 })
+        {
+            if (!e.TryGetProperty(details, out var d) || d.ValueKind != JsonValueKind.Object) continue;
+            if (Num(d, names) is { } nested) return nested;
         }
         return null;
     }
@@ -186,6 +216,13 @@ public sealed record TurnContext
     public long OutputTokens { get; init; }
     public long ReasoningOutputTokens { get; init; }
 
+    /// <summary>
+    /// HOW THE TURN ENDED, where the app chose the ending itself. See
+    /// <see cref="AgentTurnEnded.Outcome"/>: null for a vendor CLI, which ends with an exit code and
+    /// no word, and a coded word for the app-owned harness, which stopped the turn on its own bound.
+    /// </summary>
+    public string? Ended { get; init; }
+
     /// <summary>The sentence that stops the numbers above being read as a full breakdown.</summary>
     public string Note { get; init; } = Unmeasured;
 
@@ -197,7 +234,7 @@ public sealed record TurnContext
     /// Reads one turn's stream. Never throws and never invents: a line that is not JSON, or an event
     /// shape nobody here recognises, contributes nothing rather than a guess.
     /// </summary>
-    public static TurnContext Read(string raw, int? promptChars, TurnUsage? usage)
+    public static TurnContext Read(string raw, int? promptChars, TurnUsage? usage, string? ended = null)
     {
         // Counted by ITEM ID, largest output per id. A command arrives as `item.started` with an
         // empty output and again as `item.completed` with the output on it; counting the lines would
@@ -242,7 +279,8 @@ public sealed record TurnContext
             UncachedInputTokens = usage?.UncachedInputTokens ?? 0,
             UnattributedInputTokens = Math.Max(0, input - cached),
             OutputTokens = usage?.OutputTokens ?? 0,
-            ReasoningOutputTokens = usage?.ReasoningOutputTokens ?? 0
+            ReasoningOutputTokens = usage?.ReasoningOutputTokens ?? 0,
+            Ended = ended
         };
     }
 
@@ -486,7 +524,7 @@ public sealed class TurnMeter
             Unpriced = price.Unpriced,
             Estimated = price.Estimated,
             PricedByOwner = price.ByOwner,
-            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(role), ended.Usage)
+            Context = TurnContext.Read(ended.Raw, PromptCharsOfOpenAttempt(role), ended.Usage, ended.Outcome)
         };
 
         try { File.AppendAllText(_path, Json.Write(record) + Environment.NewLine); }
@@ -710,7 +748,7 @@ public sealed class TurnMeter
     {
         // COMPONENT BY COMPONENT, FROM THE STREAM THE APP KEPT, and never from anything else. See
         // TurnContext: what the stream does not show is named rather than divided up.
-        var context = Json.Write(TurnContext.Read(ended.Raw, promptChars, ended.Usage));
+        var context = Json.Write(TurnContext.Read(ended.Raw, promptChars, ended.Usage, ended.Outcome));
 
         if (id is null)
         {
@@ -763,13 +801,18 @@ public sealed class TurnMeter
         // THE OWNER'S TURN IS NOT HELD FOR A TRANSITION IT IS NOT PART OF. It is admitted and
         // reserved exactly as the loop's is; it is closed the moment it ends, because nothing
         // publishes for it and no wake is waiting on it.
-        if (conversation is AgentSession session)
-            session.Admit = prompt => Begin(prompt, role: role, heldForTheLoop: false);
+        //
+        // MATCHED ON THE INTERFACE RATHER THAN ON AgentSession, which is the whole of what made this
+        // safe once there were two implementations: a harness conversation that failed this type test
+        // would be metered after the fact and never admitted, so a role on the app-owned harness could
+        // take the last of the day's allowance and be recorded once the provider had already been paid.
+        if (conversation is IAdmittedConversation admitted)
+            admitted.Admit = prompt => Begin(prompt, role: role, heldForTheLoop: false);
 
         return new Detach(() =>
         {
             conversation.TurnEnded -= OnEnded;
-            if (conversation is AgentSession s) s.Admit = null;
+            if (conversation is IAdmittedConversation a) a.Admit = null;
         });
     }
 

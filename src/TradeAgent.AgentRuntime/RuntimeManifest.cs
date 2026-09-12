@@ -150,9 +150,17 @@ public sealed class RuntimeManifest
     /// <summary>
     /// THE MODEL THIS RUNTIME WILL BE ASKED FOR, given the owner's choice. Null means no model flag
     /// goes on the command line at all — either the runtime has none, or nothing has named one.
+    ///
+    /// <para><b>A HARNESS manifest names its model in the request body</b>, not on a command line, so
+    /// an empty <see cref="ModelArgs"/> is not "this runtime's model cannot be chosen" for one of
+    /// those — it is simply that there is no command line to put a flag on. The
+    /// <see cref="Endpoint"/> arm is what distinguishes the two, and it has to be here rather than at
+    /// the call site: <c>TurnMeter</c> prices a reservation through this method, and a harness whose
+    /// model answered null would be reserved at the dearest model in the catalogue while running on
+    /// the cheapest.</para>
     /// </summary>
     public string? ModelFor(string? chosen) =>
-        ModelArgs.Length == 0 ? null
+        ModelArgs.Length == 0 && Endpoint.Length == 0 ? null
         : chosen is { Length: > 0 } c ? c
         : DefaultModel is { Length: > 0 } d ? d
         : null;
@@ -177,6 +185,34 @@ public sealed class RuntimeManifest
     /// variable TradeAgent would have to put a credential into.
     /// </summary>
     public string[] KeepEnvironment { get; set; } = [];
+
+    /// <summary>
+    /// WHERE THE APP-OWNED HARNESS SENDS ITS REQUESTS, or empty for a runtime that is a program on
+    /// this machine rather than an endpoint.
+    ///
+    /// <para>Data, like every command here, and for a sharper version of the same reason: a provider
+    /// moves a path or a version prefix on its own schedule, and an endpoint compiled into a build is
+    /// an outage that needs a release. Non-empty is also the one thing that makes a manifest a HARNESS
+    /// manifest — <see cref="RuntimeCatalog.Harnesses"/> is exactly the entries that carry one.</para>
+    /// </summary>
+    public string BaseUrl { get; set; } = "";
+
+    /// <summary>The path under <see cref="BaseUrl"/> that a turn's requests go to.</summary>
+    public string CompletionsPath { get; set; } = "";
+
+    /// <summary>
+    /// THE PROVIDER'S OWN NAME FOR THE MAXIMUM-OUTPUT PARAMETER, which is the only per-request cap
+    /// the provider itself enforces and therefore the only one that is not advisory.
+    ///
+    /// It is data because this is the field vendors rename: OpenAI's <c>max_tokens</c> became
+    /// <c>max_completion_tokens</c>, and a build that sent the old name against a provider that had
+    /// moved on would send NO bound at all and would not be told so.
+    /// </summary>
+    public string MaxOutputParam { get; set; } = "max_completion_tokens";
+
+    /// <summary>The full URL one turn's requests go to. Empty for a runtime with no endpoint.</summary>
+    public string Endpoint =>
+        BaseUrl.Length == 0 ? "" : $"{BaseUrl.TrimEnd('/')}/{CompletionsPath.TrimStart('/')}";
 
     /// <summary>The one TradeAgent puts first, because its sign-in works without leaving the window.</summary>
     public bool Recommended { get; set; }
@@ -451,6 +487,48 @@ public static class RuntimeCatalog
         },
         new RuntimeManifest
         {
+            // THE APP-OWNED HARNESS. Not a program on this machine: TradeAgent calls the provider
+            // itself, so there is nothing to install, nothing to detect and no console anywhere near
+            // it. See ApiAgentRuntime for what that buys — every model-and-tool boundary is the app's.
+            Id = ApiAgentRuntime.RuntimeId,
+            DisplayName = "TradeAgent's own worker (OpenAI API)",
+            Description =
+                "TradeAgent calls the AI provider itself, with the tools it chooses and a budget it "
+                + "enforces per request. No separate program is installed and no console is ever opened.",
+            // NOT A SIGN-IN FLOW: there is no login command to run headless, so the honest path is the
+            // one CLAUDE.md allows — a pasted key in the app's own window. It is held in memory for
+            // the session and written nowhere, which is what the sentence beside the box says.
+            SignInDescription =
+                "Paste your OpenAI API key on the Safety page. TradeAgent keeps it in memory for this "
+                + "session only, never writes it to disk, and clears it when it closes — so it is never "
+                + "left sitting beside an AI process nothing on this computer confines.",
+            ApiKey = new ApiKeyPlan
+            {
+                Label = "your OpenAI API key",
+                HelpUrl = "https://platform.openai.com/api-keys"
+            },
+            // No executable, no install plan, no auth args: every one of those describes a program,
+            // and this runtime is code inside this build.
+            Executable = "",
+            Install = new InstallPlan { Kind = InstallKind.None },
+            // The OpenAI-compatible chat-completions shape. UNVERIFIED against the real provider by
+            // design — the brief forbids a real provider call — and every test drives it against a
+            // loopback HttpListener. What IS verified is that the app sends the model, the granted
+            // tools and the max-output parameter, and reads back text, tool calls and usage.
+            BaseUrl = "https://api.openai.com/v1",
+            CompletionsPath = "chat/completions",
+            MaxOutputParam = "max_completion_tokens",
+            // The cheapest current model on the catalogue this build ships (0.20 in / 1.20 out per
+            // million against sol's 4.00/20.00), because a WORKER is the case the harness exists for:
+            // "can run the cheapest capable model per task" (docs/COUNCIL.md). The owner picks another
+            // on the Safety page; the reservation is priced at whichever is in force.
+            DefaultModel = "gpt-5.6-luna",
+            SelfContained = true,
+            Verified = false,
+            DocsUrl = "https://platform.openai.com/docs/api-reference/chat"
+        },
+        new RuntimeManifest
+        {
             Id = "custom",
             DisplayName = "Other AI assistant",
             Description = "Any command-line AI tool, described by a manifest. Developer-facing: the end user never edits this.",
@@ -498,6 +576,22 @@ public static class RuntimeCatalog
         File.WriteAllText(OverridePath, Json.Write(manifests.ToList(), pretty: true));
 
     public static RuntimeManifest? Find(string id) => Read().Runtimes.FirstOrDefault(m => m.Id == id);
+
+    /// <summary>
+    /// THE MANIFESTS THAT ARE HARNESSES — the ones TradeAgent runs itself rather than starting a
+    /// vendor program. It is exactly the entries that carry a <see cref="RuntimeManifest.BaseUrl"/>,
+    /// because that is what makes one: a runtime with an endpoint has no executable, no install and no
+    /// sign-in command, and every model-and-tool boundary in its turns is this app's.
+    ///
+    /// Derived rather than flagged, so an override that adds a provider gets the same treatment
+    /// without also having to remember a boolean.
+    /// </summary>
+    public static IReadOnlyList<RuntimeManifest> Harnesses() =>
+        [.. Read().Runtimes.Where(m => m.Endpoint.Length > 0)];
+
+    /// <summary>Whether an id names a harness. Null and unknown ids are not.</summary>
+    public static bool IsHarness(string? id) =>
+        id is { Length: > 0 } && Find(id) is { } m && m.Endpoint.Length > 0;
 
     /// <summary>
     /// The manifest an agent is about to be STARTED from, or a refusal in the owner's own words.

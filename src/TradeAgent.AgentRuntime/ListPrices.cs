@@ -137,6 +137,15 @@ public static class ListPrices
         foreach (var row in OpenAi)
             all.Add(Price("opencode", row));
 
+        // openai-api: THE APP-OWNED HARNESS, and the one runtime here whose bill is not a quotation
+        // about somebody else's program. It calls this vendor's own endpoint with a key the owner
+        // pasted, so the page below is the page they are billed from — no subscription ambiguity, and
+        // no CLI in between that might have chosen a different model. The whole current generation
+        // applies for the same reason it does for opencode: nothing restricts which of these the app
+        // may ask for, and the Safety page's row is built from exactly these entries.
+        foreach (var row in OpenAi)
+            all.Add(Price(ApiAgentRuntime.RuntimeId, row));
+
         // `custom` is deliberately absent. Its command, and therefore its provider, is written by an
         // engineer in runtimes.json; a price shipped for it would be a guess about a vendor this
         // build has never heard of.

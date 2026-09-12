@@ -211,7 +211,7 @@ public sealed class AgentSession(
     string role = CouncilRoles.Operations,
     Func<string?>? attempt = null,
     AgentGrants? grants = null,
-    Func<string?>? launchRefusal = null) : IAgentConversation
+    Func<string?>? launchRefusal = null) : IAgentConversation, IAdmittedConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
