@@ -5007,3 +5007,43 @@ comment, judged); no trailers; `rev-list --count` → 0; CI run 34698051503 at `
 
 **NOT VERIFIED:** `AppHost`'s wiring of `Quarantined`/`Revisions.Rejected` to the activity log — read at the composition
 root, no test runs it (none covered `Rejected` on `main` either). **NOT done:** no box, no ATAS, no money.
+
+## 2026-09-12 — U-press-settle-win landed: the press sent its leg every time; the Windows runner's disk spent the budget inside the settle's own commits
+
+The windows-only red at `8197163` (run 34187380076: `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close…`, the
+book still long 2), by one fresh fixer on `docs/briefs/U-press-settle-win.md` (killed by the weekly limit after measuring, its
+three commits kept) and a second re-briefed from the branch, which read the marks, judged the fix, removed the harness and
+closed draft PR #16. Merge `fac2370`, 6 commits, test-only: `git diff main -- src/` EMPTY, the `is { } stuck` call site
+byte-identical; 3 files, +121/−8 (`UnknownCloseTests.cs`, `DispatchRecoveryTests.cs`, `_PressSettleWinMeasurement.cs` added
+and removed).
+
+- **HEADLINE: the product is right; the runner's disk is the whole story.** 48 presses of the failing fixture (8 per runner per
+  run, PR #16 runs 34188680175 and 34189533668) reached the leg and SENT it every time on every runner: `states=[ES:FILLED]
+  pos=[] sellsFilled=1`. Budget left of the 2000 ms at `leg0-close-sent`: windows 1687–1765 / 1813–1985 ms, ubuntu 1993–1997 /
+  1995–1996, macos 1916–1998 / 1997–1999. Windows' spend is record-keeping alone — the settle's two transitions 78–141 ms and
+  the leg's write-ahead 79–172 ms, against bare one-row commits on the same disk at median 16–47 / max 47–110 ms, `gcPause=0`,
+  a 20 ms tick arriving at 31–47 ms. THE CONTROL (the settle's cancel answered correctly, then the caller held past the
+  deadline — one stalled `synchronous=FULL` commit) reproduces the CI red byte for byte on ALL THREE runners:
+  `settle-cancel-answered` = windows −31 / ubuntu −24 / macos −29, `lost=CANCELLED … pos=[ES 2] sellsFilled=0`. No leg was
+  ever refused with budget to spare: no product change, no red-first test, no mutant.
+- **Fixed once, in the fixture:** the three presses whose verdict is the book take `PressBudget` = 20 s; the one whose verdict
+  IS the two-second promise keeps the simulator's two seconds; every `Assert.`/`Out.WriteLine` line byte-identical to `main`
+  in both files (diffed); no `[Trait]`, no `Timing`. Two numbers in the budget argument corrected (eight worst-case commits
+  fit in 20 s, not thirteen; the tick 31–47 ms); the control written in as the argument's evidence.
+- **Siblings:** `AgentCloseOverAnUnknownCloseTests`' four NOT at risk, measured (`deadlines=[none]` on every wire call, no
+  press, no `RiskReducingScope`). **Manager's call at landing:** the eleven press fixtures in `DispatchRecoveryTests.cs`
+  stay on two seconds — same disk, but two durable commits before the leg instead of four and no red yet; recorded here as
+  EXPOSED, and the one-item fixer is this section's second bullet if one goes red.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `dbaf5e5`, Release: 0 warnings, 0
+errors, 17 projects; Fault 3× → 277/277 each; Unit 588 + Fault 277 + Integration 627 = 1492 passed, 0 failed, 1 skipped;
+names vs `main` → 0 removed, 0 added. **CI run 34697322435 at `dbaf5e5`: SUCCESS on all three runners and `package`,
+windows-latest GREEN with the press-settles test.** Its first attempt was red on ubuntu-latest only, on
+`MissionLoopTests.A_file_the_owner_drops_between_turns_is_still_recorded_as_theirs` (`Expected: Inbox / Actual:
+InboxUnattested`) — a path this branch does not touch, green on `main` 75 minutes earlier and on the re-run: recorded as an
+observed intermittent, no fixer yet. Manager's gate at `fac2370` (the report tip rebased over the `U-turn-commit`
+landing, no conflict), Release: build → 0 warnings, 0 errors; suite → 615 + 277 + 627 = 1519 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1255 =
+1255); scan clean; no trailers; `rev-list --count` → 0; CI run 34701889403 at `fac2370`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no product code; no `Timing` membership; the eleven `DispatchRecoveryTests` presses on two seconds (above);
+no box, no ATAS, no money.
