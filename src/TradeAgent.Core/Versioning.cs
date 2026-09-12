@@ -107,8 +107,16 @@ public static class Versions
     /// none that writes, alters or deletes a row, because a strategy's record is the evidence its
     /// author is judged on. Additive — three new tables and one index — and an older database gains
     /// them empty, which reads correctly as "this installation has measured no strategy yet".
+    ///
+    /// 11/12 -&gt; 13: the <c>tool_call</c> table — one row per tool the app-owned harness was asked
+    /// for, served or refused, with the attempt it belongs to. It is round 4's "observed deliveries"
+    /// for a worker, and the one thing that sentence said could not be had from an unrestricted CLI.
+    /// Written by the app only, like every other ledger here. Additive — one new table — and an older
+    /// database gains it empty, which reads correctly as "no worker has run on the harness yet".
+    /// (12 is <c>U-runner-3</c>'s <c>backtest</c> op; the two numbers were assigned at dispatch so the
+    /// units can land in either order.)
     /// </summary>
-    public const int DatabaseSchemaVersion = 12;
+    public const int DatabaseSchemaVersion = 13;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

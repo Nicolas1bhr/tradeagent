@@ -201,6 +201,33 @@ public sealed class IpcResponse
     public static IpcResponse Fail(string id, ErrorCode c, string? tech = null) => Fail(id, Errors.Get(c, tech));
 }
 
+/// <summary>
+/// THE TRADING SURFACE, SEEN FROM THE APP-OWNED HARNESS — one op, under an identity the APP assigns.
+///
+/// <para><b>Why this exists rather than a second dispatcher.</b> A worker on the harness runs inside
+/// this process: there is no child, so there is no pipe, no machine token and no launch grant to
+/// present. What there must NOT be is a second way into the gateway. Every rule a request passes on
+/// the pipe — the role check that decides whether money may move, the request-id shape, the modes, the
+/// limits, the approvals, the kill switch, the logging of a refusal into the owner's own history — is
+/// one implementation, and this interface is how the harness reaches THAT one instead of growing its
+/// own. A Research worker's <c>trade buy</c> is refused by the same line that refuses a Research
+/// launch on the pipe.</para>
+///
+/// <para><paramref name="role"/> and <paramref name="attemptId"/> are the app's own answer to "who is
+/// this", exactly as a verified launch grant is on the pipe: the caller does not supply them, the
+/// composition root does, from the role whose conversation is running and the attempt the meter opened
+/// for it. Null role is nobody in particular — may read, may not trade — which is the same reading a
+/// grantless pipe connection gets.</para>
+/// </summary>
+public interface IGatewayCalls
+{
+    /// <summary>
+    /// Runs one operation and answers as the pipe would, including its refusals. Never throws for a
+    /// refusal: the answer carries <see cref="IpcResponse.Error"/>, so a worker learns why in words.
+    /// </summary>
+    Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId, CancellationToken ct = default);
+}
+
 public static class Json
 {
     public static readonly JsonSerializerOptions Options = new()

@@ -16,7 +16,8 @@ namespace TradeAgent.Gateway;
 /// mode changes, the kill switch, live activation, approvals — is NOT reachable here, so an agent
 /// that decides it would like more permission has nowhere to ask.
 /// </summary>
-public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null) : IAsyncDisposable
+public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null)
+    : IAsyncDisposable, IGatewayCalls
 {
     /// <summary>
     /// The launch grants this gateway will recognise. The process-wide register by default, because
@@ -697,7 +698,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     continue;
                 }
 
-                if (!await Send(pipe, await Handle(req, grant, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
+                if (!await Send(pipe, await Handle(req, grant?.Role, grant?.AttemptId, ct),
+                        req.Op, req.Session, req.RequestId ?? req.Id)) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -920,7 +922,25 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         return null;
     }
 
-    async Task<IpcResponse> Handle(IpcRequest req, Security.AgentGrant? grant, CancellationToken ct)
+    /// <summary>
+    /// ONE OPERATION FROM AN IN-PROCESS WORKER, through exactly the handler the pipe uses.
+    ///
+    /// <para>The app-owned harness has no child process, so it presents no machine token and no launch
+    /// grant: its identity is the one the composition root assigns it, which is the same pair a
+    /// verified grant would have yielded. What it must not have is a second dispatcher — see
+    /// <see cref="IGatewayCalls"/> — so this method adds exactly one thing to <see cref="Handle"/>, the
+    /// reserved-session tripwire the read loop applies to every frame, and then hands over.</para>
+    ///
+    /// <para>It works whether or not <see cref="Start"/> was ever called: the pipe is one transport
+    /// into this handler and an in-process worker is another.</para>
+    /// </summary>
+    public Task<IpcResponse> CallAsync(IpcRequest req, string? role, string? attemptId,
+        CancellationToken ct = default) =>
+        ReservedSessionRefusal(req) is { } refusal
+            ? Task.FromResult(refusal)
+            : Handle(req, role, attemptId, ct);
+
+    async Task<IpcResponse> Handle(IpcRequest req, string? role, string? attemptId, CancellationToken ct)
     {
         // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
         // that is USED, not on the field that may be absent.
@@ -966,7 +986,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
                 "and that has to be a shape the broker will give back");
 
-        var ctx = AgentContext.ForAgent(req.Session, grant?.Role, grant?.AttemptId);
+        var ctx = AgentContext.ForAgent(req.Session, role, attemptId);
 
         // THE ROLE DECIDES WHETHER MONEY MOVES, and this is the only line that reads it.
         //

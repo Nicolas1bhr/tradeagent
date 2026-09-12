@@ -677,6 +677,46 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','12') ON CONFLICT(key) DO UPDATE SET value='12';");
         }
 
+        if (have < 13)
+        {
+            // THE OBSERVED DELIVERIES OF THE APP-OWNED HARNESS. Round 4 of `docs/COUNCIL.md` asks for
+            // "identities, input hashes, grants, policy versions and observed deliveries" to be
+            // recorded, and names the gap in the same breath: "unrestricted CLI reads remain
+            // unobserved". This table is the half that stops being true for a worker on the harness —
+            // every read, every write and every gateway call a model asked for, whether it was served
+            // or refused, with the attempt it belongs to.
+            //
+            // WRITTEN BY THE APP ONLY, which is the rule `material`, `fill`, `ai_attempt`,
+            // `mission_event` and `publication` already keep. There is no verb and no pipe op that
+            // inserts, updates or deletes a row here, so a worker cannot edit the record of what it
+            // asked for — the same separation `material` keeps from `material_note`.
+            //
+            // `argument` IS A SUMMARY AND NEVER THE PAYLOAD. A path, an op, a byte count: enough to
+            // answer "what did this attempt reach for" without copying the content of a file or the
+            // owner's own words into a second place. `bytes` is what the call RETURNED, which is the
+            // quantity the app controls outright (rule 4's retrieval), so a turn's reading is a sum
+            // over these rows rather than a number the agent reported about itself.
+            //
+            // 12 is U-runner-3's (the `backtest` pipe op). This unit takes 13 as its brief assigns,
+            // so the two can land in either order without either renumbering.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS tool_call(
+              id       INTEGER PRIMARY KEY AUTOINCREMENT,
+              at       TEXT NOT NULL,
+              attempt  TEXT,
+              role     TEXT,
+              tool     TEXT NOT NULL,
+              argument TEXT,
+              bytes    INTEGER NOT NULL DEFAULT 0,
+              served   INTEGER NOT NULL,
+              refusal  TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_tool_call_attempt ON tool_call(attempt, at);
+            CREATE INDEX IF NOT EXISTS ix_tool_call_role ON tool_call(role, at);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','13') ON CONFLICT(key) DO UPDATE SET value='13';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
