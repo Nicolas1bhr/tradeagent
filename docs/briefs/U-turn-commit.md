@@ -38,3 +38,24 @@ stale process can still drop a file the relay publishes. The scanner walks only 
 Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; the three test projects in Release to a file
 → 0 failed; touched classes 3×; a `Timing` red re-run alone 3×, never loosened. Commit per item, one sentence, no trailers.
 Append `## Report` (≤20 lines): tip sha, gate counts, one line per item with its RED and mutant, what you did NOT do.
+
+## Report
+
+Tip `358659e`, rebased onto `main` `583f24e` (no conflict), six commits, tree clean; this report sits on it. Gate,
+Release, every run mine: `--no-incremental` build → `0 Warning(s)  0 Error(s)` over 17 projects; the 12 touched classes
+3× → `Failed: 0, Passed: 96` each pass; per project → unit `Failed: 0, Passed: 615`, fault `Failed: 0, Passed: 277`,
+integration `Failed: 0, Passed: 627, Skipped: 1`. Names vs `main`: 1224 → 1247, 23 added, NONE removed. No `Timing` red.
+1. Attribution and the fence. Mutant, attribution by whoever ran the relay: `Expected: "turn-killed" / Actual:
+   "turn-next"`. Fence deleted → 4 red, `Assert.Empty() Failure: Collection was not empty` (`Attempt = turn-open`).
+2. The memory caps. RED, the cap removed: `Assert.Single() Failure: The collection contained 2 items` — the 80-line
+   `PLAN.md` versioned and left on disk. Mutant, journal cap 200 → 400: same assertion, a 300-line journal accepted.
+3. One committed transition. RED, the meter's close written at once as before the unit: `Expected: LOST / Actual:
+   ENDED`. Mutant, `End` outside the transaction: `Expected: LAUNCHED / Actual: ENDED`, every publication rolled back.
+4. The scanner. RED, the chair's home alone: `Expected: [5 paths] / Actual: []`. Mutant, `out/` dropped: `Actual:
+   ["research/data/march.csv", "research/in/abc123.md"]` — the published report unrecorded.
+5. One hash helper. RED, case drift: `Expected: "a8b28701…" / Actual: "A8B28701…"`; mutant, UTF-8 → UTF-16: `Expected:
+   "41376ad6…" / Actual: "f960b1d6…"`. Both red at the five old call sites.
+Gap closed (commit 6): `NextRevision` moved inside the transaction with nothing pinning it. New test; mutant, the
+number read once before the inserts → `Expected: [1, 2, 3] / Actual: [1, 2, 2]`.
+NOT done: no box, no ATAS, no money. `AppHost`'s wiring of `Quarantined`/`Revisions.Rejected` to `Gateway.Log.Activity`
+is read-only verified — no test covers it, as none covered `Rejected` on `main`.
