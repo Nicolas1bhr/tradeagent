@@ -27,6 +27,7 @@
 *.sh        text eol=lf
 *.py        text eol=lf
 *.txt       text eol=lf
+*.strategy  text eol=lf
 
 # Windows-only scripts, where CRLF is what the interpreter and the convention expect.
 *.cmd       text eol=crlf

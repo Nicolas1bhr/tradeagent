@@ -31,8 +31,18 @@ public class DayOneStrategyTests
         return dir.FullName;
     }
 
+    /// <summary>
+    /// READ WITH LF, WHATEVER THE CHECKOUT WROTE. `.gitattributes` now pins `*.strategy` to LF, so this
+    /// is belt as well as braces — but the two assertions that use these bytes are the reason both are
+    /// needed: one compares them to a `.md` file, the other splits them on a bare '\n'. A fixture
+    /// carrying '\r' fails both while spelling exactly the same program, which makes the failure a
+    /// report about the checkout rather than about the language. CI run 34719212649 is what that looks
+    /// like: windows-latest only (its `core.autocrlf=true`), three cases of one theory, `Sub-string not
+    /// found`, with ubuntu and macos green on the same tree.
+    /// </summary>
     static string Fixture(string name) =>
-        File.ReadAllText(Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "Strategies", name));
+        File.ReadAllText(Path.Combine(RepoRoot(), "tests", "TradeAgent.UnitTests", "Strategies", name))
+            .ReplaceLineEndings("\n");
 
     static StrategyProgram Parsed(string name)
     {
