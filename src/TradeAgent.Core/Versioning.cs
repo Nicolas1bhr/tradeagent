@@ -93,8 +93,22 @@ public static class Versions
     /// publish" in two places — and the restore that puts the last valid plan back reads the newest
     /// revision of ONE kind for ONE role at the end of every turn. Index only: an older database
     /// gains it and loses nothing.
+    ///
+    /// 11 -&gt; 12: the strategy ledger — <c>strategy_version</c>, <c>strategy_run</c> and
+    /// <c>strategy_trade</c>. Nothing measured a strategy before this and the owner's report said so;
+    /// a program was a file in <c>strategies/</c> with no identity, and a run had no trace, no
+    /// declared execution model and no lineage. Each of the three is keyed by WHAT IT IS rather than
+    /// by when it was seen: a version by <c>StrategyProgram.StrategyId</c>, a run by a hash over the
+    /// version id, the dataset id, the dataset's normalised sha256, the window and the declared fees,
+    /// slippage, quantity increment and initial capital. That is the whole of why accumulated evidence
+    /// means anything — an id minted from the attempt would make every restart a new version, and
+    /// every result recorded against it a result about nothing. Written by the app only, like
+    /// <c>dataset</c>, <c>material</c> and <c>fill</c>: there is a pipe op that ASKS for a run and
+    /// none that writes, alters or deletes a row, because a strategy's record is the evidence its
+    /// author is judged on. Additive — three new tables and one index — and an older database gains
+    /// them empty, which reads correctly as "this installation has measured no strategy yet".
     /// </summary>
-    public const int DatabaseSchemaVersion = 11;
+    public const int DatabaseSchemaVersion = 12;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

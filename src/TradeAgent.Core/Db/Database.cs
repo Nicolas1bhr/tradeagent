@@ -584,6 +584,99 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','11') ON CONFLICT(key) DO UPDATE SET value='11';");
         }
 
+        if (have < 12)
+        {
+            // THE STRATEGY LEDGER: what a program IS, what running it MEASURED, and every trade that
+            // measurement is made of. Written by the app only, like `dataset`, `material` and `fill`,
+            // and for the same reason — a record of how a strategy performed is the evidence its
+            // author is judged on, and an author who could edit it could report a profitable year
+            // that never happened. There is a pipe op that ASKS for a run; there is none that writes,
+            // alters or deletes a row here, and the metrics are computed by the app from its own
+            // trace rather than taken from anything an agent said.
+            //
+            // THREE TABLES BECAUSE THERE ARE THREE IDENTITIES. `strategy_version` is a PROGRAM and
+            // its id is `StrategyProgram.StrategyId` — SHA-256 over the canonical form, the
+            // parameters and the semantic-version manifest — so the same rule set offered twice is
+            // one version with one lineage. `strategy_run` is a program over PARTICULAR BYTES UNDER A
+            // PARTICULAR EXECUTION MODEL and its id is a hash of exactly that: version id, dataset
+            // id, the dataset's normalised sha256, the window, and the declared fees, slippage,
+            // quantity increment and initial capital. `strategy_trade` is one closed trade of one
+            // run. An id minted from the attempt or the clock anywhere in that chain would make every
+            // restart a new version and every accumulated result a result about nothing.
+            //
+            // `dataset_sha256` IS ON THE RUN as well as on the dataset, deliberately: a dataset row
+            // can later be REJECTED because a raw archive changed under it, and this column is what
+            // lets every run that fed on those bytes be found afterwards instead of leaving results
+            // attached to a dataset id whose contents nobody can identify any more.
+            //
+            // The money columns are TEXT, as `fill` and `execution_request` store theirs — a decimal
+            // must come back out as it went in and not as the nearest double — and NULL in one is an
+            // UNKNOWN, never a zero: a run that faulted before its first complete bar has no net
+            // result, and a zero there would read as a flat one.
+            //
+            // Additive: three new tables and one index. An older database gains them empty, which
+            // reads correctly as "this installation has measured no strategy yet" — and that is what
+            // section 8 of the owner's report then says, rather than nothing.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_version(
+              id                TEXT PRIMARY KEY,
+              source            TEXT NOT NULL,
+              canonical         TEXT NOT NULL,
+              manifest          TEXT NOT NULL,
+              interpreter_build TEXT NOT NULL,
+              parse_verdict     TEXT NOT NULL,
+              warm_up_bars      INTEGER NOT NULL,
+              created_at        TEXT NOT NULL,
+              role              TEXT,
+              attempt           TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS strategy_run(
+              id              TEXT PRIMARY KEY,
+              version_id      TEXT NOT NULL REFERENCES strategy_version(id),
+              dataset_id      INTEGER NOT NULL REFERENCES dataset(id),
+              dataset_sha256  TEXT NOT NULL,
+              window_from     TEXT,
+              window_to       TEXT,
+              execution_model TEXT NOT NULL,
+              outcome         TEXT NOT NULL,
+              fault_reason    TEXT,
+              bars            INTEGER NOT NULL,
+              trades          INTEGER NOT NULL,
+              wins            INTEGER NOT NULL,
+              intents         INTEGER NOT NULL,
+              fills           INTEGER NOT NULL,
+              exposure_bars   INTEGER NOT NULL,
+              missing_minutes INTEGER NOT NULL,
+              faults          INTEGER NOT NULL,
+              gross_pnl       TEXT,
+              fees            TEXT,
+              net_pnl         TEXT,
+              max_drawdown    TEXT,
+              trace_sha256    TEXT NOT NULL,
+              created_at      TEXT NOT NULL,
+              role            TEXT,
+              attempt         TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_strategy_run_version ON strategy_run(version_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS strategy_trade(
+              run_id      TEXT NOT NULL REFERENCES strategy_run(id),
+              ordinal     INTEGER NOT NULL,
+              entry_bar   TEXT NOT NULL,
+              entry_price TEXT NOT NULL,
+              exit_bar    TEXT NOT NULL,
+              exit_price  TEXT NOT NULL,
+              quantity    TEXT NOT NULL,
+              exit_reason TEXT NOT NULL,
+              fees        TEXT NOT NULL,
+              pnl         TEXT NOT NULL,
+              PRIMARY KEY(run_id, ordinal)
+            );
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','12') ON CONFLICT(key) DO UPDATE SET value='12';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

@@ -59,17 +59,25 @@ public class WorkspaceRevisionTests
     // ---- the revision --------------------------------------------------------------------------
 
     /// <summary>
-    /// THE EXACT SCHEMA PIN, which lives with the migration that last moved it. Schema 11 adds no
-    /// column — a revision of a role's plan IS an artifact, and a second table would put two answers
-    /// to "what did this role publish" in two places — it adds the index the restore reads, and the
-    /// row on disk must equal what this build writes or an upgrade did not run.
+    /// SCHEMA 11 IS THIS CLASS'S FLOOR, not the build's number. Schema 11 adds no column — a revision
+    /// of a role's plan IS an artifact, and a second table would put two answers to "what did this role
+    /// publish" in two places — it adds the index the restore reads.
+    ///
+    /// <para>It used to read <c>Assert.Equal(11, Versions.DatabaseSchemaVersion)</c>, which made every
+    /// later ADDITIVE migration fail here for no reason of its own: <c>U-runner-3</c> added the
+    /// strategy ledger at 12 and this went red without anything about a plan revision having changed.
+    /// The same move <c>CouncilRoleTests</c>, <c>AiAttemptLedgerTests</c> and <c>OwnerDispositionTests</c>
+    /// already made, for the same reason, and the comment on the last of those is the argument. The
+    /// row on disk is still asserted to equal what this build writes, so an upgrade that did not run
+    /// is still caught, and the index below is still the thing this test is about.</para>
     /// </summary>
     [Fact]
     public void The_plan_and_journal_revisions_arrive_at_schema_eleven()
     {
         using var db = TestEnv.NewDb();
-        Assert.Equal(11, Versions.DatabaseSchemaVersion);
-        Assert.Equal("11", db.Read(_ =>
+        Assert.True(Versions.DatabaseSchemaVersion >= 11,
+            $"the plan and journal revisions need schema 11 or later; this build says {Versions.DatabaseSchemaVersion}");
+        Assert.Equal(Versions.DatabaseSchemaVersion.ToString(), db.Read(_ =>
         {
             using var c = db.Cmd("SELECT value FROM meta WHERE key='schema_version'");
             return c.ExecuteScalar() as string;
