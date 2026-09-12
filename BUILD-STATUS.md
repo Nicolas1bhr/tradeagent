@@ -5047,3 +5047,44 @@ landing, no conflict), Release: build → 0 warnings, 0 errors; suite → 615 + 
 
 **NOT done:** no product code; no `Timing` membership; the eleven `DispatchRecoveryTests` presses on two seconds (above);
 no box, no ATAS, no money.
+
+## 2026-09-12 — U-budget-reserve landed: every turn is admitted inside the transaction that reserves it, the owner's chat included, and an unreported turn keeps its reservation
+
+Rules 3 and 4 of `docs/COUNCIL.md`, by one fresh builder on `docs/briefs/U-budget-reserve.md` (killed by the weekly limit
+after five items and a gate it never reported) and a second re-briefed from the branch, which rebased it over `U-turn-commit`
+(four conflicts — `CONTRACTS.md`, `MissionLoop.cs`, `TurnMeter.cs`, `CouncilLoopTests.cs` — resolved inside the rebase),
+reproduced every RED and mutant itself, kept and tested the fifth commit, closed two gaps and wrote the report. Merge
+`1757043`, 10 commits, 23 files, +1396/−128 (`AiAttemptStore.cs`, `TurnMeter.cs`, `MissionLoop.cs`, `AgentSession.cs`,
+`AppHost.cs`, `RuntimeManifest.cs`, `Errors.cs`, `Trading.cs`, `DailyReport(s).cs`, `DashboardView.cs`, `CONTRACTS.md`, the
+guide; new `BudgetReservationTests`). No schema change.
+
+- **Admission inside the reservation's transaction:** `AiAttemptStore.Begin` reads the day's totals and inserts the row in ONE
+  `Database.Write`, refusing (which cap, by how much, `ResumesAt`) when the sum would pass the cap; the loop's pre-check stays
+  a cheap first look. RED (the guard removed): `Expected: 1 / Actual: 2` LAUNCHED rows from two racing threads; mutant (the
+  check moved back outside the transaction): the same, on three runs of three.
+- **Every turn is reserved and admitted, the owner's chat included:** `AgentSession.SendAsync` opens an attempt through the
+  meter; a refused chat turn never launches and the chat shows the cap sentence; one open attempt PER conversation, `Close`
+  matching by id. RED: `Assert.All() Failure … Expected: 1.28 / Actual: 0`, the row `Role = research, ReservedCost = 0`
+  holding the Research turn's usage; mutant (the chat skipping `Begin`): the same.
+- **An unreported turn keeps its reservation:** ENDED with `cost = reserved_cost` and an `unpriced_reason`, counted by the
+  report and the card as a worst case. RED (`cost=$cost` as before): `Expected: 1.28 / Actual: null`; mutant (`cost` NULL
+  with the row still marked unreported): the same.
+- **The formula:** input at the dearer of the plain and cache-write rates, output at the output rate; `TurnAllowance` on the
+  Safety page as two boxes. RED (priced as plain input): `Expected: 6.40 / Actual: 5.200`; mutant (the max dropped):
+  `Expected: 6.40 / Actual: 5.20`, in the formula and in the committed row.
+- **The fifth commit, kept and pinned:** a refused turn keeps the owner's typed words and records the refusal against their
+  message (mutant `Expected: "blocked" / Actual: null`). **Gaps closed:** the card, the AI's line and the report's two
+  places name a turn charged its reservation; the provider-side ceiling (none for codex) stated in both docs.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `f8abb57`, Release: 0 warnings, 0
+errors; 9 touched classes 3× → 88/88 each; Unit 629 + Fault 277 + Integration 627 = 1533 passed, 0 failed, 1 skipped; names
+vs `main` → 14 added, 0 removed. Manager's gate at `882c336` (the report tip rebased onto `main`; landed as `1757043` after a docs-only rebase, `src`
+and `tests` identical), Release: build → 0 warnings, 0 errors; suite → Unit 629 + Fault 277 + Integration 627 = 1533
+passed, 0 failed, 1 skipped — the Integration suite's FIRST run spanned a four-hour sleep of this Mac (wall clock 4 h 17 m)
+and went 13 red, all in `ConnectorSendDeadlineTests` (`Timing`; `"the ATAS bridge disconnected" / Not found: "busy"` — a
+heartbeat verdict after the gap), re-run alone on the same build → 627 passed, 0 failed; names vs
+`main` → 0 removed, 14 added (sets 1255 → 1269); scan clean (`InputTokens`/`OutputTokens`, judged); no trailers; `rev-list
+--count` → 0; CI run 34715391501 at `1757043`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT VERIFIED:** the two boxes on a screen — no UI run. **NOT done:** `_staged` is still ONE slot, safe only while the loop
+is serial (`U-council-concurrent`); no provider-side ceiling exists for codex (a stated limitation); no box, no ATAS, no money.

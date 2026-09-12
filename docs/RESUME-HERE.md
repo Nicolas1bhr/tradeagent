@@ -15,23 +15,24 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `73d09f8`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `1757043`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
-   four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included).
+   four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included),
+   **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 in flight when this was written).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
-   - `u-budget-reserve` (worktree `U-budget-reserve`): a FRESH builder re-briefed 15:50 from the branch, told to rebase onto
-     `u-turn-commit` `0da64d7` first (four conflicts: `CONTRACTS.md`, `MissionLoop.cs`, `TurnMeter.cs`, `CouncilLoopTests.cs`;
-     its item 3 must live INSIDE turn-commit's one-transaction turn end), reproduce every RED and mutant, gate, report. No schema number.
-   - `u-containment` (worktree `U-containment`, new at `bfe7a0c`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`,
-     no schema number, a draft PR for the windows runner, told to rebase onto `main` before its gate.
+   - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
+     after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
+     PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
+   - `u-runner-1` (worktree `U-runner-1`, new at `88eba27`): a fresh builder dispatched 21:52 on `docs/briefs/U-runner-1.md` (the
+     strategy program: parse, validate, freeze, identify — new files only, no schema number). `U-runner-2`/`-3` briefs follow.
 4. **CI on `main`:** green on all three platforms at `fac2370`; the windows-only press-settles red is closed by `U-press-settle-win`.
    The eleven `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in its section — if one goes
    red, the one-item fixer is that section's second bullet applied to that file.
 5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-api-worker.md` (the app-owned harness: one provider,
-   one role, every tool a grant, every boundary counted, the key in memory only). Dispatch when `u-budget-reserve` lands, so
-   that at most two heavy legs run at once.
+   one role, every tool a grant, every boundary counted, the key in memory only). Dispatch when `U-containment` lands: its `trade`
+   tool needs the role-and-attempt identity containment puts on `AgentContext`. Schema 12 (`tool_call`) — assign it in the dispatch.
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
