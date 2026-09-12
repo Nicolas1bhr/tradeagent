@@ -5088,3 +5088,44 @@ heartbeat verdict after the gap), re-run alone on the same build → 627 passed,
 
 **NOT VERIFIED:** the two boxes on a screen — no UI run. **NOT done:** `_staged` is still ONE slot, safe only while the loop
 is serial (`U-council-concurrent`); no provider-side ceiling exists for codex (a stated limitation); no box, no ATAS, no money.
+
+## 2026-09-12 — U-runner-1 landed: the strategy program — parsed, validated, frozen and identified; text in, a typed program or a refusal out
+
+Rule 8 of `docs/COUNCIL.md` begins: the runner's program half, by one fresh builder on `docs/briefs/U-runner-1.md`, written from a
+read-only survey of what existed (nothing: no parser, indicator or evaluator anywhere in `src/`). Merge `1e92fe3`, 7 commits, 20
+files, +3413 (new `src/TradeAgent.Core/Strategy/`, 9 files; `docs/STRATEGY-LANGUAGE.md`, 150 lines; a `CONTRACTS.md` section; four
+test classes and three fixture programs under `tests/TradeAgent.UnitTests/Strategies/`). No schema change, nothing on the wire.
+
+- **The language and its typed AST:** typed constants, indicator expressions (SMA, EMA, ATR, RSI, rolling high/low, an opening-
+  range accumulator), ordered rules with exits before entries, sizing, stops, targets, maximum holding bars, time filters; one
+  spot instrument, long/flat. COUNCIL's "Never:" line is UNREPRESENTABLE, not filtered — `Expr`'s constructor is `private
+  protected`, the node kinds closed to the assembly — and nineteen spellings of it (an import, `def`, `for`, `while`, `now()`,
+  `random()`, a model call, a shell call, a file or http read, a second instrument, `short`, `leverage 3`, …) are each refused
+  naming the line. RED: `expected a program, got: the parser is not implemented` (23 red); mutant (an unknown name becomes
+  a node): `expected a refusal, got a program`.
+- **Refusals name the line**, every limit a constant in `StrategyLimits`. RED: `sma(close, 0)` parses; mutant (`<= 0` → `< 0`):
+  5 of 25 red on the period cases.
+- **Canonical form and identity:** one typed ordered text per meaning, `StrategyId = sha256(canonical + "\n" + parameters +
+  "\n" + manifest)`. Four spellings of one program (spacing, comments, reordered constants, upper case with CRLF and a BOM,
+  `1.50` for `1.5`) reach ONE id; fourteen changes of meaning each reach another. RED (canonical = source): `Strings differ`;
+  mutant (hash the source text): `Expected: b8c939f4… / Actual: bd977b8d…`.
+- **Warm-up** in one place, written into the canonical form so the id covers it. RED: `Expected: 20 / Actual: 1`; mutant (max
+  lookback − 1): `Expected: 15 / Actual: 14`, 14 of 14 red.
+- **The three day-one programs** as fixtures the document prints byte for byte, golden ids recomputed outside the build:
+  crossover `8873b586…`, opening-range breakout `88f6586a…`, RSI mean reversion `eeb61430…`; mutant (the `instrument` line
+  dropped from the canonical form): all three goldens red.
+- **Two departures from `COUNCIL.md:126-166`, judged right at landing:** account-state readings (capital, equity, position, fill
+  price, pending state, bars since entry) are evaluator state, not parse-time vocabulary (`U-runner-2`); the timezone is an
+  allowlist of six zones, because `InvariantGlobalization` makes an OS lookup answer per platform and a promoted id must not
+  depend on the machine that hashed it. **Found by the gate:** two test files had reached disk with literal NUL and control
+  bytes, grep read them as binary and the name diff lost fourteen names — rewritten as C# escapes, all forty names seen.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `b5f60c1`, Release: 0 warnings, 0
+errors, 17 projects; the five `Strategy` classes 3× → 77/77 each; Unit 706 + Fault 277 + Integration 627 = 1610 passed, 0
+failed, 1 skipped; names vs `main` → 40 added, 0 removed. Manager's gate at `1e92fe3`, Release: build → 0 warnings, 0 errors; suite →
+706 + 277 + 627 = 1610 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 40 added (sets 1269 → 1309); scan clean (the lexer's `token` variables, judged); no
+trailers; no binary files in the diff; `rev-list --count` → 0; CI run 34719212649 at `1e92fe3`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no evaluation, indicator values, intents, bars, storage, trace, report, pipe op or relay (`U-runner-2`, `-3`); no
+per-event budget yet; nothing reads `workspace/strategies/`; three `$` prefixes without interpolation in `StrategyParser.cs`
+(cosmetic, 0 warnings, left); no box, no ATAS, no money.
