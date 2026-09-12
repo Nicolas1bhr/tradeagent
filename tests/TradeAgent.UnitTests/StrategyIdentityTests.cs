@@ -102,7 +102,7 @@ public class StrategyIdentityTests
             + "instrument BTCUSDT\n",
 
             // upper case, CRLF, and a byte-order mark, which is what a Windows editor leaves behind
-            "﻿INSTRUMENT BTCUSDT\r\nCONST FAST = 20\r\nINDICATOR FASTMA = SMA(CLOSE, FAST)\r\n"
+            "\uFEFFINSTRUMENT BTCUSDT\r\nCONST FAST = 20\r\nINDICATOR FASTMA = SMA(CLOSE, FAST)\r\n"
             + "SIZE FIXED 1\r\nSTOP PERCENT 1.5\r\nEXIT WHEN CROSSES_BELOW(CLOSE, FASTMA)\r\n"
             + "ENTRY WHEN CLOSE > FASTMA AND VOLUME > 100\r\n",
         };

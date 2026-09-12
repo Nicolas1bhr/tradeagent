@@ -248,11 +248,11 @@ public class StrategyRefusalTests
             "entry when close >", "entry when > close", "entry when close ==", "entry when close = 1",
             "entry when close ! 1", "entry when close[", "entry when close[]", "entry when close[-1]",
             "entry when close[1.5]", "entry when crosses_above(close)", "entry when crosses_above(close,)",
-            "﻿instrument BTCUSDT", "instrument BTCUSDT ", "instrument éèê",
+            "\uFEFFinstrument BTCUSDT", "instrument BTCUSDT\u0000", "instrument \u00e9\u00e8\u00ea",
             "ENTRY WHEN CLOSE > 1", "entry when \"close\" > 1", "entry when close > 1e9",
             new string('(', 5_000), "entry when " + new string('(', 5_000) + "close",
             new string('x', 9_000), string.Join("\n", Enumerable.Repeat("entry when close > 1", 500)),
-            "ÿ", "entry when close > 0.0.0.1", "instrument BTCUSDT\nsize fixed 0",
+            "\u0001\u0002\u0003\u00ff", "entry when close > 0.0.0.1", "instrument BTCUSDT\nsize fixed 0",
         };
 
         foreach (var input in inputs)
