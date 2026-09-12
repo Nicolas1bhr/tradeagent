@@ -1186,3 +1186,46 @@ subject" is a judgment this software is not entitled to make).
 message was received; the report lists the day's messages plus any older one still unsettled and past
 due, marked `OVERDUE`. It buys no turn: priority a task claims for itself is what rule 7 forbids, and
 a backlog that manufactured wakes would spend tomorrow's allowance at midnight.
+
+## The strategy program — `src/TradeAgent.Core/Strategy/`
+
+`StrategyParser.Parse(text)` is **total**: it answers a `StrategyProgram` or a `StrategyRefusal`, never
+both, never neither, and never an exception. The text comes from an agent writing into
+`workspace/strategies/`, so a parser that threw would be a crash the agent can cause with a file. A
+refusal reads `line 7: <reason>`, or `program: <reason>` when the fault is the ABSENCE of a declaration.
+`docs/STRATEGY-LANGUAGE.md` is the syntax, the indicator semantics and the limits.
+
+`StrategyProgram` is immutable, built only by the parser: `Instrument` (one spot symbol), `Constants`
+(sorted, typed), `Indicators` (sorted), `Rules` (declared order, **every exit before every entry**),
+`Sizing`, `Stop`, `Target`, `MaxHoldBars`, `Time`, `WarmUpBars`, `NodeCount`, and `Source` — the text
+verbatim, kept beside the canonical form so that what is read is what was written.
+
+**Everything on COUNCIL's "Never:" line is unrepresentable, not filtered.** `Expr`'s constructor is
+`private protected`, so the node kinds are closed to `TradeAgent.Core`: there is no node for a
+statement, a loop, a user function, a clock, a random draw, a file, a socket, a model call or a second
+instrument. A program is long or flat — no rule takes a side, and a sizing fraction above 1 (which is
+leverage) is refused as a number. Adding any of them would be a new node kind in a reviewed diff, never
+a keyword slipping past a blocklist.
+
+**Identity.** `StrategyId = Sha256Hex.Of(Canonical + "\n" + Parameters + "\n" + Manifest)`, which is
+`docs/COUNCIL.md`'s rule made literal. `Canonical` (`StrategyCanonical`) is the typed, ordered form:
+one fixed line order, constants resolved into it, indicators sorted, conditions in prefix form where
+precedence cannot be misread, numbers with trailing zeros gone, and the computed `warmup`. `Parameters`
+is the constant table, sorted, because a parameter sweep is one structure with different numbers.
+`Manifest` is `StrategyVersions` — language, indicator semantics, calendar — so a build that changes
+what a program MEANS re-identifies every program rather than reusing an id over new semantics. Comments,
+spacing, letter case and declaration order are not part of it: one strategy saved twice by a model that
+reformatted its own output is ONE submission, one trial budget, one lineage. Rule order IS part of it.
+The three day-one programs are pinned to their ids in `tests/TradeAgent.UnitTests/Strategies/`.
+
+**Warm-up is explicit** (`StrategyWarmUp`, one place): the deepest lookback over every DECLARED
+indicator, every history reference, every crossing (one bar more than its deeper side) and the stop's
+own ATR period, at least 1, refused when it exceeds `StrategyLimits.MaxLookbackBars`. An indicator
+evaluated one bar early is a different indicator wearing the same name, and every trade it produces is
+one the promoted program would not have taken.
+
+**Every limit is a named constant in `StrategyLimits`** — source bytes, lines, line length, names,
+constants, indicators, rules, expression nodes, nesting depth, history depth, lookback, entry windows,
+holding bars, quantity, fraction, percent — and each is cited by the refusal that enforces it. The
+zones a program may name are data there too, never an OS lookup, so a program means the same thing on
+every machine that hashes it.

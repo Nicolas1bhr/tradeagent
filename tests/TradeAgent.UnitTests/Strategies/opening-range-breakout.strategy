@@ -1,0 +1,18 @@
+# An opening-range breakout with ATR risk sizing and a time stop.
+instrument BTCUSDT
+timezone America/New_York
+const atrperiod = 14
+const atrmultiple = 2
+const riskfraction = 0.01
+indicator rangehigh = opening_range_high()
+indicator rangelow = opening_range_low()
+indicator truerange = atr(atrperiod)
+size risk_fraction riskfraction
+stop atr atrmultiple atrperiod
+max_hold_bars 120
+weekdays mon,tue,wed,thu,fri
+opening_range 09:30-10:00
+entry_window 10:00-15:30
+session_exit 15:55
+exit when low < rangelow
+entry when close > rangehigh

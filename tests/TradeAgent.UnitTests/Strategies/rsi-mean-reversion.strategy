@@ -1,0 +1,13 @@
+# An RSI mean reversion with a profit exit and a maximum holding time.
+instrument BTCUSDT
+timezone UTC
+const period = 14
+const oversold = 30
+const recovered = 55
+indicator momentum = rsi(close, period)
+size capital_fraction 0.25
+stop percent 2
+target percent 1
+max_hold_bars 60
+exit when momentum > recovered
+entry when momentum < oversold

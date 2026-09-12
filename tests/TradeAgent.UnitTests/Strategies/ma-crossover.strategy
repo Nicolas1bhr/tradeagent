@@ -1,0 +1,11 @@
+# A moving-average crossover with fixed sizing and a stop.
+instrument BTCUSDT
+timezone UTC
+const fast = 20
+const slow = 50
+indicator fastma = sma(close, fast)
+indicator slowma = sma(close, slow)
+size fixed 1
+stop percent 1.5
+exit when crosses_below(fastma, slowma)
+entry when crosses_above(fastma, slowma)
