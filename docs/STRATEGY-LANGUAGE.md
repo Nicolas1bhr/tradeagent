@@ -4,15 +4,13 @@ A strategy is a **data file with an expression grammar**, not a program in a pro
 declares constants, indicators and ordered rules, and the app parses it into a typed, frozen
 `StrategyProgram` (`src/TradeAgent.Core/Strategy/`) identified by hash. Statements, functions, loops,
 recursion, imports, clocks, randomness, files, network, model calls, a second instrument, shorting,
-leverage and pyramiding are not switched off — the AST has no node for them (`StrategyAst.cs`) and the
-grammar has no word for them. Parsing is **total**: every text yields a program or a refusal naming
-the line, and nothing throws.
+leverage and pyramiding are not switched off — the AST has no node for them (`StrategyAst.cs`). Parsing
+is **total**: every text yields a program or a refusal naming the line, and nothing throws.
 
 ## A program
 
 One declaration per line; `#` starts a comment; blank lines are ignored. Declaration ORDER does not
-matter except among rules. Keywords and names are read case-insensitively and canonicalised to lower
-case; an instrument symbol is upper-cased.
+matter except among rules. Keywords and names are read case-insensitively; a symbol is upper-cased.
 
 ```
 declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, required; zone default UTC
@@ -30,9 +28,8 @@ SERIES      := "open" | "high" | "low" | "close" | "volume"
 CLOCK       := HH ":" MM         # 24-hour, in the declared zone
 ```
 
-Rules are evaluated **in declared order, every exit before every entry**; an exit written below an
-entry is refused rather than reordered. A program is **long or flat**: `entry` buys, `exit` flattens,
-there is one position, and no rule takes a side.
+Rules are evaluated **in declared order, every exit before every entry**; an exit written below an entry
+is refused, not reordered. A program is **long or flat**: one position, and no rule takes a side.
 
 ## Conditions
 
@@ -48,9 +45,9 @@ ref     := (SERIES | NAME) ("[" INT "]")?  # close, close[1], fastma[2]
 ```
 
 Two types, `number` and `boolean`: arithmetic and comparison take numbers, `and`/`or`/`not` take
-booleans, and a rule condition must be a boolean. `crosses_above(a, b)` is true on the bar where `a`
-is above `b` and was at or below it on the bar before; `crosses_below` is the mirror. `x[k]` is the
-value `k` closed bars ago and `x[0]` is `x`; a constant has no history.
+booleans, and a rule condition must be a boolean. `crosses_above(a, b)` is true on the bar where `a` is
+above `b` and was at or below it on the bar before; `crosses_below` is the mirror. `x[k]` is the value
+`k` closed bars ago and `x[0]` is `x`; a constant has no history.
 
 ## Indicators — semantics and initialisation
 
@@ -66,25 +63,31 @@ missing and nothing is filled in. Prices are decimals, exactly as the vendor pub
 | `highest(s, p)` / `lowest(s, p)` | largest / smallest of the last `p` values | none | `p` |
 | `opening_range_high()` / `opening_range_low()` | highest high / lowest low of the bars closing inside the `opening_range` interval | resets each session; undefined until that interval's first close | `1` |
 
-`atr` takes no series, because a true range is over high, low and the previous close; an indicator
-reads a bar series, never another indicator. These semantics are versioned in `StrategyVersions`
-(`language`, `indicators`, `calendar`), and moving one re-identifies every program.
+`atr` takes no series (a true range is over high, low and the previous close), and an indicator reads a
+bar series, never another indicator. These semantics are versioned in `StrategyVersions`, and moving a
+version re-identifies every program.
 
 ## Limits — `StrategyLimits`, one place
 
 8192 source bytes · 200 lines · 240 characters a line · 32 characters a name · 32 constants ·
-16 indicators · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars
-of period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing
-fraction 1 (above one is leverage) · 100 percent and 100 ATR multiples. Zones a program may name:
-`UTC`, `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data
-rather than an OS lookup, so a program means the same thing on every machine that hashes it.
+16 indicators · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
+period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
+1 (above one is leverage) · 100 percent and 100 ATR multiples. Zones a program may name: `UTC`,
+`America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
+an OS lookup, so a program means the same thing on every machine that hashes it.
 
 ## Refusals
 
 A refusal reads `line 7: <reason>`, or `program: <reason>` when what is wrong is the ABSENCE of a
-declaration — no instrument, no size, no entry rule, nothing that can ever close the position. A
-period at or below zero, an undeclared name, a type mismatch, a second `size`, risk sizing with no
-stop to measure risk against, and every limit above are refusals rather than warnings.
+declaration — no instrument, no size, no entry rule, nothing that can ever close the position. A period
+at or below zero, an undeclared name, a type mismatch, a second `size`, risk sizing with no stop to
+measure risk against, and every limit above are refusals rather than warnings.
+
+## One meaning, one id
+
+Identity is `Sha256Hex.Of(canonical + "\n" + parameters + "\n" + manifest)`: the typed canonical form
+(comments, spacing, letter case and declaration order gone; rule order kept), the constants sorted by
+name, and `StrategyVersions`. The source is retained beside it. `docs/CONTRACTS.md` holds the form.
 
 ## The three day-one programs
 

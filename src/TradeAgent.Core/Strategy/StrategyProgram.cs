@@ -37,6 +37,13 @@ public sealed class StrategyProgram
         Target = target;
         MaxHoldBars = maxHoldBars;
         Time = time;
+
+        // Computed once, here, because a frozen program's identity must not depend on when it is
+        // asked for — and because every caller that compares two programs compares these.
+        Canonical = StrategyCanonical.Of(this);
+        Parameters = StrategyCanonical.Parameters(this);
+        Manifest = StrategyVersions.Manifest;
+        StrategyId = Sha256Hex.Of($"{Canonical}\n{Parameters}\n{Manifest}");
     }
 
     /// <summary>
@@ -84,4 +91,31 @@ public sealed class StrategyProgram
     /// what <see cref="StrategyLimits.MaxNodes"/> bounds.
     /// </summary>
     public int NodeCount => Rules.Sum(r => r.Condition.NodeCount);
+
+    /// <summary>
+    /// THE TYPED, ORDERED FORM THIS PROGRAM IS HASHED IN — `StrategyCanonical`. Free of comments, of
+    /// the source's spacing and letter case, and of the order the declarations happened to be written
+    /// in; the rules keep their order, because their order is their meaning.
+    /// </summary>
+    public string Canonical { get; }
+
+    /// <summary>The declared constants, sorted, as `name=type:value` lines. The other half of the identity.</summary>
+    public string Parameters { get; }
+
+    /// <summary>The semantic versions in force — `StrategyVersions.Manifest` — hashed in beside the program.</summary>
+    public string Manifest { get; }
+
+    /// <summary>
+    /// THE IDENTITY: `Sha256Hex.Of(Canonical + "\n" + Parameters + "\n" + Manifest)`.
+    ///
+    /// <para>`docs/COUNCIL.md`: "SHA-256 over the canonical typed program, parameters and
+    /// semantic-version manifest, source retained". Everything the referee does hangs off this figure
+    /// — lineage, the trial budget a submission is charged against, which results may be pooled — so
+    /// the three parts are joined in that order, with a newline between them, and each of the three is
+    /// spelled in exactly one place.</para>
+    ///
+    /// <para>Promotion binds MORE than this: the interpreter build, the dataset, the execution model
+    /// and the evaluation policy. That is a different record, and it names this id.</para>
+    /// </summary>
+    public string StrategyId { get; }
 }
