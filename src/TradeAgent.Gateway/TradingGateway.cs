@@ -3111,20 +3111,6 @@ public sealed class TradingGateway : IAsyncDisposable
     static string PressPrefix(string kind, string nonce) => $"{kind}-{nonce}";
 
     /// <summary>
-    /// TEMPORARY MEASUREMENT HOOK — U-press-settle-win, removed with its harness. What a close-all
-    /// press answers depends on how much of the operation's own deadline is left at each step
-    /// inside it, and those numbers cannot be read from outside the method. Null in every run but
-    /// the harness's.
-    /// </summary>
-    public static Action<string>? PressMark;
-
-    static void PressStep(string mark) => PressMark?.Invoke(mark);
-
-    /// <summary>Milliseconds left on the operation's deadline, or -1 where there is none.</summary>
-    static long PressLeft() =>
-        RiskReducingScope.DeadlineAt is { } d ? d - Environment.TickCount64 : -1;
-
-    /// <summary>
     /// Whether a request id belongs to an emergency press rather than to an ordinary order.
     ///
     /// It is a prefix test and it is safe to be one. An agent cannot mint an id starting with
@@ -3608,15 +3594,11 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         foreach (var req in UnresolvedReducersOn(symbol, side))
         {
-            PressStep($"settle-enter={PressLeft()}");
             if (IsPressRecord(req.RequestId))
                 return $"{symbol} is waiting on {req.RequestId}, which only you can resolve";
 
             if (RiskReducingScope.DeadlineAt is { } deadline && Environment.TickCount64 >= deadline)
-            {
-                PressStep($"settle-deadline={PressLeft()}");
                 return $"{symbol} is waiting on {req.RequestId}, and this press ran out of time before it could settle it";
-            }
 
             OrderInfo? match;
             decimal filled;
@@ -3628,14 +3610,12 @@ public sealed class TradingGateway : IAsyncDisposable
                 var since = req.CreatedAt - TimeSpan.FromMinutes(5);
                 match = (await Connector.GetOrdersAsync(req.AccountId, true, since, ct))
                     .FirstOrDefault(o => o.ClientOrderId == req.ClientOrderId);
-                PressStep($"settle-read={PressLeft()}");
                 filled = match is not null ? 0m
                     : (await Connector.GetExecutionsAsync(req.AccountId, since, ct))
                         .Where(f => f.ClientOrderId == req.ClientOrderId).Sum(f => f.Quantity);
             }
             catch (Exception ex)
             {
-                PressStep($"settle-read-threw={PressLeft()}");
                 // Rule 3. A read that did not come back says nothing about the order — least of all
                 // that it is not there — so the record is untouched and the leg is refused.
                 return $"{symbol} is waiting on {req.RequestId}, and the platform did not answer about it ({ex.Message})";
@@ -3669,22 +3649,18 @@ public sealed class TradingGateway : IAsyncDisposable
             try
             {
                 using var dispatch = TransportLedger.MarkDispatch();
-                PressStep($"settle-cancel-sent={PressLeft()}");
                 await Connector.CancelOrderAsync(match.ConnectorOrderId, ct);
-                PressStep($"settle-cancel-answered={PressLeft()}");
             }
             catch (Exception ex)
             {
                 // Includes a DEFINITE refusal of the cancel, which is the platform saying the order
                 // is still live. Either way this leg proceeds on nothing.
-                PressStep($"settle-cancel-threw={PressLeft()}");
                 return $"{symbol} is waiting on {req.RequestId}, which is still live at the platform and would not cancel ({ex.Message})";
             }
 
             if (!SettleTheUnresolved(req, ExecutionState.CANCELLED, null, match.ConnectorOrderId,
                     "the platform accepted the cancel of this order; settled by an emergency press"))
                 return $"{symbol} is waiting on {req.RequestId}, whose outcome could not be written down";
-            PressStep($"settle-written={PressLeft()}");
         }
 
         return null;
@@ -3743,7 +3719,6 @@ public sealed class TradingGateway : IAsyncDisposable
         // deadline for the operation rather than a fresh budget per RPC, so the promise does not
         // scale with the size of the book.
         using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
-        PressStep($"enter={PressLeft()}");
 
         RefuseWhileAPressIsOpen(ClosePress);
 
@@ -3755,7 +3730,6 @@ public sealed class TradingGateway : IAsyncDisposable
             .Where(p => p.Quantity != 0)
             .Select(p => (p.Symbol, p.Quantity))
             .ToList();
-        PressStep($"captured={captured.Count}/{PressLeft()}");
 
         if (captured.Count == 0)
         {
@@ -3767,7 +3741,6 @@ public sealed class TradingGateway : IAsyncDisposable
         // See OperatorCancelAllAsync: the plan is written down before any close goes out.
         BeginComposite(AgentContext.Operator, PressPrefix(ClosePress, nonce), Ops.CloseAll,
             captured.Select(p => p.Symbol).ToList(), () => nonce);
-        PressStep($"composite={PressLeft()}");
 
         var drifted = new List<string>();
 
@@ -3796,16 +3769,13 @@ public sealed class TradingGateway : IAsyncDisposable
             var (symbol, quantity) = captured[i];
             var closingSide = quantity > 0 ? OrderSide.Sell : OrderSide.Buy;
             var rid = PressLegId(ClosePress, nonce, i);
-            PressStep($"leg{i}-enter={PressLeft()}");
 
             // SETTLED BEFORE ANYTHING IS READ FOR THIS LEG, because what it settles CHANGES the
             // reading. An unresolved order that turns out to have filled has moved the position, and
             // the drift re-read below is then the honest look at what is actually there; one that
             // turns out to be resting is cancelled here, so the close this press sends is the only
             // one on the instrument. See SettleAnUnresolvedReducerOrRefuse.
-            var settled = await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct);
-            PressStep($"leg{i}-settled={PressLeft()}");
-            if (settled is { } stuck)
+            if (await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct) is { } stuck)
             {
                 // REFUSED, AND THE ROW IS ITS ACCOUNT. Nothing is sent for this instrument and the
                 // position may still be open, so the leg leaves a flagged record naming it rather
@@ -3818,7 +3788,6 @@ public sealed class TradingGateway : IAsyncDisposable
                     refusal, claims: claimed ? null : ClosePress, waitsForWorkOn: null, out _, sending: false);
                 if (refused is not null) claimed = true;
                 unsettled.Add(stuck);
-                PressStep($"leg{i}-refused-unsettled={PressLeft()}");
                 continue;
             }
 
@@ -3840,9 +3809,8 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 live = (await Connector.GetPositionsAsync(accountId, ct))
                     .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
-                PressStep($"leg{i}-reread={live}/{PressLeft()}");
             }
-            catch (Exception ex) { unreadable = ex; PressStep($"leg{i}-reread-threw={PressLeft()}"); }
+            catch (Exception ex) { unreadable = ex; }
 
             // A DEFINITE DIFFERENT ANSWER AND NO ANSWER AT ALL ARE NOT THE SAME NEWS, and they get
             // different treatment. A position the platform says is 1 when the press captured 2 is a
@@ -3860,7 +3828,6 @@ public sealed class TradingGateway : IAsyncDisposable
                 { Intent = OrderIntent.Close };
             var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
                 claims: claimed ? null : ClosePress, waitsForWorkOn: symbol, out var waitingOn);
-            PressStep($"leg{i}-row={PressLeft()}");
 
             // REFUSED, AND THE OWNER IS TOLD WHAT IT IS WAITING ON. Nothing was written under this
             // id and nothing was sent; the claim is still unclaimed, so the next symbol may take it.
@@ -3883,13 +3850,10 @@ public sealed class TradingGateway : IAsyncDisposable
             try
             {
                 using var dispatch = TransportLedger.MarkDispatch();
-                PressStep($"leg{i}-close-sent={PressLeft()}");
                 order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
-                PressStep($"leg{i}-close-answered={PressLeft()}");
             }
             catch (Exception ex)
             {
-                PressStep($"leg{i}-close-threw={PressLeft()}");
                 // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
                 // press that hit trouble on the first symbol left every other position open and
                 // unrecorded — an emergency control that stops half way through the emergency.
