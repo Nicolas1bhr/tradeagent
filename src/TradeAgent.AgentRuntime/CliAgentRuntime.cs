@@ -369,7 +369,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             StandardErrorEncoding = Encoding.UTF8
         };
         SetCommand(psi, exe, manifest.AuthArgs);
-        foreach (var (k, v) in _env) psi.Environment[k] = v;
+        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
         var contained = ProcessContainment.Start(psi);
         var process = contained.Process;
@@ -490,7 +490,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
             };
             SetCommand(psi, exe, plan.StdinArgs);
-            foreach (var (k, v) in _env) psi.Environment[k] = v;
+            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
             using var held = ProcessContainment.Start(psi);
             var p = held.Process;
@@ -645,7 +645,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 StandardErrorEncoding = Encoding.UTF8
             };
             SetCommand(psi, exe, manifest.InteractiveArgs);
-            foreach (var (k, v) in _env) psi.Environment[k] = v;
+            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
             _session = ProcessContainment.Start(psi);
             Presence(_session.Process);
         }
@@ -722,7 +722,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
         };
         SetCommand(psi, exe, args);
-        foreach (var (k, v) in _env) psi.Environment[k] = v;
+        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
         using var held = ProcessContainment.Start(psi);
         var p = held.Process;

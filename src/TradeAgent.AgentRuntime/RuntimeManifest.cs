@@ -167,6 +167,17 @@ public sealed class RuntimeManifest
     /// <summary>How this runtime takes a pasted key, or null if it signs in another way.</summary>
     public ApiKeyPlan? ApiKey { get; set; }
 
+    /// <summary>
+    /// ENVIRONMENT VARIABLE NAMES THIS VENDOR'S CLI READS, and the only names outside TradeAgent's
+    /// own whitelist that reach the agent process (<see cref="AgentEnvironment"/>).
+    ///
+    /// Here rather than in that whitelist because vendor commands are data: a CLI that starts
+    /// reading a new variable is a one-line change to <c>runtimes.json</c>, not a rebuild. Names
+    /// only — a value belongs to the machine, never to a manifest, and nothing here may name a
+    /// variable TradeAgent would have to put a credential into.
+    /// </summary>
+    public string[] KeepEnvironment { get; set; } = [];
+
     /// <summary>The one TradeAgent puts first, because its sign-in works without leaving the window.</summary>
     public bool Recommended { get; set; }
 
@@ -320,6 +331,10 @@ public static class RuntimeCatalog
         {
             Id = "codex",
             DisplayName = "OpenAI Codex CLI",
+            // Where Codex keeps its own state and its auth.json. Unset on an ordinary machine — the
+            // CLI then uses ~/.codex — and honoured here so an install that DOES set it keeps
+            // working once the agent's environment became a whitelist.
+            KeepEnvironment = ["CODEX_HOME"],
             Description = "OpenAI's coding agent. Signs in with your ChatGPT account.",
             SignInDescription = "A browser window will open so you can sign in with your ChatGPT account.",
             Recommended = true,
