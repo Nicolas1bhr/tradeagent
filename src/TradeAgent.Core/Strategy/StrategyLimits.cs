@@ -97,6 +97,38 @@ public static class StrategyLimits
     public const decimal MaxAtrMultiple = 100m;
 
     /// <summary>
+    /// THE PER-EVENT OPERATION BUDGET — the runner's promise that one closed bar costs a bounded
+    /// amount of work, enforced while the bar is being evaluated rather than argued about afterwards.
+    ///
+    /// <para>An operation is one indicator step (a rolling extreme costs its period on the bar the
+    /// extreme expires from its window) or one expression node visited. The number is set ABOVE what
+    /// any program the parser accepts can reach, and `EvaluatorLimitTests` pins that arithmetic:
+    /// <see cref="MaxIndicators"/> extremes of <see cref="MaxLookbackBars"/> is 8,000, a crossing
+    /// doubles its operands so <see cref="MaxNodes"/> is at most 400 visits — a crossing cannot nest
+    /// inside a crossing, because a crossing is a true-or-false value and a crossing's sides are
+    /// numbers — and the stop's own ATR is one more. 8,401 against 16,384.</para>
+    ///
+    /// <para>That relationship is the point. A budget a valid program could trip would refuse a
+    /// program the parser accepted, which is a limit disagreeing with a limit; a budget no invalid
+    /// program can trip would be a promise with nothing behind it. This one bounds the interpreter
+    /// while leaving every parseable program runnable, and a run may be given a TIGHTER budget but
+    /// never a wider one.</para>
+    /// </summary>
+    public const int MaxOperationsPerEvent = 16_384;
+
+    /// <summary>
+    /// THE STATE-SIZE LIMIT, in bytes of the decimals a run holds between bars.
+    ///
+    /// <para>`docs/COUNCIL.md` bounds "lookback, state, per-event computation and output". The state
+    /// is the indicator windows, the values kept for history references, and the recent bars:
+    /// <see cref="MaxIndicators"/> windows of <see cref="MaxLookbackBars"/> plus their kept values,
+    /// plus the bar ring, is about 138 KB at the parser's own limits — so this is set at 256 KB and
+    /// the same test pins the arithmetic. A program's state does not grow while it runs; the limit
+    /// exists so that a WIDER limit elsewhere cannot quietly make a run unbounded.</para>
+    /// </summary>
+    public const int MaxStateBytes = 256 * 1024;
+
+    /// <summary>
     /// THE ZONES A PROGRAM MAY NAME, as data rather than as an OS lookup.
     ///
     /// <para>`TimeZoneInfo.FindSystemTimeZoneById` answers differently on Windows and on Unix, and

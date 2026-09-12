@@ -84,4 +84,37 @@ public static class SyntheticBars
             return new KlineBar(from.AddMinutes(i), value, value + 0.50m, value - 0.50m, value, 1m);
         })];
     }
+
+    /// <summary>
+    /// THE FIXTURE THE MOVING-AVERAGE CROSSOVER IS RUN OVER: sixty flat minutes, sixty rising, sixty
+    /// falling, from 2026-01-05T00:00Z. The flat stretch is longer than the program's fifty-bar
+    /// average, so the crossing happens where the rise overtakes it and not where the fixture starts.
+    /// </summary>
+    public static IReadOnlyList<KlineBar> Crossover { get; } = Minutes(
+        new DateTimeOffset(2026, 1, 5, 0, 0, 0, TimeSpan.Zero), 180,
+        i => i < 60 ? 100m : i < 120 ? 100m + (i - 59) : 160m - (i - 119));
+
+    /// <summary>
+    /// THE FIXTURE THE OPENING-RANGE BREAKOUT IS RUN OVER — one New York trading day in EDT, from
+    /// 13:00Z (09:00 ET): thirty minutes to warm the ATR, thirty minutes of opening range whose high
+    /// reaches 101.00, an hour of rise through it inside the entry window, and an hour of fall back
+    /// through the range low.
+    /// </summary>
+    public static IReadOnlyList<KlineBar> OpeningRange { get; } = Minutes(
+        new DateTimeOffset(2026, 7, 6, 13, 0, 0, TimeSpan.Zero), 180,
+        i => i < 30 ? 100m
+            : i < 60 ? 100m + (i % 2) * 0.5m
+            : i < 120 ? 101m + (i - 60) * 0.1m
+            : 106.9m - (i - 119) * 0.2m);
+
+    /// <summary>
+    /// THE FIXTURE THE RSI MEAN REVERSION IS RUN OVER: twenty rising minutes to put the RSI near its
+    /// top, thirty falling to take it under thirty, then forty rising to bring it back over
+    /// fifty-five.
+    /// </summary>
+    public static IReadOnlyList<KlineBar> MeanReversion { get; } = Minutes(
+        new DateTimeOffset(2026, 1, 5, 0, 0, 0, TimeSpan.Zero), 90,
+        i => i < 20 ? 100m + i * 0.5m
+            : i < 50 ? 109.5m - (i - 19)
+            : 79.5m + (i - 49));
 }

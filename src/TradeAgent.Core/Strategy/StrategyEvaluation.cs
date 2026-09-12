@@ -188,3 +188,44 @@ public sealed record EvaluationRun(
     /// <summary>The gap runs the run crossed, bounded; the COUNT in the counters is not.</summary>
     public IReadOnlyList<GapRun> GapRuns => State.GapRuns;
 }
+
+/// <summary>
+/// THE TWO RESOURCE BOUNDS ONE RUN IS EVALUATED UNDER.
+///
+/// <para><see cref="Default"/> is <see cref="StrategyLimits.MaxOperationsPerEvent"/> and
+/// <see cref="StrategyLimits.MaxStateBytes"/>, and those are CEILINGS: <see cref="Of"/> refuses a
+/// budget above either. A run may be given a tighter one — a fixture run, a first pass over an
+/// untrusted program, a test of the guard itself — and cannot be given a wider one, because the
+/// numbers in `StrategyLimits` are what `docs/STRATEGY-LANGUAGE.md` prints for whoever writes a
+/// program and a per-run override that beat them would make that document a suggestion.</para>
+/// </summary>
+public sealed class EvaluationLimits
+{
+    EvaluationLimits(int operationsPerEvent, int stateBytes)
+    {
+        OperationsPerEvent = operationsPerEvent;
+        StateBytes = stateBytes;
+    }
+
+    /// <summary>The limits in `StrategyLimits`, which are also the ceilings.</summary>
+    public static readonly EvaluationLimits Default =
+        new(StrategyLimits.MaxOperationsPerEvent, StrategyLimits.MaxStateBytes);
+
+    /// <summary>The most operations one closed bar may cost before the run faults.</summary>
+    public int OperationsPerEvent { get; }
+
+    /// <summary>The most bytes of decimals the run may hold between bars.</summary>
+    public int StateBytes { get; }
+
+    /// <summary>Tighter limits than the defaults. Wider ones are refused.</summary>
+    public static EvaluationLimits Of(int operationsPerEvent, int stateBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(operationsPerEvent, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(
+            operationsPerEvent, StrategyLimits.MaxOperationsPerEvent);
+        ArgumentOutOfRangeException.ThrowIfLessThan(stateBytes, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(stateBytes, StrategyLimits.MaxStateBytes);
+
+        return new EvaluationLimits(operationsPerEvent, stateBytes);
+    }
+}

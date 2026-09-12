@@ -1229,3 +1229,38 @@ constants, indicators, rules, expression nodes, nesting depth, history depth, lo
 holding bars, quantity, fraction, percent — and each is cited by the refusal that enforces it. The
 zones a program may name are data there too, never an OS lookup, so a program means the same thing on
 every machine that hashes it.
+
+## Bars by dataset id, and the evaluator — `src/TradeAgent.Core/Data/BarFeed.cs`, `Strategy/`
+
+`DatasetStore.ById(id)` finds one dataset by its ledger id, and `BarFeed.Open(store, id)` answers a feed
+or a **refusal that says why**. Opening is where `DatasetStore.Checked` is called — **once, at the start
+of a run** — because it re-hashes every raw archive file and the normalised file on every call, and
+because a run whose dataset changed state half way through has no one dataset its result is about. A
+`REJECTED` dataset serves nothing. `BarFeed.Chunks(from, to)` then streams the window ascending with **no
+cap**; `DatasetReader.Read`, which the `data-bars` pipe op uses, keeps its 10,000-bar cap and still
+REFUSES rather than truncating. Both read one row parser, `DatasetReader.TryBar`.
+
+**What a dataset does not carry.** There are no per-bar quality flags and no instrument increment
+anywhere in `dataset` or `dataset_file` — the rows are counts, hashes, coverage and gap runs. So the
+evaluator serves the five prices the vendor published and states an intent's quantity **without an
+increment applied**: rounding down to the increment and the gateway's own risk limits happen downstream,
+where the instrument is known. An intent is not an order.
+
+`StrategyEvaluator.Step(state, bar, account)` is the whole event interface: one closed bar, plus the
+account state the CALLER supplies (capital, equity, position, average fill price, pending-order state,
+bars since entry). The evaluator **never invents** any of it, reads no clock, draws no random number and
+touches no file — the same bars, program and readings produce the same intents on every machine. It
+EMITS intents and places nothing: each one names the bar it came from and `NotBefore`, that bar's close,
+the earliest instant it may be acted on. `docs/STRATEGY-LANGUAGE.md`'s "Evaluation" section is the
+semantics: warm-up refused, exits before entries, an exit that fires ends the event, no duplicate signal
+while one is pending, at most one intent, undefined is not false, and time filters read from the bar's
+open time against `StrategyCalendar` — a versioned rule table for the six allowed zones, not an OS
+lookup, so a program means the same thing on every machine.
+
+**A fault is a value.** `EvaluationOutcome.Faulted` with a reason, the run halted, no intent: a bar out
+of order or off the interval grid, a division by zero, arithmetic that overflowed, an event over
+`StrategyLimits.MaxOperationsPerEvent`, state over `StrategyLimits.MaxStateBytes`, or a run the caller
+stopped — which is how a TIMEOUT is defined without a clock in the evaluator. The budget is counted per
+EVENT and not per rule, and it is set above what any program the parser accepts can cost, so the two
+limits cannot contradict each other. Nothing throws out of the evaluator: the program was written by a
+cheap model, and a text it can produce that crashes the app would be the app's defect.

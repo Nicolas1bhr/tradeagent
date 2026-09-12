@@ -20,11 +20,12 @@ public sealed class EvaluationState
 {
     readonly List<GapRun> gaps = [];
 
-    EvaluationState(StrategyProgram program, ZoneRules zone, TimeSpan barInterval)
+    EvaluationState(StrategyProgram program, ZoneRules zone, TimeSpan barInterval, EvaluationLimits limits)
     {
         Program = program;
         Zone = zone;
         BarInterval = barInterval;
+        Limits = limits;
         Indicators = IndicatorSet.For(program);
         History = new BarHistory();
 
@@ -38,6 +39,9 @@ public sealed class EvaluationState
 
     /// <summary>The calendar rules for the program's declared zone.</summary>
     public ZoneRules Zone { get; }
+
+    /// <summary>The per-event operation budget and the state-size limit this run is under.</summary>
+    public EvaluationLimits Limits { get; }
 
     /// <summary>
     /// How long one bar is, which is what makes a gap a gap. Stated rather than assumed: a run over
@@ -135,7 +139,8 @@ public sealed class EvaluationState
     /// <paramref name="barInterval"/> defaults to one minute, which is what `docs/COUNCIL.md` says a
     /// bar is ("closed 1-minute OHLCV bars in UTC") and what every dataset this build collects holds.
     /// </summary>
-    public static EvaluationState Start(StrategyProgram program, TimeSpan? barInterval = null)
+    public static EvaluationState Start(
+        StrategyProgram program, EvaluationLimits? limits = null, TimeSpan? barInterval = null)
     {
         var interval = barInterval ?? TimeSpan.FromMinutes(1);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(interval, TimeSpan.Zero);
@@ -147,7 +152,7 @@ public sealed class EvaluationState
             throw new ArgumentException(
                 $"this build has no calendar for the zone '{program.Time.TimeZone}'", nameof(program));
 
-        return new EvaluationState(program, zone, interval);
+        return new EvaluationState(program, zone, interval, limits ?? EvaluationLimits.Default);
     }
 
     /// <summary>Halts the run with a reason. There is no route back: a faulted state stays faulted.</summary>
@@ -279,11 +284,31 @@ public static class StrategyEvaluator
         var inOpeningRange = state.Program.Time.OpeningRange is { } range
                              && StrategyCalendar.Contains(range, local);
 
-        var operations = state.Indicators.Push(bar, newSession, inOpeningRange);
-        if (state.StopAtr is { } stopAtr) operations += stopAtr.Push(bar, newSession, inOpeningRange);
+        int operations;
+        try
+        {
+            operations = state.Indicators.Push(bar, newSession, inOpeningRange);
+            if (state.StopAtr is { } stopAtr) operations += stopAtr.Push(bar, newSession, inOpeningRange);
+        }
+        catch (OverflowException)
+        {
+            return EvaluationOutcome.Faulted(state, Overflowed(bar, "an indicator"));
+        }
+
         state.History.Push(bar);
         state.Advance(bar, session, missing);
         state.Charged(operations, state.StateBytes);
+
+        // THE STATE-SIZE LIMIT. A program's state does not grow while it runs — every window is
+        // allocated from its declared period — so this refuses on the first bar rather than half way
+        // through, which is the only useful moment to refuse.
+        if (state.StateBytes > state.Limits.StateBytes)
+            return EvaluationOutcome.Faulted(state,
+                $"this program holds {state.StateBytes} bytes of state between bars, and the limit is " +
+                $"{state.Limits.StateBytes}");
+
+        if (operations > state.Limits.OperationsPerEvent)
+            return EvaluationOutcome.Faulted(state, OverBudget(state, operations));
 
         if (!state.Warm)
         {
@@ -293,7 +318,8 @@ public static class StrategyEvaluator
 
         state.CountEvaluated();
 
-        var interpreter = new StrategyInterpreter(state);
+        // The rules are evaluated under what is LEFT of the event's budget after the indicators.
+        var interpreter = new StrategyInterpreter(state, state.Limits.OperationsPerEvent - operations);
         StrategyIntent? intent;
         bool undefined;
 
@@ -304,6 +330,17 @@ public static class StrategyEvaluator
         catch (EvaluationFault fault)
         {
             return EvaluationOutcome.Faulted(state, fault.Reason);
+        }
+        catch (OverflowException)
+        {
+            return EvaluationOutcome.Faulted(state, Overflowed(bar, "a rule"));
+        }
+        catch (DivideByZeroException)
+        {
+            // Belt and braces: the interpreter checks a divisor before dividing, so this is a
+            // division this build did not know it was doing rather than one a program asked for.
+            return EvaluationOutcome.Faulted(state,
+                $"a rule divided by zero on the bar at {bar.OpenTime:O}");
         }
         finally
         {
@@ -406,7 +443,7 @@ public static class StrategyEvaluator
         {
             if (program.Rules[i].Kind != RuleKind.Exit) continue;
 
-            var value = interpreter.Eval(program.Rules[i].Condition);
+            var value = interpreter.Rule(program.Rules[i].Condition);
             if (!value.Defined)
             {
                 undefined = true;
@@ -442,7 +479,7 @@ public static class StrategyEvaluator
         {
             if (program.Rules[i].Kind != RuleKind.Entry) continue;
 
-            var value = interpreter.Eval(program.Rules[i].Condition);
+            var value = interpreter.Rule(program.Rules[i].Condition);
             if (!value.Defined)
             {
                 undefined = true;
@@ -593,6 +630,14 @@ public static class StrategyEvaluator
 
     static int MinuteOf(DateTime local) => local.Hour * 60 + local.Minute;
 
+    static string Overflowed(KlineBar bar, string what) =>
+        $"{what} overflowed the largest number this build can hold, on the bar at {bar.OpenTime:O}";
+
+    static string OverBudget(EvaluationState state, int operations) =>
+        $"one closed bar cost more than the {state.Limits.OperationsPerEvent} operations a single event " +
+        $"is allowed ({operations} and counting), so this program is not one the runner will evaluate " +
+        "at the rate it is asked to";
+
     /// <summary>
     /// A WHOLE RUN over bars in ascending order.
     ///
@@ -609,6 +654,7 @@ public static class StrategyEvaluator
         StrategyProgram program,
         IEnumerable<KlineBar> bars,
         Func<EvaluationState, KlineBar, AccountReading> account,
+        EvaluationLimits? limits = null,
         TimeSpan? barInterval = null,
         CancellationToken stop = default)
     {
@@ -616,7 +662,7 @@ public static class StrategyEvaluator
         ArgumentNullException.ThrowIfNull(bars);
         ArgumentNullException.ThrowIfNull(account);
 
-        var state = EvaluationState.Start(program, barInterval);
+        var state = EvaluationState.Start(program, limits, barInterval);
         var intents = new List<StrategyIntent>();
 
         foreach (var bar in bars)

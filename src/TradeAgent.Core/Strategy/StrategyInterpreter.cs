@@ -68,17 +68,38 @@ sealed class EvaluationFault(string reason) : Exception(reason)
 /// <para><b>`back` is how a crossing reads yesterday.</b> `crosses_above(a, b)` needs both sides on
 /// this bar and on the one before, so it evaluates its operands twice with the whole subtree shifted
 /// one bar — which is exactly why `StrategyWarmUp` charges a crossing one bar more than its deeper
-/// side, and why a crossing of a crossing is warm one bar later still.</para>
+/// side. A crossing cannot nest inside a crossing: a crossing IS a true-or-false value and a
+/// crossing's sides are numbers, so the doubling happens at most once on any path and one event's
+/// node visits are at most twice the program's node count.</para>
+///
+/// <para><b>The budget is counted per EVENT, not per rule.</b> A program of twenty small rules costs
+/// the sum of them on one bar, and a budget applied to each rule separately would let it through while
+/// refusing one rule of the same total size — which is the same program with different line breaks.</para>
 /// </summary>
-sealed class StrategyInterpreter(EvaluationState state)
+sealed class StrategyInterpreter(EvaluationState state, int budget)
 {
-    /// <summary>Expression nodes visited on this event.</summary>
+    /// <summary>Expression nodes visited on this event, across every rule reached.</summary>
     public int Operations { get; private set; }
 
+    /// <summary>
+    /// ONE RULE'S CONDITION, charged against the budget that is already part-spent by the rules before
+    /// it on this bar.
+    ///
+    /// <para>This is the only entry point the rule loops use, and it deliberately does NOT reset the
+    /// count. A budget applied per rule would let twenty small rules through while refusing one rule of
+    /// the same total size — the same program with different line breaks — so the event is what is
+    /// bounded and a rule is only ever part of one.</para>
+    /// </summary>
+    public Val Rule(Expr condition) => Eval(condition, 0);
+
     /// <summary>One condition's value, with every reference shifted <paramref name="back"/> bars.</summary>
-    public Val Eval(Expr expr, int back = 0)
+    Val Eval(Expr expr, int back = 0)
     {
-        Operations++;
+        if (++Operations > budget)
+            throw new EvaluationFault(
+                $"the rules of this program cost more than the {budget} operations left in this event's " +
+                "budget after the indicators, counted across every rule on the bar rather than one rule " +
+                "at a time");
 
         switch (expr)
         {
