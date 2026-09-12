@@ -70,6 +70,53 @@ public class ContainmentTests
         finally { Reap(grandchild); }
     }
 
+    /// <summary>
+    /// The refusal at the LAUNCH, not in the pure function: a turn in the armed live configuration
+    /// must start no process at all, and the owner must be told why in the window they armed it in.
+    /// </summary>
+    [Fact]
+    public async Task The_armed_live_configuration_starts_no_vendor_process()
+    {
+        var dir = Path.Combine(TestEnv.Home, "refuse-" + Guid.NewGuid().ToString("n")[..8]);
+        Directory.CreateDirectory(dir);
+        var marker = Path.Combine(dir, "the-cli-ran");
+
+        var manifest = new RuntimeManifest
+        {
+            Id = "containment-refusal-probe",
+            DisplayName = "containment refusal probe",
+            Executable = Shell,
+            ExecArgs = [ShellFlag, "{prompt}"],
+            TaskArgs = [ShellFlag, "{prompt}"],
+            ResumeArgs = [], UnattendedArgs = [], ModelArgs = [], JsonFlag = null
+        };
+
+        var refusal = "Real-money trading is switched on, and nothing confines the AI here.";
+        var armed = true;
+
+        var session = new AgentSession(manifest, () => Shell, () => dir,
+            () => new Dictionary<string, string>(), new AgentPresence(),
+            launchRefusal: () => armed ? refusal : null);
+
+        await session.SendAsync(Touch(marker));
+
+        Assert.False(File.Exists(marker),
+            "the vendor CLI ran in the armed live configuration: a program nothing on this computer " +
+            "confines was started beside a switch that spends money");
+        Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains(refusal));
+
+        // And the same session runs normally the moment real money is switched off — the refusal is
+        // read at every launch, not captured once.
+        armed = false;
+        await session.SendAsync(Touch(marker));
+        for (var i = 0; i < 100 && !File.Exists(marker); i++) await Task.Delay(50);
+        Assert.True(File.Exists(marker), "the AI did not run once real-money trading was switched off");
+    }
+
+    static string Touch(string marker) => OperatingSystem.IsWindows()
+        ? $"echo ran > \"{marker}\""
+        : $"printf ran > \"{marker}\"";
+
     // ---- the probe ------------------------------------------------------------------------------
 
     static string Shell => OperatingSystem.IsWindows()

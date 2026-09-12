@@ -25,7 +25,86 @@ public static class Containment
         ToolDeployer.DeployedHash(),
         Paths.Tools,
         Paths.Workspace);
+
+    /// <summary>
+    /// WHETHER AN OPERATING-SYSTEM SANDBOX CONFINES THE AI'S OWN PROGRAM, and today the answer is no
+    /// on every platform this ships to.
+    ///
+    /// It is a method rather than a constant because it is a question about the MACHINE, and the
+    /// answer will change when `U-contain-2` lands an AppContainer on Windows or a sandboxed helper on
+    /// macOS. Until then it returns NONE, and everything that reads it — the Doctor's row, the guide,
+    /// the live gate — says so in those words rather than in a silence that reads as "fine".
+    ///
+    /// What a job object and a whitelisted environment are NOT: they stop a turn outliving its cancel
+    /// and stop the app's own environment leaking into the AI. They do not stop the agent process
+    /// reading or writing any file its user account can reach, which includes TradeAgent's own
+    /// binaries and its `state/` folder.
+    /// </summary>
+    public static SandboxState Sandbox() => new(false, "NONE",
+        "no operating-system sandbox confines the AI assistant's program on this computer: it runs as " +
+        "the same Windows user as TradeAgent and can read and write whatever that user can");
+
+    /// <summary>
+    /// The sentence that refuses to start the vendor's CLI, or null when it may start.
+    ///
+    /// The condition is BOTH halves of the owner's real-money decision, and that is deliberate:
+    /// <c>ModeIsLive</c> alone is a mode the owner has chosen and not yet armed — real money is off,
+    /// no order can reach a broker — and refusing to run the AI there would take the app away from
+    /// someone who is setting it up. It is the ARMED live configuration that this refuses, because
+    /// that is the configuration in which an uncontained agent process sits beside a switch that
+    /// spends money.
+    ///
+    /// Paper and observe are untouched, and the sentence says so: a refusal that does not tell the
+    /// owner what still works reads as a broken product.
+    /// </summary>
+    public static string? RefusalToLaunch(bool modeIsLive, bool liveActivated, SandboxState? sandbox = null)
+    {
+        if (!modeIsLive || !liveActivated) return null;
+
+        var state = sandbox ?? Sandbox();
+        if (state.Ok) return null;
+
+        return "Real-money trading is switched on, and " + state.Detail + ". TradeAgent will not start " +
+               "the AI assistant in that configuration. Switch real-money trading off, or choose " +
+               "Practice or Watch only, and the AI runs exactly as before.";
+    }
+
+    /// <summary>
+    /// The whole containment story in the words the Doctor prints. <paramref name="mechanism"/> is what
+    /// held the last agent process, or null when none has run in this session.
+    /// </summary>
+    public static ContainmentFacts Facts(string? mechanism = null)
+    {
+        var sandbox = Sandbox();
+        var rule = PeerRuleNow();
+        var held = OperatingSystem.IsWindows()
+            ? "a Windows job object that dies with TradeAgent; breakaway is refused"
+            : ProcessContainment.DefaultLauncher() is not null
+                ? "a session of its own, so cancelling a turn kills its whole process group"
+                : "nothing: TradeAgent's own trade command is not installed, so no session can be started";
+
+        var peer = rule.ExpectedHash is { Length: 64 }
+            ? OperatingSystem.IsWindows()
+                ? "the program on the other end of the AI's pipe is checked against the trade command this app installed"
+                : "recorded, but only Windows will say which program holds a pipe, so it is not checked here"
+            : "not checked: TradeAgent has not recorded which trade command it installed";
+
+        return new ContainmentFacts(
+            Held: OperatingSystem.IsWindows() || ProcessContainment.DefaultLauncher() is not null,
+            Mechanism: mechanism ?? held,
+            SandboxOk: sandbox.Ok,
+            Sandbox: $"OS sandbox: {sandbox.Name}")
+        {
+            Environment = "the AI is given a named list of environment variables, not a copy of TradeAgent's own",
+            Grant = "every launch carries a grant naming its role and attempt; only the Operations Director's may trade",
+            Peer = peer,
+            SandboxDetail = sandbox.Detail
+        };
+    }
 }
+
+/// <summary>What the operating system is doing to confine the AI's program, and what it is called.</summary>
+public sealed record SandboxState(bool Ok, string Name, string Detail);
 
 /// <summary>
 /// WHAT HOLDS AN AGENT PROCESS, reported in the words the Doctor card prints.
@@ -36,7 +115,24 @@ public static class Containment
 /// on — a job is not a sandbox, and saying so is the difference between this unit and the one that
 /// has not been built.
 /// </summary>
-public sealed record ContainmentFacts(bool Held, string Mechanism, bool SandboxOk, string Sandbox);
+public sealed record ContainmentFacts(bool Held, string Mechanism, bool SandboxOk, string Sandbox)
+{
+    /// <summary>What the child's environment is.</summary>
+    public string Environment { get; init; } = "";
+
+    /// <summary>What the pipe knows about who is calling.</summary>
+    public string Grant { get; init; } = "";
+
+    /// <summary>Whether the program on the other end of the pipe is checked, and against what.</summary>
+    public string Peer { get; init; } = "";
+
+    /// <summary>What the absence of a sandbox actually means, in the owner's words.</summary>
+    public string SandboxDetail { get; init; } = "";
+
+    /// <summary>The four sentences and the sandbox line, in the order the card reads them.</summary>
+    public string Detail => string.Join("; ", new[] { Mechanism, Environment, Grant, Peer, Sandbox }
+        .Where(s => s.Length > 0));
+}
 
 /// <summary>
 /// One agent process and the thing that holds it: a Job Object on Windows, a session of its own on
@@ -194,9 +290,31 @@ public static class ProcessContainment
                 "platform, is not installed");
         }
 
+        var exe = psi.FileName;
+        var args = psi.ArgumentList.ToArray();
         Relaunch(psi, prefix);
-        var process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
-            $"{psi.FileName} would not start");
+
+        Process process;
+        try
+        {
+            process = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
+                $"{psi.FileName} would not start");
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            // A LAUNCHER THAT WILL NOT START MUST NOT TAKE THE THING IT WAS LAUNCHING WITH IT.
+            //
+            // Measured while this file was being written: a `trade` at the expected path that was not
+            // executable threw Win32Exception "Permission denied" out of Process.Start, and because
+            // every agent process now comes through here that exception surfaced from `Doctor.RunAsync`
+            // — the containment broke the diagnostics that would have explained it. The honest
+            // behaviour is the one this class already states: start it anyway and say it is not held.
+            Command(psi, exe, args);
+            var bare = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND,
+                $"{exe} would not start");
+            return new ContainedProcess(bare, IntPtr.Zero, false, false,
+                $"not held: TradeAgent's own trade command at {prefix[0]} would not start ({ex.Message})");
+        }
 
         // The session belongs to the LAUNCHER, which has not run yet — see ContainedProcess.Held.
         // What is known here is the only thing this line claims: the process was started through the
@@ -220,6 +338,14 @@ public static class ProcessContainment
         for (var i = 1; i < prefix.Count; i++) psi.ArgumentList.Add(prefix[i]);
         psi.ArgumentList.Add(ContainedLaunch.Flag);
         psi.ArgumentList.Add(exe);
+        foreach (var a in args) psi.ArgumentList.Add(a);
+    }
+
+    /// <summary>Puts a command back the way the caller wrote it, for the fallback above.</summary>
+    static void Command(ProcessStartInfo psi, string exe, IReadOnlyList<string> args)
+    {
+        psi.FileName = exe;
+        psi.ArgumentList.Clear();
         foreach (var a in args) psi.ArgumentList.Add(a);
     }
 

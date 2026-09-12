@@ -20,7 +20,7 @@ namespace TradeAgent.AgentRuntime;
 /// because it lives in the settings and can change while this runtime is alive.
 /// </param>
 public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
-    Func<string, string?>? attemptId = null) : IAgentRuntime
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -594,7 +594,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
             model: () => RequestedModel, role: CouncilRoles.Operations,
-            attempt: () => attemptId?.Invoke(CouncilRoles.Operations));
+            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal);
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -615,7 +615,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // would have to know which runtime is prepared, which is the one thing this interface
             // exists to keep out of the app.
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
-                model: () => ModelFor(model()), role: role, attempt: () => attemptId?.Invoke(role));
+                model: () => ModelFor(model()), role: role,
+                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal);
             _roleConversations[role] = session;
             return session;
         }
@@ -633,6 +634,13 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     public async Task StartAsync(CancellationToken ct = default)
     {
         var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
+
+        // The same refusal the turn obeys, on the one other path that starts a vendor process the
+        // agent's work runs in. Checked here rather than inside Run(): Run also issues this class's
+        // own fixed probes — a version string, an auth state, an installer — and refusing those
+        // would leave the owner unable to see WHY the AI will not start.
+        if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
 
         if (manifest.InteractiveArgs.Length > 0 && _session is not { Process.HasExited: false })
         {

@@ -122,7 +122,11 @@ public class PipeContractTests(ITestOutputHelper log)
         server.Start();
 
         await using var raw = await RawFrames.Connect(pipe);
-        var hello = await raw.Send(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Peek(), Session = "agent-1" });
+        var hello = await raw.Send(new IpcRequest
+        {
+            // The chair's launch grant, because what follows trades: see TestEnv.Chair.
+            Op = Ops.Hello, Token = IpcToken.Peek(), Session = "agent-1", Grant = TestEnv.Chair!.Token
+        });
         Assert.True(hello.Ok, $"the current protocol version was refused: {hello.Error?.Message}");
 
         var buy = await raw.Send(Buy());
@@ -961,7 +965,11 @@ public class PipeContractTests(ITestOutputHelper log)
         server.Start();
 
         await using var raw = await RawFrames.Connect(pipe);
-        var hello = await raw.Send(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Peek(), Session = "agent-1" });
+        var hello = await raw.Send(new IpcRequest
+        {
+            // The chair's launch grant, because what follows trades: see TestEnv.Chair.
+            Op = Ops.Hello, Token = IpcToken.Peek(), Session = "agent-1", Grant = TestEnv.Chair!.Token
+        });
         Assert.True(hello.Ok, hello.Error?.Message);
 
         var buy = await raw.SendLine(

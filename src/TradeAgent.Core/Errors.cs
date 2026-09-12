@@ -32,6 +32,10 @@ public enum ErrorCode
     // IPC_UNAUTHENTICATED, which reads "your token is wrong" and would send whoever owns that peer
     // hunting a credential problem that is not there: the credential was fine and the role was not.
     ROLE_MAY_NOT_TRADE,
+    // The ARMED live configuration will not start an AI runtime that nothing confines. Not
+    // MODE_FORBIDS_EXECUTION, which is about an ORDER this mode will not send: this is about the
+    // assistant's own program not being started at all, and the repair is a different one.
+    CONTAINMENT_REQUIRED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -438,6 +442,7 @@ public static class Errors
         [ErrorCode.IPC_UNAVAILABLE]                = ("The AI cannot reach the trading service.", "Restart TradeAgent.", true),
         [ErrorCode.IPC_UNAUTHENTICATED]            = ("A program tried to use trading without permission.", "No action needed. The request was refused.", false),
         [ErrorCode.ROLE_MAY_NOT_TRADE]             = ("A part of the AI that is not allowed to trade asked to place, change or cancel an order.", "No action needed. The request was refused and recorded.", false),
+        [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
         // what it does not share is the shape of the conversation, and telling its owner to go
         // looking for a permission problem sends them after a fault that is not there. It is the
