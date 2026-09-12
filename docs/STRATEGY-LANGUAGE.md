@@ -23,9 +23,8 @@ declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, requ
              | ("exit" | "entry") "when" expr             # exits first, at least one entry
 indicator   := ("sma" | "ema" | "rsi" | "highest" | "lowest") "(" SERIES "," value ")"
              | "atr" "(" value ")" | ("opening_range_high" | "opening_range_low") "(" ")"
-value       := NUMBER | NAME     # a declared number constant
+value       := NUMBER | NAME     # a declared number constant;  CLOCK := HH ":" MM, 24-hour
 SERIES      := "open" | "high" | "low" | "close" | "volume"
-CLOCK       := HH ":" MM         # 24-hour, in the declared zone
 ```
 
 Rules are evaluated **in declared order, every exit before every entry**; an exit written below an entry
@@ -45,9 +44,8 @@ ref     := (SERIES | NAME) ("[" INT "]")?  # close, close[1], fastma[2]
 ```
 
 Two types, `number` and `boolean`: arithmetic and comparison take numbers, `and`/`or`/`not` take
-booleans, and a rule condition must be a boolean. `crosses_above(a, b)` is true on the bar where `a` is
-above `b` and was at or below it on the bar before; `crosses_below` is the mirror. `x[k]` is the value
-`k` closed bars ago and `x[0]` is `x`; a constant has no history.
+booleans, a rule condition must be a boolean. `crosses_above(a, b)` is true where `a` is above `b` and
+was at or below it on the bar before; `x[k]` is `k` closed bars ago; a constant has no history.
 
 ## Indicators — semantics and initialisation
 
@@ -64,8 +62,11 @@ missing and nothing is filled in. Prices are decimals, exactly as the vendor pub
 | `opening_range_high()` / `opening_range_low()` | highest high / lowest low of the bars closing inside the `opening_range` interval | resets each session; undefined until that interval's first close | `1` |
 
 `atr` takes no series (a true range is over high, low and the previous close), and an indicator reads a
-bar series, never another indicator. These semantics are versioned in `StrategyVersions`, and moving a
-version re-identifies every program.
+bar series, never another indicator. These semantics are versioned in `StrategyVersions`; moving a
+version re-identifies every program. **Warm-up** is the maximum "bars needed" over every DECLARED
+indicator, every history reference (`close[3]` is 4), every crossing (one more than its deeper side) and
+the stop's ATR period; at least 1. It is stated on the frozen program, hashed into its id, and a bar
+before it is refused rather than answered from a half-filled window.
 
 ## Limits — `StrategyLimits`, one place
 
@@ -79,15 +80,15 @@ an OS lookup, so a program means the same thing on every machine that hashes it.
 ## Refusals
 
 A refusal reads `line 7: <reason>`, or `program: <reason>` when what is wrong is the ABSENCE of a
-declaration — no instrument, no size, no entry rule, nothing that can ever close the position. A period
-at or below zero, an undeclared name, a type mismatch, a second `size`, risk sizing with no stop to
-measure risk against, and every limit above are refusals rather than warnings.
+declaration — no instrument, no size, no entry rule, no way to ever close the position. Every limit
+above, a period at or below zero, an undeclared name, a type mismatch and risk sizing with no stop to
+measure risk against are refusals, not warnings.
 
 ## One meaning, one id
 
 Identity is `Sha256Hex.Of(canonical + "\n" + parameters + "\n" + manifest)`: the typed canonical form
-(comments, spacing, letter case and declaration order gone; rule order kept), the constants sorted by
-name, and `StrategyVersions`. The source is retained beside it. `docs/CONTRACTS.md` holds the form.
+(comments, spacing, case and declaration order gone; rule order and the computed warm-up kept), the
+constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONTRACTS.md` has the form.
 
 ## The three day-one programs
 

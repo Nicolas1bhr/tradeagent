@@ -54,6 +54,11 @@ public static class StrategyCanonical
         text.Append("target ").Append(Target(p.Target)).Append('\n');
         text.Append("hold ").Append(p.MaxHoldBars is { } bars ? bars.ToString() : "none").Append('\n');
 
+        // DERIVED, AND IN HERE ANYWAY. The warm-up is a function of the declarations above, so it adds
+        // nothing a reader could not work out — but it is part of what the FROZEN program states, and
+        // hashing it means two builds that disagree about how warm is warm enough cannot share an id.
+        text.Append("warmup ").Append(p.WarmUpBars).Append('\n');
+
         foreach (var rule in p.Rules)
             text.Append(rule.Kind == RuleKind.Exit ? "exit " : "entry ").Append(Condition(rule.Condition)).Append('\n');
 

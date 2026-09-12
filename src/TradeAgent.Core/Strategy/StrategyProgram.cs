@@ -39,7 +39,9 @@ public sealed class StrategyProgram
         Time = time;
 
         // Computed once, here, because a frozen program's identity must not depend on when it is
-        // asked for — and because every caller that compares two programs compares these.
+        // asked for — and because every caller that compares two programs compares these. The warm-up
+        // comes first: the canonical form states it.
+        WarmUpBars = StrategyWarmUp.Of(this);
         Canonical = StrategyCanonical.Of(this);
         Parameters = StrategyCanonical.Parameters(this);
         Manifest = StrategyVersions.Manifest;
@@ -91,6 +93,18 @@ public sealed class StrategyProgram
     /// what <see cref="StrategyLimits.MaxNodes"/> bounds.
     /// </summary>
     public int NodeCount => Rules.Sum(r => r.Condition.NodeCount);
+
+    /// <summary>
+    /// THE CLOSED BARS THAT MUST HAVE PASSED BEFORE THIS PROGRAM MAY BE ASKED ANYTHING —
+    /// `StrategyWarmUp`, the deepest lookback over every declared indicator, every history reference
+    /// (nesting and crossings included) and the stop's own ATR period; at least one.
+    ///
+    /// <para>It is stated on the frozen program and hashed into <see cref="StrategyId"/> rather than
+    /// recomputed by each caller, because the failure it prevents is silent: an indicator evaluated
+    /// one bar early is a different indicator with the same name, and a backtest over it contains
+    /// trades this program would never have taken. `U-runner-2` refuses to evaluate before it.</para>
+    /// </summary>
+    public int WarmUpBars { get; }
 
     /// <summary>
     /// THE TYPED, ORDERED FORM THIS PROGRAM IS HASHED IN — `StrategyCanonical`. Free of comments, of

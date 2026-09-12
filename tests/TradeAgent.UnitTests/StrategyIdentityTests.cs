@@ -57,6 +57,7 @@ public class StrategyIdentityTests
             stop percent:1.5
             target none
             hold none
+            warmup 21
             exit (crosses_below close @fastma)
             entry (and (> close @fastma) (> volume 100))
 

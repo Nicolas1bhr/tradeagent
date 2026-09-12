@@ -190,7 +190,7 @@ public static class StrategyParser
             settings.OpeningRange,
             settings.SessionExit);
 
-        return StrategyParse.Yes(new StrategyProgram(
+        var program = new StrategyProgram(
             text,
             instrument,
             [.. constants.Values.OrderBy(c => c.Name, StringComparer.Ordinal)],
@@ -200,7 +200,17 @@ public static class StrategyParser
             settings.Stop,
             settings.Target,
             settings.MaxHoldBars,
-            time));
+            time);
+
+        // A WARM-UP THAT CANNOT BE REACHED IS A REFUSAL, not a program that waits for ever. One limit
+        // covers the period and the warm-up, so a period at the limit inside a crossing — which reads
+        // one bar more — is refused here rather than accepted and never acted on.
+        if (program.WarmUpBars > StrategyLimits.MaxLookbackBars)
+            throw new Refused(0,
+                $"this program would need {program.WarmUpBars} closed bars before it could act, and the most a " +
+                $"program may need is {StrategyLimits.MaxLookbackBars}. Shorten the deepest period or history reference");
+
+        return StrategyParse.Yes(program);
     }
 
     static List<Decl> ReadLines(string text)
