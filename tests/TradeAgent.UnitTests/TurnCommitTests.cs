@@ -203,6 +203,37 @@ public class TurnCommitTests
     }
 
     /// <summary>
+    /// THREE ARTIFACTS IN ONE TRANSACTION GET THREE REVISION NUMBERS. <c>NextRevision</c> is read
+    /// inside the insert's own transaction, not by the caller before it opens — which is what the
+    /// revision number has to be for it to mean anything.
+    ///
+    /// <para>A turn publishes up to three things at once: its report, its plan and its journal. A
+    /// number read once before the transaction is a number every one of them is handed, and the
+    /// role's history then holds three rows all calling themselves its first — with the restore
+    /// ("the last valid plan stands") reading a MAX that three rows are tied on. The count is what
+    /// is asserted, because it is the ordering the table is read by.</para>
+    /// </summary>
+    [Fact]
+    public void Three_publications_committed_in_one_turn_are_numbered_one_two_and_three()
+    {
+        using var world = new World();
+        var (db, meter) = world.Open();
+
+        var attempt = meter.Mint();
+        meter.Begin("## Situation", [], CouncilRoles.Research);
+        world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
+        world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
+        world.Write(CouncilRoles.Research, "trading/JOURNAL.md", Journal);
+        meter.Record(Ended(world.At));
+
+        world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
+            () => meter.CommitStaged(), () => { });
+
+        Assert.Equal([1, 2, 3],
+            new PublicationStore(db).By(CouncilRoles.Research).Select(p => p.Revision));
+    }
+
+    /// <summary>
     /// THE WHOLE TRANSITION ROLLS BACK TOGETHER. A failure raised while the transaction is open —
     /// here from the dispositions, the last step — must leave nothing of the turn behind, not the
     /// publications that had already been inserted and not the closed launch record. That is the
