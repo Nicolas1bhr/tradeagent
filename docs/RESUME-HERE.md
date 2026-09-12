@@ -10,33 +10,32 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session closed 2026-09-12 14:35 CEST by the WEEKLY usage limit (resets 2026-09-12 12:00 — it has, but the session is wrapped
-rather than restarted). The doctrine survived four kills in two days; the branches are the handoff. Restart in this order:**
+**Session resumed 2026-09-12 15:20 CEST after the WEEKLY limit reset (12:00). This block is kept current as legs land; if it
+says a leg is running and nothing is, that leg was killed — re-brief it FRESH from its branch and brief on disk. Restart in this order:**
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `8a6d88b`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `bfe7a0c`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
-   `U-archive-win` `8197163`. Schema is 10 on `main`.
-3. **Three legs were killed by the weekly limit with their work COMMITTED on their branches — re-brief each to a FRESH builder
-   from disk ("read your branch first; judge uncommitted files on their merits; reproduce every RED and mutant yourself"):**
-   - `u-turn-commit` (worktree `U-turn-commit`, tip `1064b6a`, 5 commits = all five items of `docs/briefs/U-turn-commit.md`,
-     schema 11; an untracked `gate-build.txt` to delete): owed its gate and its `## Report`.
-   - `u-budget-reserve` (worktree `U-budget-reserve`, tip `525ce84`, 5 commits = all five items of `docs/briefs/U-budget-
-     reserve.md`; three untracked gate files to delete): owed its gate and its `## Report`. It and `u-turn-commit` both touch
-     `TurnMeter.cs`, `AiAttemptStore.cs` and `MissionLoop.cs`'s turn end — whichever lands second needs a rebase fixer.
-   - `u-press-settle-win` (worktree `U-press-settle-win`, tip `d519d87`, 3 commits incl. a temporary harness; **draft PR #16
-     is OPEN** with the runners' marks): the fixer was naming the sibling tests as not at risk; owed: read PR #16's runs, remove
-     the harness from the tip, gate, `## Report`, close the PR. It fixes the ONE windows-only red on `main` (below).
-4. **CI on `main`:** green on macos and ubuntu at every sha since `2082091`; windows-latest at `8197163` and after is RED on
-   ONE Fault test, `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close…` (the runner's disk spends the press's
-   two-second budget after the cancel; the product refused honestly; green at its own merge sha and at `3003b89`) — the
+   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 at that sha
+   in flight when this was written — its verdict goes into the `U-turn-commit` section).
+3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
+   - `u-press-settle-win` (worktree `U-press-settle-win`; draft PR #16 OPEN): a FRESH fixer re-briefed 15:25 from the branch — reads
+     PR #16's marks (run 34189533668), removes the harness (a `PressMark` hook in `TradingGateway.cs` and
+     `_PressSettleWinMeasurement.cs`), gates, reports, closes the PR. It fixes the windows-only red below.
+   - `u-budget-reserve` (worktree `U-budget-reserve`): a FRESH builder re-briefed 15:50 from the branch, told to rebase onto
+     `u-turn-commit` `0da64d7` first (four conflicts: `CONTRACTS.md`, `MissionLoop.cs`, `TurnMeter.cs`, `CouncilLoopTests.cs`;
+     its item 3 must live INSIDE turn-commit's one-transaction turn end), reproduce every RED and mutant, gate, report. No schema number.
+   - `u-containment` (worktree `U-containment`, new at `bfe7a0c`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`,
+     no schema number, a draft PR for the windows runner, told to rebase onto `main` before its gate.
+4. **CI on `main`:** green on macos and ubuntu at every sha since `2082091`; windows-latest INTERMITTENTLY red on ONE Fault test,
+   `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close…` (red at `8197163`, GREEN at `583f24e` run 34694003715 —
+   the runner's disk spends the press's two-second budget after the cancel; the product refused honestly) — the
    `u-press-settle-win` fixer above. The thirty-minute Windows Unit suite is gone since `8197163` (2 m 35 s).
-5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-containment.md` (the job object, the clean
-   environment, per-attempt tokens and the peer-image check on the pipe, the live configuration refusing an uncontained CLI)
-   and `docs/briefs/U-api-worker.md` (the app-owned harness: one provider, one role, every tool a grant, every boundary
-   counted, the key in memory only). Dispatch after the three legs above land, at most two heavy legs at once.
+5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-api-worker.md` (the app-owned harness: one provider,
+   one role, every tool a grant, every boundary counted, the key in memory only). Dispatch when `u-budget-reserve` lands, so
+   that at most two heavy legs run at once.
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
