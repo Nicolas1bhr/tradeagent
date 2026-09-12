@@ -5084,7 +5084,7 @@ passed, 0 failed, 1 skipped — the Integration suite's FIRST run spanned a four
 and went 13 red, all in `ConnectorSendDeadlineTests` (`Timing`; `"the ATAS bridge disconnected" / Not found: "busy"` — a
 heartbeat verdict after the gap), re-run alone on the same build → 627 passed, 0 failed; names vs
 `main` → 0 removed, 14 added (sets 1255 → 1269); scan clean (`InputTokens`/`OutputTokens`, judged); no trailers; `rev-list
---count` → 0; CI run 34715391501 at `1757043`: in flight at the time of this record; verdict in a follow-up commit.
+--count` → 0; CI run 34715391501 at `1757043`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT VERIFIED:** the two boxes on a screen — no UI run. **NOT done:** `_staged` is still ONE slot, safe only while the loop
 is serial (`U-council-concurrent`); no provider-side ceiling exists for codex (a stated limitation); no box, no ATAS, no money.
