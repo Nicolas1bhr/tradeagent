@@ -27,3 +27,24 @@ Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; 
 Release to a file → 0 failed; names vs `main` → nothing removed; the draft PR's three runners green (run id quoted). Commit per
 item, one sentence, no trailers. Append `## Report` (≤20 lines): tip sha, the gate counts, the RED and mutant quoted, the run id,
 the sweep's verdicts, what you did NOT do. Close the draft PR after the report.
+
+## Report
+**Tip `e391ccd`** (plus this report commit) — 2 files, +12/-1; `git diff main -- src/` empty, no `Assert.` line anywhere in the diff.
+
+1. `.gitattributes` gains `*.strategy  text eol=lf` in the source block; `Fixture()` reads with `.ReplaceLineEndings("\n")`, so lines 67
+   and 185 hold on either checkout. **RED on this Mac** (Release; the three fixtures rewritten by `perl -pi -e 's/(?<!\r)\n/\r\n/'` →
+   `git ls-files --eol` `w/crlf`, CR 11/18/13): `Failed!  - Failed: 3, Passed: 7, Skipped: 0, Total: 10`, each case carrying run
+   34719212649's own `Assert.Contains() Failure: Sub-string not found` / Not found: "`ma-crossover.strategy`\n```\n# A moving-av"···.
+   **GREEN with the CRLF files still in place**: `Passed!  - Failed: 0, Passed: 10`; **mutant** (the normalisation removed again, CRLF
+   still there): `Failed: 3, Passed: 7`, same message. Restored (CR 0); `git add --renormalize .` staged nothing else. No `Timing`: no
+   clock. The attribute half alone: `git -c core.autocrlf=true clone` of `main` `5fcccdd` → `w/crlf`, CR 11/18/13; this branch → `w/lf`.
+2. **Proven on the runner:** draft PR #18, run **34720230379** at `e391ccd` — windows, ubuntu, macos and `package` all SUCCESS; the
+   windows trx names all three cases `outcome="Passed"`. Windows suites: Unit `705, Duration: 2 m 57 s`, Fault `272, 4 m 56 s`,
+   Integration `539 passed, 1 skipped, 6 m 31 s`; Timing re-run 1 + 5 + 88 in `4 s` / `10 s` / `8 m 39 s`. PR closed, not merged.
+3. **Sweep** (89 `ReadAllText`/`ReadAllLines`/`ReadLines` sites in `tests/`): of the 20 anchored at the repo root, 19 read a tracked `.cs`
+   or `.md` (`text eol=lf` since `U-crlf-win`, most normalising anyway) and the 20th is this fixture; the other 69 read files written at
+   runtime into temp directories, which no checkout touches. Nothing else at risk.
+
+**Gate at `e391ccd`, Release:** build `--no-incremental` → `0 Warning(s) 0 Error(s)`, 17 projects, 41 `CoreCompile:` tasks; Unit 3× →
+`Passed: 706, Failed: 0` each; Fault `277, 0`; Integration `627 passed, 1 skipped, 0 failed`; `[Fact]`/`[Theory]` names vs `main` 1298 =
+1298, nothing removed; no `Timing` red. **NOT done:** no product code, no assertion loosened, no other test touched, no merge, no money.
