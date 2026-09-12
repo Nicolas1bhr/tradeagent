@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -182,13 +183,29 @@ public static class AgentArgs
 /// owner who changes it on the Safety page is obeyed by the next turn and not by the next restart.
 /// Null, or a null answer, means no model flag goes on the command line.
 /// </param>
+/// <param name="role">
+/// Which council role's launches these are. It is what the launch grant NAMES, so it decides what
+/// the process may ask the gateway for — the chair may move money, Research may not — and it is
+/// TradeAgent's own answer rather than anything the agent says about itself.
+/// </param>
+/// <param name="attempt">
+/// The AI attempt the meter opened for the launch about to happen, or null when nothing opened one.
+/// Stamped on the grant so the gateway can record which attempt a request came from.
+/// </param>
+/// <param name="grants">
+/// Where launch grants are minted. The process-wide register by default — the same one the pipe
+/// server checks against.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
     Func<string> workspace,
     Func<IReadOnlyDictionary<string, string>> environment,
     AgentPresence? presence = null,
-    Func<string?>? model = null) : IAgentConversation
+    Func<string?>? model = null,
+    string role = CouncilRoles.Operations,
+    Func<string?>? attempt = null,
+    AgentGrants? grants = null) : IAgentConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
@@ -467,12 +484,22 @@ public sealed class AgentSession(
         };
         CliAgentRuntime.SetCommand(psi, exe, args);
 
+        // ONE LAUNCH, ONE GRANT, AND IT TRAVELS IN THE ENVIRONMENT ONLY.
+        //
+        // Minted here rather than by whoever built the environment, because this is the only line in
+        // the product that knows a process is about to exist: the chair's environment is a dictionary
+        // made once at prepare, and a token minted there would be one token for every turn of the
+        // app's life. Disposed when the turn returns, which pulls its expiry in to the grace — see
+        // AgentGrants.
+        using var launch = (grants ?? AgentGrants.Shared).Issue(role, attempt?.Invoke() ?? "");
+
         // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
         // as a copy of this process's, so everything TradeAgent was started with used to reach the
         // AI — see AgentEnvironment. The additions are still the only thing that puts `trade` on the
         // agent's PATH; losing them is how the agent ends up reading its own instructions about a
         // command it cannot run.
-        AgentEnvironment.Apply(psi, environment(), manifest.KeepEnvironment);
+        var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
+        AgentEnvironment.Apply(psi, env, manifest.KeepEnvironment);
 
         // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has

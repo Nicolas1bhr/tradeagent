@@ -14,6 +14,30 @@ public static class ToolDeployer
     /// <summary>The launcher's own side-cars. Present for a framework-dependent build, absent for a single-file one.</summary>
     static readonly string[] Launcher = ["trade.dll", "trade.runtimeconfig.json", "trade.deps.json"];
 
+    /// <summary>
+    /// WHAT THE APP DEPLOYED, recorded so the gateway can tell its own CLI from a copy of it.
+    ///
+    /// Under <c>state/</c> rather than <c>bin/</c>, beside the other things the app owns and the
+    /// agent does not write. It is not a secret and it is not a signature: an agent running as the
+    /// same user can rewrite this file, which is exactly why <c>U-contain-2</c> exists and why the
+    /// Doctor says "OS sandbox: NONE" out loud. What it does close is the cheap version of the
+    /// attack — a <c>trade.exe</c> copied into the workspace and run from there is refused by the
+    /// PATH rule before the hash is ever consulted.
+    /// </summary>
+    public static string DeployedHashFile => Path.Combine(Paths.State, "trade.sha256");
+
+    /// <summary>The hash of the CLI this install deployed, or null when it was never recorded.</summary>
+    public static string? DeployedHash()
+    {
+        try
+        {
+            var text = File.Exists(DeployedHashFile) ? File.ReadAllText(DeployedHashFile).Trim() : "";
+            return text.Length == 64 ? text.ToLowerInvariant() : null;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     /// <summary>Copies the shipped CLI into the managed bin directory when it is missing or older.</summary>
     public static string? EnsureTradeCli(string? sourceDir = null)
     {
@@ -42,9 +66,23 @@ public static class ToolDeployer
                 var f = Path.Combine(from, extra);
                 if (File.Exists(f)) File.Copy(f, Path.Combine(Paths.Bin, extra), overwrite: true);
             }
+
+            // The hash of what THIS BUILD SHIPPED, not of whatever is sitting at `dst`. The two are
+            // the same after a copy and differ exactly when something replaced the deployed file
+            // behind the app's back — and recording the file on disk would record the replacement as
+            // though the app had put it there.
+            Record(Sha256Hex.OfFile(src));
             return dst;
         }
         catch (IOException) { return File.Exists(dst) ? dst : null; }
+    }
+
+    static void Record(string? hash)
+    {
+        if (hash is not { Length: 64 }) return;
+        try { File.WriteAllText(DeployedHashFile, hash); }
+        catch (IOException) { /* the gateway then reports the peer as unchecked, which is the truth */ }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>

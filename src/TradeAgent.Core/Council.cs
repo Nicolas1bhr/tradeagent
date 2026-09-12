@@ -52,6 +52,16 @@ public static class CouncilRoles
     /// </summary>
     public static string Or(string? role) => IsKnown(role) ? role! : Default;
 
+    /// <summary>
+    /// WHETHER A ROLE MAY MOVE MONEY, and the one place that question is answered.
+    ///
+    /// Only the chair. Research proposes, designs experiments and reads; <c>docs/COUNCIL.md</c> gives
+    /// it no order permission, and the Strategist teams under it none either. A caller that proved no
+    /// role at all is not the chair by default — see <c>AgentContext.Role</c> — so an unknown or
+    /// absent role answers false here rather than falling through <see cref="Or"/> to Operations.
+    /// </summary>
+    public static bool MayPlaceOrders(string? role) => role == Operations;
+
     /// <summary>The role's name in the owner's words, for a card and for a mission file.</summary>
     public static string Title(string role) => role switch
     {

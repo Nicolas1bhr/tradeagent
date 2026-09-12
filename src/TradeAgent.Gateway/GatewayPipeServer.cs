@@ -18,6 +18,30 @@ namespace TradeAgent.Gateway;
 /// </summary>
 public sealed class GatewayPipeServer(TradingGateway gateway, string token, string? pipeName = null) : IAsyncDisposable
 {
+    /// <summary>
+    /// The launch grants this gateway will recognise. The process-wide register by default, because
+    /// the half that mints them is the app and the half that checks them is this class.
+    /// </summary>
+    public Security.AgentGrants Grants { get; init; } = Security.AgentGrants.Shared;
+
+    /// <summary>
+    /// WHAT A PEER MUST BE TO PRESENT A GRANT, or null to check nothing.
+    ///
+    /// Null is the honest default rather than a hole: off Windows the kernel will not say who is
+    /// holding a pipe at all (<see cref="Security.PeerImage.ClientPath"/> returns null there), so a
+    /// rule applied everywhere would refuse every caller on two of the three platforms this builds
+    /// on. The app configures it where it can be answered, and the Doctor's containment row says in
+    /// the owner's words whether it is configured — an unchecked peer is a fact about the
+    /// installation, not a silence.
+    /// </summary>
+    public Security.PeerRule? Peer { get; init; }
+
+    /// <summary>
+    /// How the image of the peer is read. Overridable so the RULE can be tested where the kernel
+    /// call cannot run; the product never sets it.
+    /// </summary>
+    public Func<NamedPipeServerStream, string?> PeerImagePath { get; init; } = Security.PeerImage.ClientPath;
+
     const int MaxFrameBytes = 1 << 20;
 
     /// <summary>
@@ -536,6 +560,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     async Task Serve(NamedPipeServerStream pipe, CancellationToken ct)
     {
         var authenticated = false;
+        // WHO THIS CONNECTION PROVED IT IS, settled once at hello and never re-read off a later
+        // frame. A role carried per-request would be a role the caller asserts; this one is the
+        // grant the app minted for one process, looked up in the app's own register.
+        Security.AgentGrant? grant = null;
         try
         {
             await using var _ = pipe;
@@ -617,6 +645,21 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                         await Send(pipe, IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, "token rejected"), req.Op, req.Session, req.RequestId);
                         return; // one chance per connection
                     }
+                    // WHO IS CALLING, and it is settled here or not at all.
+                    //
+                    // A frame with no grant is authenticated and roleless: it may read, and every
+                    // rule that asks which role is calling answers "none". A frame WITH a grant is
+                    // making the strong claim, so it gets the strong checks — the register must know
+                    // the token, the turn must not be over, and on a platform where the kernel will
+                    // say, the program holding the handle must be TradeAgent's own trade command.
+                    if (GrantRefusal(pipe, req, out grant) is { } grantRefusal)
+                    {
+                        gateway.Log.Engineering("Ipc", "grant_rejected", "warn", session: req.Session,
+                            requestId: req.RequestId ?? req.Id);
+                        await Send(pipe, grantRefusal, req.Op, req.Session, req.RequestId);
+                        return; // one chance per connection, exactly as a wrong token gets
+                    }
+
                     // Refused BEFORE the flag flips: a connection that asked for the operator's
                     // name never becomes usable under it, rather than being refused per-op after.
                     if (ReservedSessionRefusal(req) is { } helloRefusal)
@@ -634,7 +677,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                         // reaches this line agreed the version above. It used to be the ONLY
                         // report of a mismatch, which made compatibility something the peer was
                         // trusted to check about itself.
-                        compatible = true
+                        compatible = true,
+                        role = grant?.Role,
+                        attempt = grant?.AttemptId
                     }), req.Op, req.Session, req.RequestId)) return;
                     continue;
                 }
@@ -651,7 +696,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     continue;
                 }
 
-                if (!await Send(pipe, await Handle(req, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
+                if (!await Send(pipe, await Handle(req, grant, ct), req.Op, req.Session, req.RequestId ?? req.Id)) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -836,7 +881,45 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             $"'{AgentContext.OperatorSessionId}' is a reserved session name and is not available on this channel");
     }
 
-    async Task<IpcResponse> Handle(IpcRequest req, CancellationToken ct)
+    /// <summary>
+    /// Null when this hello may be served, and the refusal otherwise. <paramref name="grant"/> is the
+    /// launch this connection is, or null for a roleless one.
+    ///
+    /// THE ABSENT CASE IS NOT A REFUSAL, and that is the one judgement in here worth stating. A
+    /// connection with no grant is exactly as authenticated as it was before this unit and exactly as
+    /// unable to trade as a caller with no role — the owner's own <c>trade status</c> on the machine
+    /// still answers, and nothing that moves money does. Refusing it outright would buy no safety
+    /// (the roleless caller can already do nothing dangerous) and would cost the one diagnostic route
+    /// into a gateway that is misbehaving.
+    ///
+    /// The image is checked only for a connection that PRESENTS a grant, and only where a rule was
+    /// configured. Off Windows the kernel does not answer the question at all, so a rule applied
+    /// there would refuse everything; that is a gap, it belongs to the platform, and the Doctor says
+    /// so rather than this method pretending otherwise.
+    /// </summary>
+    IpcResponse? GrantRefusal(NamedPipeServerStream pipe, IpcRequest req, out Security.AgentGrant? grant)
+    {
+        grant = null;
+        var verdict = Grants.Verify(req.Grant);
+
+        if (verdict.State is Security.GrantState.Absent) return null;
+
+        if (verdict.State is not Security.GrantState.Valid)
+            return IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, verdict.Reason);
+
+        if (Peer is { } rule)
+        {
+            var image = PeerImagePath(pipe);
+            if (Security.PeerImage.Verdict(image, Security.PeerImage.HashOf(image), rule) is { } why)
+                return IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED,
+                    $"this connection presented a launch grant, and {why}");
+        }
+
+        grant = verdict.Grant;
+        return null;
+    }
+
+    async Task<IpcResponse> Handle(IpcRequest req, Security.AgentGrant? grant, CancellationToken ct)
     {
         // THE EFFECTIVE ID, COMPUTED BEFORE IT IS GUARDED — because the guard has to be on the value
         // that is USED, not on the field that may be absent.
@@ -882,7 +965,30 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 $"carried onto the broker order as the client order id, which must fit {MaxClientOrderIdChars}, " +
                 "and that has to be a shape the broker will give back");
 
-        var ctx = AgentContext.ForAgent(req.Session);
+        var ctx = AgentContext.ForAgent(req.Session, grant?.Role, grant?.AttemptId);
+
+        // THE ROLE DECIDES WHETHER MONEY MOVES, and this is the only line that reads it.
+        //
+        // Before it, every authenticated caller was the same caller: one machine token, no way to
+        // tell the Operations Director's launch from the Research Director's, so a Research turn
+        // asking to buy was served. The doctrine gives Research no order permission at all, and a
+        // caller that presented no grant has proved no role and gets none either — which is what
+        // "the machine token alone is no longer served as the chair" means in code.
+        //
+        // Refused here rather than inside TradingGateway because it is a fact about the CALLER, not
+        // about the order: the gateway's modes, limits, approvals and kill switch are unchanged and
+        // still apply to everything that gets past this.
+        if (Core.Ops.IsMutating(req.Op) && !ctx.MayPlaceOrders)
+        {
+            var who = ctx.Role is { Length: > 0 } named
+                ? $"the {CouncilRoles.Title(named)}"
+                : "a caller that presented no launch grant";
+            gateway.Log.Activity($"AI order refused: {who} may not place, change or cancel orders", "warn");
+            return IpcResponse.Fail(req.Id, ErrorCode.ROLE_MAY_NOT_TRADE,
+                $"'{req.Op}' moves money, and {who} may not. Only the " +
+                $"{CouncilRoles.Title(CouncilRoles.Operations)}'s own launch may, and it proves which launch " +
+                "it is with the grant TradeAgent put in its environment.");
+        }
 
         // EVERY READ THIS OPERATION HAS TO DO FIRST IS PART OF THE EMERGENCY, NOT A PRELUDE TO IT.
         //

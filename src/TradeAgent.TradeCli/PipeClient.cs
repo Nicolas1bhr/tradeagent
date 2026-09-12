@@ -27,7 +27,14 @@ public sealed class PipeClient : IAsyncDisposable
         _r = new StreamReader(_pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
         _w = new StreamWriter(_pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
 
-        var hello = await SendAsync(new IpcRequest { Op = Ops.Hello, Token = token }, ct);
+        // THE LAUNCH GRANT COMES FROM THE ENVIRONMENT AND FROM NOWHERE ELSE — no flag, no file, no
+        // argument. TradeAgent put it in the environment of the one process it started for this
+        // turn, so a `trade` inside that process has it and a `trade` anywhere else does not, which
+        // is the whole of what it proves. Absent is not an error here: a roleless connection is
+        // served, and it is refused only if it asks to move money.
+        var grant = Environment.GetEnvironmentVariable(AgentGrants.Variable);
+
+        var hello = await SendAsync(new IpcRequest { Op = Ops.Hello, Token = token, Grant = grant }, ct);
         if (!hello.Ok)
             throw new TradeAgentException(ErrorCode.IPC_UNAUTHENTICATED, hello.Error?.Message ?? "handshake refused");
     }

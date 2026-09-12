@@ -3,6 +3,7 @@ using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
+using TradeAgent.Security;
 
 namespace TradeAgent.Tests;
 
@@ -21,7 +22,21 @@ public static class TestEnv
         Directory.CreateDirectory(Home);
         Environment.SetEnvironmentVariable("TRADEAGENT_HOME", Home);
         Environment.SetEnvironmentVariable("TRADEAGENT_PIPE", "ta-test-" + Guid.NewGuid().ToString("n")[..12]);
+
+        // ONE CHAIR'S LAUNCH GRANT FOR THE WHOLE ASSEMBLY, because in the product every process that
+        // dials this pipe IS a launch TradeAgent started and minted a grant for. A test assembly has
+        // no AgentSession doing that, so it stands in for one: the register is the process-wide one
+        // the pipe server checks, and the environment variable is where a launched process finds it
+        // — which is also how a `trade` child process started by a test gets it, by inheritance.
+        //
+        // Tests that are ABOUT the grant build their own register and speak the wire themselves, so
+        // this cannot make one of them pass.
+        Chair = AgentGrants.Shared.Issue(CouncilRoles.Operations, "test-attempt");
+        Environment.SetEnvironmentVariable(AgentGrants.Variable, Chair.Token);
     }
+
+    /// <summary>The assembly's stand-in for a launch of the Operations Director. See <see cref="Init"/>.</summary>
+    public static AgentGrant? Chair { get; private set; }
 
     public static Database NewDb() => new(Path.Combine(Home, $"db-{Guid.NewGuid():n}.db"));
 

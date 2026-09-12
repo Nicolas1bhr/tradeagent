@@ -2,8 +2,30 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using TradeAgent.Core;
+using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
+
+/// <summary>
+/// WHAT THIS INSTALLATION'S CONTAINMENT ACTUALLY IS, in one place, so the gateway, the Doctor and
+/// the live gate are all reading the same answer rather than three descriptions of it.
+/// </summary>
+public static class Containment
+{
+    /// <summary>
+    /// The rule the agent pipe applies to a peer that presents a launch grant: TradeAgent's own
+    /// trade command, at the path this app deployed it to, hashing to what this app deployed, and
+    /// never anything under the managed AI-runtime folder or inside the agent's own workspace.
+    ///
+    /// Read now rather than cached: <c>ToolDeployer</c> writes the hash at start, and a gateway
+    /// rebuilt when the owner changes trading platform must see what the current install deployed.
+    /// </summary>
+    public static PeerRule PeerRuleNow() => new(
+        Path.Combine(Paths.Bin, ToolDeployer.TradeCliName),
+        ToolDeployer.DeployedHash(),
+        Paths.Tools,
+        Paths.Workspace);
+}
 
 /// <summary>
 /// WHAT HOLDS AN AGENT PROCESS, reported in the words the Doctor card prints.

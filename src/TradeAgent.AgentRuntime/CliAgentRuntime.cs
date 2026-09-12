@@ -19,7 +19,8 @@ namespace TradeAgent.AgentRuntime;
 /// The model the OWNER chose, or null for the manifest's default. A function rather than a value
 /// because it lives in the settings and can change while this runtime is alive.
 /// </param>
-public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null) : IAgentRuntime
+public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
+    Func<string, string?>? attemptId = null) : IAgentRuntime
 {
     ContainedProcess? _session;
     ContainedProcess? _login;
@@ -592,7 +593,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
-            model: () => RequestedModel);
+            model: () => RequestedModel, role: CouncilRoles.Operations,
+            attempt: () => attemptId?.Invoke(CouncilRoles.Operations));
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -613,7 +615,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // would have to know which runtime is prepared, which is the one thing this interface
             // exists to keep out of the app.
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
-                model: () => ModelFor(model()));
+                model: () => ModelFor(model()), role: role, attempt: () => attemptId?.Invoke(role));
             _roleConversations[role] = session;
             return session;
         }

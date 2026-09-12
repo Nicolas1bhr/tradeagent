@@ -371,6 +371,23 @@ public sealed class TurnMeter
     readonly Dictionary<string, (string Id, int PromptChars, bool HeldForTheLoop)> _open = [];
 
     /// <summary>
+    /// THE ATTEMPT ONE ROLE'S LAUNCH BELONGS TO, or the id its next launch will carry.
+    ///
+    /// Read by the launch-grant mint (<c>U-containment</c>): the token handed to one agent process
+    /// names the attempt that process's work is charged to, so "which attempt placed this order" is
+    /// answered by the app's own record rather than by an agent describing itself. PER ROLE, because
+    /// that is what the meter now holds — a single slot would hand the chair's grant another role's
+    /// attempt id, which is the same confusion `U-budget-reserve` removed from the reservations.
+    ///
+    /// The minted id is the fallback for the same reason <see cref="Mint"/> exists: a message that
+    /// names its own attempt is built before <see cref="Begin"/> writes the row.
+    /// </summary>
+    public string? OpenAttemptIdFor(string? role)
+    {
+        lock (_gate) return _open.TryGetValue(Key(role), out var held) ? held.Id : _minted;
+    }
+
+    /// <summary>
     /// AN ID MINTED AND NOT YET LAUNCHED UNDER. <see cref="Mint"/> puts one here so the turn's
     /// message can name it; <see cref="Begin"/> takes it. Nothing is committed while it sits here —
     /// a minted id nobody launched under names no row, which is why the relay's fence refuses a
