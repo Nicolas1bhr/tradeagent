@@ -398,13 +398,17 @@ public sealed class AppHost : IAsyncDisposable
             // trades through. There is deliberately no second Attach call down there to forget.
             UpdateTradingInterlock.Attach(() => Gateway, Updates);
 
-            _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
+            _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
             _server.Start();
             Health.Set(Components.Gateway, HealthState.READY);
 
             // THE MODEL IS READ THROUGH A FUNCTION, not captured: the owner changes it on the Safety
             // page while the agent is running, and the next turn is the one that has to obey.
-            Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId);
+            Agent = new AgentSupervisor(Health, () => Gateway.Settings.SelectedModelId,
+                // The attempt the meter opened for the launch about to happen. A function, because
+                // the launch is minutes away from this line and the attempt it belongs to does not
+                // exist yet.
+                attemptId: role => Meter?.OpenAttemptIdFor(role));
             Meter = new TurnMeter(_db,
                 cap: () => Gateway.Settings.AiDailyCostCap,
                 session: () => (Conversation as AgentSession)?.ThreadId,
@@ -513,7 +517,7 @@ public sealed class AppHost : IAsyncDisposable
         // Forgetting this line is how a fill on the new platform stops waking the AI.
         Gateway.RaiseMissionWake = RaiseWake;
 
-        _server = new GatewayPipeServer(Gateway, IpcToken.Ensure());
+        _server = new GatewayPipeServer(Gateway, IpcToken.Ensure()) { Peer = Containment.PeerRuleNow() };
         _server.Start();
         Health.Set(Components.Gateway, HealthState.READY);
         // A new gateway is a new object, and the hook is on the object. Forgetting this line is how

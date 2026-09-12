@@ -84,6 +84,18 @@ public sealed class IpcRequest
     [JsonPropertyName("id")] public string Id { get; set; } = Guid.NewGuid().ToString("n");
     [JsonPropertyName("op")] public string Op { get; set; } = "";
     [JsonPropertyName("token")] public string? Token { get; set; }
+
+    /// <summary>
+    /// THE LAUNCH GRANT, AND IT IS A DIFFERENT KIND OF THING FROM <see cref="Token"/>.
+    ///
+    /// <c>token</c> says "I am allowed to speak to this machine's gateway" and every agent process
+    /// can read it, because it is a file under the user's own account. This says "I am the launch
+    /// TradeAgent started for the Operations Director, under attempt X, and my turn is not over" —
+    /// it is minted per launch, handed to exactly one process in its environment, and expires with
+    /// the turn. Optional on the wire: a frame without one is authenticated and roleless, which is a
+    /// caller that may read and may not trade.
+    /// </summary>
+    [JsonPropertyName("grant")] public string? Grant { get; set; }
     [JsonPropertyName("session")] public string? Session { get; set; }
     [JsonPropertyName("request_id")] public string? RequestId { get; set; }
     [JsonPropertyName("args")] public Dictionary<string, JsonElement>? Args { get; set; }

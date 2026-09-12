@@ -28,6 +28,10 @@ public enum ErrorCode
     // instrument and still closes the others.
     CLOSE_UNRESOLVED, CLOSE_UNRESOLVED_ON_INSTRUMENT,
     AUTONOMY_REQUIRES_PROVABLE_STATE,
+    // The caller is authenticated and is not allowed to do THIS. Its own code rather than
+    // IPC_UNAUTHENTICATED, which reads "your token is wrong" and would send whoever owns that peer
+    // hunting a credential problem that is not there: the credential was fine and the role was not.
+    ROLE_MAY_NOT_TRADE,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -433,6 +437,7 @@ public static class Errors
         [ErrorCode.RECONCILIATION_FAILED]          = ("TradeAgent could not confirm the true state of your orders.", "Open ATAS and check your orders, then press Resume.", false),
         [ErrorCode.IPC_UNAVAILABLE]                = ("The AI cannot reach the trading service.", "Restart TradeAgent.", true),
         [ErrorCode.IPC_UNAUTHENTICATED]            = ("A program tried to use trading without permission.", "No action needed. The request was refused.", false),
+        [ErrorCode.ROLE_MAY_NOT_TRADE]             = ("A part of the AI that is not allowed to trade asked to place, change or cancel an order.", "No action needed. The request was refused and recorded.", false),
         // Deliberately NOT IPC_UNAUTHENTICATED. A peer refused here may hold a perfectly good token;
         // what it does not share is the shape of the conversation, and telling its owner to go
         // looking for a permission problem sends them after a fault that is not there. It is the
