@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `c758fce`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `7b90acf`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -23,15 +23,14 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 GREEN on all four jobs), **`U-runner-1` `1e92fe3`** (the
    strategy program; no schema change; CI run 34719212649 RED on windows-latest only — a CRLF checkout of the `.strategy`
    fixtures), **`U-crlf-strategy-win` `137aaa4`** (the fixer, test- and attributes-only; CI run 34721991796 GREEN on all four jobs),
-   **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 in flight when written).
+   **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 in flight when written), **`U-containment`
+   `7b90acf`** (no schema change; CI run 34723265426 and draft PR #17's run at `ee2abb2` in flight when written).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
      PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
    - `u-runner-3` (worktree `U-runner-3`, created on the `u-runner-2` tip): a fresh builder dispatched 00:05 2026-09-13 on
      `docs/briefs/U-runner-3.md` — the backtest, **schema 12**, told to rebase onto `main` before its gate.
-   - `u-containment` (worktree `U-containment`, tip `ee2abb2` rebased onto `main` `340575d`, built and reported, draft PR #17 OPEN
-     for the windows proof at that tip): being gated by the manager for landing; its record is drafted.
    - `u-api-worker` (worktree `U-api-worker`, created on the `u-containment` tip `ee2abb2`): a fresh builder dispatched 00:30 on
      `docs/briefs/U-api-worker.md` — the app-owned harness, **schema 13**, told to rebase onto `main` before its gate.
 4. **CI on `main`:** green on all four jobs at `137aaa4` (the CRLF fixture red of `1e92fe3` closed); `c758fce` in flight. The eleven
@@ -42,8 +41,9 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
 7. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) the
-   containment direction beyond `U-containment` — an AppContainer (`U-contain-2`, needs the box) or harness-only execution
-   for every role, the doctrine's honest alternative.
+   containment direction beyond `U-containment` (landed: job object, whitelist environment, per-launch grants, the armed live
+   configuration refusing an uncontained CLI; OS sandbox still NONE) — an AppContainer (`U-contain-2`, needs the box) or
+   harness-only execution for every role, the doctrine's honest alternative.
 8. **Machine facts that cost time:** three Opus legs in parallel reach the session limit in about two hours and the WEEKLY
    limit in two days — budget for it; a runner-measuring fixer costs a full builder; two parallel units take their schema
    numbers FROM THE BRIEF (assigned at dispatch), never "the next free"; `docs/briefs/` holds only work in flight.

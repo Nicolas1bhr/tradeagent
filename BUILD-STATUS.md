@@ -5197,3 +5197,44 @@ Release: build → 0 warnings, 0 errors; suite → 783 + 277 + 627 = 1687 passed
 
 **NOT done:** no fills, fees, slippage, stop or target enforcement, capital, trace, persistence, report or pipe op (`U-runner-3`);
 nothing reads `workspace/strategies/`; no box, no ATAS, no money.
+
+## 2026-09-13 — U-containment landed: the agent process held in a job, given a clean environment, known by launch on the pipe, and refused in the armed live configuration
+
+Rule 2 of `docs/COUNCIL.md` and the round-4 containment lines, by one fresh builder on `docs/briefs/U-containment.md` (dispatched
+16:10, stalled twice by the Mac sleeping, resumed with its context both times; draft PR #17 for the windows runner). Merge
+`7b90acf`, 6 commits, 33 files, +2605/−53 (new `Security/AgentGrants.cs`, `PeerImage.cs`,
+`AgentRuntime/AgentEnvironment.cs`, `Containment.cs`; `AgentSession.cs`, `AgentSupervisor.cs`, `CliAgentRuntime.cs`, `TurnMeter.cs`,
+`GatewayPipeServer.cs`, `GatewayTypes.cs` (`AgentContext.Role`/`AttemptId`), `PipeClient.cs`, `Protocol.cs`, `AppHost.cs`, the Doctor,
+`CONTRACTS.md`, `COUNCIL.md`; eight test classes). No schema number: the grant register is in memory, the deployed-CLI hash a file.
+
+- **A job that dies with the app:** on Windows every agent process is placed in a Job Object with `KILL_ON_JOB_CLOSE`, breakaway
+  forbidden, assigned immediately after `Process.Start`; on macOS/Linux the child is its own session and the cancel kills it. Mac
+  RED: "the turn's detached grandchild (pid 40448) was still running after CancelAsync"; **windows RED on the runner**, run
+  34718510974: the same test, `Probe: ticks=10147, middle.done=True`; mutant (`SILENT_BREAKAWAY_OK`), run 34719666628: red again,
+  "lets EVERY child start outside the job, asked for or not".
+- **A clean environment:** a whitelist, never the inherited copy. RED: `TA_TEST_EXPORTED_CREDENTIAL … reached the agent process`;
+  mutant (`Clear()` deleted): the same line.
+- **The pipe knows which launch is calling:** a per-attempt grant (role, attempt id, expiry) handed only through the environment,
+  required in `hello` beside the machine token, role and attempt stamped on `AgentContext`; the peer image checked as the bridge
+  does it. RED: "a client holding nothing but the machine token … was served an order as though it were the Operations Director";
+  mutant (`MayPlaceOrders => true`): "the Research Director's launch placed an order"; image mutant (the workspace clause dropped):
+  a copied `trade.exe` inside the agent's tree refused by the path rule alone, the verdict no longer naming the workspace.
+- **The protected configuration:** `Doctor` gains `Containment` (job, environment, grant, image, "OS sandbox: NONE" said plainly);
+  while `ModeIsLive && LiveActivated` the vendor CLI is refused until an OS sandbox reports OK. RED: `Value is null` and "the vendor
+  CLI ran in the armed live configuration"; mutant (`ModeIsLive` alone): `LIVE_CONFIRM` unactivated refused too.
+- **Judged at landing, two deviations kept:** the child is assigned to the job right after start rather than started suspended
+  (suspended needs raw `CreateProcess`, re-implementing the redirection the no-terminal rule rests on, to close a one-syscall
+  race — a bound, recorded); a `hello` with no grant is served ROLELESS (may read, refused everything that moves money) rather than
+  refused outright, so `trade status` on the box still answers while "the machine token alone is the chair" is closed. One extra
+  commit: the Windows probe rewritten as script files with a heartbeat, because a quoted script through `cmd /c` never reached
+  the runner's shell intact — the first two windows runs failed on the probe, not the product.
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `3735a17`, Release: 0 warnings, 0 errors;
+touched classes 3× → 30/30, 61 + 1 skipped, 34/34 each; Unit 736 + Fault 277 + Integration 635 = 1648 passed, 0 failed, 1 skipped;
+names → 39 added, 0 removed; CI 34720169201 and 34721448060: ubuntu and macos green, windows red only on `main`'s own CRLF red
+(this unit's Fault 272/272, Integration 547/548 there). Manager's gate at `43323f3` (rebased over the CRLF fix and `U-runner-2`; landed as `7b90acf`
+after a docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 813 + 277 + 635 = 1725
+passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 34 added (sets 1309 → 1343); scan clean (grant `Token`
+fields, judged); no trailers; PR #17's runners at `ee2abb2`: in flight at the time of this record; `rev-list --count` → 0; CI run 34723265426 at `7b90acf`: in flight at the time of this record; both verdicts in a follow-up commit.
+
+**NOT done:** no OS sandbox — same-user reads and writes of `state/` stand, a Unix session is escapable by its own `setsid`
+(`U-contain-2`); the peer-image kernel call is Windows-only, the Doctor row saying the rule is unenforced elsewhere; no box.
