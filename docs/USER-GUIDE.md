@@ -382,6 +382,14 @@ tool like any other, so it is reserved before it is sent and charged when it com
 day's limit has no room for it, nothing is sent, your message is kept, and the chat says so in one
 line — rather than going quiet as though the AI had broken.
 
+**What the limit cannot do: stop a turn that has already started.** The AI tool takes no instruction
+from TradeAgent about how much one run of it may use — that number does not exist on its command
+line — so the amount set aside is what *TradeAgent* holds back, not a ceiling your supplier enforces.
+A single turn can therefore use more than its allowance and be billed for it, and the limit does its
+work between turns: the next one is refused. That is why the figure set aside is priced at the
+dearest rate the same tokens can be charged at, and why raising the allowance is the cautious
+direction rather than the expensive one.
+
 **A turn that ends without saying what it used is charged what was set aside for it.** The work was
 asked for and your supplier billed for it, so the reservation stands as the cost. The card and the
 daily report both say how many turns that was, because for those turns the figure is the *most* they

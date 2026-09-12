@@ -1126,7 +1126,20 @@ zero is not a charge and such a row stays unpriced. `AiSpendToday.UnreportedTurn
 that part of it is the most it could have been.
 
 `TurnMeter` holds one open attempt PER ROLE — one conversation per role, and the owner can type into
-the chair's while another role's turn is in flight — and `Close` writes the row it opened, by id.
+the chair's while another role's turn is in flight — and `Close` writes the row it opened, by id. The
+close of a turn the MISSION LOOP opened is held for that turn's one committed transition
+(`CommitStaged`, above); the owner's typed turn publishes nothing and consumes no wake, so its close
+is written the moment the turn ends rather than held in a slot the next mission turn also writes to.
+
+**STATED LIMITATION: there is no provider-side ceiling.** The reservation bounds what TradeAgent
+COMMITS, not what the vendor will bill. codex 0.153.4 takes no per-request token or cost limit on its
+command line and its sandbox restricts writes rather than what enters its context
+(`docs/COUNCIL.md`, "workers run on an app-owned harness"), so a turn whose input runs past
+`AiTurnAllowanceInputTokens` is still run and still billed, and this app's only enforcement is
+refusing the NEXT launch. That is why over-reserving is the safe direction and why the reservation is
+priced at the dearest rate the same tokens can carry. A per-REQUEST bound that the provider itself
+enforces arrives with the harness (`U-api-worker`); until then the allowance is an app-side
+commitment and the daily ceiling is enforced between turns, never inside one.
 
 ## The owner's daily report — `src/TradeAgent.Gateway/DailyReports.cs`
 
