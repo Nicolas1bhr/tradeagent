@@ -100,6 +100,48 @@ period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity
 `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
 an OS lookup, so a program means the same thing on every machine that hashes it.
 
+## Evaluation — one closed bar at a time
+
+`StrategyEvaluator.Step(state, bar, account)` is the whole interface: the bar that has just closed, and
+the account state the CALLER supplies (capital, equity, position, average fill price, pending-order
+state, bars since entry). None of those is in the expression grammar — a rule cannot say `equity` — and
+the evaluator never invents one. It emits **intents** and places nothing.
+
+- **Warm-up first.** Before `WarmUpBars` closed bars the event is consumed, the indicators are fed and
+  no rule is evaluated. A gap advances no lookback, so warm-up counts BARS and not minutes.
+- **Order.** Every exit before every entry; the scheduled `session_exit` and `max_hold_bars` before
+  the declared exit rules; declared rules in their written order; **at most one intent per event**.
+- **No same-event reversal.** An exit that fires ENDS the event, even though the position is now flat
+  and an entry rule may be true on the same bar.
+- **No duplicate signal while one is pending.** The caller's pending-order state is the authority; the
+  intent the evaluator emitted is held over the next event as well, so a caller that has not yet
+  reported cannot be handed the same signal twice. It applies to exits, not only entries.
+- **Executable only afterwards.** An intent carries the bar it came from and `NotBefore`, that bar's
+  close: the earliest instant it may be acted on.
+- **Undefined is not false.** If a value a rule reads is undefined once the program is warm — an
+  opening range before its session's interval — the event is NOT evaluated and is counted. `and` and
+  `or` are three-valued: a definitely-false side makes `and` false whatever the other side is.
+- **Time filters are read from the bar's OPEN time** in the program's zone, which is the only timestamp
+  the dataset carries. `weekdays` and `entry_window` gate ENTRIES only — a program that could not exit
+  outside its window would be a trap. `session_exit` fires at or after its wall clock. A session is
+  one local DAY.
+- **The calendar** (`StrategyCalendar`, `StrategyVersions.CalendarVersion`) is a rule table, not a
+  database: standard and daylight offsets for the six zones, the United States' rule (second Sunday in
+  March, first Sunday in November, local) and the European Union's (last Sunday in March and October,
+  01:00 UTC), applied to every year. Instants become wall clocks and never the other way round, so the
+  spring hour that does not exist admits no bar and the autumn hour that happens twice admits both.
+  There is no holiday table, and a southern-hemisphere zone would need a version bump.
+- **Sizing** is the declared rule over the supplied account state: `fixed` is the quantity,
+  `capital_fraction` is `capital * f / close`, `risk_fraction` is `equity * f / (close - stop)`. It is
+  **not** rounded to an instrument increment — a dataset carries none — so that rounding and the
+  gateway's limits happen downstream. A stop that is not below the close has no risk distance and is a
+  fault. An entry that sizes to nothing is counted, not a fault: an account with no capital cannot act.
+- **A fault is a value**, `EvaluationOutcome.Faulted` with a reason, and the run halts with no intent:
+  a bar out of order or off the interval grid, a division by zero, arithmetic that overflowed, an event
+  over the operation budget, state over its size limit, or a run the caller stopped. Nothing throws out
+  of the evaluator — the program was written by a cheap model, and a crash it could cause would be the
+  app's.
+
 ## Refusals
 
 A refusal reads `line 7: <reason>`, or `program: <reason>` when what is wrong is the ABSENCE of a

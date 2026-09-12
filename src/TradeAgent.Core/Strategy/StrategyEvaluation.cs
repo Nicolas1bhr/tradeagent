@@ -130,7 +130,7 @@ public sealed record EvaluationCounters(
     long EvaluatedEvents,
     long Intents,
     long EntriesOutsideTimeFilters,
-    long EntriesWhilePending,
+    long SignalsWhilePending,
     long EntriesWithoutSize,
     int PeakOperations,
     int PeakStateBytes);

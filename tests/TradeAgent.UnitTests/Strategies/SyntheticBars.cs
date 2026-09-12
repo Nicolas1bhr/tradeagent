@@ -67,4 +67,21 @@ public static class SyntheticBars
 
         return [.. rows.Select((r, i) => At(i, r[0], r[1], r[2], r[3], r[4]))];
     }
+
+    /// <summary>
+    /// <paramref name="count"/> consecutive one-minute bars from <paramref name="from"/>, each with
+    /// the close <paramref name="close"/> gives for its index and a high and low half a unit either
+    /// side. For the time-filter and calendar tests, where the prices are beside the point.
+    /// </summary>
+    public static IReadOnlyList<KlineBar> Minutes(
+        DateTimeOffset from, int count, Func<int, decimal>? close = null)
+    {
+        var price = close ?? (_ => 100m);
+
+        return [.. Enumerable.Range(0, count).Select(i =>
+        {
+            var value = price(i);
+            return new KlineBar(from.AddMinutes(i), value, value + 0.50m, value - 0.50m, value, 1m);
+        })];
+    }
 }
