@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `7b90acf`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `1b96f55`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -23,7 +23,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 GREEN on all four jobs), **`U-runner-1` `1e92fe3`** (the
    strategy program; no schema change; CI run 34719212649 RED on windows-latest only — a CRLF checkout of the `.strategy`
    fixtures), **`U-crlf-strategy-win` `137aaa4`** (the fixer, test- and attributes-only; CI run 34721991796 GREEN on all four jobs),
-   **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 in flight when written), **`U-containment`
+   **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 GREEN on all four jobs), **`U-containment`
    `7b90acf`** (no schema change; CI run 34723265426 and draft PR #17's run at `ee2abb2` in flight when written).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
@@ -33,7 +33,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
      `docs/briefs/U-runner-3.md` — the backtest, **schema 12**, told to rebase onto `main` before its gate.
    - `u-api-worker` (worktree `U-api-worker`, created on the `u-containment` tip `ee2abb2`): a fresh builder dispatched 00:30 on
      `docs/briefs/U-api-worker.md` — the app-owned harness, **schema 13**, told to rebase onto `main` before its gate.
-4. **CI on `main`:** green on all four jobs at `137aaa4` (the CRLF fixture red of `1e92fe3` closed); `c758fce` in flight. The eleven
+4. **CI on `main`:** green on all four jobs at `137aaa4` and `c758fce`; `7b90acf` in flight. The eleven
    `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
    goes red, the fixer is that section's second bullet.
 5. **Briefed, committed, NOT dispatched:** none — every brief in `docs/briefs/` has a leg on it.

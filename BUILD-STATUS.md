@@ -5193,7 +5193,7 @@ section; `CONTRACTS.md`; seven new test classes). No schema change, nothing on t
 17 projects; 12 touched classes 3× → 106/106 (Unit) and 6/6 (Integration) each; Unit 783 + Fault 277 + Integration 627 = 1687
 passed, 0 failed, 1 skipped; names vs `main` → 61 added, 0 removed; 127 test files all text. Manager's gate at `c758fce`,
 Release: build → 0 warnings, 0 errors; suite → 783 + 277 + 627 = 1687 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 63 added; scan clean; no trailers; `rev-list
---count` → 0; CI run 34722641133 at `c758fce`: in flight at the time of this record; verdict in a follow-up commit.
+--count` → 0; CI run 34722641133 at `c758fce`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** no fills, fees, slippage, stop or target enforcement, capital, trace, persistence, report or pipe op (`U-runner-3`);
 nothing reads `workspace/strategies/`; no box, no ATAS, no money.
