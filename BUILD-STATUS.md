@@ -5043,7 +5043,7 @@ windows-latest GREEN with the press-settles test.** Its first attempt was red on
 InboxUnattested`) — a path this branch does not touch, green on `main` 75 minutes earlier and on the re-run: recorded as an
 observed intermittent, no fixer yet. Manager's gate at `fac2370` (the report tip rebased over the `U-turn-commit`
 landing, no conflict), Release: build → 0 warnings, 0 errors; suite → 615 + 277 + 627 = 1519 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1255 =
-1255); scan clean; no trailers; `rev-list --count` → 0; CI run 34701889403 at `fac2370`: in flight at the time of this record; verdict in a follow-up commit.
+1255); scan clean; no trailers; `rev-list --count` → 0; CI run 34701889403 at `fac2370`: all four jobs GREEN — ubuntu, macos, windows-latest (the press-settles test on its new budget) and `package`.
 
 **NOT done:** no product code; no `Timing` membership; the eleven `DispatchRecoveryTests` presses on two seconds (above);
 no box, no ATAS, no money.

@@ -15,24 +15,20 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `bfe7a0c`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `73d09f8`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
-   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 at that sha GREEN on all
-   four jobs).
+   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
+   four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
-   - `u-press-settle-win` (worktree `U-press-settle-win`; draft PR #16 OPEN): a FRESH fixer re-briefed 15:25 from the branch — reads
-     PR #16's marks (run 34189533668), removes the harness (a `PressMark` hook in `TradingGateway.cs` and
-     `_PressSettleWinMeasurement.cs`), gates, reports, closes the PR. It fixes the windows-only red below.
    - `u-budget-reserve` (worktree `U-budget-reserve`): a FRESH builder re-briefed 15:50 from the branch, told to rebase onto
      `u-turn-commit` `0da64d7` first (four conflicts: `CONTRACTS.md`, `MissionLoop.cs`, `TurnMeter.cs`, `CouncilLoopTests.cs`;
      its item 3 must live INSIDE turn-commit's one-transaction turn end), reproduce every RED and mutant, gate, report. No schema number.
    - `u-containment` (worktree `U-containment`, new at `bfe7a0c`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`,
      no schema number, a draft PR for the windows runner, told to rebase onto `main` before its gate.
-4. **CI on `main`:** green on macos and ubuntu at every sha since `2082091`; windows-latest INTERMITTENTLY red on ONE Fault test,
-   `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close…` (red at `8197163`, GREEN at `583f24e` run 34694003715 —
-   the runner's disk spends the press's two-second budget after the cancel; the product refused honestly) — the
-   `u-press-settle-win` fixer above. The thirty-minute Windows Unit suite is gone since `8197163` (2 m 35 s).
+4. **CI on `main`:** green on all three platforms at `fac2370`; the windows-only press-settles red is closed by `U-press-settle-win`.
+   The eleven `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in its section — if one goes
+   red, the one-item fixer is that section's second bullet applied to that file.
 5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-api-worker.md` (the app-owned harness: one provider,
    one role, every tool a grant, every boundary counted, the key in memory only). Dispatch when `u-budget-reserve` lands, so
    that at most two heavy legs run at once.
