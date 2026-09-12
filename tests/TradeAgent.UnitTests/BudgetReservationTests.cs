@@ -4,6 +4,7 @@ using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -274,6 +275,52 @@ public class BudgetReservationTests : IDisposable
         Assert.Equal(1, spend.Turns);
         Assert.Equal(1, spend.UnreportedTurns);    // so the total is not read as a bill
         Assert.Equal(0, spend.UnpricedTurns);
+    }
+
+    /// <summary>
+    /// AND EVERY SURFACE THAT SHOWS THE DAY SAYS SO. The item is not finished when the ledger is
+    /// right: `Spent` now contains money that is a WORST CASE, and a total the owner, the report and
+    /// the AI itself all read as a bill is the reading rule 4 forbids. Three surfaces, one fact.
+    ///
+    /// <para>The report says it twice on purpose: once as a count beside the day's turns, and once
+    /// in the unresolved list beside the LAUNCHED and LOST rows — because "reserved and unresolved"
+    /// above it sums only the rows still open, and a turn charged its reservation is exactly as
+    /// unresolved as those are.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_unreported_turn_is_named_on_the_card_the_report_and_the_line_the_AI_reads()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var day = DateTimeOffset.Now.ToLocalTime().Date.AddHours(12);
+        var at = new DateTimeOffset(day, TimeZoneInfo.Local.GetUtcOffset(day));
+
+        var meter = new TurnMeter(db, () => 50m, runtimeId: () => "codex", now: () => at,
+            recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol", share: _ => 1m);
+
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);
+        meter.Record(new AgentTurnEnded(1, TimeSpan.FromSeconds(2), "", at), CouncilRoles.Operations);
+        meter.CommitStaged();
+
+        var spend = meter.Today;
+        Assert.Equal(1, spend.UnreportedTurns);
+
+        // THE CARD, in the owner's words.
+        Assert.Contains("never reported what they used and are charged what they reserved",
+            DashboardPage.MissionCost(spend));
+
+        // THE LINE THE AI READS, in the same direction and not folded into the unpriced one.
+        var told = MissionSituation.SpendLine(spend)!;
+        Assert.Contains("never reported what they used and are charged what they reserved", told);
+        Assert.Contains("which is the most they could have cost", told);
+        Assert.DoesNotContain("could not be priced", told);
+
+        // THE REPORT, as a count beside the turns and as an unresolved commitment of its own.
+        // The snapshot the app hands the report, which is the meter's own reading of the day.
+        var report = gw.Reports.Compose(at, new DailyReportInputs { Spending = [spend] });
+        var text = DailyReportText.Render(report);
+        Assert.Equal(1, report.Spending.UnreportedTurns);
+        Assert.Contains("charged at their reservation because no usage was ever reported", text);
+        Assert.Contains("its reservation stands as its cost", text);
     }
 
     /// <summary>
