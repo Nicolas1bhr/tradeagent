@@ -38,3 +38,25 @@ Not this unit: a provider-side ceiling (none for codex; a stated limitation in `
 Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; the three test projects in Release to a file
 → 0 failed; touched classes 3×; a `Timing` red re-run alone 3×, never loosened. Commit per item, one sentence, no trailers.
 Append `## Report` (≤20 lines): tip sha, gate counts, one line per item with its RED and mutant, what you did NOT do.
+
+## Report
+
+Tip `f8abb57`: rebased onto `u-turn-commit` `0da64d7`, its four conflicts resolved inside the rebase, then onto `main`
+`b5803f8` (its last commit is docs only, landing after the gate; `src/` and `tests/` identical). Nine commits, clean
+tree, this report sits on it. Gate, Release, every run mine: `clean` + `--no-incremental` → `0 Warning(s)  0 Error(s)`;
+the 9 touched classes 3× → `Failed: 0, Passed: 88` each; unit 629, fault 277, integration 627 with 1 skipped (as on
+`main`), all `Failed: 0`. Names 1198 → 1212, NONE removed. No `Timing` red, no orphaned runner.
+1. RED, the guard removed: `Expected: 1 / Actual: 2` LAUNCHED rows from two racing threads. Mutant, the check moved back
+   outside `Database.Write`: `Expected: 1 / Actual: 2`, on three runs of three.
+2. RED, one `_open` and the chat unadmitted: `Assert.All() Failure … Expected: 1.28 / Actual: 0`, the dumped row being
+   `Role = research, ReservedCost = 0` holding the Research turn's usage. Mutant, the chat skipping `Begin`: the same.
+3. RED, `cost=$cost` as before the unit: `Expected: 1.28 / Actual: null`. Mutant, `cost` left NULL while the row is
+   still MARKED unreported: `Expected: 1.28 / Actual: null`.
+4. RED, the allowance priced as plain input: `Expected: 6.40 / Actual: 5.200`. Mutant, the max dropped: `Expected: 6.40
+   / Actual: 5.20`, in the formula and in the committed row.
+Fifth commit KEPT and tested: without it a refusal eats the owner's question. Its untested half — the refusal recorded
+against their message — is now pinned too (mutant `Expected: "blocked" / Actual: null`).
+Gaps closed: the card, the AI's line and the report's two places (mutants `Expected: 1 / Actual: 0` and
+`Assert.Contains() Failure: Sub-string not found`); the provider-side ceiling, absent from both docs, now stated.
+NOT done: no box, no ATAS, no money. `_staged` is still ONE slot, safe only while the loop is serial
+(`U-council-concurrent`); the owner's chat close is written at once, which is what keeps the two from colliding today.
