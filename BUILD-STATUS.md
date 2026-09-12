@@ -5129,3 +5129,31 @@ trailers; no binary files in the diff; `rev-list --count` → 0; CI run 34719212
 **NOT done:** no evaluation, indicator values, intents, bars, storage, trace, report, pipe op or relay (`U-runner-2`, `-3`); no
 per-event budget yet; nothing reads `workspace/strategies/`; three `$` prefixes without interpolation in `StrategyParser.cs`
 (cosmetic, 0 warnings, left); no box, no ATAS, no money.
+
+## 2026-09-12 — U-crlf-strategy-win landed: the day-one fixtures pinned to LF, and the test holds on either checkout
+
+The windows-only red at `1e92fe3` (run 34719212649: the three theory cases of `DayOneStrategyTests.Each_fixture_is_the_program_
+the_document_prints`, `Sub-string not found`), by one fresh fixer on `docs/briefs/U-crlf-strategy-win.md`. Merge `137aaa4`, 2
+commits, test- and attributes-only: `git diff main -- src/` empty, no `Assert.` line in the diff; draft PR #18 for the runner, closed.
+
+- **The shape, a second time:** `.gitattributes` pinned `*.md` (the document) to LF since `U-crlf-win` but said nothing about
+  `*.strategy`, so `* text=auto` handed the runner's `core.autocrlf=true` checkout CRLF fixtures; the test normalised the
+  document's line endings and read the fixture raw. A `git -c core.autocrlf=true clone` of `main` reproduces it: `w/crlf`, CR
+  11/18/13 on the three files.
+- **The class fix, both halves:** `*.strategy text eol=lf` in the source block, and `Fixture()` reads with `ReplaceLineEndings("\n")`
+  so both comparisons hold on either checkout. RED on this Mac with the fixtures rewritten to CRLF: `Failed: 3, Passed: 7`, each
+  case carrying the CI's own message; GREEN with the CRLF files still in place: `Passed: 10`; mutant (the normalisation removed
+  again, CRLF in place): `Failed: 3, Passed: 7`. No `Timing` membership — no clock is involved.
+- **Proven on the runner:** run 34720230379 at `e391ccd`, windows, ubuntu, macos and `package` all SUCCESS, the three cases
+  `outcome="Passed"` in the windows trx; windows suites Unit 2 m 57 s, Fault 4 m 56 s, Integration 6 m 31 s.
+- **Sweep of 89 file-reading sites in `tests/`:** 20 anchored at the repo root — 19 read a tracked `.cs` or `.md` (LF-pinned, most
+  normalising anyway), the 20th is this fixture; the other 69 read files written at run time into temp directories. Nothing else
+  at risk.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `e391ccd`, Release: 0 warnings, 0 errors, 17
+projects; Unit 3× → 706/706 each; Unit 706 + Fault 277 + Integration 627 = 1610 passed, 0 failed, 1 skipped; names vs `main` → 0
+removed, 0 added (two independent extractors). Manager's gate at `137aaa4`, Release: build → 0 warnings, 0 errors; suite → 706 + 277 + 627 = 1610 passed, 0 failed, 1 skipped;
+names vs `main` → 0 removed, 0 added (sets 1309 = 1309); scan clean; no trailers; `rev-list --count` → 0; CI run 34721991796 at `137aaa4`: in flight at the time of this record; verdict in a follow-up commit.
+
+**Carried forward:** a tracked file the tests read byte for byte needs BOTH its extension in `.gitattributes` and a test that
+normalises what it reads — either alone has now failed once. **NOT done:** no product code; no assertion loosened; no box, no money.
