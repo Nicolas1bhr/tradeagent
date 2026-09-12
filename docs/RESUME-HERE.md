@@ -22,7 +22,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included),
    **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 GREEN on all four jobs), **`U-runner-1` `1e92fe3`** (the
    strategy program; no schema change; CI run 34719212649 RED on windows-latest only — a CRLF checkout of the `.strategy`
-   fixtures), **`U-crlf-strategy-win` `137aaa4`** (the fixer, test- and attributes-only; CI run 34721991796 in flight when written),
+   fixtures), **`U-crlf-strategy-win` `137aaa4`** (the fixer, test- and attributes-only; CI run 34721991796 GREEN on all four jobs),
    **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 in flight when written).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
@@ -34,9 +34,9 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
      for the windows proof at that tip): being gated by the manager for landing; its record is drafted.
    - `u-api-worker` (worktree `U-api-worker`, created on the `u-containment` tip `ee2abb2`): a fresh builder dispatched 00:30 on
      `docs/briefs/U-api-worker.md` — the app-owned harness, **schema 13**, told to rebase onto `main` before its gate.
-4. **CI on `main`:** green on all three platforms at `1757043`; RED on windows-latest at `1e92fe3` (CRLF `.strategy` fixtures), fixed
-   at `137aaa4` — its run 34721991796 is the proof on `main`'s own runner. The eleven `DispatchRecoveryTests` presses stay on two
-   seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one goes red, the fixer is that section's second bullet.
+4. **CI on `main`:** green on all four jobs at `137aaa4` (the CRLF fixture red of `1e92fe3` closed); `c758fce` in flight. The eleven
+   `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
+   goes red, the fixer is that section's second bullet.
 5. **Briefed, committed, NOT dispatched:** none — every brief in `docs/briefs/` has a leg on it.
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates

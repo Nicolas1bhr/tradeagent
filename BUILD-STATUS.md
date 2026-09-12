@@ -5153,7 +5153,7 @@ commits, test- and attributes-only: `git diff main -- src/` empty, no `Assert.` 
 **Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `e391ccd`, Release: 0 warnings, 0 errors, 17
 projects; Unit 3× → 706/706 each; Unit 706 + Fault 277 + Integration 627 = 1610 passed, 0 failed, 1 skipped; names vs `main` → 0
 removed, 0 added (two independent extractors). Manager's gate at `137aaa4`, Release: build → 0 warnings, 0 errors; suite → 706 + 277 + 627 = 1610 passed, 0 failed, 1 skipped;
-names vs `main` → 0 removed, 0 added (sets 1309 = 1309); scan clean; no trailers; `rev-list --count` → 0; CI run 34721991796 at `137aaa4`: in flight at the time of this record; verdict in a follow-up commit.
+names vs `main` → 0 removed, 0 added (sets 1309 = 1309); scan clean; no trailers; `rev-list --count` → 0; CI run 34721991796 at `137aaa4`: all four jobs GREEN — windows-latest with the three fixture cases, the red closed on `main`'s own runner.
 
 **Carried forward:** a tracked file the tests read byte for byte needs BOTH its extension in `.gitattributes` and a test that
 normalises what it reads — either alone has now failed once. **NOT done:** no product code; no assertion loosened; no box, no money.
