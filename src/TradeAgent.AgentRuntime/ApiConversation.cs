@@ -92,6 +92,33 @@ public sealed class ApiConversation(
     /// <summary>Nothing was started: no key, or the app refused the launch.</summary>
     public const int NotStarted = -1;
 
+    /// <summary>
+    /// HOW THE TURN ENDED, AS THE WORD THE LAUNCH LEDGER CARRIES (<c>ai_attempt.context</c>, through
+    /// <see cref="AgentTurnEnded.Outcome"/> and <see cref="TurnContext.Ended"/>).
+    ///
+    /// <para>An exit code cannot say this. <see cref="BudgetExceeded"/> is a turn that did its work and
+    /// was stopped by the app before a request it had decided not to send; a provider that refused is a
+    /// turn that did not work at all; and both would be "1" and "2" to anybody reading the table in
+    /// three weeks. Rule 4 keeps enforcement apart from billing, and a total the owner cannot tell a
+    /// bounded turn from a broken one in is the reading that rule forbids.</para>
+    ///
+    /// <para>The budget word is the error code's own name rather than a sentence, so the row, the
+    /// catalogue entry the owner reads and the repair on the Safety page are one thing.</para>
+    /// </summary>
+    public const string EndedCompleted = "completed";
+
+    /// <inheritdoc cref="EndedCompleted"/>
+    public static readonly string EndedOverBudget = nameof(ErrorCode.CONTEXT_BUDGET_EXCEEDED);
+
+    /// <inheritdoc cref="EndedCompleted"/>
+    public const string EndedProviderFailed = "provider-failed";
+
+    /// <inheritdoc cref="EndedCompleted"/>
+    public const string EndedNotStarted = "not-started";
+
+    /// <inheritdoc cref="EndedCompleted"/>
+    public const string EndedCancelled = "cancelled";
+
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
@@ -201,6 +228,7 @@ public sealed class ApiConversation(
         var startedAt = _now();
         var transcript = new Transcript();
         var exitCode = NotStarted;
+        var outcome = EndedNotStarted;
         TurnUsage? usage = null;
 
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
@@ -211,7 +239,10 @@ public sealed class ApiConversation(
         {
             Append(new ChatTurn(ChatRole.System, Labels.HarnessKeyNotHeld, _now()));
             transcript.Note("no key is held, so nothing was sent");
-            TurnEnded?.Invoke(new AgentTurnEnded(NotStarted, _now() - startedAt, transcript.Text, _now()));
+            TurnEnded?.Invoke(new AgentTurnEnded(NotStarted, _now() - startedAt, transcript.Text, _now())
+            {
+                Outcome = EndedNotStarted
+            });
             return;
         }
 
@@ -219,23 +250,23 @@ public sealed class ApiConversation(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, usage) = await RunRequestsAsync(key, message, transcript, _cts.Token);
+            (exitCode, usage, outcome) = await RunRequestsAsync(key, message, transcript, _cts.Token);
         }
         catch (OperationCanceledException)
         {
-            exitCode = NotStarted;
+            (exitCode, outcome) = (NotStarted, EndedCancelled);
             Append(new ChatTurn(ChatRole.System, "Stopped.", _now()));
             transcript.Note("the turn was cancelled");
         }
         catch (TradeAgentException ex)
         {
-            exitCode = ProviderFailed;
+            (exitCode, outcome) = (ProviderFailed, EndedProviderFailed);
             Append(new ChatTurn(ChatRole.System, ex.Message, _now()));
             transcript.Note(ex.Message);
         }
         catch (Exception ex)
         {
-            exitCode = ProviderFailed;
+            (exitCode, outcome) = (ProviderFailed, EndedProviderFailed);
             Append(new ChatTurn(ChatRole.System, $"The AI could not be reached: {ex.Message}", _now()));
             transcript.Note(ex.Message);
         }
@@ -249,7 +280,12 @@ public sealed class ApiConversation(
                 // NULL WHEN NOTHING REPORTED ANY, never a zero. A turn whose usage never arrived is
                 // charged its reservation by the launch ledger; a zeroed usage would be charged
                 // nothing and would read as a free turn.
-                Usage = usage
+                Usage = usage,
+
+                // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
+                // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
+                // difference — see EndedCompleted.
+                Outcome = outcome
             });
         }
     }
@@ -257,7 +293,7 @@ public sealed class ApiConversation(
     /// <summary>
     /// The request loop. Returns how the turn ended and what every response together reported.
     /// </summary>
-    async Task<(int ExitCode, TurnUsage? Usage)> RunRequestsAsync(string key, string message,
+    async Task<(int ExitCode, TurnUsage? Usage, string Outcome)> RunRequestsAsync(string key, string message,
         Transcript transcript, CancellationToken ct)
     {
         var bound = allowance?.Invoke() ?? TurnAllowance.Default;
@@ -284,7 +320,7 @@ public sealed class ApiConversation(
                 // would throw away work the owner has already paid for.
                 Append(new ChatTurn(ChatRole.System, why, _now()));
                 transcript.Note(why);
-                return (BudgetExceeded, total);
+                return (BudgetExceeded, total, EndedOverBudget);
             }
 
             var body = RequestBody(messages, surface, bound);
@@ -303,7 +339,7 @@ public sealed class ApiConversation(
                 transcript.Message(text);
             }
 
-            if (answer.Calls.Count == 0) return (Completed, total);
+            if (answer.Calls.Count == 0) return (Completed, total, EndedCompleted);
 
             // THE TOOL LOOP IS THE APP'S, not the provider's. Each call is answered by this process,
             // recorded, bounded, and put back into the conversation as a tool message.
