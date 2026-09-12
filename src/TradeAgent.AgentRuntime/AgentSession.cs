@@ -467,9 +467,12 @@ public sealed class AgentSession(
         };
         CliAgentRuntime.SetCommand(psi, exe, args);
 
-        // This environment is the only thing that puts `trade` on the agent's PATH. Losing it is how
-        // the agent ends up reading its own instructions about a command it cannot run.
-        foreach (var (k, v) in environment()) psi.Environment[k] = v;
+        // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
+        // as a copy of this process's, so everything TradeAgent was started with used to reach the
+        // AI — see AgentEnvironment. The additions are still the only thing that puts `trade` on the
+        // agent's PATH; losing them is how the agent ends up reading its own instructions about a
+        // command it cannot run.
+        AgentEnvironment.Apply(psi, environment(), manifest.KeepEnvironment);
 
         // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
         // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
