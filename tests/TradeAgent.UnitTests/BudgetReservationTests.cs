@@ -379,6 +379,32 @@ public class BudgetReservationTests : IDisposable
     }
 
     /// <summary>
+    /// AND THE REFUSAL IS RECORDED AGAINST THE MESSAGE IT COULD NOT ANSWER. The owner's message is
+    /// still owed a turn — a refused launch consumes nothing — so the queue has to carry the standing
+    /// reason it has not had one, in the same words and by the same helper the loop's own pre-check
+    /// uses. Without it the only record of the refusal is a wait the owner cannot account for.
+    /// </summary>
+    [Fact]
+    public async Task A_refusal_is_recorded_against_the_owners_message_it_could_not_answer()
+    {
+        var now = DateTimeOffset.Now;
+        var events = new MissionEventStore(_db);
+        events.Raise("owner:1", MissionEventKind.Owner, now);
+
+        var meter = Meter(2m, () => now);
+        Assert.True(meter.Begin("## Situation", role: CouncilRoles.Operations).Admitted);   // the room goes
+
+        var host = new StaleHost(meter) { Wakes = events };
+        Assert.True(await new MissionLoop(host).TurnAsync() > TimeSpan.Zero);
+        Assert.Empty(host.Conv.Sent);
+
+        var row = events.Get("owner:1")!;
+        Assert.Null(row.ConsumedBy);                       // still owed a turn, at midnight or sooner
+        Assert.Equal(MissionEventDisposition.Blocked, row.Disposition);
+        Assert.Equal(Labels.DailySpendingLimitReached, row.DispositionDetail);
+    }
+
+    /// <summary>
     /// THE RESERVATION CHARGES INPUT AT THE DEARER OF THE TWO RATES THE SAME TOKENS CAN BE BILLED AT.
     ///
     /// <c>gpt-5.6-sol</c>, on this build's own shipped list, costs 4.00 per million input and 5.00
@@ -462,6 +488,11 @@ public class BudgetReservationTests : IDisposable
 
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
             meter.Begin(prompt, wakes, CouncilRoles.Operations);
+
+        /// <summary>The wake queue, where a test needs one. Null is the host with no queue at all.</summary>
+        public MissionEventStore? Wakes { get; init; }
+
+        public MissionEventStore? Events => Wakes;
     }
 
     /// <summary>A conversation that records what it was sent, and answers every turn the same way.</summary>
