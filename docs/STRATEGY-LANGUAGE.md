@@ -59,11 +59,34 @@ missing and nothing is filled in. Prices are decimals, exactly as the vendor pub
 | `rsi(s, p)` | `100 - 100/(1+avgGain/avgLoss)`, Wilder's smoothing | the first `p` changes' mean gain and loss; a zero average loss reads as 100 | `p+1` |
 | `atr(p)` | Wilder's mean of `max(high-low, abs(high-prevClose), abs(low-prevClose))` | the mean of the first `p` true ranges | `p+1` |
 | `highest(s, p)` / `lowest(s, p)` | largest / smallest of the last `p` values | none | `p` |
-| `opening_range_high()` / `opening_range_low()` | highest high / lowest low of the bars closing inside the `opening_range` interval | resets each session; undefined until that interval's first close | `1` |
+| `opening_range_high()` / `opening_range_low()` | highest high / lowest low of the bars whose open time is inside the `opening_range` interval | resets each session; undefined until that interval's first close | `1` |
 
 `atr` takes no series (a true range is over high, low and the previous close), and an indicator reads a
 bar series, never another indicator. These semantics are versioned in `StrategyVersions`; moving a
-version re-identifies every program. **Warm-up** is the maximum "bars needed" over every DECLARED
+version re-identifies every program.
+
+**The arithmetic, spelled out** (`StrategyIndicators.cs`), because "Wilder's smoothing" and "`v*a +
+prev*(1-a)`" each have more than one implementation and they do not produce the same digits:
+
+- Every value is a **decimal**, never a float. Addition and subtraction are exact, so a running sum
+  cannot drift from the window it stands for; division rounds at the type's own ~29 significant
+  digits and nothing else rounds anywhere.
+- `ema`: `a = 2/(p+1)` is computed ONCE, and the other factor is `1 - a` over that same `a` — so the
+  two weights sum to one even where `a` does not terminate (`p=20` is 0.0952380952380952380952380952).
+  The multiply-add form above is normative; `prev + a*(v - prev)` is the same algebra and not the
+  same digits.
+- `rsi` and `atr` smooth as **`avg = (avg*(p-1) + x)/p`** after their seeds. `rsi`'s seed is the mean
+  gain and the mean loss of the first `p` CHANGES (hence `p+1` bars); `atr`'s is the mean of the
+  first `p` true ranges (hence `p+1` bars, the first bar having no previous close). A zero average
+  loss reads 100, which is also what a price that never moves reads.
+- `highest` / `lowest` are exact over the window and cost one operation on an ordinary bar, or `p`
+  on the bar the extreme expires from the window.
+- The **opening-range accumulator's window is a wall-clock interval, not a lookback**: a bar belongs
+  to it when its OPEN time is inside the declared `opening_range` interval in the program's zone
+  (half-open, `from` included and `to` excluded). It resets at the start of each session and is
+  undefined until that session's interval has had a bar, so a session whose opening range has no
+  bars leaves the program unable to act rather than acting on yesterday's range. Nothing is carried
+  over. **Warm-up** is the maximum "bars needed" over every DECLARED
 indicator, every history reference (`close[3]` is 4), every crossing (one more than its deeper side) and
 the stop's ATR period; at least 1. It is stated on the frozen program, hashed into its id, and a bar
 before it is refused rather than answered from a half-filled window.
