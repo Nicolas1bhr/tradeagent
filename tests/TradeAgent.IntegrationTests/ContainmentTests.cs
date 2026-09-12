@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using Xunit;
@@ -13,23 +12,27 @@ namespace TradeAgent.Tests.Integration;
 /// <c>U-containment</c>, and before that item it was false on every platform — <c>Kill(entireProcess
 /// Tree: true)</c> walks parent links, and an orphan has none left to walk.
 ///
-/// The grandchild here is deliberately a real orphan rather than a nested child: the middle process
-/// exits before the assertion, so the kernel has already reparented the survivor away from anything
-/// the app could reach by walking down from its own child.
+/// THE PROBE IS THREE SCRIPT FILES AND TWO FILES IT WRITES, on both platforms, and none of that is
+/// decoration. The first version passed the whole probe as one quoted argument to <c>cmd /c</c> and
+/// never ran at all on the hosted windows runner — .NET escapes an embedded quote as <c>\"</c> and
+/// cmd.exe reads only <c>""</c> — so the test failed while the product was fine. A file has no command
+/// line to mangle. And liveness is a HEARTBEAT rather than a process id, because that is one mechanism
+/// for both platforms instead of `ps` on one and `Get-CimInstance` on the other: the survivor appends a
+/// line a second, and "the survivor is dead" is the file going quiet.
 /// </summary>
 [Collection("containment")]
 public class ContainmentTests
 {
     /// <summary>Long enough that a survivor is unmistakable, short enough that a failed run cleans itself up.</summary>
-    const int SurvivorSeconds = 45;
+    const int SurvivorSeconds = 60;
+
+    /// <summary>Ticks the survivor must have written before the cancel, so a probe that never ran cannot pass.</summary>
+    const int TicksBeforeCancel = 2;
 
     [Fact]
     public async Task A_detached_grandchild_does_not_survive_the_cancel()
     {
-        var dir = Path.Combine(TestEnv.Home, "contain-" + Guid.NewGuid().ToString("n")[..8]);
-        Directory.CreateDirectory(dir);
-        var pidFile = Path.Combine(dir, "grandchild.pid");
-
+        var probe = Probe.Write(Path.Combine(TestEnv.Home, "contain-" + Guid.NewGuid().ToString("n")[..8]));
         DeployLauncher();
 
         var manifest = new RuntimeManifest
@@ -47,27 +50,23 @@ public class ContainmentTests
             JsonFlag = null
         };
 
-        var session = new AgentSession(manifest, () => Shell, () => dir, () => new Dictionary<string, string>(),
-            new AgentPresence());
+        var session = new AgentSession(manifest, () => Shell, () => probe.Dir,
+            () => new Dictionary<string, string>(), new AgentPresence());
 
-        var turn = session.SendAsync(Script(dir, pidFile));
-        var grandchild = await WaitForOrphan(pidFile);
-
+        var turn = session.SendAsync(probe.Command);
         try
         {
-            Assert.True(Alive(grandchild), "the probe never got a running grandchild to detach");
+            await probe.WaitForOrphanedSurvivor();
 
             await session.CancelAsync();
             await turn;
 
-            // The kernel does not take a whole process group down synchronously with the call.
-            for (var i = 0; i < 100 && Alive(grandchild); i++) await Task.Delay(100);
-
-            Assert.False(Alive(grandchild),
-                $"the turn's detached grandchild (pid {grandchild}) was still running after CancelAsync; " +
-                "nothing but a parent link was holding the turn");
+            var quiet = await probe.WentQuiet();
+            Assert.True(quiet,
+                "the turn's detached grandchild was still writing after CancelAsync; nothing but a " +
+                $"parent link was holding the turn.{probe.Trace()}");
         }
-        finally { Reap(grandchild); }
+        finally { probe.Reap(); }
     }
 
     /// <summary>
@@ -95,12 +94,12 @@ public class ContainmentTests
         var armed = true;
 
         var session = new AgentSession(manifest, () => Shell, () => dir,
-            () => new Dictionary<string, string>(), new AgentPresence(),
+            () => new Dictionary<string, string> { [MarkerVariable] = marker }, new AgentPresence(),
             launchRefusal: () => armed ? refusal : null);
 
-        await session.SendAsync(Touch(marker));
+        await session.SendAsync(MakeMarker());
 
-        Assert.False(File.Exists(marker),
+        Assert.False(Directory.Exists(marker),
             "the vendor CLI ran in the armed live configuration: a program nothing on this computer " +
             "confines was started beside a switch that spends money");
         Assert.Contains(session.History, t => t.Role == ChatRole.System && t.Text.Contains(refusal));
@@ -108,137 +107,28 @@ public class ContainmentTests
         // And the same session runs normally the moment real money is switched off — the refusal is
         // read at every launch, not captured once.
         armed = false;
-        await session.SendAsync(Touch(marker));
-        for (var i = 0; i < 100 && !File.Exists(marker); i++) await Task.Delay(50);
-        Assert.True(File.Exists(marker), "the AI did not run once real-money trading was switched off");
+        await session.SendAsync(MakeMarker());
+        for (var i = 0; i < 100 && !Directory.Exists(marker); i++) await Task.Delay(50);
+        Assert.True(Directory.Exists(marker), "the AI did not run once real-money trading was switched off");
     }
 
-    static string Touch(string marker) => OperatingSystem.IsWindows()
-        ? $"echo ran > \"{marker}\""
-        : $"printf ran > \"{marker}\"";
+    /// <summary>
+    /// "The AI ran", written so that no quote and no redirect ever reaches a command line: the path
+    /// travels in the environment — which also proves TradeAgent's own additions still cross the
+    /// whitelist — and the command makes a DIRECTORY, because <c>mkdir</c> and <c>md</c> both take one
+    /// argument and need no shell.
+    /// </summary>
+    const string MarkerVariable = "TA_TEST_MARKER";
 
-    // ---- the probe ------------------------------------------------------------------------------
+    static string MakeMarker() => OperatingSystem.IsWindows()
+        ? $"md %{MarkerVariable}%"
+        : $"mkdir \"${MarkerVariable}\"";
 
     static string Shell => OperatingSystem.IsWindows()
         ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe")
         : "/bin/sh";
 
     static string ShellFlag => OperatingSystem.IsWindows() ? "/c" : "-c";
-
-    /// <summary>
-    /// A turn that leaves one process behind on purpose.
-    ///
-    /// Unix: an inner shell backgrounds the survivor and exits at once, so the survivor's parent is
-    /// gone before anything looks at it; the outer shell then sleeps, which is what keeps the turn in
-    /// flight until the test cancels it.
-    ///
-    /// Windows: the same shape through a detached <c>cmd</c> — <c>start /b</c> gives the middle
-    /// process, which writes the survivor's id and exits, and the outer <c>cmd</c> waits.
-    /// </summary>
-    static string Script(string dir, string pidFile)
-    {
-        if (!OperatingSystem.IsWindows())
-            return $"/bin/sh -c 'sleep {SurvivorSeconds} & echo $! > \"{pidFile}\"' & sleep {SurvivorSeconds}";
-
-        var inner = Path.Combine(dir, "inner.cmd");
-        File.WriteAllText(inner,
-            "@echo off\r\n" +
-            "powershell -NoProfile -NonInteractive -Command " +
-            $"\"$p = Start-Process -FilePath '{PingExe}' -ArgumentList '-n','{SurvivorSeconds * 2}','127.0.0.1' " +
-            $"-PassThru -WindowStyle Hidden; Set-Content -Path '{pidFile}' -Value $p.Id -Encoding ascii\"\r\n");
-        return $"start \"\" /b \"{inner}\" & {PingExe} -n {SurvivorSeconds * 2} 127.0.0.1 > nul";
-    }
-
-    static string PingExe =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe");
-
-    /// <summary>
-    /// Waits until the probe has written its survivor's id AND that survivor has actually been
-    /// orphaned. Asserting before the middle process has exited would test the tree walk, not the
-    /// containment.
-    /// </summary>
-    static async Task<int> WaitForOrphan(string pidFile)
-    {
-        for (var i = 0; i < 300; i++)
-        {
-            if (File.Exists(pidFile))
-            {
-                var text = Read(pidFile);
-                if (int.TryParse(text.Trim(), out var pid) && pid > 1 && Alive(pid) && Orphaned(pid))
-                    return pid;
-            }
-            await Task.Delay(100);
-        }
-        throw new Xunit.Sdk.XunitException($"the containment probe never orphaned a grandchild ({pidFile})");
-    }
-
-    static string Read(string file)
-    {
-        try { using var s = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); return new StreamReader(s).ReadToEnd(); }
-        catch (IOException) { return ""; }
-    }
-
-    static bool Alive(int pid)
-    {
-        try
-        {
-            using var p = Process.GetProcessById(pid);
-            return !p.HasExited;
-        }
-        catch (ArgumentException) { return false; }
-        catch (InvalidOperationException) { return false; }
-    }
-
-    /// <summary>Whether the process's parent is gone. On Windows a dead parent is one that is not there.</summary>
-    static bool Orphaned(int pid)
-    {
-        if (!OperatingSystem.IsWindows())
-            return ParentUnix(pid) is 1 or 0 or -1;
-
-        var parent = ParentWindows(pid);
-        return parent is null || !Alive(parent.Value);
-    }
-
-    static int ParentUnix(int pid)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("/bin/ps") { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-            psi.ArgumentList.Add("-o"); psi.ArgumentList.Add("ppid=");
-            psi.ArgumentList.Add("-p"); psi.ArgumentList.Add(pid.ToString());
-            using var p = Process.Start(psi)!;
-            var text = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit();
-            return int.TryParse(text, out var ppid) ? ppid : -1;
-        }
-        catch (Exception) { return -1; }
-    }
-
-    static int? ParentWindows(int pid)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("powershell")
-            {
-                RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add($"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId");
-            using var p = Process.Start(psi)!;
-            var text = p.StandardOutput.ReadToEnd().Trim();
-            p.WaitForExit();
-            return int.TryParse(text, out var ppid) ? ppid : null;
-        }
-        catch (Exception) { return null; }
-    }
-
-    static void Reap(int pid)
-    {
-        try { using var p = Process.GetProcessById(pid); p.Kill(entireProcessTree: true); }
-        catch (Exception) { /* the point of the test is that it is already gone */ }
-    }
 
     /// <summary>
     /// Puts TradeAgent's own trade command where the containment looks for it, because on macOS and
@@ -255,5 +145,168 @@ public class ContainmentTests
         if (string.IsNullOrWhiteSpace(host) || !File.Exists(host)) host = Environment.ProcessPath;
         File.WriteAllText(exe, $"#!/bin/sh\nexec \"{host}\" \"{Build.TradeCliDll}\" \"$@\"\n");
         File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    // ---- the probe ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A turn that leaves one process behind on purpose, as files on disk.
+    ///
+    /// Three processes and two facts. The TURN's own process starts the MIDDLE one and then waits, so
+    /// the turn is still in flight when the test cancels it. The middle one starts the SURVIVOR and
+    /// then exits — which is what makes the survivor an orphan, with no parent link left for a tree
+    /// walk to follow — recording that it got that far in <c>middle.done</c>. The survivor appends a
+    /// line to <c>heartbeat</c> once a second for as long as it lives.
+    ///
+    /// So "the survivor was alive and already orphaned" is: the heartbeat grew, and middle.done
+    /// exists. And "the survivor is dead" is: the heartbeat stopped growing. No process ids, no `ps`,
+    /// no WMI, and the same three sentences on both platforms.
+    /// </summary>
+    sealed class Probe
+    {
+        public string Dir { get; private init; } = "";
+
+        /// <summary>What the turn is asked to run. A path on Windows, a short script on Unix.</summary>
+        public string Command { get; private init; } = "";
+
+        string Heartbeat => Path.Combine(Dir, "heartbeat");
+        string MiddleDone => Path.Combine(Dir, "middle.done");
+        string TraceFile => Path.Combine(Dir, "trace");
+
+        public static Probe Write(string dir)
+        {
+            Directory.CreateDirectory(dir);
+            var heartbeat = Path.Combine(dir, "heartbeat");
+            var done = Path.Combine(dir, "middle.done");
+            var trace = Path.Combine(dir, "trace");
+
+            if (OperatingSystem.IsWindows())
+            {
+                var ping = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "ping.exe");
+                var survivor = Path.Combine(dir, "survivor.cmd");
+                var middle = Path.Combine(dir, "middle.cmd");
+                var outer = Path.Combine(dir, "probe.cmd");
+
+                File.WriteAllText(survivor,
+                    "@echo off\r\n" +
+                    ":loop\r\n" +
+                    $"echo tick >> \"{heartbeat}\"\r\n" +
+                    $"\"{ping}\" -n 2 127.0.0.1 > nul\r\n" +
+                    "goto loop\r\n");
+
+                File.WriteAllText(middle,
+                    "@echo off\r\n" +
+                    $"echo middle running >> \"{trace}\"\r\n" +
+                    $"start \"\" /b cmd /c \"{survivor}\"\r\n" +
+                    $"echo middle started the survivor >> \"{trace}\"\r\n" +
+                    $"echo done > \"{done}\"\r\n");
+
+                File.WriteAllText(outer,
+                    "@echo off\r\n" +
+                    $"echo turn running >> \"{trace}\"\r\n" +
+                    $"start \"\" /b cmd /c \"{middle}\"\r\n" +
+                    $"echo turn started the middle >> \"{trace}\"\r\n" +
+                    $"\"{ping}\" -n {SurvivorSeconds} 127.0.0.1 > nul\r\n");
+
+                return new Probe { Dir = dir, Command = outer };
+            }
+
+            var survivorSh = Path.Combine(dir, "survivor.sh");
+            var middleSh = Path.Combine(dir, "middle.sh");
+            File.WriteAllText(survivorSh,
+                $"while true; do echo tick >> \"{heartbeat}\"; sleep 1; done\n");
+            File.WriteAllText(middleSh,
+                $"echo middle running >> \"{trace}\"\n" +
+                $"/bin/sh \"{survivorSh}\" &\n" +
+                $"echo middle started the survivor >> \"{trace}\"\n" +
+                $"echo done > \"{done}\"\n");
+
+            return new Probe
+            {
+                Dir = dir,
+                Command = $"echo turn running >> \"{trace}\"; /bin/sh \"{middleSh}\"; sleep {SurvivorSeconds}"
+            };
+        }
+
+        /// <summary>
+        /// Waits until the survivor has written <see cref="TicksBeforeCancel"/> lines AND its parent
+        /// has exited. Asserting before the middle process is gone would test the tree walk rather
+        /// than the containment, and asserting before the survivor has written anything would let a
+        /// probe that never ran pass.
+        /// </summary>
+        public async Task WaitForOrphanedSurvivor()
+        {
+            for (var i = 0; i < 400; i++)
+            {
+                if (File.Exists(MiddleDone) && Ticks() >= TicksBeforeCancel) return;
+                await Task.Delay(100);
+            }
+            throw new Xunit.Sdk.XunitException(
+                $"the containment probe never produced an orphaned survivor.{Trace()}");
+        }
+
+        /// <summary>
+        /// Whether the heartbeat has stopped. Two readings a few seconds apart, because the kernel
+        /// does not take a whole job or process group down synchronously with the call, and the
+        /// survivor's own tick is a second wide.
+        /// </summary>
+        public async Task<bool> WentQuiet()
+        {
+            for (var i = 0; i < 20; i++)
+            {
+                var before = Ticks();
+                await Task.Delay(1500);
+                if (Ticks() == before)
+                {
+                    await Task.Delay(2500);
+                    if (Ticks() == before) return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Everything the probe wrote about itself, for a failure that would otherwise be a guess.</summary>
+        public string Trace()
+        {
+            var parts = new List<string>
+            {
+                $"ticks={Ticks()}",
+                $"middle.done={File.Exists(MiddleDone)}",
+                "trace=[" + Read(TraceFile).Replace("\r", "").Replace("\n", " | ").Trim() + "]"
+            };
+            foreach (var f in Directory.Exists(Dir) ? Directory.GetFiles(Dir) : [])
+                parts.Add(Path.GetFileName(f));
+            return " Probe: " + string.Join(", ", parts);
+        }
+
+        int Ticks() => Read(Heartbeat).Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+
+        static string Read(string file)
+        {
+            try
+            {
+                using var s = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                return new StreamReader(s).ReadToEnd();
+            }
+            catch (IOException) { return ""; }
+            catch (UnauthorizedAccessException) { return ""; }
+        }
+
+        /// <summary>
+        /// Leaves nothing behind when the test fails. A survivor that outlived its cancel is the
+        /// failure, and it must not also become an orphan that outlives the whole test run.
+        /// </summary>
+        public void Reap()
+        {
+            try { File.Delete(Path.Combine(Dir, OperatingSystem.IsWindows() ? "survivor.cmd" : "survivor.sh")); }
+            catch (IOException) { }
+
+            // The loop re-reads its own script every iteration on Windows and not at all on Unix, so
+            // deleting it is enough there and nothing here can be enough on Unix: the group kill is
+            // the only thing that reaches it, and if that failed the test has already said so.
+            if (!OperatingSystem.IsWindows()) return;
+            try { File.Delete(Path.Combine(Dir, "middle.cmd")); }
+            catch (IOException) { }
+        }
     }
 }
