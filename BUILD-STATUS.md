@@ -5124,7 +5124,7 @@ test classes and three fixture programs under `tests/TradeAgent.UnitTests/Strate
 errors, 17 projects; the five `Strategy` classes 3× → 77/77 each; Unit 706 + Fault 277 + Integration 627 = 1610 passed, 0
 failed, 1 skipped; names vs `main` → 40 added, 0 removed. Manager's gate at `1e92fe3`, Release: build → 0 warnings, 0 errors; suite →
 706 + 277 + 627 = 1610 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 40 added (sets 1269 → 1309); scan clean (the lexer's `token` variables, judged); no
-trailers; no binary files in the diff; `rev-list --count` → 0; CI run 34719212649 at `1e92fe3`: in flight at the time of this record; verdict in a follow-up commit.
+trailers; no binary files in the diff; `rev-list --count` → 0; CI run 34719212649 at `1e92fe3`: ubuntu and macos GREEN; **windows-latest RED** on the three theory cases of `DayOneStrategyTests.Each_fixture_is_the_program_the_document_prints` (`Sub-string not found`: `.gitattributes` pins `*.md` to LF but not `*.strategy`, so the runner's CRLF checkout of the fixtures fails a byte-for-byte match the test normalises on one side only — the `U-crlf-win` shape; Fault and Integration green there); fixer `U-crlf-strategy-win` on top; recorded red until it lands.
 
 **NOT done:** no evaluation, indicator values, intents, bars, storage, trace, report, pipe op or relay (`U-runner-2`, `-3`); no
 per-event budget yet; nothing reads `workspace/strategies/`; three `$` prefixes without interpolation in `StrategyParser.cs`

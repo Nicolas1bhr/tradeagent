@@ -21,16 +21,17 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
    four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included),
    **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 GREEN on all four jobs), **`U-runner-1` `1e92fe3`** (the
-   strategy program; no schema change; CI run 34719212649 in flight when this was written).
+   strategy program; no schema change; CI run 34719212649 RED on windows-latest only — a CRLF checkout of the `.strategy`
+   fixtures, the `U-crlf-win` shape; fixer `U-crlf-strategy-win` dispatched; ubuntu and macos green).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
      PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
    - `u-runner-2` (worktree `U-runner-2`, created on the `u-runner-1` tip): a fresh builder dispatched 23:00 on `docs/briefs/U-runner-2.md`
      (the evaluator: bars by dataset id, indicators, gaps, the rule engine, limits and faults; no schema number). `U-runner-3` follows it.
-4. **CI on `main`:** green on all three platforms at `fac2370`; the windows-only press-settles red is closed by `U-press-settle-win`.
-   The eleven `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in its section — if one goes
-   red, the one-item fixer is that section's second bullet applied to that file.
+4. **CI on `main`:** green on all three platforms at `1757043`; RED on windows-latest at `1e92fe3` on the three day-one fixture cases
+   (CRLF, above) until `U-crlf-strategy-win` lands. The eleven `DispatchRecoveryTests` presses stay on two seconds and are recorded
+   as EXPOSED in the `U-press-settle-win` section — if one goes red, the one-item fixer is that section's second bullet.
 5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-api-worker.md` (the app-owned harness: one provider,
    one role, every tool a grant, every boundary counted, the key in memory only). Dispatch when `U-containment` lands: its `trade`
    tool needs the role-and-attempt identity containment puts on `AgentContext`. Schema 12 (`tool_call`) — assign it in the dispatch.
