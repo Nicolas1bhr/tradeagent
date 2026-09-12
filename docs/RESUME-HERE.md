@@ -10,103 +10,42 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**The vision, in the owner's words (2026-09-06), which every unit below serves:** the product is a container with a good
-UI that runs a never-stopping, evolving AI agent whose sole purpose is to make at least enough to pay for itself. It
-works non-stop, does its own research, builds its own strategies and places as many winning trades as it can, inside
-the gateway's limits; the owner adds guidance, strategies and documents through the inbox and a Guidance box. An
-evolution scheme — non-performing agents terminated and replaced — comes later and needs a higher manager level. **A
-chat window that answers when typed at is NOT the product**; until `U-life` lands, that is what the build is.
-**Decided 2026-09-06: there must be no human in the loop for real money.** Fully automatic is the target, not
-ask-me-first. ATAS cannot prove order history, so it cannot be the execution venue for that; a direct connector to a
-venue whose API returns orders by client id and history since a timestamp is required (the owner chooses the venue),
-and the same-user containment hole becomes load-bearing the day the app holds that venue's keys.
+**Session closed 2026-09-12 14:35 CEST by the WEEKLY usage limit (resets 2026-09-12 12:00 — it has, but the session is wrapped
+rather than restarted). The doctrine survived four kills in two days; the branches are the handoff. Restart in this order:**
 
-**Session closed 2026-09-06 (evening). Restart in this order, and you are working within ten minutes:**
-
-1. **Read `docs/HOW-WE-BUILD.md`** (97 lines, the whole process), **`docs/COUNCIL.md`** (2026-09-07: the product doctrine for the
-   never-stopping mission — a council of roles, settled with GPT-6 Astra in three written rounds, its unit order at the end) and
-   the `## 2026-09-06` and `## 2026-09-07` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing, every
-   claim with its run).
-2. **`main` is `a167884` plus the docs commits after it, clean, pushed.** Landed today against the vision above, each
-   with its section: `U-life` `0ec96c6` (the mission loop — the AI runs turn after turn on a `## Situation` the app
-   writes; "Let the AI work on its own" is two presses, "Pause" one; its instructions are a mission), `U-ledger`
-   `640bce5` (a `fill` table at schema 5, `trade pnl --json` that withholds a net it cannot compute, a Performance
-   card), `U-meter` `902e3da` (the AI's cost per turn from the CLI's own usage event, a daily cap that pauses the loop
-   — and `U-prices` `4e0d877`, which makes the cap bite: list prices as dated data, an unknown
-   model priced high, the owner's override on the Safety page), and three test-only fixers: `U-typed-catalog` `4d48395` (a
-   unit test read `runtimes.json` while another test corrupted it — the red on the first two merges' CI),
-   `U-coid-vanished-win` `697e24f` and `U-press-win-3` `a167884` (two Windows-runner reds that were the runner's disk,
-   measured on the runners, no assertion loosened). **`U-loss` LANDED `7b46503` (2026-09-07, the two loss budgets; its section is the last in `BUILD-STATUS.md`); `U-seen-1` LANDED (the
-   three findings of the first screen run); `U-model` LANDED `2504c5b` (the model named and passed, the
-   attempt row before launch, the reservation as the admission gate); `U-crlf-win` LANDED `2082091` (a root `.gitattributes`
-   pins `.cs` to LF, the test made honest); `U-unknown-close` LANDED `acff18a` (item (e): an UNKNOWN close can no longer be doubled by a press or the agent);
-   `U-wakes` LANDED `cef122b` (the loop wakes on persisted events, the owner's words
-   survive a restart); `U-data-binance` LANDED `a22939d` (the first real dataset, Binance's public 1-minute archives); `U-council-thin` LANDED `96f29a6` (two
-   roles run serially by the app, the relay that cannot lose or double a handoff, schema 9); `U-midnight-test` LANDED `baeff48` (the loop's tests read a clock they
-   control); `U-sweep-win` LANDED `324a11b` (the sweep never lost the order; fourteen fixtures onto the file's 20-second budget);
-   `U-report` LANDED `3003b89` (the owner's daily report, no inference; the dispositions completed; schema 10);
-   `U-archive-win` LANDED `8197163` (the harness answered a HEAD with a body on
-   http.sys and hung; a download nobody could complete is now Unreachable, never "not published"); `docs/briefs/` holds
-   `U-turn-commit` and `U-budget-reserve` (a fresh builder on each) — a desktop-app restart at 02:4x killed two builders
-   mid-gate and each was re-briefed FRESH from its branch, which kept every commit** — read the briefs for what is in flight; the worktrees are under `~/Projects/ai-trading-software-for-mihael-worktrees/`; a killed leg is re-briefed from its branch.
-3. **v0.1.2 is still the published release** (`gh release view v0.1.2`, target `6672b5e`); nothing landed today is in a
-   release. **The box is as the morning left it:** installed app 0.1.2, the real home at schema 3 (the next 0.1.2 start
-   migrates it — the owner's moment), ATAS up, the bridge at protocol 3 on a chart, the book flat. **On 2026-09-07 the four units were run on this Mac's screen** (the last `BUILD-STATUS.md` section): the loop took four
-   turns, the cap paused it at 5.07 USD, no order was placed; the Mac loop is now DRIVABLE — `tools/mac-bundle.sh`, then the
-   desktop's screen control (the memory file says how). Nothing landed since 2026-09-06 has run on the box. The morning's open items
-   stand for the third review: the UNKNOWN close that can reverse a position (step 6 (e)); `req.V` checked only on
-   `hello`; "Open the AI's folder" pointing at `workspace/`; `Bridge`/`StatusDetail` two readings of the connector;
-   an older build refusing a newer home as "damaged"; 0.1.1 writing no activity row for the update press;
-   `TreatWarningsAsErrors` on the bridge only.
-4. **CI on `main`:** the merge shas `0ec96c6` and `640bce5` are recorded RED (the harness race `U-typed-catalog`
-   closed); every later merge through `7b46503` (`U-loss`, run 34072945394) green on all three platforms and `package`;
-   **`06a8636` (`U-seen-1`) and the docs commits after it are RED on windows-latest only** — a test splitting a raw-string
-   paragraph on `'\n'` against the runner's CRLF checkout; fixer `U-crlf-win` LANDED `2082091`, whose CI run 34140348483 is green on all three
-   platforms and `package`; `acff18a` (`U-unknown-close`) green; **`cef122b` (`U-wakes`) RED on windows-latest only** —
-   `SweepRequestIdTests.Two_sweeps_mint_different_ids` saw 0 working where 1 was placed, green everywhere else; fixer `U-sweep-win`
-   LANDED `324a11b` — measured on the runners: the product never lost the order, the runner's disk spent the budget in one commit. **`a22939d` (`U-data-binance`) RED on
-   windows-latest only** — `BinanceArchiveTests.A_month_with_no_sidecar_at_all…` read `NotPublished`, and that Unit run took 30 min: one
-   request hung to the downloader's 30-minute timeout; fixer `U-archive-win`
-   LANDED `8197163` — both sides fixed, its draft PR green on all runners with the Windows Unit suite back to 1 m 40 s; the shas
-   `a22939d`, `96f29a6`, `cef122b`, `baeff48`, `324a11b`, `3003b89` were red on windows-latest on that one test only; at `8197163` the
-   Windows Unit suite is green in 2 m 35 s, and a NEW windows-only red appeared in Fault — `PressSettlesAnUnknownCloseTests.A_press_
-   cancels_the_unknown_close…` (the press's two-second budget spent by the runner's disk after the cancel; the product refused
-   honestly); fixer `U-press-settle-win` (measure first, the `U-sweep-win` way) in flight; recorded red until it lands. A red CI is judged by `docs/HOW-WE-BUILD.md` step 6: product red → reset;
-   runner or harness red → a fixer on top, the sha recorded red until it lands.
-5. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS platform installer is
-   downloaded with no checksum and run elevated (`Prerequisites.cs:118`) — pin a hash in `atas.json` and fail closed
-   when the vendor changes the file, or accept TLS as the whole integrity story and say so in the guide; (b) the U12
-   containment direction — the AI runs unsandboxed as the owner (Codex F1 in the review), so same-user credentials and
-   the in-process gateway are not security boundaries.
-6. **Then, in order (the money path, re-planned 2026-09-06 against the vision above; GPT-6 Astra consulted once on
-   direction, its corrections taken):** (a) `U-ledger` (the fill table, `trade pnl`, a Performance card) and `U-life`
-   (the mission loop, the mission, Guidance, two-press "work on its own") — BOTH LANDED (`U-life` `0ec96c6`, `U-ledger` `640bce5`); `U-typed-catalog` LANDED `4d48395` (the runtime-file harness race);
-   `U-coid-vanished-win` LANDED `697e24f` (the witness test times the product, not the disk); `U-press-win-3` LANDED `a167884` (the
-   stalled press charged for its wire calls, not the Windows runner's disk); `U-prices` LANDED `4e0d877`; (b) `U-meter` LANDED `902e3da`, and with `U-prices` the daily cap bites out of the box (list
-   prices as dated data, an unknown model priced high, the owner's override on the Safety page); (c) `U-loss` IN FLIGHT 2026-09-07 (the budgets, refused from the ledger), then `U-flatten` (the gateway closes positions on
-   a breach, after (e)); **the council line runs BESIDE the money path from here, in the order `docs/COUNCIL.md` fixes:** `U-model`
-   (the app names and passes the model, persists the attempt and its spending commitment BEFORE launch, measures the turn's
-   context by component — today the loop inherited `gpt-6-astra` from `~/.codex/config.toml` at 1.5 USD a turn) → `U-wakes` →
-   `U-data-binance` → `U-council-thin` → `U-turn-commit` → `U-budget-reserve` → `U-containment` → `U-api-worker` → `U-runner`
-   (the strategy language) → `U-referee` → `U-council-concurrent` → venues and data → `U-allocator`; `U-model` LANDED `2504c5b`; `U-wakes` LANDED `cef122b`; `U-data-binance` LANDED `a22939d`; `U-council-thin` LANDED `96f29a6`; `U-report` LANDED `3003b89`; `U-turn-commit` IN FLIGHT, then `U-budget-reserve`; (d) `U-bars`: `trade bars` from the chart's candles, read-only, closed-bar flags and gaps; (e) the UNKNOWN
-   close that could reverse a position — FIXED per leg by `U-unknown-close` `acff18a` (the press settles or cancels the unknown
-   order first, refuses that one leg if the platform cannot answer; the agent's close is refused); `U-flatten` may follow; (f) containment before unattended real money: the agent must not be able to edit the active limits
-   or bypass the gateway (a low-integrity agent process is the candidate; low IL alone does not isolate reads); (g) the
-   paper loop on the box for weeks, the Performance card as the report; (h) the owner's decisions: broker, instrument,
-   size; venues decided 2026-09-06 — Binance or Revolut X direct, AND prop firms like Zenit through the platforms they
-   support (ATAS among them: that is why the bridge exists), all in `docs/RESEARCH-REQUIRED.md` § C; then `U-rules`
-   (a prop firm's rulebook enforced by the gateway ahead of the firm, replacing plain `U-loss`), `U-binance` (testnet),
-   `U-revolutx`, the ATAS order-history BOUND probed on hardware for Zenit, `U-data` (history and feeds from it), `U-runner`
-   (strategies as code the app runs identically in backtest, paper and live, supervised jobs), `U-referee` (the app
-   backtests on data the agent never saw, counts attempts, promotes on measured numbers), `U-allocator` (allocation by
-   live track record: losers to zero and replaced, the swarm's evolution); (i) the third milestone review at the next cut; the ATAS hash pin
-   (recommended now, a data line); the box's real-home migration whenever the owner wants it.
-7. **Machine facts that cost time today** are in the traps below and in `docs/HOW-WE-BUILD.md`: gates run in Release,
-   one at a time on this Mac; `tools/mac-run.sh` no longer kills test hosts (`f7f1baa`); the display must be awake
-   before the Mac UI loop; the box IS reachable (`~/.tradeagent/win.env`, sourced by every `tools/*.sh`); seven
-   usage-limit kills over two sessions were survived by re-briefing from disk, the branch keeps everything; the Bash tool's shell is zsh, so `${PIPESTATUS[0]}` prints nothing —
-   check a command's exit with `$?` on the bare command; `pgrep -f testhost` matches the waiting shell itself — count
-   test hosts with `pgrep -fl 'testhost.dll' | grep -v pgrep`; `git grep -E` here has no `\s` — use `[[:space:]]`.
+1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
+   the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
+2. **`main` is `8a6d88b`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+   `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
+   `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
+   `U-archive-win` `8197163`. Schema is 10 on `main`.
+3. **Three legs were killed by the weekly limit with their work COMMITTED on their branches — re-brief each to a FRESH builder
+   from disk ("read your branch first; judge uncommitted files on their merits; reproduce every RED and mutant yourself"):**
+   - `u-turn-commit` (worktree `U-turn-commit`, tip `1064b6a`, 5 commits = all five items of `docs/briefs/U-turn-commit.md`,
+     schema 11; an untracked `gate-build.txt` to delete): owed its gate and its `## Report`.
+   - `u-budget-reserve` (worktree `U-budget-reserve`, tip `525ce84`, 5 commits = all five items of `docs/briefs/U-budget-
+     reserve.md`; three untracked gate files to delete): owed its gate and its `## Report`. It and `u-turn-commit` both touch
+     `TurnMeter.cs`, `AiAttemptStore.cs` and `MissionLoop.cs`'s turn end — whichever lands second needs a rebase fixer.
+   - `u-press-settle-win` (worktree `U-press-settle-win`, tip `d519d87`, 3 commits incl. a temporary harness; **draft PR #16
+     is OPEN** with the runners' marks): the fixer was naming the sibling tests as not at risk; owed: read PR #16's runs, remove
+     the harness from the tip, gate, `## Report`, close the PR. It fixes the ONE windows-only red on `main` (below).
+4. **CI on `main`:** green on macos and ubuntu at every sha since `2082091`; windows-latest at `8197163` and after is RED on
+   ONE Fault test, `PressSettlesAnUnknownCloseTests.A_press_cancels_the_unknown_close…` (the runner's disk spends the press's
+   two-second budget after the cancel; the product refused honestly; green at its own merge sha and at `3003b89`) — the
+   `u-press-settle-win` fixer above. The thirty-minute Windows Unit suite is gone since `8197163` (2 m 35 s).
+5. **Briefed, committed, NOT dispatched (no worktree yet):** `docs/briefs/U-containment.md` (the job object, the clean
+   environment, per-attempt tokens and the peer-image check on the pipe, the live configuration refusing an uncontained CLI)
+   and `docs/briefs/U-api-worker.md` (the app-owned harness: one provider, one role, every tool a grant, every boundary
+   counted, the key in memory only). Dispatch after the three legs above land, at most two heavy legs at once.
+6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
+   strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
+   untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
+7. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) the
+   containment direction beyond `U-containment` — an AppContainer (`U-contain-2`, needs the box) or harness-only execution
+   for every role, the doctrine's honest alternative.
+8. **Machine facts that cost time:** three Opus legs in parallel reach the session limit in about two hours and the WEEKLY
+   limit in two days — budget for it; a runner-measuring fixer costs a full builder; two parallel units take their schema
+   numbers FROM THE BRIEF (assigned at dispatch), never "the next free"; `docs/briefs/` holds only work in flight.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 
