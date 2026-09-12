@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
+using TradeAgent.Security;
 
 namespace TradeAgent.AgentRuntime;
 
@@ -182,19 +183,41 @@ public static class AgentArgs
 /// owner who changes it on the Safety page is obeyed by the next turn and not by the next restart.
 /// Null, or a null answer, means no model flag goes on the command line.
 /// </param>
+/// <param name="role">
+/// Which council role's launches these are. It is what the launch grant NAMES, so it decides what
+/// the process may ask the gateway for — the chair may move money, Research may not — and it is
+/// TradeAgent's own answer rather than anything the agent says about itself.
+/// </param>
+/// <param name="attempt">
+/// The AI attempt the meter opened for the launch about to happen, or null when nothing opened one.
+/// Stamped on the grant so the gateway can record which attempt a request came from.
+/// </param>
+/// <param name="grants">
+/// Where launch grants are minted. The process-wide register by default — the same one the pipe
+/// server checks against.
+/// </param>
+/// <param name="launchRefusal">
+/// THE PROTECTED CONFIGURATION, asked at every launch: a sentence when this build will not start the
+/// vendor's CLI at all, null when it will. A function because the owner arms and disarms real money
+/// while the AI is working, and the turn that has to obey is the next one.
+/// </param>
 public sealed class AgentSession(
     RuntimeManifest manifest,
     Func<string?> resolveExecutable,
     Func<string> workspace,
     Func<IReadOnlyDictionary<string, string>> environment,
     AgentPresence? presence = null,
-    Func<string?>? model = null) : IAgentConversation
+    Func<string?>? model = null,
+    string role = CouncilRoles.Operations,
+    Func<string?>? attempt = null,
+    AgentGrants? grants = null,
+    Func<string?>? launchRefusal = null) : IAgentConversation
 {
     readonly List<ChatTurn> _history = [];
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
 
-    Process? _current;
+    ContainedProcess? _current;
     CancellationTokenSource? _cts;
     bool _busy;
     bool _sessionExists;
@@ -440,6 +463,16 @@ public sealed class AgentSession(
 
     async Task<(int ExitCode, string Raw, TurnUsage? Usage)> RunTurnAsync(string exe, string message, CancellationToken ct)
     {
+        // REFUSED BEFORE ANYTHING IS STARTED, AND THIS IS THE ONLY PLACE A TURN BEGINS.
+        //
+        // The armed live configuration will not run an AI runtime that no operating-system sandbox
+        // confines — see Containment.RefusalToLaunch. It throws rather than returning quietly: the
+        // caller turns a TradeAgentException into a System turn in the conversation, so the owner
+        // reads the sentence in the window where they armed the switch, which is the only place it
+        // means anything.
+        if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
+
         var streaming = !string.IsNullOrWhiteSpace(manifest.JsonFlag);
 
         // The model is read here, at the turn, and handed to the SAME builder for a first message and
@@ -467,13 +500,30 @@ public sealed class AgentSession(
         };
         CliAgentRuntime.SetCommand(psi, exe, args);
 
-        // This environment is the only thing that puts `trade` on the agent's PATH. Losing it is how
-        // the agent ends up reading its own instructions about a command it cannot run.
-        foreach (var (k, v) in environment()) psi.Environment[k] = v;
+        // ONE LAUNCH, ONE GRANT, AND IT TRAVELS IN THE ENVIRONMENT ONLY.
+        //
+        // Minted here rather than by whoever built the environment, because this is the only line in
+        // the product that knows a process is about to exist: the chair's environment is a dictionary
+        // made once at prepare, and a token minted there would be one token for every turn of the
+        // app's life. Disposed when the turn returns, which pulls its expiry in to the grace — see
+        // AgentGrants.
+        using var launch = (grants ?? AgentGrants.Shared).Issue(role, attempt?.Invoke() ?? "");
 
-        using var process = Process.Start(psi)
-            ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} would not start");
-        _current = process;
+        // A WHITELIST, NOT THE APP'S OWN ENVIRONMENT WITH A FEW NAMES ADDED. `psi.Environment` starts
+        // as a copy of this process's, so everything TradeAgent was started with used to reach the
+        // AI — see AgentEnvironment. The additions are still the only thing that puts `trade` on the
+        // agent's PATH; losing them is how the agent ends up reading its own instructions about a
+        // command it cannot run.
+        var env = new Dictionary<string, string>(environment()) { [AgentGrants.Variable] = launch.Token };
+        AgentEnvironment.Apply(psi, env, manifest.KeepEnvironment);
+
+        // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
+        // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
+        // exited has none left to walk — measured before this line existed, a detached grandchild
+        // outlived CancelAsync on both platforms. See ProcessContainment.
+        using var contained = ProcessContainment.Start(psi);
+        var process = contained.Process;
+        _current = contained;
         // The conversation turn: the one process that runs what the agent decided to do. Held open
         // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
         // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
@@ -802,11 +852,17 @@ public sealed class AgentSession(
 
     // ---- lifecycle -----------------------------------------------------------------------------
 
-    /// <summary>Kills the run in flight, and everything it started, without touching the session.</summary>
+    /// <summary>
+    /// Kills the run in flight, and everything it started, without touching the session.
+    ///
+    /// "Everything it started" is what <see cref="ContainedProcess.Kill"/> buys and what the bare
+    /// tree kill could not: a grandchild that detached is no longer anybody's child, so a walk down
+    /// parent links stops one level above it. The job — or the process group — still names it.
+    /// </summary>
     public Task CancelAsync()
     {
-        var process = _current;
-        try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); }
+        var contained = _current;
+        try { contained?.Kill(); }
         catch (Exception) { /* already gone */ }
         try { _cts?.Cancel(); }
         catch (Exception) { }

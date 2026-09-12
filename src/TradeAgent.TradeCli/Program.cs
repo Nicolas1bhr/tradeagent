@@ -7,6 +7,12 @@ using TradeAgent.TradeCli;
 // --json is the canonical interface: it always prints one object with ok/data/error, so an agent can
 // branch on structure rather than parse prose. Human output is a convenience for the person watching.
 
+// THE macOS/LINUX LAUNCHER, AND IT IS THE FIRST THING THIS PROGRAM DOES. It opens no pipe, reads no
+// token and parses no verb: it starts a session of its own and becomes the program it was handed, so
+// that TradeAgent can kill a cancelled turn by its process group. See ContainedLaunch for why the
+// launcher has to be a separate process at all.
+if (ContainedLaunch.TryRun(args, Console.Error, out var launcherExit)) return launcherExit;
+
 var argv = args.ToList();
 var wantJson = argv.Remove("--json");
 var wantAll = argv.Remove("--all");

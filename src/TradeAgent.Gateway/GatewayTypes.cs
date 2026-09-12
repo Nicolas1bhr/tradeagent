@@ -107,23 +107,52 @@ public sealed class AgentContext
     /// <summary>An ordinary caller. Cannot be an operator, whatever the session is called.</summary>
     public AgentContext(string sessionId) : this(sessionId, isOperator: false) { }
 
-    AgentContext(string sessionId, bool isOperator)
+    AgentContext(string sessionId, bool isOperator, string? role = null, string? attemptId = null)
     {
         SessionId = sessionId;
         IsOperator = isOperator;
+        Role = role;
+        AttemptId = attemptId;
     }
 
     public string SessionId { get; }
     public bool IsOperator { get; }
 
     /// <summary>
-    /// The context for a caller on the other side of the fence, named by whatever session string it
-    /// sent. The only factory the pipe server uses, and it cannot return an operator.
+    /// THE COUNCIL ROLE THIS CALLER PROVED IT IS, or null because it proved nothing.
+    ///
+    /// Null is not "the chair" and it is not a default to be filled in downstream. Everywhere else
+    /// in this product a row with no role reads as Operations (<see cref="CouncilRoles.Or"/>),
+    /// because rows written before the council existed are the chair's — and applying that reading
+    /// HERE was the defect: a caller holding nothing but the machine token, which every agent process
+    /// can read, was served the chair's authority. A caller says which role it is by presenting the
+    /// launch grant the app minted for that role's process, or it is nobody.
     /// </summary>
-    public static AgentContext ForAgent(string? sessionId) =>
-        new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!);
+    public string? Role { get; }
 
-    public override string ToString() => IsOperator ? "operator (in-process)" : SessionId;
+    /// <summary>The AI attempt this caller's launch was opened under, when it proved one.</summary>
+    public string? AttemptId { get; }
+
+    /// <summary>
+    /// Whether this caller may place, change or cancel an order.
+    ///
+    /// The operator always may — that is the owner at the keyboard, in-process, and nothing on the
+    /// pipe can forge it. Otherwise it is the ROLE's answer, and a caller with no role has none:
+    /// Research submits hypotheses and reads, and the doctrine gives it no order permission
+    /// (<c>docs/COUNCIL.md</c>).
+    /// </summary>
+    public bool MayPlaceOrders => IsOperator || CouncilRoles.MayPlaceOrders(Role);
+
+    /// <summary>
+    /// The context for a caller on the other side of the fence, named by whatever session string it
+    /// sent and by the role it PROVED. The only factory the pipe server uses, and it cannot return
+    /// an operator.
+    /// </summary>
+    public static AgentContext ForAgent(string? sessionId, string? role = null, string? attemptId = null) =>
+        new(string.IsNullOrWhiteSpace(sessionId) ? "agent" : sessionId!, isOperator: false, role, attemptId);
+
+    public override string ToString() =>
+        IsOperator ? "operator (in-process)" : Role is { Length: > 0 } r ? $"{SessionId} ({r})" : SessionId;
 }
 
 /// <summary>

@@ -118,6 +118,43 @@ CreateEnvironment · Start · Stop · Restart · ExecuteTask · GetHealth · Cap
 `CliAgentRuntime` implements all of it from a `RuntimeManifest`, so OpenCode, Codex and anything later
 are the same code with different data. Runtime-specific awkwardness stays inside the manifest.
 
+## Containment — `src/TradeAgent.AgentRuntime/Containment.cs`, `src/TradeAgent.Security/AgentGrants.cs`
+
+`U-containment` (2026-09-12). Four properties, and what each does NOT cover:
+
+- **The agent process is held.** Windows: a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, one
+  per turn, the child assigned immediately after `Process.Start` (not started suspended — that needs
+  raw `CreateProcess`, and re-implementing redirection and `CreateNoWindow` to close a one-syscall race
+  is the wrong trade). Breakaway is **not** permitted: neither `BREAKAWAY_OK` nor
+  `SILENT_BREAKAWAY_OK` is set. macOS/Linux: the child is started through TradeAgent's own `trade
+  --spawn-contained`, which calls `setsid()` then `execv()`s the real command, so the pid the app holds
+  is the session and group leader and the cancel is `kill(-pid)`. Measured: `Process.Start` alone leaves
+  the child in TradeAgent's OWN group, and `setpgid` from the parent after exec fails as POSIX says.
+- **The environment is a whitelist**, `AgentEnvironment.PassThrough` plus the runtime manifest's
+  `KeepEnvironment` plus TradeAgent's own — `psi.Environment.Clear()` first, because that dictionary
+  starts as a copy of the app's.
+- **The pipe knows which launch is calling.** One grant per launch (role, attempt id, expiry), minted
+  in `AgentSession` and handed over in the child's environment ONLY, presented in `hello` beside the
+  machine token, and stamped on `AgentContext.Role` / `AttemptId`. A grantless caller is authenticated
+  and **roleless**: it may read and `Ops.IsMutating` is refused `ROLE_MAY_NOT_TRADE`. Research's grant
+  is refused the same way. A grant that is unknown or expired is refused at `hello`, one chance per
+  connection. Where a `PeerRule` is configured, a caller PRESENTING a grant must also be the app's own
+  `trade` under `Paths.Bin` with the hash `ToolDeployer` recorded, and never under `Paths.Tools` or
+  `Paths.Workspace` — the two folder clauses come FIRST, ahead of the recorded path, so a runtime that
+  rewrote the record cannot satisfy it.
+- **The protected configuration.** While `ModeIsLive && LiveActivated` and no OS sandbox reports OK
+  (none can: `Containment.Sandbox()` returns `NONE` on every platform), no AI runtime is started at
+  all — `CONTAINMENT_REQUIRED`, said on the Doctor's `AI containment` row and in `docs/USER-GUIDE.md`.
+  `ModeIsLive` alone does not refuse: a mode chosen and not armed sends no order anywhere.
+
+**What stays open, and it is `U-contain-2`:** the agent runs as the same OS user, so `state/` —
+the database, the datasets, the reports, the recorded CLI hash — is readable AND writable by it. A job
+object is not a sandbox and the product says so in the owner's words rather than implying otherwise. The
+candidates are an AppContainer with brokered file access on Windows and a sandboxed helper on macOS,
+neither verified for a vendor CLI; the honest alternative is harness-only execution for every role
+(`docs/COUNCIL.md`, round 4). Also open: the Unix session can be escaped by a process that calls
+`setsid` itself, which any scripting language on the machine can do in one line.
+
 ## Gateway IPC — `src/TradeAgent.Core/Protocol.cs`
 
 Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap **counted in bytes on the
@@ -129,8 +166,8 @@ frame of CJK text was accepted at 2.6x the stated cap and held whole in the serv
 BEFORE the `hello` check, so the peer that spends it need not have authenticated (finding 10).
 
 ```jsonc
-// request
-{"v":1,"id":"...","op":"buy","token":"...","session":"agent-...","request_id":"...","args":{...}}
+// request  — `grant` is the per-launch grant (U-containment); absent means a roleless caller
+{"v":1,"id":"...","op":"buy","token":"...","grant":"...","session":"agent-...","request_id":"...","args":{...}}
 // response
 {"v":1,"id":"...","ok":true,"data":{...}}
 {"v":1,"id":"...","ok":false,"error":{"code":"...","message":"...","user_message":"...","repair":"...","auto_repairable":false}}

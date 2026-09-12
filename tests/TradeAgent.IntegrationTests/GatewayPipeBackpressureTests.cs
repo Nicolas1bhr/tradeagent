@@ -2056,7 +2056,10 @@ public class GatewayPipeBackpressureTests
         {
             var a = new RawAgent(pipe);
             await a._p.ConnectAsync(10_000);
-            await a.WriteAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure() });
+            // The launch grant this assembly stands in for (TestEnv.Chair): in the product a process
+            // that places an order IS a launch TradeAgent minted a grant for, and a raw client that
+            // skipped it would be testing a caller the product never has.
+            await a.WriteAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = TestEnv.Chair!.Token });
             var hello = Json.Read<IpcResponse>(await a.ReadLineAsync(TimeSpan.FromSeconds(5)))!;
             Assert.True(hello.Ok, "hello was refused: " + Json.Write(hello.Error));
             return a;

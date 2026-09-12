@@ -553,6 +553,27 @@ The two real-money modes need you to switch real-money trading on **separately**
 is not consent on its own. And if you leave a real mode and come back, you have to switch it on again.
 It does not remember your permission.
 
+### While real money is switched on, TradeAgent will not start the AI at all
+
+**This is deliberate and it is new.** Nothing on a Windows PC confines the AI assistant's own program:
+it is a separate program TradeAgent starts, it runs as you, and it can read and write whatever you
+can — including TradeAgent's own files. TradeAgent does hold it in a job that dies with the app, does
+hand it a short list of environment variables rather than a copy of its own, and does check which
+program is on the other end of the AI's connection before believing anything it says about itself. But
+none of that is a sandbox, and the Checks page says so in those words: **OS sandbox: NONE**.
+
+So in the one configuration where that gap would matter — a real-money mode **and** real-money trading
+switched on — TradeAgent refuses to start the assistant and says:
+
+> Real-money trading is switched on, and no operating-system sandbox confines the AI assistant's
+> program on this computer: it runs as the same Windows user as TradeAgent and can read and write
+> whatever that user can. TradeAgent will not start the AI assistant in that configuration. Switch
+> real-money trading off, or choose Practice or Watch only, and the AI runs exactly as before.
+
+**Watch only, Practice and both real modes with real money OFF are completely unaffected**, and so is
+everything else the AI does. Choosing a real mode is not what triggers this — arming it is. When a real
+sandbox exists, this refusal lifts on its own and nothing else changes.
+
 ### What "Real, ask me first" actually looks like
 
 The AI decides it wants to buy or sell. Nothing is sent. Instead:
@@ -822,6 +843,12 @@ down" is not a state this can end up in.
   It needs two things proven — that your order reference survives the round trip, and that order
   history reaches far enough back to answer "what happened to this one". Until a platform confirms
   both, **Real, fully automatic** is withheld and the other three modes work normally.
+- **The AI assistant's program is not sandboxed by the operating system.** It is held in a job that
+  dies with TradeAgent and given a short list of environment variables rather than a copy of the app's
+  own, and the connection it trades over now knows which of the AI's roles is calling — but it still
+  runs as you and can read and write what you can. While real-money trading is switched on TradeAgent
+  will not start it at all; see *While real money is switched on, TradeAgent will not start the AI at
+  all*.
 - **The blue "Windows protected your PC" screen has not been walked.** Nobody has yet installed this
   from a browser download on a machine that treats it as downloaded.
 - **Rolling an update back has never been tried**, nor has an update interrupted halfway.

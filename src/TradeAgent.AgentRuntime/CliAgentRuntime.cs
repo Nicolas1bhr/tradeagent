@@ -19,10 +19,11 @@ namespace TradeAgent.AgentRuntime;
 /// The model the OWNER chose, or null for the manifest's default. A function rather than a value
 /// because it lives in the settings and can change while this runtime is alive.
 /// </param>
-public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null) : IAgentRuntime
+public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? selectedModel = null,
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null) : IAgentRuntime
 {
-    Process? _session;
-    Process? _login;
+    ContainedProcess? _session;
+    ContainedProcess? _login;
     AgentSession? _conversation;
     bool _started;
     string _workspace = Paths.Workspace;
@@ -369,11 +370,11 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             StandardErrorEncoding = Encoding.UTF8
         };
         SetCommand(psi, exe, manifest.AuthArgs);
-        foreach (var (k, v) in _env) psi.Environment[k] = v;
+        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
-        var process = Process.Start(psi)
-            ?? throw new TradeAgentException(ErrorCode.AI_AUTH_FAILED, $"{manifest.DisplayName} would not start its sign-in");
-        _login = process;
+        var contained = ProcessContainment.Start(psi);
+        var process = contained.Process;
+        _login = contained;
         Presence(process);
 
         var transcript = new StringBuilder();
@@ -454,7 +455,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
 
     void StopLogin()
     {
-        try { if (_login is { HasExited: false }) _login.Kill(entireProcessTree: true); }
+        try { if (_login is { Process.HasExited: false }) _login.Kill(); }
         catch (Exception) { /* already gone */ }
         _login?.Dispose();
         _login = null;
@@ -490,10 +491,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
             };
             SetCommand(psi, exe, plan.StdinArgs);
-            foreach (var (k, v) in _env) psi.Environment[k] = v;
+            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
-            using var p = Process.Start(psi)
-                ?? throw new TradeAgentException(ErrorCode.AI_AUTH_REQUIRED, $"could not start {Path.GetFileName(exe)}");
+            using var held = ProcessContainment.Start(psi);
+            var p = held.Process;
             using var alive = Presence(p);
             await p.StandardInput.WriteLineAsync(key);
             p.StandardInput.Close();
@@ -592,7 +593,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     /// </summary>
     public IAgentConversation OpenConversation() =>
         _conversation ??= new AgentSession(manifest, ResolveExecutable, () => _workspace, () => _env,
-            model: () => RequestedModel);
+            model: () => RequestedModel, role: CouncilRoles.Operations,
+            attempt: () => attemptId?.Invoke(CouncilRoles.Operations), launchRefusal: launchRefusal);
 
     /// <summary>
     /// One conversation per council role, made once and kept. The chair gets the window's own
@@ -613,7 +615,8 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             // would have to know which runtime is prepared, which is the one thing this interface
             // exists to keep out of the app.
             var session = new AgentSession(manifest, ResolveExecutable, workspace, environment,
-                model: () => ModelFor(model()));
+                model: () => ModelFor(model()), role: role,
+                attempt: () => attemptId?.Invoke(role), launchRefusal: launchRefusal);
             _roleConversations[role] = session;
             return session;
         }
@@ -632,7 +635,14 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     {
         var exe = ResolveExecutable() ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND);
 
-        if (manifest.InteractiveArgs.Length > 0 && _session is not { HasExited: false })
+        // The same refusal the turn obeys, on the one other path that starts a vendor process the
+        // agent's work runs in. Checked here rather than inside Run(): Run also issues this class's
+        // own fixed probes — a version string, an auth state, an installer — and refusing those
+        // would leave the owner unable to see WHY the AI will not start.
+        if (launchRefusal?.Invoke() is { Length: > 0 } refusal)
+            throw new TradeAgentException(ErrorCode.CONTAINMENT_REQUIRED, refusal);
+
+        if (manifest.InteractiveArgs.Length > 0 && _session is not { Process.HasExited: false })
         {
             var psi = new ProcessStartInfo
             {
@@ -645,9 +655,9 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
                 StandardErrorEncoding = Encoding.UTF8
             };
             SetCommand(psi, exe, manifest.InteractiveArgs);
-            foreach (var (k, v) in _env) psi.Environment[k] = v;
-            _session = Process.Start(psi);
-            if (_session is not null) Presence(_session);
+            AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
+            _session = ProcessContainment.Start(psi);
+            Presence(_session.Process);
         }
 
         var conversation = OpenConversation();
@@ -665,7 +675,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
         lock (_roleConversations) roles = [.. _roleConversations.Values];
         foreach (var c in roles) await c.StopAsync();
         StopLogin();
-        try { if (_session is { HasExited: false }) _session.Kill(entireProcessTree: true); }
+        try { if (_session is { Process.HasExited: false }) _session.Kill(); }
         catch (Exception) { /* already gone */ }
         _session?.Dispose();
         _session = null;
@@ -690,7 +700,7 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
     {
         var exe = ResolveExecutable();
         if (exe is null) return HealthState.FAILED;
-        if (_started || _session is { HasExited: false }) return HealthState.READY;
+        if (_started || _session is { Process.HasExited: false }) return HealthState.READY;
         var v = await GetVersionAsync(ct);
         return v is null ? HealthState.DEGRADED : HealthState.READY;
     }
@@ -722,9 +732,10 @@ public sealed class CliAgentRuntime(RuntimeManifest manifest, Func<string?>? sel
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = _workspace
         };
         SetCommand(psi, exe, args);
-        foreach (var (k, v) in _env) psi.Environment[k] = v;
+        AgentEnvironment.Apply(psi, _env, manifest.KeepEnvironment);
 
-        using var p = Process.Start(psi) ?? throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED, $"could not start {exe}");
+        using var held = ProcessContainment.Start(psi);
+        var p = held.Process;
         using var alive = agentWork ? Presence(p) : null;
         try { p.StandardInput.Close(); } catch (Exception) { /* already gone */ }
         using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);

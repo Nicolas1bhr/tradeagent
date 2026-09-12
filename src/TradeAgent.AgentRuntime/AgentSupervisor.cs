@@ -11,7 +11,17 @@ namespace TradeAgent.AgentRuntime;
 /// The model the owner chose on the Safety page, or null for the runtime's default. Handed to every
 /// runtime this supervisor prepares, so the choice survives a restart of the agent.
 /// </param>
-public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null)
+/// <param name="attemptId">
+/// The AI attempt open for ONE ROLE's launch about to happen, read at the launch. Handed to every
+/// runtime this supervisor prepares so that the grant a turn's process carries names the attempt its
+/// cost is committed against. Per role, because the meter holds one open attempt per role.
+/// </param>
+/// <param name="launchRefusal">
+/// The protected configuration's answer, asked at every launch: a sentence when no AI runtime may be
+/// started at all, null when one may. Handed to every runtime this supervisor prepares.
+/// </param>
+public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? selectedModel = null,
+    Func<string, string?>? attemptId = null, Func<string?>? launchRefusal = null)
 {
     readonly SemaphoreSlim _gate = new(1, 1);
     IAgentRuntime? _runtime;
@@ -46,7 +56,7 @@ public sealed class AgentSupervisor(HealthRegistry health, Func<string?>? select
         await _gate.WaitAsync(ct);
         try
         {
-            var runtime = new CliAgentRuntime(manifest, selectedModel);
+            var runtime = new CliAgentRuntime(manifest, selectedModel, attemptId, launchRefusal);
             var detection = await runtime.DetectAsync(ct);
             health.Set(Components.AgentRuntime,
                 detection.Installed ? HealthState.READY : HealthState.FAILED,

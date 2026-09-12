@@ -121,6 +121,9 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
                     "If sign-in misbehaves, the commands can be corrected in runtimes.json without reinstalling."));
         }
 
+        // ---- containment
+        r.Add(ContainmentCheck(gateway?.Settings));
+
         // ---- IPC
         r.Add(await PipeReachable(ct)
             ? CheckResult.Ok("Trading service connection", Paths.PipeName)
@@ -184,6 +187,44 @@ public sealed class Doctor(TradingGateway? gateway = null, bool allowNetwork = t
         }
 
         return new DoctorReport(DateTimeOffset.UtcNow, r);
+    }
+
+    /// <summary>
+    /// WHAT IS HOLDING THE AI'S OWN PROGRAM, AND WHAT IS NOT — including the sentence "OS sandbox:
+    /// NONE", which is the most important thing on this row and the easiest to leave out.
+    ///
+    /// READY until the armed live configuration makes the gap bite, and then DEGRADED. Not DEGRADED
+    /// always: a row that is amber on every installation for the lifetime of the product teaches its
+    /// owner to ignore the colour, and there is nothing to press — the sandbox is <c>U-contain-2</c>,
+    /// not a repair. What the row does on every installation is SAY what confines the AI and what
+    /// does not, in the detail, so the fact is never hidden behind a state.
+    ///
+    /// Never FAILED and never repairable, for the reason <see cref="ReconciliationCheck"/> is
+    /// neither: this is a property of the platform TradeAgent is running on, and three of the four
+    /// modes are unaffected by it.
+    /// </summary>
+    public static CheckResult ContainmentCheck(TradeAgentSettings? settings)
+    {
+        const string name = "AI containment";
+        var facts = AgentRuntime.Containment.Facts();
+
+        var refusal = AgentRuntime.Containment.RefusalToLaunch(
+            settings?.ModeIsLive ?? false, settings?.LiveActivated ?? false);
+
+        if (refusal is { Length: > 0 })
+            return CheckResult.Warn(name, facts.Detail,
+                refusal + " “Watch only”, “Practice” and “Real, ask me first” are unaffected, and so is " +
+                "everything else the AI does — this withholds one configuration, the one where an " +
+                "unconfined program sits beside a switch that spends money.",
+                ErrorCode.CONTAINMENT_REQUIRED);
+
+        if (!facts.Held)
+            return CheckResult.Warn(name, facts.Detail,
+                "Press Repair. Until the trade command is installed, a turn TradeAgent cancels can " +
+                "leave a program of its own still running.",
+                ErrorCode.IPC_UNAVAILABLE, repairable: true);
+
+        return CheckResult.Ok(name, facts.Detail);
     }
 
     /// <summary>
