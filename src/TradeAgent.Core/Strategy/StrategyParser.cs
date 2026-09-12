@@ -156,6 +156,14 @@ public static class StrategyParser
                 "no size: a program says how much to buy, as `size fixed <quantity>`, " +
                 "`size capital_fraction <fraction>` or `size risk_fraction <fraction>`");
 
+        // RISK SIZING WITH NOTHING TO MEASURE RISK AGAINST. `risk_fraction` is a fraction of equity
+        // over the STOP DISTANCE; with no stop there is no distance, and the quantity is a division
+        // by nothing. The refusal names the size line, because that is the line that has to change.
+        if (sizing.Kind == SizingKind.EquityRiskFraction && settings.Stop.Kind == StopKind.None)
+            throw new Refused(settings.SizingLine,
+                "`size risk_fraction` sizes a position so that the distance to the STOP is that fraction of equity, " +
+                "and this program declares no stop. Add a `stop`, or size with `fixed` or `capital_fraction`");
+
         if (!rules.Any(r => r.Kind == RuleKind.Entry))
             throw new Refused(0, "no entry rule: a program that can never enter is not a strategy");
 
@@ -356,6 +364,7 @@ public static class StrategyParser
         public string? Instrument;
         public string? TimeZone;
         public Sizing? Sizing;
+        public int SizingLine;
         public StopRule Stop = StopRule.None;
         public TargetRule Target = TargetRule.None;
         public int? MaxHoldBars;
@@ -390,6 +399,7 @@ public static class StrategyParser
                 case "size":
                     Once(d, s.Sizing is not null);
                     s.Sizing = ReadSizing(d, constants);
+                    s.SizingLine = d.No;
                     break;
 
                 case "stop":
@@ -405,6 +415,10 @@ public static class StrategyParser
                 case "max_hold_bars":
                     Once(d, s.MaxHoldBars is not null);
                     s.MaxHoldBars = Count(d, d.Rest, constants, "max_hold_bars", StrategyLimits.MaxHoldBars);
+                    if (s.MaxHoldBars <= 0)
+                        throw new Refused(d.No,
+                            $"max_hold_bars is a number of bars above 0, and this one is {s.MaxHoldBars}. " +
+                            "A holding time of zero bars would close a position on the bar that opened it");
                     break;
 
                 case "weekdays":
@@ -596,6 +610,7 @@ public static class StrategyParser
     {
         var rules = new List<StrategyRule>();
         var sawEntry = false;
+        var nodes = 0;
 
         foreach (var d in decls)
         {
@@ -611,6 +626,22 @@ public static class StrategyParser
                         : $"`{Clip(words[0])}` is not `when` — and a rule takes no side, because a program is long or flat"));
 
             var condition = ParseExpression(d.No, d.Rest[words[0].Length..].Trim(), constants, indicators);
+
+            // A CONDITION IS A QUESTION, and the type system is what says so while there is still a
+            // line to name. `entry when close` asks whether a price is true.
+            var type = StrategyTypes.TypeOf(condition, out var mismatch);
+            if (type is null)
+                throw new Refused(d.No, mismatch ?? "this condition does not type-check");
+            if (type != ValueKind.Boolean)
+                throw new Refused(d.No,
+                    "a rule condition is a true-or-false question, and this one is a number. " +
+                    "A comparison makes it a question: `close > fastma`, `rsi14 < 30`");
+
+            nodes += condition.NodeCount;
+            if (nodes > StrategyLimits.MaxNodes)
+                throw new Refused(d.No,
+                    $"the conditions in this program come to more than the {StrategyLimits.MaxNodes} expression nodes " +
+                    "one program may hold. That count is what the interpreter walks on every closed bar");
 
             if (kind == RuleKind.Entry) sawEntry = true;
             else if (sawEntry)
@@ -915,6 +946,10 @@ public static class StrategyParser
 
             if (t.Number != decimal.Truncate(t.Number) || t.Number < 0m)
                 throw new Refused(line, $"`{name}[{t.Text}]` is not a whole number of bars back");
+            if (t.Number > StrategyLimits.MaxHistoryDepth)
+                throw new Refused(line,
+                    $"`{name}[{t.Text}]` reaches further back than the {StrategyLimits.MaxHistoryDepth} bars a history " +
+                    "reference may reach. A lookback has to be bounded before the program runs, not after");
 
             return (int)t.Number;
         }
@@ -975,8 +1010,18 @@ public static class StrategyParser
             $"`{Clip(word)}` is not a number and is not a declared constant");
     }
 
-    static int Period(int line, string what, string word, Dictionary<string, StrategyConstant> constants) =>
-        Count(line, what + " period", Value(line, word, constants), StrategyLimits.MaxLookbackBars);
+    /// <summary>
+    /// A PERIOD, WHICH IS ABOVE ZERO. The mean of no bars is not a number: an indicator that answered
+    /// one anyway would make a program's backtest the backtest of a different program, and the author
+    /// — a model that wrote `sma(close, 0)` by arithmetic slip — would never see it.
+    /// </summary>
+    static int Period(int line, string what, string word, Dictionary<string, StrategyConstant> constants)
+    {
+        var period = Count(line, what + " period", Value(line, word, constants), StrategyLimits.MaxLookbackBars);
+        if (period <= 0)
+            throw new Refused(line, $"{what} needs a period above 0, and this one asks for {period}");
+        return period;
+    }
 
     static int Count(Decl d, string word, Dictionary<string, StrategyConstant> constants, string what, int most) =>
         Count(d.No, what, Value(d.No, word, constants), most);
