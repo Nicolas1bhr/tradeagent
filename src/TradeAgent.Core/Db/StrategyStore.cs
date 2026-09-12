@@ -236,6 +236,24 @@ public sealed class StrategyStore(Database db)
         return ReadRuns(c);
     });
 
+    /// <summary>
+    /// EVERY RUN THAT FED ON ONE DATASET, newest first — which is what makes a later rejection
+    /// traceable.
+    ///
+    /// <para>A dataset row can be moved to REJECTED months after the fact, because a raw archive file
+    /// changed under it. The question that then matters is "which of my results were computed over
+    /// those bytes", and this is it: the run rows carry the dataset's sha AS IT WAS AT RUN TIME, so a
+    /// caller can tell a run over the bytes the ledger measured from a run over bytes it no longer
+    /// can.</para>
+    /// </summary>
+    public IReadOnlyList<StrategyRunRow> RunsOfDataset(long datasetId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {RunCols} FROM strategy_run WHERE dataset_id=$id ORDER BY created_at DESC, id DESC",
+            ("$id", datasetId));
+        return ReadRuns(c);
+    });
+
     /// <summary>How many runs this installation has measured. What section 8 of the owner's report asks.</summary>
     public int RunCount => db.Read(_ =>
     {

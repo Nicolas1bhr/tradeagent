@@ -508,6 +508,57 @@ public static class Backtest
         }
     }
 
+    /// <summary>
+    /// ONE RUN OVER ONE DATASET BY ITS LEDGER ID — or a REFUSAL that says why there is none.
+    ///
+    /// <para><b>This is the only way in that can refuse, and it is where a REJECTED dataset stops.</b>
+    /// <see cref="Data.BarFeed.Open"/> takes the ledger's verdict ONCE, at the start of the run, by
+    /// re-hashing every raw archive file and the normalised file; a dataset whose bytes have changed
+    /// under it serves nothing and the refusal names it. A run whose dataset changed state half way
+    /// through would have no one dataset its result was about.</para>
+    ///
+    /// <para><b>The dataset's SHA-256 comes from that verified record and goes into the run's id.</b>
+    /// So a rejection discovered next month can be traced to every run that fed on those bytes —
+    /// <c>StrategyStore.RunsOfDataset</c> — instead of leaving results attached to a dataset id whose
+    /// contents nobody can identify any more.</para>
+    /// </summary>
+    public static BacktestOpened Over(
+        Db.DatasetStore datasets,
+        long datasetId,
+        StrategyProgram program,
+        ExecutionModel model,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        EvaluationLimits? limits = null,
+        CancellationToken stop = default)
+    {
+        ArgumentNullException.ThrowIfNull(datasets);
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(model);
+
+        if (from is { } lo && to is { } hi && lo > hi)
+            return BacktestOpened.No(
+                $"the window starts at {lo:O} and ends at {hi:O}, which is a window with nothing in it");
+
+        var open = Data.BarFeed.Open(datasets, datasetId);
+        if (open.Feed is not { } feed) return BacktestOpened.No(open.Why);
+
+        var request = new BacktestRequest(
+            feed.Dataset.Id, feed.Dataset.NormalisedSha256, model, from, to);
+
+        try
+        {
+            return BacktestOpened.Yes(Run(program, request, feed.Bars(from, to), limits, null, stop));
+        }
+        catch (IOException ex)
+        {
+            // The ledger vouched for the file a moment ago; a read that fails now is a disk problem
+            // and not a result. A refusal rather than an exception, for the reason `BarFeedOpen` is one.
+            return BacktestOpened.No(
+                $"the normalised file of dataset {datasetId} could not be read: {ex.Message}");
+        }
+    }
+
     static ExitReason Reason(IntentCause cause) => cause switch
     {
         IntentCause.SessionExit => ExitReason.SessionExit,
@@ -538,4 +589,33 @@ public sealed record BacktestResult(
     string? FaultReason)
 {
     public bool Faulted => Outcome == BacktestOutcome.FAULTED;
+}
+
+/// <summary>
+/// A RUN, OR WHY THERE IS NONE. The shape <see cref="StrategyParse"/>, <see cref="BarFeedOpen"/> and
+/// <see cref="ExecutionModelDeclared"/> already have, for the same reason: a caller that forgot to
+/// check gets a null result rather than a figure about bars nobody will vouch for.
+/// </summary>
+public sealed record BacktestOpened
+{
+    BacktestOpened(BacktestResult? result, string? refusal)
+    {
+        Result = result;
+        Refusal = refusal;
+    }
+
+    /// <summary>The run, or null when it was refused.</summary>
+    public BacktestResult? Result { get; }
+
+    /// <summary>Why there is none, or null when there is one.</summary>
+    public string? Refusal { get; }
+
+    public bool Ok => Result is not null;
+
+    /// <summary>The refusal's text, or the empty string when a run came out.</summary>
+    public string Why => Refusal ?? "";
+
+    internal static BacktestOpened Yes(BacktestResult result) => new(result, null);
+
+    internal static BacktestOpened No(string reason) => new(null, reason);
 }
