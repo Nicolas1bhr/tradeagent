@@ -485,7 +485,8 @@ public static class Backtest
 
         return new BacktestResult(
             request.RunIdFor(program.StrategyId), program.StrategyId, request, events, trades,
-            state.Counters, fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault);
+            BacktestMetrics.Of(events), state.Counters,
+            fault is null ? BacktestOutcome.COMPLETED : BacktestOutcome.FAULTED, fault);
 
         void Close(KlineBar bar, decimal price, ExitReason reason)
         {
@@ -519,11 +520,11 @@ public static class Backtest
 /// EVERYTHING ONE RUN PRODUCED: what it was a run of, what happened bar by bar, the trades that came
 /// out of it, and the metrics computed from the trace.
 ///
-/// <para><see cref="Trace"/> is the record every figure about this run is computed from, and
-/// <see cref="Trades"/> is the bookkeeping that produced it. `docs/COUNCIL.md`'s "metrics computed by
-/// the app from its own trace" is the rule those two serve: a figure that came from anywhere else —
-/// the program's text, a counter a caller kept, a number an agent reported — is a claim wearing a
-/// measurement's clothes.</para>
+/// <para><see cref="Metrics"/> is NOT a second account of the run. It is computed from
+/// <see cref="Trace"/> and from nothing else (<see cref="BacktestMetrics.Of"/>), which is what
+/// `docs/COUNCIL.md` means by "metrics computed by the app from its own trace": a figure that came from
+/// anywhere else — the program's text, a counter a caller kept, a number an agent reported — is a claim
+/// wearing a measurement's clothes.</para>
 /// </summary>
 public sealed record BacktestResult(
     string RunId,
@@ -531,6 +532,7 @@ public sealed record BacktestResult(
     BacktestRequest Request,
     BacktestTrace Trace,
     IReadOnlyList<BacktestTrade> Trades,
+    BacktestMetrics Metrics,
     EvaluationCounters Counters,
     BacktestOutcome Outcome,
     string? FaultReason)
