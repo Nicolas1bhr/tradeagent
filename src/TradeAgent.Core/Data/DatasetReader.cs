@@ -41,26 +41,52 @@ public static class DatasetReader
 
         foreach (var line in File.ReadLines(path))
         {
-            if (line.Length == 0 || line.StartsWith("open_time", StringComparison.Ordinal)) continue;
+            if (!TryBar(line, out var bar)) continue;
 
-            var f = line.Split(',');
-            if (f.Length < 6) continue;
-            if (!DateTimeOffset.TryParse(f[0], CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var at)) continue;
+            if (from is { } lo && bar.OpenTime < lo) continue;
+            if (to is { } hi && bar.OpenTime > hi) break;   // the file is written in ascending order
 
-            if (from is { } lo && at < lo) continue;
-            if (to is { } hi && at > hi) break;   // the file is written in ascending order
-
-            if (!decimal.TryParse(f[1], CultureInfo.InvariantCulture, out var o)) continue;
-            if (!decimal.TryParse(f[2], CultureInfo.InvariantCulture, out var h)) continue;
-            if (!decimal.TryParse(f[3], CultureInfo.InvariantCulture, out var l)) continue;
-            if (!decimal.TryParse(f[4], CultureInfo.InvariantCulture, out var c)) continue;
-            if (!decimal.TryParse(f[5], CultureInfo.InvariantCulture, out var v)) continue;
-
-            bars.Add(new KlineBar(at, o, h, l, c, v));
+            bars.Add(bar);
             if (bars.Count > cap) return new BarWindow([], true);
         }
 
         return new BarWindow(bars, false);
     }
+
+    /// <summary>
+    /// ONE LINE OF THE NORMALISED FILE, OR NOT A BAR AT ALL — the header, a blank line, a short row
+    /// or a column that will not parse.
+    ///
+    /// <para>Public and in one place because there are now two readers of this format —
+    /// <see cref="Read"/>, which the pipe op uses and which REFUSES a window over
+    /// <see cref="MaxBars"/>, and <see cref="BarFeed"/>, which streams a whole run with no cap. Two
+    /// copies of the row parse would be two definitions of what a bar is, and the one that drifted
+    /// would be the one nobody read.</para>
+    ///
+    /// <para>A line that is not a bar is SKIPPED rather than refused: the file is the app's own
+    /// output, hashed in the ledger, so a row this cannot read is a corrupt file — and what settles
+    /// a corrupt file is `DatasetStore.Checked` comparing the hash, not a reader guessing.</para>
+    /// </summary>
+    public static bool TryBar(string line, out KlineBar bar)
+    {
+        bar = Empty;
+
+        if (line.Length == 0 || line.StartsWith("open_time", StringComparison.Ordinal)) return false;
+
+        var f = line.Split(',');
+        if (f.Length < 6) return false;
+        if (!DateTimeOffset.TryParse(f[0], CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var at)) return false;
+
+        if (!decimal.TryParse(f[1], CultureInfo.InvariantCulture, out var o)) return false;
+        if (!decimal.TryParse(f[2], CultureInfo.InvariantCulture, out var h)) return false;
+        if (!decimal.TryParse(f[3], CultureInfo.InvariantCulture, out var l)) return false;
+        if (!decimal.TryParse(f[4], CultureInfo.InvariantCulture, out var c)) return false;
+        if (!decimal.TryParse(f[5], CultureInfo.InvariantCulture, out var v)) return false;
+
+        bar = new KlineBar(at, o, h, l, c, v);
+        return true;
+    }
+
+    static readonly KlineBar Empty = new(default, 0m, 0m, 0m, 0m, 0m);
 }

@@ -135,6 +135,20 @@ public sealed class DatasetStore(Database db)
         return ReadAll(c);
     });
 
+    /// <summary>
+    /// ONE DATASET BY ITS LEDGER ID, or null when this installation has no such row.
+    ///
+    /// <para><see cref="Newest"/> answers "the freshest BTCUSDT data", which is the right question
+    /// for an agent asking to look at some bars and the wrong one for a run whose result is going to
+    /// be attached to an id: a backtest run against "newest" is a result nobody can reproduce once a
+    /// month is collected. Not verified — see <see cref="Checked"/>.</para>
+    /// </summary>
+    public DatasetRecord? ById(long id) => db.Read(_ =>
+    {
+        using var c = db.Cmd($"SELECT {Cols} FROM dataset WHERE id=$id", ("$id", id));
+        return ReadAll(c).FirstOrDefault();
+    });
+
     /// <summary>The newest dataset for a pair, or null when this installation has none.</summary>
     public DatasetRecord? Newest(string pair) => db.Read(_ =>
     {
