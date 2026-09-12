@@ -192,6 +192,7 @@ public class BudgetReservationTests : IDisposable
         {
             Usage = new TurnUsage(1_000, 0, 0, 10, 0, null)
         }, CouncilRoles.Research);
+        meter.CommitStaged();               // the mission loop's own commit, which is where its close lands
 
         var rows = store.Between(now.AddDays(-1), now.AddDays(1));
         Assert.Equal(2, rows.Count);
@@ -259,6 +260,7 @@ public class BudgetReservationTests : IDisposable
         // The process ended and said nothing about what it used — no usage event at all.
         meter.Record(new AgentTurnEnded(1, TimeSpan.FromSeconds(2), "the AI tool could not be reached", now),
             CouncilRoles.Operations);
+        meter.CommitStaged();               // the mission loop's own commit, which is where its close lands
 
         var row = new AiAttemptStore(_db).Get(id)!;
         Assert.Equal(AiAttemptState.ENDED, row.State);
@@ -291,6 +293,7 @@ public class BudgetReservationTests : IDisposable
         Assert.Equal(0m, new AiAttemptStore(_db).Get(id)!.ReservedCost);
 
         meter.Record(new AgentTurnEnded(1, TimeSpan.FromSeconds(2), "", now), CouncilRoles.Operations);
+        meter.CommitStaged();               // the mission loop's own commit, which is where its close lands
 
         var row = new AiAttemptStore(_db).Get(id)!;
         Assert.Null(row.Cost);

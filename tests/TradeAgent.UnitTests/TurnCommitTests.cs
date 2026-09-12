@@ -115,7 +115,7 @@ public class TurnCommitTests
             world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
             world.Write(CouncilRoles.Research, "trading/JOURNAL.md", Journal);
 
-            meter.Record(Ended(world.At));           // the runtime reported; the close is held
+            meter.Record(Ended(world.At), CouncilRoles.Research);   // the runtime reported; the close is held
 
             var relay = world.RelayOver(dying);
             relay.Boundary = at => { if (at == boundary) throw new IOException($"killed at the {at}"); };
@@ -183,7 +183,7 @@ public class TurnCommitTests
         meter.Begin("## Situation", ["review:1"], CouncilRoles.Research);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
-        meter.Record(Ended(world.At));
+        meter.Record(Ended(world.At), CouncilRoles.Research);
 
         world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
             () => meter.CommitStaged(),
@@ -224,7 +224,7 @@ public class TurnCommitTests
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
         world.Write(CouncilRoles.Research, "trading/JOURNAL.md", Journal);
-        meter.Record(Ended(world.At));
+        meter.Record(Ended(world.At), CouncilRoles.Research);
 
         world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
             () => meter.CommitStaged(), () => { });
@@ -249,7 +249,7 @@ public class TurnCommitTests
         meter.Begin("## Situation", [], CouncilRoles.Research);
         world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", Plan);
-        meter.Record(Ended(world.At));
+        meter.Record(Ended(world.At), CouncilRoles.Research);
 
         Assert.Throws<InvalidOperationException>(() =>
             world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
@@ -281,7 +281,7 @@ public class TurnCommitTests
         var attempt = meter.Mint();
         meter.Begin("## Situation", [], CouncilRoles.Research);
         world.Write(CouncilRoles.Research, "trading/PLAN.md", tooLong);
-        meter.Record(Ended(world.At));
+        meter.Record(Ended(world.At), CouncilRoles.Research);
 
         var relay = world.RelayOver(db);
         relay.Boundary = at =>
