@@ -194,7 +194,7 @@ public sealed class AgentSession(
     readonly Lock _historyLock = new();
     readonly List<string> _typedMeanwhile = [];
 
-    Process? _current;
+    ContainedProcess? _current;
     CancellationTokenSource? _cts;
     bool _busy;
     bool _sessionExists;
@@ -471,9 +471,13 @@ public sealed class AgentSession(
         // the agent ends up reading its own instructions about a command it cannot run.
         foreach (var (k, v) in environment()) psi.Environment[k] = v;
 
-        using var process = Process.Start(psi)
-            ?? throw new TradeAgentException(ErrorCode.AI_RUNTIME_NOT_FOUND, $"{manifest.DisplayName} would not start");
-        _current = process;
+        // HELD, NOT MERELY STARTED. A Job Object on Windows, a session of its own on macOS and
+        // Linux: Kill(entireProcessTree) walks parent links, and a grandchild whose parent has
+        // exited has none left to walk — measured before this line existed, a detached grandchild
+        // outlived CancelAsync on both platforms. See ProcessContainment.
+        using var contained = ProcessContainment.Start(psi);
+        var process = contained.Process;
+        _current = contained;
         // The conversation turn: the one process that runs what the agent decided to do. Held open
         // for exactly as long as it runs, so the material scanner cannot attest an inbox sighting
         // to the account owner across a window this process was inside (REVIEW 2026-09-05b f5).
@@ -802,11 +806,17 @@ public sealed class AgentSession(
 
     // ---- lifecycle -----------------------------------------------------------------------------
 
-    /// <summary>Kills the run in flight, and everything it started, without touching the session.</summary>
+    /// <summary>
+    /// Kills the run in flight, and everything it started, without touching the session.
+    ///
+    /// "Everything it started" is what <see cref="ContainedProcess.Kill"/> buys and what the bare
+    /// tree kill could not: a grandchild that detached is no longer anybody's child, so a walk down
+    /// parent links stops one level above it. The job — or the process group — still names it.
+    /// </summary>
     public Task CancelAsync()
     {
-        var process = _current;
-        try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); }
+        var contained = _current;
+        try { contained?.Kill(); }
         catch (Exception) { /* already gone */ }
         try { _cts?.Cancel(); }
         catch (Exception) { }
