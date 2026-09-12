@@ -5157,3 +5157,43 @@ names vs `main` → 0 removed, 0 added (sets 1309 = 1309); scan clean; no traile
 
 **Carried forward:** a tracked file the tests read byte for byte needs BOTH its extension in `.gitattributes` and a test that
 normalises what it reads — either alone has now failed once. **NOT done:** no product code; no assertion loosened; no box, no money.
+
+## 2026-09-13 — U-runner-2 landed: the evaluator — closed bars of a named dataset in, bounded intents out, a fault a defined outcome
+
+Rule 8's second half, by one fresh builder on `docs/briefs/U-runner-2.md`. Merge `c758fce`, 6 commits (new `Data/BarFeed.cs`,
+`Strategy/StrategyIndicators.cs`, `StrategyEvaluator.cs`, `StrategyInterpreter.cs`, `StrategyCalendar.cs`, `EvaluationLimits`;
+`DatasetStore.ById`; `DatasetReader.TryBar` extracted, its cap and body unchanged; `docs/STRATEGY-LANGUAGE.md` an "Evaluation"
+section; `CONTRACTS.md`; seven new test classes). No schema change, nothing on the wire, no order.
+
+- **Bars by dataset id:** `DatasetStore.ById` and a streaming `BarFeed` — a real twelve-month window (525,600 bars) is `OverCap`
+  to the reader and streams whole through the feed; the `Checked` verdict taken ONCE at open (proven by deleting a raw file
+  mid-run and still streaming). RED: `Value is null` / `the bar feed is not implemented`; mutant (`Checked` not called): 2 red.
+- **Seven indicators**, 280 pinned values over a 40-bar fixture, every value recomputed OUTSIDE the build in 60-digit decimal:
+  all 280 agree, worst relative deviation 2.3e-27 (the last digit `decimal` has). RED: `Expected: 101.50 / Actual: null`; mutant
+  (EMA seeded from the first close): the series differs from bar 4.
+- **Gaps and warm-up:** a missing minute advances no lookback and is counted; a bar out of order, repeated or off the grid is a
+  defined fault. RED: `the evaluator is not implemented`; mutant (the previous close carried across the gap): `Expected: 99.60 /
+  Actual: 99.30`.
+- **The rule engine:** exits before entries, no same-event reversal, no duplicate entry while one is pending, a signal stamped with
+  its bar and executable only after it; the calendar table checked outside the build against IANA — 525,888 half-hour readings
+  across six zones and 2023–2027, zero mismatches. RED: `Assert.Single() Failure: The collection was empty` (22 red). **The
+  brief's mutant corrected by the builder:** with the position read from the account input, "entries before exits" cannot reverse
+  (an entry is gated on being flat); the guard that produces a one-event reversal is "an exit that fires ENDS the event", and that
+  mutant went red: `Expected: Exit / Actual: Enter`, 3 of 28.
+- **Limits and faults:** a per-event operation budget (16,384) and a state limit (262,144 bytes), both ABOVE what any accepted
+  program can cost (8,401 / 138,464, pinned as an inequality); a fault is a value, never an exception. RED: `OverflowException`
+  escaping the evaluator; mutant (the budget counted per rule): `Expected: 57 / Actual: 3`. The three day-one programs evaluate
+  end to end with their intents pinned (crossover bar 60/142, RSI 30/59, breakout 61/154), recomputed outside the build.
+- **Judged at landing:** four recorded departures — account state is evaluator INPUT, not vocabulary; a dataset carries no
+  increment or quality flag, so quantities are unrounded and the contract says so; the deadline is the CALLER's token (no clock
+  in the evaluator); the opening-range row of the language document corrected to "bars whose open time is inside the interval".
+  Sizing (not an item) is in, because a bounded intent needs a quantity. `StrategyVersions` unmoved: the three golden ids stand.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `39c94e0`, Release: 0 warnings, 0 errors,
+17 projects; 12 touched classes 3× → 106/106 (Unit) and 6/6 (Integration) each; Unit 783 + Fault 277 + Integration 627 = 1687
+passed, 0 failed, 1 skipped; names vs `main` → 61 added, 0 removed; 127 test files all text. Manager's gate at `c758fce`,
+Release: build → 0 warnings, 0 errors; suite → 783 + 277 + 627 = 1687 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 63 added; scan clean; no trailers; `rev-list
+--count` → 0; CI run 34722641133 at `c758fce`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no fills, fees, slippage, stop or target enforcement, capital, trace, persistence, report or pipe op (`U-runner-3`);
+nothing reads `workspace/strategies/`; no box, no ATAS, no money.
