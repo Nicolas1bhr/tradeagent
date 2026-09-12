@@ -63,15 +63,24 @@ static class Unresolved
     /// leg — ubuntu 1993-1997 ms, macos 1916-1998, windows 1687-1765 — and all of the spend was
     /// record-keeping: on windows the two settle transitions cost 78-141 ms and the leg's
     /// write-ahead 79-172, against 20 bare one-row commits on the same disk measuring med 16-47 and
-    /// max 47-110 ms. `gcPause` was 0 and a 20 ms tick arrived at 32-47 ms, so the process was
+    /// max 47-110 ms. `gcPause` was 0 and a 20 ms tick arrived at 31-47 ms, so the process was
     /// running: it is the disk. The outlier that closes a 2 s budget in one commit is not in that
     /// run; it is in U-press-win-3's, on the same runner image — ten bare one-row commits measured
     /// 16-2234 ms.
     ///
+    /// AND THE RED IS THE BUDGET GOING, NOT A RACE, measured rather than argued. The same harness
+    /// carries a control that answers the settle's cancel correctly and then holds the caller until
+    /// the deadline has passed — what one stalled `synchronous=FULL` commit does to this method —
+    /// and on ALL THREE runners it reproduces the failure byte for byte: `lost=CANCELLED
+    /// book=[FB-1 Buy 2 FILLED | FB-3 Sell 2 CANCELLED] pos=[ES 2] sellsFilled=0`, which is the CI
+    /// red's own output. The budget left where the cancel was answered: windows -31, ubuntu -24,
+    /// macos -29. Nothing in the product refused a leg it had time to send.
+    ///
     /// Twenty seconds takes that clock out of the verdict entirely: no fixture here waits on
-    /// anything but the press itself, and thirteen of the worst commit ever measured on this runner
-    /// image still fit inside it. Nothing is loosened — an assertion that used to hold still holds,
-    /// byte for byte, and the fixture that IS about the budget keeps the simulator's two seconds.
+    /// anything but the press itself, and eight of the worst commit ever measured on this runner
+    /// image (2234 ms) still fit inside it. Nothing is loosened — an assertion that used to hold
+    /// still holds, byte for byte, and the fixture that IS about the budget keeps the simulator's
+    /// two seconds.
     /// </summary>
     public static readonly TimeSpan PressBudget = TimeSpan.FromSeconds(20);
 

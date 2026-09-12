@@ -226,6 +226,20 @@ static class Recovery
     /// is durable SQLite at <c>synchronous=FULL</c>, and on a hosted runner that is a wall clock
     /// kept by the disk. Null leaves the simulator's own two seconds, which is what a fixture about
     /// the budget itself needs. See <c>UnknownCloseTests</c>' <c>PressBudget</c>.
+    ///
+    /// THE PRESSES IN THIS FILE STILL PASS NULL, AND THAT IS A SMALLER EXPOSURE RATHER THAN NONE.
+    /// Say it plainly so the next reader does not take silence for immunity: the eleven fixtures below
+    /// that press (five in <c>OperatorEmergencyRecordTests</c>, one in <c>UnconfirmedLatchTests</c>,
+    /// three in <c>CloseAllOutcomeTests</c>, two in <c>CancelAllPerOrderSettlementTests</c>) judge what
+    /// the press did with its legs, under the same two seconds, on the same disk — a budget that goes
+    /// before the leg's turn changes those verdicts as surely as it changed this one's. What is
+    /// different is measurable: none of them has an unresolved
+    /// reducer to settle, so <c>SettleAnUnresolvedReducerOrRefuse</c> returns without a wire call and
+    /// without a write, and the two transitions that cost 78-141 ms of the windows budget in
+    /// U-press-settle-win's marks are not in their window at all — two durable commits before the leg
+    /// instead of four. None has gone red on any runner. They are NOT moved here: U-press-settle-win's
+    /// brief is the class in <c>UnknownCloseTests</c>, and moving a file-wide default on the strength
+    /// of a red that has not happened is a different unit's call, not a fixer's.
     /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
         FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
