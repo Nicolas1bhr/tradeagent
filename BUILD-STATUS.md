@@ -5003,7 +5003,7 @@ the guide, the mission text; new `TurnCommitTests`, `WorkspaceRevisionTests`).
 0 errors (17 projects); 12 touched classes 3× → 96/96 each; Unit 615 + Fault 277 + Integration 627 = 1519 passed, 0
 failed, 1 skipped; names vs `main` → 23 added, 0 removed. Manager's gate at `0da64d7`, Release: build → 0 warnings, 0 errors;
 suite → 615 + 277 + 627 = 1519 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 23 added (sets 1232 → 1255); scan clean (`CancellationToken` and a doc
-comment, judged); no trailers; `rev-list --count` → 0; CI run 34698051503 at `0da64d7`: in flight at the time of this record; verdict in a follow-up commit.
+comment, judged); no trailers; `rev-list --count` → 0; CI run 34698051503 at `0da64d7`: all four jobs GREEN — ubuntu, macos, windows-latest (the press-settles test included) and `package`.
 
 **NOT VERIFIED:** `AppHost`'s wiring of `Quarantined`/`Revisions.Rejected` to the activity log — read at the composition
 root, no test runs it (none covered `Rejected` on `main` either). **NOT done:** no box, no ATAS, no money.

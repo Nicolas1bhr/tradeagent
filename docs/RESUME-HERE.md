@@ -18,8 +18,8 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 2. **`main` is `bfe7a0c`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
-   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 at that sha
-   in flight when this was written — its verdict goes into the `U-turn-commit` section).
+   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 at that sha GREEN on all
+   four jobs).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-press-settle-win` (worktree `U-press-settle-win`; draft PR #16 OPEN): a FRESH fixer re-briefed 15:25 from the branch — reads
      PR #16's marks (run 34189533668), removes the harness (a `PressMark` hook in `TradingGateway.cs` and
