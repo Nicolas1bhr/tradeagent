@@ -210,4 +210,77 @@ public class RefereeVerdictTests
         Assert.Contains("will not judge evidence by a standard other than", verdict.Why, StringComparison.Ordinal);
         Assert.Empty(new Promotions(w.Db).All());
     }
+
+    // ---- item 4: forward evidence, after the freeze -----------------------------------------------
+
+    /// <summary>
+    /// A VERSION FROZEN AFTER THE HELD-BACK WINDOW BEGINS IS REFUSED, WHATEVER ITS FIGURES SAY.
+    ///
+    /// <para>`docs/COUNCIL.md`:135-136: "because public history may already be known or hard-coded into
+    /// a submission, forward evidence collected after the strategy's freeze is required before capital".
+    /// The program under test is the profitable one — it closes winning trades over exactly these bars —
+    /// and it is refused anyway, which is the whole point: months that predate the freeze are not weak
+    /// evidence to be weighed against the rest, they are not evidence at all.</para>
+    ///
+    /// <para>This is also the mutant: comparing the version's freeze with when the RUN was made instead
+    /// of with the window the run covered. Every run is made now, so that comparison passes for every
+    /// version ever submitted and refuses nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_version_frozen_after_the_held_back_window_begins_is_refused_in_words()
+    {
+        var w = await Given(frozenAt: Bar0.AddMinutes(HoldoutAtBar + 10));
+        using var _1 = w.Db;
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+
+        Assert.True(verdict.Ok, verdict.Why);
+        Assert.False(verdict.Promoted, "a version frozen after the holdout begins promoted on it");
+        Assert.Equal(PromotionVerdict.Refused, verdict.Promotion!.Verdict);
+        Assert.Equal(PromotionReason.PrecedesTheFreeze, verdict.Promotion!.Reason);
+        Assert.Equal(PromotionState.Refused, new Promotions(w.Db).Standing(w.VersionId).State);
+        Assert.Contains("not evidence collected after the freeze",
+            PromotionReason.Words(verdict.Promotion!.Reason), StringComparison.Ordinal);
+
+        // The run really was made and really was profitable: it is the DATE that refused it.
+        var run = new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!;
+        Assert.True(run.Trades > 0);
+        Assert.True(run.NetPnl > 0m, "the fixture program is profitable over these bars");
+    }
+
+    /// <summary>
+    /// A VERSION FROZEN BEFORE THE WINDOW IS JUDGED ON IT, and this one is promoted — the clauses of
+    /// <see cref="ScoringPolicyV1"/> in the order they are applied, with the figures reached at last.
+    /// </summary>
+    [Fact]
+    public async Task A_version_frozen_before_the_window_is_judged_on_it()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+
+        Assert.True(verdict.Ok, verdict.Why);
+        Assert.True(verdict.Promoted, verdict.Promotion!.Reason);
+        Assert.Equal(PromotionReason.Met, verdict.Promotion!.Reason);
+        Assert.Equal(PromotionState.Promoted, new Promotions(w.Db).Standing(w.VersionId).State);
+    }
+
+    /// <summary>
+    /// THE FIGURES ARE REACHED ONLY AFTER THE DATE IS, and a losing program frozen in good time is
+    /// refused on the figures rather than on the calendar. The two refusals are different words.
+    /// </summary>
+    [Fact]
+    public async Task A_version_that_loses_over_the_holdout_is_refused_on_the_figures()
+    {
+        var w = await Given(frozenAt: Bar0, program: LosingText);
+        using var _1 = w.Db;
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+
+        Assert.True(verdict.Ok, verdict.Why);
+        Assert.False(verdict.Promoted);
+        Assert.Equal(PromotionReason.NotProfitable, verdict.Promotion!.Reason);
+        Assert.True(new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!.NetPnl <= 0m);
+    }
 }
