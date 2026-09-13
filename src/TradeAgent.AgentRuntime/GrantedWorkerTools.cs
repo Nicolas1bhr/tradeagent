@@ -81,12 +81,21 @@ public sealed class GrantedWorkerTools(
     /// Mutating ops are on the list for EVERY role. That is not a hole: the list says which operations
     /// exist, and the gateway's own role check says who may use them. Keeping a per-role list here
     /// instead would be the second role check this class refuses to have.
+    ///
+    /// <para><b><see cref="Ops.Backtest"/> is on it, for every role, and that is the decision
+    /// <c>U-api-worker</c> deferred.</b> It is READ-ONLY for the gateway — no connector, no mode, no
+    /// kill switch, and nothing it could change — it is deliberately not in <see cref="Ops.Mutating"/>,
+    /// and it runs under the caller's own launch identity, reading the program out of that role's own
+    /// home (<c>U-runner-3</c>). Leaving it off left the Research Director unable to ask for the one
+    /// measurement the runner exists to give it, with describing an unmeasured result in a report as its
+    /// only alternative. What it WRITES is the app's own measurement of a run the worker asked for, and
+    /// there is no op here that edits or deletes one.</para>
     /// </summary>
     public static readonly string[] TradeOps =
     [
         Ops.Status, Ops.Connectors, Ops.Accounts, Ops.Account, Ops.Instruments, Ops.Quote,
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
-        Ops.MaterialList, Ops.MaterialNote, Ops.Schema,
+        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest,
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 
@@ -387,7 +396,10 @@ public sealed class GrantedWorkerTools(
             + "launch. Reads answer for every role. Anything that places, changes or cancels an order is "
             + "refused unless your role may move money, and no argument here changes that: there is no "
             + "operation that grants permission, changes the mode, lifts the kill switch or approves "
-            + "anything. Run 'schema' for the full description of every operation and its arguments.",
+            + "anything. 'backtest' answers for every role too: TradeAgent runs a program from your own "
+            + "folder over its own bars and computes every figure itself, so it places no order and "
+            + "proves no fill — it is a reason to test something, never a record of a trade. "
+            + "Run 'schema' for the full description of every operation and its arguments.",
             Schema(("op", "string", "One of: " + string.Join(", ", TradeOps)),
                    ("request_id", "string", "Idempotency key for a mutating op. Reuse it to retry safely."))),
 

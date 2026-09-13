@@ -1242,6 +1242,11 @@ itself sits under one. **The role check is not in that class**: `trade` goes thr
 `AgentContext.ForAgent(session, role, attempt)`, so a Research worker's `buy` is refused by the same line
 that refuses a Research launch on the pipe, with the same code and sentence. `trade`'s op list is closed
 and carries no operator authority; a mutating op with no `request_id` is sent under one the app minted.
+**`backtest` is on that list for every role** (`U-harness-loop` item 3, the decision `U-api-worker`
+deferred): it is read-only for the gateway, it is deliberately NOT in `Ops.Mutating`, and it runs under
+the caller's own launch identity — so a worker may ask for a backtest of a program in **its own home**,
+the run is recorded under the role that asked, and one run at a time per role still holds. Adding it to
+`Ops.Mutating` instead would make the pipe's role check refuse the one role that needs it.
 **Every call is a `tool_call` row at schema 13** — attempt, role, tool, an argument SUMMARY (never the
 payload), bytes returned, served or refused — app-written only, like `material`, `fill`, `ai_attempt`,
 `mission_event` and `publication`. It is round 4's "observed deliveries", the thing that sentence said

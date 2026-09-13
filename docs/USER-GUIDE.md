@@ -534,7 +534,10 @@ every single request is one it composed itself — and that changes three things
   and the Chat page says which limit stopped it.
 - **It has a fixed set of tools and cannot ask for more.** It can read files in its own folder,
   write into its own `out` and `trading` folders, read the trading surface, read the market data
-  TradeAgent holds and read your daily report. There is no shell, no way to install anything, and no
+  TradeAgent holds, read your daily report, and ask TradeAgent to **backtest a program in its own
+  folder** — TradeAgent runs the program over its own market data and works out every figure itself,
+  so a result is something it was measured on rather than something it says about itself. That places
+  no order and proves no fill. There is no shell, no way to install anything, and no
   way to reach the internet. Anything else it asks for is refused and written down.
 - **Everything it asked for is recorded.** Every read, every write and every trading call it made —
   served or refused — is in TradeAgent's own records, which it cannot edit. That is not true of the

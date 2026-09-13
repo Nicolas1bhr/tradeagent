@@ -1,7 +1,10 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using Xunit;
@@ -64,6 +67,54 @@ public class WorkerToolTests : IAsyncLifetime
     static ToolRequest Call(string tool, object args, string id = "c1") =>
         new(id, tool, Json.Write(args));
 
+    // ---- what a backtest needs, as `BacktestRequestTests` builds it -------------------------------
+    //
+    // A PROGRAM IN THE ROLE'S OWN MANAGED HOME, not in this class's `_root`: the file tools are
+    // confined to the home this surface was handed, and the `backtest` op resolves the program against
+    // `Paths.RoleHome(ctx.Role)` — the app's own answer for that role, which no argument can move. In
+    // the product the two are the same directory; here they differ, which is exactly why the path is
+    // passed THROUGH and the confinement is the gateway's.
+
+    static readonly DateTimeOffset BarsFrom = new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+
+    const string Program = "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n";
+
+    static string GivenProgram(string role, string name = "worker-asked.strategy")
+    {
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, name), Program);
+        return $"strategies/{name}";
+    }
+
+    /// <summary>A dataset the ledger really recorded, with a sawtooth that crosses 103 every ten minutes.</summary>
+    DatasetRecord GivenData(int bars = 120, string pair = "BTCUSDT")
+    {
+        var dir = BinanceArchive.DatasetDir(pair);
+        Directory.CreateDirectory(Path.Combine(dir, "raw"));
+        var raw = Path.Combine(dir, "raw", $"{pair}-{Guid.NewGuid():n}.zip");
+        File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
+
+        var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
+        var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
+        for (var i = 0; i < bars; i++)
+        {
+            var close = 96m + i % 10;
+            text.Append(CultureInfo.InvariantCulture,
+                $"{BarsFrom.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
+        }
+        File.WriteAllText(csv, text.ToString());
+
+        var record = new DatasetRecord(
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            csv, DatasetStore.Sha256(csv)!, bars, BarsFrom, BarsFrom.AddMinutes(bars - 1), 0, [], false,
+            0, 0, 0, BarsFrom, DatasetState.ACCEPTED, null,
+            [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
+                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, BarsFrom, KlineTimeUnit.Microseconds, raw)]);
+
+        return record with { Id = new DatasetStore(_db).Record(record) };
+    }
+
     // ---- the trade tool ---------------------------------------------------------------------------
 
     /// <summary>
@@ -115,6 +166,76 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.StartsWith($"w-{CouncilRoles.Operations}-", id);
         // Never the prefix the gateway mints for its own sweep legs, which it refuses outright.
         Assert.DoesNotContain("op-", id);
+    }
+
+    /// <summary>
+    /// A RESEARCH WORKER MAY ASK FOR A BACKTEST OF A PROGRAM IN ITS OWN HOME — <c>U-harness-loop</c>
+    /// item 3, and the one measurement the runner exists to give it.
+    ///
+    /// <para><b>Why it belongs on the closed list.</b> That list says which operations <c>trade</c>
+    /// CARRIES; the gateway's own role check says who may use them. <c>backtest</c> is READ-ONLY for the
+    /// gateway — it touches no connector, reads no mode and could change none — and it runs under the
+    /// caller's own launch identity, so the run is recorded under the role that asked and reads only
+    /// that role's folder. Leaving it off meant a Research worker on the harness could not ask for the
+    /// figure the whole research loop is about, and its alternative was to describe an unmeasured result
+    /// in a report.</para>
+    ///
+    /// <para><b>The mutant is the other way to "add" it:</b> put <c>backtest</c> into
+    /// <see cref="Ops.Mutating"/> and the pipe's own role check refuses Research with
+    /// <c>ROLE_MAY_NOT_TRADE</c> — the op would exist and the one role that needs it could never call
+    /// it. That word on this channel means "sends something to a broker", and nothing here does.</para>
+    /// </summary>
+    [Fact]
+    public async Task Research_may_ask_for_a_backtest_of_a_program_in_its_own_home()
+    {
+        var set = GivenData();
+        var ledger = new ToolCallStore(_db);
+        var research = Tools(CouncilRoles.Research, ledger);
+
+        var ran = await research.InvokeAsync(Call(Trade, new
+        {
+            op = Ops.Backtest,
+            strategy = GivenProgram(CouncilRoles.Research),
+            dataset = set.Id,
+            fees = 0.001m
+        }));
+
+        Assert.True(ran.Served, ran.Content);
+        using var body = JsonDocument.Parse(ran.Content);
+
+        // UNDER THE WORKER'S OWN LAUNCH, from the identity the app assigned this surface — never from
+        // the folder the program happened to be in.
+        Assert.Equal(CouncilRoles.Research, body.RootElement.GetProperty("role").GetString());
+        var runId = body.RootElement.GetProperty("run_id").GetString()!;
+        Assert.Equal(64, runId.Length);                                   // a sha256, not a guid
+
+        var run = _gw.Strategies.RunById(runId);
+        Assert.NotNull(run);
+        Assert.Equal(Attempt, run!.Attempt);
+        Assert.Equal(CouncilRoles.Research, run.Role);
+        Assert.Equal(set.NormalisedSha256, run.DatasetSha256);
+        Assert.True(run.Trades > 0, "the fixture's sawtooth closed no trade, so this measured nothing");
+        Assert.Equal(CouncilRoles.Research,
+            _gw.Strategies.VersionById(run.VersionId)!.Role);
+
+        // AND IT IS NOT A MUTATING OP, which is what lets Research reach it at all.
+        Assert.DoesNotContain(Ops.Backtest, Ops.Mutating);
+        Assert.False(Ops.IsMutating(Ops.Backtest));
+
+        // The call is recorded like every other, by the summary and not by the payload.
+        Assert.Contains(ledger.ForAttempt(Attempt),
+            r => r.Tool == Trade && r.Argument == $"{Trade} {Ops.Backtest}" && r.Served);
+
+        // ONE RUN AT A TIME PER ROLE IS A GUARD THAT RELEASES: the same ask again is served, which is
+        // the half of `Backtests`' own rule this route has to keep working.
+        var again = await research.InvokeAsync(Call(Trade, new
+        {
+            op = Ops.Backtest,
+            strategy = GivenProgram(CouncilRoles.Research),
+            dataset = set.Id,
+            fees = 0.001m
+        }, "c2"));
+        Assert.True(again.Served, again.Content);
     }
 
     /// <summary>
