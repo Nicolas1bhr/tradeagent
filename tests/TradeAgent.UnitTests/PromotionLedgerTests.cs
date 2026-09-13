@@ -258,4 +258,132 @@ public class PromotionLedgerTests
             "holdout_run_id", "verdict", "reason", "at"
         ], columns);
     }
+
+    // ---- item 3: a changed assumption invalidates the evidence ------------------------------------
+
+    /// <summary>
+    /// A DATASET REJECTED AFTER THE FACT INVALIDATES THE PROMOTION THAT RESTED ON IT, and the row is
+    /// not touched to do it.
+    ///
+    /// <para>`docs/COUNCIL.md`:35: "a changed assumption invalidates the evidence that rested on it".
+    /// The dataset going REJECTED means TradeAgent no longer vouches for the bars the verdict was
+    /// computed over — so the verdict is still on the table, still says what it said, and no longer
+    /// stands.</para>
+    /// </summary>
+    [Fact]
+    public void A_dataset_rejected_afterwards_invalidates_the_promotion_that_rested_on_it()
+    {
+        var j = Given();
+        using var _1 = j.Db;
+        var promotions = new Promotions(j.Db);
+        var written = promotions.Record(RowFor(j));
+
+        Assert.Equal(PromotionState.Promoted, promotions.Standing(j.VersionId).State);
+
+        new DatasetStore(j.Db).Reject(j.Set.Id, "a raw archive file changed under it");
+
+        var standing = promotions.Standing(j.VersionId);
+        Assert.Equal(PromotionState.Invalidated, standing.State);
+        Assert.False(standing.IsPromoted);
+        Assert.Contains("has since been REJECTED", standing.Why, StringComparison.Ordinal);
+        Assert.Contains("a raw archive file changed under it", standing.Why, StringComparison.Ordinal);
+
+        // THE ROW IS UNTOUCHED. Invalidation is computed at read time and never written back: a record
+        // the app restates once the outcome is known is not a record.
+        var row = promotions.ById(written.Id)!;
+        Assert.Equal(PromotionVerdict.Promoted, row.Verdict);
+        Assert.Equal(PromotionReason.Met, row.Reason);
+        Assert.Equal(written, row);
+    }
+
+    /// <summary>
+    /// A DATASET COLLECTED AGAIN INVALIDATES THE PROMOTION — this is the mutant.
+    ///
+    /// <para>The check is the sha the RUN read against the sha the ledger holds now. Comparing the
+    /// ledger's current sha with itself is a check that can never fail, and a version would go on
+    /// trading the owner's money on the evidence of months that are no longer the ones under that id.</para>
+    ///
+    /// <para>No writer in this build moves <c>dataset.normalised_sha256</c> — a re-collection writes a
+    /// new row — so the test writes past the store to put the ledger in the state a collector that
+    /// replaced a dataset in place would leave it in. That is the same thing
+    /// <c>CampaignLedgerTests</c> does to prove the partial unique index is what holds: the guard has
+    /// to be the arithmetic, not the absence of a caller.</para>
+    /// </summary>
+    [Fact]
+    public void A_dataset_collected_again_under_the_same_id_invalidates_the_promotion()
+    {
+        var j = Given();
+        using var _1 = j.Db;
+        var promotions = new Promotions(j.Db);
+        promotions.Record(RowFor(j));
+
+        Assert.Equal(PromotionState.Promoted, promotions.Standing(j.VersionId).State);
+
+        j.Db.Write(_ =>
+        {
+            using var c = j.Db.Cmd("UPDATE dataset SET normalised_sha256=$sha WHERE id=$id",
+                ("$sha", "collected-again-0000"), ("$id", j.Set.Id));
+            return c.ExecuteNonQuery();
+        });
+
+        var standing = promotions.Standing(j.VersionId);
+        Assert.Equal(PromotionState.Invalidated, standing.State);
+        Assert.Contains("the months have been collected again", standing.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A PROMOTION TAKEN BY AN EARLIER INTERPRETER, OR UNDER AN EARLIER SCORING POLICY, DOES NOT STAND.
+    ///
+    /// <para>Both are ordinary rather than adversarial: the interpreter build moves with every release,
+    /// and the scoring policy's text is a constant somebody can edit. Rule 9 binds promotion to both, so
+    /// a build that changed either is a build whose evidence has to be recollected — the row is written
+    /// with the facts of its own time, and the comparison is against this build's.</para>
+    /// </summary>
+    [Fact]
+    public void A_promotion_from_another_interpreter_or_another_policy_does_not_stand()
+    {
+        var j = Given();
+        using var _1 = j.Db;
+        var promotions = new Promotions(j.Db);
+
+        promotions.Record(RowFor(j) with { InterpreterBuild = "app=0.0.1;language=1" });
+        var old = promotions.Standing(j.VersionId);
+        Assert.Equal(PromotionState.Invalidated, old.State);
+        Assert.Contains("app=0.0.1;language=1", old.Why, StringComparison.Ordinal);
+        Assert.Contains("the program may not mean the same thing", old.Why, StringComparison.Ordinal);
+
+        var second = Given("ETHUSDT");
+        using var _2 = second.Db;
+        var others = new Promotions(second.Db);
+        others.Record(RowFor(second) with { ScoringPolicySha256 = new string('a', 64) });
+        var moved = others.Standing(second.VersionId);
+        Assert.Equal(PromotionState.Invalidated, moved.State);
+        Assert.Contains("the standard has changed", moved.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE OTHER TWO ANSWERS: a version the referee refused reads <c>refused</c> with its reason in the
+    /// owner's words, and a version nobody has asked about reads <c>unjudged</c> — which is a different
+    /// fact from a refusal and is said as one.
+    /// </summary>
+    [Fact]
+    public void A_refused_version_reads_refused_and_one_nobody_asked_about_reads_unjudged()
+    {
+        var j = Given();
+        using var _1 = j.Db;
+        var promotions = new Promotions(j.Db);
+
+        var unjudged = promotions.Standing(j.VersionId);
+        Assert.Equal(PromotionState.Unjudged, unjudged.State);
+        Assert.Null(unjudged.Promotion);
+        Assert.Contains("has not been asked about it", unjudged.Why, StringComparison.Ordinal);
+
+        promotions.Record(RowFor(j, PromotionVerdict.Refused, PromotionReason.NotProfitable));
+
+        var refused = promotions.Standing(j.VersionId);
+        Assert.Equal(PromotionState.Refused, refused.State);
+        Assert.False(refused.IsPromoted);
+        Assert.Contains(PromotionReason.Words(PromotionReason.NotProfitable), refused.Why,
+            StringComparison.Ordinal);
+    }
 }
