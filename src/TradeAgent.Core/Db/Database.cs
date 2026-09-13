@@ -717,6 +717,38 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','13') ON CONFLICT(key) DO UPDATE SET value='13';");
         }
 
+        // 13 IS THE RUNG ABOVE, AND IT ARRIVED AFTER THIS ONE WAS WRITTEN. `U-api-worker`'s `tool_call`
+        // table was in flight beside this unit, so this rung was written as `if (have < 14)` over a 13
+        // that did not exist yet and needed no edit when it landed: the two add only their own columns
+        // and tables, so the ladder comes out 11-12-13-14 whichever order the units land in.
+        if (have < 14)
+        {
+            // THE HOLDOUT: A TIME CUTOFF ON A DATASET, NOT A SECOND DATASET.
+            //
+            // `docs/COUNCIL.md`:131 asks for "holdout data the research process cannot reach" and does
+            // not say how; :212 says why the shape had to be decided now rather than later — "a leaked
+            // holdout cannot become unseen", so this is the one boundary that cannot be added after the
+            // fact. Two columns rather than a second `dataset` row: a cutoff cannot be asked for by id,
+            // there is one normalised file to keep hashed, and a split would have needed a second set of
+            // provenance that could drift from the first. `holdout_from` is UTC and INCLUSIVE — the bar
+            // whose open time equals it is already private — and NULL means this dataset holds nothing
+            // back, which is what every row written before this did.
+            //
+            // `evaluation_class` decides whether a run over these bars is CHARGED against a campaign:
+            // `research` is real collected history and `fixture` is bars that exist to prove the
+            // plumbing works (`docs/COUNCIL.md`:134, "fixture runs establishing plumbing only"). The
+            // default is `research` deliberately — a team that could have its bars read as a fixture
+            // would have bought itself unlimited free trials, so the free reading is never the default.
+            //
+            // Both are written by `DatasetStore.SetHoldout` and by nothing else: the owner presses it in
+            // TradeAgent's own window, there is no pipe op and no `trade` verb, and moving a cutoff
+            // EARLIER is refused in words. Additive — two columns, one nullable and one with a default —
+            // so an older database gains them and every existing dataset keeps being served in full.
+            Exec("ALTER TABLE dataset ADD COLUMN holdout_from TEXT;");
+            Exec($"ALTER TABLE dataset ADD COLUMN evaluation_class TEXT NOT NULL DEFAULT '{Data.EvaluationClass.Research}';");
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','14') ON CONFLICT(key) DO UPDATE SET value='14';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

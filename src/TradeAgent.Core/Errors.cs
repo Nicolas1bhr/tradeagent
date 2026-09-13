@@ -75,6 +75,31 @@ public static class Labels
     /// <summary>The button on the Safety page that writes the limits back.</summary>
     public const string SaveLimits = "Save limits";
 
+    /// <summary>
+    /// THE HOLDOUT CARD ON THE DATA PAGE, WHICH IS THE ONLY WAY A CUTOFF IS EVER SET.
+    ///
+    /// <para>Two presses, because it is the boundary of the evidence the AI is judged on and because
+    /// the direction matters: setting one withholds bars, and the column can never be moved back
+    /// afterwards (<c>DatasetStore.SetHoldout</c>). The armed sentence names the date and says in the
+    /// owner's own words what it means, rather than the bare word "Confirm".</para>
+    /// </summary>
+    public const string HoldoutCutoff = "The date from which bars are held back";
+
+    public const string SetHoldout = "Hold these bars back";
+
+    public const string SetHoldoutFixture = "These are fixture bars";
+
+    /// <summary>What the second press does, in full. The date is the one the owner typed.</summary>
+    public static string SetHoldoutArmed(string date) =>
+        $"Confirm: bars from {date} on are evidence the research process never sees";
+
+    /// <summary>
+    /// The other class. A fixture is bars that exist to prove the plumbing works, so a run over them
+    /// is charged nothing and is never evidence — which is a grant, and therefore also two presses.
+    /// </summary>
+    public static string SetHoldoutFixtureArmed(string date) =>
+        $"Confirm: these are fixture bars from {date} on — runs over them are never evidence";
+
     /// <summary>The AI's own daily spending ceiling, and the press that writes it.</summary>
     public const string DailyCostCap = "The most the AI may spend on itself in a day";
 

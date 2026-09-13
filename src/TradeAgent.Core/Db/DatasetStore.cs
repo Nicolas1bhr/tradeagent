@@ -51,7 +51,33 @@ public sealed record DatasetRecord(
     DateTimeOffset AcceptedAt,
     DatasetState State,
     string? RejectedReason,
-    IReadOnlyList<DatasetFile> Files);
+    IReadOnlyList<DatasetFile> Files)
+{
+    /// <summary>
+    /// THE INSTANT FROM WHICH THIS DATASET'S BARS ARE PRIVATE EVALUATION EVIDENCE, or null because
+    /// none of it is.
+    ///
+    /// <para>UTC, and INCLUSIVE: the bar whose open time equals this is already holdout. Every bar at
+    /// or after it is served to NO caller on the agent pipe — see <see cref="Data.Holdout"/> — and the
+    /// referee alone reads them, in process, through a charged verdict.</para>
+    ///
+    /// <para>Init-only with a default, like <c>PlaceIntent.Intent</c>, so that adding it did not
+    /// silently re-parameterise every construction site of this record: a caller that does not know
+    /// about holdouts cannot accidentally declare one, and every row written before schema 14 reads as
+    /// a dataset with none, which is what it was.</para>
+    ///
+    /// <para>It is set by <see cref="DatasetStore.SetHoldout"/>, which the owner's own window calls and
+    /// nothing on the pipe does. Moving it EARLIER is refused there: a bar that has already been served
+    /// to the research process cannot be made unseen by writing a column.</para>
+    /// </summary>
+    public DateTimeOffset? HoldoutFrom { get; init; }
+
+    /// <summary>
+    /// Whether a run over these bars is evidence or plumbing. See <see cref="Data.EvaluationClass"/>;
+    /// <c>research</c> unless the owner said otherwise, which is what every older row was.
+    /// </summary>
+    public string EvaluationClass { get; init; } = Data.EvaluationClass.Research;
+}
 
 /// <summary>
 /// THE DATASET LEDGER — provenance the AI cannot edit.
@@ -79,8 +105,17 @@ public sealed class DatasetStore(Database db)
         gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state, rejected_reason
         """;
 
-    /// <summary>The same list with the id in front, in the order <see cref="ReadAll"/> reads it.</summary>
-    const string Cols = "id, " + Written;
+    /// <summary>
+    /// The same list with the id in front and the holdout behind, in the order <see cref="ReadAll"/>
+    /// reads it.
+    ///
+    /// <para><b>The two holdout columns are read and are NOT in <see cref="Written"/>.</b>
+    /// <see cref="Record"/> is the collector's write, and a collection must not be able to declare a
+    /// holdout as a side effect of downloading months: <see cref="SetHoldout"/> is the one writer of
+    /// those two columns, it is reached from the owner's own window, and it refuses to move a cutoff
+    /// earlier. One writer is what makes that refusal the whole truth rather than one of two paths.</para>
+    /// </summary>
+    const string Cols = "id, " + Written + ", holdout_from, evaluation_class";
 
     /// <summary>The next unused version name for this pair, e.g. <c>v3</c>.</summary>
     public string NextVersion(string pair, string interval) => db.Read(_ =>
@@ -206,6 +241,66 @@ public sealed class DatasetStore(Database db)
         return null;
     }
 
+    /// <summary>
+    /// WHAT <see cref="SetHoldout"/> DID, or why it did nothing. A value rather than an exception, for
+    /// the reason <see cref="Data.BarFeedOpen"/> is one: the caller is a button on the owner's screen
+    /// and the refusal is a sentence it has to print.
+    /// </summary>
+    public sealed record HoldoutSet(bool Ok, string Why, DateTimeOffset? Cutoff)
+    {
+        internal static HoldoutSet Yes(DateTimeOffset at) => new(true, "", at);
+        internal static HoldoutSet No(string why) => new(false, why, null);
+    }
+
+    /// <summary>
+    /// THE HOLDOUT CUTOFF, SET BY THE OWNER'S OWN WINDOW AND BY NOTHING ELSE.
+    ///
+    /// <para><b>Moving an existing cutoff EARLIER is refused, in words.</b> Bars between the old cutoff
+    /// and a new earlier one have already been served to the research process — that is what being
+    /// outside the cutoff MEANT — and a column rewritten after the fact would make them read as
+    /// evidence nobody had seen. `docs/COUNCIL.md`:212 calls contaminated evidence one of the four
+    /// things that cannot be recovered later: "a leaked holdout cannot become unseen". So the
+    /// direction is refused rather than warned about.</para>
+    ///
+    /// <para><b>Moving it LATER is allowed</b>, and that is not an inconsistency: it un-holds bars the
+    /// research process has never been served, which leaks nothing, and it is the owner's own press.
+    /// Setting the same instant again is a no-op that answers Ok.</para>
+    ///
+    /// <para><b>There is no pipe op and no verb here.</b> Not a `trade` verb, not an op on the agent
+    /// pipe, not a field on any request: the cutoff is the boundary of the evidence the caller is being
+    /// judged on, and a caller that could move it would be marking its own homework. The evaluation
+    /// class is on the same press for the same reason — a team that could call real history a fixture
+    /// would have bought itself unlimited free trials.</para>
+    /// </summary>
+    public HoldoutSet SetHoldout(long id, DateTimeOffset cutoff, string evaluationClass) => db.Write(_ =>
+    {
+        var row = ById(id);
+        if (row is null)
+            return HoldoutSet.No($"there is no dataset {id} in this installation's ledger.");
+
+        if (!Data.EvaluationClass.IsKnown(evaluationClass))
+            return HoldoutSet.No(
+                $"“{evaluationClass}” is not an evaluation class this build knows. It is "
+                + $"{Data.EvaluationClass.Research} — real collected history, whose runs are charged "
+                + $"against the campaign — or {Data.EvaluationClass.Fixture}, bars that exist to check "
+                + "the plumbing and are never evidence.");
+
+        var at = cutoff.ToUniversalTime();
+        if (row.HoldoutFrom is { } already && at < already)
+            return HoldoutSet.No(
+                $"dataset {id} already holds out every bar from {already:u}, and {at:u} is EARLIER than "
+                + "that. TradeAgent will not move a cutoff back: every bar between the two has already "
+                + "been served to the research process, and a cutoff rewritten afterwards would record "
+                + "them as evidence nobody had seen. Moving it later is allowed, because that only "
+                + "withholds bars nothing has read yet.");
+
+        using var c = db.Cmd(
+            "UPDATE dataset SET holdout_from=$at, evaluation_class=$class WHERE id=$id",
+            ("$at", Sql.T(at)), ("$class", evaluationClass), ("$id", id));
+        c.ExecuteNonQuery();
+        return HoldoutSet.Yes(at);
+    });
+
     /// <summary>Marks a dataset rejected. There is no route back: see <see cref="Checked"/>.</summary>
     public void Reject(long id, string reason) => db.Write(_ =>
     {
@@ -232,7 +327,11 @@ public sealed class DatasetStore(Database db)
                     r.GetInt32(16), r.GetInt32(17), r.GetInt32(18), Sql.Time(r.GetString(19)),
                     Enum.TryParse<DatasetState>(r.GetString(20), out var s) ? s : DatasetState.REJECTED,
                     r.IsDBNull(21) ? null : r.GetString(21),
-                    []));
+                    [])
+                {
+                    HoldoutFrom = Sql.TimeN(r.IsDBNull(22) ? null : r.GetString(22)),
+                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(23) ? null : r.GetString(23))
+                });
 
         return [.. rows.Select(row => row with { Files = FilesOf(row.Id) })];
     }

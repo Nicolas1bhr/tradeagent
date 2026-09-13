@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -71,6 +72,13 @@ sealed class SettingsPage
     readonly Control _dataBusy = Ui.Busy("Collecting months from Binance's public archive.");
     readonly Button _collect;
     bool _collecting;
+
+    // ---- the holdout ----
+    readonly TextBox _holdoutFrom;
+    readonly TextBlock _holdoutValue = Ui.Mono("—");
+    readonly TextBlock _holdoutNote = Ui.Muted("");
+    readonly Button _holdoutResearch;
+    readonly Button _holdoutFixture;
 
     // ---- updates ----
     readonly TextBlock _versionValue = Ui.Mono("—");
@@ -173,6 +181,41 @@ sealed class SettingsPage
                      "may trade — that is the allowlist on the Safety page — and it moves no money. The AI can read " +
                      "this data and everything recorded about where it came from; it cannot collect, change or delete it.")));
 
+        // THE HOLDOUT. Two presses, and here rather than on the Safety page because it is about the
+        // DATA: the owner is drawing a line across the months they have just collected and saying that
+        // everything after it is evidence the research process never sees. Two presses because the line
+        // can only ever move forward — a bar that has been served cannot become holdout again — so a
+        // mis-click is not something the owner can take back.
+        _holdoutFrom = Ui.TextField(null, "2026-06-01");
+        _holdoutFrom.Width = 180;
+        _holdoutFrom.HorizontalAlignment = HorizontalAlignment.Left;
+        _holdoutResearch = BuildHoldoutConfirm(EvaluationClass.Research, ReadCutoff, ApplyHoldout);
+        _holdoutFixture = BuildHoldoutConfirm(EvaluationClass.Fixture, ReadCutoff, ApplyHoldout);
+
+        // A DATE CHANGED UNDER A HALF-PRESSED BUTTON DISARMS IT. `Ui.Relabel` is what the unconfirmed
+        // orders card uses for the same reason: a confirmation armed against one sentence must not be
+        // completable against a different one, and this sentence carries the date.
+        _holdoutFrom.TextChanged += (_, _) => RelabelHoldout();
+        _holdoutNote.IsVisible = false;
+
+        var holdout = Ui.Section("Private evaluation evidence", Ui.Col(Theme.S4,
+            Ui.KeyValueLive("Held back", _holdoutValue),
+            _holdoutNote,
+            Ui.Divider(),
+            Ui.FieldRow("From", _holdoutFrom,
+                "A date, or a date and time, in UTC — 2026-06-01 or 2026-06-01T00:00:00Z. The bar at that " +
+                "instant is already held back."),
+            Ui.Wrap(Theme.S2, _holdoutResearch, _holdoutFixture),
+            Ui.Divider(),
+            Ui.Muted("Bars from this date on become evidence the research process never sees. The AI can neither " +
+                     "read them nor backtest over them: a window that reaches the date is refused in words rather " +
+                     "than quietly cut short, and every part of the AI is refused equally. TradeAgent itself reads " +
+                     "them, to judge a finished strategy on months it was never shown."),
+            Ui.Micro("The line can only be moved LATER. A bar that has already been served to the AI cannot become " +
+                     "held-back afterwards, so TradeAgent refuses to move the date back rather than pretending the " +
+                     "AI never saw it. Fixture bars are the other choice: made-up minutes that prove the machinery " +
+                     "works, never counted as evidence and never charged against the AI's budget of attempts.")));
+
         // Updates are here rather than on Checks because this is where somebody looks for "what
         // version am I on". Nothing on this card happens on its own: the automatic half is the
         // asking, and installing is two presses, because it closes the program holding the open
@@ -226,7 +269,7 @@ sealed class SettingsPage
         var bridge = Ui.Section("ATAS bridge", BridgeRepair.Body(_host));
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, marketData, bridge, updates)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, platform, account, marketData, holdout, bridge, updates)));
         grid.Children.Add(Pages.Column(1, explain));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -236,6 +279,8 @@ sealed class SettingsPage
 
         EnsureAccounts();
         ApplyMarketData();
+        RelabelHoldout();
+        ApplyHoldoutValue();
         ApplyUpdates();
     }
 
@@ -335,6 +380,125 @@ sealed class SettingsPage
         catch (Exception) { _dataValue.Text = "could not be read"; }
     }
 
+    // ---- the holdout -------------------------------------------------------------------------
+
+    /// <summary>
+    /// ONE OF THE TWO PRESSES THAT SET A HOLDOUT, built the way the page builds it so that what a test
+    /// presses is the control the owner sees.
+    ///
+    /// <para><b>Two presses in both directions, which is unlike every other pair on these pages.</b>
+    /// The usual rule is that widening asks twice and narrowing asks once, because hesitating on the way
+    /// down costs money. This control has no way down: a cutoff cannot be moved back, so the first press
+    /// is the only moment at which the owner can still change their mind. The armed sentence carries the
+    /// DATE, because "Confirm" on its own would not say which months are about to become private.</para>
+    ///
+    /// <para>The cutoff is re-read at the moment of the second press rather than captured at build time
+    /// — the owner types it into the field beside the button — and a date this build cannot read applies
+    /// nothing at all. <see cref="RelabelHoldout"/> disarms the control whenever that text changes.</para>
+    /// </summary>
+    internal static Button BuildHoldoutConfirm(
+        string evaluationClass, Func<DateTimeOffset?> cutoff, Action<DateTimeOffset, string> apply)
+    {
+        var label = evaluationClass == EvaluationClass.Fixture ? Labels.SetHoldoutFixture : Labels.SetHoldout;
+        var b = Ui.Confirm(label, HoldoutArmed(evaluationClass, cutoff()), () =>
+        {
+            if (cutoff() is { } at) apply(at, evaluationClass);
+        });
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>What the second press will do, in the owner's words, with the date they typed in it.</summary>
+    internal static string HoldoutArmed(string evaluationClass, DateTimeOffset? at)
+    {
+        var date = at is { } when ? $"{when.UtcDateTime:yyyy-MM-dd HH:mm} UTC" : "that date";
+        return evaluationClass == EvaluationClass.Fixture
+            ? Labels.SetHoldoutFixtureArmed(date)
+            : Labels.SetHoldoutArmed(date);
+    }
+
+    /// <summary>
+    /// THE DATE THE OWNER TYPED, READ AS UTC, or null because there is nothing readable in the box.
+    ///
+    /// A bare date means midnight UTC, not midnight here: the cutoff decides which bars exist for the
+    /// AI, and a boundary that moved with the machine's offset would hold back a different set of
+    /// minutes on every computer.
+    /// </summary>
+    DateTimeOffset? ReadCutoff() =>
+        DateTimeOffset.TryParse((_holdoutFrom.Text ?? "").Trim(), CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var at)
+            ? at
+            : null;
+
+    /// <summary>
+    /// Keeps both armed sentences in step with the box, and disarms them as it goes. A control armed
+    /// against one date must not be completable against another.
+    /// </summary>
+    void RelabelHoldout()
+    {
+        var at = ReadCutoff();
+        Ui.Relabel(_holdoutResearch, Labels.SetHoldout, HoldoutArmed(EvaluationClass.Research, at));
+        Ui.Relabel(_holdoutFixture, Labels.SetHoldoutFixture, HoldoutArmed(EvaluationClass.Fixture, at));
+
+        var typed = (_holdoutFrom.Text ?? "").Trim().Length > 0;
+        _holdoutResearch.IsEnabled = at is not null;
+        _holdoutFixture.IsEnabled = at is not null;
+        _holdoutNote.IsVisible = typed && at is null;
+        if (typed && at is null)
+        {
+            _holdoutNote.Foreground = Theme.Caution;
+            _holdoutNote.Text = "TradeAgent cannot read that as a date. Write it as 2026-06-01, or as "
+                + "2026-06-01T13:00:00Z if the hour matters.";
+        }
+    }
+
+    /// <summary>
+    /// The owner's second press. It moves the cutoff on the newest dataset — the one the card above
+    /// describes — and prints what the ledger did, refusal included.
+    /// </summary>
+    void ApplyHoldout(DateTimeOffset at, string evaluationClass)
+    {
+        _holdoutNote.IsVisible = true;
+
+        try
+        {
+            var newest = _host.Gateway.Datasets.All().FirstOrDefault();
+            if (newest is null)
+            {
+                _holdoutNote.Foreground = Theme.Caution;
+                _holdoutNote.Text = "There is no market data to hold back yet. Download some months first.";
+                return;
+            }
+
+            var done = _host.Gateway.Datasets.SetHoldout(newest.Id, at, evaluationClass);
+            _holdoutNote.Foreground = done.Ok ? Theme.TextMuted : Theme.Caution;
+            _holdoutNote.Text = done.Ok
+                ? $"Bars from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on are held back. The AI cannot read them "
+                  + "or backtest over them, and this date can no longer be moved earlier."
+                : done.Why;
+        }
+        catch (Exception ex)
+        {
+            _holdoutNote.Foreground = Theme.Caution;
+            _holdoutNote.Text = $"The holdout could not be set: {ex.Message}";
+        }
+        finally { ApplyHoldoutValue(); }
+    }
+
+    /// <summary>What is held back right now, read off the ledger rather than off the box.</summary>
+    void ApplyHoldoutValue()
+    {
+        try
+        {
+            var newest = _host.Gateway.Datasets.All().FirstOrDefault();
+            _holdoutValue.Text = newest?.HoldoutFrom is { } at
+                ? $"{newest.Pair} from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on"
+                  + (newest.EvaluationClass == EvaluationClass.Fixture ? ", fixture bars" : "")
+                : "nothing";
+        }
+        catch (Exception) { _holdoutValue.Text = "could not be read"; }
+    }
+
     // ---- refresh -----------------------------------------------------------------------------
 
     public void Update(GatewayStatus status)
@@ -343,6 +507,10 @@ sealed class SettingsPage
         EnsureAccounts();
         ApplyAccountSelection();
         ApplyMarketData();
+        // The VALUE only. `RelabelHoldout` is deliberately not on the tick: it disarms, and a
+        // five-second refresh that disarms a half-pressed confirmation is the defect the dashboard
+        // tree was built once to avoid.
+        ApplyHoldoutValue();
         ApplyUpdates();
     }
 

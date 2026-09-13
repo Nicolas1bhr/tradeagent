@@ -115,8 +115,23 @@ public static class Versions
     /// database gains it empty, which reads correctly as "no worker has run on the harness yet".
     /// (12 is <c>U-runner-3</c>'s <c>backtest</c> op; the two numbers were assigned at dispatch so the
     /// units can land in either order.)
+    ///
+    /// 13 -&gt; 14: THE REFEREE'S PROTOCOL. <c>dataset.holdout_from</c> and
+    /// <c>dataset.evaluation_class</c>, so a dataset can hold its last months back as private
+    /// evaluation evidence; <c>strategy_campaign</c>, whose scoring policy text and SHA-256 are fixed
+    /// at open and whose trial and verdict budgets are finite; <c>strategy_trial</c>, one row per
+    /// registered research run, keyed by campaign, version and run and by NOTHING an agent chooses, so
+    /// that replacing a team inherits the count instead of resetting it; and <c>strategy_verdict</c>,
+    /// one row per verdict REQUESTED, written before any holdout bar is read because every verdict
+    /// leaks (<c>docs/COUNCIL.md</c>:134). Nothing measured a holdout before this: <c>dataset</c> had
+    /// two states and no class, and a thousand backtests of one program cost nothing at all. This rung
+    /// was written as <c>if (have &lt; 14)</c> while 13 was still in flight beside it, and it needed no
+    /// edit when 13 landed: the two are independent and additive, which is what let the ladder come out
+    /// 11-12-13-14 whatever order the units landed in. Additive — two columns and three tables, the app
+    /// the only writer, no pipe op that touches any of them — and an older database gains them empty,
+    /// which reads correctly as "this installation holds nothing back and has run no campaign".
     /// </summary>
-    public const int DatabaseSchemaVersion = 13;
+    public const int DatabaseSchemaVersion = 14;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using TradeAgent.App;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using Xunit;
 
 namespace TradeAgent.Tests.Unit;
@@ -441,6 +442,79 @@ public class TwoPressGrantTests
         var guide = File.ReadAllText(Path.Combine(RepositoryRoot(), "docs", "USER-GUIDE.md"));
         Assert.Contains(Labels.ResumeAiTradingArmed, guide);
         Assert.Contains(Labels.ModeAutonomousArmed, guide);
+    }
+
+    // ---- 4. the holdout card (U-referee-1) -------------------------------------------------------
+
+    /// <summary>
+    /// THE HOLDOUT IS TWO PRESSES IN BOTH DIRECTIONS, WHICH NO OTHER CONTROL IN THIS APP IS.
+    ///
+    /// <para>The rule everywhere else is "widening asks twice, narrowing asks once", because hesitating
+    /// on the way down costs money. This control has no way down: <c>DatasetStore.SetHoldout</c> refuses
+    /// to move a cutoff earlier, since the bars in between have already been served to the research
+    /// process. So the first press is the last moment the owner can change their mind, and the armed
+    /// sentence has to carry the DATE — "Confirm" alone would not say which months are about to become
+    /// private evidence.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(EvaluationClass.Research,
+        "Confirm: bars from 2026-06-01 00:00 UTC on are evidence the research process never sees")]
+    [InlineData(EvaluationClass.Fixture,
+        "Confirm: these are fixture bars from 2026-06-01 00:00 UTC on \u2014 runs over them are never evidence")]
+    public void The_holdout_card_takes_two_presses_and_the_armed_sentence_names_the_date(
+        string evaluationClass, string armed)
+    {
+        var typed = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        (DateTimeOffset At, string Class)? applied = null;
+        var b = SettingsPage.BuildHoldoutConfirm(evaluationClass, () => typed, (at, c) => applied = (at, c));
+
+        Press(b);
+        Assert.Null(applied);
+        Assert.Equal(armed, b.Content);
+
+        Press(b);
+        Assert.Equal(typed, applied?.At);
+        Assert.Equal(evaluationClass, applied?.Class);
+    }
+
+    /// <summary>
+    /// A DATE CHANGED UNDER A HALF-PRESSED BUTTON DISARMS IT. The sentence the owner read named one
+    /// instant; completing it against another would hold back a different set of months from the one
+    /// they agreed to, and that cannot be undone afterwards.
+    /// </summary>
+    [Fact]
+    public void Changing_the_date_disarms_a_half_pressed_holdout()
+    {
+        var typed = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        DateTimeOffset? applied = null;
+        var b = SettingsPage.BuildHoldoutConfirm(EvaluationClass.Research, () => typed, (at, _) => applied = at);
+
+        Press(b);
+        Assert.True(Ui.IsArmed(b));
+
+        typed = typed.AddMonths(1);
+        Ui.Relabel(b, Labels.SetHoldout, SettingsPage.HoldoutArmed(EvaluationClass.Research, typed));
+
+        Assert.False(Ui.IsArmed(b));
+        Assert.Equal(Labels.SetHoldout, b.Content);
+        Assert.Null(applied);
+    }
+
+    /// <summary>
+    /// A date this build cannot read applies NOTHING, even on a second press. The cutoff decides which
+    /// bars exist for the AI, and a guess at what the owner meant is the one thing this control must
+    /// never do.
+    /// </summary>
+    [Fact]
+    public void An_unreadable_date_applies_no_holdout_on_either_press()
+    {
+        var applied = 0;
+        var b = SettingsPage.BuildHoldoutConfirm(EvaluationClass.Research, () => null, (_, _) => applied++);
+
+        Press(b);
+        Press(b);
+
+        Assert.Equal(0, applied);
     }
 
     static string RepositoryRoot()
