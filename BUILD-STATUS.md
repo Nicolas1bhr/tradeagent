@@ -5277,3 +5277,41 @@ test, judged); no trailers; `rev-list --count` → 0; CI run 34756421303 at `502
 **NOT VERIFIED:** the CLI verb inside the suite — `Map` is a private local function of the top-level `Program`, so `trade backtest` was
 proven only by hand (`IPC_UNAVAILABLE` with no app, `unknown command` on a typo, the help lines). **NOT done:** no live or paper execution,
 no protection between evaluations (`U-flatten`), no promotion or referee (`U-referee-1`, `-2`), no box, no ATAS, no money.
+
+## 2026-09-13 — U-api-worker landed: the app-owned harness — one provider, one role on it, every tool a grant, every boundary counted, the key in memory only
+
+"Workers run on an app-owned harness" (`docs/COUNCIL.md`), by one fresh builder on `docs/briefs/U-api-worker.md` (killed by the session
+limit at 00:53 mid-item-4 with items 1–3 committed and item 4 half-edited on disk, RESUMED from its transcript at 13:05, rebased four
+times as `main` moved — three real conflicts resolved inside the rebase, the schema ladder carrying 11 → 12 → 13 in order). Merge
+`ff8b43c`, 7 commits, 34 files, +4414/−50 (new `ApiAgentRuntime`, `ApiConversation`, `GrantedWorkerTools`, `Security/HarnessKey.cs`,
+`FakeProvider`; `Database.cs` **schema 13** — `tool_call`; `TurnMeter.cs`, `AgentSupervisor.cs`, `AppHost.cs`, `DashboardView.cs`,
+`DailyReports.cs`, `GatewayPipeServer.cs`, `ListPrices.cs`, `CONTRACTS.md`, the guide; seven test classes).
+
+- **The runtime `openai-api`** from manifest data (endpoint, `max_completion_tokens`, the model `ListPrices` prices), the provider's tool
+  loop run BY THE APP, usage summed over every response. RED: `Collection was empty`, `costs.json has no price for …`; mutant (usage from
+  the last response only): `Expected: 6000 / Actual: 3000` — a three-request turn priced as one.
+- **Tools are grants, default deny:** six tools; `read_file`/`list_files` inside the role's home and `in/`, `write_file` into `out/` and
+  the role's `trading/`, `trade` through the pipe server's own call path so the role check is the pipe's one line, `data`, `report`; every
+  call a `tool_call` row. RED: `Expected: 13 / Actual: 11`; mutant (the role check dropped): Research's `trade buy` served; path mutant:
+  `read_file("../agent/trading/PLAN.md")` served.
+- **Every boundary counted before each request:** the reservation first, then input, output and retrieval bytes against `TurnAllowance`,
+  over it `CONTEXT_BUDGET_EXCEEDED` with staged files kept. RED: `Expected: 3 / Actual: 24` (and 2, 8); mutant (`>=` → `>`): a fourth
+  request past the allowance — the brief's "check after the request" mutant is behaviourally identical inside a turn, stated.
+- **One role on it:** per-role runtime and model on the Safety page, Research defaults to the harness once a key is held, the chair stays
+  on codex; the key in a masked box, in memory only, cleared on dispose; "harness key: held / not held" on the daily report. RED:
+  `Expected: "openai-api" / Actual: "codex"`; mutant (the key check dropped): a role with no key sent a request.
+- **Never the network:** `FakeProvider` on loopback (a HEAD answered with headers only, every response closed in a `finally`); the
+  vendor-reach scan extended to the provider's host and matching the TYPE — it caught a live offender in the unit's own tests first.
+- **Judged at landing:** `backtest` is deliberately NOT on the harness's closed `trade` op list (a decision, briefed as `U-harness-loop`);
+  `Containment.RefusalToLaunch` does not apply to the harness (no child process); `TurnMeter` prices by (runtime, model).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at the tip before a docs-only rebase, Release: 0
+warnings, 0 errors (the build re-run at the tip); touched classes 3× → 201/201 and 103 + 1 skipped each; Unit 920 + Fault 277 +
+Integration 645 = 1842 passed, 0 failed, 1 skipped; names → 47 added, 0 removed; every test source text. Manager's gate at `98d23a2` (landed as `ff8b43c` after a docs-only rebase, `src` and `tests` identical),
+Release: build → 0 warnings, 0 errors; suite → 920 + 277 + 645 = 1842 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 52 added (sets 1453 → 1505); scan clean (test names and a
+placeholder token string, judged; no key-shaped literal); no trailers; `rev-list --count` → 0; CI run 34758232365 at `ff8b43c`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT VERIFIED:** the mission loop over a harness conversation — `ConversationFor(role)` is wired and read by the loop, but every harness
+turn in the suite is driven by calling the conversation directly (`U-harness-loop`). **NOT done:** no real provider call has ever been
+made by this repository (the manifest stays `Verified = false`); the chair is not on the harness; no memory search, no grant table with
+fencing, no second provider, no key on disk; no box, no ATAS, no money.
