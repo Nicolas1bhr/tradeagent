@@ -5309,7 +5309,7 @@ times as `main` moved — three real conflicts resolved inside the rebase, the s
 warnings, 0 errors (the build re-run at the tip); touched classes 3× → 201/201 and 103 + 1 skipped each; Unit 920 + Fault 277 +
 Integration 645 = 1842 passed, 0 failed, 1 skipped; names → 47 added, 0 removed; every test source text. Manager's gate at `98d23a2` (landed as `ff8b43c` after a docs-only rebase, `src` and `tests` identical),
 Release: build → 0 warnings, 0 errors; suite → 920 + 277 + 645 = 1842 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 52 added (sets 1453 → 1505); scan clean (test names and a
-placeholder token string, judged; no key-shaped literal); no trailers; `rev-list --count` → 0; CI run 34758232365 at `ff8b43c`: in flight at the time of this record; verdict in a follow-up commit.
+placeholder token string, judged; no key-shaped literal); no trailers; `rev-list --count` → 0; CI run 34758232365 at `ff8b43c`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT VERIFIED:** the mission loop over a harness conversation — `ConversationFor(role)` is wired and read by the loop, but every harness
 turn in the suite is driven by calling the conversation directly (`U-harness-loop`). **NOT done:** no real provider call has ever been
