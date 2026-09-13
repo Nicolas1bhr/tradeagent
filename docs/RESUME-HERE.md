@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `f1e3167`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `6fd0b77`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -29,10 +29,13 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
      PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
-   - `u-runner-3` (worktree `U-runner-3`, created on the `u-runner-2` tip): a fresh builder dispatched 00:05 2026-09-13 on
-     `docs/briefs/U-runner-3.md` — the backtest, **schema 12**, told to rebase onto `main` before its gate.
-   - `u-api-worker` (worktree `U-api-worker`, created on the `u-containment` tip `ee2abb2`): a fresh builder dispatched 00:30 on
-     `docs/briefs/U-api-worker.md` — the app-owned harness, **schema 13**, told to rebase onto `main` before its gate.
+   - `u-runner-3` (worktree `U-runner-3`, tip `f7f8ad1`, five item commits over `main` `f1e3167`): killed by the SESSION limit at
+     00:53 while writing the docs; RESUMED 13:05 2026-09-13 by `SendMessage` with its context (the docs, a rebase, the gate and
+     the report owed). The backtest, **schema 12**.
+   - `u-api-worker` (worktree `U-api-worker`, tip `7b01a99`, items 1–3 committed over the old containment tip `ee2abb2`, item 4
+     half-edited on disk): killed at 00:53, RESUMED 13:05 the same way (item 4, item 5, a rebase that drops the six already-landed
+     containment commits, the gate and the report owed). The app-owned harness, **schema 13**.
+   If either is not running when you read this, re-brief it FRESH from its branch and brief on disk.
 4. **CI on `main`:** green on all four jobs at `137aaa4`, `c758fce` and `7b90acf`. The eleven
    `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
    goes red, the fixer is that section's second bullet.
