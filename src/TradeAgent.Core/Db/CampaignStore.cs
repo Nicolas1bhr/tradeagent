@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Data.Sqlite;
+using TradeAgent.Core.Data;
 
 namespace TradeAgent.Core.Db;
 
@@ -79,6 +80,31 @@ public sealed record CampaignOpened(bool Ok, string Why, CampaignRow? Campaign)
     internal static CampaignOpened Yes(CampaignRow row) => new(true, "", row);
     internal static CampaignOpened No(string why) => new(false, why, null);
 }
+
+/// <summary>
+/// ONE REGISTERED RESEARCH RUN, CHARGED AGAINST ITS CAMPAIGN.
+///
+/// <para>There is no role and no attempt on this record, and their absence is the design: a trial keyed
+/// by the attempt would make a restart a fresh budget, and one keyed by the role would let a replacement
+/// team start again — <c>docs/COUNCIL.md</c>:131 asks for a budget "that survives team replacement". Who
+/// asked is on the run row (<see cref="StrategyRunRow.Role"/>), where it belongs; what it COST is here,
+/// keyed by what was asked.</para>
+///
+/// <para><see cref="Kind"/> is the dataset's evaluation class as it stood when the run was registered,
+/// copied rather than joined, so a dataset reclassified later cannot rewrite what past runs cost.
+/// <see cref="Charged"/> is the arithmetic that follows from it, written down so a reader of one row need
+/// not know the rule.</para>
+/// </summary>
+public sealed record TrialRow(
+    long CampaignId,
+    string VersionId,
+    string RunId,
+    string Kind,
+    bool Charged,
+    DateTimeOffset RegisteredAt);
+
+/// <summary>What registering a trial did: whether it was charged, and where the campaign now stands.</summary>
+public sealed record TrialRegistered(bool Ok, string Why, bool Charged, int Spent, int Budget);
 
 /// <summary>
 /// THE CAMPAIGN LEDGER — the referee's protocol, and the app is the only writer.
@@ -205,6 +231,90 @@ public sealed class CampaignStore(Database db)
 
         return chain;
     }
+
+
+    // ---- trials -----------------------------------------------------------------------------------
+
+    /// <summary>How many CHARGED trials this campaign has registered. A fixture run is not among them.</summary>
+    public int TrialsCharged(long campaignId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COUNT(*) FROM strategy_trial WHERE campaign_id=$id AND charged=1", ("$id", campaignId));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
+    /// <summary>Every trial registered against this campaign, oldest first.</summary>
+    public IReadOnlyList<TrialRow> Trials(long campaignId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT campaign_id, version_id, run_id, kind, charged, registered_at
+            FROM strategy_trial WHERE campaign_id=$id ORDER BY registered_at, run_id
+            """, ("$id", campaignId));
+
+        var rows = new List<TrialRow>();
+        using var r = c.ExecuteReader();
+        while (r.Read())
+            rows.Add(new TrialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3),
+                r.GetInt32(4) != 0, Sql.Time(r.GetString(5))));
+        return rows;
+    });
+
+    /// <summary>
+    /// WHY THE NEXT RUN OF THIS KIND CANNOT BE REGISTERED, in words, or null because it can.
+    ///
+    /// <para>Asked BEFORE the run rather than after it, which is the whole point of having it separate
+    /// from <see cref="RegisterTrial"/>: a caller told "your budget is spent" after twenty minutes of
+    /// evaluation has spent the budget to learn that it was spent. A <c>fixture</c> run is never refused
+    /// here — it is charged nothing, so there is nothing for a budget to refuse.</para>
+    /// </summary>
+    public string? TrialRefusal(long campaignId, string kind)
+    {
+        if (kind == EvaluationClass.Fixture) return null;
+        if (ById(campaignId) is not { } campaign) return null;
+
+        var spent = TrialsCharged(campaignId);
+        if (spent < campaign.TrialBudget) return null;
+
+        return $"campaign {campaignId} has registered all {campaign.TrialBudget} of its research trials, so "
+            + "this run is refused before it is made. A trial is one registered run of one version over one "
+            + "dataset under one execution model, and the count is the CAMPAIGN's: it is keyed by the "
+            + "campaign, the version and the run and by nothing about who asked, so it is not reset by a "
+            + "restart, by a fresh attempt or by a replacement team. What is left is a renewal, which the "
+            + "account owner authorises in TradeAgent's own window and which carries this campaign's "
+            + "holdout and its lineage forward. Runs over a fixture dataset are still free.";
+    }
+
+    /// <summary>
+    /// REGISTERS ONE TRIAL, or leaves the row that is already there alone.
+    ///
+    /// <para><b>Idempotent on (campaign, version, run), and the FIRST registration stands.</b> All three
+    /// are content hashes or the app's own id, so a re-request of the same program over the same bytes
+    /// under the same model is the same trial and is not charged twice — and a restart, a fresh attempt
+    /// or a new team asking the identical question inherits the count rather than starting one.</para>
+    ///
+    /// <para>It does not check the budget: <see cref="TrialRefusal"/> does that before the work. A run
+    /// that has already been made is recorded whatever the budget says, because the alternative is a run
+    /// the app measured and did not admit to.</para>
+    /// </summary>
+    public TrialRegistered RegisterTrial(long campaignId, string versionId, string runId, string kind,
+        DateTimeOffset at) => db.Write(_ =>
+    {
+        if (ById(campaignId) is not { } campaign)
+            return new TrialRegistered(false, $"there is no campaign {campaignId}.", false, 0, 0);
+
+        var charged = kind != EvaluationClass.Fixture;
+
+        using var c = db.Cmd("""
+            INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at)
+            VALUES($id,$ver,$run,$kind,$charged,$at)
+            ON CONFLICT(campaign_id, version_id, run_id) DO NOTHING
+            """,
+            ("$id", campaignId), ("$ver", versionId), ("$run", runId), ("$kind", kind),
+            ("$charged", charged ? 1 : 0), ("$at", Sql.T(at)));
+        c.ExecuteNonQuery();
+
+        return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
+    });
 
     /// <summary>Closes a campaign. Renewal does this to the parent; nothing else calls it yet.</summary>
     public void Close(long id, DateTimeOffset at) => db.Write(_ =>

@@ -1,3 +1,6 @@
+using TradeAgent.Core.Strategy;
+using System.Text;
+using System.Globalization;
 using System.Reflection;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -250,5 +253,217 @@ public class CampaignLedgerTests
         var shipped = new TradeAgentSettings();
         Assert.Equal(200, shipped.CampaignTrialBudget);
         Assert.Equal(3, shipped.CampaignVerdictBudget);
+    }
+
+    // ---- item 4: the trials -----------------------------------------------------------------------
+
+    static readonly DateTimeOffset Bar0 = new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+
+    /// <summary>Minutes into the fixture dataset at which the owner's holdout begins.</summary>
+    const int HoldoutAtBar = 60;
+
+    const string ProgramText = "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n";
+
+    /// <summary>
+    /// A GATEWAY WITH REAL BARS ON DISK, A REAL CUTOFF AND A REAL CAMPAIGN — the whole path the pipe
+    /// takes, minus the pipe. 120 one-minute bars, the last 60 held back, so every window used below
+    /// ends before the cutoff and nothing here is refused by the holdout instead of by the budget.
+    /// </summary>
+    static async Task<(TradingGateway Gw, Database Db, DatasetRecord Set, CampaignRow Campaign)> Campaigning(
+        int trials = 3, int verdicts = 2, string evaluationClass = EvaluationClass.Research, int bars = 120)
+    {
+        var (gw, _, db) = await TestEnv.Ready(s =>
+        {
+            s.CampaignTrialBudget = trials;
+            s.CampaignVerdictBudget = verdicts;
+        });
+
+        var dir = BinanceArchive.DatasetDir("BTCUSDT");
+        Directory.CreateDirectory(Path.Combine(dir, "raw"));
+        var raw = Path.Combine(dir, "raw", $"BTCUSDT-{Guid.NewGuid():n}.zip");
+        File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
+
+        var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
+        var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
+        for (var i = 0; i < bars; i++)
+        {
+            var close = 96m + i % 10;
+            text.Append(CultureInfo.InvariantCulture,
+                $"{Bar0.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
+        }
+        File.WriteAllText(csv, text.ToString());
+
+        var record = new DatasetRecord(
+            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            csv, DatasetStore.Sha256(csv)!, bars, Bar0, Bar0.AddMinutes(bars - 1), 0, [], false,
+            0, 0, 0, Bar0, DatasetState.ACCEPTED, null,
+            [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
+                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, Bar0, KlineTimeUnit.Microseconds, raw)]);
+
+        var id = gw.Datasets.Record(record);
+        var (held, campaign) = gw.SetHoldout(id, Bar0.AddMinutes(HoldoutAtBar), evaluationClass);
+        Assert.True(held.Ok, held.Why);
+        Assert.NotNull(campaign);
+
+        return (gw, db, gw.Datasets.ById(id)!, campaign!);
+    }
+
+    /// <summary>The same program text in a role's own folder. The same text is the same version.</summary>
+    static string GivenProgram(string role, string name = "campaign.strategy")
+    {
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, name), ProgramText);
+        return "strategies/" + name;
+    }
+
+    static BacktestRan Run(TradingGateway gw, DatasetRecord set, string path,
+        string role = CouncilRoles.Research, string attempt = "attempt-1", int toBar = HoldoutAtBar - 1) =>
+        gw.Backtests.Run(
+            AgentContext.ForAgent("agent", role, attempt),
+            new BacktestAsk(path, set.Id, Bar0, Bar0.AddMinutes(toBar), 0.001m));
+
+    /// <summary>
+    /// EVERY REGISTERED RESEARCH RUN COSTS ONE TRIAL — and the row says what it cost without naming who
+    /// asked. Red first: a thousand backtests of one version cost nothing at all, because no table
+    /// counted them.
+    /// </summary>
+    [Fact]
+    public async Task Every_registered_research_run_is_charged_one_trial_against_its_campaign()
+    {
+        var (gw, db, set, campaign) = await Campaigning();
+        using var _1 = db;
+
+        var ran = Run(gw, set, GivenProgram(CouncilRoles.Research));
+
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
+        var trial = Assert.Single(gw.Campaigns.Trials(campaign.Id));
+        Assert.Equal(campaign.Id, trial.CampaignId);
+        Assert.Equal(ran.Result.VersionId, trial.VersionId);
+        Assert.Equal(ran.Result.RunId, trial.RunId);
+        Assert.Equal(EvaluationClass.Research, trial.Kind);
+        Assert.True(trial.Charged);
+
+        // AND THE TABLE ITSELF CARRIES NO ROLE AND NO ATTEMPT. Their absence is the guarantee — a column
+        // that exists is a column a later change could key on — so it is asserted against the schema and
+        // not only against the type.
+        var columns = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT name FROM pragma_table_info('strategy_trial')");
+            var names = new List<string>();
+            using var r = c.ExecuteReader();
+            while (r.Read()) names.Add(r.GetString(0));
+            return names;
+        });
+
+        Assert.Equal(["campaign_id", "version_id", "run_id", "kind", "charged", "registered_at"], columns);
+    }
+
+    /// <summary>
+    /// THE SAME QUESTION ASKED BY A REPLACEMENT COSTS NOTHING MORE, and asking it under a different role
+    /// and a different attempt does not buy a second peek: the trial is keyed by the campaign, the version
+    /// and the run, all three of which are content hashes or the app's own id.
+    ///
+    /// <para>This is the mutant — a trial keyed by the attempt, so a restart resets the budget.
+    /// `docs/COUNCIL.md`:131 asks for a budget "that survives team replacement", and a killed worker
+    /// coming back as a fresh attempt is the ordinary case, not the adversarial one.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_same_run_asked_for_again_by_a_replacement_is_one_trial()
+    {
+        var (gw, db, set, campaign) = await Campaigning();
+        using var _1 = db;
+
+        var first = Run(gw, set, GivenProgram(CouncilRoles.Research), attempt: "attempt-1");
+        var restarted = Run(gw, set, GivenProgram(CouncilRoles.Research), attempt: "attempt-2-after-a-kill");
+        var otherRole = Run(gw, set, GivenProgram(CouncilRoles.Operations), CouncilRoles.Operations, "attempt-3");
+
+        // One version, one run, one trial — three asks.
+        Assert.Equal(first.Result.RunId, restarted.Result.RunId);
+        Assert.Equal(first.Result.RunId, otherRole.Result.RunId);
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
+        Assert.Single(gw.Campaigns.Trials(campaign.Id));
+    }
+
+    /// <summary>
+    /// A DIFFERENT WINDOW IS A DIFFERENT PEEK AND COSTS ANOTHER TRIAL. That is the other half of the
+    /// same key: a run is one program over particular bytes under a particular execution model, so
+    /// changing any of the three is a new question about the same data.
+    /// </summary>
+    [Fact]
+    public async Task A_different_window_is_a_different_trial()
+    {
+        var (gw, db, set, campaign) = await Campaigning();
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+
+        Run(gw, set, path, toBar: HoldoutAtBar - 1);
+        Run(gw, set, path, toBar: HoldoutAtBar - 2);
+
+        Assert.Equal(2, gw.Campaigns.TrialsCharged(campaign.Id));
+    }
+
+    /// <summary>
+    /// A RUN OVER A FIXTURE DATASET IS RECORDED, CHARGED NOTHING AND NEVER EVIDENCE
+    /// (<c>docs/COUNCIL.md</c>:134, "fixture runs establishing plumbing only").
+    ///
+    /// <para>Recorded rather than skipped: the plumbing run happened and the ledger says so. What it
+    /// does not do is spend the budget that bounds how many times the real data has been looked at.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_run_over_a_fixture_dataset_is_charged_nothing()
+    {
+        var (gw, db, set, campaign) = await Campaigning(trials: 1, evaluationClass: EvaluationClass.Fixture);
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+
+        Run(gw, set, path, toBar: HoldoutAtBar - 1);
+        Run(gw, set, path, toBar: HoldoutAtBar - 2);
+        Run(gw, set, path, toBar: HoldoutAtBar - 3);
+
+        Assert.Equal(0, gw.Campaigns.TrialsCharged(campaign.Id));
+        Assert.Equal(3, gw.Campaigns.Trials(campaign.Id).Count);
+        Assert.All(gw.Campaigns.Trials(campaign.Id), t =>
+        {
+            Assert.Equal(EvaluationClass.Fixture, t.Kind);
+            Assert.False(t.Charged);
+        });
+    }
+
+    /// <summary>
+    /// A CAMPAIGN OVER BUDGET REFUSES THE NEXT RUN IN WORDS, BEFORE IT RUNS.
+    ///
+    /// <para>Before, not after: a caller told "your budget is spent" once the evaluation is finished has
+    /// spent the budget to learn that it was spent, and the run it just made is exactly the peek the
+    /// count exists to bound. So the refusal is checked against the ledger first, and the proof that it
+    /// really ran nothing is that no second run row exists.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_campaign_over_budget_refuses_the_next_run_in_words_before_it_runs()
+    {
+        var (gw, db, set, campaign) = await Campaigning(trials: 1);
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+
+        Run(gw, set, path, toBar: HoldoutAtBar - 1);
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
+
+        var refused = Assert.Throws<GatewayDeniedException>(() => Run(gw, set, path, toBar: HoldoutAtBar - 2));
+
+        Assert.Equal(ErrorCode.CAMPAIGN_BUDGET_REACHED, refused.Code);
+        Assert.Contains("has registered all 1 of its research trials", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("not reset by a restart", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("renewal", refused.Message, StringComparison.Ordinal);
+
+        // It ran nothing: one run row, one trial, and the second window never became a measurement.
+        Assert.Single(gw.Strategies.Runs());
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(campaign.Id));
+
+        // A renewal is what is left, and it lets the next run through — carrying the parent's holdout.
+        var renewed = gw.Campaigns.Renew(campaign.Id, trialBudget: 1, verdictBudget: 1, At);
+        Assert.True(renewed.Ok, renewed.Why);
+        Run(gw, set, path, toBar: HoldoutAtBar - 2);
+        Assert.Equal(1, gw.Campaigns.TrialsCharged(renewed.Campaign!.Id));
+        Assert.Equal(2, gw.Strategies.Runs().Count);
     }
 }

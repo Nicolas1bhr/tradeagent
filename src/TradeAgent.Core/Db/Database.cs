@@ -784,6 +784,36 @@ public sealed class Database : IDisposable
             CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_open_holdout
               ON strategy_campaign(holdout_dataset_id) WHERE closed_at IS NULL;
             """);
+            // THE TRIAL: ONE ROW PER REGISTERED RESEARCH RUN, KEYED BY NOTHING AN AGENT CHOOSES.
+            //
+            // `docs/COUNCIL.md`:131: "registered submissions charged against a campaign-wide trial budget
+            // that survives team replacement". The key is (campaign, version, run) and there is
+            // DELIBERATELY no role column and no attempt column: a trial keyed by the attempt would make
+            // a restart a fresh budget, which is the mutant this table was built against, and a trial
+            // keyed by the role would let a replacement team start again. All three parts of the key are
+            // content hashes or the app's own id, so the same program over the same bytes under the same
+            // execution model is ONE trial however many times it is asked for, and a different window or
+            // a different fee is a different trial because it is a different peek at the data.
+            //
+            // `kind` is the dataset's evaluation class AS IT STOOD when the run was registered, copied
+            // rather than joined: a dataset reclassified later must not rewrite what past runs cost.
+            // `charged` is the arithmetic that follows from it, written down so that a reader of one row
+            // need not know the rule — a `fixture` run establishes plumbing only (:134) and costs nothing.
+            //
+            // Additive: one table and one index. An older database gains them empty, which reads as "no
+            // campaign has been charged anything yet".
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_trial(
+              campaign_id   INTEGER NOT NULL REFERENCES strategy_campaign(id),
+              version_id    TEXT NOT NULL REFERENCES strategy_version(id),
+              run_id        TEXT NOT NULL REFERENCES strategy_run(id),
+              kind          TEXT NOT NULL,
+              charged       INTEGER NOT NULL,
+              registered_at TEXT NOT NULL,
+              PRIMARY KEY(campaign_id, version_id, run_id)
+            );
+            CREATE INDEX IF NOT EXISTS ix_trial_charged ON strategy_trial(campaign_id, charged);
+            """);
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','14') ON CONFLICT(key) DO UPDATE SET value='14';");
         }
 

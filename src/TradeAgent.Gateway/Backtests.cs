@@ -57,6 +57,7 @@ public sealed record BacktestAsk(
 public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTimeOffset>? now = null)
 {
     readonly StrategyStore _strategies = new(db);
+    readonly CampaignStore _campaigns = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>Roles with a run in flight right now. See the type's summary.</summary>
@@ -105,6 +106,16 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that is not a program TradeAgent will run — {parse.Why}");
 
+        // THE TRIAL BUDGET IS ASKED BEFORE THE RUN, NOT AFTER IT. A caller told "your budget is spent"
+        // after twenty minutes of evaluation has spent the budget to learn that it was spent — and the
+        // run it just made is a peek at the data that the count was supposed to bound. There is a
+        // campaign only where the owner has set a holdout; over a dataset with none, nothing is charged
+        // and nothing is refused. A `fixture` dataset is free, so it is never refused here either.
+        var campaign = _campaigns.OpenForDataset(ask.Dataset);
+        var kind = EvaluationClass.Or(gateway.Datasets.ById(ask.Dataset)?.EvaluationClass);
+        if (campaign is { } open && _campaigns.TrialRefusal(open.Id, kind) is { } spent)
+            throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
+
         if (!_running.TryAdd(role, 0))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"a backtest for {CouncilRoles.Title(role)} is already running. One at a time per role: "
@@ -127,7 +138,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
-            if (!stop.IsCancellationRequested) Record(result, program, role, caller.AttemptId);
+            if (!stop.IsCancellationRequested) Record(result, program, role, caller.AttemptId, campaign, kind);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!);
         }
@@ -264,7 +275,8 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         return path.StartsWith(root, how);
     }
 
-    void Record(BacktestResult result, StrategyProgram program, string role, string? attempt)
+    void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
+        CampaignRow? campaign, string kind)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -291,6 +303,13 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 [.. result.Trades.Select(t => new StrategyTradeRow(
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
+
+            // THE TRIAL, IN THE SAME TRANSACTION AS THE RUN IT IS THE COST OF. Either both land or
+            // neither does: a run recorded without its trial is a peek nobody was charged for, and a
+            // trial without its run is a charge for nothing. Keyed by the campaign, the version and the
+            // run — never by the role or the attempt, which are on the run row where they belong.
+            if (campaign is { } open)
+                _campaigns.RegisterTrial(open.Id, result.VersionId, result.RunId, kind, at);
 
             return 0;
         });
