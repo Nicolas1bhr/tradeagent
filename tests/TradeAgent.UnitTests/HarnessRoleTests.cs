@@ -99,7 +99,13 @@ public class HarnessRoleTests : IDisposable
     [Fact]
     public async Task A_role_on_the_harness_with_no_key_starts_nothing_and_says_which_fact_is_missing()
     {
+        // POINTED AT THE LOOPBACK FAKE like every other harness test, although this one never sends a
+        // request: the shipped manifest's BaseUrl is the real provider, and SuiteReachesNoVendorTests
+        // holds every source that builds one of these to repointing it rather than to remembering which
+        // of them happens not to reach the wire today.
+        using var provider = new FakeProvider();
         var manifest = RuntimeCatalog.Require(Harness);
+        manifest.BaseUrl = provider.BaseUrl;
         using var runtime = new ApiAgentRuntime(manifest, _key.Read);
 
         Assert.False(_key.Held);

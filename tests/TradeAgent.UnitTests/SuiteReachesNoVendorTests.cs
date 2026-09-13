@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core.Data;
 using TradeAgent.Provisioning;
 using Xunit;
@@ -6,24 +7,39 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
-/// ITEM 5 — the suite talks to a loopback <see cref="System.Net.HttpListener"/> and never to the
-/// vendor.
+/// THE SUITE TALKS TO A LOOPBACK <see cref="System.Net.HttpListener"/> AND NEVER TO A VENDOR.
 ///
-/// Every other test in this unit is written against <see cref="FakeArchive"/>. What makes that a
-/// property of the SUITE rather than of the tests that happen to exist today is this scan, and the
-/// hazard it closes is a real one: <see cref="BinanceArchiveClient"/> takes its base URL as an
-/// OPTIONAL argument defaulting to <c>data.binance.vision</c>, so a test that forgets to pass the
-/// loopback address does not fail — it quietly downloads two megabytes from a public CDN on every CI
-/// run, on three platforms, and passes.
+/// <para>Every test that needs an outside service is written against <see cref="FakeArchive"/> or
+/// <see cref="FakeProvider"/>. What makes that a property of the SUITE rather than of the tests that
+/// happen to exist today is this scan, and it closes the same hazard twice over:</para>
 ///
-/// The one real download this unit was allowed is quoted in the brief's report. It was made once, by
-/// hand, to establish the URL pattern and the sidecar's format; it is evidence, and evidence is not
-/// something a test suite re-fetches.
+/// <list type="bullet">
+/// <item><b>The data archive</b> (<c>U-data-binance</c> item 5). <see cref="BinanceArchiveClient"/>
+/// takes its base URL as an OPTIONAL argument defaulting to <c>data.binance.vision</c>, so a test that
+/// forgets to pass the loopback address does not fail — it quietly downloads two megabytes from a public
+/// CDN on every CI run, on three platforms, and passes.</item>
+/// <item><b>The AI provider</b> (<c>U-api-worker</c> item 5). Worse in one way: the app-owned harness is
+/// built from the SHIPPED manifest, whose <c>BaseUrl</c> is the real endpoint, so a test that builds an
+/// <c>ApiAgentRuntime</c> and forgets to repoint it sends a request to a provider — with a fake key, so
+/// it fails as a 401 rather than as "you are on the network", which is the worst way to find out.</item>
+/// </list>
+///
+/// <para>The one real download the data unit was allowed is quoted in that unit's report. It was made
+/// once, by hand, to establish the URL pattern and the sidecar's format; it is evidence, and evidence is
+/// not something a test suite re-fetches. <b>The provider was never called at all</b> — no run of this
+/// repository has ever sent a request to it — so the harness's request and response shapes are the
+/// vendor's published contract rather than something measured, and the manifest says so.</para>
 /// </summary>
 public class SuiteReachesNoVendorTests
 {
     /// <summary>The vendor's own host, spelled once, here, where the scan is looking for it.</summary>
     const string VendorHost = "data" + ".binance" + ".vision";
+
+    /// <summary>
+    /// The AI provider's own host, spelled the same way and for the same reason: this file is the one
+    /// place in the test tree these two names may appear, so a scan for them cannot find itself.
+    /// </summary>
+    const string ProviderHost = "api" + ".openai" + ".com";
 
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
@@ -56,24 +72,50 @@ public class SuiteReachesNoVendorTests
             if (name == nameof(SuiteReachesNoVendorTests) + ".cs") continue;
 
             var text = File.ReadAllText(file);
+
+            // THE CODE ONLY, built as the per-line loop goes, because both checks below are about what a
+            // test WOULD DO and a comment does nothing. Measured: the file-level check over the whole
+            // text flagged HarnessCatalogTests for one sentence in a comment naming the type.
+            var codeLines = new System.Text.StringBuilder();
+
             foreach (var (line, n) in text.Replace("\r\n", "\n").Split('\n').Select((l, i) => (l, i + 1)))
             {
                 var code = line.TrimStart();
                 if (code.StartsWith("//", StringComparison.Ordinal) || code.StartsWith("///", StringComparison.Ordinal)
                     || code.StartsWith("*", StringComparison.Ordinal)) continue;
+                codeLines.Append(code).Append('\n');
 
                 if (code.Contains(VendorHost, StringComparison.OrdinalIgnoreCase))
-                    offenders.Add($"{name}:{n} names the vendor's own host");
+                    offenders.Add($"{name}:{n} names the archive vendor's own host");
+
+                if (code.Contains(ProviderHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names the AI provider's own host");
 
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
                 if (Regex.IsMatch(code, @"new\s+BinanceArchiveClient\s*\(\s*\)"))
                     offenders.Add($"{name}:{n} constructs BinanceArchiveClient with no base URL, so it would use the vendor's");
             }
+
+            // AND THE HARNESS, WHICH CANNOT BE CAUGHT A LINE AT A TIME. An ApiAgentRuntime is built from
+            // a manifest, and the shipped manifest's BaseUrl is the provider — so the rule is about the
+            // FILE: a test source that uses the type has to repoint it somewhere in the same file.
+            //
+            // THE MATCH IS THE TYPE, NOT `new ApiAgentRuntime`, and that is the whole difference between
+            // a scan and a scan that works. Measured here: with the repoint deliberately removed from
+            // ApiWorkerTests, a check for `new ApiAgentRuntime` found nothing — that file builds one with
+            // a TARGET-TYPED `new(...)`, so the constructor's name is nowhere in the source. The lookahead
+            // lets static access through (`ApiAgentRuntime.RuntimeId` names no instance and reaches
+            // nothing) and catches every way of naming the type itself.
+            var body = codeLines.ToString();
+            if (Regex.IsMatch(body, @"\bApiAgentRuntime\b(?!\s*\.)")
+                && !body.Contains("BaseUrl =", StringComparison.Ordinal))
+                offenders.Add($"{name} uses ApiAgentRuntime and never sets BaseUrl, so it would "
+                              + "send a request to the AI provider");
         }
 
         Assert.True(offenders.Count == 0,
-            "these tests would reach the real archive:\n  " + string.Join("\n  ", offenders));
+            "these tests would reach a real vendor:\n  " + string.Join("\n  ", offenders));
     }
 
     /// <summary>
@@ -97,5 +139,35 @@ public class SuiteReachesNoVendorTests
     {
         Assert.Equal(BinanceArchive.BaseUrl, new BinanceArchiveClient().BaseUrl);
         Assert.StartsWith("https://", BinanceArchive.BaseUrl);
+    }
+
+    /// <summary>
+    /// AND THE SHIPPED HARNESS MANIFEST REALLY POINTS AT THE PROVIDER, which is why a test that builds
+    /// one has to repoint it. Asserted through the host spelled in this file rather than against a
+    /// literal, so the scan above and this claim cannot drift apart.
+    /// </summary>
+    [Fact]
+    public void The_shipped_harness_manifest_really_points_at_the_provider()
+    {
+        var manifest = RuntimeCatalog.Require(ApiAgentRuntime.RuntimeId);
+
+        Assert.Contains(ProviderHost, manifest.Endpoint, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("https://", manifest.Endpoint);
+        // Unverified against the real provider by design: the brief forbids a real call, and nothing in
+        // this repository has ever made one.
+        Assert.False(manifest.Verified);
+    }
+
+    /// <summary>
+    /// The provider fake is a loopback listener and says so in its own address, so a test pointed at it
+    /// cannot accidentally be pointed somewhere else.
+    /// </summary>
+    [Fact]
+    public void The_provider_fake_serves_loopback_only()
+    {
+        using var provider = new FakeProvider();
+
+        Assert.StartsWith("http://127.0.0.1:", provider.BaseUrl);
+        Assert.DoesNotContain(ProviderHost, provider.BaseUrl, StringComparison.OrdinalIgnoreCase);
     }
 }

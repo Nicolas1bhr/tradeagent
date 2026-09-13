@@ -1176,7 +1176,83 @@ command line and its sandbox restricts writes rather than what enters its contex
 refusing the NEXT launch. That is why over-reserving is the safe direction and why the reservation is
 priced at the dearest rate the same tokens can carry. A per-REQUEST bound that the provider itself
 enforces arrives with the harness (`U-api-worker`); until then the allowance is an app-side
-commitment and the daily ceiling is enforced between turns, never inside one.
+commitment and the daily ceiling is enforced between turns, never inside one. **That limitation now has
+an exception, and only one:** a role on the app-owned harness is bounded inside its turn — see below.
+
+## The app-owned harness — `src/TradeAgent.AgentRuntime/ApiAgentRuntime.cs`, `ApiConversation.cs`
+
+One `IAgentRuntime` (`openai-api`) whose turns are HTTP requests this app composes rather than a vendor
+process it starts and watches. `docs/COUNCIL.md`, "Workers run on an app-owned harness": a cheap team
+with enforceable tools and a bounded context needs control at every model-and-tool boundary, "which the
+codex CLI's documented contract does not provide: its sandbox restricts writes, not what enters its
+context, so its caps are advisory". Here the app IS the boundary.
+
+**It is manifest data**, like every vendor command (`CLAUDE.md`): `BaseUrl`, `CompletionsPath`,
+`MaxOutputParam` (the provider renamed `max_tokens` to `max_completion_tokens` once already) and
+`DefaultModel` = `gpt-5.6-luna`, the cheapest current entry. `RuntimeCatalog.Harnesses()`/`IsHarness` is
+derived from a non-empty `BaseUrl`, not a flag. `ListPrices` prices the whole current generation for it.
+**`Verified = false` and no run of this repository has ever called the provider**: the request and
+response shapes are the vendor's published chat-completions contract, and every test drives
+`FakeProvider`, a loopback `HttpListener`. `SuiteReachesNoVendorTests` is what keeps that a property of
+the suite — it refuses the provider's host in any test source and refuses a test file that uses
+`ApiAgentRuntime` without setting `BaseUrl`, matched on the TYPE because a target-typed `new(...)` has
+the constructor's name nowhere in the source.
+
+**A turn is one `SendMissionAsync`, however many requests it takes.** `TurnEnded` is raised once, with
+the usage SUMMED over every response — last-wins would price a three-request turn as one, and the
+direction of a wrong bill is the whole argument (`TurnUsage.Plus`). Usage no response reported stays
+NULL, never zeroed, so `AiAttemptStore.End` charges the reservation. `TurnUsage.Read` now also looks one
+level into `prompt_tokens_details` / `completion_tokens_details` for the three SUBSET figures, which is
+where this provider nests cached input; the flat names still win.
+
+**Four boundaries, each checked BEFORE the request that would pass it** (`ApiConversation.Exceeded`) —
+after it, the provider has already done the work the check exists to prevent. Reaching a bound EXACTLY
+is already too late. (1) `TurnMeter.Begin` reserves before the first request, through
+`IAdmittedConversation` — an interface rather than a type test on `AgentSession`, or a harness turn would
+be metered after the fact and never admitted. (2) Cumulative input and (3) output tokens against
+`TurnAllowance`, the provider's own reported counts. (4) Retrieval in BYTES against
+`MaxRetrievalBytesPerTurn` (512 KiB, 64 KiB per call) — its own number rather than a share of a token
+allowance, because "bytes are not tokens and are never converted to them" (`TurnContext`). Plus
+`MaxRequestsPerTurn` = 24, which stops a turn that is looping cheaply rather than spending. Every request
+carries the provider's max-output parameter, which is the one bound the PROVIDER enforces. Over a bound,
+the turn ends `CONTEXT_BUDGET_EXCEEDED` with exit code 1, **its staged files kept**, and
+`ai_attempt.context` carrying `"ended"` — an exit code cannot tell a bounded turn from a broken one, and
+rule 4 keeps enforcement apart from billing. A never-answering endpoint fails on an injectable timeout
+(120 s shipped, seconds in tests) reported as a timeout rather than as a cancellation.
+
+**Tools are grants, default deny** (`GrantedWorkerTools`). Six, and no seventh: `read_file` /
+`list_files` anywhere inside the role's own home (its `in/` included), `write_file` into `out/` and
+`trading/` ONLY — staged, the relay publishes — `trade`, `data` (`data-list`/`data-bars`) and `report`.
+No shell, no HTTP, no packages, no model-selected executable. `ToolPaths.Resolve` refuses an absolute
+path, a `..` SEGMENT (for what it says, not only for where it lands), anything resolving outside the
+root, and a symbolic link inside it — links are checked only BELOW the root, because on macOS the root
+itself sits under one. **The role check is not in that class**: `trade` goes through
+`GatewayPipeServer.CallAsync` (`IGatewayCalls`), which is the pipe's OWN handler under
+`AgentContext.ForAgent(session, role, attempt)`, so a Research worker's `buy` is refused by the same line
+that refuses a Research launch on the pipe, with the same code and sentence. `trade`'s op list is closed
+and carries no operator authority; a mutating op with no `request_id` is sent under one the app minted.
+**Every call is a `tool_call` row at schema 13** — attempt, role, tool, an argument SUMMARY (never the
+payload), bytes returned, served or refused — app-written only, like `material`, `fill`, `ai_attempt`,
+`mission_event` and `publication`. It is round 4's "observed deliveries", the thing that sentence said
+could not be had from an unrestricted CLI.
+
+**One role on it, by the owner's choice.** `TradeAgentSettings.RoleRuntime` per role;
+`AppHost.RuntimeForRole` resolves the owner's choice, then Research onto the harness IFF a key is held,
+then the app-wide runtime. The chair stays on the vendor CLI in this slice — its conversation IS the Chat
+page's, and the chair on the harness is a later unit. `TurnMeter` takes `roleRuntime` beside `roleModel`,
+because a price is looked up by (runtime, model) and a Research turn on `openai-api` priced against the
+chair's `codex` catalogue is a commitment against a rate nobody is charged. **The key is
+`HarnessKey`: in memory, written nowhere, cleared in `AppHost.DisposeAsync`**, pasted into a masked box
+on the Safety page with the sentence saying why — round 4's "keys… are not retained beside an
+unsandboxed CLI process until containment lands", and `Containment.Sandbox()` still answers `NONE`.
+The owner pastes it again after a restart; the daily report says `harness key: held` / `not held`.
+
+**What the harness is NOT contained by.** It runs IN this process, so `Containment.RefusalToLaunch` —
+which refuses to START an uncontained child while real money is armed — has no child to refuse and is
+not applied to it. That is not a gap being papered over: a worker with no process of its own is the
+"harness-only execution for every role" that round 4 named as the honest alternative to an AppContainer.
+What it does not fix is `U-contain-2`: this process reads and writes `state/` as the same OS user, and so
+does the vendor CLI beside it.
 
 ## The owner's daily report — `src/TradeAgent.Gateway/DailyReports.cs`
 

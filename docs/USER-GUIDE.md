@@ -506,14 +506,53 @@ Both are the same AI tool with the same permissions. **A role is not a rank**: n
 the chair lets it trade more, raise a limit or change a setting — the **Safety** page is still the
 only place any of that lives.
 
-Two things about them are yours to set, on the **Safety** page under *What the AI costs*:
+Three things about them are yours to set, on the **Safety** page under *What the AI costs*:
 
+- **What the Research Director runs on.** Two choices, and they are two different kinds of thing.
+  *The AI tool on this computer* is the program TradeAgent installed for you, started with no window,
+  once per turn. *TradeAgent's own worker* is TradeAgent talking to the AI provider itself — see below.
 - **The model the Research Director runs on.** A cheaper model here buys the research more turns for
   the same money. Leave it on *TradeAgent's choice* and it runs on whatever the row above says.
 - **The split of the daily limit.** 50/50 out of the box. It divides the limit above between the two
   roles; it never adds to it. A role that has spent its share stops taking turns and the other one
   carries on, which is the point — without a split, whichever role woke first would spend the whole
   day.
+
+### TradeAgent's own worker
+
+The AI tool on your computer is somebody else's program. TradeAgent can start it, stop it and read
+what it prints, and that is all: it decides for itself what to read, how much of it to read and what
+to do next, so the limit you set on how much one turn may use is a number TradeAgent can only check
+*between* turns. A turn that reads far more than you allowed has already been billed by the time
+TradeAgent sees it.
+
+**TradeAgent's own worker** is the other way round. TradeAgent calls the AI provider directly, so
+every single request is one it composed itself — and that changes three things:
+
+- **The limit bites inside a turn.** Before each request TradeAgent adds up what that turn has used
+  so far and stops if the next request would pass what you allowed. The turn ends with its work kept,
+  and the Chat page says which limit stopped it.
+- **It has a fixed set of tools and cannot ask for more.** It can read files in its own folder,
+  write into its own `out` and `trading` folders, read the trading surface, read the market data
+  TradeAgent holds and read your daily report. There is no shell, no way to install anything, and no
+  way to reach the internet. Anything else it asks for is refused and written down.
+- **Everything it asked for is recorded.** Every read, every write and every trading call it made —
+  served or refused — is in TradeAgent's own records, which it cannot edit. That is not true of the
+  AI tool on your computer: what that program reads, nothing outside it can see.
+
+It can do **less** than the AI tool, not more. It still cannot place an order unless its role is
+allowed to, and the Research Director never is.
+
+**It needs a key, and TradeAgent will not save it.** Paste your provider's API key into the box
+under *What the AI costs*. TradeAgent keeps it in memory while it is open, sends it with each
+request, and forgets it when you close the app — so you paste it again next time you start. That is
+deliberate and it is the honest reason: nothing on Windows yet stops the AI's own program from
+reading the files TradeAgent keeps, so a key written into one of those files is a key the AI could
+read. Until that is fixed, the key does not go in a file. Your daily report says **harness key: held**
+or **not held** so you can tell at a glance, and it never contains any part of the key itself.
+
+With no key held, a role set to TradeAgent's own worker **takes no turns at all** and the Safety page
+says so in orange. Nothing is lost; it starts working the moment you paste one.
 
 Their folders sit side by side: **Open the AI's folder** on the Dashboard gives you the Operations
 Director's, and `research` beside it is the other one's. Each has an `in` folder — what TradeAgent

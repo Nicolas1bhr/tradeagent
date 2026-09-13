@@ -28,6 +28,9 @@ namespace TradeAgent.Tests.Unit;
 /// </summary>
 public sealed class FakeProvider : IDisposable
 {
+    /// <summary>The one method that carries no entity body. See the comment at the write below.</summary>
+    const string Head = "HEAD";
+
     readonly HttpListener _http = new();
     readonly ConcurrentQueue<string> _responses = new();
     readonly ConcurrentQueue<string> _bodies = new();
@@ -63,7 +66,8 @@ public sealed class FakeProvider : IDisposable
                 catch (Exception) { return; }
 
                 var path = ctx.Request.Url!.AbsolutePath;
-                Mark($"got {ctx.Request.HttpMethod} {path}");
+                var method = ctx.Request.HttpMethod;
+                Mark($"got {method} {path}");
 
                 try
                 {
@@ -91,9 +95,23 @@ public sealed class FakeProvider : IDisposable
                     ctx.Response.StatusCode = 200;
                     ctx.Response.ContentType = "application/json";
                     ctx.Response.ContentLength64 = body.Length;
-                    Mark($"answering 200, {body.Length} bytes");
-                    await ctx.Response.OutputStream.WriteAsync(body);
-                    Mark("write returned");
+
+                    // A HEAD IS ANSWERED WITH THE HEADERS AND NOTHING ELSE — the FakeArchive lesson,
+                    // kept here although the harness only ever POSTs: http.sys allows no body on a HEAD,
+                    // so writing one throws, the throw skips the close, and the client sits on its own
+                    // timeout reading the silence as a provider that had nothing to say. That cost
+                    // windows-latest thirty minutes once already (see FakeArchive), and a harness that
+                    // could do it again is worse than one line of method check.
+                    if (string.Equals(method, Head, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Mark($"answering 200, {body.Length} bytes declared, no body because this is a HEAD");
+                    }
+                    else
+                    {
+                        Mark($"answering 200, {body.Length} bytes");
+                        await ctx.Response.OutputStream.WriteAsync(body);
+                        Mark("write returned");
+                    }
                 }
                 catch (Exception ex) { Mark($"THREW {ex.GetType().Name}: {One(ex.Message)}"); }
                 finally
