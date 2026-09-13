@@ -121,6 +121,14 @@ public class CouncilLoopTests
         public Dictionary<string, RoleConversation> Conversations { get; } = [];
         public Dictionary<string, AiSpendToday> Spending { get; } = [];
 
+        /// <summary>
+        /// RUN AT THE LAST MOMENT BEFORE A TURN IS ADMITTED, so a test can hold two callers there
+        /// and let them go together. It is called from <see cref="SituationAsync(string,
+        /// CancellationToken)"/> — the last thing the loop does before it takes the role's lease —
+        /// which is what makes the race below a race rather than a sequence.
+        /// </summary>
+        public Action<string>? BeforeLaunch { get; set; }
+
         /// <summary>Every launch this host recorded, in order, as (role, prompt).</summary>
         public List<(string Role, string Prompt)> Opened { get; } = [];
 
@@ -143,16 +151,26 @@ public class CouncilLoopTests
         public Task<MissionSituation> SituationAsync(CancellationToken ct) =>
             Task.FromResult(new MissionSituation());
 
-        public Task<MissionSituation> SituationAsync(string role, CancellationToken ct) =>
-            Task.FromResult(new MissionSituation { Role = role, Spend = SpendFor(role) });
+        public Task<MissionSituation> SituationAsync(string role, CancellationToken ct)
+        {
+            BeforeLaunch?.Invoke(role);
+            return Task.FromResult(new MissionSituation { Role = role, Spend = SpendFor(role) });
+        }
 
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes) =>
             BeginTurn(prompt, wakes, CouncilRoles.Default);
 
         public AiAdmission BeginTurn(string prompt, IReadOnlyList<string> wakes, string role)
         {
-            Opened.Add((role, prompt));
-            var id = Minted ?? NextAttemptId()!;
+            lock (Opened) Opened.Add((role, prompt));
+
+            // THE MINTED ID IS TAKEN, exactly as <see cref="TurnMeter.Begin"/> takes it: an id that
+            // stayed here would be used by two launches the moment two callers mint before either
+            // records, and the second INSERT would fail on the primary key rather than on the thing
+            // a test is asking about.
+            string id;
+            lock (_mint) { id = _pending ?? NewId(); _pending = null; }
+
             return new AiAttemptStore(_db).Begin(
                 new AiAttempt { Id = id, StartedAt = DateTimeOffset.UtcNow, Role = role }, wakes);
         }
@@ -161,7 +179,15 @@ public class CouncilLoopTests
         /// The id the turn about to run will carry. Minted before the prompt, exactly as the meter
         /// does it, so a conversation writing into <c>out/</c> can name the file after it.
         /// </summary>
-        public string? NextAttemptId() => Minted = $"turn-{_tag}-{++_attempts}";
+        public string? NextAttemptId()
+        {
+            lock (_mint) return Minted = _pending = NewId();
+        }
+
+        readonly Lock _mint = new();
+        string? _pending;
+
+        string NewId() => $"turn-{_tag}-{++_attempts}";
 
         /// <summary>The id minted for the turn in flight, for a conversation that has to name it.</summary>
         public string? Minted { get; private set; }
@@ -210,7 +236,79 @@ public class CouncilLoopTests
     /// </summary>
     static DateTimeOffset Noon() => new(DateTime.Today.AddHours(12), DateTimeOffset.Now.Offset);
 
+    /// <summary>How many launches this ledger holds for one role, whatever state they are in.</summary>
+    static int Launches(Database db, string role)
+    {
+        using var c = db.Cmd("SELECT COUNT(*) FROM ai_attempt WHERE role=$r", ("$r", role));
+        return Convert.ToInt32(c.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// Runs both callers on REAL THREADS and waits for them, because "both were admitted" is a fact
+    /// about two callers and one ledger, and a stand-in for either would exercise neither. The idiom
+    /// is <c>BudgetReservationTests</c>'s.
+    /// </summary>
+    static void Together(Action a, Action b)
+    {
+        Exception? first = null;
+        void Run(Action work)
+        {
+            try { work(); }
+            catch (Exception ex) { Interlocked.CompareExchange(ref first, ex, null); }
+        }
+
+        var one = new Thread(() => Run(a));
+        var two = new Thread(() => Run(b));
+        one.Start();
+        two.Start();
+        Assert.True(one.Join(TimeSpan.FromSeconds(60)), "the first turn never finished");
+        Assert.True(two.Join(TimeSpan.FromSeconds(60)), "the second turn never finished");
+        if (first is not null) throw first;
+    }
+
     // ---- the property ------------------------------------------------------------------------
+
+    /// <summary>
+    /// ITEM 1, RED FIRST: ONE TURN PER ROLE AT A TIME, and the second caller is REFUSED rather than
+    /// queued behind the first.
+    ///
+    /// <para>Nothing prevented a second <see cref="MissionLoop.TurnAsync"/> for a role already
+    /// turning. Everything before the launch is a look — the queue, the share, the conversation's
+    /// own busy flag — and two callers that take those looks together both pass them: the wake is
+    /// still unconsumed, the share still has room, and the conversation is not busy until one of
+    /// them actually sends. Both then launched. Two launch records for one reason to work, two agent
+    /// processes in one role's folder, and the second one charged to a day that had room for one.</para>
+    ///
+    /// <para>The barrier is what makes this a race rather than a sequence, exactly as in
+    /// <c>BudgetReservationTests</c>: neither caller reaches the lease until both have been past
+    /// every look the loop takes before it.</para>
+    /// </summary>
+    [Fact]
+    public void A_second_turn_for_a_role_already_turning_is_refused_and_never_launched()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var concurrency = new Concurrency();
+        var host = new CouncilHost(db, root, concurrency);
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        host.Events!.Raise(MissionEventIds.Fill("EXEC-1"), MissionEventKind.Fill, earlier,
+            role: CouncilRoles.Operations);
+
+        using var both = new Barrier(2);
+        host.BeforeLaunch = _ => Assert.True(both.SignalAndWait(TimeSpan.FromSeconds(30)),
+            "the two callers never met: one of them was refused before the lease, not at it");
+
+        Together(() => loop.TurnAsync().GetAwaiter().GetResult(),
+                 () => loop.TurnAsync().GetAwaiter().GetResult());
+
+        // ONE LAUNCH FOR ONE REASON TO WORK. The other caller was answered, not parked.
+        Assert.Equal(1, Launches(db, CouncilRoles.Operations));
+        Assert.Single(host.Conversations[CouncilRoles.Operations].Sent);
+        Assert.Equal(1, concurrency.Peak);
+    }
+
 
     /// <summary>
     /// RED FIRST, AND THIS IS THE UNIT'S ITEM 2. Two due wakes, one for each role: two turns, in

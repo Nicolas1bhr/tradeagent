@@ -52,6 +52,16 @@ public sealed record MissionStatus(
     /// from a council that is working, and the fix for the two is different.
     /// </summary>
     public string? Role { get; init; }
+
+    /// <summary>
+    /// EVERY ROLE WITH A TURN IN FLIGHT, not just the first of them. Two roles' turns may overlap, so
+    /// a card naming one of them is a card that is right half the time — and the half it gets wrong
+    /// is the one an owner is looking at when they wonder why the Research Director is quiet.
+    ///
+    /// Empty where nothing is turning and no wake is next; a single name is the ordinary case and
+    /// reads exactly as <see cref="Role"/> always did.
+    /// </summary>
+    public IReadOnlyList<string> Roles { get; init; } = [];
 }
 
 /// <summary>
@@ -828,12 +838,34 @@ public sealed class MissionLoop
     Task? _running;
 
     int _turns;
-    int _sessionTurns;
-    int _consecutiveErrors;
     string? _lastFirstLine;
-    bool _working;
     DateTimeOffset? _nextTurnAt;
     string? _waitingFor;
+
+    /// <summary>
+    /// THE ROLES WITH A TURN IN FLIGHT RIGHT NOW — the turn lease, and the whole of it.
+    ///
+    /// <para>One entry per role, taken immediately before <see cref="IMissionHost.BeginTurn"/> and
+    /// dropped in the <c>finally</c> beside the turn's committed transition. A second
+    /// <see cref="TurnAsync"/> for a role that is already in here is REFUSED and returns; it is
+    /// never queued behind the first, because a turn that waits is a turn whose wake, share and
+    /// conversation were all read a long time before it runs.</para>
+    ///
+    /// <para><b>It is in memory, and the LAUNCHED <c>ai_attempt</c> row is its durable witness.</b>
+    /// The app's other two leases are in memory for the same reason (<c>docs/CONTRACTS.md</c>): a
+    /// claim that outlived the process holding it could never be released, and a restart must be
+    /// able to reconcile whatever it finds. What a crash leaves behind is an open launch record,
+    /// which the next start turns LOST and charges — the fail-safe direction.</para>
+    ///
+    /// <para>Everything else that used to be one slot is keyed the same way, because the council is
+    /// no longer serial by construction: the session count, the consecutive errors and whether the
+    /// owner has been told about the cap are one role's facts, and a single slot let one role's five
+    /// failures rotate the other's session and back off its turns.</para>
+    /// </summary>
+    readonly HashSet<string> _turning = new(StringComparer.Ordinal);
+
+    readonly Dictionary<string, int> _sessionTurns = new(StringComparer.Ordinal);
+    readonly Dictionary<string, int> _consecutiveErrors = new(StringComparer.Ordinal);
 
     /// <summary>The role the card is describing: the turn in flight, or the next wake's owner.</summary>
     string? _role;
@@ -844,8 +876,12 @@ public sealed class MissionLoop
     /// <summary>A wake that arrived with nothing asleep to interrupt. Spent by the next wait.</summary>
     bool _nudged;
 
-    /// <summary>Whether the owner has already been told about THIS spell of being over the cap.</summary>
-    bool _reportedCap;
+    /// <summary>
+    /// Whether the owner has already been told about THIS spell of being over the cap, PER ROLE.
+    /// One flag between them said it once for whichever role reached its share first and then went
+    /// quiet about the other — and the two are different sentences about different money.
+    /// </summary>
+    readonly Dictionary<string, bool> _reportedCap = new(StringComparer.Ordinal);
 
     /// <summary>
     /// WORDS THE OWNER TYPED INTO A TURN THAT WAS THEN REFUSED. They were taken off the
@@ -884,6 +920,79 @@ public sealed class MissionLoop
     /// <summary>Raised whenever <see cref="Status"/> would read differently. The card redraws on it.</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// A TURN THAT WAS NOT STARTED, IN WORDS, so a refusal is something written down rather than a
+    /// second caller that quietly went away. The app logs it; nothing reads it to decide anything.
+    /// </summary>
+    public event Action<string>? Refused;
+
+    /// <summary>
+    /// TAKES THE ROLE'S TURN LEASE, or answers null because that role is already turning.
+    ///
+    /// <para>The lease is in memory. <c>docs/COUNCIL.md</c> is silent on where one lives, and this
+    /// follows the app's other two (<c>docs/CONTRACTS.md</c>): a claim that outlived the process
+    /// holding it could never be released, and the durable witness that a turn was in flight is the
+    /// LAUNCHED <c>ai_attempt</c> row the launch writes a moment later — which the next start turns
+    /// LOST and charges. A restart therefore holds no leases and reconciles everything, which is the
+    /// only reading under which a crash mid-turn leaves the council able to work.</para>
+    ///
+    /// <para>Disposing it twice does nothing: the turn drops it beside its commit, and the
+    /// <c>using</c> in <see cref="TurnAsync"/> drops it again on every other way out.</para>
+    /// </summary>
+    IDisposable? Lease(string role)
+    {
+        lock (_gate)
+        {
+            if (!_turning.Add(role)) return null;
+            _nextTurnAt = null;
+            _waitingFor = null;
+            _role = role;
+        }
+        return new Turn(this, role);
+    }
+
+    sealed class Turn(MissionLoop loop, string role) : IDisposable
+    {
+        bool _dropped;
+
+        public void Dispose()
+        {
+            lock (loop._gate)
+            {
+                if (_dropped) return;
+                _dropped = true;
+                loop._turning.Remove(role);
+            }
+        }
+    }
+
+    /// <summary>Whether any role has a turn in flight — what the scanner's window turns on.</summary>
+    bool NobodyIsTurning { get { lock (_gate) return _turning.Count == 0; } }
+
+    /// <summary>Turns this role has resumed into its current CLI session.</summary>
+    int Sessions(string role)
+    {
+        lock (_gate) return _sessionTurns.TryGetValue(CouncilRoles.Or(role), out var n) ? n : 0;
+    }
+
+    /// <summary>This role's run of failed turns, as the card and the backoff read it.</summary>
+    int Errors(string? role)
+    {
+        lock (_gate) return _consecutiveErrors.TryGetValue(CouncilRoles.Or(role), out var n) ? n : 0;
+    }
+
+    /// <summary>One more failed turn for this role, and the new count.</summary>
+    int Failed(string? role)
+    {
+        lock (_gate) return _consecutiveErrors[CouncilRoles.Or(role)] = Errors(role) + 1;
+    }
+
+    /// <summary>A clean turn, so this role's run of failures is over. Always zero.</summary>
+    int Recovered(string? role)
+    {
+        lock (_gate) return _consecutiveErrors[CouncilRoles.Or(role)] = 0;
+    }
+
     /// <summary>True while the loop is taking turns of its own accord.</summary>
     public bool Running => _running is { IsCompleted: false };
 
@@ -902,16 +1011,29 @@ public sealed class MissionLoop
                 // a turn: a loop started before the AI was would otherwise sit reporting "waiting
                 // until 14:32" over a turn that cannot happen, and every number beside it would be
                 // describing that same turn.
+                //
+                // WORKING IS THE LEASE, not a flag set beside it. A bool that said "working" while
+                // the set of turning roles said something else is two answers to one question, and
+                // the card would show whichever was written last.
                 var state =
                     !hasAgent ? MissionState.Stopped :
-                    _working ? MissionState.Working :
+                    _turning.Count > 0 ? MissionState.Working :
                     !Running ? MissionState.Paused :
                     MissionState.Waiting;
+
+                // EVERY ROLE THAT IS TURNING, in the council's own order so the line does not
+                // reorder itself between two repaints. With none turning it is the role the card is
+                // waiting on, which is what the sentence was already about.
+                string[] whose = _turning.Count > 0
+                    ? [.. CouncilRoles.All.Where(_turning.Contains)]
+                    : _role is { Length: > 0 } r ? [r] : [];
+
                 return new MissionStatus(state, state == MissionState.Waiting ? _nextTurnAt : null,
-                    _turns, _consecutiveErrors, _lastFirstLine)
+                    _turns, Errors(whose.FirstOrDefault() ?? _role), _lastFirstLine)
                 {
                     WaitingFor = state == MissionState.Waiting ? _waitingFor : null,
-                    Role = _role
+                    Role = whose.FirstOrDefault() ?? _role,
+                    Roles = whose
                 };
             }
         }
@@ -927,7 +1049,7 @@ public sealed class MissionLoop
         {
             if (Running) return;
             _cts = new CancellationTokenSource();
-            _consecutiveErrors = 0;
+            _consecutiveErrors.Clear();
             _running = Task.Run(() => LoopAsync(_cts.Token));
         }
         Changed?.Invoke();
@@ -947,7 +1069,10 @@ public sealed class MissionLoop
         if (_host.Conversation is { } c) await c.CancelAsync();
         if (run is not null) { try { await run; } catch (Exception) { /* it was cancelled */ } }
 
-        lock (_gate) { _working = false; _nextTurnAt = null; _waitingFor = null; _role = null; }
+        // EVERY LEASE DROPPED. A turn cancelled mid-flight drops its own in the finally below, and
+        // this is the second half of the same promise for a turn whose task the wait above gave up
+        // on: a lease nothing releases is a role that never works again.
+        lock (_gate) { _turning.Clear(); _nextTurnAt = null; _waitingFor = null; _role = null; }
         Changed?.Invoke();
     }
 
@@ -996,8 +1121,13 @@ public sealed class MissionLoop
                 // Dying here would leave the card reading "paused" over a decision nobody made, and
                 // an owner who had gone to bed with the AI working would find it stopped with no
                 // reason given anywhere. The climbing error count on the card is the visible signal.
+                //
+                // CHARGED TO THE ROLE THE CARD WAS DESCRIBING, which is the one whose turn threw:
+                // the lease's finally has already released it and left `_role` naming it. A throw
+                // before any role was chosen is the chair's, which is what a turn with no role has
+                // always meant.
                 int errors;
-                lock (_gate) { _working = false; errors = ++_consecutiveErrors; }
+                lock (_gate) errors = Failed(_role);
                 Changed?.Invoke();
                 wait = Backoff(errors);
             }
@@ -1114,10 +1244,15 @@ public sealed class MissionLoop
         // Resuming forever grows one context until the runtime refuses it or prices it absurdly. The
         // files are the memory, so a fresh session loses nothing the AI wrote down — and StopAsync
         // forgets the session without touching the workspace.
-        if (_sessionTurns >= _options.TurnsPerSession)
+        //
+        // COUNTED PER ROLE, because the count is about ONE CLI session's context. One counter
+        // between them rotated whichever conversation happened to run next: twenty chair turns
+        // threw away the Research Director's session, which had taken one, and the context that
+        // was actually long went on growing.
+        if (Sessions(role) >= _options.TurnsPerSession)
         {
             await conversation.StopAsync();
-            _sessionTurns = 0;
+            lock (_gate) _sessionTurns[role] = 0;
         }
 
         // THE OWNER'S WORDS COME OFF THE TABLE FIRST AND THE IN-MEMORY QUEUE SECOND. With a wake
@@ -1151,7 +1286,35 @@ public sealed class MissionLoop
         };
         var prompt = situation.Text();
 
-        lock (_gate) { _working = true; _nextTurnAt = null; _waitingFor = null; _role = role; }
+        // ---- THE ROLE'S TURN LEASE ----------------------------------------------------------------
+        // ONE TURN PER ROLE AT A TIME, and this line is the whole of it. Everything above is a LOOK —
+        // the queue, the share, the conversation's own busy flag — and two callers that take those
+        // looks together all pass them: the wake is still unconsumed, the share still has room, and
+        // the conversation is not busy until one of them actually sends. Both then launched, which is
+        // two launch records for one reason to work and two processes in one role's folder.
+        //
+        // REFUSED, NEVER QUEUED. A second turn that waited here would run with a wake, a share and a
+        // conversation it read minutes earlier; the honest answer is no, and the loop's next look is
+        // a fresh one. The words the owner typed go back into the pot exactly as a turn the ledger
+        // refuses puts them back.
+        //
+        // It is taken HERE, immediately before the launch record, rather than at the top of the
+        // method: everything above commits nothing, and a lease held across the broker read in
+        // SituationAsync would stop the other role for as long as the broker took to answer.
+        if (Lease(role) is not { } lease)
+        {
+            lock (_gate) _typedForARefusedTurn.AddRange(typed);
+            Refused?.Invoke($"{CouncilRoles.Title(role)}: a turn is already running for this role, "
+                            + "so a second one was not started.");
+            return _options.BusyRetry;
+        }
+
+        // DROPPED AT EVERY EXIT FROM HERE ON, including a throw the loop catches above: a lease
+        // nothing released would be a role that never works again. It is dropped EARLY — beside the
+        // commit below — and disposing it twice does nothing, which is what lets the scan that
+        // follows the turn see a role that has finished.
+        using var _ = lease;
+
         Changed?.Invoke();
 
         // ---- the record and the commitment, BEFORE the process ------------------------------------
@@ -1178,7 +1341,7 @@ public sealed class MissionLoop
         // not wasted either — `TurnMeter.Mint` hands the same one to the next `Begin`.
         if (!admission.Admitted)
         {
-            lock (_gate) { _working = false; _role = null; _typedForARefusedTurn.AddRange(typed); }
+            lock (_gate) { _turning.Remove(role); _role = null; _typedForARefusedTurn.AddRange(typed); }
 
             // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it —
             // the same line the pre-check writes, because the outcome is the same one.
@@ -1212,7 +1375,6 @@ public sealed class MissionLoop
             // A turn that threw its way out — cancelled, or a runtime that will not start — must not
             // leave the card reading "working" for ever over a turn that is not happening.
             conversation.TurnEnded -= Watch;
-            lock (_gate) _working = false;
 
             // ---- THE TURN'S ONE COMMITTED TRANSITION ------------------------------------------
             // The launch record closed, what the turn left in `out/` published, its plan and journal
@@ -1231,6 +1393,13 @@ public sealed class MissionLoop
             // that failed is not a turn that was cut, and the notice must not outlive the turn it
             // describes.
             Remember(role, ended);
+
+            // AND THE ROLE'S LEASE, BESIDE THE COMMIT. Here rather than at the end of the method
+            // because the pass that follows may attest the owner's inbox, and it may only do that
+            // across a window with no agent alive: a role that has committed its turn is not
+            // turning, and leaving the lease held would have this role's own pass decline to
+            // measure a window it is no longer in.
+            lease.Dispose();
         }
 
         // ---- close the scanner's window behind this turn -----------------------------------------
@@ -1248,8 +1417,8 @@ public sealed class MissionLoop
         lock (_gate)
         {
             _turns++;
-            _sessionTurns++;
-            errors = _consecutiveErrors = failed ? _consecutiveErrors + 1 : 0;
+            _sessionTurns[role] = Sessions(role) + 1;
+            errors = failed ? Failed(role) : Recovered(role);
             _lastFirstLine = FirstLineOfLastReply(conversation) ?? _lastFirstLine;
         }
         Changed?.Invoke();
@@ -1443,7 +1612,7 @@ public sealed class MissionLoop
         }
         catch (Exception) { next = null; why = null; whose = null; }
 
-        lock (_gate) { _working = false; _nextTurnAt = next; _waitingFor = why; _role = whose; }
+        lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; }
         Changed?.Invoke();
 
         if (next is null) return _options.MaxDelay;
@@ -1645,17 +1814,22 @@ public sealed class MissionLoop
     {
         // ASKED BEFORE THE TURN, ABOUT THE TURN. `CapReached` alone could only ever be answered
         // after the turn that passed the ceiling had already run and been billed.
-        if (spend.AdmitsAnotherTurn) { _reportedCap = false; return null; }
+        // PER ROLE. The transition this reports is "this role stopped because there was no money
+        // left for its next turn", and one flag between them said it once — for whichever role
+        // reached its ceiling first — and then said nothing at all about the other.
+        var whose = CouncilRoles.Or(spend.Role);
+        if (spend.AdmitsAnotherTurn) { lock (_gate) _reportedCap[whose] = false; return null; }
 
-        if (!_reportedCap)
+        bool told;
+        lock (_gate)
         {
-            _reportedCap = true;
-            _host.SpendCapReached(spend);
+            told = _reportedCap.TryGetValue(whose, out var said) && said;
+            _reportedCap[whose] = true;
         }
+        if (!told) _host.SpendCapReached(spend);
 
         lock (_gate)
         {
-            _working = false;
             _nextTurnAt = spend.ResumesAt;
             _waitingFor = spend.Role is { } r && !spend.RoleAdmitsAnotherTurn && spend.AdmitsGlobally
                 ? $"the {CouncilRoles.Title(r)}'s share of the day to reset"

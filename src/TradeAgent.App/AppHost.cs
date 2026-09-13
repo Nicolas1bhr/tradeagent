@@ -572,6 +572,16 @@ public sealed class AppHost : IAsyncDisposable
                 });
             Mission.Changed += () => Changed?.Invoke();
 
+            // A TURN THAT WAS NOT STARTED, WRITTEN DOWN. The engineering log rather than the
+            // activity log: a second caller refused because that role is already turning is the
+            // council working as designed, not something the owner has to do anything about — and a
+            // refusal nobody records is a turn that silently did not happen.
+            Mission.Refused += why =>
+            {
+                try { Gateway.Log.Engineering("Mission", "turn_refused", "info", metadataJson: Json.Write(new { why })); }
+                catch (Exception) { /* a log line is never worth a turn */ }
+            };
+
             // THE TWO FACTS THE GATEWAY OWNS AND NOBODY ELSE CAN SEE ARRIVE. A fill and an order
             // reaching a final state are the events the AI most needs to be woken for, and both are
             // known first inside the gateway's own event handling. The sink is a delegate rather
