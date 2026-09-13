@@ -149,7 +149,8 @@ public class CouncilLoopTests
             Root = root;
             Presence = presence;
             Events = new MissionEventStore(db);
-            _relay = new CouncilRelay(db, HomeFor);
+            Boundaries = new CouncilBoundaries(db, () => BoundaryWindow);
+            _relay = new CouncilRelay(db, HomeFor, boundaries: Boundaries);
             foreach (var role in CouncilRoles.All)
             {
                 Conversations[role] = new RoleConversation(role, concurrency, presence);
@@ -174,6 +175,12 @@ public class CouncilLoopTests
         public List<(string Role, string Prompt)> Opened { get; } = [];
 
         public MissionEventStore? Events { get; }
+
+        /// <summary>
+        /// The REAL boundary ledger, so the loop's deadline sweep is the thing under test rather than a
+        /// stand-in for it. Its window is a minute, which is a day the test can run in milliseconds.
+        /// </summary>
+        public CouncilBoundaries? Boundaries { get; }
 
         public IAgentConversation? Conversation => Conversations[CouncilRoles.Operations];
         public IAgentConversation? ConversationFor(string role) => Conversations[role];
@@ -269,6 +276,9 @@ public class CouncilLoopTests
             return p is null ? null : new MissionDelivery(p.Id, p.Kind, p.Role, p.Content);
         }
     }
+
+    /// <summary>How long a boundary in these tests stays open. A day compressed to a minute.</summary>
+    static readonly TimeSpan BoundaryWindow = TimeSpan.FromMinutes(1);
 
     static (Database Db, string Root) Workspace()
     {
@@ -809,4 +819,85 @@ public class CouncilLoopTests
         Assert.False(File.Exists(
             Path.Combine(host.HomeFor(CouncilRoles.Research), ".tradeagent", "next.json")));
     }
+    // ---- U-council-concurrent-2, item 4: the deadline's default is applied by CODE ---------------
+
+    /// <summary>
+    /// RED FIRST: the deadline passes and the boundary stays open for ever.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:62 — "code applies the promotion and allocation policy so neither
+    /// director can veto an eligible deployment forever". This is the end-to-end half of that: the loop
+    /// settles it ITSELF, with no agent running, no launch record written and nothing charged — and the
+    /// clock it settles on is the app's, because the loop SLEEPS UNTIL the deadline rather than waiting
+    /// for a wake that may never come on a quiet installation.</para>
+    ///
+    /// <para>The two turns before it are the two the boundary bought when it opened: two assessments are
+    /// two turns (:63), and the third tick is not a third one.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_loop_settles_a_boundary_at_its_deadline_without_launching_anything()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var now = Noon();
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, NoHeartbeat, now: () => now);
+
+        var boundary = host.Boundaries!.Open(BoundaryKind.Promotion, "version-a", 1,
+            BoundaryDisposition.Deploy, "holdout run 9f3c under campaign 1", now).Row;
+
+        // THE TWO TURNS THE BOUNDARY BOUGHT, one per director, and nothing more.
+        await loop.TurnAsync();
+        await loop.TurnAsync();
+        Assert.Equal(1, Launches(db, CouncilRoles.Operations));
+        Assert.Equal(1, Launches(db, CouncilRoles.Research));
+
+        // NOTHING IS DUE, AND THE LOOP SLEEPS UNTIL THE DEADLINE — not until the queue's next tick,
+        // which on an installation with the heartbeat off is nothing at all.
+        now = boundary.DeadlineAt.AddSeconds(-20);
+        var wait = await loop.TurnAsync();
+        Assert.Equal(TimeSpan.FromSeconds(20), wait);
+        Assert.True(host.Boundaries.ById(boundary.Id)!.IsOpen);
+
+        // AT THE DEADLINE: the policy's default, written by the app, with no third launch anywhere.
+        now = boundary.DeadlineAt;
+        await loop.TurnAsync();
+
+        var settled = host.Boundaries.ById(boundary.Id)!;
+        Assert.Equal(BoundaryDisposition.Deploy, settled.Disposition);
+        Assert.Equal(BoundaryAuthor.Policy, settled.DisposedBy);
+        Assert.Equal(1, Launches(db, CouncilRoles.Operations));
+        Assert.Equal(1, Launches(db, CouncilRoles.Research));
+        Assert.Equal(2, host.Opened.Count);
+    }
+
+    /// <summary>
+    /// EACH DIRECTOR IS TOLD ITS OWN OPEN BOUNDARIES AND THEIR DEADLINES, and what the app will answer
+    /// without them. A deadline whose consequence is not stated is a date.
+    ///
+    /// <para>The line is composed from the LEDGER — <c>CouncilBoundaries.OpenFor</c> — so what a
+    /// director is told and what the sweep will do are the same two facts read from the same row.</para>
+    /// </summary>
+    [Fact]
+    public void The_situation_shows_a_director_its_open_boundary_its_deadline_and_the_default()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var now = Noon();
+        var host = new CouncilHost(db, root, new Concurrency());
+
+        var row = host.Boundaries!.Open(BoundaryKind.Promotion, "version-a", 1,
+            BoundaryDisposition.Deploy, "holdout run 9f3c under campaign 1", now).Row;
+
+        var standing = Assert.Single(host.Boundaries.OpenFor(CouncilRoles.Research));
+        var text = new MissionSituation { Role = CouncilRoles.Research, Boundaries = [standing.Line()] }
+            .Text();
+
+        Assert.Contains(row.Id, text, StringComparison.Ordinal);
+        Assert.Contains("write your assessment this turn", text, StringComparison.Ordinal);
+        Assert.Contains("you cannot revise it", text, StringComparison.Ordinal);
+        Assert.Contains($"{row.DeadlineAt.LocalDateTime:yyyy-MM-dd HH:mm}", text, StringComparison.Ordinal);
+        Assert.Contains("`deploy`", text, StringComparison.Ordinal);
+        Assert.Contains("holdout run 9f3c under campaign 1", text, StringComparison.Ordinal);
+    }
+
 }

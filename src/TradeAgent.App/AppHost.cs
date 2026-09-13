@@ -292,6 +292,14 @@ public sealed class AppHost : IAsyncDisposable
     public MissionEventStore? Wakes { get; private set; }
 
     /// <summary>
+    /// THE CONSEQUENTIAL BOUNDARIES (<c>docs/COUNCIL.md</c>:59-65). Opened by the app when something
+    /// consequential happens, disposed by the app when the deadline passes, and reachable from the loop
+    /// only through <c>IMissionHost.Boundaries</c> — there is no pipe op and no <c>trade</c> verb that
+    /// opens, assesses, challenges or disposes one, which is what keeps the whole protocol the app's.
+    /// </summary>
+    public CouncilBoundaries? Boundaries { get; private set; }
+
+    /// <summary>
     /// THE RELAY BETWEEN THE TWO ROLES. Publishes what a role left in its <c>out/</c>, commits the
     /// delivery and the recipient's one task in a single transaction, and copies the text into the
     /// recipient's <c>in/</c>. Written by this process and by nothing else.
@@ -554,12 +562,13 @@ public sealed class AppHost : IAsyncDisposable
             Meter.Changed += () => Changed?.Invoke();
 
             Wakes = new MissionEventStore(_db);
+            Boundaries = new CouncilBoundaries(_db);
 
             // THE APP CARRYING WORK BETWEEN THE ROLES, AND THE ONLY THING THAT MAY. A role writes a
             // file into its own `out/`; nothing it can do publishes, delivers or creates a task.
             // Composed here, beside the gateway, and reachable from the loop only through
             // IMissionHost.Relay — there is no pipe op and no `trade` verb that touches it.
-            Relay = new CouncilRelay(_db, HomeFor)
+            Relay = new CouncilRelay(_db, HomeFor, boundaries: Boundaries)
             {
                 Rejected = text => Gateway.Log.Activity(text, "warn"),
                 Quarantined = text => Gateway.Log.Activity(text, "warn")
@@ -1010,6 +1019,7 @@ public sealed class AppHost : IAsyncDisposable
 
         /// <summary>The persisted reasons to wake. Read by the loop; written by the app only.</summary>
         public MissionEventStore? Events => host.Wakes;
+        public CouncilBoundaries? Boundaries => host.Boundaries;
 
         /// <summary>
         /// The launch record and its reservation, written before the CLI starts, together with the
@@ -1107,6 +1117,10 @@ public sealed class AppHost : IAsyncDisposable
             {
                 Role = role,
                 Spend = SpendFor(role),
+                // WHAT THIS DIRECTOR OWES A CONSEQUENTIAL BOUNDARY, AND BY WHEN. It is per role because
+                // an assessment is per director: the line says whether this one has written its own,
+                // whether the pair has been released, and what TradeAgent will decide without it.
+                Boundaries = OpenBoundariesFor(role),
                 // WHAT THE APP REFUSED AND PUT BACK SINCE THIS ROLE LAST TURNED. A plan restored
                 // under an agent that is not told is the app editing its memory behind its back,
                 // and the next turn would spend itself wondering where its work went.
@@ -1155,6 +1169,18 @@ public sealed class AppHost : IAsyncDisposable
                 Data = MissionSituation.DataLine(NewestDataset()),
                 Promoted = MissionSituation.PromotedLine(PromotedStanding())
             };
+        }
+
+        /// <summary>
+        /// THE OPEN BOUNDARIES THIS ROLE IS PART OF, one line each, oldest first. A failure to read the
+        /// ledger answers an empty list rather than throwing out of the middle of composing a turn — the
+        /// deadline is applied by the loop's own sweep either way, so a missing line costs a turn's
+        /// prompt and never the decision.
+        /// </summary>
+        IReadOnlyList<string> OpenBoundariesFor(string role)
+        {
+            try { return [.. (host.Boundaries?.OpenFor(role) ?? []).Select(b => b.Line())]; }
+            catch (Exception) { return []; }
         }
 
         /// <summary>

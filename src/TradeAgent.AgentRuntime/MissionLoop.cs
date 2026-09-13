@@ -218,6 +218,14 @@ public interface IMissionHost
     MissionEventStore? Events => null;
 
     /// <summary>
+    /// THE CONSEQUENTIAL BOUNDARIES, or null where nothing records them. The loop reads it for two
+    /// things and neither is a turn: the sweep that applies a deadline's default without any agent
+    /// running, and the instant to sleep until so that sweep happens on the owner's clock rather than
+    /// whenever an agent next happens to be woken for something else.
+    /// </summary>
+    CouncilBoundaries? Boundaries => null;
+
+    /// <summary>
     /// WHAT THE AI HAS COST TODAY AND WHAT IT IS ALLOWED TO COST. The loop reads this before every
     /// turn and takes none unless <see cref="AiSpendToday.AdmitsAnotherTurn"/> — which asks whether
     /// the ceiling has room for the turn about to run, rather than whether the money already gone
@@ -452,6 +460,20 @@ public sealed record MissionSituation
     public IReadOnlyList<string> Wakes { get; init; } = [];
 
     /// <summary>
+    /// THE CONSEQUENTIAL BOUNDARIES OPEN TO THIS DIRECTOR, ONE LINE EACH, WITH THEIR DEADLINES.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:61-62. A director asked for an assessment has to be told which
+    /// boundary, by when, and WHAT THE APP WILL DECIDE WITHOUT IT — a deadline whose consequence is not
+    /// stated is a date. The line also says whether this one has written its assessment already and
+    /// whether the pair has been released, because a turn that cannot tell those apart will either write
+    /// a second assessment nothing publishes or wait for a file that is already in its <c>in/</c>.</para>
+    ///
+    /// <para>It grants nothing and it decides nothing: the disposition is written by
+    /// <c>CouncilBoundaries.ApplyDue</c>, which no agent can reach.</para>
+    /// </summary>
+    public IReadOnlyList<string> Boundaries { get; init; } = [];
+
+    /// <summary>
     /// WHAT THE AI HAS COST ITS OWNER TODAY. The other half of the sentence it was given as its
     /// mission — make at least enough to pay for yourself — and an AI told to cover its own costs
     /// without being told what they are is being asked to guess at half the arithmetic.
@@ -557,6 +579,11 @@ public sealed record MissionSituation
         // because that is the one line that tells it where to look first.
         if (Wakes.Count > 0)
             b.AppendLine($"- Why you are awake: {string.Join("; ", Wakes)}");
+
+        // THE BOUNDARY, ABOVE THE STATE AND BELOW THE CAUSE. It is the one thing in this message with a
+        // DEADLINE attached and an answer TradeAgent will write on its own if nothing arrives, which is
+        // why it outranks the account lines: everything below is context, and this is owed work.
+        foreach (var line in Boundaries) b.AppendLine($"- {line}");
 
         if (Role is { Length: > 0 } role)
             b.AppendLine($"- You are the {CouncilRoles.Title(role)}.");
@@ -1231,6 +1258,17 @@ public sealed class MissionLoop
         // rather than being allowed to stop the other from working. Everything below this block —
         // the ceiling, the conversation, the record, the process — is that role's, and the lease
         // below is what keeps it that role's while the other one works.
+        // ---- the deadline's default, applied by CODE and by nothing else -------------------------
+        // docs/COUNCIL.md:62 — "a deadline with a predetermined default, and code applies the promotion
+        // and allocation policy so neither director can veto an eligible deployment forever." A veto is
+        // not only a director saying no; a director that never answers holds an eligible deployment for
+        // ever, and that is what this line closes.
+        //
+        // IT RUNS BEFORE ANYTHING ELSE IN THE TURN AND IT LAUNCHES NOTHING. No wake, no admission, no
+        // conversation: an expired boundary is settled even on a day the ceiling is reached and even
+        // when the loop is idle, because the loop sleeps until the earliest deadline (see Idle).
+        ApplyBoundaryDeadlines();
+
         var events = _host.Events;
         var role = CouncilRoles.Default;
         List<MissionEvent> wake = [];
@@ -1680,6 +1718,19 @@ public sealed class MissionLoop
         }
         catch (Exception) { next = null; why = null; whose = null; }
 
+        // A BOUNDARY'S DEADLINE IS A REASON TO WAKE AND IS NOT A REASON TO LAUNCH. It competes with the
+        // queue for the sleep and never for a turn: the loop comes back at the earlier of the two, the
+        // sweep at the top of TurnAsync writes the disposition, and then nothing is due and it sleeps
+        // again. Without this an idle installation would settle a boundary whenever an agent next
+        // happened to be woken for something else, which is the deadline being the AGENT's clock.
+        var deadline = NextBoundaryDeadline();
+        if (deadline is { } due && (next is null || due < next))
+        {
+            next = due;
+            why = "a consequential boundary's deadline, which TradeAgent answers itself";
+            whose = null;
+        }
+
         lock (_gate) { _nextTurnAt = next; _waitingFor = why; _role = whose; }
         Changed?.Invoke();
 
@@ -1688,6 +1739,24 @@ public sealed class MissionLoop
         return wait <= TimeSpan.Zero ? _options.BusyRetry
             : wait > _options.MaxDelay ? _options.MaxDelay
             : wait;
+    }
+
+    /// <summary>
+    /// Writes the policy's default onto every boundary whose deadline has passed, or whose challenge
+    /// window has closed. Never throws: a sweep that could not run leaves the boundary open, which is
+    /// the fail-safe direction — nothing is deployed and the next tick tries again.
+    /// </summary>
+    void ApplyBoundaryDeadlines()
+    {
+        try { _host.Boundaries?.ApplyDue(_now()); }
+        catch (Exception) { /* the boundary stays open; the next tick settles it */ }
+    }
+
+    /// <summary>The earliest deadline still to come, or null — the other thing the loop may sleep until.</summary>
+    DateTimeOffset? NextBoundaryDeadline()
+    {
+        try { return _host.Boundaries?.NextDeadline(); }
+        catch (Exception) { return null; }
     }
 
     /// <summary>
@@ -1772,6 +1841,7 @@ public sealed class MissionLoop
         MissionEventKind.Report => "a report from the Research Director arrived in `in/`",
         MissionEventKind.Brief => "a brief from the Operations Director arrived in `in/`",
         MissionEventKind.Verdict => "TradeAgent's referee answered on a strategy version",
+        MissionEventKind.Boundary => "a consequential boundary opened and it is waiting on your assessment",
         _ => kind
     };
 

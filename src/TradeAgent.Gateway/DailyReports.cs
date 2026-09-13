@@ -73,6 +73,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     readonly MissionEventStore _events = new(db);
     readonly PublicationStore _publications = new(db);
     readonly Promotions _promotions = new(db);
+    readonly CouncilBoundaries _boundaries = new(db);
     readonly AiAttemptStore _attempts = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.Now);
 
@@ -567,6 +568,22 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             gaps.Add(new ReportGap("your messages", $"the wake queue could not be read ({ex.Message})"));
         }
 
+        // EVERY CONSEQUENTIAL BOUNDARY, AND WHAT BECAME OF IT. Read from the ledger and never composed:
+        // the disposition, its author and the deadline are all on the row, written by code at the moment
+        // each was decided, and a report that restated them from anything else would be a second account
+        // of a decision the app already recorded.
+        var boundaries = new List<ReportBoundary>();
+        try
+        {
+            boundaries.AddRange(_boundaries.All(ListShown).Select(b => new ReportBoundary(
+                b.Id, b.Kind, b.Entity, b.Evidence, b.DeadlineAt, b.Disposition, b.DisposedBy,
+                b.DisposedAt, b.IsOpen && at >= b.DeadlineAt)));
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("decisions", $"the boundary ledger could not be read ({ex.Message})"));
+        }
+
         var changes = new List<string>();
         try
         {
@@ -581,6 +598,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             OwnerMessages = messages.Count <= MessagesShown
                 ? messages
                 : [.. messages.Take(MessagesShown)],
+            Boundaries = boundaries,
             Changes = Cap(changes, ListShown, "change"),
             Missing = messages.Count > MessagesShown
                 ? [.. gaps, new ReportGap("your messages",

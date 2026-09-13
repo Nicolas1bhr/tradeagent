@@ -197,4 +197,54 @@ public class DailyReportTests
         Assert.True(draft.Lines <= DailyReportText.MaxLines,
             $"an ordinary day rendered {draft.Lines} lines");
     }
+    // ---- U-council-concurrent-2, item 4: section 9 lists every disposition ------------------------
+
+    /// <summary>
+    /// RED FIRST: every consequential boundary is listed with its EVIDENCE, its OWNER and its DEADLINE.
+    ///
+    /// <para><c>docs/COUNCIL.md</c> rule 10 — "every decision is recorded with its evidence, its owner
+    /// and its deadline". Before this the section held owner messages and warn lines: a decision code had
+    /// taken about the owner's money appeared nowhere in the document the owner reads.</para>
+    ///
+    /// <para>The OWNER of a disposition this build can write is always <c>policy</c>, and it is printed
+    /// rather than assumed — a column that can only say one thing today is what makes it visible on the
+    /// day it says something else. An open boundary past its deadline reads OVERDUE, exactly as an
+    /// unanswered message does.</para>
+    /// </summary>
+    [Fact]
+    public async Task Section_nine_lists_every_boundary_with_its_evidence_its_owner_and_its_deadline()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        var at = Midday();
+        var boundaries = new CouncilBoundaries(db, () => TimeSpan.FromHours(1));
+
+        var settled = boundaries.Open(BoundaryKind.Promotion, "version-a", 1,
+            BoundaryDisposition.Deploy, "referee promoted version-a on holdout run 9f3c",
+            at.AddHours(-4)).Row;
+        boundaries.ApplyDue(at.AddHours(-3));
+
+        boundaries.Open(BoundaryKind.Promotion, "version-b", 2, BoundaryDisposition.Hold,
+            "referee refused version-b: no forward evidence", at.AddHours(-2));
+
+        var report = gw.Reports.Compose(at);
+        var text = DailyReportText.Render(report);
+
+        var listed = report.Decisions.Boundaries.Single(b => b.Id == settled.Id);
+        Assert.Equal(BoundaryDisposition.Deploy, listed.Disposition);
+        Assert.Equal(BoundaryAuthor.Policy, listed.Owner);
+        Assert.Equal(settled.DeadlineAt, listed.DeadlineAt);
+        Assert.False(listed.Overdue);
+
+        // The one still open is two hours old with a one-hour window, so it is overdue and says so.
+        var open = report.Decisions.Boundaries.Single(b => b.Entity == "version-b");
+        Assert.Null(open.Disposition);
+        Assert.True(open.Overdue);
+
+        Assert.Contains("DEPLOY by policy at", text, StringComparison.Ordinal);
+        Assert.Contains("referee promoted version-a on holdout run 9f3c", text, StringComparison.Ordinal);
+        Assert.Contains("referee refused version-b: no forward evidence", text, StringComparison.Ordinal);
+        Assert.Contains("open, due by", text, StringComparison.Ordinal);
+        Assert.Contains("OVERDUE", text, StringComparison.Ordinal);
+    }
+
 }

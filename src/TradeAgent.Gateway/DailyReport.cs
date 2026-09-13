@@ -197,9 +197,32 @@ public sealed record ReportResearch
 public sealed record ReportOwnerMessage(string Text, DateTimeOffset ReceivedAt, string? Disposition,
     string? DispositionDetail, DateTimeOffset DueBy, bool Overdue);
 
+/// <summary>
+/// ONE CONSEQUENTIAL BOUNDARY, WITH ITS EVIDENCE, ITS OWNER AND ITS DEADLINE.
+///
+/// <para><c>docs/COUNCIL.md</c> rule 10: "every decision is recorded with its evidence, its owner and
+/// its deadline". The three are separate fields rather than one sentence because they are three
+/// different facts about the same row and a reader checking one must not have to parse prose for it.</para>
+///
+/// <para><see cref="Owner"/> is who APPLIED the disposition and is <c>policy</c> for every row this
+/// build can write — there is no method by which a director disposes a boundary. It is printed anyway,
+/// because a column that can only say one thing today is what makes it visible on the day it says
+/// something else.</para>
+/// </summary>
+public sealed record ReportBoundary(
+    string Id, string Kind, string Entity, string Evidence, DateTimeOffset DeadlineAt,
+    string? Disposition, string? Owner, DateTimeOffset? DisposedAt, bool Overdue);
+
 public sealed record ReportDecisions
 {
     public IReadOnlyList<ReportOwnerMessage> OwnerMessages { get; init; } = [];
+
+    /// <summary>
+    /// Every consequential boundary this installation has opened, newest first — the ones code has
+    /// already answered and the ones still open with their deadlines. The word the doctrine uses for
+    /// these is "decision", and this is the section that lists them.
+    /// </summary>
+    public IReadOnlyList<ReportBoundary> Boundaries { get; init; } = [];
 
     /// <summary>Limit changes and cap events, as the activity log recorded them on the day.</summary>
     public IReadOnlyList<string> Changes { get; init; } = [];
@@ -429,6 +452,20 @@ public static class DailyReportText
                               // OVERDUE IS SAID OUT LOUD. A message the owner is still waiting on,
                               // printed exactly like one that was answered, is a backlog nobody sees.
                               + (m.Overdue ? " — OVERDUE" : ""));
+        // EVERY DISPOSITION WITH ITS EVIDENCE, ITS OWNER AND ITS DEADLINE (docs/COUNCIL.md rule 10).
+        // A boundary still open is printed too, with the answer TradeAgent will write on its own: a
+        // section that listed only what had been decided would hide exactly the ones a person can still
+        // change their mind about.
+        foreach (var boundary in r.Decisions.Boundaries)
+            Kv(b, $"{boundary.Kind} of {boundary.Entity}",
+                (boundary.Disposition is { Length: > 0 } settled
+                    ? $"{settled.ToUpperInvariant()} by {boundary.Owner ?? "nobody recorded"} at "
+                      + Instant(boundary.DisposedAt)
+                    : "open")
+                + $", due by {Instant(boundary.DeadlineAt)}"
+                + (boundary.Overdue ? " — OVERDUE" : "")
+                + $" — {OneLine(boundary.Evidence)}");
+
         List(b, "changes", r.Decisions.Changes);
         Gaps(b, r.Decisions.Missing);
 

@@ -182,6 +182,121 @@ public class BoundaryLedgerTests
             Columns(db, "boundary_submission"));
     }
 
+    // ---- item 4: the deadline's default is applied by CODE ------------------------------------------
+
+    /// <summary>
+    /// RED FIRST: the deadline passes and the boundary stays open for ever.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:62 — "a deadline with a predetermined default, and code applies the
+    /// promotion and allocation policy so neither director can veto an eligible deployment forever." A
+    /// veto is not only a director saying no. A director that never answers holds an eligible deployment
+    /// exactly as effectively, and it is the cheaper way to do it: saying nothing costs nothing.</para>
+    ///
+    /// <para>What is written is the default recorded AT OPEN, and the author is <c>policy</c>. There is
+    /// no method on <see cref="CouncilBoundaries"/> that takes a disposition from a caller, so no
+    /// director — and no agent anywhere — can write any other value here.</para>
+    /// </summary>
+    [Fact]
+    public void At_the_deadline_the_app_writes_the_policys_default_and_nobody_else_can()
+    {
+        using var db = TestEnv.NewDb();
+        var boundaries = Boundaries(db);
+        var row = Raise(boundaries).Row;
+
+        // A MINUTE BEFORE: nothing is settled, and nothing was going to be.
+        Assert.Empty(boundaries.ApplyDue(row.DeadlineAt.AddMinutes(-1)));
+        Assert.True(boundaries.ById(row.Id)!.IsOpen);
+
+        var settled = Assert.Single(boundaries.ApplyDue(row.DeadlineAt));
+        Assert.Equal(row.Id, settled.Id);
+        Assert.Equal(BoundaryDisposition.Deploy, settled.Disposition);
+        Assert.Equal(row.DefaultDisposition, settled.Disposition);
+        Assert.Equal(BoundaryAuthor.Policy, settled.DisposedBy);
+        Assert.Equal(row.DeadlineAt, settled.DisposedAt);
+        Assert.False(settled.IsOpen);
+
+        // IDEMPOTENT. A second sweep settles nothing, so the instant and the author on the row are the
+        // ones the first sweep wrote.
+        Assert.Empty(boundaries.ApplyDue(row.DeadlineAt.AddDays(1)));
+        Assert.Equal(row.DeadlineAt, boundaries.ById(row.Id)!.DisposedAt);
+
+        // AND NOTHING BUT THE POLICY CAN WRITE ONE. The surface is held by name: a method that took a
+        // disposition from a caller is the one thing that would turn this into a veto.
+        Assert.Empty(typeof(CouncilBoundaries).GetMethods()
+            .Where(m => m.GetParameters().Any(x => x.Name is "disposition" or "disposedBy"))
+            .Select(m => m.Name)
+            .Except([nameof(CouncilBoundaries.Open)]));
+    }
+
+    /// <summary>
+    /// THE CHALLENGE WINDOW CLOSING IS THE OTHER TRIGGER, and it settles the boundary early.
+    ///
+    /// <para>Once both assessments are delivered and the one bounded challenge has been written, the
+    /// protocol has had everything it is ever going to get and waiting out the clock buys nothing. It is
+    /// still CODE that answers: the disposition written is the same frozen default, and a director that
+    /// wrote the challenge has no more say in the outcome than one that wrote nothing.</para>
+    /// </summary>
+    [Fact]
+    public void A_boundary_whose_challenge_window_has_closed_is_disposed_before_its_deadline()
+    {
+        using var db = TestEnv.NewDb();
+        var boundaries = Boundaries(db);
+        var row = Raise(boundaries, standing: BoundaryDisposition.Hold).Row;
+
+        foreach (var role in CouncilRoles.All)
+            Assert.True(boundaries.Assess(Assessment(role, $"{role} read it."), At).Ok);
+
+        // Still open: the assessments are sealed, so there is nothing to challenge yet.
+        Assert.Empty(boundaries.ApplyDue(At.AddMinutes(1)));
+
+        boundaries.Release(At.AddMinutes(2));
+        Assert.True(boundaries.AssessmentsDelivered(row.Id));
+        Assert.Empty(boundaries.ApplyDue(At.AddMinutes(3)));
+
+        Assert.True(boundaries.Challenge(
+            Assessment(CouncilRoles.Operations, "the sample is one campaign wide.",
+                PublicationKind.Challenge), At.AddMinutes(4)).Ok);
+
+        var settled = Assert.Single(boundaries.ApplyDue(At.AddMinutes(5)));
+        Assert.Equal(BoundaryDisposition.Hold, settled.Disposition);
+        Assert.Equal(BoundaryAuthor.Policy, settled.DisposedBy);
+        Assert.True(At.AddMinutes(5) < row.DeadlineAt, "settled before the clock, not by it");
+    }
+
+    /// <summary>
+    /// THE EARLIEST DEADLINE STILL TO COME, which is what the loop sleeps until so that a boundary is
+    /// settled on the owner's clock rather than whenever an agent next happens to be woken.
+    /// </summary>
+    [Fact]
+    public void The_next_deadline_is_the_earliest_open_one_and_nothing_once_all_are_settled()
+    {
+        using var db = TestEnv.NewDb();
+        var boundaries = Boundaries(db);
+
+        Assert.Null(boundaries.NextDeadline());
+
+        var first = Raise(boundaries, campaign: 1, at: At).Row;
+        Raise(boundaries, campaign: 2, at: At.AddHours(1));
+        Assert.Equal(first.DeadlineAt, boundaries.NextDeadline());
+
+        boundaries.ApplyDue(first.DeadlineAt);
+        Assert.Equal(At.AddHours(1) + Window, boundaries.NextDeadline());
+
+        boundaries.ApplyDue(At.AddDays(2));
+        Assert.Null(boundaries.NextDeadline());
+    }
+
+    /// <summary>One director's submission, as the relay builds it: content-addressed, to the peer.</summary>
+    static Publication Assessment(string role, string text, string kind = PublicationKind.Assessment) => new()
+    {
+        Id = Publication.IdOf(role, kind, text),
+        Role = role,
+        Kind = kind,
+        Recipients = string.Join(",", CouncilRelay.RecipientsOf(role)),
+        CreatedAt = At,
+        Content = text
+    };
+
     static List<string> Columns(Database db, string table) => db.Read(_ =>
     {
         using var c = db.Cmd($"SELECT name FROM pragma_table_info('{table}')");
