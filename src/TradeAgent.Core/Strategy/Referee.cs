@@ -59,7 +59,11 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
     readonly CampaignStore _campaigns = new(db);
     readonly DatasetStore _datasets = new(db);
     readonly StrategyStore _strategies = new(db);
+    readonly Promotions _promotions = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
+
+    /// <summary>The promotion ledger this referee writes. Read-only for a caller: it has one writer.</summary>
+    public Promotions Promotions => _promotions;
 
     /// <summary>
     /// WHAT A HOLDOUT RUN IS RECORDED UNDER, and it is deliberately not a council role.
@@ -135,6 +139,115 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
     }
 
     /// <summary>
+    /// THE VERDICT ITSELF: THE APP RUNS THE VERSION OVER THE HELD-BACK MONTHS AND SCORES IT.
+    ///
+    /// <para><b>Every step of this is the app's.</b> The charge is taken first (<see cref="RequestVerdict"/>,
+    /// which is what opens the door at all), the program is the text this installation parsed and
+    /// recorded, the bars are the campaign's own holdout read through the one in-process audience, the
+    /// figures are computed from the app's own trace, and the clauses applied to them are
+    /// <see cref="ScoringPolicyV1"/> — code, bound to the campaign's fixed policy TEXT by its sha. No
+    /// model is asked anything and no role has an opinion: <c>docs/COUNCIL.md</c>:55-57, the referee is
+    /// code and never a role.</para>
+    ///
+    /// <para><b>The run is recorded and is NOT a research trial.</b> It goes in <c>strategy_run</c> with
+    /// its trace hash and its metrics, under <see cref="RunRole"/>, and nothing charges it against the
+    /// campaign's trial budget: a trial is a peek the research process asked for, and this is the
+    /// evaluation the verdict budget already paid for. Charging it as research would spend the
+    /// submitter's allowance on the referee's own work — the mutant this method was built against.</para>
+    ///
+    /// <para><b>The execution model is the JUDGE'S, not the submission's.</b> It is a parameter of this
+    /// call — the owner's, in-process — and it is hashed into the promotion, so a verdict taken under
+    /// one declaration cannot be read as a verdict under another. The default is
+    /// <see cref="ExecutionModel.Frictionless"/>, which invents no fee nobody measured and says so on
+    /// the record it writes.</para>
+    ///
+    /// <para><b>A refusal is a VERDICT, and a failure is not.</b> A version that does not meet the
+    /// policy gets a recorded <c>refused</c> promotion with its reason class — that is an answer, and it
+    /// is what the budget was spent on. A referee that could not judge at all (no charge, no such
+    /// campaign, a policy this build does not implement, a dataset that serves nothing) writes no row
+    /// and says why in <see cref="RefereeVerdict.Why"/>.</para>
+    /// </summary>
+    public RefereeVerdict Verdict(string versionId, long campaignId, ExecutionModel? model = null,
+        CancellationToken stop = default)
+    {
+        // THE CHARGE COMES FIRST AND IT IS WHAT PRODUCES THE AUDIENCE. Nothing below can read a
+        // held-back bar without it, because the audience is on the charge and is internal to Core.
+        var charge = RequestVerdict(versionId, campaignId);
+        if (charge.Audience is not { } audience)
+            return RefereeVerdict.No($"no verdict was authorised, so nothing was computed: {charge.Why}");
+
+        if (_campaigns.ById(campaignId) is not { } campaign)
+            return RefereeVerdict.No($"there is no campaign {campaignId} in this installation's ledger.");
+
+        if (_strategies.VersionById(versionId) is not { } version)
+            return RefereeVerdict.No($"this installation has never accepted a version {versionId}.");
+
+        // THE CODE THAT SCORES IS BOUND TO THE TEXT THAT WAS FIXED. A campaign whose policy is not the
+        // one this build implements is refused rather than judged by a standard nobody agreed to: the
+        // whole value of fixing a policy before a campaign is that the criteria were settled before the
+        // outcome was known (docs/COUNCIL.md:212), and applying different clauses under its sha would
+        // hollow that out silently.
+        var policySha = CampaignPolicy.Sha256Of(CampaignPolicy.V1);
+        if (!string.Equals(campaign.ScoringPolicySha256, policySha, StringComparison.OrdinalIgnoreCase))
+            return RefereeVerdict.No(
+                $"campaign {campaignId} fixed scoring policy {campaign.ScoringPolicySha256} at open and "
+                + $"this build implements {policySha}. TradeAgent will not judge evidence by a standard "
+                + "other than the one this campaign precommitted to.");
+
+        var parse = StrategyParser.Parse(version.Source);
+        if (parse.Program is not { } program)
+            return RefereeVerdict.No(
+                $"the recorded source of version {versionId} no longer parses — {parse.Why}");
+
+        if (!string.Equals(program.StrategyId, version.Id, StringComparison.Ordinal))
+            return RefereeVerdict.No(
+                $"the recorded source of version {versionId} parses to {program.StrategyId}, which is a "
+                + "different program. TradeAgent judges the program the id names and nothing else.");
+
+        var judged = model ?? ExecutionModel.Frictionless;
+
+        // THE HOLDOUT WINDOW IS THE CAMPAIGN'S OWN: everything from its cutoff onwards, and no `to`,
+        // because a verdict wants the whole of the data the research process never saw. The dataset is
+        // the campaign's `holdout_dataset_id` and not a number anybody passed in.
+        var open = Backtest.Over(_datasets, campaign.HoldoutDatasetId, program, judged, audience,
+            campaign.HoldoutFrom, null, stop: stop);
+
+        if (open.Result is not { } run)
+            return RefereeVerdict.No(
+                $"the holdout of campaign {campaignId} could not be run: {open.Why}");
+
+        var at = _now();
+        var reason = ScoringPolicyV1.Reason(run, version.CreatedAt);
+
+        return db.Write(_ =>
+        {
+            // THE RUN, WITH ITS TRACE HASH AND ITS FIGURES, UNDER THE REFEREE'S OWN MARK — and NO
+            // trial. `Backtests.Record` registers one for every research run in the same transaction;
+            // this deliberately does not, and a test holds that.
+            _strategies.RecordRun(new StrategyRunRow(
+                run.RunId, run.VersionId, run.Request.DatasetId, run.Request.DatasetSha256,
+                run.Request.From, run.Request.To, run.Request.Model.Canonical,
+                run.Outcome.ToString(), run.FaultReason,
+                run.Metrics.Bars, run.Metrics.Trades, run.Metrics.Wins, run.Metrics.Signals,
+                run.Metrics.Fills, run.Metrics.ExposureBars, run.Metrics.MissingMinutes,
+                run.Metrics.Faults, run.Metrics.GrossPnl, run.Metrics.Fees, run.Metrics.NetPnl,
+                run.Metrics.MaxDrawdown, run.Trace.Sha256, at, RunRole, null),
+                [.. run.Trades.Select(t => new StrategyTradeRow(
+                    run.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
+                    t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
+
+            var promotion = _promotions.Record(new PromotionRow(
+                "", version.Id, campaign.Id, campaign.ScoringPolicySha256, StrategyStore.InterpreterBuild,
+                run.Request.DatasetId, run.Request.DatasetSha256, run.Request.Model.Canonical,
+                EvaluatorVersion, run.RunId,
+                reason == PromotionReason.Met ? PromotionVerdict.Promoted : PromotionVerdict.Refused,
+                reason, at));
+
+            return new RefereeVerdict(true, "", promotion);
+        });
+    }
+
+    /// <summary>
     /// THE HOLDOUT BARS OF THIS CHARGE'S CAMPAIGN — the one door past a cutoff, and it needs a charge
     /// that was recorded.
     ///
@@ -160,5 +273,70 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
             return BarFeedOpen.No($"there is no campaign {charge.CampaignId} in this installation's ledger");
 
         return BarFeed.Open(_datasets, campaign.HoldoutDatasetId, audience, from, to);
+    }
+}
+
+/// <summary>
+/// WHAT THE REFEREE ANSWERED, OR WHY IT COULD NOT ANSWER AT ALL.
+///
+/// <para>The two are different and are kept apart. <see cref="Ok"/> with a <c>refused</c>
+/// <see cref="Promotion"/> is a VERDICT: the budget was spent, the holdout was read, and the answer was
+/// no — recorded, immutable, and delivered like any other. <see cref="Ok"/> false is the referee
+/// declining to judge — no charge, no such campaign, a scoring policy this build does not implement, a
+/// dataset that serves nothing — and nothing is written.</para>
+///
+/// <para><b>The figures are not on here.</b> A caller gets the promotion and the run's id; the trace and
+/// the metrics stay in <c>strategy_run</c>, which is the owner's table. <c>docs/COUNCIL.md</c>:196-197
+/// keeps private evaluation disclosures referee-budgeted, and a return value that carried the holdout's
+/// net result would put them one careless caller away from a publication.</para>
+/// </summary>
+public sealed record RefereeVerdict(bool Ok, string Why, PromotionRow? Promotion)
+{
+    /// <summary>Whether the version was promoted. False for a refusal AND for a failure to judge.</summary>
+    public bool Promoted => Promotion is { IsPromoted: true };
+
+    /// <summary>The holdout run this verdict was computed from, or null where there was none.</summary>
+    public string? RunId => Promotion?.HoldoutRunId;
+
+    internal static RefereeVerdict No(string why) => new(false, why, null);
+}
+
+/// <summary>
+/// THE SCORING POLICY, AS CODE — <see cref="CampaignPolicy.V1"/> in clauses, applied in this order.
+///
+/// <para><b>It is bound to the text by the sha on the campaign row.</b> <see cref="Referee.Verdict"/>
+/// refuses to judge a campaign whose fixed policy is not the one this build implements, so a rewrite of
+/// the words is a rewrite of the standard and cannot be applied to evidence collected under the old one
+/// (<c>docs/COUNCIL.md</c>:212, precommitment).</para>
+///
+/// <para><b>Forward evidence is the FIRST clause, before any figure is looked at.</b> "Because public
+/// history may already be known or hard-coded into a submission, forward evidence collected after the
+/// strategy's freeze is required before capital" (:135-136). A result over months that predate the
+/// freeze is not weak evidence to be weighed against the rest — it is not evidence at all, so it is
+/// refused whatever the figures say.</para>
+///
+/// <para><b>Every clause answers a REASON CLASS and never a number.</b> The class is the only thing that
+/// crosses back to the team that submitted the version, and a vocabulary cannot leak a metric.</para>
+/// </summary>
+public static class ScoringPolicyV1
+{
+    /// <summary>
+    /// WHICH CLAUSE THIS RUN LANDS ON: <see cref="PromotionReason.Met"/> when it passes them all.
+    ///
+    /// <para><paramref name="frozenAt"/> is the version's <c>created_at</c> — when this installation
+    /// accepted and hashed the program. The comparison is against the WINDOW the run covered and never
+    /// against when the run was made: a run recorded today over last year's bars is not forward
+    /// evidence, and comparing the run's own timestamp is the mutant this clause was built against.</para>
+    /// </summary>
+    public static string Reason(BacktestResult run, DateTimeOffset frozenAt)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+
+        if (run.Request.From is not { } from || from <= frozenAt) return PromotionReason.PrecedesTheFreeze;
+        if (run.Faulted) return PromotionReason.DidNotComplete;
+        if (run.Metrics.Trades <= 0) return PromotionReason.NoTrade;
+        if (run.Metrics.NetPnl is not { } net || net <= 0m) return PromotionReason.NotProfitable;
+
+        return PromotionReason.Met;
     }
 }
