@@ -912,8 +912,9 @@ public sealed class MissionLoop
     /// <summary>
     /// THE BOUND THAT CUT EACH ROLE'S LAST TURN, until that role's next turn has been told about it.
     ///
-    /// <para>Per role, because the council is serial but its turns interleave: the chair taking a turn
-    /// between two of Research's must not clear — or read — a notice that belongs to Research. It is
+    /// <para>Per role, because the roles' turns interleave and may overlap: the chair taking a turn
+    /// between — or during — two of Research's must not clear, or read, a notice that belongs to
+    /// Research. It is
     /// written when a turn ends and CLEARED when the next one ends without being cut, so the notice
     /// describes the turn immediately before and never a turn from an hour ago.</para>
     ///
@@ -1225,10 +1226,11 @@ public sealed class MissionLoop
         // wake to sleep until, and every one of them is DUE IN THE FUTURE — the loop scheduling its
         // own next look must never be what makes this one eligible.
         //
-        // ONE ROLE PER TURN, AND ONE TURN AT A TIME. The council is serial: the role that has waited
-        // longest goes first, and a role that has spent its slice of the day is stepped over rather
-        // than being allowed to stop the other from working. Everything below this block — the
-        // ceiling, the conversation, the record, the process — is that role's.
+        // ONE ROLE PER TURN, AND ONE TURN PER ROLE. The role that has waited longest goes first; a
+        // role that has spent its slice of the day, or that is already turning, is stepped over
+        // rather than being allowed to stop the other from working. Everything below this block —
+        // the ceiling, the conversation, the record, the process — is that role's, and the lease
+        // below is what keeps it that role's while the other one works.
         var events = _host.Events;
         var role = CouncilRoles.Default;
         List<MissionEvent> wake = [];
