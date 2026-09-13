@@ -43,11 +43,16 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 4. **CI on `main`:** green on all four jobs at every sha from `137aaa4` to `ff8b43c`. The eleven
    `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
    goes red, the fixer is that section's second bullet.
-5. **Briefed, committed, NOT dispatched:** none — every brief in `docs/briefs/` has a leg on it.
+5. **Briefed, committed, NOT dispatched:** `U-council-concurrent-2` (schema 16, after `U-referee-2` and `-1`), `U-venue-catalog` (schema 17,
+   not the money path — next free heavy slot), `U-data-2` (schema 18, after the catalogue), `U-freshness` (schema 19, money path, after
+   `U-referee-2` and the catalogue). Schema numbers are assigned here, in landing order; a builder never takes "the next free".
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
-7. **Two decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) the
+7. **Three decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (c) the Revolut X
+   PUBLIC CANDLES endpoint — `docs/COUNCIL.md:167-169` names the source, the repo records only the signed trading base
+   (`docs/RESEARCH-REQUIRED.md:170`); `U-data-2` builds the source against the loopback harness with the URL as unverified data until
+   the endpoint is supplied and one real fetch authorised; (b) the
    containment direction beyond `U-containment` (landed: job object, whitelist environment, per-launch grants, the armed live
    configuration refusing an uncontained CLI; OS sandbox still NONE) — an AppContainer (`U-contain-2`, needs the box) or
    harness-only execution for every role, the doctrine's honest alternative.
