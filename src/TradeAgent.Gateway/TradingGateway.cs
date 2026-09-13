@@ -392,7 +392,16 @@ public sealed class TradingGateway : IAsyncDisposable
         // agrees on. An unreadable file empties the table and says why, which is the most restrictive
         // reading and the one `RuntimeManifest.Read` already takes.
         _venues = new VenueStore(db);
-        _venues.Sync(Core.Data.VenueCatalog.Read());
+        // GUARDED, BECAUSE A GATEWAY THAT CANNOT WRITE STILL HAS TO BE BUILT. This runs in a
+        // constructor, and `DispatchRecoveryTests` holds this whole path to the rule the startup sweep
+        // already follows: a store that will not take a write must not stop the gateway from existing,
+        // because the pause and the refusals that protect the account are what the gateway IS. What a
+        // failed sync leaves behind is the catalogue as it was — an empty table on a fresh install,
+        // which refuses every increment nobody declared, and the previous rows on an old one. Said out
+        // loud rather than swallowed: a build running on a catalogue it could not refresh is a fact the
+        // engineering log has to carry.
+        try { _venues.Sync(Core.Data.VenueCatalog.Read()); }
+        catch (Exception ex) { _log.TryEngineering("Gateway", "venue_catalogue_not_recorded", "error", ex: ex); }
         _campaigns = new CampaignStore(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
