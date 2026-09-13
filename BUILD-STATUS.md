@@ -5419,7 +5419,7 @@ new `PromotionStore`, `Referee.Verdict`, `ScoringPolicyV1`; `PublicationStore.cs
 timestamps checked); touched classes 3× → 18/18 and 1/1 each; Unit 980 + Fault 277 + Integration 657 = 1914 passed, 0 failed, 1 skipped;
 names → 19 added, 0 removed; 140 test files text. Manager's gate at `45719b2`, Release: build → 0 warnings, 0 errors; suite → 980 + 277 + 657 = 1914 passed, 0 failed, 1 skipped; names vs
 `main` → 0 removed, 19 added (sets 1546 → 1565); scan clean; no trailers; `TradingGateway.cs` diff read at landing — 22 added lines, the `Referee` and `Promotions` properties outside the handler table, the gate chain untouched; `rev-list
---count` → 0; CI run 34771155930 at `45719b2`: in flight at the time of this record; verdict in a follow-up commit.
+--count` → 0; CI run 34771155930 at `45719b2`: ubuntu and macos GREEN; **windows-latest RED** on ONE Fault test, `CancelAllAgainstOpenWorkTests.An_agent_modify_inside_the_connector_call_does_not_survive_the_cancel_all_press` (`PressInFlightTests.cs`): the press waited on the open work and then had no budget left for its own cancel leg — `1 of 1 record(s) from this press are still waiting for you`, the runner's disk spending the two-second budget, the class fixed in the fixture for two sibling classes already (`U-press-win-3`, `U-press-settle-win`); this unit touched nothing on the order path; fixer `U-press-inflight-win` on top; recorded red until it lands.
 
 **NOT done:** no way for the owner to ASK for a verdict — `Referee.Verdict` runs from code and tests only, no card, no op, no verb (a test asks
 the whole op vocabulary by name); nothing reads `Promotions.Standing` on the order path yet (`U-freshness`/`U-flatten`); the trial-budget race
