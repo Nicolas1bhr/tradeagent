@@ -847,6 +847,57 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','14') ON CONFLICT(key) DO UPDATE SET value='14';");
         }
 
+        if (have < 15)
+        {
+            // THE PROMOTION RECORD: ONE IMMUTABLE ROW, ADDRESSED BY EVERYTHING THE VERDICT RESTED ON.
+            //
+            // `docs/COUNCIL.md` rule 9: "Promotion needs app-computed evidence bound to code, parameters,
+            // dependencies, data, evaluator, execution-and-cost model and scoring-policy versions — a
+            // changed assumption invalidates the evidence that rested on it". Before this rung
+            // `strategy_version` had no state at all: nothing said a version was promoted, refused or
+            // invalidated, and the binding material that rule asks for was scattered across one
+            // `strategy_run` row where nobody could compare it with anything.
+            //
+            // `id` IS THE BINDING. It is the SHA-256 of the nine columns between `version_id` and
+            // `holdout_run_id`, in the order `PromotionRow.IdOf` spells them, so a second verdict over
+            // identical evidence collides with the first rather than becoming a second record of one
+            // judgement. An id minted from the clock is the mutant this table was built against.
+            //
+            // `verdict` and `reason` are NOT in the hash: they are a function of the nine facts that are
+            // — the same run under the same policy cannot come out two ways — and ON CONFLICT DO NOTHING
+            // makes the first answer stand.
+            //
+            // THERE IS NO `invalidated` COLUMN, and that is the point of the rule this table implements.
+            // Whether a promotion still holds is computed at READ time (`Promotions.Standing`) from these
+            // recorded hashes against the current facts. A column would make a version's truth depend on
+            // a sweep having run, and the sweep that did not run is exactly the case the money path must
+            // not get wrong.
+            //
+            // Written by the app alone, like `dataset`, `material`, `strategy_run` and `strategy_trial`:
+            // one INSERT with ON CONFLICT DO NOTHING, no UPDATE, no DELETE, no pipe op and no `trade`
+            // verb anywhere near it. Additive — one table and one index — and an older database gains it
+            // empty, which reads correctly as "nothing has been judged here".
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_promotion(
+              id                     TEXT PRIMARY KEY,
+              version_id             TEXT NOT NULL REFERENCES strategy_version(id),
+              campaign_id            INTEGER NOT NULL REFERENCES strategy_campaign(id),
+              scoring_policy_sha256  TEXT NOT NULL,
+              interpreter_build      TEXT NOT NULL,
+              holdout_dataset_id     INTEGER NOT NULL REFERENCES dataset(id),
+              holdout_dataset_sha256 TEXT NOT NULL,
+              execution_model        TEXT NOT NULL,
+              evaluator_version      TEXT NOT NULL,
+              holdout_run_id         TEXT NOT NULL REFERENCES strategy_run(id),
+              verdict                TEXT NOT NULL,
+              reason                 TEXT NOT NULL,
+              at                     TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_promotion_version ON strategy_promotion(version_id, at);
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','15') ON CONFLICT(key) DO UPDATE SET value='15';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

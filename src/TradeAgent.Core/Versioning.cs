@@ -130,8 +130,21 @@ public static class Versions
     /// 11-12-13-14 whatever order the units landed in. Additive — two columns and three tables, the app
     /// the only writer, no pipe op that touches any of them — and an older database gains them empty,
     /// which reads correctly as "this installation holds nothing back and has run no campaign".
+    ///
+    /// 14 -&gt; 15: THE VERDICT ITSELF. <c>strategy_promotion</c>, one immutable row per judgement, whose
+    /// id is the SHA-256 of the nine facts it binds — version, campaign, scoring-policy hash,
+    /// interpreter build, holdout dataset and its hash at run time, declared execution model, evaluator
+    /// version and the holdout run. That is rule 9's list of what promotion must be bound to, written
+    /// down once and addressable: before it, <c>strategy_version</c> carried no state at all and nothing
+    /// compared a version's freeze with the window it was judged over. There is no <c>invalidated</c>
+    /// column, deliberately — "a changed assumption invalidates the evidence that rested on it" is
+    /// computed at READ time from those hashes against the current facts (<c>Promotions.Standing</c>),
+    /// because a column would make a version's truth depend on a sweep having run. Written by the app
+    /// alone with ON CONFLICT DO NOTHING, never updated and never deleted, and no pipe op or
+    /// <c>trade</c> verb reaches it. Additive — one table and one index — and an older database gains it
+    /// empty, which reads correctly as "nothing has been judged here".
     /// </summary>
-    public const int DatabaseSchemaVersion = 14;
+    public const int DatabaseSchemaVersion = 15;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

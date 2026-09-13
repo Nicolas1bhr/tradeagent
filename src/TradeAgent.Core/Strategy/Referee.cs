@@ -61,6 +61,31 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
     readonly StrategyStore _strategies = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
+    /// <summary>
+    /// WHAT A HOLDOUT RUN IS RECORDED UNDER, and it is deliberately not a council role.
+    ///
+    /// <para><c>CouncilRoles.IsKnown("referee")</c> is false, so this word grants nothing anywhere: it is
+    /// attribution on a <c>strategy_run</c> row, in the column that otherwise says which director asked.
+    /// The referee is CODE (<c>docs/COUNCIL.md</c>:55-57) — no workspace, no budget, no turn — and the
+    /// reason the run needs a mark of its own is the daily report: a run over the held-back months is
+    /// the one run whose figures must never be printed where an agent can read them, and the report
+    /// tells it apart by this.</para>
+    /// </summary>
+    public const string RunRole = "referee";
+
+    /// <summary>
+    /// THE MEASURING APPARATUS' OWN VERSION, hashed into every promotion.
+    ///
+    /// <para>Rule 9 binds promotion to the "evaluator" as well as to the code and the data: the trace
+    /// this app produced, the metrics it computed from that trace, and the clauses it applied to those
+    /// metrics. None of the three is inside the version id — that hashes the PROGRAM — so a build whose
+    /// backtest, metrics or scoring changed would otherwise be able to write a new verdict over the id
+    /// of an old one. It is a constant rather than a computed string because it must move only when
+    /// somebody decides it has: a number that tracked the assembly version would invalidate every
+    /// promotion on every rebuild.</para>
+    /// </summary>
+    public const string EvaluatorVersion = "backtest=1;metrics=1;scoring=1";
+
     /// <summary>The campaign ledger this referee charges against. Read-only for a caller.</summary>
     public CampaignStore Campaigns => _campaigns;
 
