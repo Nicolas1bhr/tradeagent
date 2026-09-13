@@ -83,11 +83,15 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         var role = RoleOf(caller);
         var path = Resolve(role, ask.Strategy);
 
-        var step = Increment(ask);
-        var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, step.Value, ask.Capital);
-        if (declared.Model is not { } model)
+        // WHAT THE CALLER DECLARED IS CHECKED FIRST, AND ON ITS OWN. `Increment` can refuse — an
+        // instrument nothing has recorded is not a run TradeAgent will guess its way through — and a
+        // request that also names a fee of 10% has to hear about the FEE, which is the mistake it
+        // actually made. So the caller's own four numbers are validated here, with the increment left
+        // to its default when none was given, and the catalogue is not consulted until they pass.
+        var asDeclared = ExecutionModel.Declare(ask.Fees, ask.Slippage, ask.Increment, ask.Capital);
+        if (!asDeclared.Ok)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"that execution model cannot be run: {declared.Why}.");
+                $"that execution model cannot be run: {asDeclared.Why}.");
 
         string text;
         try
@@ -107,6 +111,14 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         if (parse.Program is not { } program)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that is not a program TradeAgent will run — {parse.Why}");
+
+        // AFTER the parse, so a text that is not a program is refused for being one rather than for
+        // the instrument of a dataset it was never going to be run over.
+        var step = Increment(ask);
+        var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, step.Value, ask.Capital);
+        if (declared.Model is not { } model)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"that execution model cannot be run: {declared.Why}.");
 
         // THE TRIAL BUDGET IS ASKED BEFORE THE RUN, NOT AFTER IT. A caller told "your budget is spent"
         // after twenty minutes of evaluation has spent the budget to learn that it was spent — and the
@@ -308,10 +320,21 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         if (gateway.Datasets.ById(ask.Dataset) is not { } set) return new IncrementChosen(null, null);
 
         if (set.VenueId is not { Length: > 0 } venue || set.InstrumentSymbol is not { Length: > 0 } symbol)
-            return new IncrementChosen(null, null);
+            throw Guessing(
+                $"dataset {ask.Dataset} records no venue and no instrument, so there is nothing to read a "
+                + "quantity increment from");
 
-        if (_venues.Instrument(venue, symbol) is not { } row) return new IncrementChosen(null, null);
-        if (!row.Verified) return new IncrementChosen(null, null);
+        if (_venues.Instrument(venue, symbol) is not { } row)
+            throw Guessing(
+                $"this installation's venue catalogue holds no instrument '{symbol}' on '{venue}', which "
+                + $"is what dataset {ask.Dataset} records its bars as being of");
+
+        if (!row.Verified)
+            throw Guessing(
+                $"'{symbol}' on '{venue}' is recorded with a quantity increment of "
+                + $"{Plain(row.QuantityIncrement)}, and that row has not been verified — its source is "
+                + $"“{row.Source}”, so nothing has confirmed the number against the venue's own "
+                + "instrument definition");
 
         return new IncrementChosen(row.QuantityIncrement,
             $"the venue catalogue: {venue}/{symbol}, recorded from {row.Source}");
@@ -319,6 +342,29 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 
     /// <summary>The increment a run will use and the sentence that says where it came from.</summary>
     readonly record struct IncrementChosen(decimal? Value, string? Source);
+
+    /// <summary>
+    /// A REFUSAL, NEVER A GUESS — the one shape this whole unit exists to produce.
+    ///
+    /// <para>The alternative is <c>ExecutionModel.Frictionless</c>'s 1, and a whole unit is not a
+    /// conservative fallback on an instrument nobody recorded: it is a number with no relationship to
+    /// the venue, and every figure a run computes under it is about a position that could not have been
+    /// taken. <c>FakeBroker.TickSize</c> answers null for an unknown symbol for exactly this reason —
+    /// substituting a grid makes "this platform cannot tell you" indistinguishable from a
+    /// measurement.</para>
+    ///
+    /// <para>Both routes out are named, because the two are for different people. The AGENT can declare
+    /// <c>--increment</c> and own the number, which the run then records as the caller's. The ACCOUNT
+    /// OWNER can confirm the row in <c>venues.json</c>, which is the one-line data fix
+    /// <c>docs/DECISIONS.md</c>:73-78 asks for and needs no rebuild.</para>
+    /// </summary>
+    static GatewayDeniedException Guessing(string why) => new(ErrorCode.INVALID_REQUEST,
+        $"this run declared no quantity increment and TradeAgent will not invent one: {why}. A size is "
+        + "rounded DOWN to the increment, so a number nobody recorded would make every figure in the "
+        + "result about a position that could not have been taken. Either pass --increment yourself — "
+        + "the run records that the number was yours — or ask the account owner to record the "
+        + "instrument in venues.json in TradeAgent's own folder. 'trade venue list' shows what is "
+        + "recorded today and which rows have been verified.");
 
     /// <summary>
     /// A decimal with its trailing zeros gone, invariant, for a sentence a person reads.

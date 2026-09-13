@@ -196,4 +196,126 @@ public class VenueIncrementTests(ITestOutputHelper log)
         Assert.Contains("binance-spot", gw.Strategies.RunById(fromCatalogue.Result.RunId)!.IncrementSource!,
             StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// ITEM 5 — AN INSTRUMENT THE CATALOGUE DOES NOT HOLD IS A REFUSAL, NOT A DEFAULT.
+    ///
+    /// <para>Red first: it ran at 1. A whole unit is not a conservative fallback on an instrument
+    /// nobody recorded — it is a number with no relationship to the venue at all, and the result it
+    /// produces is a measurement of a position that could not have been taken. The refusal is the
+    /// shape <c>FakeBroker.TickSize</c> already has for an unknown symbol: null, and the caller
+    /// decides, rather than a grid substituted for one nobody has.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_instrument_the_catalogue_does_not_hold_is_refused_rather_than_run_at_one()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        GivenConfirmed(db);                                   // BTCUSDT is confirmed; ETHUSDT is not in it
+        var set = GivenData(db, symbol: "ETHUSDT");
+
+        var refused = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id)));
+
+        log.WriteLine(refused.Message);
+        Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Info.Code);
+        Assert.Contains("ETHUSDT", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("binance-spot", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("trade venue list", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("--increment", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("venues.json", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AN UNVERIFIED ROW IS REFUSED TOO, and that is the whole point of the flag. The number is right
+    /// there and this build has no idea whether it is right, so using it silently would make "nobody
+    /// checked" and "checked and correct" the same fact.
+    ///
+    /// <para>This is the state the product SHIPS in for Binance spot: the row is there, nothing has
+    /// confirmed it against the venue's own instrument definition, and a run that declares no increment
+    /// is refused with the two routes named.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_unverified_row_is_served_as_unverified_and_refused_as_an_increment()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        new VenueStore(db).Sync(VenueCatalog.Read(
+            Path.Combine(TestEnv.Home, $"venues-absent-{Guid.NewGuid():n}.json")));   // the shipped rows
+        var set = GivenData(db);
+
+        var refused = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id)));
+
+        log.WriteLine(refused.Message);
+        Assert.Contains("BTCUSDT", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("not been verified", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("NOT confirmed", refused.Message, StringComparison.Ordinal);   // the row's own source
+    }
+
+    /// <summary>
+    /// A DATASET THAT RECORDS NO INSTRUMENT IS REFUSED FOR THE SAME REASON: there is nothing to look
+    /// anything up by, and 1 would be a guess wearing a default's clothes.
+    /// </summary>
+    [Fact]
+    public async Task A_dataset_that_names_no_instrument_is_refused_an_increment()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        GivenConfirmed(db);
+        var set = GivenData(db, venue: null, symbol: null);
+
+        var refused = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id)));
+
+        log.WriteLine(refused.Message);
+        Assert.Contains($"dataset {set.Id}", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("--increment", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE REFUSAL IS ONLY EVER ABOUT A NUMBER NOBODY GAVE. A caller that declares its own increment
+    /// runs over an instrument the catalogue has never heard of, and the run records that the number
+    /// was the caller's — which is the honest reading of what happened.
+    /// </summary>
+    [Fact]
+    public async Task A_declared_increment_runs_over_an_instrument_the_catalogue_never_heard_of()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        GivenConfirmed(db);
+        var set = GivenData(db, symbol: "ETHUSDT");
+
+        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Increment: 0.001m));
+
+        Assert.Equal(0.001m, ran.Result.Request.Model.QuantityIncrement);
+        Assert.Contains("declared", gw.Strategies.RunById(ran.Result.RunId)!.IncrementSource!,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// THE INSTRUMENT IS THE DATASET'S, NOT THE PROGRAM'S.
+    ///
+    /// <para>A program names an instrument on its first line, and that line is something the agent
+    /// types. Reading the increment from it would let a caller run over BTCUSDT bars under a futures
+    /// contract's step of 1 by writing one word — renaming the source of its own evidence. The lookup
+    /// is by the row the collector wrote beside the bytes.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_increment_is_looked_up_by_the_datasets_instrument_and_not_the_programs()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        GivenConfirmed(db);
+        var set = GivenData(db);
+
+        // The program says ES; the bars are BTCUSDT and the ledger says so.
+        var program = GivenProgram(text: Text.Replace("instrument BTCUSDT", "instrument ES", StringComparison.Ordinal));
+        var ran = gw.Backtests.Run(Caller(), new BacktestAsk(program, set.Id));
+
+        Assert.Equal("ES", ran.Program.Instrument);
+        Assert.Equal(0.00001m, ran.Result.Request.Model.QuantityIncrement);
+        Assert.Contains("BTCUSDT", gw.Strategies.RunById(ran.Result.RunId)!.IncrementSource!,
+            StringComparison.Ordinal);
+    }
 }

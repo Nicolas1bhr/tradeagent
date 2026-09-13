@@ -113,7 +113,11 @@ public class RefereeVerdictTests
         File.WriteAllText(Path.Combine(dir, name), program);
         return w.Gw.Backtests.Run(
             AgentContext.ForAgent("agent", CouncilRoles.Research, "attempt-1"),
-            new BacktestAsk("strategies/" + name, w.Set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1)));
+            // The increment is DECLARED: this fixture's dataset records no venue, and TradeAgent will
+            // not invent one (`VenueIncrementTests`). 1 is what this run used before the catalogue
+            // existed, so nothing measured here moves.
+            new BacktestAsk("strategies/" + name, w.Set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1),
+                Increment: 1m));
     }
 
     // ---- the boundary the verdict opens (U-council-concurrent-2, item 1) --------------------------

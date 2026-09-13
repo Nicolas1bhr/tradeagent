@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -157,5 +158,105 @@ public class VenueOverPipeTests(ITestOutputHelper log)
             Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
             Assert.Contains("unknown operation", reply.Error.Message, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// ITEM 5 OVER THE WIRE — A RUN THAT DECLARED NO INCREMENT OVER AN INSTRUMENT NOBODY HAS CHECKED
+    /// IS REFUSED, AND THE AGENT IS TOLD BOTH WAYS OUT.
+    ///
+    /// <para>This is the state the product SHIPS in for Binance spot. The refusal has to be readable by
+    /// the thing that receives it: an error code it can act on, the instrument named, and the two
+    /// routes — declare the number yourself, or have the account owner record it — plus the command
+    /// that shows what is recorded today.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_backtest_that_declared_no_increment_over_an_unchecked_instrument_is_refused_in_words()
+    {
+        var (gw, db, client, server) = await Connected(CouncilRoles.Operations);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = GivenData(db);
+        var program = GivenProgram();
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "agent-o",
+            Args = new Dictionary<string, JsonElement>
+            {
+                ["strategy"] = JsonSerializer.SerializeToElement(program),
+                ["dataset"] = JsonSerializer.SerializeToElement(set.Id.ToString(CultureInfo.InvariantCulture))
+            }
+        });
+
+        log.WriteLine(Json.Write(reply.Error));
+        Assert.False(reply.Ok, "a run took an increment nothing had checked");
+        Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+        Assert.Contains("BTCUSDT", reply.Error.Message, StringComparison.Ordinal);
+        Assert.Contains("not been verified", reply.Error.Message, StringComparison.Ordinal);
+        Assert.Contains("--increment", reply.Error.Message, StringComparison.Ordinal);
+        Assert.Contains("venues.json", reply.Error.Message, StringComparison.Ordinal);
+        Assert.Contains("trade venue list", reply.Error.Message, StringComparison.Ordinal);
+
+        // And declaring it runs. The refusal is only ever about a number nobody gave.
+        var ran = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "agent-o",
+            Args = new Dictionary<string, JsonElement>
+            {
+                ["strategy"] = JsonSerializer.SerializeToElement(program),
+                ["dataset"] = JsonSerializer.SerializeToElement(set.Id.ToString(CultureInfo.InvariantCulture)),
+                ["increment"] = JsonSerializer.SerializeToElement("1")
+            }
+        });
+
+        Assert.True(ran.Ok, Json.Write(ran.Error));
+        Assert.Contains("declared by the caller",
+            Data(ran).GetProperty("increment_source").GetString()!, StringComparison.Ordinal);
+    }
+
+    const string ProgramText = "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n";
+
+    static string GivenProgram(string role = CouncilRoles.Operations)
+    {
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
+        Directory.CreateDirectory(dir);
+        var name = $"venue-{Guid.NewGuid():n}.strategy";
+        File.WriteAllText(Path.Combine(dir, name), ProgramText);
+        return "strategies/" + name;
+    }
+
+    /// <summary>A dataset the ledger really recorded, naming Binance spot and the pair — as the collector does.</summary>
+    static DatasetRecord GivenData(Database db, int bars = 120, string pair = "BTCUSDT")
+    {
+        var at = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+        var dir = BinanceArchive.DatasetDir(pair);
+        Directory.CreateDirectory(Path.Combine(dir, "raw"));
+        var raw = Path.Combine(dir, "raw", $"{pair}-{Guid.NewGuid():n}.zip");
+        File.WriteAllText(raw, "a stand-in for the vendor's monthly archive");
+
+        var csv = Path.Combine(dir, $"{Guid.NewGuid():n}.csv");
+        var text = new StringBuilder().Append(KlineNormaliser.Header).Append('\n');
+        for (var i = 0; i < bars; i++)
+        {
+            var close = 96m + i % 10;
+            text.Append(CultureInfo.InvariantCulture,
+                $"{at.AddMinutes(i).UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{close},{close + 1m},{close - 1m},{close},1.00\n");
+        }
+        File.WriteAllText(csv, text.ToString());
+
+        var record = new DatasetRecord(
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 1, ["2025-09"],
+            csv, DatasetStore.Sha256(csv)!, bars, at, at.AddMinutes(bars - 1), 0, [], false,
+            0, 0, 0, at, DatasetState.ACCEPTED, null,
+            [new DatasetFile("2026-08", "https://127.0.0.1/x.zip", DatasetStore.Sha256(raw)!,
+                DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, at, KlineTimeUnit.Microseconds, raw)])
+        {
+            VenueId = VenueCatalog.BinanceSpot,
+            InstrumentSymbol = pair
+        };
+
+        return record with { Id = new DatasetStore(db).Record(record) };
     }
 }

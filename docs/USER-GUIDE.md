@@ -781,6 +781,35 @@ do. The trading mode and your account go the same way, so set the mode on that p
 real-money mode is two presses as well — and choose your account again on **Settings**. Nothing here
 needs a file, a folder or a command: if you can see the panel, you can undo it.
 
+## If a backtest says it will not guess an instrument's size step
+
+Some venues let you buy a hundredth of something and some only whole contracts. That step matters:
+a size is always rounded **down** to it, so the wrong step makes every number a test produces a
+number about a position nobody could have taken.
+
+TradeAgent keeps a list of the venues and instruments it knows of, and each entry says who says so
+and whether anyone has actually **checked** it. The AI can read that list; it cannot write it. What
+ships is deliberately modest: the four practice-simulator contracts are marked checked, because the
+simulator is TradeAgent's own and there is nobody else to disagree with; the Binance pair is **not**,
+because nothing in TradeAgent has ever asked Binance what its real step is.
+
+So when the AI asks for a backtest and does not name a step itself, and TradeAgent has no checked
+entry for that instrument, it refuses and says so instead of picking a number. The refusal names the
+two ways forward, and neither needs a command prompt:
+
+- the AI can state the step itself, and the record of that run then says the number was the AI's; or
+- you can record the instrument in **`venues.json`** in TradeAgent's own folder, with where you got
+  the numbers from and a note that you checked them. That is a small text file and a one-line fix,
+  and it is the same kind of file as the three below.
+
+An unreadable `venues.json` behaves like the others: nothing is served from it, the shipped entries
+do **not** quietly stand in for it, and every backtest that does not name its own step is refused
+until the file is corrected or deleted.
+
+TradeAgent does **not** keep venue fees or minimum order sizes. Fees are something each backtest
+states for itself and are part of what makes that test's result what it is; a fee taken from a table
+nobody checked would look like a measurement and would not be one.
+
 ## If TradeAgent names runtimes.json, atas.json or costs.json
 
 Almost nobody meets these two files. They exist for the case where a supplier changes something on

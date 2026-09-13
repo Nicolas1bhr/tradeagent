@@ -321,7 +321,10 @@ public class CampaignLedgerTests
         string role = CouncilRoles.Research, string attempt = "attempt-1", int toBar = HoldoutAtBar - 1) =>
         gw.Backtests.Run(
             AgentContext.ForAgent("agent", role, attempt),
-            new BacktestAsk(path, set.Id, Bar0, Bar0.AddMinutes(toBar), 0.001m));
+            // The increment is DECLARED: this fixture's dataset records no venue, and TradeAgent will
+            // not invent one (`VenueIncrementTests`). 1 is what every run here used before the
+            // catalogue existed, so no figure and no run id in this class moves.
+            new BacktestAsk(path, set.Id, Bar0, Bar0.AddMinutes(toBar), 0.001m, Increment: 1m));
 
     /// <summary>
     /// EVERY REGISTERED RESEARCH RUN COSTS ONE TRIAL — and the row says what it cost without naming who

@@ -378,7 +378,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         var refused = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Backtest, Session = "research", RequestId = "holdout-bt-1",
-            Args = Args(("strategy", program), ("dataset", dataset))
+            // Declared for the reason the run below declares it, and so that what this measures is the
+            // HOLDOUT refusal rather than the missing-increment one: the request has to be complete
+            // before the cutoff is the thing standing in its way.
+            Args = Args(("strategy", program), ("dataset", dataset), ("increment", "1"))
         });
 
         Assert.False(refused.Ok, "a backtest ran over the months the owner held back");
@@ -389,7 +392,10 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         var ran = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Backtest, Session = "research", RequestId = "holdout-bt-2",
-            Args = Args(("strategy", program), ("dataset", dataset), ("to", Iso(cutoff.AddMinutes(-1))))
+            // Declared, because this fixture's dataset records no venue and TradeAgent will not invent
+            // an increment (`VenueIncrementTests`). 1 is what this run used before the catalogue.
+            Args = Args(("strategy", program), ("dataset", dataset), ("to", Iso(cutoff.AddMinutes(-1))),
+                ("increment", "1"))
         });
 
         Assert.True(ran.Ok, Json.Write(ran.Error));

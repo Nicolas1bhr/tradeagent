@@ -197,7 +197,10 @@ public class WorkerToolTests : IAsyncLifetime
             op = Ops.Backtest,
             strategy = GivenProgram(CouncilRoles.Research),
             dataset = set.Id,
-            fees = 0.001m
+            fees = 0.001m,
+            // Declared, because this fixture's dataset records no venue and TradeAgent will not invent
+            // an increment (`VenueIncrementTests`). 1 is what this call used before the catalogue.
+            increment = 1m
         }));
 
         Assert.True(ran.Served, ran.Content);
@@ -233,7 +236,8 @@ public class WorkerToolTests : IAsyncLifetime
             op = Ops.Backtest,
             strategy = GivenProgram(CouncilRoles.Research),
             dataset = set.Id,
-            fees = 0.001m
+            fees = 0.001m,
+            increment = 1m
         }, "c2"));
         Assert.True(again.Served, again.Content);
     }

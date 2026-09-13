@@ -161,8 +161,11 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         var reply = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Backtest, Session = "agent-1",
+            // The increment is DECLARED throughout this class: its fixture dataset records no venue and
+            // TradeAgent will not invent one (`VenueIncrementTests`). 1 is what every run here used
+            // before the catalogue existed, so no figure and no run id in this class moves.
             Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
-                ("fees", "0.001"), ("slippage", "0.0005"))
+                ("fees", "0.001"), ("slippage", "0.0005"), ("increment", "1"))
         });
 
         Assert.True(reply.Ok, Json.Write(reply.Error));
@@ -217,7 +220,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         {
             Op = Ops.Backtest, Session = "agent-1",
             Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
-                ("from", "2026-08-01T00:00:00Z"), ("to", "2026-08-01T00:02:00Z"))
+                ("from", "2026-08-01T00:00:00Z"), ("to", "2026-08-01T00:02:00Z"), ("increment", "1"))
         });
 
         Assert.True(reply.Ok, Json.Write(reply.Error));
@@ -301,7 +304,8 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         var reply = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Backtest, Session = "agent-1",
-            Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+            Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
+                ("increment", "1"))
         });
 
         log.WriteLine(Json.Write(reply.Error));
@@ -333,7 +337,8 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         var run = await client.SendAsync(new IpcRequest
         {
             Op = Ops.Backtest, Session = "agent-1",
-            Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+            Args = Args(("strategy", GivenProgram()), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
+                ("increment", "1"))
         });
         Assert.True(run.Ok, Json.Write(run.Error));
 
@@ -403,7 +408,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         {
             Op = Ops.Backtest, Session = "research",
             Args = Args(("strategy", "strategies/shared-name.strategy"),
-                ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+                ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)), ("increment", "1"))
         });
 
         Assert.True(reply.Ok, Json.Write(reply.Error));

@@ -1431,10 +1431,22 @@ that writes, edits or deletes one of those rows**, because a record of how a str
 evidence its author is judged on.
 
 **The execution model is DECLARED per run and is part of the run's identity.** Fees and slippage are
-FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to — the
-dataset carries none, so the run's is the only one there is — and the capital is what the run starts
-with. Declared nothing, a run is frictionless with whole units and 10,000, and the answer says so in
-those words rather than letting a zero fee read as a measurement.
+FRACTIONS (`0.001` is ten basis points), the quantity increment is what a size is rounded DOWN to, and
+the capital is what the run starts with. Declared no fee and no slippage, a run is frictionless and the
+answer says so in those words rather than letting a zero fee read as a measurement; declared no capital,
+it starts with 10,000.
+
+**The increment is the one number a run need not declare, and TradeAgent will not invent it.** A request
+that omits `--increment` gets the one recorded for the dataset's own `venue_id`/`instrument_symbol` in
+`venue_instrument`, and the answer's `increment_source` and the run row say which row it came from. A
+DECLARED increment always wins — the catalogue is a default for a caller that gave no number, never an
+override of one that did. An instrument the catalogue does not hold, one whose row is not `verified`, and
+a dataset that records no instrument at all are each **REFUSED in words** naming both routes out (declare
+`--increment` yourself, or have the account owner record the instrument in `venues.json`); there is no
+fallback to 1, because a size is rounded down to the increment and a number nobody recorded makes every
+figure in the result a measurement of a position that could not have been taken. **Where the increment
+came from is NOT hashed.** The number is, exactly as a declared one is; its provenance is recorded beside
+the run in `strategy_run.increment_source`, so adding it moved no run id this installation had written.
 
 **Signals fill at the next bar's open. Protection fills where protection fires.** A signal is computed
 from a bar's CLOSE, so the earliest price it can be acted on is the next bar's open plus adverse
@@ -1476,6 +1488,47 @@ directory inside the folder is a door out of it. The other role's folder is outs
 establish no actual fill, no queue position and no intrabar ordering (`docs/COUNCIL.md`, "Data"). It is a
 reason to test something and never a record of a trade, and a result on one venue's bars is not
 execution evidence for another venue.
+
+## The venue catalogue — `src/TradeAgent.Core/Data/VenueCatalog.cs`, `Db/VenueStore.cs`
+
+**An instrument is a recorded fact with a source, not a number an agent typed.** `venue` (id, display
+name, calendar kind) and `venue_instrument` (symbol, `tick_size`, `quantity_increment`) arrive at schema
+17, and every row in both carries `source`, `recorded_at` and `verified`. `trade venue list` reads them;
+**no op writes them** — not add, not edit, not verify, not delete — because an increment is what a size
+is rounded down to, and an agent that could write its own would be choosing how much it trades and
+having the record agree with it. `venue-list` is deliberately NOT in `Ops.Mutating`: that word here means
+"sends something to a broker", and the mutating list is also the role gate, so an op on it would be
+refused to the Research Director, whose job is to propose the sizes.
+
+**The rows are shipped and corrected in one line.** `VenueCatalog.BuiltIn()` ships them and a
+`venues.json` in TradeAgent's own folder overrides them — the `runtimes.json` pattern of
+`docs/DECISIONS.md`:73-78, entry by venue id, replacing what it names and appending what it invents. An
+**unreadable** `venues.json` yields NO catalogue at all and says why: nothing shipped stands in for a
+file the owner wrote to correct a number, which is `RuntimeManifest.Read`'s judgement applied to the
+number a size is computed from. An absent file is a different fact and means the built-ins.
+`VenueStore.Sync` writes the table from that at gateway construction; the migration seeds nothing.
+
+**What ships, and what it admits.** Binance spot carries BTCUSDT at tick 0.01 and increment 0.00001 with
+`verified = false`, because nothing in this build has read Binance's own instrument definition — so out
+of the box a backtest over collected Binance bars that declares no `--increment` is REFUSED until the
+account owner records the row. TradeAgent's own simulator carries ES, NQ, MES and YM at increment 1 with
+`verified = true`, and that is not a double standard: the venue is this application's own and the rows
+are the same four `FakeBroker.Instruments` serves, which a test holds them to. Both venues are
+`continuous`.
+
+**What the catalogue does NOT hold: no fee and no minimum notional.** `docs/COUNCIL.md` is silent on a
+fee table and :155 keeps fees DECLARED per backtest and part of that run's identity, so a fee read out of
+a table nobody measured would read as a measurement. It holds no session table either: `calendar_kind`
+is `continuous` for a venue that never closes and `sessioned` means "this one closes and TradeAgent
+cannot tell you when", which is a refusal to guess rather than a calendar.
+
+**A dataset names its venue and its instrument.** `dataset.venue_id` and `dataset.instrument_symbol` are
+copied onto the row by the collector and never joined to the catalogue at read time — a `venues.json`
+edited next month must not restate what last month's evidence was collected from — with no foreign key,
+so removing a venue cannot dangle a dataset. Rows written before schema 17 are backfilled to
+`binance-spot` and the pair, which is what every one of them was. `data-list` and section 8 of the
+owner's daily report carry both, null included. A run's increment is looked up by THAT pair and never by
+the instrument named in the program, which is a line an agent types.
 
 ## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
 

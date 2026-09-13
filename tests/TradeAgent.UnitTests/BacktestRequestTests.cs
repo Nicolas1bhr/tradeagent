@@ -93,8 +93,12 @@ public class BacktestRequestTests(ITestOutputHelper log)
         using var _1 = db;
         var set = GivenData(db);
 
+        // The increment is DECLARED throughout this class: its fixture dataset records no venue, and
+        // TradeAgent will not invent one (`VenueIncrementTests`). 1 is what every run here used before
+        // the catalogue existed, so no figure and no run id in this class moves.
         var ran = gw.Backtests.Run(Caller(CouncilRoles.Research, "attempt-r9"), new BacktestAsk(
-            GivenProgram(CouncilRoles.Research, name: "research-only.strategy"), set.Id, Fees: 0.001m));
+            GivenProgram(CouncilRoles.Research, name: "research-only.strategy"), set.Id, Fees: 0.001m,
+            Increment: 1m));
 
         Assert.Equal(CouncilRoles.Research, ran.Role);
         Assert.Equal(set.Id, ran.Result.Request.DatasetId);
@@ -117,7 +121,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
 
         // The same request again is the same run: one row, not two.
         gw.Backtests.Run(Caller(CouncilRoles.Research, "attempt-r9"), new BacktestAsk(
-            Path.Combine("strategies", "research-only.strategy"), set.Id, Fees: 0.001m));
+            Path.Combine("strategies", "research-only.strategy"), set.Id, Fees: 0.001m, Increment: 1m));
         Assert.Equal(1, gw.Strategies.RunCount);
     }
 
@@ -228,7 +232,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var (gw, _, db) = await TestEnv.Ready();
         using var _1 = db;
         var set = GivenData(db);
-        var ask = new BacktestAsk(GivenProgram(), set.Id);
+        var ask = new BacktestAsk(GivenProgram(), set.Id, Increment: 1m);
 
         Backtests? runner = null;
         string? refusal = null;
@@ -269,7 +273,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.Contains(before.Research.Missing, g => g.Why.Contains("nothing has been backtested"));
         Assert.Contains(before.Research.AppMetrics, m => m.Contains("BTCUSDT"));   // the dataset IS listed
 
-        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Fees: 0.001m));
+        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Fees: 0.001m, Increment: 1m));
 
         var after = gw.Reports.Compose(DateTimeOffset.Now);
         var text = DailyReportText.Render(after);
@@ -295,7 +299,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var (gw, _, db) = await TestEnv.Ready();
         using var _1 = db;
         var set = GivenData(db);
-        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id));
+        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Increment: 1m));
 
         new PublicationStore(db).Commit(new Publication
         {
@@ -404,7 +408,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var (gw, _, db) = await TestEnv.Ready();
         using var _1 = db;
         var set = GivenData(db);
-        var ask = new BacktestAsk(GivenProgram(), set.Id);
+        var ask = new BacktestAsk(GivenProgram(), set.Id, Increment: 1m);
 
         foreach (var caller in new[] { AgentContext.ForAgent("nobody"), AgentContext.Operator })
         {
