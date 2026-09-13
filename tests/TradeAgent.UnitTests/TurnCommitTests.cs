@@ -55,13 +55,20 @@ public class TurnCommitTests
         /// <summary>
         /// A NEW connection to the same file, and the meter that opens over it — which is what turns
         /// every attempt still LAUNCHED into a LOST one. This is what "restart" means here.
+        ///
+        /// <para>Its own <see cref="LiveAttempts"/>, because that is the other half of what a restart
+        /// is: the register of launches a process is flying is in memory, so a NEW process holds
+        /// none and reconciles everything it finds open. A meter sharing the dying host's register
+        /// would be a second meter inside one process, which is a different question and the one
+        /// <c>AiAttemptLedgerTests</c> asks.</para>
         /// </summary>
         public (Database Db, TurnMeter Meter) Open()
         {
             var db = new Database(DbFile);
             _open.Add(db);
             return (db, new TurnMeter(db, () => 50m, runtimeId: () => "codex", now: () => At,
-                recordPath: Records, owner: () => new OwnerPrice(1m, 4m), model: () => "a-model"));
+                recordPath: Records, owner: () => new OwnerPrice(1m, 4m), model: () => "a-model",
+                live: new LiveAttempts()));
         }
 
         public void Write(string role, string rel, string text) =>

@@ -41,9 +41,15 @@ public class AiAttemptLedgerTests : IDisposable
 
     const decimal Reservation = (1_200_000m * 1m + 20_000m * 4m) / 1_000_000m;
 
-    TurnMeter Meter(Func<DateTimeOffset> now) =>
+    /// <param name="live">
+    /// The launches this "process" is flying. Tests pass their own for the reason
+    /// <c>AgentPresence</c> is passed one — a shared register two tests wrote into would make each
+    /// of them depend on the other's turns — and a fresh one is what a RESTART is.
+    /// </param>
+    TurnMeter Meter(Func<DateTimeOffset> now, LiveAttempts? live = null) =>
         new(_db, () => 5m, session: () => "thread-1", runtimeId: () => "probe", now: now,
-            recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol");
+            recordPath: _records, owner: () => Rate, model: () => "gpt-5.6-sol",
+            live: live ?? new LiveAttempts());
 
     /// <summary>
     /// THE GUARD. A turn is launched, its row and its reservation are written first, the process is
@@ -100,6 +106,61 @@ public class AiAttemptLedgerTests : IDisposable
         Assert.Equal(AiAttemptState.LOST, lost.State);
         Assert.Equal(Reservation, lost.Cost);
         Assert.NotNull(lost.UnpricedReason);
+    }
+
+    /// <summary>
+    /// ITEM 3, RED FIRST: A SECOND METER OVER THE SAME FILE DOES NOT LOSE A TURN THIS PROCESS IS
+    /// STILL FLYING — and loses every other open row exactly as it always did.
+    ///
+    /// <para>Opening the database is what settles a turn nobody will ever hear from again, and that
+    /// was read as "every LAUNCHED row belongs to a process that is gone". It does not, once two
+    /// roles can be turning at once: a meter built while one role's turn is in flight declared that
+    /// live turn LOST and charged it its reservation, so the turn ran, reported its usage into a row
+    /// that would no longer take it, and the day was short by a whole reservation for work that had
+    /// actually been done.</para>
+    ///
+    /// <para>The registry is in memory and holds the launches THIS process is flying. A restart
+    /// holds none, which is why a restart still loses them all — that is the fail-safe direction
+    /// and the one <see cref="AiAttemptStore.LoseOpen"/> exists for.</para>
+    /// </summary>
+    [Fact]
+    public void A_second_meter_built_mid_turn_loses_the_dead_rows_and_not_the_live_one()
+    {
+        var now = DateTimeOffset.Now;
+        var live = new LiveAttempts();
+        var meter = Meter(() => now, live);
+
+        // A turn in flight in THIS process: the row is open and its allowance committed.
+        var turning = meter.Begin("## Situation", role: CouncilRoles.Research).Id!;
+
+        // And a launch nothing in this process is flying — the shape a killed app leaves behind.
+        var store = new AiAttemptStore(_db);
+        store.Begin(new AiAttempt
+        {
+            Id = "turn-from-a-process-that-is-gone",
+            StartedAt = now,
+            ReservedCost = 0.25m,
+            Role = CouncilRoles.Operations
+        });
+
+        // A SECOND METER OVER THE SAME FILE, built while that turn is still running.
+        _ = Meter(() => now, live);
+
+        Assert.Equal(AiAttemptState.LAUNCHED, store.Get(turning)!.State);
+        Assert.Equal(AiAttemptState.LOST, store.Get("turn-from-a-process-that-is-gone")!.State);
+
+        // The live turn then ends normally, into the row that was still there to take it.
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(5), "…", now)
+        {
+            Usage = new TurnUsage(1_000, 0, 0, 10, 0, null)
+        }, CouncilRoles.Research);
+        Assert.True(meter.CommitStaged(CouncilRoles.Research));
+        Assert.Equal(AiAttemptState.ENDED, store.Get(turning)!.State);
+
+        // AND A RESTART LOSES IT AFTER ALL: a new process holds no lease over anything.
+        var restarted = meter.Begin("## Situation", role: CouncilRoles.Research).Id!;
+        _ = Meter(() => now, new LiveAttempts());
+        Assert.Equal(AiAttemptState.LOST, store.Get(restarted)!.State);
     }
 
     /// <summary>

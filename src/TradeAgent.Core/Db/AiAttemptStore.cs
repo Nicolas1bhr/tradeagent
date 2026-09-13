@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 
 namespace TradeAgent.Core.Db;
@@ -372,16 +373,32 @@ public sealed class AiAttemptStore(Database db)
     /// defect this whole table exists for: kill the turn before its usage arrives and the allowance
     /// comes back. It does not come back. Returns how many were lost.
     /// </summary>
-    public int LoseOpen(DateTimeOffset at) => db.Write(_ =>
+    /// <param name="except">
+    /// THE LAUNCHES THE CALLING PROCESS IS STILL FLYING, which are the one kind of open row that is
+    /// NOT a turn nobody will hear from again. Two roles' turns may overlap, so a meter built while
+    /// one of them is in flight would otherwise declare that live turn LOST and charge it its
+    /// reservation — and the usage it then reported would be refused by the row, because
+    /// <see cref="End"/> writes only a row still LAUNCHED. Skipping it releases nothing: a LAUNCHED
+    /// row's reservation is counted against the day's ceiling exactly as a LOST row's cost is.
+    ///
+    /// Empty or null loses everything, which is what a RESTART is: a process that has just started
+    /// holds no launches, so nothing is skipped and the whole table is reconciled.
+    /// </param>
+    public int LoseOpen(DateTimeOffset at, IReadOnlyCollection<string>? except = null) => db.Write(_ =>
     {
-        using var c = db.Cmd("""
+        var live = except is { Count: > 0 } ? except.ToArray() : [];
+        var names = live.Select((_, i) => $"$live{i.ToString(CultureInfo.InvariantCulture)}").ToArray();
+        var keep = live.Length == 0 ? "" : $" AND id NOT IN ({string.Join(",", names)})";
+
+        using var c = db.Cmd($"""
             UPDATE ai_attempt
                SET state='LOST', ended_at=$at, cost=reserved_cost,
                    unpriced_reason=COALESCE(unpriced_reason, $why)
-             WHERE state='LAUNCHED'
+             WHERE state='LAUNCHED'{keep}
             """,
-            ("$at", Sql.T(at)),
-            ("$why", "the turn was launched and never reported its usage; the reservation stands"));
+            [("$at", (object?)Sql.T(at)),
+             ("$why", "the turn was launched and never reported its usage; the reservation stands"),
+             .. names.Select((n, i) => (n, (object?)live[i]))]);
         return c.ExecuteNonQuery();
     });
 

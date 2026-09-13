@@ -353,6 +353,65 @@ public sealed record TurnRecord
 }
 
 /// <summary>
+/// THE LAUNCHES THIS PROCESS IS STILL FLYING — the one kind of open <c>ai_attempt</c> row that is
+/// not a turn nobody will ever hear from again.
+///
+/// <para><b>Why it exists.</b> A meter opening the database turns every LAUNCHED row LOST and keeps
+/// its reservation as its cost, because such a row belongs to a process that is gone. That reading
+/// was exactly right while one turn ran at a time. Two roles' turns may now overlap, so a second
+/// meter built over the same file — a test's restart, an app that rebuilt one — would declare a
+/// turn that is running right now LOST, and the usage that turn then reported would be refused by
+/// its own row: <see cref="AiAttemptStore.End"/> writes only a row still LAUNCHED. The day would be
+/// short by a reservation for work that was really done.</para>
+///
+/// <para><b>Skipping a row releases nothing.</b> A LAUNCHED row's reservation counts against the
+/// day's ceiling exactly as a LOST row's cost does, so the conservative direction is kept whichever
+/// way this answers — which is what makes it safe to answer "leave that one alone".</para>
+///
+/// <para><b>In memory, and process-wide.</b> A claim that outlived the process holding it could
+/// never be released, so a restart holds none and loses them all, which is right: nothing it finds
+/// open can still be flying. <see cref="Shared"/> is the app's; tests pass their own for the reason
+/// <see cref="AgentPresence"/> is passed one, and a fresh instance is what a restart is.</para>
+/// </summary>
+public sealed class LiveAttempts
+{
+    readonly Lock _gate = new();
+    readonly HashSet<string> _ids = new(StringComparer.Ordinal);
+
+    /// <summary>The process-wide register every meter in the app reports its launches to.</summary>
+    public static LiveAttempts Shared { get; } = new();
+
+    /// <summary>Records that this launch is in flight. Called the moment its row goes in.</summary>
+    public void Enter(string id)
+    {
+        lock (_gate) _ids.Add(id);
+    }
+
+    /// <summary>
+    /// Records that it is not any more — its close has been written, or the role that owned it has
+    /// started another turn, which is the same fact arriving late.
+    /// </summary>
+    public void Leave(string? id)
+    {
+        if (id is not { Length: > 0 }) return;
+        lock (_gate) _ids.Remove(id);
+    }
+
+    /// <summary>Whether this launch is one of the flying ones. Read by the relay's fence.</summary>
+    public bool Holds(string? id)
+    {
+        if (id is not { Length: > 0 }) return false;
+        lock (_gate) return _ids.Contains(id);
+    }
+
+    /// <summary>A snapshot, so a caller can hold it across a query without holding the lock.</summary>
+    public IReadOnlyCollection<string> Ids
+    {
+        get { lock (_gate) return [.. _ids]; }
+    }
+}
+
+/// <summary>
 /// WHAT THE AI HAS COST TODAY, AND THE CEILING IT STOPS AT.
 ///
 /// One line per turn goes to <c>state/agent-turns.jsonl</c> — in the APP's state directory, never
@@ -400,6 +459,9 @@ public sealed class TurnMeter
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
     readonly Lock _gate = new();
+
+    /// <summary>The launches this process is flying, so a second meter does not lose them.</summary>
+    readonly LiveAttempts _live;
 
     /// <summary>
     /// THE ATTEMPT EACH CONVERSATION HAS OPEN, AND THE LENGTH OF THE PROMPT IT WAS LAUNCHED WITH.
@@ -471,9 +533,10 @@ public sealed class TurnMeter
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
         Func<string, decimal>? share = null, Func<string, string?>? roleModel = null,
-        Func<string, string?>? roleRuntime = null)
+        Func<string, string?>? roleRuntime = null, LiveAttempts? live = null)
     {
         _db = db;
+        _live = live ?? LiveAttempts.Shared;
         _attempts = new AiAttemptStore(db);
         _cap = cap;
         _session = session ?? (() => null);
@@ -497,7 +560,12 @@ public sealed class TurnMeter
         // used. The vendor has already done the work and billed for it. Releasing the reservation
         // here would mean the allowance came back every time the AI was killed mid-turn — which is
         // exactly what happened before this table existed, and what nothing after it may do.
-        try { _attempts.LoseOpen(_now()); }
+        //
+        // EXCEPT WHAT THIS PROCESS IS STILL FLYING. That is the one open row whose usage IS still
+        // coming, and losing it would refuse the report of a turn that really ran — see
+        // <see cref="LiveAttempts"/>. A restart holds none of them, so a restart still loses
+        // everything; skipping one releases no money either way.
+        try { _attempts.LoseOpen(_now(), _live.Ids); }
         catch (Exception) { /* a database that cannot be written must not stop the app starting */ }
     }
 
@@ -680,7 +748,17 @@ public sealed class TurnMeter
         {
             admission = _attempts.Begin(attempt, consuming, RuleFor(role, reservation));
             if (admission.Id is { } written)
-                lock (_gate) _open[Key(role)] = (written, prompt.Length, heldForTheLoop);
+                lock (_gate)
+                {
+                    // A LAUNCH THIS ROLE NEVER CLOSED IS NOT FLYING ANY MORE: the role is starting
+                    // another turn, so whatever happened to the last one, nothing in this process is
+                    // waiting for it. Left in the register it would be a row no restart-shaped pass
+                    // could ever reconcile.
+                    if (_open.TryGetValue(Key(role), out var abandoned)) _live.Leave(abandoned.Id);
+
+                    _open[Key(role)] = (written, prompt.Length, heldForTheLoop);
+                    _live.Enter(written);
+                }
         }
         catch (Exception) { return AiAdmission.Unrecorded; }
 
@@ -815,6 +893,11 @@ public sealed class TurnMeter
             ended.Usage?.InputTokens, ended.Usage?.CachedInputTokens, ended.Usage?.CacheWriteInputTokens,
             ended.Usage?.OutputTokens, ended.Usage?.ReasoningOutputTokens,
             ended.Usage?.Model, price.Cost, price.Unpriced, context, price.Basis);
+
+        // CLOSED, SO NOT FLYING. After the write rather than before it: a close that threw leaves
+        // the row LAUNCHED, and a row this process still claims is one nothing here will lose —
+        // which is the conservative direction, and the next restart reconciles it anyway.
+        _live.Leave(id);
     }
 
     /// <summary>
