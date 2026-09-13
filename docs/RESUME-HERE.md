@@ -44,8 +44,10 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
    goes red, the fixer is that section's second bullet.
 5. **Briefed, committed, NOT dispatched:** `U-council-concurrent-2` (schema 16, after `-1` lands), `U-data-2` (schema 18, after the
-   catalogue), `U-freshness` (schema 19, money path, after the catalogue). Schema numbers are assigned here, in landing order; a builder
-   never takes "the next free".
+   catalogue), `U-freshness` (schema 19, money path, after the catalogue), `U-allocator-1` (schema 20, money path, after `U-freshness`),
+   `U-allocator-2` (schema 21, after `U-council-concurrent-2` and `U-allocator-1`). Schema numbers are assigned here, in landing order; a
+   builder never takes "the next free". With these the doctrine's unit order (`docs/COUNCIL.md:265-272`) is fully briefed; what follows
+   them is the money path's live gates — `U-flatten`, a runner on the order path, containment beyond NONE, paper on the box for weeks.
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
