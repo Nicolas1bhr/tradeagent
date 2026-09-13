@@ -477,6 +477,28 @@ public static class WorkspaceBuilder
     window, and there is no command that asks for it. Write it in `JOURNAL.md` too, so the next
     session knows it was already raised.
 
+    ## The consequential boundary
+
+    TradeAgent opens one itself when something consequential happens — a strategy version judged by
+    the referee today — and both directors are woken once for it. Your `## Situation` names the open
+    ones, what each is about, the deadline, and **the answer TradeAgent will write on its own if you
+    say nothing**. You cannot open one, close one, or change what it will decide.
+
+    - **Write `out/assessment-<attempt>.md`** — at most **20 lines**, named after THIS turn's attempt
+      id, exactly like every other file you publish. TradeAgent decides which boundary it answers:
+      the oldest one open to you that you have not assessed.
+    - **It is sealed.** Yours is committed the moment TradeAgent has it and is not delivered to the
+      other director until theirs exists too; then both arrive at once. You cannot revise it and a
+      second one is not published, so write the one you mean.
+    - **One challenge, and it belongs to the boundary rather than to you.** Once both assessments
+      have been delivered, either of you may write `out/challenge-<attempt>.md`, also at most 20
+      lines. The first one published is the only one there is; the second is refused whoever wrote
+      it.
+    - **The deadline is answered by TradeAgent and not by either of you.** At the deadline, or once
+      the one challenge has been made, the app writes the disposition the policy fixed when the
+      boundary opened. Saying nothing is not a veto: it is the default being applied without your
+      reading in it.
+
     {RoleSection(c.Role)}
     Write down what you did and why as you go, in `trading/`. The person who owns this account is
     trusting software they cannot read. A clear record is part of the job.

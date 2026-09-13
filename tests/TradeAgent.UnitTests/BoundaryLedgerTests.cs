@@ -1,3 +1,4 @@
+using System.Reflection;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Db;
@@ -296,6 +297,37 @@ public class BoundaryLedgerTests
         CreatedAt = At,
         Content = text
     };
+
+    /// <summary>
+    /// NO PIPE OP AND NO <c>trade</c> VERB REACHES A BOUNDARY, AND NO METHOD TAKES A DISPOSITION.
+    ///
+    /// <para>`CLAUDE.md`: operator authority is in-process only and an agent that wants more permission
+    /// has nowhere to ask. A boundary is not a permission by itself, but a caller that could open one
+    /// would manufacture senior spend at will, one that could dispose one would decide what deploys, and
+    /// one that could release a seal would read the other director's assessment before writing its own.
+    /// Checked over the SHIPPED vocabulary rather than by reading the code, because what this guards
+    /// against is a later unit adding a convenient op.</para>
+    /// </summary>
+    [Fact]
+    public void No_verb_and_no_pipe_op_names_a_boundary_an_assessment_or_a_challenge()
+    {
+        var ops = string.Join(" ", typeof(Ops).GetFields()
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!));
+
+        Assert.DoesNotContain("boundary", ops, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("assessment", ops, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("challenge", ops, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("disposition", ops, StringComparison.OrdinalIgnoreCase);
+
+        // AND NOTHING ANYWHERE TAKES A DISPOSITION FROM A CALLER. `Open` takes the POLICY'S default,
+        // which is the precommitment; nothing takes the answer.
+        Assert.DoesNotContain(typeof(CouncilBoundaries).GetMethods(), m =>
+            m.Name.Contains("Dispose", StringComparison.OrdinalIgnoreCase)
+            || m.Name.Contains("Override", StringComparison.OrdinalIgnoreCase)
+            || m.Name.Contains("Delete", StringComparison.OrdinalIgnoreCase)
+            || m.Name.Contains("Update", StringComparison.OrdinalIgnoreCase));
+    }
 
     static List<string> Columns(Database db, string table) => db.Read(_ =>
     {

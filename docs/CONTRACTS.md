@@ -1543,10 +1543,17 @@ the role would let a replacement team start again (`docs/COUNCIL.md`:131, "survi
 three parts are content hashes or the app's own id, so the same program over the same bytes under the same
 execution model is ONE trial however often it is asked for, and a different window or fee is a different
 trial because it is a different peek. `kind` is the dataset's `evaluation_class` **as it stood at
-registration**, copied rather than joined; a `fixture` run is charged nothing and is never evidence. The
-budget is checked **before** the run (`Backtests.Run`, `CAMPAIGN_BUDGET_REACHED`) and the trial is
-registered in the **same transaction as the run row** — a run without its trial is a peek nobody was
-charged for. A dataset with no holdout has no campaign, so runs over it are charged nothing at all.
+registration**, copied rather than joined; a `fixture` run is charged nothing and is never evidence. `CampaignStore.TrialRefusal` is asked **before** the run
+(`Backtests.Run`, `CAMPAIGN_BUDGET_REACHED`) and is a LOOK, not the gate: it reads the count in its own
+transaction and the run takes minutes, so two roles asking for the last trial both pass it honestly. **The
+gate is `RegisterTrial`, which reads the count and writes the row in ONE `Database.Write`**, in the same
+transaction as the run row — a run without its trial is a peek nobody was charged for, and a budget two
+concurrent callers can exceed by one is not the campaign-wide limit `docs/COUNCIL.md`:36 asks for. A
+refusal there **rolls the run back and its figures are never served**: the compute is spent either way,
+and the alternative is a run over the held-back data standing in the ledger charged to nobody. A trial
+already registered answers Ok even over a full budget — the same question asked again is the row that is
+already there, and refusing it would make a restart look like an overrun. A dataset with no holdout has no
+campaign, so runs over it are charged nothing at all.
 
 **`Referee.RequestVerdict(version, campaign)` charges before anything runs, and the charge is what opens
 the door.** The row is written by the request, not by the answer: a budget checked after the holdout run
@@ -1560,6 +1567,41 @@ holdout dataset and no other, and a refused charge answers a refusal rather than
 itself is `U-referee-2`** — the holdout run, the promotion record, invalidation, forward evidence and the
 delivery — and `strategy_verdict` carries no outcome column: this is the budget and the precommitment,
 which are the half that cannot be added after a holdout has been read.
+
+## The consequential boundary — `src/TradeAgent.Core/Db/BoundaryStore.cs`
+
+**`docs/COUNCIL.md`:59-65 in code, and every clause of it is the app's.** A boundary is opened by the app
+(today: `Referee.Verdict`, in the same transaction as the promotion), keyed
+`kind:entity:revision` — for a promotion, the VERSION and the CAMPAIGN, so re-asking one question buys
+nothing and the same version under a renewed campaign is a new question worth the spend. Opening one
+inserts two `mission_event` rows, one per director: **two assessments are two turns** (:63), and the ids
+are `MissionEventIds.ForRole(Boundary(id), role)`, so a restart, a retry or a re-proposal raises ids the
+table already holds. The UNIQUE index on `(kind, entity, revision)` states the key beside the primary key.
+
+**The seal is enforced by the app.** An `assessment` publication is committed at once — hashed,
+attributed, unrevisable — and its delivery is written `withheld`, a STATE rather than the absence of a
+row, because "not delivered yet" is what `committed` already means and a restart cannot tell a delivery
+the app is holding from one that merely failed. `CouncilBoundaries.Release`, run by `CouncilRelay.Deliver`,
+flips **both together** once both exist. A second assessment from one director over one boundary is
+refused in words, and `PRIMARY KEY(boundary_id, role, kind)` is the same refusal in SQL.
+
+**One challenge per boundary, from either director, after both assessments are delivered** — capped at
+`CouncilRelay.ReportLines`, delivered normally because it is worth the peer one turn, and a partial UNIQUE
+index refuses the second. **Which boundary a submission answers is the APP's choice** (the oldest open one
+this role has not answered), for the reason `CouncilRelay.KindFor` decides what a role's output IS: a
+director that chose could answer the easy boundary and let the deadline run out on the other.
+
+**The disposition is written by code and by nothing else.** `default_disposition` is frozen AT OPEN — for
+a promotion, `Promotions.Standing(version).IsPromoted ? deploy : hold` — because a default computed when
+the clock expires is a default chosen once the outcome is known. `CouncilBoundaries.ApplyDue`, called at
+the top of every `MissionLoop.TurnAsync` and launching nothing, writes it when the deadline passes or when
+the challenge window closes (both assessments delivered and the one challenge made); `MissionLoop.Idle`
+sleeps until the earliest deadline, so it happens on the app's clock rather than whenever an agent
+next runs. `disposed_by` can only ever read `policy`: **there is no method that takes a disposition from a
+caller**, no pipe op and no `trade` verb anywhere near any of it. Section 9 of the owner's report lists
+every boundary with its evidence, its owner and its deadline (rule 10), and an open one past its deadline
+reads OVERDUE. **The window is 24 hours and is NOT a setting** — a deadline the owner could shorten under
+evidence being gathered, or lengthen to hold an eligible deployment, is the veto :62 forbids.
 
 ## The verdict — `src/TradeAgent.Core/Db/PromotionStore.cs`, `Strategy/Referee.cs`
 
