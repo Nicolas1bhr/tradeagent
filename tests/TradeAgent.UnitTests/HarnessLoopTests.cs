@@ -182,7 +182,7 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
 
         /// <summary>The one committed transition, as <c>AppHost</c> wires it.</summary>
         public void CommitTurn(string role, string? attempt, Action dispositions) =>
-            _relay.CommitTurn(role, attempt, () => Meter.CommitStaged(), dispositions);
+            _relay.CommitTurn(role, attempt, () => Meter.CommitStaged(role), dispositions);
 
         public MissionDelivery? Delivered(string publicationId)
         {

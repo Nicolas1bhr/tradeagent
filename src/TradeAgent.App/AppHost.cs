@@ -1039,7 +1039,7 @@ public sealed class AppHost : IAsyncDisposable
         /// queue, and to nothing that decides what the AI is allowed to do.
         /// </summary>
         public void CommitTurn(string role, string? attempt, Action dispositions) =>
-            host.Relay.CommitTurn(role, attempt, () => host.Meter?.CommitStaged(), dispositions);
+            host.Relay.CommitTurn(role, attempt, () => host.Meter?.CommitStaged(role), dispositions);
 
         /// <summary>
         /// The id the next launch will carry, minted by the meter so the turn's message can name it.

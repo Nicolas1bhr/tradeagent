@@ -114,7 +114,7 @@ public class TurnAllowanceTests : IDisposable
         /// </summary>
         public void CommitTurn(string role, string? attempt, Action dispositions)
         {
-            meter.CommitStaged();
+            meter.CommitStaged(role);
             dispositions();
         }
 

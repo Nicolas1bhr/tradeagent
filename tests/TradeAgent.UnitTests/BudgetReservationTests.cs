@@ -193,7 +193,7 @@ public class BudgetReservationTests : IDisposable
         {
             Usage = new TurnUsage(1_000, 0, 0, 10, 0, null)
         }, CouncilRoles.Research);
-        meter.CommitStaged();               // the mission loop's own commit, which is where its close lands
+        meter.CommitStaged(CouncilRoles.Research);   // the mission loop's own commit, where this role's close lands
 
         var rows = store.Between(now.AddDays(-1), now.AddDays(1));
         Assert.Equal(2, rows.Count);
@@ -209,6 +209,56 @@ public class BudgetReservationTests : IDisposable
         var typed = Assert.Single(rows, r => r.Id != research.Id);
         Assert.Equal(CouncilRoles.Operations, typed.Role);
         Assert.Equal((17_232m * 1m + 6m * 4m) / 1_000_000m, typed.Cost);
+    }
+
+    /// <summary>
+    /// ITEM 2, RED FIRST: TWO ROLES' TURNS OVERLAP, AND EACH CLOSE LANDS IN ITS OWN ROLE'S
+    /// TRANSITION.
+    ///
+    /// <para>The close of a mission turn is measured when the runtime reports its usage and HELD
+    /// until the loop's own committed transition (<c>docs/COUNCIL.md</c> rule 6). That hold was ONE
+    /// slot. With two roles turning, the second role to end overwrote the first one's held close, so
+    /// the first role's commit wrote the OTHER role's close — inside the first role's transaction,
+    /// against the first role's published work — and the first role's row stayed LAUNCHED until a
+    /// restart declared it LOST and charged it its reservation. One turn resolved twice and one turn
+    /// never resolved at all, out of two turns that both ran.</para>
+    ///
+    /// <para>It is keyed by role and carries the attempt the close belongs to, so a commit can only
+    /// ever write the row its own turn opened.</para>
+    /// </summary>
+    [Fact]
+    public void Two_roles_ending_before_either_commits_each_close_their_own_launch()
+    {
+        var now = DateTimeOffset.Now;
+        var meter = Meter(50m, () => now);                      // room for both turns
+        var store = new AiAttemptStore(_db);
+
+        var chair = meter.Begin("## Situation", role: CouncilRoles.Operations).Id!;
+        var research = meter.Begin("## Situation", role: CouncilRoles.Research).Id!;
+
+        // The chair's process ends first. Its close is metered and held for the chair's commit.
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(4), "", now)
+        {
+            Usage = new TurnUsage(1_000, 0, 0, 10, 0, null)
+        }, CouncilRoles.Operations);
+
+        // The Research Director's ends a moment later — before the chair's transition has run.
+        meter.Record(new AgentTurnEnded(0, TimeSpan.FromSeconds(6), "", now)
+        {
+            Usage = new TurnUsage(2_000, 0, 0, 20, 0, null)
+        }, CouncilRoles.Research);
+
+        // THE CHAIR'S OWN COMMITTED TRANSITION. It closes the chair's launch and nothing else.
+        Assert.True(meter.CommitStaged(CouncilRoles.Operations));
+        Assert.Equal(AiAttemptState.ENDED, store.Get(chair)!.State);
+        Assert.Equal(AiAttemptState.LAUNCHED, store.Get(research)!.State);
+
+        // AND THEN THE RESEARCH DIRECTOR'S, with its own usage on its own row.
+        Assert.True(meter.CommitStaged(CouncilRoles.Research));
+        Assert.Equal(AiAttemptState.ENDED, store.Get(research)!.State);
+
+        Assert.Equal((1_000m * 1m + 10m * 4m) / 1_000_000m, store.Get(chair)!.Cost);
+        Assert.Equal((2_000m * 1m + 20m * 4m) / 1_000_000m, store.Get(research)!.Cost);
     }
 
     /// <summary>

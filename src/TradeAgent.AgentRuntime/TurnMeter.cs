@@ -457,8 +457,15 @@ public sealed class TurnMeter
     /// <para><b>Nothing is lost if it is never committed.</b> The row stays LAUNCHED, and the next
     /// meter to open this database turns it LOST with its reservation as its cost. That is the
     /// conservative reading and it is the one this whole table exists to keep.</para>
+    ///
+    /// <para><b>ONE PER ROLE, CARRYING THE ATTEMPT IT CLOSES.</b> It was a single slot while one
+    /// turn ran at a time. With two roles turning, the second to end overwrote the first one's held
+    /// close, so the first role's committed transition wrote the OTHER role's close — inside the
+    /// first role's transaction, against the first role's published work — and the first role's row
+    /// stayed LAUNCHED until a restart declared it LOST. The attempt id is kept beside the write so
+    /// a commit can say which launch it is closing rather than trusting the slot it came out of.</para>
     /// </summary>
-    Action? _staged;
+    readonly Dictionary<string, (string? Attempt, Action Write)> _staged = [];
 
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
@@ -568,7 +575,7 @@ public sealed class TurnMeter
             try { Write(); }
             catch (Exception) { /* a database that cannot be written must not end the turn */ }
         }
-        else lock (_gate) _staged = Write;
+        else lock (_gate) _staged[Key(role)] = (id, Write);
 
         Changed?.Invoke();
     }
@@ -582,10 +589,20 @@ public sealed class TurnMeter
     /// Called with nothing held it does nothing, which is the right answer for a turn that was
     /// never metered at all.
     /// </summary>
-    public bool CommitStaged()
+    /// <param name="role">
+    /// WHOSE TRANSITION THIS IS. Only that role's held close is written: another role's turn may be
+    /// in flight, or ended and waiting for its own commit, and writing it here would put its close
+    /// inside this role's transaction. A caller that names none is the chair's, which is what a
+    /// launch with no role has always meant.
+    /// </param>
+    public bool CommitStaged(string? role = null)
     {
         Action? write;
-        lock (_gate) { write = _staged; _staged = null; }
+        lock (_gate)
+        {
+            if (!_staged.Remove(Key(role), out var staged)) return false;
+            write = staged.Write;
+        }
         if (write is null) return false;
 
         write();
@@ -634,7 +651,11 @@ public sealed class TurnMeter
         // transition that should have carried it never ran — a cancelled turn, a host with no
         // commit behind it — and writing it now is late rather than wrong. Leaving it would hold a
         // whole reservation against the day's ceiling for a turn that has already ended.
-        try { CommitStaged(); }
+        //
+        // THIS ROLE'S OWN, and no further. The other role may be mid-turn, or ended and waiting for
+        // its own transition, and draining its close here would write it outside the transaction it
+        // belongs in — which is the defect this slot was split to remove, reintroduced by the drain.
+        try { CommitStaged(role); }
         catch (Exception) { /* the row stays LAUNCHED and the next restart loses it, which is safe */ }
 
         string id;

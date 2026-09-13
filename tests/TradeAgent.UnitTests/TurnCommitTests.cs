@@ -121,7 +121,7 @@ public class TurnCommitTests
             relay.Boundary = at => { if (at == boundary) throw new IOException($"killed at the {at}"); };
 
             Assert.Throws<IOException>(() => relay.CommitTurn(CouncilRoles.Research, attempt,
-                () => meter.CommitStaged(),
+                () => meter.CommitStaged(CouncilRoles.Research),
                 () => wakes.Settle("review:1", MissionEventDisposition.Answered)));
 
             dying.Dispose();
@@ -186,7 +186,7 @@ public class TurnCommitTests
         meter.Record(Ended(world.At), CouncilRoles.Research);
 
         world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
-            () => meter.CommitStaged(),
+            () => meter.CommitStaged(CouncilRoles.Research),
             () => wakes.Settle("review:1", MissionEventDisposition.Answered));
 
         var row = new AiAttemptStore(db).Get(attempt)!;
@@ -227,7 +227,7 @@ public class TurnCommitTests
         meter.Record(Ended(world.At), CouncilRoles.Research);
 
         world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
-            () => meter.CommitStaged(), () => { });
+            () => meter.CommitStaged(CouncilRoles.Research), () => { });
 
         Assert.Equal([1, 2, 3],
             new PublicationStore(db).By(CouncilRoles.Research).Select(p => p.Revision));
@@ -253,7 +253,7 @@ public class TurnCommitTests
 
         Assert.Throws<InvalidOperationException>(() =>
             world.RelayOver(db).CommitTurn(CouncilRoles.Research, attempt,
-                () => meter.CommitStaged(),
+                () => meter.CommitStaged(CouncilRoles.Research),
                 () => throw new InvalidOperationException("the queue could not be written")));
 
         Assert.Equal(AiAttemptState.LAUNCHED, new AiAttemptStore(db).Get(attempt)!.State);
@@ -290,7 +290,8 @@ public class TurnCommitTests
             if (at == CouncilRelay.AfterCommit)
                 Assert.Equal(tooLong, world.Read(CouncilRoles.Research, "trading/PLAN.md"));
         };
-        relay.CommitTurn(CouncilRoles.Research, attempt, () => meter.CommitStaged(), () => { });
+        relay.CommitTurn(CouncilRoles.Research, attempt,
+            () => meter.CommitStaged(CouncilRoles.Research), () => { });
 
         Assert.Equal(good, world.Read(CouncilRoles.Research, "trading/PLAN.md"));
         Assert.Single(Of(db, PublicationKind.Plan));
