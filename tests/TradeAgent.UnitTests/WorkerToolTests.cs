@@ -332,11 +332,20 @@ public class WorkerToolTests : IAsyncLifetime
     /// a fresh database gains. Before the migration there was no <c>tool_call</c> at all, so there was
     /// nowhere for an observed delivery to be recorded and round 4's "unrestricted CLI reads remain
     /// unobserved" was still the whole story.
+    ///
+    /// <para><b>A FLOOR AND NOT A PIN</b>, which is the shape this unit's own four inherited expectations
+    /// were changed to and which its report named as the trap. The table arrives at 13; what a LATER
+    /// migration takes the ladder to is that migration's business, and an equality here makes every
+    /// additive rung above this one edit a test about the rung below it. `U-referee-1`'s schema 14 was
+    /// the next one, and it went red here for exactly that reason. What is asserted instead is what this
+    /// test is about: 13 is reached, the table is there, and the number a fresh database is stamped with
+    /// is the number this build says it supports.
     /// </summary>
     [Fact]
     public void The_schema_this_build_carries_the_tool_call_ledger_at_thirteen()
     {
-        Assert.Equal(13, Versions.DatabaseSchemaVersion);
+        Assert.True(Versions.DatabaseSchemaVersion >= 13,
+            $"the tool_call ledger needs schema 13 or later; this build says {Versions.DatabaseSchemaVersion}");
 
         using var fresh = TestEnv.NewDb();
         using var table = fresh.Cmd(
@@ -344,7 +353,9 @@ public class WorkerToolTests : IAsyncLifetime
         Assert.Equal(1L, Convert.ToInt64(table.ExecuteScalar()));
 
         using var version = fresh.Cmd("SELECT value FROM meta WHERE key='schema_version'");
-        Assert.Equal("13", version.ExecuteScalar() as string);
+        Assert.Equal(
+            Versions.DatabaseSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.ExecuteScalar() as string);
     }
 
     /// <summary>
