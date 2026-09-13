@@ -1,12 +1,13 @@
 using System.Globalization;
+using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using TradeAgent.Security;
-using TradeAgent.TradeCli;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -27,15 +28,62 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
 
     static string NewPipe() => "ta-bt-" + Guid.NewGuid().ToString("n")[..12];
 
-    static async Task<(TradingGateway Gw, Database Db, PipeClient Client, IAsyncDisposable Server)> Connected()
+    /// <summary>
+    /// A GATEWAY, AND A CONNECTION THAT HAS PROVED WHICH LAUNCH IT IS.
+    ///
+    /// <para>The hello carries the launch grant the app minted for that role's process, which is what
+    /// `U-containment` made the pipe's idea of who is calling. A backtest is recorded under a role and
+    /// reads that role's own folder, so a connection that proved nothing is refused the op — these
+    /// tests therefore speak the wire by hand, as <c>LaunchGrantTests</c> does, rather than through
+    /// <c>PipeClient</c>, whose hello reads the grant out of the process environment.</para>
+    /// </summary>
+    static async Task<(TradingGateway Gw, Database Db, Raw Client, IAsyncDisposable Server, AgentGrants Grants)>
+        Connected(string? role = CouncilRoles.Operations, string attempt = "attempt-1")
     {
         var (gw, _, db) = await TestEnv.Ready();
         var pipe = NewPipe();
-        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
+        var grants = new AgentGrants();
+        var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe) { Grants = grants };
         server.Start();
-        var client = new PipeClient();
-        await client.ConnectAsync(10_000, pipe);
-        return (gw, db, client, server);
+
+        var client = await Raw.ConnectAsync(pipe);
+        var grant = role is null ? null : grants.Issue(role, attempt).Token;
+        var hello = await client.SendAsync(new IpcRequest { Op = Ops.Hello, Token = IpcToken.Ensure(), Grant = grant });
+        Assert.True(hello.Ok, Json.Write(hello.Error));
+
+        return (gw, db, client, server, grants);
+    }
+
+    /// <summary>The wire by hand: the machine token on every frame, and the grant on the hello.</summary>
+    sealed class Raw : IAsyncDisposable
+    {
+        NamedPipeClientStream _pipe = null!;
+        StreamReader _r = null!;
+        StreamWriter _w = null!;
+
+        public static async Task<Raw> ConnectAsync(string pipeName)
+        {
+            var c = new Raw { _pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous) };
+            await c._pipe.ConnectAsync(5000);
+            c._r = new StreamReader(c._pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            c._w = new StreamWriter(c._pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            return c;
+        }
+
+        public async Task<IpcResponse> SendAsync(IpcRequest req)
+        {
+            req.Token ??= IpcToken.Ensure();
+            await _w.WriteLineAsync(Json.Write(req));
+            var line = await _r.ReadLineAsync() ?? throw new IOException("the gateway closed the connection");
+            return Json.Read<IpcResponse>(line) ?? throw new IOException("unreadable reply");
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _r.Dispose();
+            _w.Dispose();
+            return _pipe.DisposeAsync();
+        }
     }
 
     static JsonElement Data(IpcResponse r) => JsonSerializer.SerializeToElement(r.Data, Json.Options);
@@ -58,9 +106,10 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     /// `U-crlf-strategy-win` defect with a strategy in it, so the app normalises as it reads and this is
     /// the fixture that holds it to that.</para>
     /// </summary>
-    static string GivenProgram(string text = Text, string name = "over-the-pipe.strategy")
+    static string GivenProgram(
+        string text = Text, string name = "over-the-pipe.strategy", string role = CouncilRoles.Operations)
     {
-        var dir = Path.Combine(Paths.RoleHome(CouncilRoles.Operations), "strategies");
+        var dir = Path.Combine(Paths.RoleHome(role), "strategies");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, name), text.ReplaceLineEndings("\r\n"));
         return "strategies/" + name;
@@ -103,7 +152,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_backtest_over_the_pipe_answers_the_run_id_and_the_metrics_the_app_computed()
     {
-        var (gw, db, client, server) = await Connected();
+        var (gw, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -158,7 +207,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_figure_the_run_could_not_compute_crosses_as_a_null_with_a_reason_beside_it()
     {
-        var (_, db, client, server) = await Connected();
+        var (_, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -193,7 +242,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_program_path_outside_the_role_folder_is_refused_over_the_wire()
     {
-        var (_, db, client, server) = await Connected();
+        var (_, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -210,7 +259,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
             log.WriteLine(Json.Write(reply.Error));
             Assert.False(reply.Ok);
             Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
-            Assert.Contains("outside your role folder", reply.Error.Message);
+            Assert.Contains("outside the Operations Director's own folder", reply.Error.Message);
         }
     }
 
@@ -218,7 +267,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_program_that_does_not_parse_is_refused_over_the_wire_naming_the_line()
     {
-        var (gw, db, client, server) = await Connected();
+        var (gw, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -242,7 +291,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task A_rejected_dataset_serves_no_run_over_the_wire()
     {
-        var (_, db, client, server) = await Connected();
+        var (_, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -271,7 +320,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task The_reports_nothing_has_been_backtested_line_goes_once_a_run_exists()
     {
-        var (_, db, client, server) = await Connected();
+        var (_, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -308,7 +357,7 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
     [Fact]
     public async Task The_backtest_op_is_dispatched_and_is_in_the_deadline_table_at_zero()
     {
-        var (_, db, client, server) = await Connected();
+        var (_, db, client, server, _) = await Connected();
         using var _1 = db;
         await using var _2 = server;
         await using var _3 = client;
@@ -324,4 +373,133 @@ public class BacktestOverPipeTests(ITestOutputHelper log)
         Assert.False(Ops.IsMutating(Ops.Backtest));
     }
 
+    /// <summary>
+    /// A LAUNCH READS ITS OWN ROLE'S FOLDER, AND ITS RUN IS RECORDED AS ITS OWN.
+    ///
+    /// <para>The same relative name — <c>strategies/shared-name.strategy</c> — exists in BOTH homes and
+    /// holds a DIFFERENT program in each. A Research launch asking for it must get the Research copy and
+    /// a run attributed to Research. Before the caller's identity reached the runner, the resolver tried
+    /// the chair's home first and won there: the chair's program was run and the run was recorded as the
+    /// chair's, which is a result about a program Research never wrote appearing in its lineage.</para>
+    ///
+    /// <para>The attempt comes from the grant too, so a row can be traced to the launch that asked for
+    /// it rather than only to a role.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_research_launch_reads_its_own_copy_of_a_name_both_roles_have_and_the_run_is_its_own()
+    {
+        var (gw, db, client, server, _) = await Connected(CouncilRoles.Research, "attempt-r1");
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+        var set = GivenData(db);
+
+        // The chair's copy enters above 103; Research's enters above 104. Two programs, two ids.
+        GivenProgram(Text, "shared-name.strategy", CouncilRoles.Operations);
+        var researchText = Text.Replace("close > 103", "close > 104");
+        GivenProgram(researchText, "shared-name.strategy", CouncilRoles.Research);
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research",
+            Args = Args(("strategy", "strategies/shared-name.strategy"),
+                ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+        });
+
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var data = Data(reply);
+        log.WriteLine(Json.Write(reply.Data));
+
+        Assert.Equal(CouncilRoles.Research, data.GetProperty("role").GetString());
+
+        // THE PROGRAM IT RAN IS RESEARCH'S OWN, by its id: the chair's copy is a different version.
+        var chairs = StrategyParser.Parse(Text).Program!.StrategyId;
+        var researchs = StrategyParser.Parse(researchText).Program!.StrategyId;
+        Assert.NotEqual(chairs, researchs);
+        Assert.Equal(researchs, data.GetProperty("version_id").GetString());
+
+        var version = gw.Strategies.VersionById(researchs);
+        Assert.NotNull(version);
+        Assert.Equal(CouncilRoles.Research, version.Role);
+        Assert.Equal("attempt-r1", version.Attempt);
+
+        var run = gw.Strategies.RunById(data.GetProperty("run_id").GetString()!);
+        Assert.NotNull(run);
+        Assert.Equal(CouncilRoles.Research, run.Role);
+        Assert.Equal("attempt-r1", run.Attempt);
+
+        // And the chair's version was never even parsed: nothing of the other role is in the ledger.
+        Assert.Null(gw.Strategies.VersionById(chairs));
+    }
+
+    /// <summary>
+    /// THE OTHER ROLE'S FOLDER IS OUTSIDE YOURS, and is refused exactly as the database is.
+    ///
+    /// <para>A role home is not a shared library. Research reaching into the chair's folder would be
+    /// reading work it was not given, and the refusal says which folder the program has to be in.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_launch_cannot_read_a_program_out_of_the_other_roles_folder()
+    {
+        var (gw, db, client, server, _) = await Connected(CouncilRoles.Research, "attempt-r2");
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+        var set = GivenData(db);
+
+        GivenProgram(Text, "chairs-own.strategy", CouncilRoles.Operations);
+        var chairsPath = Path.Combine(Paths.RoleHome(CouncilRoles.Operations), "strategies", "chairs-own.strategy");
+
+        foreach (var path in new[] { chairsPath, "../agent/strategies/chairs-own.strategy" })
+        {
+            var reply = await client.SendAsync(new IpcRequest
+            {
+                Op = Ops.Backtest, Session = "research",
+                Args = Args(("strategy", path), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+            });
+
+            log.WriteLine(Json.Write(reply.Error));
+            Assert.False(reply.Ok);
+            Assert.Equal(nameof(ErrorCode.INVALID_REQUEST), reply.Error!.Code);
+            Assert.Contains("outside the Research Director's own folder", reply.Error.Message);
+        }
+
+        Assert.Equal(0, gw.Strategies.RunCount);
+    }
+
+    /// <summary>
+    /// A CALLER THAT PROVED NO LAUNCH IS REFUSED THE OP, and told how a launch proves itself.
+    ///
+    /// <para>Every process on the agent's side of the fence can read the machine token, so a connection
+    /// with no grant is authenticated and is nobody. A run is recorded under a role and reads a role's
+    /// folder; there is no honest role to give this caller, and the reading every other table uses — a
+    /// row with no role is the chair's — is exactly the one `U-containment` established must not be
+    /// applied to a live caller.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_connection_that_proved_no_launch_is_refused_the_backtest()
+    {
+        var (gw, db, client, server, _) = await Connected(role: null);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+        var set = GivenData(db);
+        GivenProgram();
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "nobody",
+            Args = Args(("strategy", "strategies/over-the-pipe.strategy"),
+                ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)))
+        });
+
+        log.WriteLine(Json.Write(reply.Error));
+        Assert.False(reply.Ok);
+        Assert.Contains("launch grant", reply.Error!.Message);
+        Assert.Equal(0, gw.Strategies.RunCount);
+
+        // A read it may still do: the refusal is about what this caller can be recorded AS, not about
+        // whether it may speak.
+        Assert.True((await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "nobody" })).Ok);
+    }
 }

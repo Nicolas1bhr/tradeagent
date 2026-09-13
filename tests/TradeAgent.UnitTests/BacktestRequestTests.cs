@@ -35,6 +35,13 @@ public class BacktestRequestTests(ITestOutputHelper log)
         entry when close > 103
         """;
 
+    /// <summary>
+    /// A CALLER THAT PROVED A LAUNCH: the role and the attempt a grant carries, as the pipe server
+    /// builds them (<c>AgentContext.ForAgent(session, grant.Role, grant.AttemptId)</c>).
+    /// </summary>
+    static AgentContext Caller(string role = CouncilRoles.Operations, string attempt = "attempt-1") =>
+        AgentContext.ForAgent(role, role, attempt);
+
     /// <summary>Writes a program into one role's own folder and answers the path the agent would type.</summary>
     static string GivenProgram(string role = CouncilRoles.Operations, string text = Text, string name = "x.strategy")
     {
@@ -73,20 +80,20 @@ public class BacktestRequestTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// A PROGRAM IS READ FROM INSIDE A ROLE'S FOLDER, AND THE ROLE IS THE FOLDER IT WAS IN.
+    /// A PROGRAM IS READ FROM THE CALLER'S OWN FOLDER, AND THE RUN IS RECORDED UNDER ITS OWN LAUNCH.
     ///
-    /// <para>The role is a MEASUREMENT — which home the file was actually under — and not a claim the
-    /// caller made, because the pipe does not yet carry an authenticated role and a role an agent could
-    /// name is a role it could name somebody else's.</para>
+    /// <para>The role and the attempt come from the launch grant the caller presented — not from the
+    /// folder the file turned out to be in, which is something an agent can arrange, and not from a
+    /// default. A run credited to the wrong role is a result in a lineage that role did not produce.</para>
     /// </summary>
     [Fact]
-    public async Task A_program_in_a_roles_own_folder_runs_and_the_run_is_recorded_against_that_role()
+    public async Task A_program_in_the_callers_own_folder_runs_and_the_run_is_recorded_under_its_launch()
     {
         var (gw, _, db) = await TestEnv.Ready();
         using var _1 = db;
         var set = GivenData(db);
 
-        var ran = gw.Backtests.Run(new BacktestAsk(
+        var ran = gw.Backtests.Run(Caller(CouncilRoles.Research, "attempt-r9"), new BacktestAsk(
             GivenProgram(CouncilRoles.Research, name: "research-only.strategy"), set.Id, Fees: 0.001m));
 
         Assert.Equal(CouncilRoles.Research, ran.Role);
@@ -96,7 +103,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var version = gw.Strategies.VersionById(ran.Program.StrategyId);
         Assert.NotNull(version);
         Assert.Equal(CouncilRoles.Research, version.Role);
-        Assert.Null(version.Attempt);                       // the pipe carries no attested attempt yet
+        Assert.Equal("attempt-r9", version.Attempt);        // the launch, off the grant
 
         var run = gw.Strategies.RunById(ran.Result.RunId);
         Assert.NotNull(run);
@@ -106,8 +113,10 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.Equal(ran.Result.Trace.Sha256, run.TraceSha256);
         Assert.Equal(ran.Result.Trades.Count, gw.Strategies.TradesOf(ran.Result.RunId).Count);
 
+        Assert.Equal("attempt-r9", run.Attempt);
+
         // The same request again is the same run: one row, not two.
-        gw.Backtests.Run(new BacktestAsk(
+        gw.Backtests.Run(Caller(CouncilRoles.Research, "attempt-r9"), new BacktestAsk(
             Path.Combine("strategies", "research-only.strategy"), set.Id, Fees: 0.001m));
         Assert.Equal(1, gw.Strategies.RunCount);
     }
@@ -130,11 +139,11 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var set = GivenData(db);
 
         var refused = Assert.Throws<GatewayDeniedException>(
-            () => gw.Backtests.Run(new BacktestAsk(path, set.Id)));
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(path, set.Id)));
 
         log.WriteLine(refused.Message);
         Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Code);
-        Assert.Contains("outside your role folder", refused.Message);
+        Assert.Contains("own folder", refused.Message);
     }
 
     /// <summary>The same rule for an absolute path, including one the app's own state lives at.</summary>
@@ -150,15 +159,15 @@ public class BacktestRequestTests(ITestOutputHelper log)
         File.WriteAllText(elsewhere, Text);
 
         var refused = Assert.Throws<GatewayDeniedException>(
-            () => gw.Backtests.Run(new BacktestAsk(elsewhere, set.Id)));
-        Assert.Contains("outside your role folder", refused.Message);
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(elsewhere, set.Id)));
+        Assert.Contains("own folder", refused.Message);
 
         // And a sibling directory whose name merely starts with a role home's is not inside it.
-        var sibling = Paths.RoleHome(CouncilRoles.Research) + "-elsewhere";
+        var sibling = Paths.RoleHome(CouncilRoles.Operations) + "-elsewhere";
         Directory.CreateDirectory(sibling);
         File.WriteAllText(Path.Combine(sibling, "x.strategy"), Text);
-        Assert.Contains("outside your role folder", Assert.Throws<GatewayDeniedException>(
-            () => gw.Backtests.Run(new BacktestAsk(Path.Combine(sibling, "x.strategy"), set.Id))).Message);
+        Assert.Contains("own folder", Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(Path.Combine(sibling, "x.strategy"), set.Id))).Message);
     }
 
     /// <summary>
@@ -175,7 +184,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         using var _1 = db;
         var set = GivenData(db);
 
-        var refused = Assert.Throws<GatewayDeniedException>(() => gw.Backtests.Run(new BacktestAsk(
+        var refused = Assert.Throws<GatewayDeniedException>(() => gw.Backtests.Run(Caller(), new BacktestAsk(
             GivenProgram(text: """
                 instrument BTCUSDT
                 size fixed 1
@@ -199,7 +208,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var set = GivenData(db);
 
         var refused = Assert.Throws<GatewayDeniedException>(() => gw.Backtests.Run(
-            new BacktestAsk(GivenProgram(), set.Id, Fees: 0.1m)));
+            Caller(), new BacktestAsk(GivenProgram(), set.Id, Fees: 0.1m)));
 
         Assert.Contains("basis points", refused.Message);
         Assert.Equal(0, gw.Strategies.RunCount);
@@ -227,12 +236,12 @@ public class BacktestRequestTests(ITestOutputHelper log)
         runner = new Backtests(gw, db, () =>
         {
             if (refusal is null)
-                try { runner!.Run(ask); }
+                try { runner!.Run(Caller(), ask); }
                 catch (GatewayDeniedException ex) { refusal = ex.Message; }
             return At;
         });
 
-        runner.Run(ask);
+        runner.Run(Caller(), ask);
 
         Assert.NotNull(refusal);
         log.WriteLine(refusal);
@@ -240,7 +249,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.Contains("One at a time per role", refusal);
 
         // And the guard is released afterwards: the next request runs.
-        Assert.NotNull(runner.Run(ask).Result);
+        Assert.NotNull(runner.Run(Caller(), ask).Result);
     }
 
     /// <summary>
@@ -260,7 +269,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.Contains(before.Research.Missing, g => g.Why.Contains("nothing has been backtested"));
         Assert.Contains(before.Research.AppMetrics, m => m.Contains("BTCUSDT"));   // the dataset IS listed
 
-        gw.Backtests.Run(new BacktestAsk(GivenProgram(), set.Id, Fees: 0.001m));
+        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id, Fees: 0.001m));
 
         var after = gw.Reports.Compose(DateTimeOffset.Now);
         var text = DailyReportText.Render(after);
@@ -286,7 +295,7 @@ public class BacktestRequestTests(ITestOutputHelper log)
         var (gw, _, db) = await TestEnv.Ready();
         using var _1 = db;
         var set = GivenData(db);
-        gw.Backtests.Run(new BacktestAsk(GivenProgram(), set.Id));
+        gw.Backtests.Run(Caller(), new BacktestAsk(GivenProgram(), set.Id));
 
         new PublicationStore(db).Commit(new Publication
         {
@@ -304,6 +313,108 @@ public class BacktestRequestTests(ITestOutputHelper log)
         Assert.DoesNotContain(report.Research.AppMetrics, m => m.Contains("Research Director published"));
         Assert.Contains(report.Research.AgentClaims, c => c.Contains("Research Director published"));
         Assert.Contains(report.Research.AppMetrics, m => m.StartsWith("backtest ", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A PATH THE OS WILL NOT NORMALISE IS REFUSED IN WORDS, NOT THROWN AS AN UNKNOWN ERROR.
+    ///
+    /// <para>Every one of these arrives from an agent, and an exception out of here reaches it as
+    /// UNKNOWN_ERROR — which tells it nothing it can act on. The parser is total over its input for the
+    /// same reason; so is this.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("x\u0000y.strategy")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task A_path_this_machine_cannot_read_as_one_is_refused_in_words(string path)
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var set = GivenData(db);
+
+        var refused = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk(path, set.Id)));
+
+        log.WriteLine(refused.Message);
+        Assert.Equal(ErrorCode.INVALID_REQUEST, refused.Code);
+        Assert.Contains("strategies/ma-crossover.strategy", refused.Message);   // what one looks like
+
+        // The NUL is the one that used to escape as an exception: `Path.GetFullPath` throws on it.
+        if (path.Contains('\0')) Assert.Contains("not a path this machine can read", refused.Message);
+    }
+
+    /// <summary>
+    /// A SYMLINK IS NOT A DOOR OUT OF THE FOLDER, AND NEITHER IS A SYMLINKED DIRECTORY IN THE MIDDLE.
+    ///
+    /// <para>The agent is broadly free inside its own tree — it can make a link there whenever it likes
+    /// — so a check that only normalised <c>..</c> would be satisfied by a path that never says
+    /// <c>..</c> at all. The second case is why the resolution walks every segment rather than the last
+    /// one: a link one level up is the same hole one level up.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_symlink_that_points_out_of_the_folder_is_refused_and_so_is_a_linked_directory()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var set = GivenData(db);
+
+        var outside = Path.Combine(Paths.State, "outside.strategy");
+        File.WriteAllText(outside, Text);
+        var home = Path.Combine(Paths.RoleHome(CouncilRoles.Operations), "strategies");
+        Directory.CreateDirectory(home);
+
+        // A link to a FILE outside.
+        var linkedFile = Path.Combine(home, "linked.strategy");
+        if (File.Exists(linkedFile)) File.Delete(linkedFile);
+        File.CreateSymbolicLink(linkedFile, outside);
+
+        var refusedFile = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk("strategies/linked.strategy", set.Id)));
+        log.WriteLine(refusedFile.Message);
+        Assert.Contains("own folder", refusedFile.Message);
+
+        // A link to a DIRECTORY outside, with a perfectly ordinary file inside it.
+        var elsewhere = Path.Combine(Paths.State, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        File.WriteAllText(Path.Combine(elsewhere, "x.strategy"), Text);
+        var linkedDir = Path.Combine(Paths.RoleHome(CouncilRoles.Operations), "borrowed");
+        if (Directory.Exists(linkedDir)) Directory.Delete(linkedDir);
+        Directory.CreateSymbolicLink(linkedDir, elsewhere);
+
+        var refusedDir = Assert.Throws<GatewayDeniedException>(
+            () => gw.Backtests.Run(Caller(), new BacktestAsk("borrowed/x.strategy", set.Id)));
+        log.WriteLine(refusedDir.Message);
+        Assert.Contains("own folder", refusedDir.Message);
+
+        Assert.Equal(0, gw.Strategies.RunCount);
+    }
+
+    /// <summary>
+    /// A CALLER THAT PROVED NO LAUNCH IS REFUSED, AND SO IS THE IN-PROCESS OPERATOR.
+    ///
+    /// <para>Neither has a council role, and a run is recorded under one. Reading a missing role as the
+    /// chair is right for a row written before the council existed and is exactly wrong for a live
+    /// caller — the defect `U-containment` closed. The operator is refused for the other half of the
+    /// same reason: the owner at the keyboard is not a role, and crediting their run to one would put a
+    /// figure in a lineage that role did not produce.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_caller_with_no_council_role_is_refused_the_op_operator_included()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var set = GivenData(db);
+        var ask = new BacktestAsk(GivenProgram(), set.Id);
+
+        foreach (var caller in new[] { AgentContext.ForAgent("nobody"), AgentContext.Operator })
+        {
+            var refused = Assert.Throws<GatewayDeniedException>(() => gw.Backtests.Run(caller, ask));
+            log.WriteLine($"{caller}: {refused.Message}");
+            Assert.Contains("launch grant", refused.Message);
+        }
+
+        Assert.Equal(0, gw.Strategies.RunCount);
+        Assert.Empty(gw.Strategies.AllVersions());
     }
 
     /// <summary>

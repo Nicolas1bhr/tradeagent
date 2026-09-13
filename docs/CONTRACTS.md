@@ -1345,10 +1345,17 @@ the run actually fed on is copied onto the run row, so a rejection discovered la
 run it fed (`StrategyStore.RunsOfDataset`). One run at a time per role, refused rather than queued, and
 a window beyond `Backtest.MaxTracedBars` HALTS with the reason rather than being truncated.
 
-**The program is read from inside a role home and nowhere else.** The path is normalised first and
-compared afterwards, so `../../state/tradeagent.db` is refused; the role recorded on the version and the
-run is the role whose home the file was actually in, a measurement rather than a claim, because the pipe
-does not yet carry an authenticated role. **What a run cannot prove:** it is computed over bars, which
+**It runs under the caller's own launch identity, and reads only that launch's folder.** The role and
+the attempt on the version and the run come from `AgentContext` — the launch grant the app minted for
+that process (`U-containment`) — and never from the folder a file happened to be in, which is something
+an agent can arrange. A caller that proved no launch is refused the op: a run is recorded under a role,
+and reading a missing role as the chair is right for a row written before the council existed and wrong
+for a live caller. The in-process operator is refused for the same reason — the owner at the keyboard is
+not a council role. The program must be inside `Paths.RoleHome(ctx.Role)`: the path is normalised and
+compared lexically first, so `../../state/tradeagent.db` is refused before anything is read, and then
+against the real path with every symlink on the way down resolved, so neither a linked file nor a linked
+directory inside the folder is a door out of it. The other role's folder is outside yours.
+**What a run cannot prove:** it is computed over bars, which
 establish no actual fill, no queue position and no intrabar ordering (`docs/COUNCIL.md`, "Data"). It is a
 reason to test something and never a record of a trade, and a result on one venue's bars is not
 execution evidence for another venue.

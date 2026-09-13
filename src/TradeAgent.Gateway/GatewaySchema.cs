@@ -157,7 +157,11 @@ public static class GatewaySchema
             false,
             "Run a strategy program of yours over the history this installation holds, and record it. "
             + "'strategy' is a path INSIDE YOUR OWN ROLE FOLDER — relative to it is simplest — and a path "
-            + "outside it is refused: this reads a program from your folder and from nowhere else. "
+            + "outside it is refused: this reads a program from your folder and from nowhere else, not "
+            + "from the other role's and not from anywhere else on the machine, and a symlink pointing "
+            + "out is refused too. The run is recorded under YOUR launch — the role and the attempt come "
+            + "from the grant TradeAgent put in your process's environment — so a connection that "
+            + "presented no grant is refused this operation: there would be no role to record it under. "
             + "'dataset' is a ledger id from 'trade data list'; a dataset whose recorded hashes no longer "
             + "match the disk is REJECTED and serves no run. The app parses the program and a refusal "
             + "names the line. The four model numbers are DECLARED by you and are part of the run's "

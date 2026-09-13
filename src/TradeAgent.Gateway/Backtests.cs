@@ -29,18 +29,25 @@ public sealed record BacktestAsk(
 /// writes a measurement. The only thing an agent can do through it is find out what its own rule set
 /// would have done, which is the work `docs/COUNCIL.md` says is the job.</para>
 ///
-/// <para><b>The program is read from inside a role's home and nowhere else.</b> An absolute path
-/// outside every role home is REFUSED, and so is a relative one that climbs out with <c>..</c> —
-/// <see cref="Resolve"/> normalises first and compares afterwards, which is the only order that works.
-/// Without that check this op would be a general file-read primitive for any file the app's own
-/// process can open, the database and the IPC token included, and it would hand the contents back in
-/// a parse refusal that echoes the line it failed on.</para>
+/// <para><b>It runs under the CALLER'S OWN launch identity.</b> The role and the attempt come from
+/// <see cref="AgentContext"/> — the launch grant the app minted for that process, which `U-containment`
+/// made the pipe's idea of who is calling — and never from the folder a file happened to be in. A
+/// caller that proved no launch is refused the op outright: a run is recorded under a role, and the
+/// reading every other table uses for a missing role (a row with no role is the chair's) is exactly the
+/// one that must not be applied to a live caller.</para>
+///
+/// <para><b>The program is read from inside THAT role's home and nowhere else.</b> Not "a" role home:
+/// the caller's own. An absolute path outside it is refused, so is a relative one that climbs out with
+/// <c>..</c>, and so is a symlink that points out — <see cref="Resolve"/> compares lexically first and
+/// then against every link on the way down. Without that check this op would be a general file-read
+/// primitive for any file the app's own process can open, the database and the IPC token included, and
+/// it would hand the contents back in a parse refusal that echoes the line it failed on; without the
+/// role half of it, one role's launch could run and be credited with the other's program.</para>
 ///
 /// <para><b>One run at a time per role.</b> A run is unbounded work on the caller's own connection, so
 /// a second request from the same role is refused rather than queued: queueing would hold a pipe
 /// handler open behind a run nobody is waiting for, and the honest answer to "you are already running
-/// one" is to say so. The ROLE is the role whose home the program was read from — a measurement, not a
-/// claim — because the pipe does not yet carry an authenticated role.</para>
+/// one" is to say so.</para>
 ///
 /// <para><b>The app records the version and the run; the agent records nothing.</b> Ids are content
 /// hashes computed here (`Backtest`), the metrics are computed from the app's own trace, and the tables
@@ -65,11 +72,13 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     /// <see cref="GatewayDeniedException"/> because every caller of this is answering a pipe request,
     /// and the agent has to be able to read what was wrong and fix it.
     /// </summary>
-    public BacktestRan Run(BacktestAsk ask, CancellationToken stop = default)
+    public BacktestRan Run(AgentContext caller, BacktestAsk ask, CancellationToken stop = default)
     {
+        ArgumentNullException.ThrowIfNull(caller);
         ArgumentNullException.ThrowIfNull(ask);
 
-        var (path, role) = Resolve(ask.Strategy);
+        var role = RoleOf(caller);
+        var path = Resolve(role, ask.Strategy);
 
         var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, ask.Increment, ask.Capital);
         if (declared.Model is not { } model)
@@ -111,7 +120,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
-            if (!stop.IsCancellationRequested) Record(result, program, role);
+            if (!stop.IsCancellationRequested) Record(result, program, role, caller.AttemptId);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!);
         }
@@ -122,49 +131,113 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
     }
 
     /// <summary>
-    /// THE FULL PATH THIS PROGRAM IS AT, AND THE ROLE WHOSE HOME IT IS IN.
+    /// THE ROLE THIS CALLER PROVED IT IS, or a refusal. Never a default and never the folder's.
     ///
-    /// <para>A relative path is resolved against each role's home in turn and the first one that HAS
-    /// the file wins, because the agent typed it from inside its own home and that is the only place
-    /// it means anything. An absolute path is taken as given. Either way the answer is then required
-    /// to be inside a role home — after normalisation, so <c>../../state/tradeagent.db</c> is refused
-    /// rather than followed.</para>
+    /// <para>A backtest is recorded under a role, and the only honest source of that role is the launch
+    /// grant the caller presented. <c>CouncilRoles.Or</c> — which reads a missing role as the chair,
+    /// correctly, for rows written before the council existed — is deliberately NOT used here: applied
+    /// to a live caller it is the defect `U-containment` closed, a process holding nothing but the
+    /// machine token being served as the Operations Director.</para>
+    ///
+    /// <para>The in-process operator is refused too, and that is not an oversight: the owner at the
+    /// keyboard is not a council role, and recording their run as one role's work would put a figure in
+    /// a lineage that role did not produce. A future in-process caller passes a role rather than being
+    /// special-cased here.</para>
     /// </summary>
-    static (string Path, string Role) Resolve(string strategy)
+    static string RoleOf(AgentContext caller)
+    {
+        if (CouncilRoles.IsKnown(caller.Role)) return caller.Role!;
+
+        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+            "a backtest is recorded under the role that asked for it, and this connection presented no "
+            + "launch grant — so there is no role to record it under and no folder to read the program "
+            + "from. TradeAgent puts the grant in the environment of the process it starts; a caller "
+            + "holding only the machine token is authenticated and is nobody.");
+    }
+
+    /// <summary>
+    /// THE FULL PATH THIS PROGRAM IS AT, INSIDE <paramref name="role"/>'S OWN HOME.
+    ///
+    /// <para>A relative path is resolved against that home, which is where the agent typed it from and
+    /// the only place it means anything. An absolute path is taken as given and then required to be
+    /// under the same home. Both are checked TWICE: lexically after normalisation, so <c>..</c> is
+    /// refused before anything is read, and against the real path with every symlink on the way down
+    /// resolved, so a link inside the folder is not a door out of it.</para>
+    /// </summary>
+    static string Resolve(string role, string strategy)
     {
         if (string.IsNullOrWhiteSpace(strategy))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 "'strategy' is required: the path of a program file inside your own role folder, for "
                 + "example strategies/ma-crossover.strategy.");
 
-        var homes = CouncilRoles.All.Select(role => (Role: role, Home: Paths.RoleHome(role))).ToList();
+        var home = Full(Paths.RoleHome(role));
 
-        var candidates = new List<string>();
-        if (Path.IsPathRooted(strategy)) candidates.Add(Full(strategy));
-        else foreach (var home in homes) candidates.Add(Full(Path.Combine(home.Home, strategy)));
-
-        var anyInsideARoleHome = false;
-
-        foreach (var candidate in candidates)
+        // A PATH THE OS WILL NOT EVEN NORMALISE IS A REFUSAL, NOT AN EXCEPTION. `strategy` arrives from
+        // an agent, and `Path.GetFullPath` throws on an embedded NUL, on a path past the platform's
+        // limit and on a few other shapes; unhandled, those reach the agent as UNKNOWN_ERROR, which
+        // tells it nothing it can act on. Totality is the rule the parser already follows for the same
+        // reason — the text comes from a cheap model, so every input has an answer.
+        string candidate;
+        try
         {
-            var owner = homes.FirstOrDefault(h => Inside(h.Home, candidate)).Role;
-            if (owner is null) continue;                       // outside every role home: not this one
-
-            anyInsideARoleHome = true;
-            if (File.Exists(candidate)) return (candidate, owner);
+            candidate = Path.IsPathRooted(strategy) ? Full(strategy) : Full(Path.Combine(home, strategy));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"'{strategy}' is not a path this machine can read as one ({ex.Message}). Name a file "
+                + "inside your own role folder, for example strategies/ma-crossover.strategy.");
         }
 
-        // THE TWO REFUSALS ARE DIFFERENT AND ARE WORDED DIFFERENTLY. A path outside the role homes is a
-        // request this op will never serve; a path inside one with no file there is a typo.
-        if (!anyInsideARoleHome)
+        if (!Inside(home, candidate) || !Inside(Real(home), Real(candidate)))
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-                $"'{strategy}' is outside your role folder, and a backtest reads a program from inside it "
-                + "and from nowhere else. Put the program in your own folder — strategies/ is what it is "
-                + "for — and name it from there.");
+                $"'{strategy}' is outside the {CouncilRoles.Title(role)}'s own folder, and a backtest reads "
+                + "a program from inside it and from nowhere else — not from the other role's folder, and "
+                + "not from anywhere else on this machine. Put the program in your own folder; "
+                + "strategies/ is what it is for.");
 
-        throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
-            $"there is no file at '{strategy}' in your role folder. Write the program there first; "
-            + "'trade material list' shows what TradeAgent can see.");
+        if (!File.Exists(candidate))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"there is no file at '{strategy}' in the {CouncilRoles.Title(role)}'s folder. Write the "
+                + "program there first; 'trade material list' shows what TradeAgent can see.");
+
+        return candidate;
+    }
+
+    /// <summary>
+    /// The path with every symlink ON IT resolved, segment by segment — not only the last one.
+    ///
+    /// <para>Resolving only the final component would leave a symlinked DIRECTORY inside the folder as a
+    /// door out of it, which is the same hole one level up. A link that is broken, looping or
+    /// unreadable resolves to itself, which keeps it inside the folder and therefore refusable by the
+    /// ordinary rule rather than by an exception.</para>
+    /// </summary>
+    static string Real(string path)
+    {
+        var full = Full(path);
+        var root = Path.GetPathRoot(full) ?? "";
+        var here = root;
+
+        foreach (var segment in full[root.Length..]
+                     .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            here = Path.Combine(here, segment);
+            if (Link(here) is { } target) here = Full(target);
+        }
+
+        return here;
+    }
+
+    static string? Link(string path)
+    {
+        try
+        {
+            FileSystemInfo info = Directory.Exists(path) ? new DirectoryInfo(path) : new FileInfo(path);
+            return info.LinkTarget is null ? null : info.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+        }
+        catch (IOException) { return null; }                  // a broken or looping link is not a way out
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     static string Full(string path) => Path.GetFullPath(path);
@@ -184,7 +257,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         return path.StartsWith(root, how);
     }
 
-    void Record(BacktestResult result, StrategyProgram program, string role)
+    void Record(BacktestResult result, StrategyProgram program, string role, string? attempt)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -196,11 +269,9 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         {
             _strategies.RecordVersion(new StrategyVersionRow(
                 program.StrategyId, program.Source, program.Canonical, program.Manifest,
-                StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, role,
-                // THE ATTEMPT IS NOT KNOWN HERE. The agent-facing pipe carries a session string and no
-                // attested attempt, and an attempt guessed from a session an agent chose would be
-                // provenance nobody could stand behind. Null says so.
-                null));
+                // THE ROLE AND THE ATTEMPT ARE THE CALLER'S OWN, off the launch grant, and never the
+                // folder's: a file's location is something an agent can arrange, and a grant is not.
+                StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, role, attempt));
 
             _strategies.RecordRun(new StrategyRunRow(
                 result.RunId, result.VersionId, result.Request.DatasetId, result.Request.DatasetSha256,
@@ -209,7 +280,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 metrics.Bars, metrics.Trades, metrics.Wins, metrics.Signals, metrics.Fills,
                 metrics.ExposureBars, metrics.MissingMinutes, metrics.Faults,
                 metrics.GrossPnl, metrics.Fees, metrics.NetPnl, metrics.MaxDrawdown,
-                result.Trace.Sha256, at, role, null),
+                result.Trace.Sha256, at, role, attempt),
                 [.. result.Trades.Select(t => new StrategyTradeRow(
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);

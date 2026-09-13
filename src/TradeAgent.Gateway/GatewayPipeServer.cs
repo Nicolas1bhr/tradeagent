@@ -1031,7 +1031,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.DataList     => DataList(),
                 Core.Ops.DataBars     => DataBars(req),
                 Core.Ops.Report       => ReportFor(req),
-                Core.Ops.Backtest     => BacktestFor(req, ct),
+                Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
 
                 Core.Ops.Buy or Core.Ops.Sell => await gateway.PlaceAsync(ctx, rid, ParsePlace(req), ct),
                 Core.Ops.Modify   => await gateway.ModifyAsync(ctx, rid, Require(req, "id"), req.Dec("quantity"), req.Dec("limit"), req.Dec("stop"), ct),
@@ -2052,7 +2052,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// A BACKTEST THE APP RUNS AND RECORDS — a READ as far as trading is concerned.
     ///
     /// <para>No order, no mode check beyond what every read here does, no connector call, nothing that
-    /// grants or removes authority. The app reads the program from inside the caller's own role folder,
+    /// grants or removes authority. <paramref name="ctx"/> is the whole of who is asking — the role and
+    /// the attempt off the launch grant — and the run is read from that role's folder and recorded under
+    /// it. The app reads the program from inside the caller's own role folder,
     /// parses it (a refusal names the line), declares the execution model from what was asked for,
     /// streams the dataset's own hashed bars, computes the metrics from its own trace and writes the
     /// version and the run. What comes back is the run's id and those metrics.</para>
@@ -2061,9 +2063,9 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// halts it at the bar it has reached — a defined outcome — instead of holding the drain open for
     /// a window nobody is waiting for any more. A run the app stopped is not recorded.</para>
     /// </summary>
-    object BacktestFor(IpcRequest req, CancellationToken ct)
+    object BacktestFor(AgentContext ctx, IpcRequest req, CancellationToken ct)
     {
-        var ran = gateway.Backtests.Run(new BacktestAsk(
+        var ran = gateway.Backtests.Run(ctx, new BacktestAsk(
             Require(req, "strategy"),
             DatasetId(req),
             BarInstant(req, "from"),
