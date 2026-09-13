@@ -458,4 +458,211 @@ public class CouncilRelayTests
         Assert.Equal([World.Named(CouncilRoles.Research, "turn-open")],
             world.Quarantined(CouncilRoles.Research));
     }
+
+    // ---- the consequential boundary: two sealed assessments, one bounded challenge ---------------
+    //
+    // U-council-concurrent-2 items 2 and 3. They are HERE rather than beside the store's own tests
+    // because the seal is only worth anything end to end: what :61 forbids is a FILE reaching the peer's
+    // `in/` before it has written its own, and only the relay puts files there.
+
+    /// <summary>A boundary for the relay's tests to answer, opened the way the referee opens one.</summary>
+    static string Boundary(Database db, string entity = "version-a") =>
+        new CouncilBoundaries(db).Open(BoundaryKind.Promotion, entity, 1, BoundaryDisposition.Deploy,
+            "holdout run 9f3c under campaign 1", DateTimeOffset.UtcNow).Row.Id;
+
+    static string AssessmentName(string attempt) =>
+        CouncilRelay.Pattern(PublicationKind.Assessment).Replace("*", attempt);
+
+    static string ChallengeName(string attempt) =>
+        CouncilRelay.Pattern(PublicationKind.Challenge).Replace("*", attempt);
+
+    /// <summary>What the relay said it would not publish, in the app's own words.</summary>
+    static CouncilRelay Relaying(World world, Database db, List<string> refusals)
+    {
+        var relay = world.RelayOver(db);
+        relay.Rejected = why => refusals.Add(why);
+        return relay;
+    }
+
+    /// <summary>
+    /// RED FIRST: the first assessment reaches the second director's <c>in/</c> before they have written
+    /// theirs.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:61 — "both directors submit an assessment BEFORE either sees the
+    /// other's". Everything the pair is for is gone the moment one of them can read the other first: the
+    /// second assessment is then a response, the two are not independent evidence, and whichever director
+    /// happens to be slower is the only one whose reading is its own.</para>
+    ///
+    /// <para>The seal is asserted as the app HOLDING it, not as a race the second director happens to
+    /// lose: the publication is committed, hashed and attributed the moment it arrives — it cannot be
+    /// revised — and its DELIVERY is <c>withheld</c>. Then both are released by one pass and both files
+    /// land together.</para>
+    /// </summary>
+    [Fact]
+    public void An_assessment_is_committed_at_once_and_withheld_until_the_other_directors_exists()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        Boundary(db);
+        var refusals = new List<string>();
+
+        // ---- the Research Director writes first ------------------------------------------------
+        world.Launched(db, CouncilRoles.Research, "turn-r");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r"), "I read the evidence as sufficient.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r");
+
+        var store = new PublicationStore(db);
+        var mine = Assert.Single(store.By(CouncilRoles.Research));
+        Assert.Equal(PublicationKind.Assessment, mine.Kind);
+
+        // COMMITTED, AND NOT HANDED OVER. Nothing in the chair's folder, nothing it is paid to read.
+        Assert.Empty(world.Delivered(CouncilRoles.Operations));
+        Assert.Equal(DeliveryState.Withheld,
+            Assert.Single(store.To(CouncilRoles.Operations)).State);
+        Assert.Empty(new MissionEventStore(db).OfKind(PublicationKind.Assessment));
+        Assert.Empty(refusals);
+
+        // ---- and now the chair writes its own ---------------------------------------------------
+        world.Launched(db, CouncilRoles.Operations, "turn-o");
+        world.Write(CouncilRoles.Operations, AssessmentName("turn-o"), "I read it as thin.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Operations, "turn-o");
+
+        // BOTH RELEASED TOGETHER, BY ONE PASS.
+        Assert.Single(world.Delivered(CouncilRoles.Operations));
+        Assert.Single(world.Delivered(CouncilRoles.Research));
+        Assert.All(store.To(CouncilRoles.Operations).Concat(store.To(CouncilRoles.Research)),
+            d => Assert.Equal(DeliveryState.Delivered, d.State));
+        Assert.Empty(refusals);
+    }
+
+    /// <summary>
+    /// A SECOND ASSESSMENT FROM THE SAME DIRECTOR OVER THE SAME BOUNDARY IS REFUSED, and refused means
+    /// nothing published, nothing delivered and nobody charged a turn.
+    ///
+    /// <para>An assessment that could be revised is not sealed evidence of what that director thought
+    /// before it saw the other's — it is a draft, and :212's precommitment is exactly the thing that
+    /// cannot be recovered afterwards if it is not recorded at the time.</para>
+    /// </summary>
+    [Fact]
+    public void A_second_assessment_from_one_director_over_one_boundary_is_refused_and_unpaid()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        Boundary(db);
+        var refusals = new List<string>();
+
+        world.Launched(db, CouncilRoles.Research, "turn-r1");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r1"), "my reading.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r1");
+        Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+
+        world.Launched(db, CouncilRoles.Research, "turn-r2");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r2"), "on reflection, the opposite.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r2");
+
+        Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Empty(world.Delivered(CouncilRoles.Operations));
+        var said = Assert.Single(refusals);
+        Assert.Contains("was not published", said, StringComparison.Ordinal);
+        Assert.Contains("cannot be revised", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ONE BOUNDED CHALLENGE PER BOUNDARY, FROM EITHER DIRECTOR, AND THE SECOND IS REFUSED AND UNPAID.
+    ///
+    /// <para>:61 gives a boundary "one bounded challenge", and the count is per BOUNDARY and not per
+    /// director: two challenges are a debate, and a debate at the strongest model is the standup the
+    /// doctrine refuses to pay for. Unlike an assessment it is DELIVERED at once — it buys the peer the
+    /// one turn it is worth, because a challenge nobody is woken for is a challenge answered after the
+    /// deadline.</para>
+    /// </summary>
+    [Fact]
+    public void One_challenge_per_boundary_is_delivered_and_the_second_is_refused_and_unpaid()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var boundary = Boundary(db);
+        var refusals = new List<string>();
+        var store = new PublicationStore(db);
+
+        foreach (var (role, turn) in new[] { (CouncilRoles.Research, "a-r"), (CouncilRoles.Operations, "a-o") })
+        {
+            world.Launched(db, role, turn);
+            world.Write(role, AssessmentName(turn), $"{role} assessed it.");
+            Relaying(world, db, refusals).Run(role, turn);
+        }
+
+        // THE FIRST CHALLENGE, from the chair. Delivered, and it buys Research one turn.
+        world.Launched(db, CouncilRoles.Operations, "c-o");
+        world.Write(CouncilRoles.Operations, ChallengeName("c-o"), "the sample is one campaign wide.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Operations, "c-o");
+
+        Assert.Single(new MissionEventStore(db).OfKind(PublicationKind.Challenge));
+        Assert.NotNull(new CouncilBoundaries(db).Challenged(boundary));
+
+        // THE SECOND, from the OTHER director. One per boundary, so it makes no difference who writes it.
+        world.Launched(db, CouncilRoles.Research, "c-r");
+        world.Write(CouncilRoles.Research, ChallengeName("c-r"), "and the fees were not declared.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Research, "c-r");
+
+        Assert.Single(new MissionEventStore(db).OfKind(PublicationKind.Challenge));
+        Assert.Single(store.By(CouncilRoles.Research));           // its assessment, and nothing else
+        var said = Assert.Single(refusals);
+        Assert.Contains("one bounded challenge is what a boundary gets", said, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A CHALLENGE WRITTEN BEFORE BOTH ASSESSMENTS ARE DELIVERED IS NOT PUBLISHED. A reading written
+    /// before the peer's has arrived is a second assessment under another name, and taking it would let a
+    /// director spend the boundary's one challenge on something it was never for.
+    /// </summary>
+    [Fact]
+    public void A_challenge_before_both_assessments_are_delivered_is_refused()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        Boundary(db);
+        var refusals = new List<string>();
+
+        world.Launched(db, CouncilRoles.Research, "a-r");
+        world.Write(CouncilRoles.Research, AssessmentName("a-r"), "my reading.");
+        world.Write(CouncilRoles.Research, ChallengeName("a-r"), "and my challenge.");
+        Relaying(world, db, refusals).Run(CouncilRoles.Research, "a-r");
+
+        Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.Empty(new MissionEventStore(db).OfKind(PublicationKind.Challenge));
+        Assert.Contains("BOTH assessments have been delivered",
+            Assert.Single(refusals), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE CHALLENGE IS CAPPED LIKE A REPORT — this is the mutant. An unbounded challenge is a transcript
+    /// handed to the peer at the owner's expense, which is the one thing context etiquette exists to stop
+    /// (<c>docs/COUNCIL.md</c>, "a report of at most 20 lines out").
+    /// </summary>
+    [Fact]
+    public void An_over_length_challenge_is_not_published()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        Boundary(db);
+        var refusals = new List<string>();
+
+        foreach (var (role, turn) in new[] { (CouncilRoles.Research, "a-r"), (CouncilRoles.Operations, "a-o") })
+        {
+            world.Launched(db, role, turn);
+            world.Write(role, AssessmentName(turn), $"{role} assessed it.");
+            Relaying(world, db, refusals).Run(role, turn);
+        }
+
+        world.Launched(db, CouncilRoles.Operations, "c-o");
+        world.Write(CouncilRoles.Operations, ChallengeName("c-o"), Report(CouncilRelay.ReportLines + 1));
+        Relaying(world, db, refusals).Run(CouncilRoles.Operations, "c-o");
+
+        Assert.Empty(new MissionEventStore(db).OfKind(PublicationKind.Challenge));
+        Assert.Null(new CouncilBoundaries(db).Challenged(
+            BoundaryIds.Of(BoundaryKind.Promotion, "version-a", 1)));
+        Assert.Contains($"is longer than {CouncilRelay.ReportLines} lines",
+            Assert.Single(refusals), StringComparison.Ordinal);
+    }
 }
