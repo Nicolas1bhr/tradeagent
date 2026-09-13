@@ -72,6 +72,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 {
     readonly MissionEventStore _events = new(db);
     readonly PublicationStore _publications = new(db);
+    readonly Promotions _promotions = new(db);
     readonly AiAttemptStore _attempts = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.Now);
 
@@ -402,6 +403,29 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// <summary>A hash as it is shown in a report: the first twelve characters, or all of a short id.</summary>
     static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
+    /// <summary>One research run, with the figures the app computed from its own trace.</summary>
+    static string RunLine(StrategyRunRow run) =>
+        $"backtest {Short(run.Id)} of version {Short(run.VersionId)} over dataset {run.DatasetId} "
+        + $"({run.ExecutionModel}): {run.Bars} bars, {run.Trades} trades, net {Figure(run.NetPnl)}, "
+        + $"worst drawdown {Figure(run.MaxDrawdown)}, {run.Outcome}";
+
+    /// <summary>
+    /// ONE HOLDOUT RUN, NAMED AND NOT VALUED — the one run in this ledger whose figures this document
+    /// may not carry.
+    ///
+    /// <para>`trade report` serves this report to the AI over the agent pipe. A holdout run's net result
+    /// and drawdown are computed over the months the research process is never shown, so printing them
+    /// here would hand back through the report exactly what `data-bars` and `backtest` refuse
+    /// (<c>docs/COUNCIL.md</c>:196-197, and :212 — a leaked holdout cannot become unseen). The owner's
+    /// answer is the verdict beneath it, which is the thing that was worth knowing; the figures are in
+    /// the app's own <c>strategy_run</c> table.</para>
+    /// </summary>
+    static string HoldoutRunLine(StrategyRunRow run) =>
+        $"holdout run {Short(run.Id)} of version {Short(run.VersionId)} over dataset {run.DatasetId} "
+        + $"({run.ExecutionModel}), {run.Outcome} — TradeAgent's referee ran it over the months held "
+        + "back from research, and its figures are not printed in this report, which is served to the "
+        + "AI as well as to you";
+
     /// <summary>A figure, or the report's own dash. A null is an UNKNOWN here as it is everywhere else.</summary>
     static string Figure(decimal? value) =>
         value is { } d ? d.ToString(CultureInfo.InvariantCulture) : DailyReportText.Unknown;
@@ -440,12 +464,31 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         {
             runs = gateway.Strategies.RunCount;
             foreach (var run in gateway.Strategies.Runs(ListShown))
-                metrics.Add($"backtest {Short(run.Id)} of version {Short(run.VersionId)} over dataset "
-                            + $"{run.DatasetId} ({run.ExecutionModel}): {run.Bars} bars, {run.Trades} "
-                            + $"trades, net {Figure(run.NetPnl)}, worst drawdown {Figure(run.MaxDrawdown)}, "
-                            + $"{run.Outcome}");
+                metrics.Add(run.Role == Core.Strategy.Referee.RunRole ? HoldoutRunLine(run) : RunLine(run));
         }
         catch (Exception ex) { gaps.Add(new ReportGap("backtests", $"the strategy ledger could not be read ({ex.Message})")); }
+
+        // EVERY VERDICT, AND WHETHER IT STILL STANDS. It goes in "measured by TradeAgent" because the
+        // app computed all of it — the run, the figures and the clauses applied to them — and no agent's
+        // opinion is anywhere near it (docs/COUNCIL.md:55-57, the referee is code). The REASON is the
+        // promotion row's closed vocabulary, so this line cannot print a figure from the held-back
+        // months even by accident, which matters because `trade report` serves this document to the AI.
+        var verdicts = 0;
+        try
+        {
+            verdicts = _promotions.Count;
+            foreach (var p in _promotions.All(ListShown))
+            {
+                var standing = _promotions.Standing(p.VersionId);
+                var withdrawn = standing.Promotion?.Id == p.Id && standing.State == PromotionState.Invalidated;
+
+                metrics.Add($"{p.Verdict.ToUpperInvariant()} version {Short(p.VersionId)} at "
+                            + $"{p.At.UtcDateTime:yyyy-MM-dd HH:mm}Z under campaign {p.CampaignId}, on holdout run "
+                            + $"{Short(p.HoldoutRunId)}: {PromotionReason.Words(p.Reason)}"
+                            + (withdrawn ? $" — INVALIDATED since: {standing.Why}" : ""));
+            }
+        }
+        catch (Exception ex) { gaps.Add(new ReportGap("verdicts", $"the promotion ledger could not be read ({ex.Message})")); }
 
         try
         {
@@ -459,7 +502,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // `metrics.Count == 0`, which the dataset lines above already satisfied: an installation that
         // had collected twelve months and backtested nothing read as though it had evidence. Having
         // the data is not having measured anything with it.
-        if (runs == 0)
+        if (runs == 0 && verdicts == 0)
             gaps.Add(new ReportGap("evaluation evidence",
                 "nothing has been backtested or promoted by this build, so there is no measured "
                 + "evidence for or against any strategy"));

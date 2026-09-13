@@ -3,6 +3,7 @@ using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core.Strategy;
 using TradeAgent.Gateway;
 using Xunit;
@@ -282,5 +283,166 @@ public class RefereeVerdictTests
         Assert.False(verdict.Promoted);
         Assert.Equal(PromotionReason.NotProfitable, verdict.Promotion!.Reason);
         Assert.True(new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!.NetPnl <= 0m);
+    }
+
+    // ---- item 5: the verdict is delivered and told ------------------------------------------------
+
+    /// <summary>
+    /// ONE WAKE, KEYED BY THE PROMOTION, AND ONE NOTE THAT CARRIES NO FIGURE FROM THE HELD-BACK MONTHS.
+    ///
+    /// <para>This is the mutant: the holdout's metrics published to the team. Every figure the app
+    /// measured over those months is read back out of the run row and asserted to be absent from the
+    /// text that crosses — because a net result quoted in a note tells Research something about months
+    /// it was never shown, and `docs/COUNCIL.md`:212 says that cannot be untold.</para>
+    ///
+    /// <para>The second half is the deduplication `docs/COUNCIL.md`:64 asks for: asking again is one
+    /// judgement, one publication and one paid turn, because the wake is keyed by the promotion, whose
+    /// id is the hash of the evidence.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_verdict_wakes_research_once_and_the_note_carries_no_holdout_figure()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+        var referee = RefereeOf(w);
+
+        var verdict = referee.Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Ok, verdict.Why);
+        var promotion = verdict.Promotion!;
+
+        // ONE WAKE, FOR RESEARCH, KEYED BY THE PROMOTION.
+        var events = new MissionEventStore(w.Db);
+        var wake = Assert.Single(events.OfKind(MissionEventKind.Verdict));
+        Assert.Equal(MissionEventIds.ForRole(MissionEventIds.Verdict(promotion.Id), CouncilRoles.Research),
+            wake.Id);
+        Assert.Equal(CouncilRoles.Research, wake.For);
+        Assert.False(wake.Consumed);
+
+        // ONE PUBLICATION, FROM THE REFEREE, TO RESEARCH, COMMITTED FOR DELIVERY.
+        var publications = new PublicationStore(w.Db);
+        var note = Assert.Single(publications.By(Referee.RunRole));
+        Assert.Equal(PublicationKind.Verdict, note.Kind);
+        Assert.Equal([CouncilRoles.Research], note.RecipientList);
+        Assert.Equal(Publication.IdOf(Referee.RunRole, PublicationKind.Verdict, note.Content), note.Id);
+        Assert.Equal(note.Id, Json.Read<MissionTask>(wake.Payload ?? "")!.Publication);
+        Assert.Single(publications.To(CouncilRoles.Research));
+
+        // WHAT IT SAYS: the verdict and the reason class, and the promotion it can be tied back to.
+        Assert.Contains(promotion.Verdict, note.Content, StringComparison.Ordinal);
+        Assert.Contains(promotion.Reason, note.Content, StringComparison.Ordinal);
+        Assert.Contains(promotion.Id, note.Content, StringComparison.Ordinal);
+
+        // WHAT IT MUST NOT SAY: anything the app measured over the months held back. Asserted as the
+        // ABSENCE OF NUMBERS rather than as the absence of particular ones — a figure that happens to be
+        // 0 or 6 would slip through a list of strings, and the rule is not "not these figures", it is
+        // "no figure at all". With the two hashes taken out, the only digits left in the note are the
+        // campaign's id.
+        var run = new StrategyStore(w.Db).RunById(promotion.HoldoutRunId)!;
+        var stripped = note.Content.Replace(promotion.Id, "", StringComparison.Ordinal)
+            .Replace(promotion.VersionId, "", StringComparison.Ordinal);
+
+        Assert.Equal(promotion.CampaignId.ToString(CultureInfo.InvariantCulture),
+            new string([.. stripped.Where(char.IsDigit)]));
+        Assert.DoesNotContain(run.TraceSha256, note.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain(promotion.HoldoutRunId, note.Content, StringComparison.Ordinal);
+        Assert.True(run.NetPnl > 0m, "the fixture program is profitable, so a leak would have shown one");
+
+        // ASKING AGAIN IS THE SAME JUDGEMENT: no second note, no second wake, nobody charged twice.
+        var again = referee.Verdict(w.VersionId, w.Campaign.Id);
+        Assert.Equal(promotion.Id, again.Promotion!.Id);
+        Assert.Single(publications.By(Referee.RunRole));
+        Assert.Single(events.OfKind(MissionEventKind.Verdict));
+        Assert.Single(w.Gw.Campaigns.Verdicts(w.Campaign.Id));
+    }
+
+    /// <summary>
+    /// THE TURN IS TOLD WHAT IS PROMOTED, and told when what was promoted no longer stands.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:74 puts the promoted strategy in the Situation. The line is built
+    /// from <c>Promotions.Standing</c>, so an invalidated promotion reads as "none" with the reason
+    /// rather than as a strategy an agent could plan around.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_situation_names_the_promoted_version_and_says_when_it_no_longer_stands()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+        Assert.True(RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id).Promoted);
+        var promotions = new Promotions(w.Db);
+
+        var promoted = MissionSituation.PromotedLine(promotions.Standing(w.VersionId));
+        Assert.Contains(w.VersionId[..12], promoted, StringComparison.Ordinal);
+        Assert.Contains("promoted by TradeAgent's referee", promoted, StringComparison.Ordinal);
+        Assert.Contains($"- {promoted}",
+            new MissionSituation { Mode = "PAPER", Promoted = promoted }.Text(), StringComparison.Ordinal);
+
+        new DatasetStore(w.Db).Reject(w.Set.Id, "a raw archive file changed under it");
+
+        var withdrawn = MissionSituation.PromotedLine(promotions.Standing(w.VersionId));
+        Assert.StartsWith("Promoted strategy: none.", withdrawn, StringComparison.Ordinal);
+        Assert.Contains("no longer stands", withdrawn, StringComparison.Ordinal);
+        Assert.StartsWith("Promoted strategy: none.", MissionSituation.PromotedLine(null),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// SECTION 8 LISTS THE VERDICT AND WITHHOLDS THE HOLDOUT'S FIGURES — in the document the owner
+    /// reads AND the agent is served over <c>trade report</c>.
+    ///
+    /// <para>The holdout run is named, dated and counted as a run; its net, its drawdown and its trace
+    /// are not in the document, because this one is handed to the research process on request. The
+    /// verdict beneath it is what was worth knowing, and its reason is the promotion row's closed
+    /// vocabulary, which cannot hold a figure.</para>
+    /// </summary>
+    [Fact]
+    public async Task Section_eight_lists_the_verdict_and_prints_no_holdout_figure()
+    {
+        var w = await Given(frozenAt: Bar0);
+        using var _1 = w.Db;
+
+        var before = DailyReportText.Render(w.Gw.Reports.Compose(Midday()));
+        Assert.Contains("nothing has been backtested or promoted by this build", before, StringComparison.Ordinal);
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Promoted, verdict.Promotion?.Reason ?? verdict.Why);
+
+        var text = DailyReportText.Render(w.Gw.Reports.Compose(Midday()));
+
+        Assert.Contains($"PROMOTED version {w.VersionId[..12]}", text, StringComparison.Ordinal);
+        Assert.Contains(PromotionReason.Words(PromotionReason.Met), text, StringComparison.Ordinal);
+        Assert.Contains("holdout run", text, StringComparison.Ordinal);
+        Assert.Contains("its figures are not printed in this report", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing has been backtested or promoted by this build", text,
+            StringComparison.Ordinal);
+
+        var run = new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!;
+        Assert.DoesNotContain($"net {run.NetPnl?.ToString(CultureInfo.InvariantCulture)}", text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(run.TraceSha256, text, StringComparison.Ordinal);
+        Assert.DoesNotContain($"{run.Bars} bars", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AND THERE IS NO OP THAT ASKS FOR A VERDICT OR WRITES A PROMOTION. The whole agent-facing
+    /// vocabulary is asked, by name, so an op added later has to be justified here rather than pass
+    /// quietly: the caller being judged must not be able to spend the owner's evaluation budget or to
+    /// mark its own homework.
+    /// </summary>
+    [Fact]
+    public void No_pipe_op_asks_for_a_verdict_or_writes_a_promotion()
+    {
+        foreach (var op in GatewaySchema.Ops())
+        {
+            Assert.DoesNotContain("verdict", op.Op, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("promot", op.Op, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("referee", op.Op, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
+    static DateTimeOffset Midday()
+    {
+        var day = DateTimeOffset.Now.ToLocalTime().Date.AddHours(12);
+        return new DateTimeOffset(day, TimeZoneInfo.Local.GetUtcOffset(day));
     }
 }

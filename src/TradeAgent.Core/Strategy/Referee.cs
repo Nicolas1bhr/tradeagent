@@ -60,6 +60,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
     readonly DatasetStore _datasets = new(db);
     readonly StrategyStore _strategies = new(db);
     readonly Promotions _promotions = new(db);
+    readonly PublicationStore _publications = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>The promotion ledger this referee writes. Read-only for a caller: it has one writer.</summary>
@@ -243,8 +244,46 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
                 reason == PromotionReason.Met ? PromotionVerdict.Promoted : PromotionVerdict.Refused,
                 reason, at));
 
+            Deliver(promotion, at);
+
             return new RefereeVerdict(true, "", promotion);
         });
+    }
+
+    /// <summary>
+    /// TELLS THE TEAM, IN THE SAME TRANSACTION AS THE VERDICT, AND TELLS IT ONLY WHAT THE POLICY ALLOWS.
+    ///
+    /// <para>One publication through <c>PublicationStore.Commit</c> — the app's one committed transition
+    /// for an artifact, its delivery and the single paid turn that reads it — and the wake is keyed by
+    /// the PROMOTION, so re-delivering one judgement buys nobody a second turn
+    /// (<c>docs/COUNCIL.md</c>:64).</para>
+    ///
+    /// <para><b>What crosses is the verdict and the reason class.</b> No metric, no trace, no figure at
+    /// all: :196-197 keeps private evaluation disclosures referee-budgeted, and a note carrying the
+    /// holdout's net result would hand the research process the months it was never shown, laundered
+    /// through a sentence. <see cref="RefereeFeedback"/> is the only thing that decides what is in it,
+    /// and a test reads every figure of the run back out of the database and asserts none of them is in
+    /// the text.</para>
+    ///
+    /// <para>It goes to Research, which is the role that submits versions. Operations is not a recipient:
+    /// the chair reads the owner's report, where section 8 lists every promotion, refusal and
+    /// invalidation — and an extra recipient is an extra paid turn for a fact the app already wrote
+    /// down.</para>
+    /// </summary>
+    void Deliver(PromotionRow promotion, DateTimeOffset at)
+    {
+        var content = RefereeFeedback.Text(promotion);
+
+        _publications.Commit(new Publication
+        {
+            Id = Publication.IdOf(RunRole, PublicationKind.Verdict, content),
+            Role = RunRole,
+            Kind = PublicationKind.Verdict,
+            Recipients = CouncilRoles.Research,
+            Classification = PublicationClass.Council,
+            CreatedAt = at,
+            Content = content
+        }, at, MissionEventIds.Verdict(promotion.Id));
     }
 
     /// <summary>
@@ -338,5 +377,45 @@ public static class ScoringPolicyV1
         if (run.Metrics.NetPnl is not { } net || net <= 0m) return PromotionReason.NotProfitable;
 
         return PromotionReason.Met;
+    }
+}
+
+/// <summary>
+/// WHAT THE TEAM IS TOLD ABOUT A VERDICT — the whole of it, in one place, so that what crosses the
+/// boundary is a decision somebody made rather than whatever a caller happened to pass.
+///
+/// <para><b>The verdict and the reason CLASS, and nothing else.</b> <c>docs/COUNCIL.md</c>:196-197:
+/// "Teams receive their operational record and actionable feedback; private evaluation disclosures
+/// remain referee-budgeted." A metric computed over the held-back months is exactly such a disclosure —
+/// telling Research that the holdout returned 4.2% tells it something about months it was never shown,
+/// and it cannot be untold (:212). So this function reads ONLY the promotion row, whose reason column is
+/// a closed vocabulary that cannot hold a figure.</para>
+///
+/// <para>It is a pure function of the promotion, which is also what makes the delivery idempotent: the
+/// publication's id is the hash of this text, so one judgement is one artifact however many times it is
+/// committed.</para>
+/// </summary>
+public static class RefereeFeedback
+{
+    public static string Text(PromotionRow promotion)
+    {
+        ArgumentNullException.ThrowIfNull(promotion);
+
+        return $"""
+            # TradeAgent's referee has judged version {promotion.VersionId}
+
+            The app ran this version over the months campaign {promotion.CampaignId} holds back from
+            research, scored it by the policy that campaign fixed before the work, and recorded the
+            answer as promotion {promotion.Id}.
+
+            - verdict: {promotion.Verdict}
+            - reason: {promotion.Reason}
+            - what that means: {PromotionReason.Words(promotion.Reason)}
+
+            No figure from those months is in this note and none ever will be. The run's metrics and its
+            trace are the account owner's private evaluation evidence; what you may have is the verdict
+            and the reason, and a verdict is charged against a small budget, so there are few of them.
+            You cannot ask for one: TradeAgent decides when a version is judged.
+            """;
     }
 }

@@ -41,6 +41,15 @@ public static class MissionEventKind
 
     /// <inheritdoc cref="Report"/>
     public const string Brief = PublicationKind.Brief;
+
+    /// <summary>
+    /// THE REFEREE ANSWERED. Written only by <see cref="PublicationStore.Commit"/>, in the same
+    /// transaction as the promotion and the note that carries it, and keyed by the PROMOTION — the
+    /// entity — so a repeated delivery of one judgement buys no second turn
+    /// (<c>docs/COUNCIL.md</c>:64, "deduplicate boundary events by entity and revision, so repeated
+    /// proposals cannot manufacture senior spend").
+    /// </summary>
+    public const string Verdict = PublicationKind.Verdict;
 }
 
 /// <summary>
@@ -192,6 +201,16 @@ public static class MissionEventIds
 
     /// <summary>The task a publication delivered to a role. Uniquely keyed BY THE PUBLICATION.</summary>
     public static string Task(string publicationId) => $"task:{publicationId}";
+
+    /// <summary>
+    /// THE VERDICT WAKE, KEYED BY THE PROMOTION AND NOT BY THE NOTE THAT CARRIES IT.
+    ///
+    /// <para>The promotion is the ENTITY (<c>docs/COUNCIL.md</c>:64): its id is already the hash of the
+    /// evidence the verdict rested on, so a second delivery of the same judgement — a retry, a restart,
+    /// a later build re-reading the ledger — raises an id the table already holds and costs nobody a
+    /// turn. Keying it by the publication would have been one step further from the fact.</para>
+    /// </summary>
+    public static string Verdict(string promotionId) => $"{MissionEventKind.Verdict}:{promotionId}";
 }
 
 /// <summary>

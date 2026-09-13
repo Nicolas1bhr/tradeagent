@@ -37,6 +37,21 @@ public static class PublicationKind
 
     /// <summary>One revision of a role's <c>trading/JOURNAL.md</c>, on the same terms as the plan.</summary>
     public const string Journal = "journal";
+
+    /// <summary>
+    /// THE REFEREE'S ANSWER ABOUT ONE VERSION, delivered down to Research — and the ONE publication in
+    /// this product that no role wrote.
+    ///
+    /// <para>Its publisher is <c>Strategy.Referee.RunRole</c>, which is not a council role and holds no
+    /// grant: the referee is code (<c>docs/COUNCIL.md</c>:55-57), so this artifact is the app telling a
+    /// team what it decided rather than one agent handing another its opinion.</para>
+    ///
+    /// <para><b>What may be in it is a closed vocabulary.</b> The verdict and the reason CLASS, and
+    /// nothing computed from the held-back bars — no metric, no trace, no figure at all (:196-197,
+    /// "private evaluation disclosures remain referee-budgeted"). The content is built by
+    /// <c>Strategy.RefereeFeedback</c>, which is the only place that decides what crosses.</para>
+    /// </summary>
+    public const string Verdict = "verdict";
 }
 
 /// <summary>
@@ -164,7 +179,7 @@ public sealed class PublicationStore(Database db)
     /// nothing the second time and costs nobody a turn. That is why the caller does not check first:
     /// a read-then-write would be a race, and the keys are the answer.
     /// </summary>
-    public bool Commit(Publication p, DateTimeOffset at) => db.Write(_ =>
+    public bool Commit(Publication p, DateTimeOffset at, string? eventId = null) => db.Write(_ =>
     {
         using var pub = db.Cmd($"""
             INSERT INTO publication({Cols})
@@ -187,15 +202,19 @@ public sealed class PublicationStore(Database db)
                 ("$at", Sql.T(at)));
             d.ExecuteNonQuery();
 
-            // THE ONE PAID CONSEQUENCE, KEYED BY THE PUBLICATION. A second relay pass over the same
-            // file raises the same id and buys nothing; an id taken from the attempt would buy a
-            // turn every time the app restarted.
+            // THE ONE PAID CONSEQUENCE, KEYED BY THE PUBLICATION — or by the ENTITY the publication is
+            // about, where the caller knows one. A second relay pass over the same file raises the same
+            // id and buys nothing; an id taken from the attempt would buy a turn every time the app
+            // restarted. `eventId` exists for the referee: a verdict's wake is keyed by the PROMOTION,
+            // whose id is already the hash of the evidence it rested on, so re-delivering one judgement
+            // cannot manufacture a second paid turn (docs/COUNCIL.md:64, deduplicate boundary events by
+            // entity). It is null everywhere else and the publication remains the key.
             using var e = db.Cmd($"""
                 INSERT INTO mission_event({MissionEventStore.EventCols})
                 VALUES($id,$kind,$at,$at,$payload,NULL,NULL,NULL,$role,NULL)
                 ON CONFLICT(id) DO NOTHING
                 """,
-                ("$id", MissionEventIds.ForRole(MissionEventIds.Task(p.Id), recipient)),
+                ("$id", MissionEventIds.ForRole(eventId ?? MissionEventIds.Task(p.Id), recipient)),
                 ("$kind", p.Kind), ("$at", Sql.T(at)),
                 ("$payload", Json.Write(new MissionTask(p.Id, p.Kind, p.Role))),
                 ("$role", recipient));

@@ -1535,3 +1535,55 @@ holdout dataset and no other, and a refused charge answers a refusal rather than
 itself is `U-referee-2`** — the holdout run, the promotion record, invalidation, forward evidence and the
 delivery — and `strategy_verdict` carries no outcome column: this is the budget and the precommitment,
 which are the half that cannot be added after a holdout has been read.
+
+## The verdict — `src/TradeAgent.Core/Db/PromotionStore.cs`, `Strategy/Referee.cs`
+
+**A promotion is one immutable row whose id is the SHA-256 of the nine facts it binds**: version id,
+campaign id, scoring-policy sha, interpreter build, holdout dataset id and its normalised sha **at run
+time**, declared execution model, evaluator version and the holdout run id (`PromotionRow.IdOf`, and the
+order is part of the contract). That list is `docs/COUNCIL.md` rule 9 spelled out. `verdict` and `reason`
+are NOT in the hash — they are a function of the nine that are — and the write is `ON CONFLICT DO
+NOTHING` with **no update and no delete method at all**, so the same evidence judged twice is one record
+and the first answer stands. Schema 15; the table has **no `invalidated` column**, deliberately.
+
+**`Referee.Verdict(version, campaign)` is the whole of a judgement and every step of it is the app's.**
+The charge comes first (`RequestVerdict`, which is what produces the audience), the program is re-parsed
+from the recorded source and required to hash back to the version's id, the bars are the campaign's own
+holdout read in process, the figures come from the app's own trace, and the clauses are
+`ScoringPolicyV1` — code, refused outright when the campaign's fixed policy sha is not the one this build
+implements. **The holdout run is recorded under `Referee.RunRole` (`referee`, which `CouncilRoles.IsKnown`
+rejects) and is NOT charged as a research trial**: it is the evaluation the verdict budget already paid
+for, and charging it would spend the submitter's allowance on the referee's own work. The **execution
+model is the judge's**, a parameter of the call defaulting to `ExecutionModel.Frictionless`, hashed into
+the promotion so a verdict under one declaration cannot read as a verdict under another — a choice, and
+one the row states rather than hides. A *refusal* is a verdict and is recorded; a referee that could not
+judge at all writes nothing.
+
+**The clauses, in the order they are applied.** Forward evidence first: the holdout window must begin
+**after** the version's `created_at` (`docs/COUNCIL.md`:135-136), compared against the WINDOW and never
+against when the run was made, so months that predate the freeze are refused whatever the figures say.
+Then: the run must have COMPLETED, it must have closed at least one trade, and its net after its declared
+costs must be above zero. Every clause answers a **reason class from a closed vocabulary**
+(`PromotionReason`), which is why the row's `reason` column can never hold a figure.
+
+**Invalidation is computed at READ time, never written** (`Promotions.Standing(versionId)`, the one
+reader, answering `promoted` / `refused` / `invalidated` / `unjudged`). It compares the hashes ON THE ROW
+with the facts as they are now: the holdout dataset gone, REJECTED, re-collected under a different sha or
+reclassified as a fixture; the interpreter build or the scoring-policy sha no longer this build's. A
+column would make a version's truth depend on a sweep having run. The dataset's **state** is read off the
+ledger rather than re-hashed here — every reader that opens the bars re-hashes them, and this answer is
+read on the money path — which is a choice, stated. The newest judgement is the one that answers, and a
+refusal is invalidated too: "refused on evidence that no longer exists" is a different statement.
+
+**The verdict is delivered as one wake and one sanitised note.** `PublicationKind.Verdict`, published by
+`referee` to Research through `PublicationStore.Commit` — one transaction for the artifact, its delivery
+and the single paid turn — with the wake keyed by the **promotion** (`MissionEventIds.Verdict`,
+`docs/COUNCIL.md`:64, deduplicate by entity), so re-delivering one judgement buys nobody a second turn.
+`RefereeFeedback.Text` is the only thing that decides what crosses and it reads the promotion row alone:
+**the verdict and the reason class, and no figure from the held-back months** (:196-197). The Situation
+names what is promoted (`MissionSituation.PromotedLine`, `docs/COUNCIL.md`:74) and says so as "none" with
+the reason when a promotion no longer stands. Section 8 of the owner's report lists every promotion,
+refusal and invalidation under "measured by TradeAgent", and its "no evaluation evidence" gap goes only
+when a run or a verdict exists. **The holdout run is listed in that report without its figures**, because
+`trade report` serves the same document to the agent — naming it is the record, valuing it would hand
+back through the report exactly what `data-bars` and `backtest` refuse.

@@ -26,6 +26,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly FillStore _fills;
     readonly DatasetStore _datasets;
     readonly CampaignStore _campaigns;
+    readonly Core.Strategy.Referee _referee;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -82,6 +83,24 @@ public sealed class TradingGateway : IAsyncDisposable
     /// and there is no pipe op that opens, renews, closes or re-budgets a campaign.
     /// </summary>
     public CampaignStore Campaigns => _campaigns;
+
+    /// <summary>
+    /// THE REFEREE — IN PROCESS, AND THERE IS NO OP BEHIND IT.
+    ///
+    /// <para>It lives here because everything it reads is here or beside it, and it is NOT in the
+    /// handler table: no pipe op and no <c>trade</c> verb asks for a verdict, requests one, or reads a
+    /// promotion's evidence. The caller being judged is the one party that must not be able to spend the
+    /// owner's private evaluation budget, and an agent that wanted a verdict has nowhere to ask —
+    /// exactly as it has nowhere to ask for a mode, the kill switch or an approval.</para>
+    ///
+    /// <para>What an agent DOES get is the verdict once it exists: a <c>verdict</c> publication
+    /// delivered to Research and the promoted line in its Situation. Both are the app telling it
+    /// something, which is the direction that is safe.</para>
+    /// </summary>
+    public Core.Strategy.Referee Referee => _referee;
+
+    /// <summary>Every verdict this installation has recorded. Read-only: the referee is the one writer.</summary>
+    public Promotions Promotions => _referee.Promotions;
 
     /// <summary>
     /// WHAT THE OWNER'S ONE PRESS DOES: the cutoff, and the campaign that cutoff is the subject of, in
@@ -357,6 +376,9 @@ public sealed class TradingGateway : IAsyncDisposable
         _fills = new FillStore(db);
         _datasets = new DatasetStore(db);
         _campaigns = new CampaignStore(db);
+        // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
+        // a record of when the app judged, and nothing inside the judging reads a clock.
+        _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
         // After the settings, because the report reads them; on this gateway's own clock, so a test

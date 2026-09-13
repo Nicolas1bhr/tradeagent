@@ -1140,9 +1140,45 @@ public sealed class AppHost : IAsyncDisposable
                 Guidance = host.Gateway.Settings.Guidance,
                 Spend = host.SpendToday,
                 Loss = loss,
-                Data = MissionSituation.DataLine(NewestDataset())
+                Data = MissionSituation.DataLine(NewestDataset()),
+                Promoted = MissionSituation.PromotedLine(PromotedStanding())
             };
         }
+
+        /// <summary>
+        /// WHAT STANDS PROMOTED RIGHT NOW, or null when nothing does.
+        ///
+        /// <para>The standing is asked for each recent judgement in turn and the first that still HOLDS
+        /// is the answer — <c>Promotions.Standing</c> computes invalidation at read time, so a promotion
+        /// whose dataset was rejected or whose interpreter has moved is skipped here rather than
+        /// reported as current. When none of them holds, the newest judgement is returned anyway so the
+        /// line can say what was withdrawn and why; a turn told only "none" would go looking for a
+        /// verdict that is on the table.</para>
+        ///
+        /// <para>A failure to read the ledger answers null — the line then says nothing is promoted,
+        /// which is the safe reading — rather than throwing out of the middle of a turn's message.</para>
+        /// </summary>
+        PromotionStanding? PromotedStanding()
+        {
+            try
+            {
+                var promotions = new Promotions(host._db!);
+                PromotionStanding? newest = null;
+
+                foreach (var row in promotions.All(ListedJudgements))
+                {
+                    var standing = promotions.Standing(row.VersionId);
+                    if (standing.IsPromoted) return standing;
+                    newest ??= standing.State == PromotionState.Invalidated ? standing : null;
+                }
+
+                return newest;
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>How far back the promoted line looks. A version promoted long ago is still promoted.</summary>
+        const int ListedJudgements = 20;
 
         /// <summary>
         /// The newest dataset this installation holds, verified as it is read, or null when there

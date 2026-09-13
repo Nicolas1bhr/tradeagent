@@ -470,6 +470,19 @@ public sealed record MissionSituation
     public string? Data { get; init; }
 
     /// <summary>
+    /// WHAT IS PROMOTED, in one line, or the sentence that says nothing is.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:74 puts "the promoted strategy and unresolved request ids" in the
+    /// Situation, and it is the one fact about the referee a turn can act on: a promoted version is the
+    /// only thing that may run on the owner's money (rule 8), and a version whose promotion has been
+    /// INVALIDATED is not one — so the line says which, and never merely that a verdict exists.</para>
+    ///
+    /// <para>It carries no figure, for the reason the verdict note carries none: the holdout's metrics
+    /// are the owner's private evaluation evidence and this message is read by an agent.</para>
+    /// </summary>
+    public string? Promoted { get; init; }
+
+    /// <summary>
     /// The sentence that ends every turn's message. It is the whole of what makes the loop a mission
     /// rather than a cron job: the AI is told where its memory is and that keeping it is part of
     /// finishing, because a fresh CLI session starts every <see cref="MissionOptions.TurnsPerSession"/>
@@ -560,6 +573,7 @@ public sealed record MissionSituation
         if (ShareLine(Spend) is { } share) b.AppendLine($"- {share}");
         if (Loss.Line() is { } loss) b.AppendLine($"- {loss}");
         if (!string.IsNullOrWhiteSpace(Data)) b.AppendLine($"- {Data}");
+        if (!string.IsNullOrWhiteSpace(Promoted)) b.AppendLine($"- {Promoted}");
         if (NewMaterial.Count > 0)
             b.AppendLine($"- New in `../inbox` since your last turn: {string.Join(", ", NewMaterial)}");
         if (!string.IsNullOrWhiteSpace(Guidance))
@@ -600,6 +614,32 @@ public sealed record MissionSituation
                + "`trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
                + "evidence and establish no fill.";
     }
+
+    /// <summary>
+    /// THE PROMOTED-STRATEGY LINE. A function beside <see cref="DataLine"/> for the same reason: the
+    /// sentences can be read back without a running loop, and the cases are visibly the cases.
+    ///
+    /// <para>Four of them, because "promoted" and "was promoted and no longer stands" are different
+    /// facts and an agent that read the second as the first would plan on evidence TradeAgent has
+    /// withdrawn. Nothing here is a permission: what may execute is decided in the gateway, which the
+    /// agent cannot reach.</para>
+    /// </summary>
+    public static string PromotedLine(PromotionStanding? standing) => standing?.State switch
+    {
+        PromotionState.Promoted =>
+            $"Promoted strategy: version {Short(standing!.Promotion!.VersionId)}, promoted by "
+            + $"TradeAgent's referee on {standing.Promotion.At.UtcDateTime:yyyy-MM-dd} over months you "
+            + "have never been shown. The figures behind it are your owner's and are not yours to see.",
+        PromotionState.Invalidated =>
+            $"Promoted strategy: none. Version {Short(standing!.Promotion!.VersionId)} was promoted and "
+            + "no longer stands — " + standing.Why,
+        _ =>
+            "Promoted strategy: none. TradeAgent's referee has promoted nothing, and only a promoted "
+            + "version may ever run on your owner's money. You cannot ask for a verdict; the app decides "
+            + "when a version is judged."
+    };
+
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
     /// <summary>
     /// THE COST LINE, or null when there is nothing measured to say. A function so it can be read
@@ -1466,7 +1506,8 @@ public sealed class MissionLoop
     IReadOnlyList<MissionDelivery> Delivered(IEnumerable<MissionEvent> wake)
     {
         var list = new List<MissionDelivery>();
-        foreach (var e in wake.Where(e => e.Kind is MissionEventKind.Report or MissionEventKind.Brief))
+        foreach (var e in wake.Where(e => e.Kind is MissionEventKind.Report or MissionEventKind.Brief
+                     or MissionEventKind.Verdict))
         {
             try
             {
@@ -1493,6 +1534,7 @@ public sealed class MissionLoop
         MissionEventKind.Review => "a scheduled look; nothing else has happened",
         MissionEventKind.Report => "a report from the Research Director arrived in `in/`",
         MissionEventKind.Brief => "a brief from the Operations Director arrived in `in/`",
+        MissionEventKind.Verdict => "TradeAgent's referee answered on a strategy version",
         _ => kind
     };
 
