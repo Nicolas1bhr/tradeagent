@@ -5234,7 +5234,7 @@ names → 39 added, 0 removed; CI 34720169201 and 34721448060: ubuntu and macos 
 (this unit's Fault 272/272, Integration 547/548 there). Manager's gate at `43323f3` (rebased over the CRLF fix and `U-runner-2`; landed as `7b90acf`
 after a docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 813 + 277 + 635 = 1725
 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 34 added (sets 1309 → 1343); scan clean (grant `Token`
-fields, judged); no trailers; PR #17's runners at `ee2abb2`: in flight at the time of this record; `rev-list --count` → 0; CI run 34723265426 at `7b90acf`: in flight at the time of this record; both verdicts in a follow-up commit.
+fields, judged); no trailers; PR #17's runners at `ee2abb2`: run 34722253017, all jobs GREEN, PR closed; `rev-list --count` → 0; CI run 34723265426 at `7b90acf`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** no OS sandbox — same-user reads and writes of `state/` stand, a Unix session is escapable by its own `setsid`
 (`U-contain-2`); the peer-image kernel call is Windows-only, the Doctor row saying the rule is unenforced elsewhere; no box.
