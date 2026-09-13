@@ -25,6 +25,32 @@ namespace TradeAgent.Tests.Fault;
 //   - the agent's own close re-reads the position at dispatch, inside the gate, and is refused when
 //     it moved (item 2).
 // =================================================================================================
+//
+// -------------------------------------------------------------------------------------------------
+// THE BUDGET EVERY PRESS BELOW RUNS UNDER, and why it is not the simulator's default two seconds.
+//
+// windows-latest went red on `CancelAllAgainstOpenWorkTests.An_agent_modify_inside_the_connector_
+// call_does_not_survive_the_cancel_all_press` in CI run 34771155930, at the `U-referee-2` merge
+// `45719b2` — a sha that touched nothing on the order path — with `Assert.Empty() Failure:
+// Collection was not empty / Collection: [OrderInfo { ConnectorOrderId = FB-1 ... State = WORKING }]`
+// and the test's own `press: 1 of 1 record(s) from this press are still waiting for you` /
+// `working at the end: 1`. ONE record, and it is the press's own write-ahead row with no leg row
+// behind it: `OperatorCancelAllAsync` opens its deadline, commits that row, and its `GetOrdersAsync`
+// was then refused because the budget had already gone — "TradeAgent could not read your working
+// orders, so nothing was cancelled". The press refused honestly; the fixture's verdict is the book.
+//
+// JUDGED RATHER THAN ASSUMED, on this Mac in Release, by cutting this fixture's budget to what the
+// runner's disk leaves: 100, 50, 20, 10 and 5 ms all PASS — this disk carries the press from its
+// deadline to the wire in under 5 ms — and 1 ms reproduces the CI's assertion and all five of its
+// standard-output lines byte for byte, with the press's single row UNKNOWN and unresolved. The disk
+// is the third appearance of `U-press-win-3`'s finding: one `synchronous=FULL` commit on
+// windows-latest has been measured at 2234 ms, which is a whole emergency budget inside one write.
+//
+// So every fixture here takes `Unresolved.PressBudget` (20 s), whose argument and measurements are
+// written at its declaration. NO FIXTURE IN THIS FILE HAS THE TWO-SECOND PROMISE AS ITS VERDICT —
+// not one asserts a duration, a deadline, or a refusal at one — so none is left on the default, and
+// nothing here joins `Timing`: no verdict below needs the RUNNER to keep a wall clock.
+// -------------------------------------------------------------------------------------------------
 
 static class InFlight
 {
@@ -42,11 +68,15 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
     /// P6, LIFTED. Same setup, opposite assertion: the press must send NOTHING for an instrument the
     /// gateway itself has an order on the wire for, the agent's close must be the only close that
     /// reaches the broker, and the position must end FLAT rather than reversed.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: the verdict is the book and the summary the press wrote,
+    /// so the press has to reach the leg that waits. A budget that goes in the capture read throws
+    /// out of the press instead, and the sentence this asserts is never composed.
     /// </summary>
     [Fact]
     public async Task An_agent_close_in_flight_stops_the_press_sending_a_second_close_for_that_instrument()
     {
-        var (gw, c, db, _) = await Stranded.Ready();
+        var (gw, c, db, _) = await Stranded.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
 
         await gw.PlaceAsync(new AgentContext("ai"), "p6-open", TestEnv.Buy(qty: 2m));
@@ -82,11 +112,14 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
     /// <summary>
     /// P6b, LIFTED UNCHANGED. The other direction still holds: with the press's flagged row already
     /// on disk, `U-gates`' re-check at the dispatch gate refuses the agent's close.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: the press's own close is one of the two orders counted
+    /// at the end, so this fixture needs the press to reach the wire, not merely to record itself.
     /// </summary>
     [Fact]
     public async Task A_press_row_on_disk_still_refuses_the_agents_close()
     {
-        var (gw, c, db, _) = await Stranded.Ready();
+        var (gw, c, db, _) = await Stranded.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
 
         await gw.PlaceAsync(new AgentContext("ai"), "p6b-open", TestEnv.Buy(qty: 2m));
@@ -108,11 +141,14 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
     /// THE GUARD IS PER INSTRUMENT, NOT PER PRESS. A press over two positions must still flatten the
     /// one nothing is in flight on — an emergency control that gives up on every symbol because one
     /// of them is busy would be a worse failure than the one this unit fixes.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>: "the other instrument is still closed" is a close that
+    /// reaches the broker, and NQ's leg is the second of two — the last thing a press this size does.
     /// </summary>
     [Fact]
     public async Task The_other_instruments_of_the_same_press_are_still_closed()
     {
-        var (gw, c, db, _) = await Stranded.Ready();
+        var (gw, c, db, _) = await Stranded.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
 
         await gw.PlaceAsync(new AgentContext("ai"), "two-es", TestEnv.Buy(qty: 2m));
@@ -158,9 +194,15 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
 
 public class CancelAllAgainstOpenWorkTests(ITestOutputHelper Out)
 {
+    /// <summary>
+    /// A resting limit order at the broker, and a gateway whose press runs under
+    /// <see cref="Unresolved.PressBudget"/>: both verdicts below are the book the press left behind —
+    /// nothing working, one order, CANCELLED — and every one of them is downstream of a cancel leg
+    /// that has to reach the wire. This is the fixture the windows red landed on.
+    /// </summary>
     static async Task<(TradingGateway Gw, HangingReadConnector C, Database Db, ExecutionRequest Resting)> Resting(string id)
     {
-        var (gw, c, db) = await SlowRead.Ready();
+        var (gw, c, db) = await SlowRead.Ready(Unresolved.PressBudget);
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
         var resting = await gw.PlaceAsync(new AgentContext("ai"), id,
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 2m, 100m, null, TimeInForce.Day, null));

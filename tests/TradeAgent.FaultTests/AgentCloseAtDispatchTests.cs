@@ -108,10 +108,19 @@ sealed class HangingReadConnector(FakeConnector inner) : ITradingConnector
 static class SlowRead
 {
     /// <summary>A gateway allowed to trade, over a connector that can park one read.</summary>
-    public static async Task<(TradingGateway Gw, HangingReadConnector C, Database Db)> Ready()
+    /// <param name="emergencyBudget">
+    /// How long the whole of a risk-reducing operation gets, for a fixture whose verdict is what an
+    /// emergency press DID rather than how long it took. Null is the simulator's own two seconds,
+    /// which is what a fixture about the budget itself needs; <see cref="Unresolved.PressBudget"/>
+    /// is what a fixture whose verdict is the book takes, and the argument for it is written there.
+    /// </param>
+    public static async Task<(TradingGateway Gw, HangingReadConnector C, Database Db)> Ready(
+        TimeSpan? emergencyBudget = null)
     {
         var db = TestEnv.NewDb();
-        var c = new HangingReadConnector(new FakeConnector(new FakeBroker()));
+        var c = new HangingReadConnector(emergencyBudget is { } budget
+            ? new FakeConnector(new FakeBroker()) { EmergencyBudget = budget }
+            : new FakeConnector(new FakeBroker()));
         var gw = new TradingGateway(db, c, new HealthRegistry());
         gw.Update(s =>
         {
