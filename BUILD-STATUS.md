@@ -5378,7 +5378,7 @@ No schema change.
 **Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `ec44e40`, Release: 0 warnings, 0 errors, 17
 projects; seven touched classes 3× → 89/89 each; Unit 923 + Fault 277 + Integration 645 = 1845 passed, 0 failed, 1 skipped; names → 3
 added, 0 removed. Manager's gate at `118e7fb` (rebased over `U-referee-1`; landed as `47d1071` after a docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 962 + 277 + 656 = 1895 passed, 0 failed, 1 skipped; names vs
-`main` → 0 removed, 3 added; scan clean (token counts in assertions, judged); no trailers; `rev-list --count` → 0; CI run 34768117002 at `47d1071`: in flight at the time of this record; verdict in a follow-up commit.
+`main` → 0 removed, 3 added; scan clean (token counts in assertions, judged); no trailers; `rev-list --count` → 0; CI run 34768117002 at `47d1071`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** no real provider call (every request went to the loopback fake); the one-run-at-a-time guard on the worker route is pinned
 by `BacktestRequestTests` rather than re-proved here; `MissionSituation.Cut` is in memory and does not survive a restart (`ai_attempt.
