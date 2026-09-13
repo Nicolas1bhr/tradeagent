@@ -5315,3 +5315,42 @@ placeholder token string, judged; no key-shaped literal); no trailers; `rev-list
 turn in the suite is driven by calling the conversation directly (`U-harness-loop`). **NOT done:** no real provider call has ever been
 made by this repository (the manifest stays `Verified = false`); the chair is not on the harness; no memory search, no grant table with
 fencing, no second provider, no key on disk; no box, no ATAS, no money.
+
+## 2026-09-13 — U-referee-1 landed: the protocol — a holdout no pipe caller can reach, a campaign with its policy fixed, trials charged, verdicts scarce
+
+Rule 9's protocol half (`docs/COUNCIL.md:130-136`), by one fresh builder on `docs/briefs/U-referee-1.md`, written from a read-only survey.
+Merge `19ef096`, 8 commits, 26 files, +3090/−56 (`Database.cs` **schema 14** — `holdout_from` and `evaluation_class` on `dataset`,
+`strategy_campaign`, `strategy_trial`, `strategy_verdict`; `DatasetStore.cs`, `DatasetReader.cs` and `BarFeed.cs` requiring a `BarAudience`;
+`CampaignStore`, `Referee`, `HoldoutFeed`; `GatewayPipeServer.cs`, `Backtests.cs`, the Data page card, `Errors.cs`, `CONTRACTS.md`, the guide;
+six test classes). Rebased three times as `main` moved, the schema ladder reconciled 11 → 12 → 13 → 14 with no edit to either neighbour.
+
+- **The holdout is a cutoff the owner sets and nothing on the pipe can set, clear or move:** `holdout_from` (UTC, INCLUSIVE) and the class,
+  one writer, a two-press card in BOTH directions because there is no way back; moving a cutoff earlier is refused. RED: `no such column:
+  holdout_from`; mutant (`data-bars` honouring a cutoff from the request): `Expected: 2026-08-01T01:00:00 / Actual: …01:30:00`.
+- **No caller on the pipe reads a holdout bar, and the refusal is the DEFAULT path:** both readers REQUIRE a `BarAudience`, a forgotten
+  refusal yields an empty window, the only audience that may pass a cutoff is `internal` to Core and a reflection test holds it to one
+  public door; a window is served only when its end is PROVED before the cutoff, so an unbounded `to` is refused rather than clipped;
+  every op is swept off `Ops`' own fields. RED over the wire: `a caller on the agent pipe was served the bars the owner held back`, `a
+  backtest ran over the months the owner held back`; mutant (a null role read as "not research"): the roleless caller served.
+- **`strategy_campaign`**, policy text and sha fixed at open, one open campaign per holdout dataset (a partial unique index, proved by
+  writing past the store), renewal by code carrying `renewed_from` AND the parent's policy. RED: `no such table`; mutant (a renewal with
+  no `renewed_from`): `Expected: 1 / Actual: null`.
+- **`strategy_trial`**, one per registered research run, keyed by campaign + version + run and by nothing about who asked (a test holds
+  the column list); a `fixture` dataset's run charged nothing. RED: `Expected: 1 / Actual: 0`; mutant (keyed by the attempt): a restart
+  buys two more trials, `Expected: 1 / Actual: 3`.
+- **The verdict budget, charged over the renewal LINEAGE before a holdout bar is read** (a per-campaign count would hand access back on
+  renewal, `COUNCIL.md:132`). RED: `a second verdict was authorised on a budget of one`; mutant (charged after the run): the row absent
+  when the request answered. Defaults `CampaignTrialBudget` 200, `CampaignVerdictBudget` 3, copied onto the campaign at open.
+- **Judged at landing:** `U-api-worker`'s schema pin turned into a floor (the same move its own report made to four others); the choices
+  where COUNCIL is silent are in `CONTRACTS.md` as choices.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `66335c1`, Release: 0 warnings, 0 errors (DLL
+timestamps checked); touched classes 3× → 97/97 (Unit) and 27/27 (Integration) each; Unit 959 + Fault 277 + Integration 656 = 1892 passed,
+0 failed, 1 skipped; names → 38 added, 0 removed; 145 test files text. Manager's gate at `19ef096`, Release: build → 0 warnings, 0 errors; suite →
+959 + 277 + 656 = 1892 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 38 added (sets 1505 → 1543); scan clean (grant tokens in tests, judged); no trailers; `rev-list
+--count` → 0; CI run 34767356515 at `19ef096`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** the verdict itself (`U-referee-2`); no owner-visible budget line, nothing on the daily report, no renew button; no clear for a
+holdout and no way down for a class (both would un-hold bars); a dataset with no holdout has no campaign, so its runs are charged nothing;
+the trial budget can be exceeded by ONE under two concurrent roles (the charge registers with the run, the refusal is checked before it —
+`U-council-concurrent`); no box, no ATAS, no money.
