@@ -581,15 +581,19 @@ public class ShippedListPriceTests : IDisposable
     }
 
     /// <summary>
-    /// Priced per runtime id, and only for the two whose provider this build knows. <c>custom</c> is
+    /// Priced per runtime id, and only for the ones whose provider this build knows. <c>custom</c> is
     /// an engineer's own command in <c>runtimes.json</c>: a price for it would be a guess about a
     /// vendor nobody here has heard of.
+    ///
+    /// <para><c>openai-api</c> is the app-owned harness, and it is the one entry here whose bill is not
+    /// a quotation about somebody else's program: TradeAgent calls that provider's own endpoint with a
+    /// key the owner pasted, so the page the prices were read from is the page they are billed from.</para>
     /// </summary>
     [Fact]
     public void The_shipped_catalogue_covers_the_runtimes_whose_provider_is_known_and_no_others()
     {
         var runtimes = ListPrices.All.Select(p => p.Runtime).Distinct().Order().ToArray();
-        Assert.Equal(["codex", "opencode"], runtimes);
+        Assert.Equal(["codex", ApiAgentRuntime.RuntimeId, "opencode"], runtimes);
 
         var known = RuntimeCatalog.BuiltIn().Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
         Assert.All(runtimes, r => Assert.Contains(r, known));

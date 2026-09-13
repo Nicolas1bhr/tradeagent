@@ -30,6 +30,9 @@ namespace TradeAgent.Tests.Unit;
 /// repository has ever sent a request to it — so the harness's request and response shapes are the
 /// vendor's published contract rather than something measured, and the manifest says so.</para>
 /// </summary>
+// It reads runtimes.json (RuntimeCatalog.Require, for the shipped harness manifest), so it shares the
+// collection with the tests that corrupt that file on purpose rather than racing them.
+[Collection(VendorOverrideFiles.Name)]
 public class SuiteReachesNoVendorTests
 {
     /// <summary>The vendor's own host, spelled once, here, where the scan is looking for it.</summary>

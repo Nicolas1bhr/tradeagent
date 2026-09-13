@@ -577,14 +577,48 @@ public class DoctorReconciliationCheckTests
 [Collection(VendorOverrideFiles.Name)]
 public class RuntimeCatalogTests
 {
+    /// <summary>
+    /// Every built-in that is a PROGRAM on this machine names one and admits it is unverified.
+    ///
+    /// <para><c>custom</c> is excluded because it is an engineer's own command, and a HARNESS is
+    /// excluded because it is not a program at all: TradeAgent calls the provider itself, so there is
+    /// nothing to find on disk and <c>Executable</c> is empty by design. The claim is not dropped for
+    /// those — it moves to the test below, which holds them to naming an endpoint instead.</para>
+    /// </summary>
     [Fact]
     public void Built_in_runtimes_are_honest_about_being_unverified()
     {
-        foreach (var m in RuntimeCatalog.BuiltIn().Where(m => m.Id != "custom"))
+        foreach (var m in RuntimeCatalog.BuiltIn()
+                     .Where(m => m.Id != "custom" && m.Endpoint.Length == 0))
         {
             Assert.False(m.Verified, $"{m.Id} claims verified without a real-machine check");
             Assert.False(string.IsNullOrWhiteSpace(m.DocsUrl));
             Assert.False(string.IsNullOrWhiteSpace(m.Executable));
+        }
+    }
+
+    /// <summary>
+    /// AND A BUILT-IN HARNESS IS HELD TO THE SAME HONESTY IN ITS OWN TERMS: an endpoint rather than an
+    /// executable, no install plan, and unverified — no run of this repository has ever called the
+    /// provider, so its request and response shapes are the vendor's published contract and nothing
+    /// here claims they were measured.
+    /// </summary>
+    [Fact]
+    public void Built_in_harnesses_name_an_endpoint_instead_of_a_program_and_admit_it_is_unverified()
+    {
+        var harnesses = RuntimeCatalog.BuiltIn().Where(m => m.Endpoint.Length > 0).ToList();
+        Assert.NotEmpty(harnesses);
+
+        foreach (var m in harnesses)
+        {
+            Assert.False(m.Verified, $"{m.Id} claims verified without a real-provider check");
+            Assert.False(string.IsNullOrWhiteSpace(m.DocsUrl));
+            Assert.Equal("", m.Executable);
+            Assert.Equal(InstallKind.None, m.Install.Kind);
+            Assert.StartsWith("https://", m.Endpoint);
+            // A key box in the app's own window, never a login command in a terminal.
+            Assert.NotNull(m.ApiKey);
+            Assert.Empty(m.AuthArgs);
         }
     }
 
