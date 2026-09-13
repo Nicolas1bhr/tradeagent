@@ -5456,7 +5456,7 @@ witness, turned LOST at its reservation by the next start.
 projects; nine touched classes 3× → 102/102 each; Unit 988 + Fault 277 + Integration 657 = 1922 passed, 0 failed, 1 skipped; names → 8
 added, 0 removed; every test source text; rebased three times with no conflict. Manager's gate at `4753c46`, Release: build →
 0 warnings, 0 errors; suite → 988 + 277 + 657 = 1922 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 8 added (sets 1565 → 1573); scan clean (usage field names, judged); no trailers;
-no gateway or protocol file touched; `rev-list --count` → 0; CI run 34773015349 at `4753c46`: in flight at the time of this record; verdict in a follow-up commit.
+no gateway or protocol file touched; `rev-list --count` → 0; CI run 34773015349 at `4753c46`: all four jobs GREEN — ubuntu, macos, windows-latest (the press fixture red of `45719b2` not reproduced there) and `package`.
 
 **NOT done, the bound stated:** `LoopAsync` still drives one turn at a time — the guards make an overlap SAFE and two callers prove it,
 but a second driver is not this unit; `WorkspaceRevisions.Snapshot` still reads its two size-capped files inside the transaction (only the
