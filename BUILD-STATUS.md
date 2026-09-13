@@ -5272,7 +5272,7 @@ committed, RESUMED from its transcript at 13:05 with its context, then told of o
 projects; touched classes 3× → Unit 65/65, Integration 101 + 1 skipped, backpressure 34/34 each; Unit 854 + Fault 277 + Integration 645 =
 1776 passed, 0 failed, 1 skipped; names → 47 added, 0 removed; 127 test files text. Manager's gate at `5020b2b`, Release: build →
 0 warnings, 0 errors; suite → 854 + 277 + 645 = 1776 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 47 added (sets 1406 → 1453); scan clean (`ipc.token` in a traversal-refusal
-test, judged); no trailers; `rev-list --count` → 0; CI run 34756421303 at `5020b2b`: in flight at the time of this record; verdict in a follow-up commit.
+test, judged); no trailers; `rev-list --count` → 0; CI run 34756421303 at `5020b2b`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT VERIFIED:** the CLI verb inside the suite — `Map` is a private local function of the top-level `Program`, so `trade backtest` was
 proven only by hand (`IPC_UNAVAILABLE` with no app, `unknown command` on a typo, the help lines). **NOT done:** no live or paper execution,
