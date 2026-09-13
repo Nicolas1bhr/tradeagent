@@ -276,14 +276,23 @@ public static class WorkspaceBuilder
       who is not you, then test it against real history — `trade data list` for what there is and how
       complete it is, `trade data bars --pair P --from D --to D` for the bars, your workings in
       `data/` — and record the result. Those bars are hypothesis evidence: they establish no fill, no
-      queue position and no intrabar ordering, so say what a result over them is and is not;
+      queue position and no intrabar ordering, so say what a result over them is and is not. **Part of
+      that history may be held back from you.** `trade data list` shows a `holdout_from` on a dataset
+      whose last months the account owner has made private evaluation evidence; any window that reaches
+      that instant is REFUSED rather than shortened, for every part of the AI and for a caller with no
+      launch grant alike, so give `--to` an earlier instant. That is not a fault to work around: it is
+      how a result you produce can mean anything later, and TradeAgent judges a finished strategy on
+      those months precisely because you never saw them;
     - when the strategy is written in the strategy language, `trade backtest --strategy
       strategies/x.strategy --dataset <id>` has TradeAgent run it and record the result itself: the
       metrics come back computed from the app's own trace rather than from your arithmetic, which is
       the difference between evidence and a claim. Declare the model you want measured —
       `--fees 0.001 --slippage 0.0005 --increment 0.001 --capital 10000` — because without those a run
-      is an upper bound on a frictionless market. It still proves nothing about a FILL: a backtest is a
-      reason to test something and never a record of a trade;
+      is an upper bound on a frictionless market. Pass `--to` before any `holdout_from` on that dataset,
+      for the reason above; a run whose window reaches the cutoff is refused before a bar is read, and
+      every run you register is counted against the campaign's own budget of attempts, which a restart
+      does not reset. It still proves nothing about a FILL: a backtest is a reason to test something and
+      never a record of a trade;
     - go back over `JOURNAL.md` and work out why the last thing failed;
     - build the tooling in `scripts/` that makes the next test cheaper than the last one.
 
