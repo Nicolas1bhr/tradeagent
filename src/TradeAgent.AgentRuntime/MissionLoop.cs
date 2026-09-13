@@ -125,6 +125,22 @@ public sealed record AgentTurnEnded(int ExitCode, TimeSpan Duration, string Raw,
     /// fact is how a table stops being readable.</para>
     /// </summary>
     public string? Outcome { get; init; }
+
+    /// <summary>
+    /// WHICH BOUND CUT THE TURN, IN THE WORDS THE WORKER ITSELF WAS GIVEN, or null where nothing cut
+    /// it.
+    ///
+    /// <para>A second fact from <see cref="Outcome"/> rather than the same one. That is the coded word
+    /// the ledger carries — one of four, chosen by the app — and it is the right shape for a table and
+    /// the wrong shape for the NEXT turn's Situation, which has to say which of the allowances ran out
+    /// and that the work was kept. <c>CONTEXT_BUDGET_EXCEEDED</c> tells a role nothing it can act on.
+    /// </para>
+    ///
+    /// <para>It is the same sentence the turn was shown in its own conversation, deliberately: the turn
+    /// that was cut and the turn that reads about it are told the same thing, so the second one is not
+    /// working from a paraphrase of the first one's experience.</para>
+    /// </summary>
+    public string? Cut { get; init; }
 }
 
 /// <summary>
@@ -398,6 +414,24 @@ public sealed record MissionSituation
     public IReadOnlyList<string> Restored { get; init; } = [];
 
     /// <summary>
+    /// WHY THIS ROLE'S PREVIOUS TURN WAS CUT SHORT BY TRADEAGENT, in the words that turn was given, or
+    /// null where it finished on its own.
+    ///
+    /// <para>Only the app-owned harness can produce one: it stops a turn before a request it has
+    /// decided not to send (<see cref="ApiConversation.Exceeded"/>), keeps whatever that turn had
+    /// staged, and ends it <c>CONTEXT_BUDGET_EXCEEDED</c>. A vendor CLI's turn ends with an exit code
+    /// and nobody can say what stopped it, so there is nothing honest to put here for one.</para>
+    ///
+    /// <para>It is in the message because the alternative is a role that opens a half-written report
+    /// and a half-written plan with no account of either. That role has two guesses available to it —
+    /// the app lost its work, or it never wrote it — and both are wrong, and it spends the turn the
+    /// owner is paying for finding that out or writing the same report again. Rendered beside
+    /// <see cref="Restored"/>, which is the other thing TradeAgent did to this role's files while it
+    /// was not looking.</para>
+    /// </summary>
+    public string? Cut { get; init; }
+
+    /// <summary>
     /// WHY THIS TURN IS HAPPENING, in the words of the events that caused it.
     ///
     /// A turn used to have no cause at all: the previous one ended, so this one started. An AI told
@@ -467,6 +501,18 @@ public sealed record MissionSituation
         {
             b.AppendLine($"**{d.Headline()}** It is in `{WorkspaceBuilder.InDir}/{d.Id}.md`.").AppendLine();
             foreach (var line in d.Text.Replace("\r\n", "\n").TrimEnd().Split('\n'))
+                b.Append("> ").AppendLine(line);
+            b.AppendLine();
+        }
+
+        // WHAT TRADEAGENT STOPPED, and what it did with the work. Above `Restored` and below the
+        // other role's report: both are things the app did to this role's files between its turns,
+        // and this one is the reason the files may be half-written at all.
+        if (!string.IsNullOrWhiteSpace(Cut))
+        {
+            b.AppendLine("**TradeAgent stopped your last turn before you finished it, and kept what "
+                         + "you had already written.**").AppendLine();
+            foreach (var line in Cut.Replace("\r\n", "\n").TrimEnd().Split('\n'))
                 b.Append("> ").AppendLine(line);
             b.AppendLine();
         }
@@ -770,6 +816,22 @@ public sealed class MissionLoop
     /// </summary>
     readonly List<string> _typedForARefusedTurn = [];
 
+    /// <summary>
+    /// THE BOUND THAT CUT EACH ROLE'S LAST TURN, until that role's next turn has been told about it.
+    ///
+    /// <para>Per role, because the council is serial but its turns interleave: the chair taking a turn
+    /// between two of Research's must not clear — or read — a notice that belongs to Research. It is
+    /// written when a turn ends and CLEARED when the next one ends without being cut, so the notice
+    /// describes the turn immediately before and never a turn from an hour ago.</para>
+    ///
+    /// <para>It does not survive this process, and that is honest rather than a gap being tolerated: a
+    /// restart has already turned that launch LOST and reconciled its files, so the next turn's
+    /// Situation would be reporting a cut it cannot show the consequences of. What the LEDGER keeps is
+    /// the durable record — <c>ai_attempt.context</c> carries the coded word — and that is the copy
+    /// anyone auditing the day reads.</para>
+    /// </summary>
+    readonly Dictionary<string, string> _cutLastTurn = new(StringComparer.Ordinal);
+
     public MissionLoop(IMissionHost host, MissionOptions? options = null,
         Func<DateTimeOffset>? now = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
@@ -1039,6 +1101,10 @@ public sealed class MissionLoop
         {
             Role = role,
             Attempt = attemptId,
+            // WHAT TRADEAGENT DID TO THIS ROLE'S LAST TURN, if it cut it. Read here rather than
+            // removed: a turn the ledger then refuses never runs, and consuming the notice into a
+            // message nobody sent would lose it.
+            Cut = CutBefore(role),
             OwnerMessages = [.. OwnerWords(wake), .. typed],
             Deliveries = Delivered(wake),
             Wakes = Reasons(wake)
@@ -1119,6 +1185,12 @@ public sealed class MissionLoop
             // still cost money. Leaving that row open until the app next starts would hold its whole
             // reservation against the day's ceiling for a turn that has already ended.
             Commit(role, attemptId, events, wake, ended);
+
+            // AND WHETHER THIS ROLE'S NEXT TURN HAS SOMETHING TO BE TOLD. Beside the commit rather
+            // than after it, so a turn that threw its way out still settles the question — a turn
+            // that failed is not a turn that was cut, and the notice must not outlive the turn it
+            // describes.
+            Remember(role, ended);
         }
 
         // ---- close the scanner's window behind this turn -----------------------------------------
@@ -1276,6 +1348,34 @@ public sealed class MissionLoop
                 () => { if (events is not null) Settle(events, wake, failed, ended); });
         }
         catch (Exception) { /* the row stays LAUNCHED; the next start loses it and reconciles */ }
+    }
+
+    /// <summary>
+    /// THE SENTENCE THIS ROLE'S PREVIOUS TURN WAS CUT WITH, or null where nothing cut it. See
+    /// <see cref="_cutLastTurn"/>.
+    /// </summary>
+    string? CutBefore(string role)
+    {
+        lock (_gate) return _cutLastTurn.TryGetValue(role, out var why) ? why : null;
+    }
+
+    /// <summary>
+    /// REMEMBERS — OR FORGETS — THAT THIS ROLE'S TURN WAS CUT, so the role's NEXT turn's Situation says
+    /// so exactly once.
+    ///
+    /// <para>Both directions on every turn, which is the whole of it: setting without clearing would
+    /// have a role read every turn for the rest of the day as the aftermath of one cut one. A turn that
+    /// ended any other way — finished, cancelled, a provider that refused, or one that threw before it
+    /// produced an ending at all — clears it, because none of those is this app stopping a turn on its
+    /// own arithmetic and none of them leaves work half-written for that reason.</para>
+    /// </summary>
+    void Remember(string role, AgentTurnEnded? ended)
+    {
+        lock (_gate)
+        {
+            if (ended?.Cut is { Length: > 0 } why) _cutLastTurn[role] = why;
+            else _cutLastTurn.Remove(role);
+        }
     }
 
     /// <summary>The next LOCAL midnight, on the offset in force at that boundary.</summary>

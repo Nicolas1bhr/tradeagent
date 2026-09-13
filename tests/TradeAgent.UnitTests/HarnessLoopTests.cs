@@ -379,4 +379,100 @@ public class HarnessLoopTests(ITestOutputHelper log) : IDisposable
              $"{CouncilRelay.AfterCommit}: {AiAttemptState.ENDED}, 1 published"],
             seen);
     }
+
+    // ---- item 2: a turn cut mid-loop ends like any other ------------------------------------------
+
+    /// <summary>
+    /// A TURN THE APP STOPPED ON ITS OWN BOUND IS COMMITTED EXACTLY LIKE ONE THAT FINISHED, AND THE
+    /// NEXT TURN IS TOLD.
+    ///
+    /// <para>Three claims, and the third is the one that was missing. The launch ends ENDED with
+    /// <c>CONTEXT_BUDGET_EXCEEDED</c> in <c>ai_attempt.context</c> — bounded is not broken, and rule 4
+    /// keeps enforcement apart from billing. What the turn had already staged is kept and published
+    /// under that attempt, on the SAME commit as the close, because a report written by a turn that
+    /// then ran out of context is still the role's work and the owner has already paid for it. And the
+    /// next Situation says the turn was cut and which bound cut it: a role that reads a half-written
+    /// plan with no explanation spends its next turn — at the owner's expense — working out where its
+    /// report went, or writes it again.</para>
+    ///
+    /// <para>The mutant is the guard whose POSITION is the property: <c>MissionLoop.Commit</c>
+    /// returning early for a turn that failed. A cut turn has exit code 1, so the transition never
+    /// runs, and the launch is left open with its work nowhere.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_turn_cut_by_its_own_bound_commits_like_any_other_and_the_next_one_is_told()
+    {
+        using var provider = new FakeProvider();
+        // 300 INPUT TOKENS, reached EXACTLY: the write lands, the read takes the turn to the bound,
+        // and the third request is never sent — reaching a bound exactly is already too late.
+        using var host = new Harness(_db, _root, provider, TurnAllowance.From(300, 20_000));
+
+        File.WriteAllText(
+            Path.Combine(host.HomeFor(CouncilRoles.Research), WorkspaceBuilder.InDir, "brief.md"), Brief);
+
+        var attempt = host.Meter.Mint();
+        provider
+            .Answer(FakeProvider.ToolCall("write_file",
+                new { path = $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", content = Report },
+                "c1", input: 100, output: 5))
+            .Answer(FakeProvider.ToolCall("read_file", new { path = $"{WorkspaceBuilder.InDir}/brief.md" },
+                "c2", input: 200, output: 5));
+
+        var seen = new List<string>();
+        host.Handoff.Boundary = at =>
+        {
+            if (at is CouncilRelay.BeforeCommit or CouncilRelay.AfterCommit)
+                seen.Add($"{at}: {Row(attempt)?.State.ToString() ?? "no row"}, {Reports().Count} published");
+        };
+
+        WakeResearch(host, "cut");
+        var loop = new MissionLoop(host, NoHeartbeat);
+        await loop.TurnAsync();
+
+        Assert.Equal(2, provider.Requests.Count);
+
+        // ---- ENDED, with the reason ----------------------------------------------------------
+        var row = Row(attempt);
+        Assert.NotNull(row);
+        Assert.Equal(AiAttemptState.ENDED, row!.State);
+        Assert.Equal(ApiConversation.BudgetExceeded, row.ExitCode);
+        Assert.Equal(300, row.InputTokens);
+        using (var context = JsonDocument.Parse(row.Context!))
+            Assert.Equal(nameof(ErrorCode.CONTEXT_BUDGET_EXCEEDED),
+                context.RootElement.GetProperty("ended").GetString());
+
+        // ---- the staged file kept, and published under that attempt on the same commit -------
+        Assert.True(File.Exists(Path.Combine(host.HomeFor(CouncilRoles.Research),
+            WorkspaceBuilder.OutDir, $"report-{attempt}.md")));
+        var published = Assert.Single(Reports());
+        Assert.Equal(Report, published.Content);
+        Assert.Equal(attempt, published.Attempt);
+        Assert.Single(new MissionEventStore(_db).OfKind(PublicationKind.Report));
+
+        log.WriteLine(string.Join("\n", seen));
+        Assert.Equal(
+            [$"{CouncilRelay.BeforeCommit}: {AiAttemptState.LAUNCHED}, 0 published",
+             $"{CouncilRelay.AfterCommit}: {AiAttemptState.ENDED}, 1 published"],
+            seen);
+
+        // ---- and the next Situation says so, in the words the cut turn was given --------------
+        provider.Answer(FakeProvider.Message("Understood; carrying on.", input: 10, output: 5));
+        WakeResearch(host, "after-the-cut");
+        await loop.TurnAsync();
+
+        var next = Assert.Single(host.Opened.Skip(1)).Prompt;
+        log.WriteLine(next);
+        Assert.Contains("TradeAgent stopped your last turn", next);
+        Assert.Contains("300 input tokens of the 300 one turn is allowed", next);
+        Assert.Contains("is kept", next);
+
+        // AND IT IS SAID ONCE. The turn that was told about it finished normally, so the turn after
+        // that is not told again — a notice that outlived the thing it describes would have the role
+        // reading every future turn as the aftermath of one cut one.
+        provider.Answer(FakeProvider.Message("Still going.", input: 10, output: 5));
+        WakeResearch(host, "and-after-that");
+        await loop.TurnAsync();
+
+        Assert.DoesNotContain("TradeAgent stopped your last turn", host.Opened[2].Prompt);
+    }
 }

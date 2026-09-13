@@ -1220,6 +1220,17 @@ the turn ends `CONTEXT_BUDGET_EXCEEDED` with exit code 1, **its staged files kep
 rule 4 keeps enforcement apart from billing. A never-answering endpoint fails on an injectable timeout
 (120 s shipped, seconds in tests) reported as a timeout rather than as a cancellation.
 
+**A cut turn ends like any other, and the next one is told.** `MissionLoop`'s committed transition is in
+its `finally`, so a turn stopped on a bound closes ENDED and publishes what it staged in the SAME
+`Database.Write` as a turn that finished — `U-harness-loop` item 2, asserted at both boundaries. The
+third half is a message, not a row: `AgentTurnEnded.Cut` carries the bound's own sentence out of the
+turn, the loop holds it PER ROLE until that role's next turn, and `MissionSituation.Cut` renders it
+above `Restored`. Both directions on every turn, so the notice describes the turn immediately before and
+never a turn from an hour ago; it does not survive a restart, which by then has turned that launch LOST
+and reconciled its files, and `ai_attempt.context` is the durable copy. Without it a role opens a
+half-written report with two readings available to it — the app lost the work, or it never wrote it —
+and spends the turn the owner is paying for on whichever one it picked.
+
 **Tools are grants, default deny** (`GrantedWorkerTools`). Six, and no seventh: `read_file` /
 `list_files` anywhere inside the role's own home (its `in/` included), `write_file` into `out/` and
 `trading/` ONLY — staged, the relay publishes — `trade`, `data` (`data-list`/`data-bars`) and `report`.

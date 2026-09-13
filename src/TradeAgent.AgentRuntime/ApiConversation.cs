@@ -231,6 +231,11 @@ public sealed class ApiConversation(
         var outcome = EndedNotStarted;
         TurnUsage? usage = null;
 
+        // WHICH BOUND CUT THE TURN, in the words the worker was given. Null on every other path out:
+        // a cancelled turn and a provider that refused were not cut by this app's own arithmetic, and
+        // saying so to the next turn would be inventing a reason. See AgentTurnEnded.Cut.
+        string? cut = null;
+
         // REFUSED BEFORE ANYTHING IS SENT. No key is not an error the owner has to read a log for:
         // it is a sentence in the conversation, and the turn still ends so the loop and the ledger
         // both account for it rather than losing a turn that vanished.
@@ -250,7 +255,7 @@ public sealed class ApiConversation(
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         try
         {
-            (exitCode, usage, outcome) = await RunRequestsAsync(key, message, transcript, _cts.Token);
+            (exitCode, usage, outcome, cut) = await RunRequestsAsync(key, message, transcript, _cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -285,16 +290,23 @@ public sealed class ApiConversation(
                 // THE ROW SAYS HOW IT ENDED. A turn the app stopped on its own bound is a different
                 // fact from a turn that failed, and `ai_attempt.exit_code` cannot carry the
                 // difference — see EndedCompleted.
-                Outcome = outcome
+                Outcome = outcome,
+
+                // AND THE NEXT TURN IS TOLD WHICH BOUND, in these same words. A role handed a
+                // half-written report with no explanation spends its next turn — at the owner's
+                // expense — finding out where the rest of it went.
+                Cut = cut
             });
         }
     }
 
     /// <summary>
-    /// The request loop. Returns how the turn ended and what every response together reported.
+    /// The request loop. Returns how the turn ended, what every response together reported, and — on
+    /// the one path where this app cut the turn itself — the bound that did it, in the same words the
+    /// worker was shown.
     /// </summary>
-    async Task<(int ExitCode, TurnUsage? Usage, string Outcome)> RunRequestsAsync(string key, string message,
-        Transcript transcript, CancellationToken ct)
+    async Task<(int ExitCode, TurnUsage? Usage, string Outcome, string? Cut)> RunRequestsAsync(
+        string key, string message, Transcript transcript, CancellationToken ct)
     {
         var bound = allowance?.Invoke() ?? TurnAllowance.Default;
         var surface = tools();
@@ -320,7 +332,7 @@ public sealed class ApiConversation(
                 // would throw away work the owner has already paid for.
                 Append(new ChatTurn(ChatRole.System, why, _now()));
                 transcript.Note(why);
-                return (BudgetExceeded, total, EndedOverBudget);
+                return (BudgetExceeded, total, EndedOverBudget, why);
             }
 
             var body = RequestBody(messages, surface, bound);
@@ -339,7 +351,7 @@ public sealed class ApiConversation(
                 transcript.Message(text);
             }
 
-            if (answer.Calls.Count == 0) return (Completed, total, EndedCompleted);
+            if (answer.Calls.Count == 0) return (Completed, total, EndedCompleted, null);
 
             // THE TOOL LOOP IS THE APP'S, not the provider's. Each call is answered by this process,
             // recorded, bounded, and put back into the conversation as a tool message.
