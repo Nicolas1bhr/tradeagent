@@ -1472,3 +1472,50 @@ a different window from the one that was asked for, with nothing in the reply to
 `Refusal` yields an EMPTY window, never a held-back bar. `data-list` **names** the cutoff and the class,
 because the boundary is not the secret — the bars are — and an agent that had to find it one refusal at
 a time would spend the owner's money doing so.
+
+## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
+
+**The referee is code and never a role** (`docs/COUNCIL.md`:55-57). There is no LLM behind any of this, no
+role called referee, no workspace folder for it — and **no pipe op and no `trade` verb reaches it**: not
+the holdout, not a campaign, not a trial, not a verdict. A caller that could open a campaign would have
+given itself an unlimited supply of attempts, and one that could ask for verdicts could search the
+holdout by asking.
+
+**A campaign is opened by the app when the owner sets a holdout, one per holdout dataset.**
+`TradingGateway.SetHoldout` writes the cutoff and opens the campaign in ONE transaction, so months held
+back always have something counting the attempts made against them. The scoring policy **text and its
+SHA-256 are copied onto the row at open** and never updated — precommitment is the point, and a policy
+read from a constant at judging time could change between the hypothesis and the verdict. The budgets are
+copied too, off `TradeAgentSettings.CampaignTrialBudget` (**200**) and `CampaignVerdictBudget` (**3**),
+both choices, both stated: what matters is that they are finite, because an unlimited number of peeks at
+one holdout is how a process finds a rule that fits the noise. Zero means no attempts — the reading
+`AiDailyCostCap` has, and what an unreadable settings row falls to. **One OPEN campaign per dataset is a
+partial unique index**, not a C# check, so two presses racing cannot make two. **Renewal is the only
+second campaign**: `CampaignStore.Renew` closes the parent and opens a child carrying `renewed_from`, the
+parent's holdout **and the parent's policy text and sha** — so a renewal buys attempts and never an easier
+standard.
+
+**A trial is one registered research run, keyed `(campaign, version, run)` and by nothing an agent
+chooses.** There is deliberately **no role and no attempt column** — `HoldoutLedgerTests` asserts the
+column list — because a trial keyed by the attempt would make a restart a fresh budget and one keyed by
+the role would let a replacement team start again (`docs/COUNCIL.md`:131, "survives team replacement"). All
+three parts are content hashes or the app's own id, so the same program over the same bytes under the same
+execution model is ONE trial however often it is asked for, and a different window or fee is a different
+trial because it is a different peek. `kind` is the dataset's `evaluation_class` **as it stood at
+registration**, copied rather than joined; a `fixture` run is charged nothing and is never evidence. The
+budget is checked **before** the run (`Backtests.Run`, `CAMPAIGN_BUDGET_REACHED`) and the trial is
+registered in the **same transaction as the run row** — a run without its trial is a peek nobody was
+charged for. A dataset with no holdout has no campaign, so runs over it are charged nothing at all.
+
+**`Referee.RequestVerdict(version, campaign)` charges before anything runs, and the charge is what opens
+the door.** The row is written by the request, not by the answer: a budget checked after the holdout run
+refuses nothing that matters, because the bars have been read. Verdicts are counted across the whole
+**renewal lineage**, which is what makes `renewed_from` load-bearing — trials renew, holdout access does
+not. The version must already be in `strategy_version`. Asking twice for one version is one verdict and
+one charge, and it stays obtainable after the budget is full, so a crash between the charge and the
+computation does not leave a verdict paid for and unreachable. `Referee.HoldoutFeed(charge)` is the only
+door past a cutoff that any assembly outside `TradeAgent.Core` can reach, it opens **the campaign's own**
+holdout dataset and no other, and a refused charge answers a refusal rather than a feed. **The verdict
+itself is `U-referee-2`** — the holdout run, the promotion record, invalidation, forward evidence and the
+delivery — and `strategy_verdict` carries no outcome column: this is the budget and the precommitment,
+which are the half that cannot be added after a holdout has been read.

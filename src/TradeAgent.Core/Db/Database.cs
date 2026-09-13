@@ -814,6 +814,36 @@ public sealed class Database : IDisposable
             );
             CREATE INDEX IF NOT EXISTS ix_trial_charged ON strategy_trial(campaign_id, charged);
             """);
+            // THE VERDICT, WRITTEN WHEN IT IS ASKED FOR AND NOT WHEN IT IS ANSWERED.
+            //
+            // `docs/COUNCIL.md`:134: "final evaluation scarce because every verdict leaks". A verdict is
+            // computed over the holdout bars, and its answer — even one word of it — tells the research
+            // process something about months it was never shown. So the charge is the REQUEST: a row here
+            // is written before a single holdout bar is read, because a budget checked after the run has
+            // already let the leak happen.
+            //
+            // Keyed (campaign, version): the same version's verdict is ONE verdict however many times it
+            // is asked for, which is what lets a crash between the charge and the computation be
+            // recovered rather than paid for twice. There is no role and no attempt here for the reason
+            // `strategy_trial` has none.
+            //
+            // `holdout_from` is the cutoff as it stood when the verdict was charged — a record of what was
+            // private when the answer was taken, kept because a cutoff can later move later.
+            //
+            // The verdict's OUTCOME is not here: the holdout run, the promotion record and the delivery
+            // are `U-referee-2` at schema 15. This table is the budget and the precommitment, and it is
+            // deliberately a seam rather than a stub that pretends to judge.
+            //
+            // Additive: one table. An older database gains it empty — no verdict has been asked for.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_verdict(
+              campaign_id   INTEGER NOT NULL REFERENCES strategy_campaign(id),
+              version_id    TEXT NOT NULL REFERENCES strategy_version(id),
+              requested_at  TEXT NOT NULL,
+              holdout_from  TEXT NOT NULL,
+              PRIMARY KEY(campaign_id, version_id)
+            );
+            """);
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','14') ON CONFLICT(key) DO UPDATE SET value='14';");
         }
 

@@ -309,11 +309,11 @@ public class CampaignLedgerTests
     }
 
     /// <summary>The same program text in a role's own folder. The same text is the same version.</summary>
-    static string GivenProgram(string role, string name = "campaign.strategy")
+    static string GivenProgram(string role, string name = "campaign.strategy", string? text = null)
     {
         var dir = Path.Combine(Paths.RoleHome(role), "strategies");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, name), ProgramText);
+        File.WriteAllText(Path.Combine(dir, name), text ?? ProgramText);
         return "strategies/" + name;
     }
 
@@ -465,5 +465,191 @@ public class CampaignLedgerTests
         Run(gw, set, path, toBar: HoldoutAtBar - 2);
         Assert.Equal(1, gw.Campaigns.TrialsCharged(renewed.Campaign!.Id));
         Assert.Equal(2, gw.Strategies.Runs().Count);
+    }
+
+    // ---- item 5: the verdict budget ---------------------------------------------------------------
+
+    /// <summary>
+    /// A VERDICT IS CHARGED BEFORE THE DOOR OPENS, AND THE DOOR IS THE ONLY WAY PAST THE CUTOFF.
+    ///
+    /// <para>The charge row exists the moment <c>RequestVerdict</c> answers — before any bar is read —
+    /// and the feed it authorises really serves the months no pipe caller can have. The paired negative
+    /// is in the same test: the same dataset opened as a pipe caller is refused.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_is_charged_before_the_holdout_is_read_and_the_referee_alone_reads_it()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 2);
+        using var _1 = db;
+        var version = Run(gw, set, GivenProgram(CouncilRoles.Research)).Result.VersionId;
+        var referee = new Referee(db, () => At);
+
+        var charge = referee.RequestVerdict(version, campaign.Id);
+
+        Assert.True(charge.Ok, charge.Why);
+        Assert.Equal(1, charge.Spent);
+        Assert.Equal(2, charge.Budget);
+
+        // THE ROW IS ALREADY THERE, before anything has been computed over the holdout.
+        var row = Assert.Single(gw.Campaigns.Verdicts(campaign.Id));
+        Assert.Equal(version, row.VersionId);
+        Assert.Equal(set.HoldoutFrom, row.HoldoutFrom);
+        Assert.Equal(At, row.RequestedAt);
+
+        // AND THE DOOR OPENS ON THE BARS NOTHING ELSE CAN HAVE.
+        var feed = referee.HoldoutFeed(charge);
+        Assert.True(feed.Ok, feed.Why);
+        var held = feed.Feed!.Bars(set.HoldoutFrom, null).ToList();
+        Assert.NotEmpty(held);
+        Assert.All(held, bar => Assert.True(bar.OpenTime >= set.HoldoutFrom!.Value));
+
+        // The same dataset, asked for by a caller on the pipe: refused, and the refusal names the cutoff.
+        var asPipe = BarFeed.Open(gw.Datasets, set.Id, BarAudience.Pipe(CouncilRoles.Research), null, null);
+        Assert.False(asPipe.Ok);
+        Assert.True(asPipe.IsHoldout);
+        Assert.Contains("holds out every bar from", asPipe.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// OVER BUDGET, THE VERDICT IS REFUSED BEFORE ANYTHING RUNS — and the second ask deliberately comes
+    /// BEFORE the first verdict has been computed.
+    ///
+    /// <para>That sequence is the mutant: charge after the run, and both asks get through, because the
+    /// first has not paid yet. It is also the ordinary case rather than a contrived one — a verdict that
+    /// has been authorised and not yet computed is exactly when the next request arrives.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_over_budget_is_refused_before_anything_is_computed()
+    {
+        var (gw, db, set, campaign) = await Campaigning(trials: 4, verdicts: 1);
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+        var first = Run(gw, set, path, toBar: HoldoutAtBar - 1).Result.VersionId;
+        var second = Run(gw, set, GivenProgram(CouncilRoles.Research, "other.strategy",
+            "instrument BTCUSDT\nsize fixed 2\nexit when close < 97\nentry when close > 103\n")).Result.VersionId;
+        Assert.NotEqual(first, second);
+
+        var referee = new Referee(db, () => At);
+        var paid = referee.RequestVerdict(first, campaign.Id);
+        Assert.True(paid.Ok, paid.Why);
+
+        // No feed opened in between: the first verdict is authorised and not yet computed.
+        var refused = referee.RequestVerdict(second, campaign.Id);
+
+        Assert.False(refused.Ok, "a second verdict was authorised on a budget of one");
+        Assert.Contains("spent all 1 of its final judgements", refused.Why, StringComparison.Ordinal);
+        Assert.Contains("BEFORE anything is computed", refused.Why, StringComparison.Ordinal);
+        Assert.Single(gw.Campaigns.Verdicts(campaign.Id));
+
+        // And the refusal really is a closed door, not a message beside an open one.
+        var none = referee.HoldoutFeed(refused);
+        Assert.False(none.Ok);
+        Assert.Contains("this verdict was not charged", none.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE SAME VERSION ASKED TWICE IS ONE VERDICT AND ONE CHARGE, and it is still obtainable after the
+    /// budget is full: the charge is taken before the computation, so a crash in between must not leave a
+    /// verdict paid for and unreachable. The same version over the same holdout is the same answer.
+    /// </summary>
+    [Fact]
+    public async Task The_same_version_asked_twice_is_one_verdict_and_stays_obtainable()
+    {
+        var (gw, db, set, campaign) = await Campaigning(verdicts: 1);
+        using var _1 = db;
+        var version = Run(gw, set, GivenProgram(CouncilRoles.Research)).Result.VersionId;
+        var referee = new Referee(db, () => At);
+
+        Assert.True(referee.RequestVerdict(version, campaign.Id).Ok);
+        var again = referee.RequestVerdict(version, campaign.Id);
+
+        Assert.True(again.Ok, again.Why);
+        Assert.Single(gw.Campaigns.Verdicts(campaign.Id));
+        Assert.Equal(1, gw.Campaigns.VerdictsInLineage(campaign.Id));
+        Assert.True(referee.HoldoutFeed(again).Ok);
+    }
+
+    /// <summary>
+    /// A RENEWAL BUYS ATTEMPTS AND NEVER HOLDOUT ACCESS (<c>docs/COUNCIL.md</c>:132).
+    ///
+    /// <para>This is the consequence of item 3's <c>renewed_from</c>, and the reason that mutant matters:
+    /// verdicts are counted over the LINEAGE, so a renewed campaign starts with its trials renewed and its
+    /// holdout access exactly as spent as its parent left it. A renewal that lost its parent would start
+    /// untouched — a fresh set of peeks at months that have already been read.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_renewed_campaign_does_not_get_its_holdout_access_back()
+    {
+        var (gw, db, set, campaign) = await Campaigning(trials: 4, verdicts: 1);
+        using var _1 = db;
+        var path = GivenProgram(CouncilRoles.Research);
+        var first = Run(gw, set, path, toBar: HoldoutAtBar - 1).Result.VersionId;
+        var second = Run(gw, set, GivenProgram(CouncilRoles.Research, "other.strategy",
+            "instrument BTCUSDT\nsize fixed 2\nexit when close < 97\nentry when close > 103\n")).Result.VersionId;
+
+        var referee = new Referee(db, () => At);
+        Assert.True(referee.RequestVerdict(first, campaign.Id).Ok);
+
+        var renewed = gw.Campaigns.Renew(campaign.Id, trialBudget: 4, verdictBudget: 1, At.AddDays(1));
+        Assert.True(renewed.Ok, renewed.Why);
+        var child = renewed.Campaign!;
+
+        // Trials ARE renewed — that is what a renewal is for.
+        Assert.Equal(0, gw.Campaigns.TrialsCharged(child.Id));
+
+        // Holdout access is NOT. The parent's verdict still counts against the child's budget.
+        Assert.Equal(1, gw.Campaigns.VerdictsInLineage(child.Id));
+        var refused = referee.RequestVerdict(second, child.Id);
+        Assert.False(refused.Ok, "a renewal gave the research process its holdout access back");
+        Assert.Contains("counted across every renewal", refused.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A VERDICT IS ABOUT A VERSION THIS INSTALLATION HAS MEASURED, and an unknown one is refused without
+    /// charging anything: a text nobody registered is not a submission, and charging for it would spend
+    /// the scarcest budget in the product on a typo.
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_on_a_version_nobody_registered_is_refused_and_charges_nothing()
+    {
+        var (gw, db, _, campaign) = await Campaigning(verdicts: 2);
+        using var _1 = db;
+        var referee = new Referee(db, () => At);
+
+        var refused = referee.RequestVerdict(new string('f', 64), campaign.Id);
+
+        Assert.False(refused.Ok);
+        Assert.Contains("never accepted a version", refused.Why, StringComparison.Ordinal);
+        Assert.Empty(gw.Campaigns.Verdicts(campaign.Id));
+
+        var noCampaign = referee.RequestVerdict("whatever", 4242);
+        Assert.False(noCampaign.Ok);
+        Assert.Contains("there is no campaign 4242", noCampaign.Why, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// THE VERDICT ITSELF IS NOT IN THIS UNIT, AND THE SEAM SAYS SO RATHER THAN PRETENDING.
+    ///
+    /// <para><c>U-referee-2</c> computes the holdout run, the promotion record and the delivery. What this
+    /// unit owes it is a charge that was taken before any of that and a door that no pipe caller can open
+    /// — so the check here is that the seam is a real door (a feed with real bars behind it) and that the
+    /// verdict table carries no outcome column for a later unit to have to unpick.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_verdict_table_is_the_budget_and_the_precommitment_and_carries_no_outcome()
+    {
+        var (gw, db, _, _) = await Campaigning();
+        using var _1 = db;
+
+        var columns = db.Read(_ =>
+        {
+            using var c = db.Cmd("SELECT name FROM pragma_table_info('strategy_verdict')");
+            var names = new List<string>();
+            using var r = c.ExecuteReader();
+            while (r.Read()) names.Add(r.GetString(0));
+            return names;
+        });
+
+        Assert.Equal(["campaign_id", "version_id", "requested_at", "holdout_from"], columns);
     }
 }

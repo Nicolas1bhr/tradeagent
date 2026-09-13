@@ -107,6 +107,27 @@ public sealed record TrialRow(
 public sealed record TrialRegistered(bool Ok, string Why, bool Charged, int Spent, int Budget);
 
 /// <summary>
+/// ONE VERDICT THAT WAS ASKED FOR. The row exists because the question was put, not because it was
+/// answered: <c>docs/COUNCIL.md</c>:134 makes final evaluation scarce "because every verdict leaks", and a
+/// budget checked after the holdout run has already let the leak happen.
+///
+/// <para><see cref="HoldoutFrom"/> is the cutoff as it stood when the verdict was charged. A cutoff can
+/// later move LATER, so this is the record of what was private when the answer was taken.</para>
+///
+/// <para>The verdict's OUTCOME is not here. The holdout run, the promotion record and the delivery are
+/// <c>U-referee-2</c>; this is the budget and the precommitment, which had to exist first because they are
+/// the half that cannot be added afterwards.</para>
+/// </summary>
+public sealed record VerdictRow(
+    long CampaignId,
+    string VersionId,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset HoldoutFrom);
+
+/// <summary>What charging a verdict did, and where the campaign's LINEAGE now stands.</summary>
+public sealed record VerdictCharged(bool Ok, string Why, int Spent, int Budget);
+
+/// <summary>
 /// THE CAMPAIGN LEDGER — the referee's protocol, and the app is the only writer.
 ///
 /// <para><b>A campaign is opened when the owner sets a holdout, and there is at most ONE open campaign
@@ -315,6 +336,108 @@ public sealed class CampaignStore(Database db)
 
         return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
     });
+
+
+    // ---- verdicts ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// HOW MANY VERDICTS HAVE BEEN CHARGED ACROSS THIS CAMPAIGN'S WHOLE RENEWAL LINEAGE.
+    ///
+    /// <para>The lineage and not the campaign, and that is the point of <c>renewed_from</c>: renewal buys
+    /// ATTEMPTS, and it must not buy holdout access (<c>docs/COUNCIL.md</c>:132, "campaign renewal
+    /// authorised by code so no new campaign resets holdout access"). Every verdict already taken read the
+    /// same months, so every verdict already taken still counts.</para>
+    /// </summary>
+    public int VerdictsInLineage(long campaignId)
+    {
+        var chain = Lineage(campaignId);
+        if (chain.Count == 0) return 0;
+
+        return db.Read(_ =>
+        {
+            using var c = db.Cmd(
+                $"SELECT COUNT(*) FROM strategy_verdict WHERE campaign_id IN ({Ids(chain)})");
+            return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+        });
+    }
+
+    /// <summary>Every verdict charged against this campaign alone, oldest first.</summary>
+    public IReadOnlyList<VerdictRow> Verdicts(long campaignId) => db.Read(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT campaign_id, version_id, requested_at, holdout_from
+            FROM strategy_verdict WHERE campaign_id=$id ORDER BY requested_at, version_id
+            """, ("$id", campaignId));
+
+        var rows = new List<VerdictRow>();
+        using var r = c.ExecuteReader();
+        while (r.Read())
+            rows.Add(new VerdictRow(r.GetInt64(0), r.GetString(1), Sql.Time(r.GetString(2)),
+                Sql.Time(r.GetString(3))));
+        return rows;
+    });
+
+    /// <summary>Whether this exact verdict has already been charged. See <c>Strategy.Referee</c>.</summary>
+    public bool VerdictCharged(long campaignId, string versionId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COUNT(*) FROM strategy_verdict WHERE campaign_id=$id AND version_id=$ver",
+            ("$id", campaignId), ("$ver", versionId));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
+    });
+
+    /// <summary>
+    /// CHARGES ONE VERDICT, or refuses in words — and it is the CHARGE, not a reservation: the row is
+    /// written here, before anything reads a holdout bar.
+    ///
+    /// <para>Idempotent on (campaign, version), and an already-charged verdict is answered Ok EVEN IF the
+    /// budget is now full. That is deliberate: the charge is taken before the computation, so a crash in
+    /// between must leave the verdict obtainable rather than paid for and unreachable. It is not a second
+    /// leak — the same version over the same holdout is the same answer.</para>
+    ///
+    /// <para>The whole of this runs in one write transaction, so the count and the insert cannot be
+    /// separated by another charge.</para>
+    /// </summary>
+    public VerdictCharged ChargeVerdict(long campaignId, string versionId, DateTimeOffset at) => db.Write(_ =>
+    {
+        if (ById(campaignId) is not { } campaign)
+            return new VerdictCharged(false, $"there is no campaign {campaignId}.", 0, 0);
+
+        var spent = VerdictsInLineage(campaignId);
+
+        if (VerdictCharged(campaignId, versionId))
+            return new VerdictCharged(true, "", spent, campaign.VerdictBudget);
+
+        if (!campaign.IsOpen)
+            return new VerdictCharged(false,
+                $"campaign {campaignId} closed at {campaign.ClosedAt:u} and takes no further verdict. Its "
+                + "renewal is the campaign that does, and it carries this one's holdout and its verdicts.",
+                spent, campaign.VerdictBudget);
+
+        if (spent >= campaign.VerdictBudget)
+            return new VerdictCharged(false,
+                $"this campaign's lineage has spent all {campaign.VerdictBudget} of its final judgements, so "
+                + "this one is refused BEFORE anything is computed over the held-back bars. Every verdict "
+                + "leaks: its answer tells the research process something about months it was never shown, "
+                + "which is why the number is small and why it is counted across every renewal of this "
+                + "campaign rather than per campaign — a renewal buys attempts and never holdout access. "
+                + "What is left is a new holdout, which the account owner sets in TradeAgent's own window.",
+                spent, campaign.VerdictBudget);
+
+        using var c = db.Cmd("""
+            INSERT INTO strategy_verdict(campaign_id, version_id, requested_at, holdout_from)
+            VALUES($id,$ver,$at,$cut)
+            """,
+            ("$id", campaignId), ("$ver", versionId), ("$at", Sql.T(at)),
+            ("$cut", Sql.T(campaign.HoldoutFrom)));
+        c.ExecuteNonQuery();
+
+        return new VerdictCharged(true, "", spent + 1, campaign.VerdictBudget);
+    });
+
+    /// <summary>A short list of campaign ids for an IN clause. They are longs this code read itself.</summary>
+    static string Ids(IReadOnlyList<long> ids) =>
+        string.Join(',', ids.Select(i => i.ToString(CultureInfo.InvariantCulture)));
 
     /// <summary>Closes a campaign. Renewal does this to the parent; nothing else calls it yet.</summary>
     public void Close(long id, DateTimeOffset at) => db.Write(_ =>
