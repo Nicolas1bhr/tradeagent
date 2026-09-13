@@ -965,6 +965,86 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','16') ON CONFLICT(key) DO UPDATE SET value='16';");
         }
 
+        // 16 IS `U-council-concurrent-2`, WHICH WAS IN FLIGHT BESIDE THIS UNIT. This rung was written
+        // as `if (have < 17)` over a 16 that did not exist yet, exactly as 14 was written over a 13 that
+        // did not, and landing 16 first cost it nothing but its position in the file: the two add only
+        // their own tables and columns, so the ladder comes out 15-16-17 whichever order they land in.
+        if (have < 17)
+        {
+            // THE VENUE, AND IT IS APP-OWNED DATA RATHER THAN SOMETHING AN AGENT FILLS IN.
+            //
+            // `docs/COUNCIL.md`:145,152 wants bars "with instrument increments" and a size "rounded
+            // down to the increment, then the gateway's limits"; :95 wants calendars per connector AND
+            // per instrument; :239 wants venue capabilities recorded before unattended real money.
+            // Before this rung the word "venue" was in this build's comments and nowhere else, so the
+            // increment a run rounded to was a number that arrived on the request and defaulted to 1 —
+            // a whole Bitcoin on a pair whose step is 0.00001.
+            //
+            // THE ROWS ARE THE CATALOGUE'S AND THE MIGRATION SEEDS NOTHING. `VenueCatalog` ships them
+            // and `venues.json` overrides them (`docs/DECISIONS.md`:73-78, the `runtimes.json` pattern);
+            // `VenueStore.Sync` writes the table from that. A migration that INSERTed the shipped rows
+            // would be a vendor fact frozen into a database nobody can correct with a one-line edit,
+            // which is the thing that pattern exists to prevent.
+            //
+            // `verified` is the honest column: 0 means nothing in this build has confirmed these
+            // numbers against the venue's own instrument definition. The row is still served — as
+            // unverified — and the caller that would have to turn it into a SIZE is the one that
+            // refuses. `source` is who said so and `recorded_at` is when, nullable because a file that
+            // did not say must read as an unknown rather than as the epoch.
+            //
+            // There is no fee column and no minimum-notional column. `docs/COUNCIL.md` is silent on a
+            // fee table and :155 keeps fees DECLARED per backtest; a fee read out of a catalogue would
+            // put a number nobody measured into a result and let it read as a measurement.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS venue(
+              id            TEXT PRIMARY KEY,
+              display_name  TEXT NOT NULL,
+              calendar_kind TEXT NOT NULL,
+              source        TEXT NOT NULL,
+              recorded_at   TEXT,
+              verified      INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS venue_instrument(
+              venue_id           TEXT NOT NULL REFERENCES venue(id),
+              symbol             TEXT NOT NULL,
+              tick_size          TEXT NOT NULL,
+              quantity_increment TEXT NOT NULL,
+              source             TEXT NOT NULL,
+              recorded_at        TEXT,
+              verified           INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY(venue_id, symbol)
+            );
+            """);
+
+            // THE DATASET NAMES ITS VENUE AND ITS INSTRUMENT, and both are COPIED onto the row rather
+            // than joined to the catalogue. A dataset's venue is a fact about the bytes that were
+            // collected, and a catalogue edited next month must not be able to rewrite what last
+            // month's evidence was collected from — the reading `strategy_trial.kind` already takes.
+            // No foreign key for the same reason: a venue removed from `venues.json` must not be able
+            // to make an existing dataset unwritable or its row a dangling reference.
+            //
+            // Nullable, because a row can genuinely have neither: a dataset collected by something that
+            // did not record one reads as an unknown and is REFUSED an increment rather than given a
+            // default. Every row that exists TODAY was written by the Binance collector, which is what
+            // the backfill says — it is a statement about rows this build can account for, not a
+            // default applied to whatever arrives later.
+            Exec("ALTER TABLE dataset ADD COLUMN venue_id TEXT;");
+            Exec("ALTER TABLE dataset ADD COLUMN instrument_symbol TEXT;");
+            Exec($"UPDATE dataset SET venue_id='{Data.VenueCatalog.BinanceSpot}' WHERE venue_id IS NULL;");
+            Exec("UPDATE dataset SET instrument_symbol=pair WHERE instrument_symbol IS NULL;");
+
+            // WHERE A RUN'S INCREMENT CAME FROM, beside the run it decided. The four declared numbers
+            // are already on the row in `execution_model` and are what the run id hashes; this says
+            // whether the increment in them was the caller's own or was read out of the catalogue, and
+            // which row it was read from. It is deliberately NOT in the hash — see
+            // `ExecutionModel.Canonical` — because a run's identity is the model it ran under and not
+            // the provenance of how that model was assembled, and folding it in would move every run id
+            // this installation has already recorded.
+            Exec("ALTER TABLE strategy_run ADD COLUMN increment_source TEXT;");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','17') ON CONFLICT(key) DO UPDATE SET value='17';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

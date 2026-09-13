@@ -87,7 +87,23 @@ public sealed record StrategyRunRow(
     string TraceSha256,
     DateTimeOffset CreatedAt,
     string? Role,
-    string? Attempt);
+    string? Attempt)
+{
+    /// <summary>
+    /// WHERE THIS RUN'S QUANTITY INCREMENT CAME FROM, or null because no run before schema 17 recorded
+    /// one.
+    ///
+    /// <para>The increment itself is already in <see cref="ExecutionModel"/> and is part of the run's
+    /// id. This says whether the caller DECLARED it or whether the app read it out of the venue
+    /// catalogue, and from which row — the difference between a number an agent typed and a recorded
+    /// fact with a source, which is the whole point of <c>venue_instrument</c> existing.</para>
+    ///
+    /// <para>Init-only with a default, like <c>DatasetRecord.HoldoutFrom</c>, so adding it did not
+    /// silently re-parameterise every construction site; and deliberately NOT in the run id's hash, so
+    /// that recording it moved no id this installation had already written.</para>
+    /// </summary>
+    public string? IncrementSource { get; init; }
+}
 
 /// <summary>
 /// ONE CLOSED TRADE OF ONE RUN: when it was entered and left, at what prices, how much, why it
@@ -134,7 +150,9 @@ public sealed class StrategyStore(Database db)
     const string RunCols =
         "id, version_id, dataset_id, dataset_sha256, window_from, window_to, execution_model, outcome, " +
         "fault_reason, bars, trades, wins, intents, fills, exposure_bars, missing_minutes, faults, " +
-        "gross_pnl, fees, net_pnl, max_drawdown, trace_sha256, created_at, role, attempt";
+        "gross_pnl, fees, net_pnl, max_drawdown, trace_sha256, created_at, role, attempt, " +
+        // LAST, so every positional read above it keeps its index. See `StrategyRunRow.IncrementSource`.
+        "increment_source";
 
     /// <summary>The interpreter build a version row records: the app's own version and the language's.</summary>
     public static string InterpreterBuild =>
@@ -185,7 +203,8 @@ public sealed class StrategyStore(Database db)
         using var insert = db.Cmd($"""
             INSERT INTO strategy_run({RunCols})
             VALUES($id,$ver,$ds,$sha,$from,$to,$model,$outcome,$fault,$bars,$trades,$wins,$intents,
-                   $fills,$exposure,$missing,$faults,$gross,$fees,$net,$dd,$trace,$at,$role,$attempt)
+                   $fills,$exposure,$missing,$faults,$gross,$fees,$net,$dd,$trace,$at,$role,$attempt,
+                   $incsrc)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", run.Id), ("$ver", run.VersionId), ("$ds", run.DatasetId), ("$sha", run.DatasetSha256),
@@ -200,7 +219,7 @@ public sealed class StrategyStore(Database db)
             ("$net", run.NetPnl is { } n ? Sql.D(n) : null),
             ("$dd", run.MaxDrawdown is { } d ? Sql.D(d) : null),
             ("$trace", run.TraceSha256), ("$at", Sql.T(run.CreatedAt)),
-            ("$role", run.Role), ("$attempt", run.Attempt));
+            ("$role", run.Role), ("$attempt", run.Attempt), ("$incsrc", run.IncrementSource));
 
         if (insert.ExecuteNonQuery() == 0) return run.Id;
 
@@ -309,7 +328,10 @@ public sealed class StrategyStore(Database db)
                 Sql.DecN(r.IsDBNull(19) ? null : r.GetString(19)),
                 Sql.DecN(r.IsDBNull(20) ? null : r.GetString(20)),
                 r.GetString(21), Sql.Time(r.GetString(22)),
-                r.IsDBNull(23) ? null : r.GetString(23), r.IsDBNull(24) ? null : r.GetString(24)));
+                r.IsDBNull(23) ? null : r.GetString(23), r.IsDBNull(24) ? null : r.GetString(24))
+            {
+                IncrementSource = r.IsDBNull(25) ? null : r.GetString(25)
+            });
         return rows;
     }
 }

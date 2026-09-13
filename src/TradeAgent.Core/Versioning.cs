@@ -159,8 +159,31 @@ public static class Versions
     /// doctrine that spends the strongest model had no code under it. Additive — two tables and three
     /// indexes, the app the only writer, no pipe op and no <c>trade</c> verb near either — and an older
     /// database gains them empty, which reads correctly as "no boundary has been opened here".
+    ///
+    /// 15/16 -&gt; 17: THE VENUE CATALOGUE. <c>venue</c> (id, display name, calendar kind) and
+    /// <c>venue_instrument</c> (symbol, tick size, quantity increment), every row carrying
+    /// <c>source</c>, <c>recorded_at</c> and <c>verified</c> — the <c>runtimes.json</c> honesty flag
+    /// (<c>docs/DECISIONS.md</c>:73-78) applied to an instrument definition. Before it the word "venue"
+    /// was in this build's comments and nowhere else, so the increment a backtest rounded a size down
+    /// to was whatever number arrived on the request and defaulted to 1, a whole Bitcoin on a pair
+    /// whose step is 0.00001 (<c>docs/COUNCIL.md</c>:145,152). The rows are NOT seeded here:
+    /// <c>VenueCatalog</c> ships them, <c>venues.json</c> overrides them and <c>VenueStore.Sync</c>
+    /// writes the table, because a vendor fact frozen into a migration is one nobody can correct with a
+    /// one-line edit. Beside them <c>dataset.venue_id</c> and <c>dataset.instrument_symbol</c>, copied
+    /// onto the row rather than joined and with no foreign key — a catalogue edited next month must not
+    /// rewrite what last month's evidence was collected from — backfilled to <c>binance-spot</c> and the
+    /// pair, which is what every row that exists today was; and <c>strategy_run.increment_source</c>,
+    /// which says whether a run's increment was the caller's own or was read out of the catalogue.
+    /// That column is deliberately NOT in the run id's hash (<c>ExecutionModel.Canonical</c>): a run's
+    /// identity is the model it ran under, not the provenance of how that model was assembled, and
+    /// folding it in would move every run id already recorded. This rung was written as
+    /// <c>if (have &lt; 17)</c> while 16 was in flight beside it, and landing 16 first cost it nothing
+    /// but its place in the ladder, for the reason 14 cost 13 nothing. Additive — two tables, three
+    /// columns, no fee field and no minimum notional, because <c>docs/COUNCIL.md</c> is silent on a fee
+    /// table and :155 keeps fees declared per backtest — and an older database gains them, the datasets
+    /// backfilled and the catalogue empty until the app syncs it.
     /// </summary>
-    public const int DatabaseSchemaVersion = 16;
+    public const int DatabaseSchemaVersion = 17;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

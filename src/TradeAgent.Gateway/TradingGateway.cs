@@ -25,6 +25,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly MaterialStore _materials;
     readonly FillStore _fills;
     readonly DatasetStore _datasets;
+    readonly VenueStore _venues;
     readonly CampaignStore _campaigns;
     readonly Core.Strategy.Referee _referee;
     readonly HealthRegistry _health;
@@ -76,6 +77,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// serves it over <c>data-list</c> and <c>data-bars</c> without ever writing a row.
     /// </summary>
     public DatasetStore Datasets => _datasets;
+
+    /// <summary>
+    /// The venue catalogue — what instruments this installation knows of, on which venue, with what
+    /// grid and what step, and who said so. READ ONLY from here in the sense that matters: the rows
+    /// come from <c>VenueCatalog</c> (the built-ins plus <c>venues.json</c>) at construction, and there
+    /// is no pipe op and no <c>trade</c> verb that adds, edits or removes one — <c>venue-list</c> reads
+    /// it and nothing writes it.
+    /// </summary>
+    public VenueStore Venues => _venues;
 
     /// <summary>
     /// The campaign ledger — the referee's protocol. READ ONLY from here in the sense that matters:
@@ -375,6 +385,14 @@ public sealed class TradingGateway : IAsyncDisposable
         _materials = new MaterialStore(db);
         _fills = new FillStore(db);
         _datasets = new DatasetStore(db);
+        // THE CATALOGUE IS WRITTEN HERE, ONCE, FROM THE FILE AND THE BUILT-INS. It is app-owned data
+        // and not a migration's (see the schema 17 rung): recording it at construction is what makes an
+        // edit to `venues.json` take effect on the next start rather than on the next release, and it
+        // is what every reader — `venue-list`, the runner's increment, the owner's own window — then
+        // agrees on. An unreadable file empties the table and says why, which is the most restrictive
+        // reading and the one `RuntimeManifest.Read` already takes.
+        _venues = new VenueStore(db);
+        _venues.Sync(Core.Data.VenueCatalog.Read());
         _campaigns = new CampaignStore(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
