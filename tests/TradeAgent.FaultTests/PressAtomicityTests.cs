@@ -51,10 +51,23 @@ public class PressAtomicityTests(ITestOutputHelper log)
     /// </summary>
     static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// <see cref="Unresolved.PressBudget"/> for every press in this file. All four verdicts here are
+    /// the book a race left behind — one set of wire calls, one press row, a flat account, the other
+    /// press refused by a named guard — and all four hold a press INSIDE its capture read until the
+    /// other arrives, which is time spent under a deadline the press has already opened. Under the
+    /// simulator's two seconds, a runner whose disk spends the budget (one `synchronous=FULL` commit
+    /// on windows-latest has measured 2234 ms) refuses the capture read instead, and "refused by
+    /// whichever guard it reached first" becomes "refused by the clock". The generous budget takes
+    /// that out; no assertion below changed, and the `Guard` above is a separate, larger number.
+    /// </summary>
     static async Task<(TradingGateway Gw, RecordingConnector Conn, Database Db)> Ready()
     {
         var db = TestEnv.NewDb();
-        var conn = new RecordingConnector(new FakeConnector(new FakeBroker()));
+        var conn = new RecordingConnector(new FakeConnector(new FakeBroker())
+        {
+            EmergencyBudget = Unresolved.PressBudget
+        });
         var gw = new TradingGateway(db, conn, new HealthRegistry());
         gw.Update(s =>
         {

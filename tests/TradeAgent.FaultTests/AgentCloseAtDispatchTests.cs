@@ -146,6 +146,13 @@ static class SlowRead
 
 // =================================================================================================
 // Item 2 — the agent's own close is sized at dispatch, not at the snapshot (Codex F3)
+//
+// NOT AT RISK from the emergency budget, and it is a structural fact rather than a measurement: the
+// three fixtures below press nothing. `RiskReducingScope.Begin` exists at exactly three places in
+// the product — `GatewayPipeServer`'s risk-reducing ops and the two `Operator*AllAsync` presses —
+// and none of them is on the path of a `gw.CloseAsync` / `gw.PlaceAsync` made straight against the
+// gateway, so there is no operation deadline open in this class's window for a runner's disk to
+// spend. `SlowRead.Ready` takes a budget for the presses in `PressInFlightTests`, not for these.
 // =================================================================================================
 
 public class AgentCloseIsSizedAtDispatchTests(ITestOutputHelper Out)

@@ -30,6 +30,13 @@ namespace TradeAgent.Tests.Fault;
 /// database: a claim that outlived the process holding it would be a claim nothing could release,
 /// and a row left over from a crash must still resume — which is the case this class's second test
 /// keeps.
+///
+/// NOT AT RISK from the emergency budget, structurally rather than by measurement: neither test here
+/// presses. They drive `BeginCompositeAsync` and a `CancelAsync` per leg straight against the
+/// gateway, and `RiskReducingScope.Begin` exists at exactly three places in the product — the pipe
+/// server's risk-reducing ops and the two `Operator*AllAsync` presses — none of which is on that
+/// path. With no operation deadline open there is no budget for a runner's disk to spend, and the
+/// `Guard` waits below are the only clock these tests keep.
 /// </summary>
 public class CompositeOwnerTests(ITestOutputHelper log)
 {
