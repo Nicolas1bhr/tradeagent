@@ -280,6 +280,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         new(Core.Ops.MaterialNote, TimeSpan.Zero, "the workspace ledger, in process"),
         new(Core.Ops.DataList, TimeSpan.Zero, "the dataset ledger and the hashes of the files it names, on disk"),
         new(Core.Ops.DataBars, TimeSpan.Zero, "the same hashes, then one normalised file read, on disk"),
+        new(Core.Ops.VenueList, TimeSpan.Zero, "the venue catalogue this installation has recorded, in process"),
         new(Core.Ops.Report, TimeSpan.Zero, "the day's own tables and one file read, in process"),
         new(Core.Ops.Backtest, TimeSpan.Zero, "one program file read, then the dataset's own hashes and a stream of its bars, in process"),
 
@@ -1050,6 +1051,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
                 Core.Ops.DataList     => DataList(ctx),
                 Core.Ops.DataBars     => DataBars(ctx, req),
+                Core.Ops.VenueList    => VenueList(),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
 
@@ -2350,6 +2352,65 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// <inheritdoc cref="DataListReply"/>
     sealed record DataBarsReplyBar(
         DateTimeOffset OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume);
+
+    /// <summary>
+    /// WHAT INSTRUMENTS THIS INSTALLATION KNOWS OF, AND WHO SAID SO.
+    ///
+    /// A read, and only a read. The rows come from the catalogue TradeAgent ships and from the
+    /// account owner's <c>venues.json</c>; nothing on this pipe adds, edits, verifies or removes one.
+    /// An increment is what a size is rounded DOWN to, so an agent that could write its own would be
+    /// choosing how much it trades and having the record agree with it.
+    ///
+    /// An UNVERIFIED row is served, and it is served as unverified — never left out and never quietly
+    /// promoted. A caller that needs a number nobody has checked can say so and declare its own.
+    /// </summary>
+    object VenueList()
+    {
+        var venues = gateway.Venues.Venues();
+        var instruments = gateway.Venues.Instruments();
+
+        return new VenueListReply(
+            venues.Count,
+            instruments.Count,
+            "What TradeAgent knows about the instruments it can be asked about, and nothing more. "
+            + "'verified' false means NOTHING has confirmed that row against the venue's own instrument "
+            + "definition — the numbers are what this build shipped, and a backtest that does not "
+            + "declare its own increment is REFUSED over an unverified or unknown instrument rather "
+            + "than run on a guess. 'quantity_increment' is what a size is rounded DOWN to and "
+            + "'tick_size' is the price grid. There is NO fee and NO minimum notional here: fees are "
+            + "declared per backtest and are part of that run's identity, and a fee read out of a "
+            + "table nobody measured would read as a measurement. 'calendar_kind' is 'continuous' for "
+            + "a venue that never closes; 'sessioned' means it closes and TradeAgent does not hold the "
+            + "table that says when, so it is a refusal to guess and not a calendar. You cannot write "
+            + "any of this: the account owner corrects it in venues.json in TradeAgent's own folder.",
+            gateway.Venues.Unreadable,
+            [.. venues.Select(v => new VenueListReplyVenue(
+                v.Id, v.DisplayName, v.CalendarKind, v.Source, v.RecordedAt, v.Verified,
+                [.. instruments.Where(i => i.VenueId == v.Id).Select(i => new VenueListReplyInstrument(
+                    i.Symbol, i.TickSize, i.QuantityIncrement, i.Source, i.RecordedAt, i.Verified))]))]);
+    }
+
+    /// <summary>
+    /// DECLARED TYPES, for the reason <see cref="DataListReply"/> is one: <c>Json.Options</c> drops a
+    /// null field, and an absent <c>unreadable</c> must read as "the catalogue is fine" rather than as
+    /// a field this build does not have.
+    /// </summary>
+    sealed record VenueListReply(
+        int VenueCount, int InstrumentCount, string Note,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Unreadable,
+        IReadOnlyList<VenueListReplyVenue> Venues);
+
+    /// <inheritdoc cref="VenueListReply"/>
+    sealed record VenueListReplyVenue(
+        string Id, string DisplayName, string CalendarKind, string Source,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? RecordedAt,
+        bool Verified, IReadOnlyList<VenueListReplyInstrument> Instruments);
+
+    /// <inheritdoc cref="VenueListReply"/>
+    sealed record VenueListReplyInstrument(
+        string Symbol, decimal TickSize, decimal QuantityIncrement, string Source,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? RecordedAt,
+        bool Verified);
 
     /// <summary>What TradeAgent observed on disk, plus the notes already recorded against it.</summary>
     object MaterialList(IpcRequest req)

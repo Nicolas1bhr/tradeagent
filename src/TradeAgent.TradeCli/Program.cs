@@ -206,6 +206,17 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             return (Ops.DataBars, a);
         }
 
+        // `trade venue list`. A READ, and the only subcommand there is: there is deliberately no
+        // `trade venue add`, `set` or `verify`. An increment is what a size is rounded down to, so an
+        // agent that could write one would be choosing how much it trades; the account owner corrects
+        // a wrong number in venues.json in TradeAgent's own folder.
+        case "venue":
+        case "venues":
+        {
+            var sub = (pos.ElementAtOrDefault(0) ?? "list").ToLowerInvariant();
+            return sub is "list" or "ls" ? (Ops.VenueList, a) : (null, a);
+        }
+
         // `trade backtest --strategy strategies/x.strategy --dataset 3`. A READ as far as trading is
         // concerned: it places no order and grants nothing. The path is resolved inside the caller's
         // own role folder by the gateway, which refuses anything outside it.
@@ -270,6 +281,8 @@ static void Usage()
       trade cancel <id> | trade cancel-all
       trade close <symbol> | trade close-all
 
+      trade venue list                               what instruments there are, their increments,
+                                                     and whether anybody has checked the numbers
       trade data list                                what history you have, and where it came from
       trade data bars --pair BTCUSDT [--from D] [--to D]   the bars themselves, at most 10000 a call
       trade backtest --strategy strategies/x.strategy --dataset 3 [--from D] [--to D]

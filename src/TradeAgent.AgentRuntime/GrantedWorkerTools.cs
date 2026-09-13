@@ -90,12 +90,19 @@ public sealed class GrantedWorkerTools(
     /// measurement the runner exists to give it, with describing an unmeasured result in a report as its
     /// only alternative. What it WRITES is the app's own measurement of a run the worker asked for, and
     /// there is no op here that edits or deletes one.</para>
+    ///
+    /// <para><b><see cref="Ops.VenueList"/> is on it too, for every role, and for the same reason.</b> It
+    /// is a READ — it asks the connector nothing, writes nothing, and is deliberately not in
+    /// <see cref="Ops.Mutating"/>. Every part of the AI has to know an instrument's quantity increment
+    /// before it sizes anything, the Research Director most of all, since a size is rounded DOWN to it;
+    /// leaving it off would have left the role whose job is to propose sizes unable to read what they
+    /// round to. There is no op here that adds, edits, verifies or removes a venue.</para>
     /// </summary>
     public static readonly string[] TradeOps =
     [
         Ops.Status, Ops.Connectors, Ops.Accounts, Ops.Account, Ops.Instruments, Ops.Quote,
         Ops.Positions, Ops.Position, Ops.Orders, Ops.Order, Ops.Executions, Ops.Pnl,
-        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest,
+        Ops.MaterialList, Ops.MaterialNote, Ops.Schema, Ops.Backtest, Ops.VenueList,
         Ops.Buy, Ops.Sell, Ops.Modify, Ops.Cancel, Ops.CancelAll, Ops.Close, Ops.CloseAll
     ];
 

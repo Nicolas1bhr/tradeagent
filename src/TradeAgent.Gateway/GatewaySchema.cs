@@ -51,6 +51,11 @@ public static class GatewaySchema
         // record of a trade. The provenance half matters as much: coverage is what was collected,
         // not what was asked for, and a minute with no bar is a minute with no bar.
         market_data = "TradeAgent can hold historical bars the account owner collected — today Binance's public monthly spot archives, 1-minute closed bars in UTC. 'data-list' says what there is and where every byte of it came from: the URL of every raw archive file, the SHA-256 Binance published for it, the SHA-256 TradeAgent computed, and the counts that say what the file does NOT claim. 'data-bars' serves the bars themselves. What they are NOT: bars are hypothesis evidence. They establish no fill, no queue position and no intrabar ordering, so a result computed over them is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. Nothing is filled in: 'gaps' counts minutes with no bar inside the covered period, 'duplicates' counts rows dropped, and 'incomplete' counts bars excluded because they had not closed when the archive was read. 'months_present' against 'months_attempted' is the real coverage. A dataset whose recorded hashes no longer match the files on disk reads REJECTED and serves no bars. PART OF A DATASET MAY BE HELD BACK FROM YOU: 'holdout_from' on a dataset is an instant from which the account owner has made every bar private evaluation evidence, and 'data-bars' and 'backtest' REFUSE any window that reaches it — never truncate it — for every part of the AI equally and for a caller that proved no role at all. TradeAgent reads those bars itself, to judge a finished strategy on months it was never shown, and a verdict on them is scarce because every verdict tells you something about them. The cutoff is named in 'data-list' so you need not find it one refusal at a time; you cannot set, clear or move it, and even the account owner cannot move it earlier. There is no operation here that collects, normalises, deletes or accepts data: the account owner presses that in TradeAgent, and the ledger is a measurement you cannot edit.",
+        // WHAT AN INSTRUMENT IS, said where an agent reads the surface. docs/COUNCIL.md:145,152 wants
+        // bars with instrument increments and a size rounded down to the increment; :239 wants venue
+        // capabilities recorded before unattended real money. The honesty flag is the point of the
+        // sentence: a step size nobody has checked is still served, and it is served as unchecked.
+        venue_catalogue = "TradeAgent keeps a catalogue of the venues and instruments it knows of: the price grid ('tick_size') and the step a size moves in ('quantity_increment'), with the SOURCE of every row, when it was recorded, and whether anything has 'verified' it against the venue's own instrument definition. 'venue-list' reads it. WHAT 'verified' false MEANS: nothing has confirmed those numbers — they are what this build shipped — so a backtest that does not declare its own increment is REFUSED over an unverified or unknown instrument rather than run on a guess, and the refusal names the row. What the catalogue does NOT hold: no fee and no minimum notional. Fees are DECLARED by you per backtest and are part of that run's identity, and a fee read out of a table nobody measured would read as a measurement. 'calendar_kind' is 'continuous' for a venue that never closes; 'sessioned' means the venue closes and TradeAgent does not hold the table that says when, which is a refusal to guess rather than a calendar. You cannot write any of it: there is no operation here that adds, edits, verifies or removes a venue or an instrument, and the account owner corrects a wrong number in venues.json in TradeAgent's own folder.",
         // WHAT THE OWNER READS, said where an agent reads the surface. docs/COUNCIL.md rule 10: the
         // app generates the daily factual report itself. It is here so an agent asked to cover what
         // it costs works from the same account of the day the account owner does, and so that it
@@ -144,6 +149,22 @@ public static class GatewaySchema
                 new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
                 new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused.")
             ]),
+
+        new(Core.Ops.VenueList, "trade venue list", false,
+            "The venues and instruments this installation knows of, with the provenance of every row: "
+            + "the venue's id, display name and calendar kind, and per instrument the symbol, the price "
+            + "grid ('tick_size'), the step a quantity is rounded DOWN to ('quantity_increment'), who "
+            + "said so ('source'), when it was recorded and whether anything has 'verified' it against "
+            + "the venue's own instrument definition. A row with 'verified' false is served AS "
+            + "unverified: the numbers are what TradeAgent shipped and nothing has checked them, so a "
+            + "'backtest' that omits '--increment' over that instrument is REFUSED naming the row "
+            + "rather than run on a guess — declare '--increment' yourself if you want to run anyway, "
+            + "and the run records that the number was yours. There is NO fee and NO minimum notional "
+            + "here: fees stay declared per backtest and are part of that run's identity. "
+            + "'unreadable' is set when the account owner's venues.json exists and could not be read, "
+            + "in which case NOTHING is served from it and the shipped rows do not stand in for it. "
+            + "You cannot write any of this — there is no operation that adds, edits, verifies or "
+            + "removes a venue or an instrument.", []),
 
         new(Core.Ops.Report, "trade report [--day 2026-09-08]", false,
             "The account owner's daily report for a local calendar day, exactly as they read it: the "

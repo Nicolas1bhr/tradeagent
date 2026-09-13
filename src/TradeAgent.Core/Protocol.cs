@@ -47,6 +47,23 @@ public static class Ops
     public const string DataList = "data-list", DataBars = "data-bars";
 
     /// <summary>
+    /// THE VENUE CATALOGUE, AND IT IS A READ. What instruments this installation knows of, on which
+    /// venue, with what price grid and what quantity step — and, on every row, who said so and whether
+    /// anything has CONFIRMED it against the venue's own instrument definition.
+    ///
+    /// There is no op that writes one, and there is deliberately none. An increment is what a size is
+    /// rounded down to, so an agent that could write its own would be choosing how much it trades and
+    /// having the record agree with it. The rows are shipped with TradeAgent and corrected by the
+    /// account owner in <c>venues.json</c> in TradeAgent's own folder.
+    ///
+    /// It is NOT in <see cref="Mutating"/>: that word on this channel means "sends something to a
+    /// broker", and this reads a table. It is also why it is not on that list — every part of the AI
+    /// needs to know an instrument's increment before it sizes anything, and the mutating list is the
+    /// role gate.
+    /// </summary>
+    public const string VenueList = "venue-list";
+
+    /// <summary>
     /// THE OWNER'S DAILY REPORT, AND IT IS A READ. The app composes it from what it measured; this op
     /// hands the AI the same document the owner reads, so the two are never working from different
     /// accounts of the same day.
