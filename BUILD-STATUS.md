@@ -5354,3 +5354,32 @@ timestamps checked); touched classes 3× → 97/97 (Unit) and 27/27 (Integration
 holdout and no way down for a class (both would un-hold bars); a dataset with no holdout has no campaign, so its runs are charged nothing;
 the trial budget can be exceeded by ONE under two concurrent roles (the charge registers with the run, the refusal is checked before it —
 `U-council-concurrent`); no box, no ATAS, no money.
+
+## 2026-09-13 — U-harness-loop landed: the mission loop proven over a harness turn end to end, a cut turn tells the next one why, the backtest granted to a harness worker
+
+The gap `U-api-worker` named, by one fresh builder on `docs/briefs/U-harness-loop.md`. Merge `47d1071`, 4 commits, 8 files, +761/−10
+(`MissionLoop.cs`, `ApiConversation.cs`, `GrantedWorkerTools.cs`, `CONTRACTS.md`, the guide; `HarnessLoopTests`, `HarnessBudgetTests`).
+No schema change.
+
+- **A loop turn on the harness, end to end:** `MissionLoop.TurnAsync` over a real `ApiConversation` against the loopback provider —
+  admitted through `TurnMeter.Begin`, launched through `ConversationFor(role)`, the canned calls read the file the Situation NAMED and
+  write `out/report-<attempt>.md`, the transition ends the launch at the model's exact price (6,000 in / 90 out), publishes under that
+  attempt, raises Operations' `task:` event and delivers the file. **The product was already right**, so the test is the deliverable and
+  its RED is the mutant (`ConversationFor(role)` → the chair's conversation): `Expected: 3 / Actual: 0` — the provider saw no request.
+- **A turn cut mid-loop is committed like any other — two clauses right, one wrong:** a cut turn already ended ENDED with
+  `CONTEXT_BUDGET_EXCEEDED` and already published its staged report on the same commit, but nothing told the next turn. RED: `Not found:
+  "TradeAgent stopped your last turn"`; fixed — `AgentTurnEnded.Cut` carries the bound's own sentence out, `MissionSituation.Cut` renders
+  it above `Restored`, held PER ROLE until that role's next turn; mutant (`Commit` returning early for a failed turn): `Expected: ENDED /
+  Actual: LAUNCHED`.
+- **`backtest` granted to a harness worker:** a real run through `GrantedWorkerTools` into the gateway's own handler, on a program in
+  Research's home, the run row carrying that role and attempt; `backtest` stays out of `Ops.Mutating`. RED: `'backtest' is not an
+  operation 'trade' carries`; mutant (added to `Ops.Mutating` instead): `ROLE_MAY_NOT_TRADE`.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `ec44e40`, Release: 0 warnings, 0 errors, 17
+projects; seven touched classes 3× → 89/89 each; Unit 923 + Fault 277 + Integration 645 = 1845 passed, 0 failed, 1 skipped; names → 3
+added, 0 removed. Manager's gate at `118e7fb` (rebased over `U-referee-1`; landed as `47d1071` after a docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 962 + 277 + 656 = 1895 passed, 0 failed, 1 skipped; names vs
+`main` → 0 removed, 3 added; scan clean (token counts in assertions, judged); no trailers; `rev-list --count` → 0; CI run 34768117002 at `47d1071`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no real provider call (every request went to the loopback fake); the one-run-at-a-time guard on the worker route is pinned
+by `BacktestRequestTests` rather than re-proved here; `MissionSituation.Cut` is in memory and does not survive a restart (`ai_attempt.
+context` is the durable copy); the chair is not on the harness; no box, no ATAS, no money.

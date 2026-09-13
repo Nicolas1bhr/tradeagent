@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `19ef096`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `47d1071`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -27,16 +27,18 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    `7b90acf`** (no schema change; CI run 34723265426 GREEN on all four jobs; draft PR #17 green at `ee2abb2`, closed),
    **`U-runner-3` `5020b2b`** (the backtest; schema 12; CI run 34756421303 GREEN on all four jobs), **`U-api-worker` `ff8b43c`**
    (the app-owned harness; schema 13; CI run 34758232365 GREEN on all four jobs), **`U-referee-1` `19ef096`** (the holdout, the
-   campaign, trials, the verdict budget; **schema 14 on `main`**; CI run 34767356515 in flight when written).
+   campaign, trials, the verdict budget; **schema 14 on `main`**; CI run 34767356515 in flight when written), **`U-harness-loop`
+   `47d1071`** (the loop over a harness turn proven, a cut turn's account carried forward, `backtest` granted; CI run 34768117002 in flight).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
      PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
-   - `u-harness-loop` (worktree `U-harness-loop`, tip `c42bdf4`, built and reported, gate green in its report): being rebased over
-     `U-referee-1` and gated by the manager for landing; its record is drafted. No schema number.
-   - `u-referee-2` (worktree `U-referee-2`, created on the `u-referee-1` tip `19ef096` = `main`): dispatched 15:25 on
-     `docs/briefs/U-referee-2.md` — the verdict, **schema 15**; killed by the SESSION limit at 15:35 before reading anything; resumed
-     18:05 by `SendMessage`. A read-only survey for `U-council-concurrent` was killed the same way and resumed the same way.
+   - `u-referee-2` (worktree `U-referee-2`, created on the `u-referee-1` tip `19ef096`): dispatched 15:25 on `docs/briefs/U-referee-2.md`
+     — the verdict, **schema 15**; killed by the SESSION limit at 15:35 before reading anything; resumed 18:05 by `SendMessage`.
+   - `u-council-concurrent-1` (worktree `U-council-concurrent-1`, created on the `u-harness-loop` tip plus the briefs): a fresh builder
+     dispatched 18:12 on `docs/briefs/U-council-concurrent-1.md` — two roles' turns may overlap, every single-slot assumption per role,
+     an in-memory lease with the LAUNCHED row as witness; no schema number. `docs/briefs/U-council-concurrent-2.md` (the consequential
+     boundary, schema 16) follows after `U-referee-2` and `-1` land.
    If either is not running when you read this, re-brief it FRESH from its branch and brief on disk.
 4. **CI on `main`:** green on all four jobs at every sha from `137aaa4` to `ff8b43c`. The eleven
    `DispatchRecoveryTests` presses stay on two seconds and are recorded as EXPOSED in the `U-press-settle-win` section — if one
