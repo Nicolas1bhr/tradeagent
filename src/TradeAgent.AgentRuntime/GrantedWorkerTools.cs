@@ -32,18 +32,19 @@ namespace TradeAgent.AgentRuntime;
 /// <param name="home">The role's own folder, read per call: a prepare may have rebuilt it.</param>
 /// <param name="attempt">The attempt the meter opened for the launch, for the ledger row.</param>
 /// <param name="gateway">
-/// The trading surface. Null in a host with no gateway, and then <c>trade</c>, <c>data</c> and
-/// <c>report</c> are refused in words rather than silently absent — a worker told a tool exists and
-/// then given nothing would report a broken platform.
+/// The trading surface, read per call rather than captured: switching the trading platform replaces the
+/// gateway, and a worker holding the old one would be asking a gateway nobody trades through. Null — or
+/// a null answer — refuses <c>trade</c>, <c>data</c> and <c>report</c> in words rather than leaving them
+/// silently absent, because a worker told a tool exists and then given nothing reports a broken platform.
 /// </param>
 public sealed class GrantedWorkerTools(
     string role,
     Func<string> home,
     Func<string?> attempt,
-    IGatewayCalls? gateway = null,
+    Func<IGatewayCalls?>? gateway = null,
     ToolCallStore? ledger = null,
     Func<DateTimeOffset>? now = null,
-    string? session = null) : IWorkerTools
+    Func<string>? session = null) : IWorkerTools
 {
     public const string ReadFile = "read_file";
     public const string ListFiles = "list_files";
@@ -231,20 +232,20 @@ public sealed class GrantedWorkerTools(
                 $"'{op ?? "(none)"}' is not an operation '{tool}' carries. It carries: "
                 + string.Join(", ", allowed) + ".", Summary(tool, op));
 
-        if (gateway is null)
+        if (gateway?.Invoke() is not { } surface)
             return ToolAnswer.Refused($"'{tool}' is not available in this build's configuration.",
                 Summary(tool, op));
 
         var request = new IpcRequest
         {
             Op = op,
-            Session = session ?? $"harness-{role}",
+            Session = Session(),
             RequestId = RequestId(args),
             Args = Fields(args)
         };
 
         IpcResponse response;
-        try { response = await gateway.CallAsync(request, role, attempt(), ct); }
+        try { response = await surface.CallAsync(request, role, attempt(), ct); }
         catch (OperationCanceledException) { throw; }
         // A THROW OUT OF THE GATEWAY IS NOT A REFUSAL OF THE REQUEST and must not be recorded as one
         // being denied; it is an answer nobody could give. The worker is told, and the row says so.
@@ -263,6 +264,17 @@ public sealed class GrantedWorkerTools(
         return ToolAnswer.Refused(
             $"{error?.Code}: {error?.UserMessage} ({error?.Message})", Summary(tool, op));
     }
+
+    /// <summary>
+    /// The session name this surface's calls carry. The prepared agent's own where there is one, and a
+    /// name that says which role otherwise — read per call because a prepare mints a new session id, and
+    /// a captured one would attribute a later turn's fills to an earlier session.
+    ///
+    /// It is a NAME and never an authority: <c>AgentContext.ForAgent</c> cannot return an operator
+    /// whatever this says, and the reserved word is refused by the handler as a tripwire.
+    /// </summary>
+    string Session() =>
+        session?.Invoke() is { Length: > 0 } named ? named : $"harness-{role}";
 
     /// <summary>
     /// The idempotency key a mutating op is sent under: the worker's own where it gave a usable one,

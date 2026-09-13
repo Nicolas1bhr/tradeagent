@@ -89,7 +89,118 @@ public sealed class AppHost : IAsyncDisposable
     IDisposable? _metering;
 
     /// <summary>
-    /// ONE COUNCIL ROLE'S CONVERSATION: its own CLI session, in its own folder, on its own model.
+    /// THE PROVIDER KEY FOR THE APP-OWNED HARNESS, held in memory for this session and written nowhere.
+    ///
+    /// The process-wide holder, for the reason <see cref="AgentGrants.Shared"/> is one: the Safety page
+    /// takes the paste and the harness sends the request, and a key set on one instance and read from
+    /// another is a worker that will not start. <see cref="DisposeAsync"/> clears it.
+    /// </summary>
+    public HarnessKey HarnessKey { get; } = Security.HarnessKey.Shared;
+
+    /// <summary>
+    /// THE APP-OWNED HARNESS, made once and kept — see <see cref="ApiAgentRuntime"/>.
+    ///
+    /// <para>It is NOT under <see cref="AgentSupervisor"/>, and that is deliberate rather than
+    /// incidental: the supervisor's whole job is the lifecycle of an agent PROCESS — detect it, install
+    /// it, start it, hold it in a job object, stop it — and the harness has no process. Putting it
+    /// there would mean a Detect that cannot fail, an Install that does nothing and a Stop with nothing
+    /// to kill, three lies in the one class whose answers the health rows are read from.</para>
+    ///
+    /// <para>Built lazily because it depends on the catalogue, which an owner can make unreadable: a
+    /// harness that could not be constructed must not stop the app starting, and the role that wanted
+    /// it falls back to the CLI with the runtime health row saying why.</para>
+    /// </summary>
+    public ApiAgentRuntime? Harness
+    {
+        get
+        {
+            if (_harness is not null) return _harness;
+            try
+            {
+                var manifest = RuntimeCatalog.Find(ApiAgentRuntime.RuntimeId);
+                if (manifest is null) return null;
+                return _harness = new ApiAgentRuntime(manifest,
+                    // READ AT EVERY TURN, never captured: pasting a key mid-session is obeyed by the
+                    // next turn and clearing one stops the next turn.
+                    apiKey: HarnessKey.Read,
+                    tools: ToolsFor,
+                    selectedModel: () => Gateway.Settings.SelectedModelId,
+                    attemptId: role => Meter?.OpenAttemptIdFor(role),
+                    allowance: () => TurnAllowance.From(
+                        Gateway.Settings.AiTurnAllowanceInputTokens,
+                        Gateway.Settings.AiTurnAllowanceOutputTokens));
+            }
+            catch (Exception ex)
+            {
+                try { Gateway.Log.Engineering("Harness", "not_built", "warn", ex: ex); }
+                catch (Exception) { /* the log is the database, which may be the thing that failed */ }
+                return null;
+            }
+        }
+    }
+
+    ApiAgentRuntime? _harness;
+
+    /// <summary>
+    /// THE TOOLS ONE ROLE'S HARNESS TURNS ARE GRANTED. Composed here, beside the gateway, because this
+    /// is where the things a tool reaches already live — and deliberately NOT reachable from the agent:
+    /// there is no tool that hands out another tool, and the surface a role gets is decided by this
+    /// method and by nothing the model can say.
+    ///
+    /// The gateway is a FUNCTION because <see cref="SwitchConnectorAsync"/> replaces it; a worker
+    /// holding the old one would be asking a gateway nobody trades through.
+    /// </summary>
+    IWorkerTools ToolsFor(string role) =>
+        new GrantedWorkerTools(role,
+            home: () => HomeFor(role),
+            attempt: () => Meter?.OpenAttemptIdFor(role),
+            gateway: () => _server,
+            ledger: _db is null ? null : new ToolCallStore(_db),
+            session: () => Agent?.SessionId ?? "");
+
+    /// <summary>
+    /// WHICH RUNTIME ONE ROLE RUNS ON: the owner's choice for that role, then the app's default.
+    ///
+    /// <para><b>Research defaults to the harness once a key is held.</b> That is the doctrine's own
+    /// order — "workers run on an app-owned harness; seniors may keep the vendor CLI" — and the default
+    /// is conditional because a harness with no key starts nothing at all: defaulting to it
+    /// unconditionally would silence the Research Director on a machine that has never been given a
+    /// key, which is worse than running it on the CLI.</para>
+    ///
+    /// <para><b>The chair stays on the vendor CLI in this slice</b>, whatever is chosen for it. Its
+    /// conversation IS the Chat page's — one object the window draws and the owner types into — and the
+    /// chair on the harness is its own unit (<c>docs/briefs/U-api-worker.md</c>, "Not this unit"). So
+    /// this method answers the CLI for Operations rather than letting a setting produce a chair whose
+    /// turns the Chat page cannot see.</para>
+    /// </summary>
+    public string? RuntimeForRole(string role) =>
+        RuntimeForRole(role, Gateway.Settings.RuntimeForRole(role), Gateway.Settings.SelectedRuntimeId,
+            HarnessKey.Held);
+
+    /// <inheritdoc cref="RuntimeForRole(string)"/>
+    /// <remarks>
+    /// Static and handed its three inputs, for the reason <see cref="PricedRuntimeId"/> is: this is a
+    /// RULE rather than a lookup — which role, whose choice, and whether a key is held — and a rule that
+    /// can only be exercised by starting the whole app is a rule nobody is checking.
+    /// </remarks>
+    public static string? RuntimeForRole(string role, string? chosenForRole, string? appWide, bool keyHeld) =>
+        role == CouncilRoles.Operations
+            ? appWide
+            : chosenForRole
+              ?? (role == CouncilRoles.Research && keyHeld ? ApiAgentRuntime.RuntimeId : appWide);
+
+    /// <summary>
+    /// THE RUNTIME OBJECT one role's next turn runs on, or null before anything is prepared. The one
+    /// place the choice above becomes an object, so <see cref="ConversationFor"/> and the reservation's
+    /// pricing cannot disagree about which runtime a role is on.
+    /// </summary>
+    IAgentRuntime? RuntimeObjectFor(string role) =>
+        RuntimeCatalog.IsHarness(RuntimeForRole(role)) && role != CouncilRoles.Operations
+            ? Harness
+            : Agent?.Current;
+
+    /// <summary>
+    /// ONE COUNCIL ROLE'S CONVERSATION: its own session, in its own folder, on its own model.
     ///
     /// The chair's IS the window's conversation above, so the owner sees the Operations Director's
     /// work on the Chat page exactly as they always have, and what they type reaches the role that
@@ -109,7 +220,11 @@ public sealed class AppHost : IAsyncDisposable
     {
         if (role == CouncilRoles.Operations) return Conversation;
 
-        var runtime = Agent?.Current;
+        // THE ROLE'S OWN RUNTIME, WHICH MAY NOT BE THE APP'S. The cache below is keyed on the runtime
+        // object as well as the role, so an owner who moves a role between the CLI and the harness gets
+        // a genuinely new thread on the new one rather than a stale conversation that answers for a
+        // runtime it is no longer on.
+        var runtime = RuntimeObjectFor(role);
         if (runtime is null) return null;
 
         if (_roleConversations.TryGetValue(role, out var held) && ReferenceEquals(held.Owner, runtime))
@@ -147,8 +262,11 @@ public sealed class AppHost : IAsyncDisposable
     public string? RequestedModelFor(string role)
     {
         var chosen = Gateway.Settings.ModelForRole(role);
-        return Agent?.Current?.ModelFor(chosen)
-               ?? (PricingRuntime is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
+        // THE ROLE'S OWN RUNTIME RESOLVES IT. Asking the app's runtime for a role that is on the
+        // harness answers with the CLI's rules — which is how a reservation gets priced at a model the
+        // turn will not run on, in whichever direction the two happen to differ.
+        return RuntimeObjectFor(role)?.ModelFor(chosen)
+               ?? (RuntimeForRole(role) is { Length: > 0 } id ? RuntimeCatalog.Find(id)?.ModelFor(chosen) : null);
     }
 
     /// <summary>
@@ -425,7 +543,12 @@ public sealed class AppHost : IAsyncDisposable
                 // runs on. Both are read through a function for the same reason the model above is —
                 // the owner changes them while the AI is working.
                 share: role => Gateway.Settings.ShareForRole(role),
-                roleModel: RequestedModelFor);
+                roleModel: RequestedModelFor,
+                // A PRICE IS LOOKED UP BY (RUNTIME, MODEL), so a role on the app-owned harness has to
+                // be priced against the harness's catalogue. Priced against the chair's, a model only
+                // the harness offers falls back to the dearest entry and the row reads as an estimate
+                // when the app knows exactly what it asked for.
+                roleRuntime: RuntimeForRole);
             Meter.Changed += () => Changed?.Invoke();
 
             Wakes = new MissionEventStore(_db);
@@ -588,6 +711,11 @@ public sealed class AppHost : IAsyncDisposable
             NextEligibleWake = Wakes?.NextDueAt(),
             Spending = spend,
             Runtime = PricingRuntime,
+            // WHETHER THE APP-OWNED HARNESS CAN RUN AT ALL, in two words and never the key. It belongs
+            // on the report because a role on the harness with no key starts nothing: without this line
+            // the owner reads a day of zero research turns with no reason beside it, and the reason is
+            // that a key is not held and is not kept across a restart.
+            HarnessKeyHeld = HarnessKey.Held,
             NextReviewAt = status?.NextTurnAt,
             // A REVIEW THAT IS PENDING BECAUSE IT WAS NOT FUNDED, which rule 10 asks for by name. It
             // is not the same fact as a review that has not come round yet, and an owner reading
@@ -1057,6 +1185,10 @@ public sealed class AppHost : IAsyncDisposable
         if (_loop is not null) { await _loop.CancelAsync(); _loop.Dispose(); }
         foreach (var held in _roleConversations.Values) held.Metering?.Dispose();
         _metering?.Dispose();
+        // THE KEY IS CLEARED WHEN THE APP CLOSES, which is the other half of "held in memory only":
+        // it is never written, so there is nothing to delete, and it does not outlive this process.
+        HarnessKey.Clear();
+        _harness?.Dispose();
         if (_server is not null) await _server.DisposeAsync();
         if (Gateway is not null) await Gateway.DisposeAsync();
         _db?.Dispose();

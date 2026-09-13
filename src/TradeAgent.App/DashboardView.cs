@@ -953,10 +953,36 @@ sealed class SafetyPage
     /// </summary>
     string? _modelRowRuntime;
 
-    /// <summary>The Research Director's two settings: what it runs on, and its slice of the day.</summary>
+    /// <summary>The Research Director's three settings: what it runs on, which model, and its share.</summary>
+    readonly Panel _researchRuntimeRow;
     readonly Panel _researchModelRow;
     readonly NumericUpDown _researchShare;
     readonly TextBlock _councilNote = Ui.Micro("");
+
+    /// <summary>
+    /// THE KEY BOX FOR THE APP-OWNED HARNESS, MASKED, and the note that says what became of the paste.
+    ///
+    /// <c>PasswordChar</c> because the owner may be sharing a screen; the value is read on the press and
+    /// the box is emptied, so the control holds no credential between presses. The sentence beside it is
+    /// <c>Labels.HarnessKeyHint</c> and it says WHY the key is not saved, which is the one question an
+    /// owner asked to paste it again after every restart is entitled to an answer to.
+    /// </summary>
+    readonly TextBox _harnessKey = BuildHarnessKeyField();
+
+    /// <summary>
+    /// The masked box itself, from a factory for the reason the four presses on this page have one: what
+    /// a test checks has to be the control the owner is looking at, and "it is masked" is a claim about
+    /// that control rather than about a line of code near it.
+    /// </summary>
+    internal static TextBox BuildHarnessKeyField() =>
+        Ui.With(Ui.TextField(placeholder: Labels.HarnessKey), t =>
+        {
+            t.PasswordChar = '\u2022';
+            t.Width = double.NaN;
+            t.HorizontalAlignment = HorizontalAlignment.Stretch;
+        });
+
+    readonly TextBlock _harnessKeyNote = Ui.Micro("");
 
     readonly TextBox _allowlist;
     readonly TextBlock _limitsNote = Ui.Micro("");
@@ -1258,6 +1284,7 @@ sealed class SafetyPage
         _modelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, ChooseModel);
         _modelRowRuntime = _host.Gateway.Settings.SelectedRuntimeId;
 
+        _researchRuntimeRow = BuildRuntimeRow(id => ChooseRoleRuntime(CouncilRoles.Research, id));
         _researchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency,
             m => ChooseRoleModel(CouncilRoles.Research, m));
         _researchShare = Ui.NumberField(
@@ -1331,6 +1358,22 @@ sealed class SafetyPage
                 + "you talk to, and a Research Director that runs hypotheses and backtests and reports "
                 + "to it. These two settings divide the limit above between them and choose what the "
                 + "second one runs on. Neither of them can change either."),
+            Ui.Spacer(Theme.S2),
+            // WHAT IT RUNS ON, ABOVE WHICH MODEL, because the first decides what the second even means:
+            // on TradeAgent's own worker the model is named in the request TradeAgent composes, and on
+            // an AI tool it is a flag on that program's command line.
+            Ui.FieldRow(Labels.ResearchRuntime, _researchRuntimeRow),
+            Ui.Muted("TradeAgent's own worker calls the AI provider directly, with the tools TradeAgent "
+                + "chose — reading and writing inside its own folder, and reading the trading surface — "
+                + "and a budget TradeAgent enforces on every request rather than between turns. It "
+                + "cannot run a shell, install anything or reach the internet. It needs a key, below."),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.HarnessKey, _harnessKey, Labels.HarnessKeyHint),
+            Ui.Spacer(Theme.S2),
+            Ui.Row(Theme.S3,
+                BuildSaveHarnessKey(SaveHarnessKey),
+                Ui.Button(Labels.ForgetHarnessKey, ForgetHarnessKey)),
+            _harnessKeyNote,
             Ui.Spacer(Theme.S2),
             Ui.FieldRow(Labels.ResearchModel, _researchModelRow),
             Ui.FieldRow(Labels.ResearchShare, _researchShare,
@@ -1436,7 +1479,7 @@ sealed class SafetyPage
         Ui.SetResting(_stopButton,
             status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading, "emergency");
 
-        RefreshModelRow();
+        Refresh();
     }
 
     /// <summary>
@@ -1488,6 +1531,107 @@ sealed class SafetyPage
             ? $"The AI now runs on {m}"
             : "The AI now runs on whatever its AI tool is configured for");
         RefreshModelRow();
+    }
+
+    /// <summary>
+    /// THE ROW THAT CHOOSES WHAT A ROLE RUNS ON: the AI tool on this computer, or TradeAgent's own
+    /// worker. Two buttons rather than one per manifest, because those are the two KINDS of thing and
+    /// an owner choosing between them is choosing between a program and this app.
+    ///
+    /// ONE PRESS. Moving a role onto the harness can only narrow what it may do — a fixed tool surface
+    /// instead of a shell, a per-request bound the provider enforces instead of an advisory cap — and
+    /// moving it back changes no limit the gateway applies to an order.
+    ///
+    /// Static and handed what it does, like the model row, so a test presses the control the owner sees.
+    /// </summary>
+    internal static Panel BuildRuntimeRow(Action<string?> choose)
+    {
+        var row = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = Theme.S2,
+            LineSpacing = Theme.S2
+        };
+        row.Children.Add(Ui.Button(Labels.RuntimeIsTheCli, () => choose(null)));
+        row.Children.Add(Ui.Button(Labels.RuntimeIsTheHarness, () => choose(ApiAgentRuntime.RuntimeId)));
+        return row;
+    }
+
+    /// <summary>
+    /// THE PRESS THAT TAKES THE PASTED KEY. Emphasised, one press, and the box is emptied by the handler
+    /// — a control still holding a credential after the press is a credential on a screen.
+    /// </summary>
+    internal static Button BuildSaveHarnessKey(Action save)
+    {
+        var b = Ui.Button(Labels.SaveHarnessKey, save, emphasised: true);
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// Takes the paste, empties the box, and says what happened WITHOUT naming any part of the key.
+    /// Nothing is written to disk and nothing is logged but the fact that a key is now held.
+    /// </summary>
+    void SaveHarnessKey()
+    {
+        _host.HarnessKey.Set(_harnessKey.Text);
+        _harnessKey.Text = "";
+        _host.Gateway.Log.Activity(_host.HarnessKey.Held
+            ? "A key for TradeAgent's own worker is held for this session"
+            : "No key for TradeAgent's own worker is held");
+        Refresh();
+    }
+
+    void ForgetHarnessKey()
+    {
+        _host.HarnessKey.Clear();
+        _harnessKey.Text = "";
+        _host.Gateway.Log.Activity("The key for TradeAgent's own worker was forgotten");
+        Refresh();
+    }
+
+    /// <summary>
+    /// WHAT A ROLE RUNS ON. Clearing it — the AI tool on this computer — falls back to the runtime the
+    /// owner chose during setup, which is what every role ran on before this row existed.
+    /// </summary>
+    void ChooseRoleRuntime(string role, string? runtime)
+    {
+        _host.Gateway.Update(s =>
+        {
+            if (runtime is { Length: > 0 }) s.RoleRuntime[role] = runtime;
+            else s.RoleRuntime.Remove(role);
+        });
+        _host.Gateway.Log.Activity(
+            $"The {CouncilRoles.Title(role)} now runs on {_host.RuntimeForRole(role) ?? "its AI tool"}");
+        Refresh();
+    }
+
+    /// <summary>
+    /// Redraws the parts of this page a press changed, WITHOUT rebuilding the tree: the dashboard rule
+    /// (<c>CLAUDE.md</c>) is that a rebuild loses scroll position and half-pressed confirmations.
+    /// </summary>
+    void Refresh()
+    {
+        RefreshModelRow();
+        RefreshRuntimeRow();
+    }
+
+    /// <summary>
+    /// Emphasises whichever runtime the Research Director is actually on, and says what the key is,
+    /// which is the other half of the same fact: the harness with no key starts nothing.
+    /// </summary>
+    void RefreshRuntimeRow()
+    {
+        var harness = RuntimeCatalog.IsHarness(_host.RuntimeForRole(CouncilRoles.Research));
+        if (_researchRuntimeRow.Children.Count == 2)
+        {
+            if (_researchRuntimeRow.Children[0] is Button cli) Ui.Emphasise(cli, !harness);
+            if (_researchRuntimeRow.Children[1] is Button own) Ui.Emphasise(own, harness);
+        }
+
+        var held = _host.HarnessKey.Held;
+        _harnessKeyNote.Text = Labels.HarnessKeyState(held);
+        _harnessKeyNote.Foreground = held || !harness ? Theme.TextMuted : Theme.Caution;
     }
 
     /// <summary>

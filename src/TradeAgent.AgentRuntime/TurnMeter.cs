@@ -385,6 +385,18 @@ public sealed class TurnMeter
     /// <summary>The model one role runs on, for the reading that names a role.</summary>
     readonly Func<string, string?> _roleModel;
 
+    /// <summary>
+    /// THE RUNTIME ONE ROLE RUNS ON, which stopped being the same question as the app's runtime the day
+    /// a role could be put on the app-owned harness.
+    ///
+    /// A price is looked up by (runtime, model) — see <see cref="CostCatalog.Applicable"/> — so a
+    /// Research turn on <c>openai-api</c> priced against the chair's <c>codex</c> catalogue is a
+    /// reservation against a rate nobody is charged. It resolves the same way <see cref="_roleModel"/>
+    /// does, and it falls back to the app-wide runtime so a meter built with no council behind it
+    /// answers exactly as it did.
+    /// </summary>
+    readonly Func<string, string?> _roleRuntime;
+
     readonly Func<DateTimeOffset> _now;
     readonly string _path;
     readonly Lock _gate = new();
@@ -451,7 +463,8 @@ public sealed class TurnMeter
     public TurnMeter(Database db, Func<decimal> cap, Func<string?>? session = null,
         Func<string?>? runtimeId = null, Func<DateTimeOffset>? now = null, string? recordPath = null,
         Func<OwnerPrice?>? owner = null, Func<string?>? model = null, Func<TurnAllowance>? allowance = null,
-        Func<string, decimal>? share = null, Func<string, string?>? roleModel = null)
+        Func<string, decimal>? share = null, Func<string, string?>? roleModel = null,
+        Func<string, string?>? roleRuntime = null)
     {
         _db = db;
         _attempts = new AiAttemptStore(db);
@@ -465,6 +478,7 @@ public sealed class TurnMeter
         // with something honest rather than with zero — a zero share is a role that can never work.
         _share = share ?? (_ => 1m / CouncilRoles.All.Length);
         _roleModel = roleModel ?? (_ => (model ?? (() => null))());
+        _roleRuntime = roleRuntime ?? (_ => (runtimeId ?? (() => null))());
         _now = now ?? (() => DateTimeOffset.Now);
         _path = recordPath ?? RecordPath;
 
@@ -504,14 +518,14 @@ public sealed class TurnMeter
     /// </param>
     public void Record(AgentTurnEnded ended, string? role = null)
     {
-        var price = CostCatalog.Price(ended.Usage, _runtimeId(), owner: Owner(), requestedModel: ModelOf(role));
+        var price = CostCatalog.Price(ended.Usage, RuntimeOf(role), owner: Owner(), requestedModel: ModelOf(role));
         var record = new TurnRecord
         {
             Started = ended.At - ended.Duration,
             Ended = ended.At,
             Seconds = Math.Round(ended.Duration.TotalSeconds, 3),
             Session = Safe(_session),
-            Runtime = Safe(_runtimeId),
+            Runtime = RuntimeOf(role),
             ExitCode = ended.ExitCode,
             InputTokens = ended.Usage?.InputTokens,
             CachedInputTokens = ended.Usage?.CachedInputTokens,
@@ -630,7 +644,7 @@ public sealed class TurnMeter
         {
             Id = id,
             StartedAt = _now(),
-            Runtime = Safe(_runtimeId),
+            Runtime = RuntimeOf(role),
             RequestedModel = ModelOf(role),
             PricingBasis = reservation.Basis,
             ReservedCost = reservation.Cost ?? 0m,
@@ -730,7 +744,7 @@ public sealed class TurnMeter
             // The ROLE'S model, because that is the one its next turn will actually be run on. A
             // reservation priced at another role's model is a commitment against a rate nobody is
             // going to be charged, in whichever direction that rate happens to differ.
-            return CostCatalog.Reserve(_allowance(), _runtimeId(), owner: Owner(),
+            return CostCatalog.Reserve(_allowance(), RuntimeOf(role), owner: Owner(),
                 requestedModel: ModelOf(role));
         }
         catch (Exception) { return TurnPrice.Unknown("the reservation could not be priced"); }
@@ -738,6 +752,13 @@ public sealed class TurnMeter
 
     /// <summary>The model a role will be asked for, or the app's single choice where none is named.</summary>
     string? ModelOf(string? role) => role is null ? Safe(_model) : Safe(() => _roleModel(role));
+
+    /// <summary>
+    /// The runtime a role's next turn will run on, or the app's own where no role is named. See
+    /// <see cref="_roleRuntime"/>: the pair (runtime, model) is what a price is looked up by, so both
+    /// halves have to be the role's or neither is.
+    /// </summary>
+    string? RuntimeOf(string? role) => role is null ? Safe(_runtimeId) : Safe(() => _roleRuntime(role));
 
     /// <summary>
     /// Completes this meter's open attempt, or writes a finished row where nothing opened one — the
@@ -756,7 +777,7 @@ public sealed class TurnMeter
             {
                 Id = NewId(),
                 StartedAt = ended.At - ended.Duration,
-                Runtime = Safe(_runtimeId),
+                Runtime = RuntimeOf(role),
                 RequestedModel = ModelOf(role),
                 PricingBasis = price.Basis,
                 ReservedCost = 0m,
@@ -849,7 +870,7 @@ public sealed class TurnMeter
             // A turn that HAS priced today settles it the other way: a runtime whose stream names its
             // own model prices without an entry in RuntimeModels, and the probe below cannot know
             // that in advance because it has no model to offer.
-            var probe = CostCatalog.Price(Probe, _runtimeId(), catalogue, Owner(), ModelOf(role));
+            var probe = CostCatalog.Price(Probe, RuntimeOf(role), catalogue, Owner(), ModelOf(role));
             var canPrice = probe.Cost is not null || (totals.Turns > 0 && totals.Unpriced < totals.Turns);
 
             // The role's own rows, and its slice of the ceiling. Read separately from the day's

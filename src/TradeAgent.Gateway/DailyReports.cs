@@ -32,6 +32,15 @@ public sealed record DailyReportInputs
     /// <summary>The runtime the turns ran on, where anything named one.</summary>
     public string? Runtime { get; init; }
 
+    /// <summary>
+    /// WHETHER A KEY IS HELD FOR THE APP-OWNED HARNESS, or null in a host that has no harness at all.
+    ///
+    /// Handed in rather than read here for the reason every other input on this record is: the key lives
+    /// in memory in the composition root, the report is composed in the gateway, and the gateway must
+    /// never be able to reach a credential. Two words reach it; the key never does.
+    /// </summary>
+    public bool? HarnessKeyHeld { get; init; }
+
     /// <summary>When the next scheduled look is due, and why it may not happen.</summary>
     public DateTimeOffset? NextReviewAt { get; init; }
 
@@ -381,6 +390,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             UnreportedTurns = whole is { Metered: true } ? whole.UnreportedTurns : null,
             Currency = whole?.Currency ?? "",
             Runtime = i.Runtime,
+            HarnessKey = i.HarnessKeyHeld is { } held ? Labels.HarnessKeyLine(held) : null,
             // RULE 4, SAID EVERY DAY. Three figures, never one — and this build has only the third.
             Basis = "every AI figure here is a LIST-PRICE EQUIVALENT TradeAgent calculated from token "
                     + "counts. It is not an invoice, it is not a subscription charge, and it is not an "

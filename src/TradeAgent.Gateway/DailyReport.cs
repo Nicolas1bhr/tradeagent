@@ -145,6 +145,15 @@ public sealed record ReportSpending
     public string Currency { get; init; } = "";
     public string? Runtime { get; init; }
 
+    /// <summary>
+    /// WHETHER THE APP-OWNED HARNESS HAS A KEY — "held" or "not held", and never the key.
+    ///
+    /// On the report because it is the difference between a role that can work and a role that starts
+    /// nothing, and it does not survive a restart: a day with no research turns and no reason beside
+    /// them is a day the owner cannot account for. Null in a build with no harness.
+    /// </summary>
+    public string? HarnessKey { get; init; }
+
     /// <summary>Where these figures come from, and what they are not. Never null in a real report.</summary>
     public string? Basis { get; init; }
 
@@ -394,6 +403,7 @@ public static class DailyReportText
                        + (r.Spending.UnreportedTurns is int held and > 0
                            ? $", {held} charged at their reservation because no usage was ever reported" : ""));
         Kv(b, "runtime", r.Spending.Runtime ?? Unknown);
+        if (r.Spending.HarnessKey is { Length: > 0 } key) Kv(b, "harness key", key);
         foreach (var role in r.Spending.Roles)
             Kv(b, role.Role, $"{Money(role.Spent, r.Spending.Currency)} spent, "
                              + $"{Money(role.Reserved, r.Spending.Currency)} committed, "

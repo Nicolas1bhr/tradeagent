@@ -148,6 +148,27 @@ public static class Labels
     /// <summary>What the daily report's AI-spending section says about the key. Two words, no key.</summary>
     public static string HarnessKeyLine(bool held) => held ? "held" : "not held";
 
+    /// <summary>The press that takes the pasted key, and the one that forgets it.</summary>
+    public const string SaveHarnessKey = "Use this key";
+
+    public const string ForgetHarnessKey = "Forget the key";
+
+    /// <summary>What the page says about the key it is holding. Never any part of the key itself.</summary>
+    public static string HarnessKeyState(bool held) => held
+        ? "A key is held for this session. TradeAgent has not written it down; it is gone when the app closes."
+        : "No key is held, so TradeAgent's own worker will not start a turn.";
+
+    /// <summary>
+    /// WHICH AI TOOL A ROLE RUNS ON. Two words for the two kinds of thing, because they are not two
+    /// brands: one is a program on this computer that TradeAgent starts, and the other is TradeAgent
+    /// calling the provider itself with the tools it chose and a budget it enforces per request.
+    /// </summary>
+    public const string ResearchRuntime = "What the Research Director runs on";
+
+    public const string RuntimeIsTheCli = "The AI tool on this computer";
+
+    public const string RuntimeIsTheHarness = "TradeAgent's own worker";
+
     /// <summary>
     /// THE TWO BOXES THAT SET WHAT ONE TURN IS COMMITTED TO COST BEFORE IT RUNS, beside the ceiling
     /// they are measured against. They are an upper bound rather than a prediction, and the note on

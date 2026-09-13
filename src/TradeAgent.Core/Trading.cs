@@ -167,6 +167,32 @@ public sealed class TradeAgentSettings
     public Dictionary<string, string> RoleModel { get; set; } = [];
 
     /// <summary>
+    /// WHICH RUNTIME EACH COUNCIL ROLE RUNS ON, by role id, or absent for the app's own default for
+    /// that role.
+    ///
+    /// <para>A dictionary for the reason <see cref="RoleModel"/> is one: the roles are data. What is
+    /// different here is what the choice MEANS — a vendor CLI is a process this app starts and then
+    /// watches, and the app-owned harness is a series of requests this app composes, counts and may
+    /// refuse. The doctrine's line is "workers run on an app-owned harness; seniors may keep the vendor
+    /// CLI", and this is the field that makes it the owner's decision rather than a build's.</para>
+    ///
+    /// <para>It is NOT a permission and asks once. A role on the harness can do strictly LESS than the
+    /// same role on a CLI — a fixed tool surface instead of a shell, a per-request bound the provider
+    /// enforces instead of an advisory cap — so moving a role onto it never widens anything, and moving
+    /// one back off it changes no limit the gateway applies to an order.</para>
+    /// </summary>
+    public Dictionary<string, string> RoleRuntime { get; set; } = [];
+
+    /// <summary>
+    /// The runtime this role was CHOSEN to run on, or null for "the app's default for this role".
+    ///
+    /// Null is resolved above this type, not here, because the default depends on a fact settings
+    /// cannot see: whether a key is held in memory right now. See <c>AppHost.RuntimeForRole</c>.
+    /// </summary>
+    public string? RuntimeForRole(string role) =>
+        RoleRuntime.TryGetValue(role, out var r) && r.Length > 0 ? r : null;
+
+    /// <summary>
     /// EACH ROLE'S SLICE OF <see cref="AiDailyCostCap"/>, as a fraction, or absent for an equal
     /// share. Fifty-fifty across the two roles this build runs.
     ///

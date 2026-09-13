@@ -59,7 +59,7 @@ public class WorkerToolTests : IAsyncLifetime
     const string Attempt = "turn-tools-1";
 
     GrantedWorkerTools Tools(string role, ToolCallStore? ledger = null) =>
-        new(role, () => Home(role), () => Attempt, _server, ledger);
+        new(role, () => Home(role), () => Attempt, () => _server, ledger);
 
     static ToolRequest Call(string tool, object args, string id = "c1") =>
         new(id, tool, Json.Write(args));
