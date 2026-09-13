@@ -304,12 +304,25 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
 
-            // THE TRIAL, IN THE SAME TRANSACTION AS THE RUN IT IS THE COST OF. Either both land or
-            // neither does: a run recorded without its trial is a peek nobody was charged for, and a
-            // trial without its run is a charge for nothing. Keyed by the campaign, the version and the
-            // run — never by the role or the attempt, which are on the run row where they belong.
+            // THE TRIAL, IN THE SAME TRANSACTION AS THE RUN IT IS THE COST OF, AND IT IS THE GATE.
+            //
+            // Either both land or neither does: a run recorded without its trial is a peek nobody was
+            // charged for, and a trial without its run is a charge for nothing. Keyed by the campaign,
+            // the version and the run — never by the role or the attempt, which are on the run row.
+            //
+            // THE REFUSAL IS WHAT CLOSES THE BY-ONE RACE. `TrialRefusal` above is a LOOK: it reads the
+            // count in its own transaction before a run that takes minutes, so two roles asking for the
+            // last trial of a campaign both pass it. `RegisterTrial` reads the count and writes the row
+            // in ONE transaction, so exactly one of them takes it — and the loser's run is rolled back
+            // with everything else in this write and its figures are never served. The compute is spent
+            // either way; what must not happen is a run over the owner's data standing in the ledger
+            // with no trial against it, which is the peek the count exists to bound recorded as free.
             if (campaign is { } open)
-                _campaigns.RegisterTrial(open.Id, result.VersionId, result.RunId, kind, at);
+            {
+                var registered = _campaigns.RegisterTrial(open.Id, result.VersionId, result.RunId, kind, at);
+                if (!registered.Ok)
+                    throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, registered.Why);
+            }
 
             return 0;
         });

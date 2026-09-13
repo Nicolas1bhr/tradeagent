@@ -281,12 +281,18 @@ public sealed class CampaignStore(Database db)
     });
 
     /// <summary>
-    /// WHY THE NEXT RUN OF THIS KIND CANNOT BE REGISTERED, in words, or null because it can.
+    /// WHY THE NEXT RUN OF THIS KIND WOULD NOT BE REGISTERED, in words, or null because it would.
     ///
-    /// <para>Asked BEFORE the run rather than after it, which is the whole point of having it separate
-    /// from <see cref="RegisterTrial"/>: a caller told "your budget is spent" after twenty minutes of
-    /// evaluation has spent the budget to learn that it was spent. A <c>fixture</c> run is never refused
-    /// here — it is charged nothing, so there is nothing for a budget to refuse.</para>
+    /// <para><b>A LOOK, AND NEVER THE GATE.</b> It is taken BEFORE the run so that a caller is not told
+    /// "your budget is spent" after twenty minutes of evaluation has spent the budget to learn that it
+    /// was spent — but it reads the count in its own transaction and the row goes in later, so two roles
+    /// that take this look together both pass it. That is not a defect in the look: it is what a cheap
+    /// first look can honestly say, and it is why <see cref="RegisterTrial"/> asks again inside the
+    /// transaction that writes. Exactly the shape <c>AiAttemptStore.Begin</c> has beside
+    /// <c>AdmitsAnotherTurn</c>, for exactly the same reason.</para>
+    ///
+    /// <para>A <c>fixture</c> run is never refused here — it is charged nothing, so there is nothing for
+    /// a budget to refuse.</para>
     /// </summary>
     public string? TrialRefusal(long campaignId, string kind)
     {
@@ -294,28 +300,31 @@ public sealed class CampaignStore(Database db)
         if (ById(campaignId) is not { } campaign) return null;
 
         var spent = TrialsCharged(campaignId);
-        if (spent < campaign.TrialBudget) return null;
-
-        return $"campaign {campaignId} has registered all {campaign.TrialBudget} of its research trials, so "
-            + "this run is refused before it is made. A trial is one registered run of one version over one "
-            + "dataset under one execution model, and the count is the CAMPAIGN's: it is keyed by the "
-            + "campaign, the version and the run and by nothing about who asked, so it is not reset by a "
-            + "restart, by a fresh attempt or by a replacement team. What is left is a renewal, which the "
-            + "account owner authorises in TradeAgent's own window and which carries this campaign's "
-            + "holdout and its lineage forward. Runs over a fixture dataset are still free.";
+        return spent < campaign.TrialBudget ? null : Spent(campaignId, campaign.TrialBudget, made: false);
     }
 
     /// <summary>
-    /// REGISTERS ONE TRIAL, or leaves the row that is already there alone.
+    /// REGISTERS ONE TRIAL, CHARGING IT AGAINST THE BUDGET IN THE SAME TRANSACTION THAT READS IT — or
+    /// refuses in words, having written nothing.
     ///
-    /// <para><b>Idempotent on (campaign, version, run), and the FIRST registration stands.</b> All three
-    /// are content hashes or the app's own id, so a re-request of the same program over the same bytes
-    /// under the same model is the same trial and is not charged twice — and a restart, a fresh attempt
-    /// or a new team asking the identical question inherits the count rather than starting one.</para>
+    /// <para><b>The count and the insert are ONE <see cref="Database.Write"/>, and that is this method's
+    /// property.</b> They used to be two: <see cref="TrialRefusal"/> read the count before the run and
+    /// this wrote the row after it, so two roles asking for the last trial at once both read 199 of 200
+    /// and both registered. A campaign-wide budget that two concurrent callers can exceed by one is a
+    /// budget the doctrine's "campaign-wide trial limits that survive a team's replacement"
+    /// (<c>docs/COUNCIL.md</c>:36) does not describe — and the overrun is a peek at the owner's data
+    /// nobody was charged for.</para>
     ///
-    /// <para>It does not check the budget: <see cref="TrialRefusal"/> does that before the work. A run
-    /// that has already been made is recorded whatever the budget says, because the alternative is a run
-    /// the app measured and did not admit to.</para>
+    /// <para><b>Idempotent on (campaign, version, run), and the FIRST registration stands — even over
+    /// budget.</b> All three are content hashes or the app's own id, so re-asking the identical question
+    /// is the same trial, is not charged twice, and must still answer Ok: the row is already there, and
+    /// refusing it would make a restart look like an overrun.</para>
+    ///
+    /// <para><b>A refusal here means the run is not recorded at all</b>, because the caller rolls its own
+    /// transaction back on it. That is deliberate and it is the lesser of the two wrongs: the compute is
+    /// already spent either way, and the alternative is a run over the campaign's data standing in the
+    /// ledger with no trial against it — which is the peek the count exists to bound, recorded as free.
+    /// The caller is told in these words rather than quietly served the figures.</para>
     /// </summary>
     public TrialRegistered RegisterTrial(long campaignId, string versionId, string runId, string kind,
         DateTimeOffset at) => db.Write(_ =>
@@ -324,6 +333,17 @@ public sealed class CampaignStore(Database db)
             return new TrialRegistered(false, $"there is no campaign {campaignId}.", false, 0, 0);
 
         var charged = kind != EvaluationClass.Fixture;
+        var spent = TrialsCharged(campaignId);
+
+        // ALREADY REGISTERED: the same question, asked again. The first row stands and the answer is Ok
+        // whatever the budget now says — see the doc comment.
+        if (Registered(campaignId, versionId, runId))
+            return new TrialRegistered(true, "", charged, spent, campaign.TrialBudget);
+
+        // THE GATE, AND IT IS THIS TRANSACTION'S OWN READING RATHER THAN THE CALLER'S.
+        if (charged && spent >= campaign.TrialBudget)
+            return new TrialRegistered(false, Spent(campaignId, campaign.TrialBudget, made: true), false,
+                spent, campaign.TrialBudget);
 
         using var c = db.Cmd("""
             INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at)
@@ -336,6 +356,34 @@ public sealed class CampaignStore(Database db)
 
         return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
     });
+
+    /// <summary>Whether this exact trial is already on the table. Read inside the caller's transaction.</summary>
+    public bool Registered(long campaignId, string versionId, string runId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COUNT(*) FROM strategy_trial WHERE campaign_id=$id AND version_id=$ver AND run_id=$run",
+            ("$id", campaignId), ("$ver", versionId), ("$run", runId));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture) > 0;
+    });
+
+    /// <summary>
+    /// THE SENTENCE A SPENT TRIAL BUDGET ANSWERS WITH, in whichever tense applies. One text with two
+    /// halves rather than two texts, because everything after the first clause is the same fact and a
+    /// second copy of it is a second thing to keep true.
+    /// </summary>
+    static string Spent(long campaignId, int budget, bool made) =>
+        $"campaign {campaignId} has registered all {budget} of its research trials, so "
+        + (made
+            ? "this run is not recorded and its result is not served: the count is charged in the same "
+              + "transaction that reads it, so two roles asking for the last trial at once cannot both "
+              + "take it. "
+            : "this run is refused before it is made. ")
+        + "A trial is one registered run of one version over one "
+        + "dataset under one execution model, and the count is the CAMPAIGN's: it is keyed by the "
+        + "campaign, the version and the run and by nothing about who asked, so it is not reset by a "
+        + "restart, by a fresh attempt or by a replacement team. What is left is a renewal, which the "
+        + "account owner authorises in TradeAgent's own window and which carries this campaign's "
+        + "holdout and its lineage forward. Runs over a fixture dataset are still free.";
 
 
     // ---- verdicts ---------------------------------------------------------------------------------

@@ -652,4 +652,130 @@ public class CampaignLedgerTests
 
         Assert.Equal(["campaign_id", "version_id", "requested_at", "holdout_from"], columns);
     }
+    // ---- U-council-concurrent-2, item 5: the trial budget charged in ONE transaction ---------------
+
+    /// <summary>
+    /// RED FIRST: TWO ROLES ASKING FOR THE LAST TRIAL OF A CAMPAIGN BOTH TAKE IT, and the budget is
+    /// exceeded by one.
+    ///
+    /// <para><c>U-referee-1</c> reported this race by name and left it: <c>TrialRefusal</c> read the
+    /// count in one transaction and <c>RegisterTrial</c> wrote the row in another, with a backtest that
+    /// takes minutes in between. Two roles can run at once since <c>U-council-concurrent-1</c>, so both
+    /// read 199 of 200 and both registered — 201 peeks at the owner's held-back data under a budget of
+    /// 200. "Campaign-wide trial limits that survive a team's replacement"
+    /// (<c>docs/COUNCIL.md</c>:36) is not a limit two concurrent callers can walk past.</para>
+    ///
+    /// <para>TWO REAL THREADS AGAINST ONE <see cref="Database"/>, with a <see cref="Barrier"/> at the
+    /// look, because "both were admitted" is a fact about two callers and a shared table and a stand-in
+    /// for either would exercise neither. The idiom is <c>BudgetReservationTests</c>'s, and so is the
+    /// shape of the fix: the look is honest and the transaction is the gate.</para>
+    /// </summary>
+    [Fact]
+    public void Two_roles_racing_for_the_last_trial_of_a_campaign_take_exactly_one()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var set = Held(db);
+        var campaign = Opened(db, set, trials: Budget);
+        var version = Measured(db, set, runs: Budget + 1);
+
+        // 199 of the 200 already spent, so the next registration is the last one there is room for.
+        for (var n = 0; n < Budget - 1; n++)
+            Assert.True(campaigns
+                .RegisterTrial(campaign.Id, version, $"run-{n}", EvaluationClass.Research, At).Ok);
+        Assert.Equal(Budget - 1, campaigns.TrialsCharged(campaign.Id));
+
+        var looked = new string?[2];
+        var registered = new TrialRegistered[2];
+        using var read = new Barrier(2);
+
+        void Ask(int i)
+        {
+            // The loop's cheap first look, taken before the run — and on a campaign with one trial left
+            // BOTH callers are honestly told there is room.
+            looked[i] = campaigns.TrialRefusal(campaign.Id, EvaluationClass.Research);
+            read.SignalAndWait();
+            registered[i] = campaigns.RegisterTrial(
+                campaign.Id, version, $"run-{Budget - 1 + i}", EvaluationClass.Research, At);
+        }
+
+        var a = new Thread(() => Ask(0));
+        var b = new Thread(() => Ask(1));
+        a.Start();
+        b.Start();
+        Assert.True(a.Join(TimeSpan.FromSeconds(30)), "the first caller never finished");
+        Assert.True(b.Join(TimeSpan.FromSeconds(30)), "the second caller never finished");
+
+        // Both were told there was room. That is the race and not a defect: it is what a look taken
+        // before a run that takes minutes can honestly say, and it is why the look cannot be the gate.
+        Assert.All(looked, why => Assert.Null(why));
+
+        Assert.Equal(Budget, campaigns.TrialsCharged(campaign.Id));
+        Assert.Single(registered, r => r.Ok);
+
+        var refused = Assert.Single(registered, r => !r.Ok);
+        Assert.Equal(Budget, refused.Spent);
+        Assert.Equal(Budget, refused.Budget);
+        Assert.False(refused.Charged);
+        Assert.Contains($"all {Budget} of its research trials", refused.Why, StringComparison.Ordinal);
+        Assert.Contains("this run is not recorded and its result is not served", refused.Why,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>A campaign-sized budget, so the assertion reads as the figure the doctrine bounds.</summary>
+    const int Budget = 200;
+
+    /// <summary>
+    /// ONE VERSION AND <paramref name="runs"/> RUNS OF IT, written through the app's own store, so the
+    /// trials below have real rows to reference. <c>strategy_trial</c> has foreign keys to both, which
+    /// is the ledger refusing to charge for a run nobody recorded.
+    /// </summary>
+    static string Measured(Database db, DatasetRecord over, int runs, string version = "version-x")
+    {
+        var strategies = new StrategyStore(db);
+        strategies.RecordVersion(new StrategyVersionRow(
+            version, "instrument BTCUSDT\n", "canonical", "{}", StrategyStore.InterpreterBuild,
+            ParseVerdict.Accepted, 0, At, CouncilRoles.Research, "attempt-1"));
+
+        for (var n = 0; n < runs; n++)
+            strategies.RecordRun(new StrategyRunRow(
+                $"run-{n}", version, over.Id, over.NormalisedSha256, Cutoff.AddDays(-10), Cutoff,
+                "frictionless", BacktestOutcome.COMPLETED.ToString(), null,
+                10, 1, 1, 1, 1, 1, 0, 0, 1m, 0m, 1m, 0m, "sha", At, CouncilRoles.Research, "attempt-1"),
+                []);
+
+        return version;
+    }
+
+    /// <summary>
+    /// THE SAME TRIAL, ASKED FOR AGAIN, IS STILL OK EVEN WITH THE BUDGET FULL. A restart or a retry
+    /// re-asking the identical question is the row that is already there; refusing it would make
+    /// recovery look like an overrun and would leave a recorded run with its own trial unreadable.
+    /// </summary>
+    [Fact]
+    public void A_trial_already_registered_answers_ok_even_once_the_budget_is_full()
+    {
+        using var db = TestEnv.NewDb();
+        var campaigns = new CampaignStore(db);
+        var set = Held(db);
+        var campaign = Opened(db, set, trials: 1);
+        var version = Measured(db, set, runs: 3);
+
+        Assert.True(campaigns.RegisterTrial(campaign.Id, version, "run-0", EvaluationClass.Research, At).Ok);
+        Assert.True(campaigns.Registered(campaign.Id, version, "run-0"));
+        Assert.NotNull(campaigns.TrialRefusal(campaign.Id, EvaluationClass.Research));
+
+        var again = campaigns.RegisterTrial(campaign.Id, version, "run-0", EvaluationClass.Research, At);
+        Assert.True(again.Ok, again.Why);
+        Assert.Equal(1, campaigns.TrialsCharged(campaign.Id));
+
+        // A DIFFERENT run is a different peek, and there is no room for it.
+        Assert.False(campaigns.RegisterTrial(campaign.Id, version, "run-1", EvaluationClass.Research, At).Ok);
+        Assert.Equal(1, campaigns.TrialsCharged(campaign.Id));
+
+        // A FIXTURE run is charged nothing, so a full budget refuses none of them.
+        Assert.True(campaigns.RegisterTrial(campaign.Id, version, "run-2", EvaluationClass.Fixture, At).Ok);
+        Assert.Equal(1, campaigns.TrialsCharged(campaign.Id));
+    }
+
 }
