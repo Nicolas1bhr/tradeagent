@@ -75,7 +75,13 @@ public class DataOverPipeTests(ITestOutputHelper log)
             false, 0, 2, 0, DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null,
             [new DatasetFile("2026-08", "http://127.0.0.1:0/data/spot/monthly/klines/x.zip", DatasetStore.Sha256(raw)!,
                 DatasetStore.Sha256(raw)!, new FileInfo(raw).Length, DateTimeOffset.UtcNow,
-                KlineTimeUnit.Microseconds, raw)]);
+                KlineTimeUnit.Microseconds, raw)])
+        {
+            // The collector records what these bars are OF, so the stand-in does too: a fixture that
+            // left the two columns null would be testing the app against a collector it does not have.
+            VenueId = VenueCatalog.BinanceSpot,
+            InstrumentSymbol = pair
+        };
 
         return record with { Id = store.Record(record) };
     }
@@ -223,6 +229,67 @@ public class DataOverPipeTests(ITestOutputHelper log)
         Assert.False(reply.Ok);
         Assert.Equal(nameof(ErrorCode.MARKET_DATA_UNAVAILABLE), reply.Error!.Code);
         Assert.Contains("no command here that does it", reply.Error.Message);
+    }
+
+    /// <summary>
+    /// ITEM 3 — A DATASET NAMES THE VENUE AND THE INSTRUMENT ITS BARS ARE OF, AND `data-list` CARRIES
+    /// THEM.
+    ///
+    /// <para>Red first: `data-list` carried no venue for a recorded dataset, so a run over those bars
+    /// had nothing to look an increment up BY — the reason every backtest's increment was a number the
+    /// caller typed. The two fields are the row's own, copied onto it when it was collected, and the
+    /// answer reports them rather than deriving them from anything the caller asked for.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_dataset_names_the_venue_and_the_instrument_its_bars_are_of()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+        Given(db, "BTCUSDT", 30);
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "agent-1" });
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+
+        var set = Data(reply).GetProperty("datasets").EnumerateArray().First();
+        Assert.True(set.TryGetProperty("venue_id", out var venue),
+            "data-list carries no venue for a recorded dataset");
+        Assert.Equal(VenueCatalog.BinanceSpot, venue.GetString());
+        Assert.Equal("BTCUSDT", set.GetProperty("instrument_symbol").GetString());
+    }
+
+    /// <summary>
+    /// THE VENUE IS THE ROW'S, NOT THE CALLER'S.
+    ///
+    /// <para>This is the mutant's test. A dataset recorded against TradeAgent's own simulator is
+    /// reported as the simulator's, and the mutant that reports the venue every dataset was ASKED for
+    /// — derived from the pair that was collected, rather than read from the column the collector
+    /// wrote — renames the source of the evidence a strategy is going to be judged on. Every count,
+    /// hash and coverage figure in the answer stays exactly right while it does so.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_venue_on_a_dataset_is_the_recorded_one_and_not_the_one_the_pair_suggests()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var recorded = Given(db, "BTCUSDT", 12) with
+        {
+            VenueId = VenueCatalog.Simulator, InstrumentSymbol = "ES"
+        };
+        var id = new DatasetStore(db).Record(recorded);
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "agent-1" });
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+
+        var sim = Data(reply).GetProperty("datasets").EnumerateArray()
+            .Single(s => s.GetProperty("id").GetInt64() == id);
+
+        Assert.Equal(VenueCatalog.Simulator, sim.GetProperty("venue_id").GetString());
+        Assert.Equal("ES", sim.GetProperty("instrument_symbol").GetString());
     }
 
     static Dictionary<string, JsonElement> Args(params (string Key, string Value)[] args) =>

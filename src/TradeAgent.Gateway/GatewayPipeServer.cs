@@ -2300,6 +2300,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     static DataListReplyItem Describe(DatasetRecord set) => new(
+        // THE VENUE AND THE INSTRUMENT ARE THE ROW'S OWN, read off the record the collector wrote and
+        // never derived from the pair or from anything the caller asked for: a dataset is the evidence
+        // a strategy is judged on, and a caller that could rename where its own evidence came from
+        // could bind a run to an instrument it was not measured on.
+        set.VenueId, set.InstrumentSymbol,
         set.Id, set.Source, set.Pair, set.Interval, set.Version, set.State.ToString(), set.RejectedReason,
         set.MonthsAttempted, set.MonthsPresent, set.MonthsNotPublished,
         set.NormalisedSha256, set.Bars, set.FirstBar, set.LastBar,
@@ -2318,6 +2323,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
     /// <inheritdoc cref="DataListReply"/>
     sealed record DataListReplyItem(
+        // NEVER DROPPED WHEN NULL, for the reason `rejected_reason` is not: "this dataset records no
+        // venue" and "this build has no such field" are different answers, and only the first one is
+        // something a caller can do anything about.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? VenueId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? InstrumentSymbol,
         long Id, string Source, string Pair, string Interval, string Version, string State,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? RejectedReason,
         int MonthsAttempted, int MonthsPresent, IReadOnlyList<string> MonthsNotPublished,

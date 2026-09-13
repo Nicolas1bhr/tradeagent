@@ -100,7 +100,15 @@ public sealed class BinanceDataService(Database db, BinanceArchiveClient? client
             verified.MonthsAttempted, verified.MonthsPresent, verified.MonthsNotPublished,
             set.Path, set.Sha256, set.Bars, set.FirstBar, set.LastBar,
             set.Gaps, set.GapRuns, set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable,
-            DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null, verified.Files);
+            DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null, verified.Files)
+        {
+            // THE VENUE AND THE INSTRUMENT THESE BARS ARE OF, recorded with them. This collector
+            // downloads Binance's own public spot archives, so the venue is Binance spot and the
+            // instrument is the pair the archive is named for — a fact about what was fetched, not a
+            // lookup, which is why it is written here rather than derived at read time.
+            VenueId = VenueCatalog.BinanceSpot,
+            InstrumentSymbol = pair
+        };
 
         var id = _store.Record(record);
         var stored = record with { Id = id };
@@ -121,7 +129,13 @@ public sealed class BinanceDataService(Database db, BinanceArchiveClient? client
             set.Gaps, set.GapRuns, set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable,
             acceptedAt, DatasetState.ACCEPTED, null,
             [.. collected.Select(f => new DatasetFile(f.Month, f.Url, f.PublishedSha256, f.ComputedSha256,
-                f.Bytes, f.DownloadedAt, units.GetValueOrDefault(f.Month, KlineTimeUnit.Microseconds), f.Path))]);
+                f.Bytes, f.DownloadedAt, units.GetValueOrDefault(f.Month, KlineTimeUnit.Microseconds), f.Path))])
+        {
+            // See the rebuild above: the venue is what this collector fetched from, recorded with the
+            // bytes rather than inferred from them later.
+            VenueId = VenueCatalog.BinanceSpot,
+            InstrumentSymbol = pair
+        };
 
         return record with { Id = _store.Record(record) };
     }

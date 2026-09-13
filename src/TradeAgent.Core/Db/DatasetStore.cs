@@ -73,6 +73,30 @@ public sealed record DatasetRecord(
     public DateTimeOffset? HoldoutFrom { get; init; }
 
     /// <summary>
+    /// THE VENUE THESE BARS ARE OF, as the collector recorded it — or null, because nothing recorded
+    /// one.
+    ///
+    /// <para>Copied onto the row and never joined to the catalogue at read time. A dataset's venue is a
+    /// fact about the bytes that were collected, and a <c>venues.json</c> edited next month must not be
+    /// able to restate what last month's evidence was collected from. It is also what a run looks its
+    /// quantity increment up BY: the row the app wrote, not the instrument an agent named in its own
+    /// program, which is a thing the agent can arrange.</para>
+    ///
+    /// <para>Null is a real state and is refused rather than defaulted: a dataset that does not say
+    /// what venue it is of cannot have an increment read for it, and a run over it must declare one.
+    /// Init-only with a default, like <see cref="HoldoutFrom"/>, so adding it re-parameterised no
+    /// construction site.</para>
+    /// </summary>
+    public string? VenueId { get; init; }
+
+    /// <summary>
+    /// The instrument symbol on <see cref="VenueId"/>, as the collector recorded it, or null. It is not
+    /// necessarily <see cref="Pair"/>: the pair is how the vendor names its archive, and the symbol is
+    /// how the venue names the instrument. They coincide on Binance spot and need not anywhere else.
+    /// </summary>
+    public string? InstrumentSymbol { get; init; }
+
+    /// <summary>
     /// Whether a run over these bars is evidence or plumbing. See <see cref="Data.EvaluationClass"/>;
     /// <c>research</c> unless the owner said otherwise, which is what every older row was.
     /// </summary>
@@ -102,7 +126,8 @@ public sealed class DatasetStore(Database db)
     const string Written = """
         source, pair, interval, version, months_attempted, months_present, months_not_published,
         normalised_path, normalised_sha256, bars, first_bar, last_bar, gaps, gap_runs,
-        gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state, rejected_reason
+        gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state, rejected_reason,
+        venue_id, instrument_symbol
         """;
 
     /// <summary>
@@ -131,7 +156,7 @@ public sealed class DatasetStore(Database db)
         using var insert = db.Cmd($"""
             INSERT INTO dataset({Written})
             VALUES($src,$pair,$int,$ver,$att,$pres,$notpub,$npath,$nsha,$bars,$first,$last,$gaps,
-                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why);
+                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why,$venue,$sym);
             SELECT last_insert_rowid();
             """,
             ("$src", set.Source), ("$pair", set.Pair), ("$int", set.Interval), ("$ver", set.Version),
@@ -143,7 +168,11 @@ public sealed class DatasetStore(Database db)
             ("$gaps", set.Gaps), ("$runs", EncodeRuns(set.GapRuns)),
             ("$trunc", set.GapRunsTruncated ? 1 : 0), ("$dup", set.Duplicates),
             ("$inc", set.Incomplete), ("$unread", set.Unreadable), ("$at", Sql.T(set.AcceptedAt)),
-            ("$state", set.State.ToString()), ("$why", set.RejectedReason));
+            ("$state", set.State.ToString()), ("$why", set.RejectedReason),
+            // THE ROW'S OWN, and the collector is who says what they are. There is no default here and
+            // no derivation from the pair: a dataset whose collector recorded no venue reads as one
+            // that recorded no venue, and a run over it is refused an increment rather than given one.
+            ("$venue", set.VenueId), ("$sym", set.InstrumentSymbol));
 
         var id = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
 
@@ -329,8 +358,10 @@ public sealed class DatasetStore(Database db)
                     r.IsDBNull(21) ? null : r.GetString(21),
                     [])
                 {
-                    HoldoutFrom = Sql.TimeN(r.IsDBNull(22) ? null : r.GetString(22)),
-                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(23) ? null : r.GetString(23))
+                    VenueId = r.IsDBNull(22) ? null : r.GetString(22),
+                    InstrumentSymbol = r.IsDBNull(23) ? null : r.GetString(23),
+                    HoldoutFrom = Sql.TimeN(r.IsDBNull(24) ? null : r.GetString(24)),
+                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(25) ? null : r.GetString(25))
                 });
 
         return [.. rows.Select(row => row with { Files = FilesOf(row.Id) })];

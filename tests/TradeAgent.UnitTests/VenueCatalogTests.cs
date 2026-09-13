@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Data.Sqlite;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
@@ -182,6 +183,83 @@ public class VenueCatalogTests
         Assert.Equal(4, store.Instruments(VenueCatalog.Simulator).Count);
         Assert.Null(store.Unreadable);
     }
+
+    /// <summary>
+    /// ITEM 3 — THE BACKFILL. Every <c>dataset</c> row this build has ever written was written by the
+    /// Binance collector, so the rung says so rather than leaving the two columns null on history that
+    /// has a perfectly knowable answer.
+    ///
+    /// <para>Verified by taking a real database BACK to 16 — dropping the two columns and restamping
+    /// <c>meta</c> — and reopening it, which is the only way the rung runs over a row that predates it.
+    /// A test that merely asserted the columns exist would be a test of the CREATE and not of the
+    /// UPDATE.</para>
+    /// </summary>
+    [Fact]
+    public void The_rung_backfills_the_venue_of_every_dataset_that_predates_it()
+    {
+        var file = Path.Combine(TestEnv.Home, $"backfill-{Guid.NewGuid():n}.db");
+        long id;
+
+        using (var db = new Database(file))
+            id = new DatasetStore(db).Record(Collected());
+
+        // Back to 16: the two columns gone and the stamp lowered, which is what a database collected on
+        // before this unit landed actually looks like.
+        using (var raw = new SqliteConnection($"Data Source={file}"))
+        {
+            raw.Open();
+            using var c = raw.CreateCommand();
+            c.CommandText = """
+                ALTER TABLE dataset DROP COLUMN venue_id;
+                ALTER TABLE dataset DROP COLUMN instrument_symbol;
+                ALTER TABLE strategy_run DROP COLUMN increment_source;
+                DROP TABLE venue_instrument;
+                DROP TABLE venue;
+                UPDATE meta SET value='16' WHERE key='schema_version';
+                """;
+            c.ExecuteNonQuery();
+        }
+
+        using var reopened = new Database(file);
+        var set = new DatasetStore(reopened).ById(id);
+
+        Assert.NotNull(set);
+        Assert.Equal(VenueCatalog.BinanceSpot, set.VenueId);
+        Assert.Equal("BTCUSDT", set.InstrumentSymbol);
+    }
+
+    /// <summary>
+    /// ITEM 3 — SECTION 8 OF THE OWNER'S DAILY REPORT SAYS WHAT THE BARS ARE OF.
+    ///
+    /// <para>A bar count says what was measured and not what it was measured ON. The owner reading this
+    /// document is the person who would have to correct a wrong instrument, and a dataset that recorded
+    /// no venue says so in words — otherwise the runner's refusal to take an increment for it arrives
+    /// with nothing in the report to explain it.</para>
+    /// </summary>
+    [Fact]
+    public async Task Section_eight_says_which_venue_and_instrument_each_dataset_is_of()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var store = new DatasetStore(db);
+
+        store.Record(Collected() with { VenueId = VenueCatalog.BinanceSpot, InstrumentSymbol = "BTCUSDT" });
+        store.Record(Collected());   // the collector recorded neither
+
+        var report = gw.Reports.Compose(DateTimeOffset.Now);
+
+        Assert.Contains(report.Research.AppMetrics,
+            m => m.Contains($"on {VenueCatalog.BinanceSpot}/BTCUSDT", StringComparison.Ordinal));
+        Assert.Contains(report.Research.AppMetrics,
+            m => m.Contains("on no venue recorded/no instrument recorded", StringComparison.Ordinal));
+    }
+
+    /// <summary>A dataset row with the provenance a collector writes, and nothing on disk to hash.</summary>
+    static DatasetRecord Collected() => new(
+        0, "binance-spot-monthly-klines", "BTCUSDT", "1m", "v1", 12, 12, [],
+        Path.Combine(TestEnv.Home, $"{Guid.NewGuid():n}.csv"), new string('a', 64), 10,
+        DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(9), 0, [], false, 0, 0, 0,
+        DateTimeOffset.UnixEpoch, DatasetState.ACCEPTED, null, []);
 
     /// <summary>
     /// AN UNREADABLE OVERRIDE IS THE MOST RESTRICTIVE OVERRIDE, and the shipped rows do NOT stand in

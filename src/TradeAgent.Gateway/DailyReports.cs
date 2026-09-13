@@ -449,8 +449,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         try
         {
+            // THE VENUE AND THE INSTRUMENT ARE ON THE LINE, because a bar count without them says
+            // what was measured and not what it was measured ON. A dataset that recorded neither says
+            // so in words: the owner reading this is the person who would have to put it right, and a
+            // line that silently omitted the fact would leave the runner's refusal unexplained.
             foreach (var set in gateway.Datasets.All())
-                metrics.Add($"{set.Source} {set.Pair} {set.Interval} v{set.Version}: {set.Bars} bars, "
+                metrics.Add($"{set.Source} {set.Pair} {set.Interval} v{set.Version} on "
+                            + $"{set.VenueId ?? "no venue recorded"}/"
+                            + $"{set.InstrumentSymbol ?? "no instrument recorded"}: {set.Bars} bars, "
                             + $"{set.MonthsPresent} of {set.MonthsAttempted} months, {set.Gaps} gaps, "
                             + $"{set.State}");
         }
