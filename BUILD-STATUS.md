@@ -5238,3 +5238,42 @@ fields, judged); no trailers; PR #17's runners at `ee2abb2`: run 34722253017, al
 
 **NOT done:** no OS sandbox — same-user reads and writes of `state/` stand, a Unix session is escapable by its own `setsid`
 (`U-contain-2`); the peer-image kernel call is Windows-only, the Doctor row saying the rule is unenforced elsewhere; no box.
+
+## 2026-09-13 — U-runner-3 landed: the backtest — a declared execution model on bars, a trace the app scores, a persisted version and run, the request under the launch's own identity
+
+Rule 8's third part, by one fresh builder on `docs/briefs/U-runner-3.md` (killed by the session limit at 00:53 with all five items
+committed, RESUMED from its transcript at 13:05 with its context, then told of one gap a read-only survey found on its branch). Merge
+`5020b2b`, 7 commits, 24 files, +4219/−8 (new `Core/Strategy/Backtest.cs`, `Db/StrategyStore.cs`, `Gateway/Backtests.cs`; `Database.cs`
+**schema 12** — `strategy_version`, `strategy_run`, `strategy_trade`; the `backtest` pipe op and `trade backtest`; `CONTRACTS.md`,
+`STRATEGY-LANGUAGE.md`, the guide; six test classes).
+
+- **Three app-owned tables**, a version keyed by the program's own hash, a run keyed by every input (version, dataset id and its sha at run
+  time, window, execution model), `ON CONFLICT DO NOTHING`, no pipe op writes them. RED: a program is only a file; mutant (the version id
+  minted from the attempt): every restart a new version.
+- **The declared execution model:** a signal fills at the next bar's open plus adverse slippage, a fee per fill, sizing rounded DOWN to the
+  run's declared increment (a dataset carries none), stops, targets and maximum holding bars checked on every later bar with conservative
+  ordering (a bar touching both counts the stop). RED: a fill at the signal bar's own close; mutant (target before stop): the fixture's pnl.
+- **The trace and the metrics from it alone** — trades, win rate, net after fees, drawdown on equity including the open trade, exposure,
+  gap and fault counts; every unknown a labelled dash. RED: drawdown from closed trades; mutant (a metric read from the program): red.
+- **Deterministic and refusable:** no clock inside a run, a byte-identical trace and the same run id for the same inputs, a changed fee a
+  different id, a `REJECTED` dataset refused. RED: two runs of one input differ; mutant (the dataset sha left out of the id): red.
+- **The request and the report:** `trade backtest --strategy <file> --dataset <id> …`, a read-only op (not in `Ops.Mutating`), one run at a
+  time per role; section 8 lists runs "measured by TradeAgent" and its gap line goes only when a run exists. RED: the gap line stands with a
+  run; mutant (an agent's claimed metric listed as measured): red.
+- **The launch-identity gap, found by the survey and closed inside the unit** (`bad4f74`): the op took no `AgentContext` and resolved a
+  relative path against the chair's home first, so a Research request could read the chair's copy and be recorded as the chair's run.
+  Now the role and attempt come off the launch grant, the program resolves inside `Paths.RoleHome(ctx.Role)` only — lexically and with every
+  symlink on the way resolved — and a caller with no council role is refused. RED: `Expected: "research" / Actual: "operations"`; mutant
+  (the role from the folder with a grant present): the same. A malformed path is refused in words instead of `UNKNOWN_ERROR`.
+- **Two bounds the builder introduced, called out:** `Backtest.MaxTracedBars = 200_000` (a twelve-month backtest is four requests, not one)
+  and `ExecutionModel` refusing a fee or slippage above 0.05.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `bad4f74`, Release: 0 warnings, 0 errors, 17
+projects; touched classes 3× → Unit 65/65, Integration 101 + 1 skipped, backpressure 34/34 each; Unit 854 + Fault 277 + Integration 645 =
+1776 passed, 0 failed, 1 skipped; names → 47 added, 0 removed; 127 test files text. Manager's gate at `5020b2b`, Release: build →
+0 warnings, 0 errors; suite → 854 + 277 + 645 = 1776 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 47 added (sets 1406 → 1453); scan clean (`ipc.token` in a traversal-refusal
+test, judged); no trailers; `rev-list --count` → 0; CI run 34756421303 at `5020b2b`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT VERIFIED:** the CLI verb inside the suite — `Map` is a private local function of the top-level `Program`, so `trade backtest` was
+proven only by hand (`IPC_UNAVAILABLE` with no app, `unknown command` on a typo, the help lines). **NOT done:** no live or paper execution,
+no protection between evaluations (`U-flatten`), no promotion or referee (`U-referee-1`, `-2`), no box, no ATAS, no money.
