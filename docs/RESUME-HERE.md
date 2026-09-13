@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `4fbfc00`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `4753c46`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -30,25 +30,27 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    campaign, trials, the verdict budget; **schema 14 on `main`**; CI run 34767356515 GREEN on all four jobs), **`U-harness-loop`
    `47d1071`** (the loop over a harness turn proven, a cut turn's account carried forward, `backtest` granted; CI run 34768117002 GREEN on all four jobs), **`U-referee-2` `45719b2`** (the verdict; **schema 15 on `main`**; CI run
    34771155930 RED on windows-latest only — a third press fixture of the two-second-budget class, `PressInFlightTests.cs`; fixer
-   `U-press-inflight-win` dispatched; ubuntu and macos green).
+   `U-press-inflight-win` dispatched; ubuntu and macos green), **`U-council-concurrent-1` `4753c46`** (two roles' turns may overlap; no
+   schema change; CI run 34773015349 in flight when written).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
      PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
-   - `u-council-concurrent-1` (worktree `U-council-concurrent-1`, created on the `u-harness-loop` tip plus the briefs): a fresh builder
-     dispatched 18:12 on `docs/briefs/U-council-concurrent-1.md` — two roles' turns may overlap, every single-slot assumption per role,
-     an in-memory lease with the LAUNCHED row as witness; no schema number.
    - `u-venue-catalog` (worktree `U-venue-catalog`, created on the `u-referee-2` tip `45719b2`): a fresh builder dispatched 19:05 on
      `docs/briefs/U-venue-catalog.md` — the instrument as recorded data; **schema 17**, told the ladder must still take 16 before 17.
+   - `u-council-concurrent-2` (worktree `U-council-concurrent-2`, created on the `u-council-concurrent-1` tip `4753c46`): a fresh builder
+     dispatched 19:45 on `docs/briefs/U-council-concurrent-2.md` — the consequential boundary; **schema 16**.
+   - `u-press-inflight-win` (worktree `U-press-inflight-win`, at `main` `4cd8d1b`): a fresh fixer dispatched 19:35 on
+     `docs/briefs/U-press-inflight-win.md` — the third press fixture of the two-second-budget class, a draft PR for the runner.
    If either is not running when you read this, re-brief it FRESH from its branch and brief on disk.
 4. **CI on `main`:** green on all four jobs at every sha from `137aaa4` to `47d1071`; RED on windows-latest at `45719b2` on ONE press fixture
    (`PressInFlightTests.cs`, the runner's disk and the two-second budget — the third fixture of that class, the `U-press-settle-win` shape)
    until `U-press-inflight-win` lands; its brief also moves the eleven `DispatchRecoveryTests` presses named EXPOSED on 2026-09-12.
-5. **Briefed, committed, NOT dispatched:** `U-council-concurrent-2` (schema 16, after `-1` lands), `U-data-2` (schema 18, after the
-   catalogue), `U-freshness` (schema 19, money path, after the catalogue), `U-allocator-1` (schema 20, money path, after `U-freshness`),
-   `U-allocator-2` (schema 21, after `U-council-concurrent-2` and `U-allocator-1`). Schema numbers are assigned here, in landing order; a
-   builder never takes "the next free". With these the doctrine's unit order (`docs/COUNCIL.md:265-272`) is fully briefed; what follows
-   them is the money path's live gates — `U-flatten`, a runner on the order path, containment beyond NONE, paper on the box for weeks.
+5. **Briefed, committed, NOT dispatched:** `U-data-2` (schema 18, after the catalogue), `U-freshness` (schema 19, money path, after the
+   catalogue), `U-allocator-1` (schema 20, money path, after `U-freshness`), `U-allocator-2` (schema 21, after `U-council-concurrent-2` and
+   `U-allocator-1`). Schema numbers are assigned here, in landing order; a builder never takes "the next free". With these the doctrine's
+   unit order (`docs/COUNCIL.md:265-272`) is fully briefed; after them come the money path's live gates — `U-flatten`, a runner on the
+   order path, containment beyond NONE, paper on the box for weeks.
 6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
    strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
    untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.

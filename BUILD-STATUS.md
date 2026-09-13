@@ -5424,3 +5424,41 @@ names → 19 added, 0 removed; 140 test files text. Manager's gate at `45719b2`,
 **NOT done:** no way for the owner to ASK for a verdict — `Referee.Verdict` runs from code and tests only, no card, no op, no verb (a test asks
 the whole op vocabulary by name); nothing reads `Promotions.Standing` on the order path yet (`U-freshness`/`U-flatten`); the trial-budget race
 untouched (`U-council-concurrent-2`); the guide says nothing about verdicts; no box, no ATAS, no money.
+
+## 2026-09-13 — U-council-concurrent-1 landed: two roles' turns may overlap — every single-slot assumption the serial council allowed is per role
+
+The leases `docs/COUNCIL.md:259-260` deferred, by one fresh builder on `docs/briefs/U-council-concurrent-1.md` written from a read-only
+survey of what each landed unit had left single-owner. Merge `4753c46`, 7 commits, 15 files, +1288/−142 (`MissionLoop.cs`, `TurnMeter.cs`,
+`AiAttemptStore.cs`, `CouncilRelay.cs`, `AgentPresence.cs`, `MaterialScanner.cs`, `AppHost.cs`, `CONTRACTS.md`; eight tests). No schema change:
+the lease is in memory, as `CONTRACTS.md` already chooses for the app's two other leases, and the LAUNCHED `ai_attempt` row is its durable
+witness, turned LOST at its reservation by the next start.
+
+- **A per-role turn lease** (`_turning`), taken immediately before `BeginTurn`, dropped beside `Commit` and on every other way out; a
+  second `TurnAsync` for that role refused in words, never queued; a turning role stepped over when the next role is chosen. `_working` is
+  gone — "working" on the card IS the lease. RED (two real threads through a `Barrier(2)`): `Expected: 1 / Actual: 2` launches for one
+  role; mutant (the lease taken after `BeginTurn`): the same.
+- **`_staged` per role, keyed by the attempt it closes;** `CommitStaged(role)` and `Begin`'s drain touch only their own. RED: `Expected:
+  ENDED / Actual: LAUNCHED` on the chair's row; mutant (every held close written): Research's close inside the chair's transaction.
+- **`LiveAttempts`, the register of launches this process is flying:** a second meter over the same file loses every other open row and
+  skips the live one — skipping releases no money, a LAUNCHED reservation counts like a LOST cost. RED: `Expected: LAUNCHED / Actual:
+  LOST`; mutant (the skip narrowed by role): Research's live turn lost.
+- **The relay pass is the turning role's own;** `Reconcile()` is the start-up pass and the only one over every role; the fence LEAVES a file
+  whose launch this process is flying rather than quarantining it; the staged files are read BEFORE the turn's `Database.Write` opens.
+  REDs: `Collection: ["report-turn-b.md"]` quarantined, and "the other role's launch record was blocked behind this role's file read"
+  (the stack inside `Database.Write`); mutant (any LAUNCHED row publishable): a stale process's file published as live work.
+- **Quiescence is of every managed agent** (rule 7), in both directions — no pass while a role turns, no launch while a pass runs; the
+  session count, the error run and the cap notice per role. REDs: `Expected: Inbox / Actual: InboxUnattested`, and `Expected: 0 /
+  Actual: 1` for Research's session rotated by the chair's turns; mutants: the same attestation red, and `Expected: 00:02:00 / Actual:
+  00:00:30` with one error slot. `CouncilLoopTests` now MEASURES `Peak == 2` with the card reading both directors working; the old
+  `Peak == 1` kept where it is true; `AppHost.cs`'s "safe because the council is serial" rewritten.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `49c7135`, Release: 0 warnings, 0 errors, 17
+projects; nine touched classes 3× → 102/102 each; Unit 988 + Fault 277 + Integration 657 = 1922 passed, 0 failed, 1 skipped; names → 8
+added, 0 removed; every test source text; rebased three times with no conflict. Manager's gate at `4753c46`, Release: build →
+0 warnings, 0 errors; suite → 988 + 277 + 657 = 1922 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 8 added (sets 1565 → 1573); scan clean (usage field names, judged); no trailers;
+no gateway or protocol file touched; `rev-list --count` → 0; CI run 34773015349 at `4753c46`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done, the bound stated:** `LoopAsync` still drives one turn at a time — the guards make an overlap SAFE and two callers prove it,
+but a second driver is not this unit; `WorkspaceRevisions.Snapshot` still reads its two size-capped files inside the transaction (only the
+relay's unbounded `out/` read moved out); one existing test's setup changed, not its assertion (each simulated "process" its own register);
+the boundary, assessments, dispositions and the trial-budget race (`U-council-concurrent-2`); a third role; no box, no money.
