@@ -18,11 +18,20 @@ namespace TradeAgent.Core.Strategy;
 /// Slippage is adverse in both directions — a buy pays <c>open * (1 + s)</c>, a sell receives
 /// <c>open * (1 - s)</c> — and the fee is charged on every fill, entry and exit alike.</para>
 ///
-/// <para><b><see cref="QuantityIncrement"/> is the run's, because the dataset has none.</b> There is
-/// no instrument increment anywhere in `dataset` or `dataset_file` (`DatasetStore`'s rows are counts,
-/// hashes and coverage), and `U-runner-2` therefore states an intent's quantity WITHOUT one applied.
-/// So the run declares it, a quantity is rounded DOWN to it, and a quantity that rounds to nothing is
-/// no trade with the reason said out loud rather than a silent zero-size fill.</para>
+/// <para><b><see cref="QuantityIncrement"/> is the run's, and since `U-venue-catalog` a run that
+/// declares none can be given the INSTRUMENT's.</b> There is still no increment on `dataset` or
+/// `dataset_file` — those rows are counts, hashes and coverage — but a dataset now names the venue and
+/// instrument its bars are of, and `Backtests.Increment` looks that pair up in `venue_instrument`
+/// before it declares the model. A declared number always wins; an instrument the catalogue does not
+/// hold, or has not verified, is REFUSED rather than defaulted. A quantity is rounded DOWN to whichever
+/// number came out, and one that rounds to nothing is no trade with the reason said out loud rather
+/// than a silent zero-size fill. `U-runner-2` still states a live intent's quantity WITHOUT one
+/// applied.</para>
+///
+/// <para><b>Where the increment came FROM is not in <see cref="Canonical"/>.</b> The number is —
+/// it decides the answer — but its provenance is recorded beside the run (`strategy_run.increment_source`)
+/// and never hashed: a run's identity is the model it ran under, and folding the provenance in would
+/// move every run id this installation has already written.</para>
 /// </summary>
 public sealed record ExecutionModel
 {

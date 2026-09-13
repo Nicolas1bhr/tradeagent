@@ -58,6 +58,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 {
     readonly StrategyStore _strategies = new(db);
     readonly CampaignStore _campaigns = new(db);
+    readonly VenueStore _venues = new(db);
     readonly Func<DateTimeOffset> _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>Roles with a run in flight right now. See the type's summary.</summary>
@@ -82,7 +83,8 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         var role = RoleOf(caller);
         var path = Resolve(role, ask.Strategy);
 
-        var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, ask.Increment, ask.Capital);
+        var step = Increment(ask);
+        var declared = ExecutionModel.Declare(ask.Fees, ask.Slippage, step.Value, ask.Capital);
         if (declared.Model is not { } model)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that execution model cannot be run: {declared.Why}.");
@@ -138,9 +140,10 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
-            if (!stop.IsCancellationRequested) Record(result, program, role, caller.AttemptId, campaign, kind);
+            if (!stop.IsCancellationRequested)
+                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source);
 
-            return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!);
+            return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source);
         }
         finally
         {
@@ -275,8 +278,59 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         return path.StartsWith(root, how);
     }
 
+    /// <summary>
+    /// WHAT INCREMENT THIS RUN USES, AND WHO SAID SO.
+    ///
+    /// <para><b>A declared one always wins.</b> The catalogue is a default for a caller that gave no
+    /// number, never an override of one that did: a run declared at a coarser step is a legitimate
+    /// question about a coarser step, and substituting the app's own number would answer a different
+    /// one. The caller's is recorded as the caller's.</para>
+    ///
+    /// <para><b>Otherwise it comes off the DATASET's own row.</b> The venue and the instrument are what
+    /// the collector wrote down beside the bytes — not the instrument named in the program, which is a
+    /// line an agent types and can arrange, and a run whose size came from a symbol the agent chose
+    /// rather than from the evidence it ran over would be bound to an instrument it was never measured
+    /// on.</para>
+    ///
+    /// <para><b>The provenance is not part of the run's identity.</b> The number goes into
+    /// <see cref="ExecutionModel"/> and is hashed there, exactly as a declared one is; where it came
+    /// FROM is recorded beside the run. Folding it into <c>Canonical</c> would move every run id this
+    /// installation has already written.</para>
+    /// </summary>
+    IncrementChosen Increment(BacktestAsk ask)
+    {
+        if (ask.Increment is { } declared)
+            return new IncrementChosen(declared, $"declared by the caller: {Plain(declared)}");
+
+        // A dataset id nobody has a row for is not this method's refusal to make: `Backtest.Over`
+        // answers it with the sentence it already has, and a second wording of the same fact here
+        // would be a second answer to one question.
+        if (gateway.Datasets.ById(ask.Dataset) is not { } set) return new IncrementChosen(null, null);
+
+        if (set.VenueId is not { Length: > 0 } venue || set.InstrumentSymbol is not { Length: > 0 } symbol)
+            return new IncrementChosen(null, null);
+
+        if (_venues.Instrument(venue, symbol) is not { } row) return new IncrementChosen(null, null);
+        if (!row.Verified) return new IncrementChosen(null, null);
+
+        return new IncrementChosen(row.QuantityIncrement,
+            $"the venue catalogue: {venue}/{symbol}, recorded from {row.Source}");
+    }
+
+    /// <summary>The increment a run will use and the sentence that says where it came from.</summary>
+    readonly record struct IncrementChosen(decimal? Value, string? Source);
+
+    /// <summary>
+    /// A decimal with its trailing zeros gone, invariant, for a sentence a person reads.
+    /// <c>StrategyParser.Number</c> does the same job for the CANONICAL form and is internal to Core;
+    /// this is prose and is deliberately not the same function, because the canonical form must never
+    /// start depending on how a refusal happens to print a number.
+    /// </summary>
+    static string Plain(decimal value) =>
+        value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
+
     void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        CampaignRow? campaign, string kind)
+        CampaignRow? campaign, string kind, string? incrementSource)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -299,7 +353,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 metrics.Bars, metrics.Trades, metrics.Wins, metrics.Signals, metrics.Fills,
                 metrics.ExposureBars, metrics.MissingMinutes, metrics.Faults,
                 metrics.GrossPnl, metrics.Fees, metrics.NetPnl, metrics.MaxDrawdown,
-                result.Trace.Sha256, at, role, attempt),
+                result.Trace.Sha256, at, role, attempt) { IncrementSource = incrementSource },
                 [.. result.Trades.Select(t => new StrategyTradeRow(
                     result.RunId, t.Ordinal, t.EntryBar, t.EntryPrice, t.ExitBar, t.ExitPrice,
                     t.Quantity, t.Reason.ToString(), t.Fees, t.Pnl))]);
@@ -334,4 +388,11 @@ public sealed record BacktestRan(
     BacktestResult Result,
     StrategyProgram Program,
     string Role,
-    DatasetRecord Dataset);
+    DatasetRecord Dataset,
+    /// <summary>
+    /// Where the run's quantity increment came from, in words — the caller's own declaration or the
+    /// venue catalogue row it was read out of. It is in the ANSWER as well as on the run row because
+    /// the four numbers in <c>execution_model</c> say what was used and not who said so, and an agent
+    /// reading a size it did not choose has to be able to see what chose it.
+    /// </summary>
+    string? IncrementSource);

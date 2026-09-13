@@ -65,8 +65,10 @@ public sealed record BarFeedOpen
 /// <para><b>What a dataset does not have.</b> There are no per-bar quality flags and no instrument
 /// increment anywhere in `dataset` or `dataset_file` — the row carries counts, hashes and coverage
 /// (`DatasetStore.cs`) — so a feed serves exactly the five prices the vendor published and the
-/// evaluator states its intents without an increment applied. `docs/CONTRACTS.md` says so where a
-/// caller will read it.</para>
+/// evaluator states its intents without an increment applied. What the row DOES carry since
+/// `U-venue-catalog` is which venue and instrument the bars are of, which is what a run's increment is
+/// looked up by (`venue_instrument`); the number is still not in the dataset and no bar is changed by
+/// it. `docs/CONTRACTS.md` says so where a caller will read it.</para>
 /// </summary>
 public sealed class BarFeed
 {

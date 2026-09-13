@@ -2104,7 +2104,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             result.RunId, result.VersionId, ran.Role, ran.Program.Instrument, ran.Program.WarmUpBars,
             result.Request.DatasetId, ran.Dataset.Pair, ran.Dataset.Interval, ran.Dataset.Version,
             result.Request.DatasetSha256, result.Request.From, result.Request.To,
-            result.Request.Model.Canonical, result.Outcome.ToString(), result.FaultReason,
+            result.Request.Model.Canonical, ran.IncrementSource, result.Outcome.ToString(), result.FaultReason,
             "This is a measurement over BARS, and bars establish no actual fill, no queue position and "
             + "no intrabar ordering: what a run says is a reason to test something and never a record "
             + "of a trade. Fills are modelled at the next bar's open plus the declared slippage, a fee "
@@ -2152,7 +2152,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         long DatasetId, string Pair, string Interval, string DatasetVersion, string DatasetSha256,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
-        string ExecutionModel, string Outcome,
+        string ExecutionModel,
+        // WHO CHOSE THE INCREMENT. `execution_model` says WHAT was used; this says whether the number
+        // was yours or was read out of the venue catalogue, and from which row. Never dropped when
+        // null: a run recorded before this build had the field is not a run that declared its own.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? IncrementSource,
+        string Outcome,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FaultReason,
         string Note, BacktestReplyMetrics Metrics, IReadOnlyList<BacktestReplyGap> Missing,
         int TradeCount, IReadOnlyList<BacktestReplyTrade> Trades, string TraceSha256);
