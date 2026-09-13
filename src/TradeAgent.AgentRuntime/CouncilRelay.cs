@@ -80,9 +80,18 @@ public sealed class CouncilRelay
     readonly Func<string, string> _homeOf;
     readonly Func<DateTimeOffset> _now;
 
-    public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null)
+    /// <summary>
+    /// THE LAUNCHES THIS PROCESS IS STILL FLYING, which the fence needs to tell a turn that is
+    /// writing its report RIGHT NOW from a file dropped by a process the app is not accounting for.
+    /// Both are rows still LAUNCHED that are not this pass's own; only this says which is which.
+    /// </summary>
+    readonly LiveAttempts _live;
+
+    public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null,
+        LiveAttempts? live = null)
     {
         _db = db;
+        _live = live ?? LiveAttempts.Shared;
         _store = new PublicationStore(db);
         _events = new MissionEventStore(db);
         _attempts = new AiAttemptStore(db);
@@ -117,6 +126,12 @@ public sealed class CouncilRelay
     internal const string AfterCommit = "after-commit";
 
     /// <summary>
+    /// The instant before one staged file is read off disk, with NO transaction open. A test holds
+    /// the pass here to show that the other role's launch record is not waiting behind this read.
+    /// </summary>
+    internal const string Reading = "read";
+
+    /// <summary>
     /// THE TURN'S ONE COMMITTED TRANSITION — <c>docs/COUNCIL.md</c> rule 6, "one committed
     /// transition"; the <c>U-turn-commit</c> line's property.
     ///
@@ -140,12 +155,18 @@ public sealed class CouncilRelay
     /// </summary>
     public void CommitTurn(string role, string? attempt, Action endAttempt, Action dispositions)
     {
+        // READ FIRST, OUTSIDE THE TRANSACTION. What this turn staged in `out/` is on disk and the
+        // database has one lock: reading the files inside the commit held that lock across every
+        // byte of them, and the other role could not open its own launch record until this pass had
+        // finished reading. See Read.
+        var pass = Read(role, attempt);
+
         Boundary?.Invoke(BeforeCommit);
 
         var restores = _db.Write(_ =>
         {
             endAttempt();
-            Publish(role, attempt);
+            Land(pass);
             var refused = _revisions.Snapshot(role, attempt);
             dispositions();
             return refused;
@@ -153,6 +174,7 @@ public sealed class CouncilRelay
 
         Boundary?.Invoke(AfterCommit);
 
+        Apply(pass);
         Deliver();
         WorkspaceRevisions.Apply(restores);
     }
@@ -169,29 +191,56 @@ public sealed class CouncilRelay
     public Action<string>? Quarantined { get; set; }
 
     /// <summary>
-    /// ONE FULL RECONCILIATION OF DISK AGAINST THE TABLES. Run on start and after every turn.
+    /// ONE ROLE'S OWN PASS: what that turn left in its <c>out/</c>, published, and its memory
+    /// versioned. Run after every turn, by the turn that just ended.
     ///
-    /// <paramref name="attempt"/> IS NO LONGER WHAT ATTRIBUTES A FILE — the id in the file's name is
-    /// — but it is still what the fence needs: it says which launch this pass belongs to, so a file
-    /// naming a DIFFERENT launch that is still open can be told apart from this turn's own output.
-    /// A pass on start names none, and by then the meter has already turned every open row LOST.
+    /// <para><b>ONE ROLE, AND ONLY THAT ROLE'S FOLDER.</b> It used to walk every role when it was
+    /// given none, which was harmless while one turn ran at a time and is not now: a pass that walks
+    /// the OTHER role's <c>out/</c> while that role is mid-turn reads a file being written for a
+    /// launch that is still open, and the fence — which cannot tell that from a stale process's
+    /// drop — moves it to <c>quarantine/</c>. The turn's own report, taken away from it by the other
+    /// role's bookkeeping. The whole-council pass is <see cref="Reconcile"/>, on start.</para>
+    ///
+    /// <paramref name="attempt"/> IS NOT WHAT ATTRIBUTES A FILE — the id in the file's name is — but
+    /// it is still what the fence needs: it says which launch this pass belongs to, so a file naming
+    /// a DIFFERENT launch that is still open can be told apart from this turn's own output.
     /// </summary>
-    public void Run(string? role = null, string? attempt = null)
+    public void Run(string role, string? attempt = null)
+    {
+        Publish(role, attempt);
+
+        // THE ROLE'S OWN MEMORY, RECONCILED WITH THE REST. An unchanged file raises no new revision,
+        // because the publication's id is the hash of what is in it.
+        var restores = _revisions.Snapshot(role, attempt);
+
+        Deliver();
+        WorkspaceRevisions.Apply(restores);
+    }
+
+    /// <summary>
+    /// ONE FULL RECONCILIATION OF DISK AGAINST THE TABLES, ACROSS EVERY ROLE — the start-up pass,
+    /// and the only one that looks in a folder that is not the turning role's.
+    ///
+    /// <para>It names no launch, and on start it needs none: nothing in this process is flying, the
+    /// meter that opened the database has already turned every row it found open LOST, and a LOST
+    /// attempt's staged file is exactly the one this pass exists to publish.</para>
+    ///
+    /// <para><b>And if it is ever called while a turn IS running, it leaves that turn's file where
+    /// it is</b> rather than quarantining it — see <see cref="Verdict"/>. That is the difference
+    /// between a fence that protects the record and one that takes a live turn's work away because
+    /// of when a pass happened to run.</para>
+    ///
+    /// <para>The role's own memory is versioned here too: a plan the app has neither recorded nor
+    /// refused is one nobody can afterwards say the role held, and the next turn reads it first.</para>
+    /// </summary>
+    public void Reconcile()
     {
         var restores = new List<WorkspaceRevisions.Restore>();
 
-        foreach (var r in role is { Length: > 0 } one ? [one] : CouncilRoles.All)
+        foreach (var role in CouncilRoles.All)
         {
-            var launch = r == role ? attempt : null;
-            Publish(r, launch);
-
-            // THE ROLE'S OWN MEMORY, RECONCILED WITH THE REST. A pass on start names no launch, and
-            // the revision it records says so: the app cannot know which turn wrote a file it found
-            // after a crash. What it must not do is leave that file undecided — the next turn reads
-            // its plan first, and a plan the app has neither recorded nor refused is one nobody can
-            // afterwards say the role held. An unchanged file raises no new revision, because the
-            // publication's id is the hash of what is in it.
-            restores.AddRange(_revisions.Snapshot(r, launch));
+            Publish(role, attempt: null);
+            restores.AddRange(_revisions.Snapshot(role, attempt: null));
         }
 
         Deliver();
@@ -205,19 +254,51 @@ public sealed class CouncilRelay
     /// </summary>
     internal void Publish(string role, string? attempt)
     {
+        var pass = Read(role, attempt);
+        Land(pass);
+        Apply(pass);
+    }
+
+    /// <summary>
+    /// WHAT ONE PASS FOUND ON DISK AND WHAT IT DECIDED, before anything is written down. The three
+    /// lists are the three outcomes: publish it, move it aside, or say it was too long.
+    /// </summary>
+    internal sealed class Pass
+    {
+        public List<(Publication Publication, string Kind)> Publishing { get; } = [];
+        public List<(string File, string OutDir, string Role, string? Named)> Quarantining { get; } = [];
+        public List<string> Rejecting { get; } = [];
+    }
+
+    /// <summary>
+    /// EVERYTHING THE DISK CAN SAY, READ BEFORE ANY TRANSACTION IS OPEN.
+    ///
+    /// <para><b>Why the reads are here and not in <see cref="Land"/>.</b> There is ONE lock over the
+    /// database and it is held for the whole of a <see cref="Database.Write"/>. Reading a role's
+    /// <c>out/</c> inside the turn's commit therefore held that lock across an unbounded amount of
+    /// disk I/O — up to <see cref="PerPass"/> files of whatever size the agent wrote — and the other
+    /// role could not so much as open its launch record while it went on. Two roles' turns may
+    /// overlap now, so that is one role's bookkeeping standing on the other role's turn.</para>
+    ///
+    /// <para>The ledger lookups the fence makes are still reads, and they are still short; what is
+    /// unbounded is the file contents, and those are what moved out.</para>
+    /// </summary>
+    internal Pass Read(string role, string? attempt)
+    {
+        var pass = new Pass();
         var kind = KindFor(role);
         var outDir = Path.Combine(_homeOf(role), WorkspaceBuilder.OutDir);
 
         string[] files;
         try
         {
-            if (!Directory.Exists(outDir)) return;
+            if (!Directory.Exists(outDir)) return pass;
             // Top level only, which is what keeps `out/quarantine/` out of the pass: a file the
             // fence has already refused must not be read again on the next turn, for ever.
             files = [.. Directory.EnumerateFiles(outDir, Pattern(kind)).OrderBy(f => f, StringComparer.Ordinal)
                 .Take(PerPass)];
         }
-        catch (Exception) { return; }
+        catch (Exception) { return pass; }
 
         foreach (var file in files)
         {
@@ -227,11 +308,20 @@ public sealed class CouncilRelay
             // as anything downstream can show, and publishing it would put a real artifact id on a
             // provenance nobody can check.
             var named = AttemptIn(Path.GetFileName(file), kind);
-            if (!Attributable(named, role, attempt))
+            switch (Fence(named, role, attempt))
             {
-                Quarantine(file, outDir, role, named);
-                continue;
+                case Verdict.Quarantine:
+                    pass.Quarantining.Add((file, outDir, role, named));
+                    continue;
+
+                // A TURN THAT IS WRITING IT RIGHT NOW. Not this pass's work to publish and not a
+                // stranger's file to move: the role that owns it will publish it at its own commit.
+                case Verdict.Leave:
+                    continue;
             }
+
+            // ---- boundary: the file is about to be read, and no transaction is open -------------
+            Boundary?.Invoke(Reading);
 
             string content;
             try { content = File.ReadAllText(file); }
@@ -239,13 +329,13 @@ public sealed class CouncilRelay
 
             if (!Valid(content, kind))
             {
-                Rejected?.Invoke($"{CouncilRoles.Title(role)}: {Path.GetFileName(file)} is longer than "
-                                 + $"{Limit(kind)} lines, so it was not published. The last one it "
-                                 + "published still stands.");
+                pass.Rejecting.Add($"{CouncilRoles.Title(role)}: {Path.GetFileName(file)} is longer than "
+                                   + $"{Limit(kind)} lines, so it was not published. The last one it "
+                                   + "published still stands.");
                 continue;
             }
 
-            var p = new Publication
+            pass.Publishing.Add((new Publication
             {
                 Id = Publication.IdOf(role, kind, content),
                 Role = role,
@@ -256,8 +346,20 @@ public sealed class CouncilRelay
                 CreatedAt = _now(),
                 Source = $"{WorkspaceBuilder.OutDir}/{Path.GetFileName(file)}",
                 Content = content
-            };
+            }, kind));
+        }
 
+        return pass;
+    }
+
+    /// <summary>
+    /// THE SQL HALF, and nothing else: whatever transaction is open on this thread is the one these
+    /// land in, which is how a turn's publications share the commit that closes its launch.
+    /// </summary>
+    internal void Land(Pass pass)
+    {
+        foreach (var (p, kind) in pass.Publishing)
+        {
             // ---- boundary 1: the file exists and nothing in the tables knows about it ------------
             Boundary?.Invoke("file");
 
@@ -276,12 +378,26 @@ public sealed class CouncilRelay
             // Idempotent, like everything else in this pass: the first publication of a turn keeps
             // the link and a re-run writes nothing.
             if (kind == PublicationKind.Brief)
-                try { _events.Delegated(named!, p.Id); }
+                try { _events.Delegated(p.Attempt!, p.Id); }
                 catch (Exception) { /* a disposition is a record; losing one must not stop the relay */ }
 
             // ---- boundary 2: the artifact, its delivery and the task are committed; no copy yet --
             Boundary?.Invoke("transaction");
         }
+    }
+
+    /// <summary>
+    /// THE DISK HALF THAT COMES AFTER THE COMMIT: files moved aside, and the two sentences the app
+    /// says out loud. Outside the transaction for the reason every other write to disk is — a
+    /// rollback cannot un-move a file — and because the app's own log is the same database.
+    /// </summary>
+    internal void Apply(Pass pass)
+    {
+        foreach (var (file, outDir, role, named) in pass.Quarantining) Quarantine(file, outDir, role, named);
+
+        foreach (var why in pass.Rejecting)
+            try { Rejected?.Invoke(why); }
+            catch (Exception) { /* the app's own logging; never the relay's problem */ }
     }
 
     /// <summary>
@@ -299,6 +415,19 @@ public sealed class CouncilRelay
         return id.Length == 0 ? null : id;
     }
 
+    /// <summary>What a pass may do with one file it found. See <see cref="Fence"/>.</summary>
+    internal enum Verdict
+    {
+        /// <summary>The name carries a launch of this role the app can stand behind.</summary>
+        Publish,
+
+        /// <summary>Somebody else's turn is writing it right now. Not this pass's to touch.</summary>
+        Leave,
+
+        /// <summary>Nothing here can say whose work it is, so it is moved aside and said out loud.</summary>
+        Quarantine
+    }
+
     /// <summary>
     /// MAY THIS FILE BE PUBLISHED AT ALL, and under the launch its name carries?
     ///
@@ -312,18 +441,24 @@ public sealed class CouncilRelay
     ///     row belongs to a process the app is not accounting for — its own restart turns every open
     ///     row LOST before the first pass — so a file naming one arrived from somewhere the app
     ///     cannot vouch for, and that is the stale-process case the fence exists to stop.</item>
+    ///   <item><b>UNLESS THIS PROCESS IS FLYING IT.</b> Two roles' turns may overlap, so an open row
+    ///     that is not this pass's own is no longer proof of a stale process: it is ordinarily the
+    ///     other role, mid-turn, writing the file this pass just found. That one is LEFT where it
+    ///     is — its own role's commit publishes it — because moving it to <c>quarantine/</c> would
+    ///     take a live turn's report away from it on the strength of when a pass happened to run.</item>
     /// </list>
     /// </summary>
-    bool Attributable(string? id, string role, string? passAttempt)
+    Verdict Fence(string? id, string role, string? passAttempt)
     {
-        if (id is not { Length: > 0 }) return false;
+        if (id is not { Length: > 0 }) return Verdict.Quarantine;
 
         AiAttempt? a;
         try { a = _attempts.Get(id); }
-        catch (Exception) { return false; }           // an unreadable ledger cannot attribute anything
+        catch (Exception) { return Verdict.Quarantine; }   // an unreadable ledger attributes nothing
 
-        if (a is null || CouncilRoles.Or(a.Role) != role) return false;
-        return a.State != AiAttemptState.LAUNCHED || id == passAttempt;
+        if (a is null || CouncilRoles.Or(a.Role) != role) return Verdict.Quarantine;
+        if (a.State != AiAttemptState.LAUNCHED || id == passAttempt) return Verdict.Publish;
+        return _live.Holds(id) ? Verdict.Leave : Verdict.Quarantine;
     }
 
     /// <summary>

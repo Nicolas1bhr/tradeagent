@@ -146,7 +146,7 @@ public class CouncilRelayTests
 
         // ---- the fresh host over the same database -----------------------------------------
         using var restarted = world.Open();
-        world.RelayOver(restarted).Run();
+        world.RelayOver(restarted).Reconcile();
 
         var tasks = Tasks(restarted);
         Assert.Single(tasks);
@@ -191,7 +191,7 @@ public class CouncilRelayTests
 
         world.RelayOver(db).Run(CouncilRoles.Research, "turn-a");
         world.RelayOver(db).Run(CouncilRoles.Research, "turn-b");
-        world.RelayOver(db).Run();
+        world.RelayOver(db).Reconcile();
 
         Assert.Single(Tasks(db));
         Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
@@ -279,7 +279,7 @@ public class CouncilRelayTests
         // The agent tidied up after itself. The app must still be able to deliver.
         File.Delete(Path.Combine(world.Home(CouncilRoles.Research), WorkspaceBuilder.OutDir,
             World.Named(CouncilRoles.Research, "turn-a")));
-        world.RelayOver(db).Run();
+        world.RelayOver(db).Reconcile();
 
         var p = Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
         Assert.Equal(text,
@@ -393,6 +393,47 @@ public class CouncilRelayTests
 
         // And a Situation with no id names none, rather than inventing one nothing will recognise.
         Assert.DoesNotContain("This turn is attempt", new MissionSituation { Role = role }.Text());
+    }
+
+    /// <summary>
+    /// ITEM 4, RED FIRST: THE PASS THAT WALKS EVERY ROLE LEAVES A LIVE TURN'S FILE WHERE IT IS.
+    ///
+    /// <para>The whole-council pass used to be what <c>Run</c> did when it was given no role, and it
+    /// named no launch, so every open row looked like a stale process's. With two roles able to turn
+    /// at once that is the ordinary case and not the exotic one: the Research Director is mid-turn,
+    /// its report is in its own <c>out/</c> under its own open launch, and a pass run for any other
+    /// reason moved it to <c>quarantine/</c>. The turn's work taken away from it by somebody else's
+    /// bookkeeping, and the fence saying out loud that it was not a turn TradeAgent had finished —
+    /// which was true and beside the point.</para>
+    ///
+    /// <para>The file is neither published nor moved. It is left, and the role's own commit
+    /// publishes it a moment later, under its own launch.</para>
+    /// </summary>
+    [Fact]
+    public void A_pass_over_every_role_leaves_a_live_turns_file_rather_than_quarantining_it()
+    {
+        using var world = new World();
+        using var db = world.Open();
+        var live = new LiveAttempts();
+        var said = new List<string>();
+
+        // The Research Director is mid-turn: its launch is open and THIS process is flying it.
+        world.Launched(db, CouncilRoles.Research, "turn-b");
+        live.Enter("turn-b");
+        world.WriteFor(CouncilRoles.Research, "turn-b", Report(4));
+
+        // The start-up reconciliation, which is the one pass that looks in every role's folder.
+        new CouncilRelay(db, world.Home, live: live) { Quarantined = said.Add }.Reconcile();
+
+        Assert.Empty(world.Quarantined(CouncilRoles.Research));
+        Assert.Empty(said);
+        Assert.Empty(new PublicationStore(db).By(CouncilRoles.Research));
+        Assert.True(File.Exists(Path.Combine(world.Home(CouncilRoles.Research),
+            WorkspaceBuilder.OutDir, World.Named(CouncilRoles.Research, "turn-b"))));
+
+        // AND THE ROLE'S OWN PASS PUBLISHES IT, under its own launch, a moment later.
+        new CouncilRelay(db, world.Home, live: live).Run(CouncilRoles.Research, "turn-b");
+        Assert.Equal("turn-b", Assert.Single(new PublicationStore(db).By(CouncilRoles.Research)).Attempt);
     }
 
     /// <summary>

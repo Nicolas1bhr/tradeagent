@@ -136,7 +136,7 @@ public class TurnCommitTests
 
         // ---- the fresh host over the same database, and the pass it runs on start --------------
         var (restarted, _) = world.Open();
-        world.RelayOver(restarted).Run();
+        world.RelayOver(restarted).Reconcile();
 
         // EXACTLY ONE REVISION PER FILE. Not none — the work is real and the bytes are on disk —
         // and not two, because a publication's id is the hash of its content.
@@ -302,5 +302,71 @@ public class TurnCommitTests
 
         Assert.Equal(good, world.Read(CouncilRoles.Research, "trading/PLAN.md"));
         Assert.Single(Of(db, PublicationKind.Plan));
+    }
+
+    /// <summary>
+    /// ITEM 4, RED FIRST, AND MEASURED: ONE ROLE'S COMMIT DOES NOT HOLD THE DATABASE WHILE IT READS
+    /// THE FILES ITS TURN WROTE.
+    ///
+    /// <para>There is one lock over the whole store — reads as well as writes — and it is held for
+    /// the length of a <see cref="Database.Write"/>. The relay's pass over <c>out/</c> ran INSIDE
+    /// the turn's commit, so that lock was held across every byte of up to
+    /// <see cref="CouncilRelay.PerPass"/> files of whatever size the agent had written. While one
+    /// role's turn was committing, the other role could not open its launch record — which is the
+    /// first thing its turn does and the thing that commits its money — so a slow disk on one role's
+    /// report was a delay on the other role's turn.</para>
+    ///
+    /// <para>The bound below is a DEADLOCK DETECTOR, not a measurement of speed: the other role's
+    /// launch either lands while this read is held open or it does not land at all. With the read
+    /// inside the transaction it cannot, and the wait runs out with the message beside it.</para>
+    /// </summary>
+    [Fact]
+    public void One_roles_commit_does_not_hold_the_database_while_it_reads_its_own_files()
+    {
+        using var world = new World();
+        var (db, meter) = world.Open();
+
+        var attempt = meter.Mint();
+        meter.Begin("## Situation", [], CouncilRoles.Research);
+        world.Write(CouncilRoles.Research, $"{WorkspaceBuilder.OutDir}/report-{attempt}.md", Report);
+        meter.Record(Ended(world.At), CouncilRoles.Research);
+
+        using var reading = new ManualResetEventSlim();
+        using var landed = new ManualResetEventSlim();
+
+        // THE OTHER ROLE'S TURN, on a real thread: it waits for this pass to be inside its read and
+        // then opens its own launch record, which is a write against the same one lock.
+        var other = new Thread(() =>
+        {
+            if (!reading.Wait(TimeSpan.FromSeconds(30))) return;
+            new AiAttemptStore(db).Begin(new AiAttempt
+            {
+                Id = "turn-of-the-other-role",
+                StartedAt = world.At,
+                Role = CouncilRoles.Operations
+            });
+            landed.Set();
+        });
+        other.Start();
+
+        var relay = world.RelayOver(db);
+        relay.Boundary = at =>
+        {
+            if (at != CouncilRelay.Reading) return;
+            reading.Set();
+            Assert.True(landed.Wait(TimeSpan.FromSeconds(30)),
+                "the other role's launch record was blocked behind this role's file read");
+        };
+
+        relay.CommitTurn(CouncilRoles.Research, attempt,
+            () => meter.CommitStaged(CouncilRoles.Research), () => { });
+
+        Assert.True(other.Join(TimeSpan.FromSeconds(30)), "the other role's turn never finished");
+
+        // AND THE TURN STILL COMMITTED, whole: the read moved, nothing else did.
+        Assert.Equal(AiAttemptState.ENDED, new AiAttemptStore(db).Get(attempt)!.State);
+        Assert.Equal(Report, Assert.Single(Of(db, PublicationKind.Report)).Content);
+        Assert.Equal(AiAttemptState.LAUNCHED,
+            new AiAttemptStore(db).Get("turn-of-the-other-role")!.State);
     }
 }

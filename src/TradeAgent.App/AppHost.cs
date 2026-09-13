@@ -604,7 +604,7 @@ public sealed class AppHost : IAsyncDisposable
             // this is the pass that puts it there, and it is idempotent, so a clean start does
             // nothing at all. Never fatal: a relay that could not run is a delivery that is late,
             // not an app that will not open.
-            try { Relay.Run(); }
+            try { Relay.Reconcile(); }
             catch (Exception ex) { Gateway.Log.Engineering("Council", "relay_start_failed", "warn", ex: ex); }
 
             ResumeMissionIfItWasWorking();
