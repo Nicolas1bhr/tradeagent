@@ -54,9 +54,11 @@ public sealed record VerdictCharge(bool Ok, string Why, int Spent, int Budget, l
 /// not be able to spend it. `HoldoutOverPipeTests` asks every op this build has and none of them serves
 /// a held-back bar.</para>
 /// </summary>
-public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
+public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
+    CouncilBoundaries? boundaries = null)
 {
     readonly CampaignStore _campaigns = new(db);
+    readonly CouncilBoundaries _boundaries = boundaries ?? new CouncilBoundaries(db);
     readonly DatasetStore _datasets = new(db);
     readonly StrategyStore _strategies = new(db);
     readonly Promotions _promotions = new(db);
@@ -90,6 +92,9 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
     /// promotion on every rebuild.</para>
     /// </summary>
     public const string EvaluatorVersion = "backtest=1;metrics=1;scoring=1";
+
+    /// <summary>An id as it is printed for a person. The same twelve characters everything else uses.</summary>
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
     /// <summary>The campaign ledger this referee charges against. Read-only for a caller.</summary>
     public CampaignStore Campaigns => _campaigns;
@@ -245,6 +250,7 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
                 reason, at));
 
             Deliver(promotion, at);
+            OpenBoundary(promotion, at);
 
             return new RefereeVerdict(true, "", promotion);
         });
@@ -285,6 +291,37 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null)
             Content = content
         }, at, MissionEventIds.Verdict(promotion.Id));
     }
+
+    /// <summary>
+    /// OPENS THE CONSEQUENTIAL BOUNDARY THIS VERDICT IS, in the same transaction as the verdict itself.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:59 lists "promotion of a strategy" first among the boundaries the
+    /// strongest model is spent at. THE ENTITY IS THE VERSION AND THE REVISION IS THE CAMPAIGN, which is
+    /// :64's "deduplicate boundary events by entity and revision" read literally: asking for the same
+    /// version's verdict twice under one campaign is one question and buys one boundary, and the same
+    /// version judged again under a RENEWED campaign is a different question about different evidence
+    /// and is worth the spend.</para>
+    ///
+    /// <para><b>The default is the POLICY'S answer, computed now and frozen on the row.</b> A promotion
+    /// that stands deploys; anything else — refused, or promoted on evidence that has since been
+    /// invalidated — holds. That is :62, "code applies the promotion and allocation policy so neither
+    /// director can veto an eligible deployment forever": the directors are asked, and the answer they
+    /// are asked about is already written down where they cannot reach it.</para>
+    ///
+    /// <para><b>The evidence carries no figure</b>, for the reason <see cref="RefereeFeedback"/> carries
+    /// none: it is rendered into both directors' Situations and into the owner's report, which
+    /// <c>trade report</c> serves to an agent verbatim. The verdict, the reason CLASS and two hashes.</para>
+    /// </summary>
+    void OpenBoundary(PromotionRow promotion, DateTimeOffset at) =>
+        _boundaries.Open(
+            BoundaryKind.Promotion, promotion.VersionId, promotion.CampaignId,
+            _promotions.Standing(promotion.VersionId).IsPromoted
+                ? BoundaryDisposition.Deploy
+                : BoundaryDisposition.Hold,
+            $"TradeAgent's referee {promotion.Verdict} version {Short(promotion.VersionId)} under campaign "
+            + $"{promotion.CampaignId} on holdout run {Short(promotion.HoldoutRunId)}: "
+            + PromotionReason.Words(promotion.Reason),
+            at);
 
     /// <summary>
     /// THE HOLDOUT BARS OF THIS CHARGE'S CAMPAIGN — the one door past a cutoff, and it needs a charge

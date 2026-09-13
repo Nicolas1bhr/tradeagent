@@ -50,6 +50,22 @@ public static class MissionEventKind
     /// proposals cannot manufacture senior spend").
     /// </summary>
     public const string Verdict = PublicationKind.Verdict;
+
+    /// <summary>
+    /// A CONSEQUENTIAL BOUNDARY OPENED, and this role owes it an assessment.
+    ///
+    /// <para>Written only by <see cref="CouncilBoundaries.Open"/>, in the same transaction as the
+    /// boundary row, and keyed by the boundary — whose own id is <c>kind:entity:revision</c>. That is
+    /// <c>docs/COUNCIL.md</c>:64 twice over: the boundary is deduplicated by entity and revision, and the
+    /// wake is deduplicated by the boundary, so a re-proposed promotion raises an id the table already
+    /// holds and buys neither director a turn.</para>
+    ///
+    /// <para>TWO rows per boundary, one per role, for the reason new material is two rows: one row
+    /// consumed by whichever director reached it first would silently deny the other the turn the
+    /// protocol requires it to take. "Two assessments are two turns" (:63) is a count of what the owner
+    /// pays for, and these are the two.</para>
+    /// </summary>
+    public const string Boundary = "boundary";
 }
 
 /// <summary>
@@ -211,6 +227,13 @@ public static class MissionEventIds
     /// turn. Keying it by the publication would have been one step further from the fact.</para>
     /// </summary>
     public static string Verdict(string promotionId) => $"{MissionEventKind.Verdict}:{promotionId}";
+
+    /// <summary>
+    /// THE BOUNDARY WAKE, KEYED BY THE BOUNDARY — whose own id is already the entity and the revision
+    /// (<see cref="BoundaryIds.Of"/>). Wrapped per role by <see cref="ForRole"/>, so the pair is still a
+    /// function of the fact and a repeat of either is still free.
+    /// </summary>
+    public static string Boundary(string boundaryId) => $"{MissionEventKind.Boundary}:{boundaryId}";
 }
 
 /// <summary>

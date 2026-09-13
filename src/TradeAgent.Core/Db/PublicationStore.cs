@@ -52,6 +52,29 @@ public static class PublicationKind
     /// <c>Strategy.RefereeFeedback</c>, which is the only place that decides what crosses.</para>
     /// </summary>
     public const string Verdict = "verdict";
+
+    /// <summary>
+    /// ONE DIRECTOR'S READING OF ONE CONSEQUENTIAL BOUNDARY, WRITTEN BEFORE IT HAS SEEN THE OTHER'S.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:61: "both directors submit an assessment before either sees the
+    /// other's". The publication is committed the moment it arrives — it is immutable evidence of
+    /// what that director thought, and evidence held in a file until the peer is ready is evidence
+    /// that can still be edited — and its DELIVERY is <see cref="DeliveryState.Withheld"/> until
+    /// both exist. <see cref="CouncilBoundaries.Release"/> flips both together.</para>
+    ///
+    /// <para>At most <c>CouncilRelay.ReportLines</c> lines, like a report, and at most one per
+    /// director per boundary. Which boundary it answers is the APP'S decision, recorded in
+    /// <c>boundary_submission</c>: a director that chose could answer the easy boundary and let the
+    /// deadline run out on the other.</para>
+    /// </summary>
+    public const string Assessment = "assessment";
+
+    /// <summary>
+    /// THE ONE BOUNDED CHALLENGE A BOUNDARY GETS, from EITHER director, after both assessments have
+    /// been delivered. Capped like a report, delivered normally — it buys the peer the one turn it
+    /// is worth — and a second is refused and unpaid whoever writes it.
+    /// </summary>
+    public const string Challenge = "challenge";
 }
 
 /// <summary>
@@ -84,6 +107,20 @@ public static class DeliveryState
 
     /// <summary>The file is in the recipient's folder. Only ever written after the copy.</summary>
     public const string Delivered = "delivered";
+
+    /// <summary>
+    /// THE TRANSACTION LANDED AND THE RECIPIENT MAY NOT HAVE IT YET — the seal on a sealed
+    /// assessment (<c>docs/COUNCIL.md</c>:61).
+    ///
+    /// <para>A STATE rather than the absence of a row, and that is the whole of why it is here.
+    /// "Not delivered yet" is what <see cref="Committed"/> already means and what a failed copy
+    /// leaves behind; a restart looking at those two cannot tell a delivery the app is deliberately
+    /// holding from one it merely has not made. <c>PublicationStore.Undelivered</c> reads only
+    /// <see cref="Committed"/>, so a withheld row is invisible to the relay's copy pass until
+    /// <c>CouncilBoundaries.Release</c> flips it — which is the seal being the app's rather than
+    /// a director's discretion.</para>
+    /// </summary>
+    public const string Withheld = "withheld";
 }
 
 /// <summary>
@@ -219,6 +256,50 @@ public sealed class PublicationStore(Database db)
                 ("$payload", Json.Write(new MissionTask(p.Id, p.Kind, p.Role))),
                 ("$role", recipient));
             e.ExecuteNonQuery();
+        }
+
+        return fresh;
+    });
+
+    /// <summary>
+    /// PUBLISHES ONE ARTIFACT AND RECORDS WHO IT IS FOR, WITHOUT HANDING IT OVER — the sealed half of
+    /// <see cref="Commit"/>, and the only other thing that writes a <c>delivery</c> row.
+    ///
+    /// <para>The publication is committed exactly as any other: the same content-addressed id, the same
+    /// revision counter, the same immutability. What differs is the delivery's state
+    /// (<see cref="DeliveryState.Withheld"/>) and the ABSENCE of the <c>mission_event</c> that would buy
+    /// the recipient a turn. A wake here would be the app waking the peer to read a file it has decided
+    /// not to put on disk.</para>
+    ///
+    /// <para>It is the app's seal and not the author's: the artifact exists, is hashed, is attributed and
+    /// cannot be edited from the moment this returns — which is exactly what a sealed assessment has to
+    /// be for the pair to mean anything (<c>docs/COUNCIL.md</c>:212, precommitment). Only
+    /// <see cref="CouncilBoundaries.Release"/> moves it on, and only when both halves exist.</para>
+    /// </summary>
+    public bool CommitSealed(Publication p, DateTimeOffset at) => db.Write(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(p);
+
+        using var pub = db.Cmd($"""
+            INSERT INTO publication({Cols})
+            VALUES($id,$role,$attempt,$rev,$kind,$to,$class,$at,$src,$content)
+            ON CONFLICT(id) DO NOTHING
+            """,
+            ("$id", p.Id), ("$role", p.Role), ("$attempt", p.Attempt), ("$rev", NextRevision(p.Role)),
+            ("$kind", p.Kind), ("$to", p.Recipients), ("$class", p.Classification),
+            ("$at", Sql.T(p.CreatedAt)), ("$src", p.Source), ("$content", p.Content));
+        var fresh = pub.ExecuteNonQuery() == 1;
+
+        foreach (var recipient in p.RecipientList)
+        {
+            using var d = db.Cmd("""
+                INSERT INTO delivery(publication_id, recipient, state, created_at, delivered_at)
+                VALUES($id,$to,$state,$at,NULL)
+                ON CONFLICT(publication_id, recipient) DO NOTHING
+                """,
+                ("$id", p.Id), ("$to", recipient), ("$state", DeliveryState.Withheld),
+                ("$at", Sql.T(at)));
+            d.ExecuteNonQuery();
         }
 
         return fresh;

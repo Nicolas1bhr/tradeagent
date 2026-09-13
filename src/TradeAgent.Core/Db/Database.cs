@@ -898,6 +898,73 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','15') ON CONFLICT(key) DO UPDATE SET value='15';");
         }
 
+        if (have < 16)
+        {
+            // THE CONSEQUENTIAL BOUNDARY, AND THE TWO SEALED ASSESSMENTS AT IT.
+            //
+            // `docs/COUNCIL.md`:59-65: the strongest model is spent only at boundaries the app fixes, and
+            // there "both directors submit an assessment before either sees the other's; one bounded
+            // challenge, one disposition, a deadline with a predetermined default, and code applies the
+            // promotion and allocation policy so neither director can veto an eligible deployment
+            // forever ... Deduplicate boundary events by entity and revision, so repeated proposals
+            // cannot manufacture senior spend". None of that had any product code at all.
+            //
+            // `id` IS `kind:entity:revision` (`BoundaryIds.Of`), the same shape every id in
+            // `MissionEventIds` has: a function of the FACT and of nothing about the attempt, the clock
+            // or the process. That is the whole of the deduplication — the second raise of one proposal
+            // collides with the row already here, writes nothing and buys nobody a turn. The UNIQUE
+            // index says the key out loud beside it, so a later build that changed how the id is spelled
+            // would break on the index rather than quietly open a second boundary over one revision.
+            //
+            // `default_disposition` IS WRITTEN AT OPEN AND NEVER AFTERWARDS. "A deadline with a
+            // predetermined default" is precommitment: a default computed when the deadline expires is a
+            // default chosen once the outcome is known. `disposed_by` records who applied it and today
+            // there is exactly one possible value — `policy` — because no method, no pipe op and no
+            // `trade` verb lets a director dispose a boundary at all.
+            //
+            // `boundary_submission` is what makes the seal the APP'S and not a director's discretion.
+            // PRIMARY KEY(boundary_id, role, kind) refuses a second assessment from the same director
+            // over the same boundary in SQL; the partial UNIQUE index refuses a second CHALLENGE over
+            // the boundary from EITHER of them. The publication itself stays in `publication`, where
+            // every other artifact is — this table records only which boundary it answers.
+            //
+            // Written by the app alone, like `dataset`, `material`, `mission_event` and
+            // `strategy_promotion`: one INSERT with ON CONFLICT DO NOTHING per table, no UPDATE that an
+            // agent can reach, no DELETE at all. Additive — two tables and three indexes — and an older
+            // database gains them empty, which reads correctly as "no boundary has been opened here".
+            Exec("""
+            CREATE TABLE IF NOT EXISTS boundary_event(
+              id                  TEXT PRIMARY KEY,
+              kind                TEXT NOT NULL,
+              entity              TEXT NOT NULL,
+              revision            INTEGER NOT NULL,
+              opened_at           TEXT NOT NULL,
+              deadline_at         TEXT NOT NULL,
+              default_disposition TEXT NOT NULL,
+              evidence            TEXT NOT NULL,
+              disposition         TEXT,
+              disposed_at         TEXT,
+              disposed_by         TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_boundary_key
+              ON boundary_event(kind, entity, revision);
+            CREATE INDEX IF NOT EXISTS ix_boundary_open
+              ON boundary_event(disposition, deadline_at);
+
+            CREATE TABLE IF NOT EXISTS boundary_submission(
+              boundary_id    TEXT NOT NULL REFERENCES boundary_event(id),
+              role           TEXT NOT NULL,
+              kind           TEXT NOT NULL,
+              publication_id TEXT NOT NULL REFERENCES publication(id),
+              at             TEXT NOT NULL,
+              PRIMARY KEY(boundary_id, role, kind)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_boundary_one_challenge
+              ON boundary_submission(boundary_id) WHERE kind='challenge';
+            """);
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','16') ON CONFLICT(key) DO UPDATE SET value='16';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

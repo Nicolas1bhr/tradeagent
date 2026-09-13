@@ -143,8 +143,24 @@ public static class Versions
     /// alone with ON CONFLICT DO NOTHING, never updated and never deleted, and no pipe op or
     /// <c>trade</c> verb reaches it. Additive — one table and one index — and an older database gains it
     /// empty, which reads correctly as "nothing has been judged here".
+    ///
+    /// 15 -&gt; 16: THE CONSEQUENTIAL BOUNDARY. <c>boundary_event</c>, one row per boundary the app fixes
+    /// — a promotion today, a retirement under the same shape later (<c>docs/COUNCIL.md</c>:222) — keyed
+    /// by <c>kind:entity:revision</c> and by nothing about the attempt, the clock or the process, so a
+    /// repeated proposal collides with the row already there and buys no senior turn (:64, "deduplicate
+    /// boundary events by entity and revision, so repeated proposals cannot manufacture senior spend");
+    /// and <c>boundary_submission</c>, which records which boundary each <c>assessment</c> or
+    /// <c>challenge</c> publication answers and whose keys are the two refusals — a second assessment
+    /// from one director over one boundary, and a second challenge over it from either. The deadline's
+    /// default is on the row AT OPEN (<c>default_disposition</c>) because "a deadline with a
+    /// predetermined default" is precommitment, and <c>disposed_by</c> can only ever read <c>policy</c>:
+    /// there is no method by which a director disposes a boundary. Before this rung
+    /// <c>grep -rn "assessment\|challenge" src</c> found nothing at all, so the one paragraph of the
+    /// doctrine that spends the strongest model had no code under it. Additive — two tables and three
+    /// indexes, the app the only writer, no pipe op and no <c>trade</c> verb near either — and an older
+    /// database gains them empty, which reads correctly as "no boundary has been opened here".
     /// </summary>
-    public const int DatabaseSchemaVersion = 15;
+    public const int DatabaseSchemaVersion = 16;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

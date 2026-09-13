@@ -116,6 +116,55 @@ public class RefereeVerdictTests
             new BacktestAsk("strategies/" + name, w.Set.Id, Bar0, Bar0.AddMinutes(HoldoutAtBar - 1)));
     }
 
+    // ---- the boundary the verdict opens (U-council-concurrent-2, item 1) --------------------------
+
+    /// <summary>
+    /// A VERDICT OPENS ONE CONSEQUENTIAL BOUNDARY, WAKES BOTH DIRECTORS ONCE, AND ASKING AGAIN BUYS
+    /// NOTHING.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:59 lists promotion of a strategy first among the boundaries the
+    /// strongest model is spent at, and :64 says repeated proposals must not manufacture that spend. The
+    /// referee is the app's only producer of one today: the boundary is opened inside the same
+    /// transaction as the promotion, so a crash cannot leave a judgement nobody was asked about.</para>
+    ///
+    /// <para>The default written on the row is the POLICY's answer and is frozen at open — the fixture
+    /// program is profitable over the holdout and was frozen before it, so this one deploys.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_verdict_opens_one_boundary_with_the_policys_default_and_two_paid_wakes()
+    {
+        var w = await Given();
+        using var _1 = w.Db;
+        var boundaries = new CouncilBoundaries(w.Db);
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.True(verdict.Ok, verdict.Why);
+
+        var boundary = Assert.Single(boundaries.All());
+        Assert.Equal(BoundaryIds.Of(BoundaryKind.Promotion, w.VersionId, w.Campaign.Id), boundary.Id);
+        Assert.Equal(BoundaryDisposition.Deploy, boundary.DefaultDisposition);
+        Assert.True(boundary.IsOpen);
+
+        // TWO TURNS, ONE PER DIRECTOR. ":63 — two assessments are two turns."
+        var wakes = new MissionEventStore(w.Db).OfKind(MissionEventKind.Boundary);
+        Assert.Equal(2, wakes.Count);
+        Assert.Equal(CouncilRoles.All.Order(), wakes.Select(e => e.For).Order());
+
+        // THE EVIDENCE CARRIES NO FIGURE FROM THE HELD-BACK MONTHS. It is rendered into both directors'
+        // Situations and into a report `trade report` serves to an agent verbatim, so the only digits in
+        // it are the campaign id and the two hashes' own characters.
+        var run = new StrategyStore(w.Db).RunById(verdict.Promotion!.HoldoutRunId)!;
+        Assert.DoesNotContain(run.NetPnl!.Value.ToString(CultureInfo.InvariantCulture), boundary.Evidence,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(run.Bars.ToString(CultureInfo.InvariantCulture), boundary.Evidence,
+            StringComparison.Ordinal);
+
+        // ASKED AGAIN: the same promotion, the same boundary, and no second turn for anybody.
+        RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+        Assert.Single(boundaries.All());
+        Assert.Equal(2, new MissionEventStore(w.Db).OfKind(MissionEventKind.Boundary).Count);
+    }
+
     // ---- item 2: the holdout run is the referee's own ---------------------------------------------
 
     /// <summary>

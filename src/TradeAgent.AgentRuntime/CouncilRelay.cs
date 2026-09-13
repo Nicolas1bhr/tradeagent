@@ -74,6 +74,7 @@ public sealed class CouncilRelay
 
     readonly Database _db;
     readonly PublicationStore _store;
+    readonly CouncilBoundaries _boundaries;
     readonly MissionEventStore _events;
     readonly AiAttemptStore _attempts;
     readonly WorkspaceRevisions _revisions;
@@ -88,11 +89,12 @@ public sealed class CouncilRelay
     readonly LiveAttempts _live;
 
     public CouncilRelay(Database db, Func<string, string> homeOf, Func<DateTimeOffset>? now = null,
-        LiveAttempts? live = null)
+        LiveAttempts? live = null, CouncilBoundaries? boundaries = null)
     {
         _db = db;
         _live = live ?? LiveAttempts.Shared;
         _store = new PublicationStore(db);
+        _boundaries = boundaries ?? new CouncilBoundaries(db);
         _events = new MissionEventStore(db);
         _attempts = new AiAttemptStore(db);
         _revisions = new WorkspaceRevisions(db, homeOf, now);
@@ -286,21 +288,26 @@ public sealed class CouncilRelay
     internal Pass Read(string role, string? attempt)
     {
         var pass = new Pass();
-        var kind = KindFor(role);
         var outDir = Path.Combine(_homeOf(role), WorkspaceBuilder.OutDir);
 
-        string[] files;
+        List<(string File, string Kind)> files;
         try
         {
             if (!Directory.Exists(outDir)) return pass;
             // Top level only, which is what keeps `out/quarantine/` out of the pass: a file the
             // fence has already refused must not be read again on the next turn, for ever.
-            files = [.. Directory.EnumerateFiles(outDir, Pattern(kind)).OrderBy(f => f, StringComparer.Ordinal)
+            //
+            // EVERY KIND THIS ROLE MAY PUBLISH, and the cap is over the whole pass rather than per
+            // pattern: three patterns at ten files each would be thirty paid turns bought by a role
+            // that filled its folder, which is exactly what PerPass exists to stop.
+            files = [.. KindsFor(role)
+                .SelectMany(k => Directory.EnumerateFiles(outDir, Pattern(k)).Select(f => (File: f, Kind: k)))
+                .OrderBy(x => x.File, StringComparer.Ordinal)
                 .Take(PerPass)];
         }
         catch (Exception) { return pass; }
 
-        foreach (var file in files)
+        foreach (var (file, kind) in files)
         {
             // ---- the fence, BEFORE the file is read -------------------------------------------
             // The name has to name a launch this app recorded, of THIS role. Everything else goes
@@ -362,6 +369,32 @@ public sealed class CouncilRelay
         {
             // ---- boundary 1: the file exists and nothing in the tables knows about it ------------
             Boundary?.Invoke("file");
+
+            // THE THREE WAYS AN ARTIFACT LANDS, AND THE APP PICKS. A report or an agenda is committed
+            // and handed straight over. An ASSESSMENT is committed and SEALED — no delivery, no wake —
+            // until the other director's exists (docs/COUNCIL.md:61). A CHALLENGE is taken only once
+            // per boundary and only after both assessments are delivered. A refusal writes nothing at
+            // all and buys nobody a turn, and is said out loud by Apply below.
+            switch (kind)
+            {
+                case PublicationKind.Assessment:
+                {
+                    var taken = _boundaries.Assess(p, _now());
+                    if (!taken.Ok)
+                        pass.Rejecting.Add($"{CouncilRoles.Title(p.Role)}: the assessment in "
+                                           + $"{p.Source} was not published — {taken.Why}");
+                    continue;
+                }
+
+                case PublicationKind.Challenge:
+                {
+                    var taken = _boundaries.Challenge(p, _now());
+                    if (!taken.Ok)
+                        pass.Rejecting.Add($"{CouncilRoles.Title(p.Role)}: the challenge in "
+                                           + $"{p.Source} was not published — {taken.Why}");
+                    continue;
+                }
+            }
 
             _store.Commit(p, _now());
 
@@ -499,6 +532,17 @@ public sealed class CouncilRelay
     /// </summary>
     internal void Deliver()
     {
+        // BOTH SEALED ASSESSMENTS ARE RELEASED TOGETHER, AND HERE IS WHERE "TOGETHER" MEANS SOMETHING.
+        // The flip from `withheld` to `committed` is one transaction over both rows, and the copy pass
+        // below is what then puts both files on disk in the same pass. Releasing at the moment the
+        // second assessment was committed would still leave one director's file landing while the
+        // other's was being written; the release is the app's own pass, not the author's.
+        //
+        // Never throws out of the relay: a release that could not be made leaves both withheld, which
+        // is the fail-safe direction — the seal holds, and the next pass tries again.
+        try { _boundaries.Release(_now()); }
+        catch (Exception) { /* the seal holds; the next pass releases */ }
+
         foreach (var d in _store.Undelivered())
         {
             var p = _store.Get(d.PublicationId);
@@ -528,6 +572,18 @@ public sealed class CouncilRelay
         role == CouncilRoles.Research ? PublicationKind.Report : PublicationKind.Brief;
 
     /// <summary>
+    /// EVERY KIND ONE ROLE MAY PUBLISH. Its own handoff, plus the two the consequential boundary adds —
+    /// and both directors write both of those, which is the point: an assessment is one per director per
+    /// boundary and the one challenge may come from either.
+    ///
+    /// <para>A function of the role and never of the file name, like <see cref="KindFor"/>: a role does
+    /// not get to turn its agenda into an assessment by renaming the file, and WHICH boundary an
+    /// assessment answers is the app's decision too (<see cref="CouncilBoundaries.Assess"/>).</para>
+    /// </summary>
+    public static string[] KindsFor(string role) =>
+        [KindFor(role), PublicationKind.Assessment, PublicationKind.Challenge];
+
+    /// <summary>
     /// WHO IT GOES TO. Both directions are one hop today. It is here rather than in the mission file
     /// because a role must not be able to choose its own audience: that is the recipient scoping
     /// round 4 asked for, and it is the app's decision.
@@ -536,11 +592,22 @@ public sealed class CouncilRelay
         role == CouncilRoles.Research ? [CouncilRoles.Operations] : [CouncilRoles.Research];
 
     /// <summary>The file names each kind is read from — exactly what the mission file asks for.</summary>
-    public static string Pattern(string kind) =>
-        kind == PublicationKind.Report ? "report-*.md" : "agenda-*.md";
+    public static string Pattern(string kind) => kind switch
+    {
+        PublicationKind.Report => "report-*.md",
+        PublicationKind.Assessment => "assessment-*.md",
+        PublicationKind.Challenge => "challenge-*.md",
+        _ => "agenda-*.md"
+    };
 
-    public static int Limit(string kind) =>
-        kind == PublicationKind.Report ? ReportLines : AgendaLines;
+    /// <summary>
+    /// HOW MANY LINES EACH KIND MAY BE. An assessment and a challenge are capped like a REPORT, which is
+    /// the context-etiquette budget the doctrine states for anything handed upward or sideways — and the
+    /// challenge is the one <c>docs/COUNCIL.md</c>:61 calls "bounded" in so many words. Dropping the cap
+    /// is the mutant this unit watches: an unbounded challenge is a transcript handed to the peer at the
+    /// owner's expense, which is the one thing context etiquette exists to stop.
+    /// </summary>
+    public static int Limit(string kind) => kind == PublicationKind.Brief ? AgendaLines : ReportLines;
 
     /// <summary>
     /// Whether this text may be published. Blank is not a publication, and neither is a file over
