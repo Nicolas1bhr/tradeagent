@@ -470,11 +470,19 @@ sealed class SettingsPage
                 return;
             }
 
-            var done = _host.Gateway.Datasets.SetHoldout(newest.Id, at, evaluationClass);
+            // ONE PRESS, TWO ROWS, ONE TRANSACTION. The gateway writes the cutoff and opens the campaign
+            // that cutoff is the subject of together: months held back with nothing counting the attempts
+            // made against them would be a holdout with no protocol behind it.
+            var (done, campaign) = _host.Gateway.SetHoldout(newest.Id, at, evaluationClass);
             _holdoutNote.Foreground = done.Ok ? Theme.TextMuted : Theme.Caution;
             _holdoutNote.Text = done.Ok
                 ? $"Bars from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on are held back. The AI cannot read them "
                   + "or backtest over them, and this date can no longer be moved earlier."
+                  + (campaign is { } c
+                      ? $" Campaign {c.Id} is measured against them: {c.TrialBudget:N0} research runs and "
+                        + $"{c.VerdictBudget:N0} final judgements, and the standard it will be judged by is "
+                        + "fixed as of now."
+                      : "")
                 : done.Why;
         }
         catch (Exception ex)
@@ -491,10 +499,12 @@ sealed class SettingsPage
         try
         {
             var newest = _host.Gateway.Datasets.All().FirstOrDefault();
-            _holdoutValue.Text = newest?.HoldoutFrom is { } at
-                ? $"{newest.Pair} from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on"
-                  + (newest.EvaluationClass == EvaluationClass.Fixture ? ", fixture bars" : "")
-                : "nothing";
+            if (newest?.HoldoutFrom is not { } at) { _holdoutValue.Text = "nothing"; return; }
+
+            var open = _host.Gateway.Campaigns.OpenForDataset(newest.Id);
+            _holdoutValue.Text = $"{newest.Pair} from {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC on"
+                + (newest.EvaluationClass == EvaluationClass.Fixture ? ", fixture bars" : "")
+                + (open is { } c ? $", campaign {c.Id}" : "");
         }
         catch (Exception) { _holdoutValue.Text = "could not be read"; }
     }

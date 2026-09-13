@@ -25,6 +25,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly MaterialStore _materials;
     readonly FillStore _fills;
     readonly DatasetStore _datasets;
+    readonly CampaignStore _campaigns;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -74,6 +75,43 @@ public sealed class TradingGateway : IAsyncDisposable
     /// serves it over <c>data-list</c> and <c>data-bars</c> without ever writing a row.
     /// </summary>
     public DatasetStore Datasets => _datasets;
+
+    /// <summary>
+    /// The campaign ledger — the referee's protocol. READ ONLY from here in the sense that matters:
+    /// the only writer is the owner's own press (<see cref="SetHoldout"/>) and the referee's charge,
+    /// and there is no pipe op that opens, renews, closes or re-budgets a campaign.
+    /// </summary>
+    public CampaignStore Campaigns => _campaigns;
+
+    /// <summary>
+    /// WHAT THE OWNER'S ONE PRESS DOES: the cutoff, and the campaign that cutoff is the subject of, in
+    /// ONE transaction.
+    ///
+    /// <para>Here rather than in the app because the invariant belongs to the data and not to a screen: a
+    /// holdout without a campaign is months held back with nothing counting the attempts made against
+    /// them, and a campaign without a holdout is a budget for nothing. <c>Database.Write</c> joins the
+    /// transaction already open, so the two rows land together or neither does.</para>
+    ///
+    /// <para>The budgets come off the owner's settings AT THIS MOMENT and are copied onto the campaign.
+    /// A second press on a dataset that already has an open campaign moves the cutoff (later only) and
+    /// leaves that campaign alone — its trial history is the whole point of it, and a fresh campaign
+    /// would reset a count that must survive a team's replacement.</para>
+    /// </summary>
+    public (DatasetStore.HoldoutSet Holdout, CampaignRow? Campaign) SetHoldout(
+        long datasetId, DateTimeOffset cutoff, string evaluationClass) => _db.Write(_ =>
+    {
+        var done = _datasets.SetHoldout(datasetId, cutoff, evaluationClass);
+        if (!done.Ok) return (done, null);
+
+        var set = _datasets.ById(datasetId)!;
+        if (_campaigns.OpenForDataset(datasetId) is { } already) return (done, already);
+
+        var opened = _campaigns.Open(
+            $"{set.Pair} {set.Interval} {set.Version}", set,
+            Settings.CampaignTrialBudget, Settings.CampaignVerdictBudget, Now);
+
+        return (done, opened.Campaign);
+    });
 
     /// <summary>
     /// THE OWNER'S DAILY REPORT, COMPOSED BY THE APP FROM WHAT IT MEASURED — see
@@ -318,6 +356,7 @@ public sealed class TradingGateway : IAsyncDisposable
         _materials = new MaterialStore(db);
         _fills = new FillStore(db);
         _datasets = new DatasetStore(db);
+        _campaigns = new CampaignStore(db);
         _health = health ?? new HealthRegistry();
         Settings = LoadSettings();
         // After the settings, because the report reads them; on this gateway's own clock, so a test

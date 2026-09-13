@@ -746,6 +746,44 @@ public sealed class Database : IDisposable
             // so an older database gains them and every existing dataset keeps being served in full.
             Exec("ALTER TABLE dataset ADD COLUMN holdout_from TEXT;");
             Exec($"ALTER TABLE dataset ADD COLUMN evaluation_class TEXT NOT NULL DEFAULT '{Data.EvaluationClass.Research}';");
+            // THE CAMPAIGN: A HOLDOUT, A STANDARD FIXED BEFORE THE WORK, AND A FINITE NUMBER OF ATTEMPTS.
+            //
+            // `docs/COUNCIL.md`:131-134: "registered submissions charged against a campaign-wide trial
+            // budget that survives team replacement, with campaign renewal authorised by code so no new
+            // campaign resets holdout access ... the scoring policy fixed before a campaign ... final
+            // evaluation scarce because every verdict leaks".
+            //
+            // THE POLICY TEXT IS COPIED ONTO THE ROW, not referenced. A policy read from a constant at
+            // judging time could change between the hypothesis and the verdict, and precommitment — that
+            // the criteria were fixed before the outcome was known — is one of the four things :212 names
+            // as unrecoverable afterwards. The sha beside it is what binds evidence to the standard.
+            //
+            // THE BUDGETS ARE COPIED TOO, off the owner's settings at open. A campaign's allowance is what
+            // it was opened with, so a setting nudged half way through cannot move the standard under
+            // evidence already collected.
+            //
+            // ONE OPEN CAMPAIGN PER HOLDOUT DATASET, and that is a PARTIAL UNIQUE INDEX rather than a
+            // check in C#: two presses racing must not be able to make two. Renewal is the only way a
+            // second campaign exists over one dataset — it closes the parent and opens a child carrying
+            // `renewed_from`, the parent's holdout and the parent's policy — so the index is what makes
+            // "renewal is the only route" true rather than merely intended.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_campaign(
+              id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+              name                  TEXT NOT NULL,
+              scoring_policy        TEXT NOT NULL,
+              scoring_policy_sha256 TEXT NOT NULL,
+              trial_budget          INTEGER NOT NULL,
+              verdict_budget        INTEGER NOT NULL,
+              holdout_dataset_id    INTEGER NOT NULL REFERENCES dataset(id),
+              holdout_from          TEXT NOT NULL,
+              opened_at             TEXT NOT NULL,
+              renewed_from          INTEGER REFERENCES strategy_campaign(id),
+              closed_at             TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_campaign_open_holdout
+              ON strategy_campaign(holdout_dataset_id) WHERE closed_at IS NULL;
+            """);
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','14') ON CONFLICT(key) DO UPDATE SET value='14';");
         }
 

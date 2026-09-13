@@ -337,6 +337,41 @@ public sealed class TradeAgentSettings
     public decimal AiDailyCostCap { get; set; } = 5m;
 
     /// <summary>
+    /// HOW MANY REGISTERED RESEARCH RUNS ONE CAMPAIGN ALLOWS (<c>docs/COUNCIL.md</c>:131, "a
+    /// campaign-wide trial budget that survives team replacement").
+    ///
+    /// <para><b>Two hundred is a choice, and what matters about it is that it is FINITE.</b> An
+    /// unlimited supply of attempts over one holdout is how a research process finds a rule that fits
+    /// the noise: every run is a peek at the same months, and enough peeks make a strategy that has
+    /// learnt the sample. Two hundred is a lot of hypotheses for one twelve-month window and small
+    /// enough to be reached, which is the point — reaching it is a renewal the owner authorises, not a
+    /// wall.</para>
+    ///
+    /// <para>It is COPIED onto the campaign when it opens, so changing this does not move the standard
+    /// under evidence already collected; the next campaign gets the new number. ZERO means no trials at
+    /// all, exactly as <see cref="AiDailyCostCap"/>'s zero means no spending — this is the value an
+    /// unreadable settings row falls to, and a row nobody could read must not be the event that takes a
+    /// limit off. A negative number reads as zero.</para>
+    /// </summary>
+    public int CampaignTrialBudget { get; set; } = 200;
+
+    /// <summary>
+    /// HOW MANY FINAL VERDICTS ONE CAMPAIGN'S LINEAGE ALLOWS (<c>docs/COUNCIL.md</c>:134, "final
+    /// evaluation scarce because every verdict leaks").
+    ///
+    /// <para><b>Three, and the number is small on purpose.</b> A verdict is computed over the holdout
+    /// bars, and its answer — even a single word of it — tells the research process something about
+    /// months it was never shown. Three is enough to promote a candidate, find it wanting and promote a
+    /// successor inside one holdout's life, and few enough that nobody can search the holdout by asking
+    /// for verdicts.</para>
+    ///
+    /// <para>It is counted across the whole RENEWAL LINEAGE, not per campaign, which is what makes
+    /// renewal buy attempts without buying holdout access (<c>docs/COUNCIL.md</c>:132). Zero means no
+    /// verdicts; a negative number reads as zero.</para>
+    /// </summary>
+    public int CampaignVerdictBudget { get; set; } = 3;
+
+    /// <summary>
     /// WHAT THE OWNER SAYS THEIR AI TOOL CHARGES THEM, per million tokens in and out, or null for
     /// "use the list price this build shipped".
     ///
@@ -409,6 +444,7 @@ public sealed class TradeAgentSettings
     ///   AiWorksOnItsOwn = false   the loop does not start on a row nobody could read
     ///   Guidance = ""             standing instructions nobody can vouch for are no instructions
     ///   AiDailyCostCap = 0        the AI may spend nothing until the row is written again
+    ///   Campaign*Budget = 0       a campaign opened from an unreadable row allows no attempt at all
     ///   AiPrice…PerMillion = null  the AI's turns cost the LIST price, which is the dearer reading
     ///
     /// <c>MaxNotionalPerOrder</c>, <c>MaxLossPerTrade</c> and <c>MaxDailyLoss</c> stay at 0, which on
@@ -435,6 +471,12 @@ public sealed class TradeAgentSettings
         // Zero is the smallest this field has and it means no spending, so a row nobody could read
         // is not the event that lifts the ceiling. The loop is not running on this row anyway.
         AiDailyCostCap = 0m,
+        // The same reading, for the same reason: a campaign opened while the settings cannot be read
+        // gets no attempts, rather than the shipped allowance from a row nobody can vouch for. A
+        // campaign is only ever opened by the owner pressing a button, so this costs nothing until
+        // the row is written again.
+        CampaignTrialBudget = 0,
+        CampaignVerdictBudget = 0,
         Risk = new RiskPolicy
         {
             MaxOrderQuantity = 0m,
