@@ -5348,7 +5348,7 @@ six test classes). Rebased three times as `main` moved, the schema ladder reconc
 timestamps checked); touched classes 3× → 97/97 (Unit) and 27/27 (Integration) each; Unit 959 + Fault 277 + Integration 656 = 1892 passed,
 0 failed, 1 skipped; names → 38 added, 0 removed; 145 test files text. Manager's gate at `19ef096`, Release: build → 0 warnings, 0 errors; suite →
 959 + 277 + 656 = 1892 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 38 added (sets 1505 → 1543); scan clean (grant tokens in tests, judged); no trailers; `rev-list
---count` → 0; CI run 34767356515 at `19ef096`: in flight at the time of this record; verdict in a follow-up commit.
+--count` → 0; CI run 34767356515 at `19ef096`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** the verdict itself (`U-referee-2`); no owner-visible budget line, nothing on the daily report, no renew button; no clear for a
 holdout and no way down for a class (both would un-hold bars); a dataset with no holdout has no campaign, so its runs are charged nothing;
