@@ -5383,3 +5383,44 @@ added, 0 removed. Manager's gate at `118e7fb` (rebased over `U-referee-1`; lande
 **NOT done:** no real provider call (every request went to the loopback fake); the one-run-at-a-time guard on the worker route is pinned
 by `BacktestRequestTests` rather than re-proved here; `MissionSituation.Cut` is in memory and does not survive a restart (`ai_attempt.
 context` is the durable copy); the chair is not on the harness; no box, no ATAS, no money.
+
+## 2026-09-13 — U-referee-2 landed: the verdict — a promotion record bound by hash, invalidated by a changed assumption, forward evidence after the freeze, delivered without a figure
+
+Rule 9's verdict half, by one fresh builder on `docs/briefs/U-referee-2.md` (killed by the session limit at 15:35 before reading anything,
+resumed from its prompt at 18:05). Merge `45719b2`, 8 commits, 15 files, +1920/−14 (`Database.cs` **schema 15** — `strategy_promotion`;
+new `PromotionStore`, `Referee.Verdict`, `ScoringPolicyV1`; `PublicationStore.cs` (an optional event id on `Commit`), `MissionEventStore.cs`
+(`verdict`), `MissionLoop.cs` (the Situation's promoted line), `DailyReports.cs`, `CONTRACTS.md`; three test classes). Nothing on the order path.
+
+- **One immutable row addressed by the nine facts it binds** (version, campaign, policy sha, interpreter build, holdout dataset and its sha at
+  run time, execution model, evaluator version, holdout run), `ON CONFLICT DO NOTHING`, no update, no delete — a reflection test holds the
+  store to `Record/ById/For/All/Standing`. RED: `no such table: strategy_promotion`; mutant (the clock hashed into the id): two ids for one
+  judgement.
+- **The holdout run is the referee's own, through the one in-process door, and is not a research trial.** RED (no door): "the holdout of
+  campaign 1 could not be run … holds out every bar from …"; mutant (registered as a trial): `Expected: 1 / Actual: 2` — the evaluation
+  charged twice.
+- **A changed assumption invalidates the evidence, computed at read time, never written back:** a `REJECTED` dataset, a changed interpreter
+  build or policy sha → `invalidated` with the reason. RED: `Expected: "invalidated" / Actual: "promoted"` on all three; mutant (the dataset's
+  CURRENT sha compared with itself): the re-collected case alone.
+- **Forward evidence after the freeze:** the holdout window must begin after the version's `created_at`. RED: "a version frozen after the
+  holdout begins promoted on it" (and the run in that test is the profitable one, so it is the date that refuses); mutant (compared against
+  when the run was made): refuses nothing.
+- **Delivered and told, with no figure:** one `verdict` wake for Research keyed by the promotion, a note whose only digits are the campaign
+  id (asserted digit by digit), the Situation naming the promoted version, section 8 listing every promotion, refusal and invalidation.
+  RED: `Not found: "PROMOTED version …"`; mutant (the holdout's net appended to the note): `Expected: "1" / Actual: "148"`.
+- **Found while wiring section 8:** `trade report` hands the agent the WHOLE rendered report, so a valued holdout line would have leaked
+  through it what `data-bars` and `backtest` refuse. The holdout run is named, dated and counted, never valued — proved over the wire on a
+  connection refused the same bars a moment later.
+- **Choices where COUNCIL is silent, in `CONTRACTS.md` as choices:** a separate promotion table (the verdict row is the CHARGE, this the
+  ANSWER); the scoring policy is CODE bound to the campaign's text by sha, a campaign fixing another policy is not judged; its clauses are
+  forward evidence, completed, one closed trade, net above declared costs — no drawdown or sample floor, because nobody measured one; the
+  execution model is the JUDGE'S (default `Frictionless`, hashed in); `Standing` reads the ledger state, not the file, for the money path.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `3f075be`, Release: 0 warnings, 0 errors (DLL
+timestamps checked); touched classes 3× → 18/18 and 1/1 each; Unit 980 + Fault 277 + Integration 657 = 1914 passed, 0 failed, 1 skipped;
+names → 19 added, 0 removed; 140 test files text. Manager's gate at `45719b2`, Release: build → 0 warnings, 0 errors; suite → 980 + 277 + 657 = 1914 passed, 0 failed, 1 skipped; names vs
+`main` → 0 removed, 19 added (sets 1546 → 1565); scan clean; no trailers; `TradingGateway.cs` diff read at landing — 22 added lines, the `Referee` and `Promotions` properties outside the handler table, the gate chain untouched; `rev-list
+--count` → 0; CI run 34771155930 at `45719b2`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no way for the owner to ASK for a verdict — `Referee.Verdict` runs from code and tests only, no card, no op, no verb (a test asks
+the whole op vocabulary by name); nothing reads `Promotions.Standing` on the order path yet (`U-freshness`/`U-flatten`); the trial-budget race
+untouched (`U-council-concurrent-2`); the guide says nothing about verdicts; no box, no ATAS, no money.
