@@ -864,6 +864,23 @@ public sealed class MissionLoop
     /// </summary>
     readonly HashSet<string> _turning = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// A MATERIAL PASS IN FLIGHT, and the other half of the same lease.
+    ///
+    /// <para><c>docs/COUNCIL.md</c> rule 7: the inbox scanner attests only across proven quiescence
+    /// of EVERY managed agent. A pass can say "the account owner put this file here" only if no
+    /// agent process was alive at any point in the window it measures — so the two have to exclude
+    /// each other in BOTH directions. A pass while a role is turning measures a window with an agent
+    /// in it and records every file it finds as unattested; a turn LAUNCHED while a pass is running
+    /// walks into the window that pass is measuring and costs it the same claim, which is the race
+    /// that only exists once two roles can turn at once.</para>
+    ///
+    /// <para>The turn is refused rather than queued, exactly as a second turn for a turning role is:
+    /// the pass is the app's own, it is bounded, and the loop asks again in <see
+    /// cref="MissionOptions.BusyRetry"/>.</para>
+    /// </summary>
+    bool _passing;
+
     readonly Dictionary<string, int> _sessionTurns = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _consecutiveErrors = new(StringComparer.Ordinal);
 
@@ -943,6 +960,7 @@ public sealed class MissionLoop
     {
         lock (_gate)
         {
+            if (_passing) return null;
             if (!_turning.Add(role)) return null;
             _nextTurnAt = null;
             _waitingFor = null;
@@ -966,8 +984,37 @@ public sealed class MissionLoop
         }
     }
 
-    /// <summary>Whether any role has a turn in flight — what the scanner's window turns on.</summary>
-    bool NobodyIsTurning { get { lock (_gate) return _turning.Count == 0; } }
+    /// <summary>
+    /// RUNS ONE MATERIAL PASS, OR DOES NOT RUN ONE AT ALL because the window it would measure has an
+    /// agent in it.
+    ///
+    /// <para>Quiescence is of EVERY managed agent and not of this role: a pass taken while the other
+    /// role's process is alive attests nothing, and — worse — it RECORDS what it finds with the
+    /// weaker word, permanently, because a material row is written once. Skipping it costs a pass;
+    /// taking it costs the owner the one claim in the ledger that says a file is theirs.</para>
+    ///
+    /// <para>While it runs, <see cref="Lease"/> refuses: a turn launched inside the window this pass
+    /// is measuring would take the same claim away, and the loop is the only thing that knows both
+    /// facts.</para>
+    /// </summary>
+    async Task<bool> PassAsync(CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (_turning.Count > 0 || _passing) return false;
+            _passing = true;
+        }
+
+        try { await _host.ScanAsync(ct); }
+        finally { lock (_gate) _passing = false; }
+        return true;
+    }
+
+    /// <summary>Whether this role has a turn in flight right now.</summary>
+    bool Turning(string role)
+    {
+        lock (_gate) return _turning.Contains(role);
+    }
 
     /// <summary>Turns this role has resumed into its current CLI session.</summary>
     int Sessions(string role)
@@ -1192,8 +1239,18 @@ public sealed class MissionLoop
             var due = RolesDue(events);
             if (due.Count == 0) return Idle(events);
 
+            // A ROLE THAT IS ALREADY TURNING IS NOT A CANDIDATE, and is stepped over exactly as a
+            // role that has spent its share is. Without this line a second caller always collides
+            // on the longest-waiting role and is refused, so the OTHER role — whose wake is sitting
+            // right behind it — never gets the turn it is owed while the first one runs.
+            //
+            // Every role due is already turning: the work is in hand, there is nothing to say and
+            // nothing to record, so this is a plain wait rather than the cap's sentence below.
+            var free = due.Where(r => !Turning(r)).ToList();
+            if (free.Count == 0) return _options.BusyRetry;
+
             // The first role whose own share AND the owner's ceiling both have room for a turn.
-            var affordable = due.FirstOrDefault(r => Spend(r).AdmitsAnotherTurn);
+            var affordable = free.FirstOrDefault(r => Spend(r).AdmitsAnotherTurn);
             if (affordable is null)
             {
                 // WHAT THE OWNER IS OWED AND CANNOT BE GIVEN, written down where they will read it.
@@ -1202,7 +1259,7 @@ public sealed class MissionLoop
                 // the thing that stopped the turn is that there is no money left to spend on one.
                 BlockOwnerMessages(events, "the day's AI spending ceiling is reached, so no turn can "
                                            + "be taken until it resets");
-                return CappedUntilMidnight(Spend(due[0])) ?? _options.BusyRetry;
+                return CappedUntilMidnight(Spend(free[0])) ?? _options.BusyRetry;
             }
             role = affordable;
         }
@@ -1225,11 +1282,15 @@ public sealed class MissionLoop
         if (conversation.Busy) return _options.BusyRetry;
 
         // ---- yield to the scanner ----------------------------------------------------------------
-        // Nothing is running at this line: the previous turn's process has exited and this one has
-        // not started. So a pass taken here measures a window that contains no agent and can attest
-        // what it finds to the owner. Removing this is what makes A_file_the_owner_drops_between_
-        // turns_is_still_recorded_as_theirs go red.
-        if (_host.InboxChangedSinceLastPass) await _host.ScanAsync(ct);
+        // Nothing of THIS turn is running at this line: the previous turn's process has exited and
+        // this one has not started. So a pass taken here measures a window that contains no agent
+        // and can attest what it finds to the owner. Removing this is what makes
+        // A_file_the_owner_drops_between_turns_is_still_recorded_as_theirs go red.
+        //
+        // PassAsync is what makes that true of the OTHER role as well: quiescence is of every
+        // managed agent, so the pass does not run while any role is turning, and no role may launch
+        // while it runs.
+        if (_host.InboxChangedSinceLastPass) await PassAsync(ct);
 
         // That pass may have recorded material, which raises a wake of its own. Taking it NOW rather
         // than leaving it for the next turn is what keeps "the owner dropped a file" one turn: the
@@ -1304,8 +1365,9 @@ public sealed class MissionLoop
         if (Lease(role) is not { } lease)
         {
             lock (_gate) _typedForARefusedTurn.AddRange(typed);
-            Refused?.Invoke($"{CouncilRoles.Title(role)}: a turn is already running for this role, "
-                            + "so a second one was not started.");
+            Refused?.Invoke($"{CouncilRoles.Title(role)}: a turn is already running for this role, or "
+                            + "a material pass is measuring the window a launch would walk into, so a "
+                            + "second one was not started.");
             return _options.BusyRetry;
         }
 
@@ -1410,7 +1472,11 @@ public sealed class MissionLoop
         //
         // After the commit, so what it records is where the files ended up: a file the fence moved
         // to `out/quarantine/` is recorded there rather than at a path that no longer exists.
-        await _host.ScanAsync(ct);
+        //
+        // And after this role's lease is dropped, so it is not this turn that stops the pass — but
+        // still not while the OTHER role is turning: that pass would attest nothing and would spend
+        // the sighting on the weaker word. The role that finishes last takes it.
+        await PassAsync(ct);
 
         var failed = ended?.Failed ?? true;
         int errors;

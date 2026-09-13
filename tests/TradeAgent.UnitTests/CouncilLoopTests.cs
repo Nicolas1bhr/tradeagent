@@ -7,17 +7,21 @@ using Xunit;
 namespace TradeAgent.Tests.Unit;
 
 /// <summary>
-/// ONE SCHEDULER, ONE ROLE PER TURN, ONE PROCESS AT A TIME (<c>docs/COUNCIL.md</c>, the
-/// <c>U-council-thin</c> line: "two role workspaces run SERIALLY by one app instance").
+/// ONE SCHEDULER, ONE ROLE PER TURN, AND AT MOST ONE TURN PER ROLE (<c>docs/COUNCIL.md</c>, the
+/// <c>U-council-thin</c> line: "two role workspaces run SERIALLY by one app instance", and
+/// <c>U-council-concurrent</c>, which makes every slot that sentence allowed a slot per role).
 ///
 /// <para>Before this the loop asked <c>MissionEventStore.Due</c> for every due event, handed the
 /// whole batch to the ONE conversation the app had, and charged the ONE cap. Two roles could not
 /// exist under that: a fact that woke Research was consumed by the chair's turn, Research never ran,
 /// and there was no reading of the day's spending that could say which of them had spent it.</para>
 ///
-/// <para>Serial is not a simplification to be undone later — it is what makes the leases in
-/// <c>U-council-concurrent</c> unnecessary today and the relay's crash cases tractable. Two agent
-/// processes against one trading account is a race with real money in it.</para>
+/// <para><b>What is no longer claimed, and what still is.</b> One process at a time was the whole of
+/// the safety argument and it is not any more: a role's turn may overlap the other role's, each under
+/// its own lease, and the tests below measure that rather than assume it. What has NOT changed is
+/// what a role may DO — only the Operations Director places orders, the gateway's dispatch gate is
+/// still a mutex, and two agent processes against one trading account is a race with real money in
+/// it precisely because the account is reached through that one gate and not through the loop.</para>
 /// </summary>
 public class CouncilLoopTests
 {
@@ -46,8 +50,15 @@ public class CouncilLoopTests
         }
     }
 
-    /// <summary>One role's conversation: what it was told, and while it was the only one running.</summary>
-    sealed class RoleConversation(string role, Concurrency concurrency) : IAgentConversation
+    /// <summary>
+    /// One role's conversation: what it was told, and while it was the only one running.
+    ///
+    /// <para>It reports itself to an <see cref="AgentPresence"/> for the length of its turn, exactly
+    /// as <c>AgentSession</c> does, because the inbox attestation is worth nothing unless the
+    /// scanner and every agent process are looking at one register.</para>
+    /// </summary>
+    sealed class RoleConversation(string role, Concurrency concurrency, AgentPresence? presence = null)
+        : IAgentConversation
     {
         readonly List<ChatTurn> _history = [];
 
@@ -55,9 +66,18 @@ public class CouncilLoopTests
         public List<string> Sent { get; } = [];
         public bool Busy { get; private set; }
 
+        /// <summary>How the turn ends. Non-zero is a failed turn, which is what the backoff counts.</summary>
+        public int Exit { get; set; }
+
+        /// <summary>How many times this conversation has been told to start a fresh CLI session.</summary>
+        public int Stops { get; private set; }
+
         /// <summary>What the agent does during its turn — writing a file into its own <c>out/</c>.</summary>
         public Action? OnTurn { get; set; }
-        public IReadOnlyList<ChatTurn> History => _history.ToArray();
+        public IReadOnlyList<ChatTurn> History
+        {
+            get { lock (_history) return _history.ToArray(); }
+        }
 
         public event Action<ChatTurn>? TurnAdded;
         public event Action<string>? Delta;
@@ -70,22 +90,41 @@ public class CouncilLoopTests
 
         async Task Run(string message, CancellationToken ct)
         {
-            Sent.Add(message);
+            lock (Sent) Sent.Add(message);
             Busy = true;
             StateChanged?.Invoke();
-            using (concurrency.Enter()) { OnTurn?.Invoke(); await Task.Delay(2, ct); }
+            using (concurrency.Enter())
+            using (presence?.Enter() ?? Nothing)
+            {
+                OnTurn?.Invoke();
+                await Task.Delay(2, ct);
+            }
 
             var turn = new ChatTurn(ChatRole.Ai, $"{role} did its turn.", DateTimeOffset.UtcNow);
-            _history.Add(turn);
+            lock (_history) _history.Add(turn);
             TurnAdded?.Invoke(turn);
             Busy = false;
             StateChanged?.Invoke();
             Delta?.Invoke("");
-            TurnEnded?.Invoke(new AgentTurnEnded(0, TimeSpan.FromMilliseconds(3), turn.Text, DateTimeOffset.UtcNow));
+            TurnEnded?.Invoke(new AgentTurnEnded(Exit, TimeSpan.FromMilliseconds(3), turn.Text,
+                DateTimeOffset.UtcNow));
+        }
+
+        /// <summary>A handle that closes nothing, for a conversation with no register behind it.</summary>
+        static IDisposable Nothing { get; } = new NoWindow();
+
+        sealed class NoWindow : IDisposable
+        {
+            public void Dispose() { }
         }
 
         public IReadOnlyList<string> TakeTyped() => [];
-        public Task StopAsync() => Task.CompletedTask;
+
+        public Task StopAsync()
+        {
+            Stops++;
+            return Task.CompletedTask;
+        }
         public Task CancelAsync() => Task.CompletedTask;
         public void Queue(string message) { }
     }
@@ -103,15 +142,17 @@ public class CouncilLoopTests
 
         readonly CouncilRelay _relay;
 
-        public CouncilHost(Database db, string root, Concurrency concurrency)
+        public CouncilHost(Database db, string root, Concurrency concurrency,
+            AgentPresence? presence = null)
         {
             _db = db;
             Root = root;
+            Presence = presence;
             Events = new MissionEventStore(db);
             _relay = new CouncilRelay(db, HomeFor);
             foreach (var role in CouncilRoles.All)
             {
-                Conversations[role] = new RoleConversation(role, concurrency);
+                Conversations[role] = new RoleConversation(role, concurrency, presence);
                 Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), ".tradeagent"));
                 Directory.CreateDirectory(Path.Combine(WorkspaceBuilder.HomeOf(root, role), WorkspaceBuilder.OutDir));
             }
@@ -140,8 +181,35 @@ public class CouncilLoopTests
         public string AgentHome => WorkspaceBuilder.HomeOf(Root, CouncilRoles.Operations);
         public string HomeFor(string role) => WorkspaceBuilder.HomeOf(Root, role);
 
-        public bool InboxChangedSinceLastPass => false;
-        public Task ScanAsync(CancellationToken ct) => Task.CompletedTask;
+        /// <summary>
+        /// The register every conversation here reports itself to, or null for the tests that are
+        /// not about the attestation at all — and then nothing is scanned and nothing is claimed.
+        /// </summary>
+        public AgentPresence? Presence { get; }
+
+        /// <summary>Run inside the material pass, so a test can hold one open across another turn.</summary>
+        public Action? WhileScanning { get; set; }
+
+        /// <summary>How many complete material passes this host has run.</summary>
+        public int Passes;
+
+        DateTimeOffset? _lastPassAt;
+
+        public bool InboxChangedSinceLastPass =>
+            Presence is not null && MissionInbox.ChangedSince(Root, _lastPassAt);
+
+        public Task ScanAsync(CancellationToken ct)
+        {
+            if (Presence is null) return Task.CompletedTask;
+
+            // Captured BEFORE the walk, so this host's idea of the last pass is never later than the
+            // scanner's own. Erring early costs a spare pass; erring late costs an attestation.
+            _lastPassAt = DateTimeOffset.UtcNow;
+            Interlocked.Increment(ref Passes);
+            WhileScanning?.Invoke();
+            new MaterialScanner(_db, Root, Presence.NoneSince).Scan(ct);
+            return Task.CompletedTask;
+        }
 
         public AiSpendToday Spend => AiSpendToday.NotMetered;
 
@@ -358,7 +426,10 @@ public class CouncilLoopTests
         // Two launch records, one per role, each charged to the role that ran.
         Assert.Equal([CouncilRoles.Operations, CouncilRoles.Research], host.Opened.Select(o => o.Role));
 
-        // ONE PROCESS AT A TIME, measured rather than assumed.
+        // ONE AT A TIME HERE, measured rather than assumed: these two turns are taken one after the
+        // other by one caller, and nothing in the loop starts a second turn behind the first. What
+        // is NOT claimed by this number is that two turns can never overlap — they can, and
+        // Two_roles_turns_overlap_under_their_own_leases_and_the_card_names_both measures two.
         Assert.Equal(1, concurrency.Peak);
 
         // And the turn was told which role it is, so it need not infer it from its own folder.
@@ -511,6 +582,199 @@ public class CouncilLoopTests
         // And its own share of the day, which is not the day's total.
         Assert.Contains($"Your share of that limit, as the {CouncilRoles.Title(CouncilRoles.Operations)}",
             prompt);
+    }
+
+    /// <summary>
+    /// THE MEASURED NUMBER THIS UNIT CHANGES: two roles' turns really do overlap, each under its own
+    /// lease, and the card names both of them.
+    ///
+    /// <para>Every other test in this class takes its turns one after another, so its high-water mark
+    /// is one; that is a fact about the caller, not a guarantee of the loop. Here both turns are in
+    /// flight at the same instant — each conversation reports itself alive and waits for the other —
+    /// and the peak is two. It is measured rather than assumed for the same reason it always was.</para>
+    ///
+    /// <para>And the line on the card is read at that instant. "Working" over two roles that are both
+    /// working is not wrong so much as useless: the owner cannot tell it from one role working and
+    /// the other stuck, which is the state the share on the Safety page exists to repair.</para>
+    /// </summary>
+    [Fact]
+    public void Two_roles_turns_overlap_under_their_own_leases_and_the_card_names_both()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var concurrency = new Concurrency();
+        var host = new CouncilHost(db, root, concurrency);
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        foreach (var role in CouncilRoles.All)
+            host.Events!.Raise(MissionEventIds.ForRole(MissionEventIds.Review(earlier), role),
+                MissionEventKind.Review, earlier, role: role);
+
+        // BOTH INSIDE THEIR OWN TURN AT ONCE. The chair goes first because its wake is the oldest;
+        // the second caller starts only once the first is really inside, which is the moment the
+        // loop has to step over a role that is turning and give the other one its turn.
+        using var release = new ManualResetEventSlim();
+        var inside = CouncilRoles.All.ToDictionary(r => r, _ => new ManualResetEventSlim());
+        foreach (var role in CouncilRoles.All)
+        {
+            var mine = inside[role];
+            host.Conversations[role].OnTurn = () =>
+            {
+                mine.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(30)), "the other role never started");
+            };
+        }
+
+        MissionStatus? mid = null;
+        var chair = new Thread(() => loop.TurnAsync().GetAwaiter().GetResult());
+        chair.Start();
+        Assert.True(inside[CouncilRoles.Operations].Wait(TimeSpan.FromSeconds(30)),
+            "the chair never started its turn");
+
+        var director = new Thread(() => loop.TurnAsync().GetAwaiter().GetResult());
+        director.Start();
+        Assert.True(inside[CouncilRoles.Research].Wait(TimeSpan.FromSeconds(30)),
+            "the Research Director was not given a turn while the chair was in one");
+
+        mid = loop.Status;
+        release.Set();
+
+        Assert.True(chair.Join(TimeSpan.FromSeconds(30)), "the chair's turn never finished");
+        Assert.True(director.Join(TimeSpan.FromSeconds(30)), "the Research Director's turn never finished");
+        foreach (var e in inside.Values) e.Dispose();
+
+        Assert.Equal(2, concurrency.Peak);
+        Assert.Single(host.Conversations[CouncilRoles.Operations].Sent);
+        Assert.Single(host.Conversations[CouncilRoles.Research].Sent);
+
+        Assert.NotNull(mid);
+        Assert.Equal(MissionState.Working, mid!.State);
+        Assert.Equal([CouncilRoles.Operations, CouncilRoles.Research], mid.Roles);
+        Assert.Equal($"{CouncilRoles.Title(CouncilRoles.Operations)} and "
+                     + $"{CouncilRoles.Title(CouncilRoles.Research)}: working",
+            DashboardPage.MissionSentence(mid));
+    }
+
+    /// <summary>
+    /// ITEM 5, RED FIRST: QUIESCENCE IS OF EVERY MANAGED AGENT, so a file the owner drops between
+    /// turns is still recorded as THEIRS when two roles are turning.
+    ///
+    /// <para><c>docs/COUNCIL.md</c> rule 7. The pass before a turn can attest what it finds only
+    /// across a window with no agent process alive in it, and a material row is written ONCE — so a
+    /// pass that runs while the other role is mid-turn does not merely fail to attest, it spends the
+    /// sighting on the weaker word for good. Serially there was no such moment; with two roles there
+    /// is one every time a turn launches beside a pass.</para>
+    ///
+    /// <para>Both directions are pressed here: the pass is held open, and the other role tries to
+    /// launch inside it. The turn is refused — the pass is the app's own, bounded, and the loop asks
+    /// again in five seconds — and the owner keeps the one claim in the ledger that says the file is
+    /// theirs.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_file_dropped_between_turns_is_still_the_owners_when_another_role_tries_to_launch()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var presence = new AgentPresence();
+        var host = new CouncilHost(db, root, new Concurrency(), presence);
+        var loop = new MissionLoop(host, NoHeartbeat);
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+
+        void Wake(string role, int n) => host.Events!.Raise(
+            MissionEventIds.ForRole($"{MissionEventKind.Review}:{n}", role),
+            MissionEventKind.Review, earlier.AddSeconds(n), role: role);
+
+        // ---- a first turn, so a pass has run and the window is closed behind it ----------------
+        Wake(CouncilRoles.Operations, 1);
+        await loop.TurnAsync();
+
+        // ---- the owner drops something, with nothing alive -------------------------------------
+        File.WriteAllText(Path.Combine(root, MaterialScanner.InboxDir, "broker-statement.pdf"),
+            "the owner's document");
+
+        // ---- and the other role tries to launch INSIDE the pass that is recording it -----------
+        Wake(CouncilRoles.Operations, 2);
+        Wake(CouncilRoles.Research, 3);
+
+        using var scanning = new ManualResetEventSlim();
+        using var tried = new ManualResetEventSlim();
+        host.WhileScanning = () =>
+        {
+            if (!scanning.IsSet) { scanning.Set(); Assert.True(tried.Wait(TimeSpan.FromSeconds(30))); }
+        };
+
+        Together(
+            () => loop.TurnAsync().GetAwaiter().GetResult(),
+            () =>
+            {
+                Assert.True(scanning.Wait(TimeSpan.FromSeconds(30)), "no pass ever started");
+                loop.TurnAsync().GetAwaiter().GetResult();
+                tried.Set();
+            });
+
+        var row = new MaterialStore(db).Present().Single(m => m.Name == "broker-statement.pdf");
+        Assert.Equal(MaterialOrigin.Inbox, row.Origin);
+    }
+
+    /// <summary>
+    /// ITEM 5, RED FIRST: ONE ROLE'S TURNS ARE NOT THE OTHER ROLE'S. The session count and the run
+    /// of failures are per role, because both are facts about ONE conversation.
+    ///
+    /// <para>A single session counter rotated whichever conversation ran next: two chair turns threw
+    /// away the Research Director's CLI session, which had taken one, and the context that was
+    /// actually long went on growing. A single error count made one role's failures the other
+    /// role's backoff — a Research Director that cannot start is a half-hour wait on a chair that is
+    /// working perfectly well.</para>
+    /// </summary>
+    [Fact]
+    public async Task One_roles_failures_and_session_do_not_rotate_or_back_off_the_other_roles()
+    {
+        var (db, root) = Workspace();
+        using var _ = db;
+        var host = new CouncilHost(db, root, new Concurrency());
+        var loop = new MissionLoop(host, new MissionOptions
+        {
+            ReviewEvery = TimeSpan.Zero,
+            TurnsPerSession = 2
+        });
+
+        var chair = host.Conversations[CouncilRoles.Operations];
+        var research = host.Conversations[CouncilRoles.Research];
+        chair.Exit = 2;                                  // every chair turn fails
+
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-2);
+        void Wake(string role, int n) => host.Events!.Raise(
+            MissionEventIds.ForRole($"{MissionEventKind.Review}:{n}", role),
+            MissionEventKind.Review, earlier.AddSeconds(n), role: role);
+
+        // TWO CHAIR TURNS, both failing, which is exactly its allowance of one CLI session.
+        for (var i = 1; i <= 2; i++)
+        {
+            Wake(CouncilRoles.Operations, i);
+            Assert.Equal(TimeSpan.FromSeconds(i == 1 ? 30 : 60), await loop.TurnAsync());
+        }
+
+        Assert.Equal(2, chair.Sent.Count);
+        Assert.Equal(0, chair.Stops);
+
+        // THE RESEARCH DIRECTOR'S FIRST TURN, which ends cleanly. Its session has taken NO turns, so
+        // nothing rotates it: one counter between them would throw away the session of the role that
+        // had not used it, and leave the long context of the role that had.
+        Wake(CouncilRoles.Research, 3);
+        await loop.TurnAsync();
+
+        Assert.Single(research.Sent);
+        Assert.Equal(0, research.Stops);
+
+        // AND THE CHAIR'S RUN OF FAILURES IS STILL ITS OWN: its third failed turn doubles to 120s.
+        // One counter between them would have been reset by the clean turn above and this would be
+        // thirty seconds — a role that cannot start, retried as though it were healthy, because a
+        // different role is. Its own third turn is also where its session is rotated.
+        Wake(CouncilRoles.Operations, 4);
+        Assert.Equal(TimeSpan.FromSeconds(120), await loop.TurnAsync());
+        Assert.Equal(1, chair.Stops);
     }
 
     /// <summary>

@@ -398,19 +398,29 @@ sealed class DashboardPage
     };
 
     /// <summary>
-    /// WHICH ROLE THE REST OF THE LINE IS ABOUT, as a prefix, or nothing at all where no council is
+    /// WHICH ROLES THE REST OF THE LINE IS ABOUT, as a prefix, or nothing at all where no council is
     /// behind the loop.
     ///
     /// It is a prefix rather than a suffix because the sentence already ends with the thing the loop
-    /// is waiting for, and that is the half an owner reads first. "Working" with two roles running
-    /// one at a time is otherwise an ambiguous word: a council in which Operations takes every turn
-    /// and Research never runs looks exactly like a healthy one, and the repair for the two is
-    /// different — the share on the Safety page, not the daily limit.
+    /// is waiting for, and that is the half an owner reads first. "Working" with two roles is
+    /// otherwise an ambiguous word: a council in which Operations takes every turn and Research
+    /// never runs looks exactly like a healthy one, and the repair for the two is different — the
+    /// share on the Safety page, not the daily limit.
+    ///
+    /// EVERY ROLE THAT IS TURNING, because their turns may overlap: a line naming one of two working
+    /// roles is a line that is right half the time, and the half it gets wrong is the one an owner is
+    /// looking at when they wonder why the other role is quiet.
     /// </summary>
-    static string Whose(MissionStatus status) =>
-        status.Role is { Length: > 0 } role && status.State is MissionState.Working or MissionState.Waiting
-            ? $"{CouncilRoles.Title(role)}: "
-            : "";
+    static string Whose(MissionStatus status)
+    {
+        if (status.State is not (MissionState.Working or MissionState.Waiting)) return "";
+
+        var roles = status.Roles.Count > 0 ? status.Roles
+            : status.Role is { Length: > 0 } one ? [one]
+            : (IReadOnlyList<string>)[];
+
+        return roles.Count == 0 ? "" : $"{string.Join(" and ", roles.Select(CouncilRoles.Title))}: ";
+    }
 
     /// <summary>
     /// How much it has done, and whether it is getting anywhere. The error count is spelled rather

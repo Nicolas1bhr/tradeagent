@@ -1100,9 +1100,19 @@ chair's (`CouncilRoles.Or`), because the single agent the council replaces was O
 **A file is attributed by the attempt id in its NAME.** The `## Situation` names the launch id and the
 agent writes `out/report-<attempt>.md` or `out/agenda-<attempt>.md`; the relay reads the id back out.
 A file whose id is not in `ai_attempt`, or names a launch made for another role, or names one still
-`LAUNCHED` that is not the pass's own turn, is MOVED to `out/quarantine/` with an activity line and
-never published. `ENDED` and `LOST` both publish: a killed turn's report is the work of THAT turn, and
-attribution by whichever launch happened to run the pass named the wrong one.
+`LAUNCHED` that is not the pass's own turn AND is not a launch this process is still flying, is MOVED
+to `out/quarantine/` with an activity line and never published. `ENDED` and `LOST` both publish: a
+killed turn's report is the work of THAT turn, and attribution by whichever launch happened to run the
+pass named the wrong one. A file whose launch IS still flying here is LEFT where it is — that is the
+other role, mid-turn, and its own commit publishes it; quarantining it would take a live turn's report
+away from it on the strength of when a pass happened to run.
+
+**A pass belongs to the role whose turn it follows.** `CouncilRelay.Run(role, attempt)` touches only
+that role's `out/`; `Reconcile()` is the only pass over every role and is the app's start-up pass, when
+nothing is flying. The staged files are READ before the turn's `Database.Write` opens — there is one
+lock over the whole store, so reading them inside the commit held it across every byte the agent wrote
+and the other role could not open its own launch record until the read finished. What is still read
+inside the transaction is `WorkspaceRevisions.Snapshot`'s two size-capped memory files.
 
 **`publication` also holds each role's own memory, versioned.** `kind` `plan` (`trading/PLAN.md`, at
 most 60 non-empty lines) and `journal` (`trading/JOURNAL.md`, at most 200; older entries go to
@@ -1128,6 +1138,21 @@ never a wake answered by a turn the ledger did not close.
 folders plus `in/` and `out/`, all under one `agent` origin so `MarkMissing` never invents a deletion.
 What a role was handed and what it published are measured facts in `material`, which the agent cannot
 edit, beside the relay's own record of the same artifacts.
+
+**Two roles' turns may overlap, and three leases are what keeps that honest.** A turn lease per role in
+`MissionLoop` (a second `TurnAsync` for a role already turning is refused in words, never queued, and a
+role that is turning is stepped over when the next turn's role is chosen); one open attempt, one staged
+close and one reservation per role in `TurnMeter`; and a register of the launches THIS process is
+flying (`LiveAttempts`), which is what a second meter skips when it turns every other open row `LOST`.
+**All three are in memory, deliberately** — the same choice the gateway's dispatch lease and the
+owner's composite lease are written down above for: a claim that outlived the process holding it could
+never be released. The durable witness that a turn was in flight is its `LAUNCHED` `ai_attempt` row,
+and a restart holds no leases, loses every open row at its reservation and reconciles from disk. There
+is no schema for any of it. Quiescence stays whole-council: a material pass runs only when NO role is
+turning, and no role may launch while one runs (`docs/COUNCIL.md` rule 7 — the scanner attests only
+across proven quiescence of every managed agent). `_sessionTurns`, the run of consecutive errors and
+the cap notice are per role, because each is a fact about one conversation. What is NOT concurrent is
+the money path: only the Operations Director places orders and the gateway's dispatch gate is a mutex.
 
 ## The AI's spending — `src/TradeAgent.Core/Db/AiAttemptStore.cs`
 

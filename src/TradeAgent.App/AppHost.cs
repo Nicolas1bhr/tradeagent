@@ -211,10 +211,12 @@ public sealed class AppHost : IAsyncDisposable
     /// one. It is metered on this line and nowhere else — every run of the CLI is charged to
     /// somebody, and a role whose turns were not attached would spend the owner's day invisibly.
     ///
-    /// <b>One open attempt at a time is safe because the council is serial.</b>
-    /// <see cref="TurnMeter"/> holds a single open attempt, and <see cref="MissionLoop"/> runs one
-    /// role's turn at a time by construction; concurrent roles are <c>U-council-concurrent</c>, and
-    /// they need the meter to hold one per role before they can exist.
+    /// <b>One open attempt PER ROLE, because two roles' turns may overlap.</b>
+    /// <see cref="TurnMeter"/> holds an open attempt, a staged close and a reservation for each role
+    /// separately, and <see cref="MissionLoop"/> holds a turn lease per role: a second turn for a
+    /// role that is already turning is refused, and the other role is free to work meanwhile. What
+    /// is NOT concurrent is the money path — only the Operations Director places orders, and the
+    /// gateway's dispatch gate is still a mutex.
     /// </summary>
     public IAgentConversation? ConversationFor(string role)
     {
