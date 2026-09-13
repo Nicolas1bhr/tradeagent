@@ -227,19 +227,17 @@ static class Recovery
     /// kept by the disk. Null leaves the simulator's own two seconds, which is what a fixture about
     /// the budget itself needs. See <c>UnknownCloseTests</c>' <c>PressBudget</c>.
     ///
-    /// THE PRESSES IN THIS FILE STILL PASS NULL, AND THAT IS A SMALLER EXPOSURE RATHER THAN NONE.
-    /// Say it plainly so the next reader does not take silence for immunity: the eleven fixtures below
-    /// that press (five in <c>OperatorEmergencyRecordTests</c>, one in <c>UnconfirmedLatchTests</c>,
-    /// three in <c>CloseAllOutcomeTests</c>, two in <c>CancelAllPerOrderSettlementTests</c>) judge what
-    /// the press did with its legs, under the same two seconds, on the same disk — a budget that goes
-    /// before the leg's turn changes those verdicts as surely as it changed this one's. What is
-    /// different is measurable: none of them has an unresolved
-    /// reducer to settle, so <c>SettleAnUnresolvedReducerOrRefuse</c> returns without a wire call and
-    /// without a write, and the two transitions that cost 78-141 ms of the windows budget in
-    /// U-press-settle-win's marks are not in their window at all — two durable commits before the leg
-    /// instead of four. None has gone red on any runner. They are NOT moved here: U-press-settle-win's
-    /// brief is the class in <c>UnknownCloseTests</c>, and moving a file-wide default on the strength
-    /// of a red that has not happened is a different unit's call, not a fixer's.
+    /// THE ELEVEN PRESSES IN THIS FILE NOW PASS IT, and the red that changed the answer is
+    /// U-press-inflight-win's. They were named EXPOSED here on 2026-09-12 — five in
+    /// <c>OperatorEmergencyRecordTests</c>, one in <c>UnconfirmedLatchTests</c>, three in
+    /// <c>CloseAllOutcomeTests</c>, two in <c>CancelAllPerOrderSettlementTests</c> — on the argument
+    /// that two durable commits before the leg is a smaller exposure than four and that none had
+    /// gone red. A third fixture of the family then went red on windows-latest (CI run 34771155930,
+    /// <c>CancelAllAgainstOpenWorkTests</c>), and it went red on the SHORTEST window of the three:
+    /// the press's own write-ahead row and nothing else, with its book read refused straight after.
+    /// Smaller is not immune, and every verdict below is what the press DID with its legs — a
+    /// record, a state, a book, an account — never how long it took. So they take the generous
+    /// budget, every assertion unchanged, and nothing in this file is left judging the runner's disk.
     /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
         FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
@@ -920,7 +918,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task A_close_that_landed_then_failed_leaves_a_flagged_record()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pos-1", TestEnv.Buy(qty: 2m));
         Assert.Single(c.Inner.Broker.Positions);
@@ -948,7 +946,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task Close_all_with_a_healthy_connector_closes_each_position_once_and_records_each()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "flat-es", TestEnv.Buy(qty: 2m));
         await gw.PlaceAsync(AgentContext.Operator, "flat-nq", TestEnv.Buy("NQ", 1m));
@@ -976,7 +974,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task Cancel_all_records_every_order_it_cancels()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "w-1", TestEnv.Buy());
         var b = await gw.PlaceAsync(AgentContext.Operator, "w-2", TestEnv.Buy("NQ"));
@@ -1007,7 +1005,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task A_cancel_all_that_failed_on_the_wire_leaves_its_orders_flagged()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "wf-1", TestEnv.Buy());
         // U2c1b: the wire call is a per-ORDER cancel now, so the wire fails where a per-order
@@ -1032,7 +1030,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task The_emergency_controls_still_work_while_trading_is_paused()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "eh-1", TestEnv.Buy());
         c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
@@ -1314,7 +1312,7 @@ public class UnconfirmedLatchTests
     [Fact]
     public async Task Confirming_one_outcome_does_not_lift_another_requests_pause()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "latch-pos", TestEnv.Buy(qty: 2m));   // a position to close
 
@@ -1433,7 +1431,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task Close_all_keeps_going_after_one_position_fails()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "cp-es", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "cp-nq", TestEnv.Buy("NQ", 1m));
@@ -1459,7 +1457,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task A_close_that_is_only_submitted_is_not_counted_as_a_closed_position()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "sub-es", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "sub-nq", TestEnv.Buy("NQ", 1m));
@@ -1490,7 +1488,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task Close_all_says_it_closed_everything_only_when_the_account_is_flat()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "flat-a", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "flat-b", TestEnv.Buy("NQ", 1m));
@@ -1921,7 +1919,7 @@ public class CancelAllPerOrderSettlementTests
     [Fact]
     public async Task Each_order_is_settled_by_the_answer_to_its_own_cancel()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "pa-1",
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
@@ -1950,7 +1948,7 @@ public class CancelAllPerOrderSettlementTests
     [Fact]
     public async Task A_sweep_that_accounted_for_everything_settles_every_record()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pb-1",
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));

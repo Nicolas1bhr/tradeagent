@@ -24,13 +24,28 @@ namespace TradeAgent.Tests.Fault;
 //
 // Every test here asserts both directions: the unsafe outcome is refused AND an ordinary press
 // still reaches the wire.
+//
+// AND EVERY PRESS BELOW RUNS UNDER `Unresolved.PressBudget` EXCEPT WHERE THE BUDGET IS THE SUBJECT.
+// "Reaches the wire" is a claim about what the press DID, and everything between the instant a press
+// opens its deadline and the instant its leg goes out is durable SQLite at `synchronous=FULL` — on
+// windows-latest one such commit has been measured at 2234 ms, which is a whole emergency budget
+// (`U-press-win-3`), and the class has now cost three fixtures their green (`U-sweep-win`,
+// `U-press-settle-win`, `U-press-inflight-win`). The three classes immediately below therefore take
+// the generous budget; `OperatorPressIsAnEmergencyTests`, whose verdict IS the promise, keeps the
+// simulator's two seconds and says so per test. No assertion in this file changed.
 // =================================================================================================
 public class EmergencyPressTests
 {
-    /// <summary>A position that is open, with the close left resting on the book rather than filling.</summary>
+    /// <summary>
+    /// A position that is open, with the close left resting on the book rather than filling.
+    ///
+    /// <see cref="Unresolved.PressBudget"/>, as everywhere in this file outside
+    /// <see cref="OperatorPressIsAnEmergencyTests"/>: every verdict here is a record, a flag or a
+    /// book, and a press whose budget went on the runner's disk before its leg leaves none of them.
+    /// </summary>
     static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> WithAnOpenPosition(decimal qty = 2m)
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         await gw.PlaceAsync(AgentContext.Operator, "pos-1", TestEnv.Buy(qty: qty));
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;         // the close will rest, not fill
         return (gw, c, db);
@@ -87,7 +102,7 @@ public class EmergencyPressTests
     [Fact]
     public async Task A_successful_cancel_all_press_also_pauses_until_it_is_resolved()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "ca-1", TestEnv.Buy());
 
@@ -127,7 +142,7 @@ public class EmergencyPressTests
     [Fact]
     public async Task A_press_is_judged_by_its_own_records_and_not_by_unrelated_work()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "own-pos", TestEnv.Buy("ES", 2m));
 
@@ -173,7 +188,7 @@ public class SecondPressRefusedTests
     [Fact]
     public async Task A_second_close_all_is_refused_while_the_first_is_unresolved()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "sp-1", TestEnv.Buy(qty: 2m));
         c.Inner.Faults.Fill = FillBehaviour.LeaveWorking;
@@ -206,7 +221,7 @@ public class SecondPressRefusedTests
     [Fact]
     public async Task An_unresolved_cancel_all_does_not_block_close_all()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pk-1", TestEnv.Buy());
         c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
@@ -234,7 +249,7 @@ public class PressReachesTheWireOnItsOwnTermsTests
     [Fact]
     public async Task Cancel_all_sends_one_cancel_per_captured_order_and_no_account_wide_sweep()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking });
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "po-1", TestEnv.Buy());
         var b = await gw.PlaceAsync(AgentContext.Operator, "po-2", TestEnv.Buy("NQ"));
@@ -262,7 +277,7 @@ public class PressReachesTheWireOnItsOwnTermsTests
     [Fact]
     public async Task A_close_is_not_sent_when_the_position_changed_after_the_press()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "dr-1", TestEnv.Buy("ES", 2m));
 
@@ -319,6 +334,13 @@ public class PressReachesTheWireOnItsOwnTermsTests
 /// hitting it is ordinary. The press is now charged the WIRE and not the disk — see
 /// `TheStalledPressGaveUpOnItsOwnDeadline` — and the class stays in `Timing`, because what it still
 /// measures is a wall clock around a platform call and a descheduled runner would still redden it.
+///
+/// U-press-inflight-win: THREE of the five below still keep the simulator's two seconds, because
+/// their verdict IS what the press did about that deadline. The other two —
+/// `The_position_read_before_the_close_inherits_the_scope` and `A_healthy_press_is_untouched_by_the
+/// _scope` — assert the scope's existence and the book, never a duration, so they take
+/// `Unresolved.PressBudget` and are argued at themselves. The trait is unchanged and no assertion
+/// moved; a member that no longer needs the runner's clock costs a `Timing` class nothing.
 /// </summary>
 [Trait("Category", "Timing")]
 public class OperatorPressIsAnEmergencyTests
@@ -420,11 +442,18 @@ public class OperatorPressIsAnEmergencyTests
     /// THE READ BEFORE THE CLOSE IS PART OF THE EMERGENCY, not a prelude to it. This is the half the
     /// connector cannot classify for itself: `positions` is an ordinary RPC whatever it is nested in,
     /// and the scope is the only thing that says otherwise.
+    ///
+    /// ONE OF THE TWO IN THIS CLASS THAT TAKE <see cref="Unresolved.PressBudget"/>. What it asserts
+    /// is that the deadline EXISTS, is inherited by every read, and is ONE — three facts about the
+    /// scope and none about its size, all of them exactly as true at twenty seconds as at two. Under
+    /// the simulator's two the press's capture read can instead be refused by a budget the runner's
+    /// disk spent, which throws out of the press and asserts nothing at all. The class keeps its
+    /// `Timing` trait: it is per class, and the three tests that measure the deadline still need it.
     /// </summary>
     [Fact]
     public async Task The_position_read_before_the_close_inherits_the_scope()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "st-2", TestEnv.Buy("ES", 2m));
 
@@ -443,11 +472,16 @@ public class OperatorPressIsAnEmergencyTests
     /// <summary>
     /// THE OTHER DIRECTION. A healthy platform is not slowed down or refused by any of this: the
     /// scope only ever WIDENS urgency, and the ordinary press still closes the position.
+    ///
+    /// THE OTHER OF THE TWO ON <see cref="Unresolved.PressBudget"/>, and for the same reason: its
+    /// verdict is the book — one target, FILLED, the account flat — which is precisely the verdict a
+    /// budget spent on the runner's disk destroys. Nothing about "the scope does not disturb a
+    /// healthy press" needs that budget to be two seconds rather than twenty.
     /// </summary>
     [Fact]
     public async Task A_healthy_press_is_untouched_by_the_scope()
     {
-        var (gw, c, db) = await Recovery.Ready();
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "st-3", TestEnv.Buy("ES", 2m));
 
