@@ -429,4 +429,45 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         Assert.Equal(JsonValueKind.Null, open.GetProperty("holdout_from").ValueKind);
         Assert.Contains("holdout_from", Data(reply).GetProperty("note").GetString()!, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// THE OTHER TRANSPORT INTO THE SAME HANDLER SERVES NO HOLDOUT BAR EITHER.
+    ///
+    /// <para><c>U-api-worker</c> landed a second way in while this unit was being built: the app-owned
+    /// harness has no child process, so it presents no machine token and no launch grant and reaches the
+    /// gateway through <c>GatewayPipeServer.CallAsync</c> instead of the pipe. Its <c>data</c> tool
+    /// carries <c>data-list</c> and <c>data-bars</c>, which is exactly the surface this unit refuses.</para>
+    ///
+    /// <para>The refusal needed no new code for it, and that is the point being asserted: the check is
+    /// inside the READER, not beside the transport, so a second door onto the same handler inherits it.
+    /// Every op is asked over that door too, with a window covering the whole dataset.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(CouncilRoles.Research)]
+    [InlineData(null)]
+    public async Task Not_one_op_reached_through_the_in_process_worker_surface_serves_a_holdout_bar(string? role)
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), NewPipe());
+
+        var set = Given(db);
+        var cutoff = set.HoldoutFrom!.Value;
+        var program = GivenProgram(role ?? CouncilRoles.Research);
+
+        foreach (var op in EveryOp())
+        {
+            var reply = await server.CallAsync(new IpcRequest
+            {
+                Op = op, Session = "worker", RequestId = $"holdout-worker-{op}",
+                Args = Args(("pair", set.Pair), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
+                    ("strategy", program), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(1000))),
+                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"))
+            }, role, "attempt-worker");
+
+            var served = Held(Data(reply), cutoff);
+            Assert.True(served is null,
+                $"'{op}' over the in-process worker surface served a bar at {served:u}, at or after {cutoff:u}");
+        }
+    }
 }
