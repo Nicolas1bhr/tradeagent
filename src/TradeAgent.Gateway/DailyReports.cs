@@ -509,7 +509,10 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         return new ReportResearch
         {
-            AppMetrics = Cap(metrics, ListShown, "dataset"),
+            // "measured line" rather than "dataset": this list has held datasets, backtests and now
+            // verdicts since long before the noun was last read, and a report that says "3 more
+            // dataset(s) not listed" while hiding a refusal is a report that miscounts what it withheld.
+            AppMetrics = Cap(metrics, ListShown, "measured line"),
             AgentClaims = Cap(claims, ListShown, "publication"),
             Missing = gaps
         };
