@@ -36,15 +36,31 @@ static class Stranded
         public void Advance(TimeSpan by) => Now += by;
     }
 
+    /// <param name="emergencyBudget">
+    /// How long the whole of a risk-reducing operation gets, for a fixture whose verdict is what an
+    /// emergency press DID rather than how long it took: everything between the instant a press
+    /// opens its deadline and the instant its leg reaches the wire is durable SQLite at
+    /// <c>synchronous=FULL</c>, and on a hosted runner that is a wall clock kept by the disk. Null
+    /// leaves the simulator's own two seconds, which is what a fixture about the budget itself
+    /// needs; <see cref="Unresolved.PressBudget"/> is what a fixture whose verdict is the book
+    /// takes, and the argument for it — with the numbers — is written there.
+    /// </param>
     public static async Task<(TradingGateway Gw, HangingConnector C, Database Db, Movable Clock)> Ready(
-        TimeSpan? worstCase = null, GatewayOptions? options = null, Database? db = null)
+        TimeSpan? worstCase = null, GatewayOptions? options = null, Database? db = null,
+        TimeSpan? emergencyBudget = null)
     {
         db ??= TestEnv.NewDb();
         var clock = new Movable(DateTimeOffset.UtcNow);
-        var c = new HangingConnector(new FakeConnector(new FakeBroker())
-        {
-            WorstCaseOperationPath = worstCase ?? AtasOrderPath
-        });
+        var c = new HangingConnector(emergencyBudget is { } budget
+            ? new FakeConnector(new FakeBroker())
+            {
+                WorstCaseOperationPath = worstCase ?? AtasOrderPath,
+                EmergencyBudget = budget
+            }
+            : new FakeConnector(new FakeBroker())
+            {
+                WorstCaseOperationPath = worstCase ?? AtasOrderPath
+            });
         options ??= new GatewayOptions();
         options.Clock = clock;
         var gw = new TradingGateway(db, c, new HealthRegistry(), options);
