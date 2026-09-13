@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core.Data;
 
@@ -11,8 +12,15 @@ public sealed record KlineBar(
     decimal Close,
     decimal Volume);
 
-/// <summary>What a window of a dataset holds, and whether it is more than a caller may have at once.</summary>
-public sealed record BarWindow(IReadOnlyList<KlineBar> Bars, bool OverCap);
+/// <summary>
+/// What a window of a dataset holds, whether it is more than a caller may have at once, and whether
+/// it may be served to this caller at all.
+///
+/// <para><see cref="Refusal"/> is the holdout's, in words, or null. It comes with an EMPTY
+/// <see cref="Bars"/> deliberately: a caller that forgets to look at it is handed nothing, never a
+/// bar the owner held back. See <see cref="Holdout"/>.</para>
+/// </summary>
+public sealed record BarWindow(IReadOnlyList<KlineBar> Bars, bool OverCap, string? Refusal = null);
 
 /// <summary>
 /// Reads bars back out of a normalised dataset file.
@@ -29,17 +37,29 @@ public static class DatasetReader
     public const int MaxBars = 10_000;
 
     /// <summary>
-    /// The bars of <paramref name="path"/> between <paramref name="from"/> and
-    /// <paramref name="to"/>, both inclusive and both optional.
+    /// The bars of <paramref name="set"/> between <paramref name="from"/> and <paramref name="to"/>,
+    /// both inclusive and both optional — or nothing at all, because they are held back from this
+    /// audience.
     ///
-    /// Reading stops one bar past the cap: that is enough to know the window is too big, and it is
-    /// the last row this ever asks the disk for.
+    /// <para><b><paramref name="audience"/> is required, and the holdout is checked HERE rather than
+    /// beside the call.</b> A caller that wants bars has to say who is asking, and the file is not even
+    /// opened when the answer is no: that is what stops a new op from serving the months the owner held
+    /// back by forgetting a line. The refusal comes back on <see cref="BarWindow.Refusal"/> with an
+    /// empty bar list, so ignoring it serves nothing rather than everything.</para>
+    ///
+    /// <para>Reading stops one bar past the cap: that is enough to know the window is too big, and it is
+    /// the last row this ever asks the disk for.</para>
     /// </summary>
-    public static BarWindow Read(string path, DateTimeOffset? from, DateTimeOffset? to, int cap = MaxBars)
+    public static BarWindow Read(DatasetRecord set, BarAudience audience, DateTimeOffset? from,
+        DateTimeOffset? to, int cap = MaxBars)
     {
+        ArgumentNullException.ThrowIfNull(set);
+
+        if (Holdout.Refusal(set, audience, from, to) is { } withheld) return new BarWindow([], false, withheld);
+
         var bars = new List<KlineBar>();
 
-        foreach (var line in File.ReadLines(path))
+        foreach (var line in File.ReadLines(set.NormalisedPath))
         {
             if (!TryBar(line, out var bar)) continue;
 
@@ -59,7 +79,9 @@ public static class DatasetReader
     ///
     /// <para>Public and in one place because there are now two readers of this format —
     /// <see cref="Read"/>, which the pipe op uses and which REFUSES a window over
-    /// <see cref="MaxBars"/>, and <see cref="BarFeed"/>, which streams a whole run with no cap. Two
+    /// <see cref="MaxBars"/>, and <see cref="BarFeed"/>, which streams a whole run with no cap. Both
+    /// take a <see cref="BarAudience"/> and both refuse a holdout window; this row parse is below that
+    /// and knows nothing about it, which is why the check is on the two entry points and not here. Two
     /// copies of the row parse would be two definitions of what a bar is, and the one that drifted
     /// would be the one nobody read.</para>
     ///

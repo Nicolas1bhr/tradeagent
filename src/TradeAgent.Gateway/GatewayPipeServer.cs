@@ -1048,8 +1048,8 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 Core.Ops.Pnl         => await PnlFor(req, ct),
                 Core.Ops.MaterialList => MaterialList(req),
                 Core.Ops.MaterialNote => MaterialNote(ctx, req),
-                Core.Ops.DataList     => DataList(),
-                Core.Ops.DataBars     => DataBars(req),
+                Core.Ops.DataList     => DataList(ctx),
+                Core.Ops.DataBars     => DataBars(ctx, req),
                 Core.Ops.Report       => ReportFor(req),
                 Core.Ops.Backtest     => BacktestFor(ctx, req, ct),
 
@@ -2187,7 +2187,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// recorded — so a dataset whose bytes have changed under it is reported REJECTED here rather
     /// than being described as though it were still the thing that was measured.
     /// </summary>
-    object DataList()
+    object DataList(AgentContext ctx)
     {
         var sets = gateway.Datasets.All().Select(gateway.Datasets.Checked).ToList();
 
@@ -2199,7 +2199,14 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "on disk since; those bars are not served. 'months_present' against 'months_attempted' is "
             + "the real coverage, 'gaps' counts minutes with no bar INSIDE the covered period and nothing "
             + "was filled in, and 'incomplete' counts bars excluded because they had not closed when the "
-            + "archive was read.",
+            + "archive was read. 'holdout_from' is the instant from which the account owner is HOLDING "
+            + "THESE BARS BACK, or null: every bar at or after it is private evaluation evidence, and "
+            + "'data-bars' and 'backtest' refuse any window that reaches it — for you, for the other "
+            + "director and for a caller that proved no role, with no exception and no quiet truncation. "
+            + "The cutoff is told to you rather than hidden so that you need not find it one refusal at a "
+            + "time; nothing on this channel can set, clear or move it, and moving it earlier is refused "
+            + "even to the account owner. 'evaluation_class' is 'research' for real collected history and "
+            + "'fixture' for bars that exist to prove the machinery works and are never evidence.",
             [.. sets.Select(Describe)]);
     }
 
@@ -2210,7 +2217,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// is: an answer quietly cut short is a different window from the one that was asked for, and
     /// nothing in the reply would say so.
     /// </summary>
-    object DataBars(IpcRequest req)
+    object DataBars(AgentContext ctx, IpcRequest req)
     {
         var pair = Require(req, "pair").ToUpperInvariant();
         if (!BinanceArchive.IsPair(pair))
@@ -2235,12 +2242,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 + "The account owner collects the months again in TradeAgent.");
 
         BarWindow window;
-        try { window = DatasetReader.Read(set.NormalisedPath, from, to); }
+        try
+        {
+            // THE AUDIENCE IS THE CALLER'S OWN AND IT IS A PIPE CALLER, whatever role it proved: the
+            // reader takes the holdout decision itself, so this op cannot serve a held-back bar by
+            // forgetting a check, and a null role is not treated as "not research" — it is treated as a
+            // caller that proved nothing, which is refused exactly as both directors are.
+            window = DatasetReader.Read(set, BarAudience.Pipe(ctx.Role), from, to);
+        }
         catch (IOException ex)
         {
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
                 $"The {pair} dataset file could not be read: {ex.Message}");
         }
+
+        if (window.Refusal is { } withheld)
+            throw new GatewayDeniedException(ErrorCode.HOLDOUT_WITHHELD, withheld);
 
         if (window.OverCap)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
@@ -2286,6 +2303,7 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         set.NormalisedSha256, set.Bars, set.FirstBar, set.LastBar,
         set.Gaps, [.. set.GapRuns.Select(g => new DataListReplyGap(g.From, g.To, g.Minutes))],
         set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable, set.AcceptedAt,
+        set.HoldoutFrom, set.EvaluationClass,
         [.. set.Files.Select(f => new DataListReplyFile(f.Month, f.Url, f.PublishedSha256,
             f.ComputedSha256, f.Bytes, f.DownloadedAt, f.Unit.ToString()))]);
 
@@ -2306,6 +2324,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastBar,
         int Gaps, IReadOnlyList<DataListReplyGap> GapRuns, bool GapRunsTruncated,
         int Duplicates, int Incomplete, int Unreadable, DateTimeOffset AcceptedAt,
+        // NEVER DROPPED WHEN NULL, for the reason `rejected_reason` is not: an absent key reads as a
+        // field this build does not have, and "TradeAgent holds nothing back on this dataset" is a
+        // different answer from "this build cannot hold anything back".
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? HoldoutFrom,
+        string EvaluationClass,
         IReadOnlyList<DataListReplyFile> Files);
 
     /// <inheritdoc cref="DataListReply"/>

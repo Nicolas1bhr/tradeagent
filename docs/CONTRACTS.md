@@ -1435,3 +1435,40 @@ directory inside the folder is a door out of it. The other role's folder is outs
 establish no actual fill, no queue position and no intrabar ordering (`docs/COUNCIL.md`, "Data"). It is a
 reason to test something and never a record of a trade, and a result on one venue's bars is not
 execution evidence for another venue.
+
+## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
+
+**A holdout is a TIME CUTOFF on a dataset, not a second dataset, and that is a CHOICE this build made
+where `docs/COUNCIL.md` is silent.** COUNCIL:131 asks the referee to protect "holdout data the research
+process cannot reach" and does not say how. `dataset.holdout_from` is a UTC instant and it is
+**inclusive** — the bar whose open time equals it is already private — and `dataset.evaluation_class` is
+`research` (real collected history, whose runs are charged) or `fixture` (bars that prove the plumbing
+works, charged nothing, never evidence). A second dataset row would have given the research process an
+id it could ask for and a second set of provenance that could drift from the first; a cutoff cannot be
+asked for, because asking is what is refused. **The class and the cutoff are orthogonal:** the cutoff
+decides which bars are served, the class decides whether a run over them is charged.
+
+**Only the owner's own window sets it, and it can never move EARLIER.** `DatasetStore.SetHoldout` is the
+one writer of both columns — deliberately not part of `DatasetStore.Record`, so collecting months cannot
+declare a holdout as a side effect — and it is reached from the two-press card on the Data page and from
+nowhere else. There is no pipe op, no `trade` verb and no request field: `HoldoutOverPipeTests` asks
+**every op this build has**, in both directions, and the row does not move. Moving the cutoff back is
+refused in words because the bars in between have already been served, and COUNCIL:212 is literal about
+it — "a leaked holdout cannot become unseen". Moving it LATER is allowed: it withholds bars nothing has
+read. There is no clear, and nothing lowers the class back either.
+
+**The refusal is the DEFAULT path, in the readers themselves.** `DatasetReader.Read` and `BarFeed.Open`
+both **require** a `BarAudience` and both take the holdout decision inside, before the file is opened:
+`BarAudience.Pipe(role)` is every caller on the agent channel — both directors and a connection that
+proved no role, refused identically — and the only audience that may read past a cutoff is
+`BarAudience.Referee`, which is `internal` to `TradeAgent.Core`. So the gateway, the pipe server and the
+CLI **cannot mint one at all**, and `HoldoutLedgerTests` holds the list of public doors that produce a
+`BarAudience` to exactly one entry by name. A window is served only when its END is **proved** to be
+before the cutoff: an unbounded `to` asks for every bar there is and is refused, because reading "no
+end" as "up to the cutoff" is clipping with extra steps. A refused window is `HOLDOUT_WITHHELD` — its
+own code, because the frame was well formed and the data is there, so the repair is an earlier window
+rather than a fixed frame or more months — and it is **never truncated**: an answer quietly cut short is
+a different window from the one that was asked for, with nothing in the reply to say so. A forgotten
+`Refusal` yields an EMPTY window, never a held-back bar. `data-list` **names** the cutoff and the class,
+because the boundary is not the secret — the bars are — and an agent that had to find it one refusal at
+a time would spend the owner's money doing so.

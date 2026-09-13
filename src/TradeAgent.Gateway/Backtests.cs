@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using TradeAgent.Core.Strategy;
 
@@ -111,11 +112,17 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
 
         try
         {
+            // THE AUDIENCE IS THE CALLER'S, AND IT IS A PIPE CALLER WHATEVER ROLE IT PROVED. Both
+            // directors and a connection that proved nothing get the same one: `BarAudience.Pipe` can
+            // never read a holdout bar, and the role on it is only for the wording of the refusal.
             var run = Backtest.Over(
-                gateway.Datasets, ask.Dataset, program, model, ask.From, ask.To, stop: stop);
+                gateway.Datasets, ask.Dataset, program, model, BarAudience.Pipe(role),
+                ask.From, ask.To, stop: stop);
 
             if (run.Result is not { } result)
-                throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE, run.Why + ".");
+                throw new GatewayDeniedException(
+                    run.IsHoldout ? ErrorCode.HOLDOUT_WITHHELD : ErrorCode.MARKET_DATA_UNAVAILABLE,
+                    run.Why + ".");
 
             // A RUN THE APP ITSELF STOPPED IS NOT RECORDED. The fault is this process shutting down,
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of

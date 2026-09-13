@@ -47,6 +47,17 @@ public enum ErrorCode
     // and the second is specifically about moving money, while this covers every tool the surface
     // denies — and the answer to it is never "ask again", because there is nothing to ask.
     TOOL_NOT_GRANTED,
+    // THE WINDOW ASKED FOR REACHES A DATASET'S HOLDOUT. Its own code rather than INVALID_REQUEST,
+    // which reads "you sent something malformed", or MARKET_DATA_UNAVAILABLE, which reads "this
+    // installation does not have it": the request was perfectly well formed, the data is there, and
+    // this caller may not see it — a distinction an agent has to be able to act on, because the
+    // repair is to ask for an earlier window rather than to fix the frame or collect more months.
+    HOLDOUT_WITHHELD,
+    // THE CAMPAIGN'S TRIAL OR VERDICT BUDGET IS SPENT. Not RISK_LIMIT_EXCEEDED, which is about an
+    // order, and not HOLDOUT_WITHHELD, which is about a window: the request was legitimate and the
+    // campaign has no attempts left, so the repair is a renewal the OWNER authorises, never a
+    // smaller version of the same ask. The distinction LOSS_BUDGET_REACHED already makes.
+    CAMPAIGN_BUDGET_REACHED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -528,6 +539,11 @@ public static class Errors
         [ErrorCode.IPC_UNAVAILABLE]                = ("The AI cannot reach the trading service.", "Restart TradeAgent.", true),
         [ErrorCode.IPC_UNAUTHENTICATED]            = ("A program tried to use trading without permission.", "No action needed. The request was refused.", false),
         [ErrorCode.ROLE_MAY_NOT_TRADE]             = ("A part of the AI that is not allowed to trade asked to place, change or cancel an order.", "No action needed. The request was refused and recorded.", false),
+        // The owner's own sentence for both of these says what was refused and that nothing is broken:
+        // the AI asking for the months you held back, and the AI running out of attempts, are the
+        // referee's protocol working rather than a fault to repair.
+        [ErrorCode.HOLDOUT_WITHHELD]               = ("The AI asked to read the market data you are holding back, and was refused.", "No action needed. The bars you held back stay private; TradeAgent uses them itself to judge a finished strategy.", false),
+        [ErrorCode.CAMPAIGN_BUDGET_REACHED]        = ("The AI has used all the attempts this research campaign allows.", "No action needed unless you want to allow more: the budgets are on the Safety page, and a new campaign keeps the same held-back data.", false),
         [ErrorCode.CONTAINMENT_REQUIRED]           = ("TradeAgent will not start the AI assistant while real-money trading is switched on, because nothing on this computer confines the assistant's own program.", "Switch real-money trading off, or choose Practice or Watch only. Everything else about the AI is unchanged.", false),
         // NOT A FAILURE, and the repair sentence says so: the work the turn did is kept and the next
         // turn starts fresh. The two boxes named here are the ones on the Safety page.

@@ -216,4 +216,217 @@ public class HoldoutOverPipeTests(ITestOutputHelper log)
         // Not a sweep of refusals: the reads that touch this ledger really did answer.
         Assert.True(served >= 6, $"only {served} ops were served at all, so the sweep proved little");
     }
+
+    // ---- item 2: no op on this channel reads a holdout bar ----------------------------------------
+
+    /// <summary>
+    /// A WINDOW THAT REACHES THE CUTOFF IS REFUSED IN WORDS, FOR EVERY CALLER, AND NEVER CLIPPED.
+    ///
+    /// <para>Red first, over the real wire: a Research grant asking for the whole dataset was served all
+    /// 120 bars, the last 60 of which are the months the owner held back — and so was a connection that
+    /// proved no role at all, which is the reading `U-containment` had already had to fix once.</para>
+    ///
+    /// <para>Three callers and two shapes of window: no <c>to</c> at all, and a <c>to</c> past the
+    /// cutoff. Both are refused with <c>HOLDOUT_WITHHELD</c> and a refusal that NAMES the cutoff, and
+    /// neither comes back with bars: an answer quietly cut short at the cutoff would be a different
+    /// window from the one asked for, and nothing in the reply would say so.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(CouncilRoles.Research)]
+    [InlineData(CouncilRoles.Operations)]
+    [InlineData(null)]
+    public async Task A_window_that_reaches_the_cutoff_is_refused_in_words_for_every_caller(string? role)
+    {
+        var (gw, db, client, server) = await Connected(role);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db);
+        var cutoff = set.HoldoutFrom!.Value;
+
+        foreach (var args in new[]
+                 {
+                     Args(("pair", set.Pair)),
+                     Args(("pair", set.Pair), ("to", Iso(cutoff))),
+                     Args(("pair", set.Pair), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(119))))
+                 })
+        {
+            var reply = await client.SendAsync(new IpcRequest { Op = Ops.DataBars, Session = "agent", Args = args });
+            log.WriteLine(Json.Write(reply.Error ?? (object)Data(reply)));
+
+            Assert.False(reply.Ok, "a caller on the agent pipe was served the bars the owner held back");
+            Assert.Equal(nameof(ErrorCode.HOLDOUT_WITHHELD), reply.Error?.Code);
+            Assert.Contains("holds out every bar from", reply.Error!.Message, StringComparison.Ordinal);
+            Assert.Contains(cutoff.ToString("u", CultureInfo.InvariantCulture), reply.Error!.Message, StringComparison.Ordinal);
+            Assert.Contains("REFUSED rather than quietly cut short", reply.Error!.Message, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// THE PAIRED POSITIVE, which is what makes the refusal a boundary rather than an outage: a window
+    /// that ENDS before the cutoff is served in full, to the same caller, on the same dataset.
+    /// </summary>
+    [Fact]
+    public async Task A_window_that_ends_before_the_cutoff_is_served_in_full()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db);
+        var cutoff = set.HoldoutFrom!.Value;
+
+        var reply = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.DataBars, Session = "research",
+            Args = Args(("pair", set.Pair), ("from", Iso(Start)), ("to", Iso(cutoff.AddMinutes(-1))))
+        });
+
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        var bars = Data(reply).GetProperty("bars");
+        Assert.Equal(HoldoutAtBar, bars.GetArrayLength());
+        foreach (var bar in bars.EnumerateArray())
+            Assert.True(bar.GetProperty("open_time").GetDateTimeOffset() < cutoff,
+                "a bar at or after the cutoff was in an answer that was served");
+    }
+
+    /// <summary>
+    /// NOT ONE OP SERVES A BAR AT OR AFTER THE CUTOFF — every op this build has, asked with a window
+    /// that covers the whole dataset, off <see cref="Ops"/>'s own fields so that an op added later is
+    /// asked too. The one bar shape this product has carries <c>open_time</c>, so that is what is looked
+    /// for, anywhere in the reply and at any depth.
+    ///
+    /// <para>What it proves and what it does not: it proves that nothing reachable on this channel today
+    /// hands back a held-back bar, to a role or to a roleless caller, and it is the leg that a new op
+    /// would fail. It does not prove a future op could not invent a different name for a bar; the other
+    /// leg of that is structural and is in <c>HoldoutLedgerTests</c> — the audience that may read past a
+    /// cutoff cannot be minted outside <c>TradeAgent.Core</c> at all.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(CouncilRoles.Research)]
+    [InlineData(null)]
+    public async Task Not_one_op_on_this_channel_serves_a_bar_at_or_after_the_cutoff(string? role)
+    {
+        var (gw, db, client, server) = await Connected(role);
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db);
+        var cutoff = set.HoldoutFrom!.Value;
+        var program = GivenProgram(role ?? CouncilRoles.Research);
+
+        foreach (var op in EveryOp())
+        {
+            var reply = await client.SendAsync(new IpcRequest
+            {
+                Op = op, Session = "agent", RequestId = $"holdout-read-{op}",
+                Args = Args(("pair", set.Pair), ("dataset", set.Id.ToString(CultureInfo.InvariantCulture)),
+                    ("strategy", program), ("from", Iso(Start)), ("to", Iso(Start.AddMinutes(1000))),
+                    ("symbol", "ES"), ("quantity", "1"), ("id", "nothing"), ("all", "true"))
+            });
+
+            var served = Held(Data(reply), cutoff);
+            Assert.True(served is null,
+                $"'{op}' served a bar at {served:u}, which is at or after the holdout cutoff {cutoff:u}");
+        }
+    }
+
+    /// <summary>The first bar at or after <paramref name="cutoff"/> anywhere in this reply, or null.</summary>
+    static DateTimeOffset? Held(JsonElement e, DateTimeOffset cutoff)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var p in e.EnumerateObject())
+                {
+                    if (p.NameEquals("open_time") && p.Value.TryGetDateTimeOffset(out var at) && at >= cutoff)
+                        return at;
+                    if (Held(p.Value, cutoff) is { } deeper) return deeper;
+                }
+                return null;
+            case JsonValueKind.Array:
+                foreach (var item in e.EnumerateArray())
+                    if (Held(item, cutoff) is { } deeper) return deeper;
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// A BACKTEST WHOSE WINDOW REACHES THE CUTOFF IS REFUSED BEFORE IT RUNS, and the paired positive is
+    /// a run over the months the AI is allowed to see. A run is the reading that MATTERS: `data-bars`
+    /// hands over prices, and a backtest hands over what the prices did — the same leak, laundered
+    /// through a metric.
+    /// </summary>
+    [Fact]
+    public async Task A_backtest_whose_window_reaches_the_cutoff_is_refused_and_one_before_it_runs()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db);
+        var cutoff = set.HoldoutFrom!.Value;
+        var dataset = set.Id.ToString(CultureInfo.InvariantCulture);
+        var program = GivenProgram();
+
+        var refused = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = "holdout-bt-1",
+            Args = Args(("strategy", program), ("dataset", dataset))
+        });
+
+        Assert.False(refused.Ok, "a backtest ran over the months the owner held back");
+        Assert.Equal(nameof(ErrorCode.HOLDOUT_WITHHELD), refused.Error?.Code);
+        Assert.Contains("holds out every bar from", refused.Error!.Message, StringComparison.Ordinal);
+        Assert.Empty(gw.Strategies.Runs());
+
+        var ran = await client.SendAsync(new IpcRequest
+        {
+            Op = Ops.Backtest, Session = "research", RequestId = "holdout-bt-2",
+            Args = Args(("strategy", program), ("dataset", dataset), ("to", Iso(cutoff.AddMinutes(-1))))
+        });
+
+        Assert.True(ran.Ok, Json.Write(ran.Error));
+        Assert.Equal(HoldoutAtBar, Data(ran).GetProperty("metrics").GetProperty("bars").GetInt64());
+        Assert.Single(gw.Strategies.Runs());
+    }
+
+    /// <summary>
+    /// `data-list` NAMES THE CUTOFF. The refusal is only half of an honest answer: an agent that cannot
+    /// see where the boundary is would spend its budget discovering it one refused window at a time, and
+    /// the boundary itself is not secret — the bars are.
+    /// </summary>
+    [Fact]
+    public async Task Data_list_names_the_cutoff_and_the_evaluation_class()
+    {
+        var (gw, db, client, server) = await Connected();
+        using var _1 = db;
+        await using var _2 = server;
+        await using var _3 = client;
+
+        var set = Given(db);
+        var plain = Given(db, "ETHUSDT", holdout: false);
+
+        var reply = await client.SendAsync(new IpcRequest { Op = Ops.DataList, Session = "research" });
+        Assert.True(reply.Ok, Json.Write(reply.Error));
+        log.WriteLine(Json.Write(reply.Data));
+
+        var rows = Data(reply).GetProperty("datasets").EnumerateArray().ToList();
+        var held = rows.Single(r => r.GetProperty("id").GetInt64() == set.Id);
+        var open = rows.Single(r => r.GetProperty("id").GetInt64() == plain.Id);
+
+        Assert.Equal(set.HoldoutFrom, held.GetProperty("holdout_from").GetDateTimeOffset());
+        Assert.Equal(EvaluationClass.Research, held.GetProperty("evaluation_class").GetString());
+
+        // A dataset with no cutoff says so with a null rather than by leaving the field out: an absent
+        // key reads as "this build has no such field", which is a different answer.
+        Assert.Equal(JsonValueKind.Null, open.GetProperty("holdout_from").ValueKind);
+        Assert.Contains("holdout_from", Data(reply).GetProperty("note").GetString()!, StringComparison.Ordinal);
+    }
 }

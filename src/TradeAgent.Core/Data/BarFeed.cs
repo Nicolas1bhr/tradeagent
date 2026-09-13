@@ -29,9 +29,20 @@ public sealed record BarFeedOpen
     /// <summary>The refusal's text, or the empty string when a feed came out.</summary>
     public string Why => Refusal ?? "";
 
+    /// <summary>
+    /// Whether the refusal is the HOLDOUT's rather than the ledger's. The caller turns the two into
+    /// different error codes: a rejected dataset is data this installation can no longer vouch for, and
+    /// a withheld window is data it will not show THIS caller — one is repaired by collecting the months
+    /// again and the other by asking for an earlier window, so an agent that could not tell them apart
+    /// would spend its turn on the wrong repair.
+    /// </summary>
+    public bool IsHoldout { get; private init; }
+
     internal static BarFeedOpen Yes(BarFeed feed) => new(feed, null);
 
     internal static BarFeedOpen No(string reason) => new(null, reason);
+
+    internal static BarFeedOpen Withheld(string reason) => new(null, reason) { IsHoldout = true };
 }
 
 /// <summary>
@@ -71,13 +82,29 @@ public sealed class BarFeed
     public DatasetRecord Dataset { get; }
 
     /// <summary>
-    /// Opens a feed on one dataset by its ledger id, or refuses and says why.
+    /// Opens a feed on one dataset by its ledger id, for a named audience over a named window, or
+    /// refuses and says why.
     ///
     /// <para>The refusal is a VALUE. A caller that forgot to check it gets a null feed rather than a
     /// run over bars the ledger will not vouch for.</para>
+    ///
+    /// <para><b>The window is declared HERE, at the open, and not only at <see cref="Chunks"/>.</b> The
+    /// holdout is a property of the window and of the audience together — a run to July over a dataset
+    /// held out from June is refused, and the same run to May is served — so the two have to be known at
+    /// the one moment this dataset's verdict is taken. A caller that opens for the whole dataset and then
+    /// streams a narrower window is asking for more than it reads, and over a dataset with a cutoff that
+    /// is exactly the request that must not succeed.</para>
+    ///
+    /// <para><paramref name="audience"/> is required for the reason it is required on
+    /// <see cref="DatasetReader.Read"/>: the refusal is the default path, and a new caller has to say
+    /// who is asking before it gets a bar. The only audience that reads past a cutoff is the referee's,
+    /// which no assembly outside this one can mint (<see cref="BarAudience"/>).</para>
     /// </summary>
-    public static BarFeedOpen Open(DatasetStore store, long datasetId)
+    public static BarFeedOpen Open(DatasetStore store, long datasetId, BarAudience audience,
+        DateTimeOffset? from, DateTimeOffset? to)
     {
+        ArgumentNullException.ThrowIfNull(store);
+
         var row = store.ById(datasetId);
         if (row is null)
             return BarFeedOpen.No($"there is no dataset {datasetId} in this installation's ledger");
@@ -87,6 +114,9 @@ public sealed class BarFeed
             return BarFeedOpen.No(
                 $"dataset {datasetId} ({verdict.Pair} {verdict.Interval} {verdict.Version}) is REJECTED " +
                 $"and its bars are not served: {verdict.RejectedReason}");
+
+        if (Holdout.Refusal(verdict, audience, from, to) is { } withheld)
+            return BarFeedOpen.Withheld(withheld);
 
         return BarFeedOpen.Yes(new BarFeed(verdict));
     }

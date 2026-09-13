@@ -50,7 +50,7 @@ public static class GatewaySchema
         // intrabar ordering, and a backtest over them is a reason to test something rather than a
         // record of a trade. The provenance half matters as much: coverage is what was collected,
         // not what was asked for, and a minute with no bar is a minute with no bar.
-        market_data = "TradeAgent can hold historical bars the account owner collected — today Binance's public monthly spot archives, 1-minute closed bars in UTC. 'data-list' says what there is and where every byte of it came from: the URL of every raw archive file, the SHA-256 Binance published for it, the SHA-256 TradeAgent computed, and the counts that say what the file does NOT claim. 'data-bars' serves the bars themselves. What they are NOT: bars are hypothesis evidence. They establish no fill, no queue position and no intrabar ordering, so a result computed over them is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. Nothing is filled in: 'gaps' counts minutes with no bar inside the covered period, 'duplicates' counts rows dropped, and 'incomplete' counts bars excluded because they had not closed when the archive was read. 'months_present' against 'months_attempted' is the real coverage. A dataset whose recorded hashes no longer match the files on disk reads REJECTED and serves no bars. There is no operation here that collects, normalises, deletes or accepts data: the account owner presses that in TradeAgent, and the ledger is a measurement you cannot edit.",
+        market_data = "TradeAgent can hold historical bars the account owner collected — today Binance's public monthly spot archives, 1-minute closed bars in UTC. 'data-list' says what there is and where every byte of it came from: the URL of every raw archive file, the SHA-256 Binance published for it, the SHA-256 TradeAgent computed, and the counts that say what the file does NOT claim. 'data-bars' serves the bars themselves. What they are NOT: bars are hypothesis evidence. They establish no fill, no queue position and no intrabar ordering, so a result computed over them is a reason to test something and never a record of a trade, and a result on one venue's bars is not execution evidence for another venue. Nothing is filled in: 'gaps' counts minutes with no bar inside the covered period, 'duplicates' counts rows dropped, and 'incomplete' counts bars excluded because they had not closed when the archive was read. 'months_present' against 'months_attempted' is the real coverage. A dataset whose recorded hashes no longer match the files on disk reads REJECTED and serves no bars. PART OF A DATASET MAY BE HELD BACK FROM YOU: 'holdout_from' on a dataset is an instant from which the account owner has made every bar private evaluation evidence, and 'data-bars' and 'backtest' REFUSE any window that reaches it — never truncate it — for every part of the AI equally and for a caller that proved no role at all. TradeAgent reads those bars itself, to judge a finished strategy on months it was never shown, and a verdict on them is scarce because every verdict tells you something about them. The cutoff is named in 'data-list' so you need not find it one refusal at a time; you cannot set, clear or move it, and even the account owner cannot move it earlier. There is no operation here that collects, normalises, deletes or accepts data: the account owner presses that in TradeAgent, and the ledger is a measurement you cannot edit.",
         // WHAT THE OWNER READS, said where an agent reads the surface. docs/COUNCIL.md rule 10: the
         // app generates the daily factual report itself. It is here so an agent asked to cover what
         // it costs works from the same account of the day the account owner does, and so that it
@@ -119,8 +119,12 @@ public static class GatewaySchema
             + "and the counts that say what it is not: bars, first and last bar, gaps (minutes with no bar inside "
             + "the covered period, listed in gap_runs and never filled in), duplicates dropped, and bars excluded "
             + "because they had not closed when the archive was read. 'state' is ACCEPTED or REJECTED; REJECTED "
-            + "means a file this ledger measured has changed on disk since, and those bars are not served. You "
-            + "cannot write any of this — the account owner collects data in TradeAgent.", []),
+            + "means a file this ledger measured has changed on disk since, and those bars are not served. "
+            + "'holdout_from' is the instant from which these bars are HELD BACK from you, or null; "
+            + "'evaluation_class' is 'research' for real collected history and 'fixture' for bars that exist to "
+            + "prove the machinery works and are never evidence. You "
+            + "cannot write any of this — the account owner collects data in TradeAgent, and the holdout is set "
+            + "in TradeAgent's own window and can never be moved earlier.", []),
         new(Core.Ops.DataBars, "trade data bars --pair P [--from D] [--to D]", false,
             "Closed bars from that data, ascending, in UTC, with nothing filled in. They are hypothesis evidence: "
             + "they establish no fill, no queue position and no intrabar ordering, so what you compute over them "
@@ -129,7 +133,12 @@ public static class GatewaySchema
             + "answer quietly cut short is a different window from the one you asked for. 'from' and 'to' take an "
             + "ISO-8601 date or instant and are inclusive; present and unreadable is refused, never read as "
             + "something else. A pair with no dataset, and a dataset whose recorded hashes no longer match the "
-            + "disk, are both refused with MARKET_DATA_UNAVAILABLE.",
+            + "disk, are both refused with MARKET_DATA_UNAVAILABLE. A window that reaches the dataset's "
+            + "'holdout_from' is refused with HOLDOUT_WITHHELD naming the cutoff — including a window with no "
+            + "'to' at all, which asks for every bar there is — and it is refused rather than cut short at the "
+            + "cutoff, because an answer quietly clipped is a different window from the one you asked for. Ask "
+            + "for a window whose 'to' is EARLIER than the cutoff. Every part of the AI is refused equally, and "
+            + "so is a caller that presented no launch grant.",
             [
                 new("pair", "string", true, "Which pair, e.g. BTCUSDT. Upper-case letters and digits only."),
                 new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
@@ -163,8 +172,12 @@ public static class GatewaySchema
             + "from the grant TradeAgent put in your process's environment — so a connection that "
             + "presented no grant is refused this operation: there would be no role to record it under. "
             + "'dataset' is a ledger id from 'trade data list'; a dataset whose recorded hashes no longer "
-            + "match the disk is REJECTED and serves no run. The app parses the program and a refusal "
-            + "names the line. The four model numbers are DECLARED by you and are part of the run's "
+            + "match the disk is REJECTED and serves no run. A run whose window reaches that dataset's "
+            + "'holdout_from' is refused with HOLDOUT_WITHHELD before a single bar is evaluated, and a run "
+            + "with no 'to' over a dataset that has a cutoff asks for every bar there is, so it is refused "
+            + "too: pass a 'to' EARLIER than the cutoff. It is not truncated to the part you may see — a "
+            + "metric over a window you did not ask for is a figure about nothing. The app parses the "
+            + "program and a refusal names the line. The four model numbers are DECLARED by you and are part of the run's "
             + "identity: fees and slippage are FRACTIONS (0.001 is ten basis points, not a tenth of a "
             + "per cent), the increment is what a size is rounded DOWN to, and capital is what the run "
             + "starts with. Omit them and the run declares NO friction, whole units and 10,000 — an upper "
@@ -177,7 +190,7 @@ public static class GatewaySchema
                 new("strategy", "string", true, "Path of the program file inside your own role folder, e.g. strategies/ma-crossover.strategy. A path outside it is refused."),
                 new("dataset", "number", true, "The dataset's ledger id, from 'trade data list'. A whole number."),
                 new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
-                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused. Over a dataset with a 'holdout_from', a run is refused unless this is earlier than the cutoff."),
                 new("fees", "number", false, "Fee per fill as a FRACTION of its notional, e.g. 0.001 for ten basis points. 0 when omitted."),
                 new("slippage", "number", false, "Slippage as a FRACTION of the price, adverse on every fill. 0 when omitted."),
                 new("increment", "number", false, "Quantity increment. A size is rounded DOWN to it and a size that rounds to nothing is no trade, with the reason. 1 when omitted."),

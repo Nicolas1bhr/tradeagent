@@ -542,6 +542,13 @@ public static class Backtest
     /// under it serves nothing and the refusal names it. A run whose dataset changed state half way
     /// through would have no one dataset its result was about.</para>
     ///
+    /// <para><b>It is also where the HOLDOUT stops.</b> The window and the caller's audience are handed
+    /// to <see cref="Data.BarFeed.Open"/> together, so a run whose window reaches the dataset's
+    /// <c>holdout_from</c> is refused before a single bar is evaluated — and refused rather than run over
+    /// the part it is allowed to see, because a metric over a window the caller did not ask for is a
+    /// figure about nothing. A backtest is the reading that matters: `data-bars` hands over prices, and a
+    /// run hands over what the prices did, which is the same leak laundered through a metric.</para>
+    ///
     /// <para><b>The dataset's SHA-256 comes from that verified record and goes into the run's id.</b>
     /// So a rejection discovered next month can be traced to every run that fed on those bytes —
     /// <c>StrategyStore.RunsOfDataset</c> — instead of leaving results attached to a dataset id whose
@@ -552,6 +559,7 @@ public static class Backtest
         long datasetId,
         StrategyProgram program,
         ExecutionModel model,
+        Data.BarAudience audience,
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
         EvaluationLimits? limits = null,
@@ -565,8 +573,8 @@ public static class Backtest
             return BacktestOpened.No(
                 $"the window starts at {lo:O} and ends at {hi:O}, which is a window with nothing in it");
 
-        var open = Data.BarFeed.Open(datasets, datasetId);
-        if (open.Feed is not { } feed) return BacktestOpened.No(open.Why);
+        var open = Data.BarFeed.Open(datasets, datasetId, audience, from, to);
+        if (open.Feed is not { } feed) return BacktestOpened.No(open.Why, open.IsHoldout);
 
         var request = new BacktestRequest(
             feed.Dataset.Id, feed.Dataset.NormalisedSha256, model, from, to);
@@ -640,7 +648,16 @@ public sealed record BacktestOpened
     /// <summary>The refusal's text, or the empty string when a run came out.</summary>
     public string Why => Refusal ?? "";
 
+    /// <summary>
+    /// Whether the refusal is the HOLDOUT's, carried up from <see cref="BarFeedOpen.IsHoldout"/> so the
+    /// pipe can answer HOLDOUT_WITHHELD rather than MARKET_DATA_UNAVAILABLE. "This installation does not
+    /// have those bars" and "you may not see those bars" have different repairs, and an agent told the
+    /// first would ask the owner to collect data it already has.
+    /// </summary>
+    public bool IsHoldout { get; private init; }
+
     internal static BacktestOpened Yes(BacktestResult result) => new(result, null);
 
-    internal static BacktestOpened No(string reason) => new(null, reason);
+    internal static BacktestOpened No(string reason, bool isHoldout = false) =>
+        new(null, reason) { IsHoldout = isHoldout };
 }

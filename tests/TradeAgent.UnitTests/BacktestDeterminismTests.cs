@@ -44,6 +44,13 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
         return parse.Program!;
     }
 
+    /// <summary>
+    /// THE AUDIENCE EVERY RUN IN THIS CLASS IS FOR: a caller on the agent pipe, which is the one that
+    /// can never read a holdout bar. None of these datasets has a cutoff, so nothing here is refused by
+    /// it — the point is that the strongest audience is what the determinism is measured under.
+    /// </summary>
+    static readonly BarAudience Research = BarAudience.Pipe(CouncilRoles.Research);
+
     static ExecutionModel Model(decimal? fees = null, decimal? slippage = null)
     {
         var declared = ExecutionModel.Declare(fees, slippage);
@@ -103,8 +110,8 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
         var store = new DatasetStore(db);
         var program = Program();
 
-        var first = Backtest.Over(store, set.Id, program, Model(fees: 0.001m));
-        var again = Backtest.Over(store, set.Id, program, Model(fees: 0.001m));
+        var first = Backtest.Over(store, set.Id, program, Model(fees: 0.001m), Research);
+        var again = Backtest.Over(store, set.Id, program, Model(fees: 0.001m), Research);
 
         Assert.True(first.Ok, first.Why);
         Assert.True(again.Ok, again.Why);
@@ -129,7 +136,7 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
     {
         using var db = TestEnv.NewDb();
         var set = Given(db, 60);
-        var run = Backtest.Over(new DatasetStore(db), set.Id, Program(), Model(fees: 0.001m));
+        var run = Backtest.Over(new DatasetStore(db), set.Id, Program(), Model(fees: 0.001m), Research);
         Assert.True(run.Ok, run.Why);
 
         var barTimes = Enumerable.Range(0, 60)
@@ -214,18 +221,18 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
         var store = new DatasetStore(db);
 
         // It runs while the bytes are what the ledger says they are.
-        Assert.True(Backtest.Over(store, set.Id, Program(), Model()).Ok);
+        Assert.True(Backtest.Over(store, set.Id, Program(), Model(), Research).Ok);
 
         File.WriteAllText(set.Files[0].Path, "somebody replaced the vendor's archive");
 
-        var refused = Backtest.Over(store, set.Id, Program(), Model());
+        var refused = Backtest.Over(store, set.Id, Program(), Model(), Research);
         Assert.False(refused.Ok);
         Assert.Null(refused.Result);
         Assert.Contains("REJECTED", refused.Why);
         Assert.Contains("no longer matches the hash", refused.Why);
 
         // A dataset id this installation does not have is refused the same way.
-        Assert.Contains("no dataset 9999", Backtest.Over(store, 9999, Program(), Model()).Why);
+        Assert.Contains("no dataset 9999", Backtest.Over(store, 9999, Program(), Model(), Research).Why);
     }
 
     /// <summary>
@@ -244,7 +251,7 @@ public class BacktestDeterminismTests(ITestOutputHelper log)
         var strategies = new StrategyStore(db);
         var program = Program();
 
-        var run = Backtest.Over(datasets, set.Id, program, Model(fees: 0.001m));
+        var run = Backtest.Over(datasets, set.Id, program, Model(fees: 0.001m), Research);
         Assert.True(run.Ok, run.Why);
         var result = run.Result!;
 

@@ -1,3 +1,4 @@
+using System.Reflection;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -154,5 +155,112 @@ public class HoldoutLedgerTests
 
         Assert.False(done.Ok);
         Assert.Contains("there is no dataset 4242", done.Why, StringComparison.Ordinal);
+    }
+
+    // ---- item 2: the rule, and the one door past it ----------------------------------------------
+
+    /// <summary>
+    /// THE RULE ITSELF, AND IT REFUSES BY DEFAULT: a window is served only when its END is PROVED to be
+    /// before the cutoff.
+    ///
+    /// <para>An unbounded <c>to</c> is therefore refused, and that is the whole shape of the decision.
+    /// Reading "no end" as "up to the cutoff" would be clipping with extra steps: the caller asked for
+    /// every bar of the dataset, and an answer that silently stopped early is a different window from
+    /// the one asked for with nothing in the reply to say so.</para>
+    /// </summary>
+    [Theory]
+    // from, to, is it served
+    [InlineData(0, 59, true)]        // ends the minute before the cutoff
+    [InlineData(0, 60, false)]       // the cutoff bar itself is already private: INCLUSIVE
+    [InlineData(0, 119, false)]
+    [InlineData(60, 119, false)]
+    [InlineData(0, -1, false)]       // -1 means no 'to' at all
+    public void A_window_is_served_only_when_its_end_is_proved_to_be_before_the_cutoff(
+        int fromMinute, int toMinute, bool served)
+    {
+        using var db = TestEnv.NewDb();
+        var store = new DatasetStore(db);
+        var id = Given(db).Id;
+        Assert.True(store.SetHoldout(id, At.AddMinutes(60), EvaluationClass.Research).Ok);
+        var set = store.ById(id)!;
+
+        var refusal = Holdout.Refusal(set, BarAudience.Pipe(CouncilRoles.Research),
+            At.AddMinutes(fromMinute), toMinute < 0 ? null : At.AddMinutes(toMinute));
+
+        Assert.Equal(served, refusal is null);
+        if (!served) Assert.Contains("holds out every bar from", refusal!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// EVERY PIPE AUDIENCE IS REFUSED EQUALLY, and a NULL role is not "not research" — it is a caller
+    /// that proved nothing, which is the reading `U-containment` had to fix once already when it was
+    /// being served as the chair.
+    /// </summary>
+    [Theory]
+    [InlineData(CouncilRoles.Research)]
+    [InlineData(CouncilRoles.Operations)]
+    [InlineData(null)]
+    [InlineData("some-role-a-newer-build-has")]
+    public void No_pipe_audience_may_read_the_holdout_whatever_role_it_proved(string? role)
+    {
+        using var db = TestEnv.NewDb();
+        var store = new DatasetStore(db);
+        var id = Given(db).Id;
+        Assert.True(store.SetHoldout(id, At, EvaluationClass.Research).Ok);
+
+        var audience = BarAudience.Pipe(role);
+
+        Assert.False(audience.MayReadHoldout);
+        Assert.NotNull(Holdout.Refusal(store.ById(id)!, audience, null, null));
+    }
+
+    /// <summary>
+    /// A DATASET WITH NO CUTOFF SERVES EVERYTHING, which is what every installation that upgrades into
+    /// this build has. The holdout is something the owner declares, never something a migration invents.
+    /// </summary>
+    [Fact]
+    public void A_dataset_with_no_cutoff_serves_every_window()
+    {
+        using var db = TestEnv.NewDb();
+        var set = new DatasetStore(db).ById(Given(db).Id)!;
+
+        Assert.Null(Holdout.Refusal(set, BarAudience.Pipe(CouncilRoles.Research), null, null));
+    }
+
+    /// <summary>
+    /// NO PUBLIC DOOR IN <c>TradeAgent.Core</c> HANDS OUT AN AUDIENCE THAT MAY READ A HOLDOUT — and this
+    /// is a whitelist by NAME, so a door added later fails here rather than passing quietly.
+    ///
+    /// <para>This is the structural half of "the referee alone reads the holdout, in process". The wire
+    /// sweep in <c>HoldoutOverPipeTests</c> proves that no op reachable today serves a held-back bar; it
+    /// cannot prove that a future op could not. This can: the only audience that may read past a cutoff
+    /// is <c>BarAudience.Referee</c>, which is <c>internal</c>, and the only public member of any
+    /// exported Core type that produces a <see cref="BarAudience"/> at all is <c>Pipe</c>, which never
+    /// may. The gateway, the pipe server, the CLI and this test assembly are all outside that boundary,
+    /// so none of them can mint one — not by forgetting a check, but because the type is not there.</para>
+    ///
+    /// <para>Parameters are deliberately not part of the check: being HANDED an audience is how the
+    /// readers work, and the thing that has to be scarce is the ability to MAKE one.</para>
+    /// </summary>
+    [Fact]
+    public void No_public_door_in_core_hands_out_an_audience_that_may_read_the_holdout()
+    {
+        var doors = new List<string>();
+        foreach (var type in typeof(BarAudience).Assembly.GetExportedTypes())
+        {
+            foreach (var m in type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                         .Where(m => m.ReturnType == typeof(BarAudience)))
+                doors.Add($"{type.Name}.{m.Name}()");
+
+            foreach (var f in type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
+                         .Where(f => f.FieldType == typeof(BarAudience)))
+                doors.Add($"{type.Name}.{f.Name}");
+        }
+
+        // `Pipe` is the whole public surface, and the property getter its name implies is not a second
+        // door: a property returning one would show up here as get_X and would have to be justified.
+        Assert.Equal([$"{nameof(BarAudience)}.{nameof(BarAudience.Pipe)}()"], doors.Order(StringComparer.Ordinal));
+        Assert.All(new[] { CouncilRoles.Research, CouncilRoles.Operations, null },
+            role => Assert.False(BarAudience.Pipe(role).MayReadHoldout));
     }
 }
