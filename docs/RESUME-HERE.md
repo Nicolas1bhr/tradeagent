@@ -14,8 +14,8 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 Nothing is running. No worktree exists. Every landing has its ≤40-line section. Restart in this order:**
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-12`, `## 2026-09-13` and `## 2026-09-14` sections at the end of
-   `BUILD-STATUS.md` (one section per landing; the last two record their merge sha's CI as "in flight" — read `gh run view 34843618128`
-   and `gh run view 34844839257` and record the verdicts in those two sections before anything else).
+   `BUILD-STATUS.md` (one section per landing; the last two record their merge sha's CI as "in flight" — `34843618128` at `30dc8ed` is GREEN on all four jobs and recorded;
+   read `gh run view 34844839257` at `afa49dd` and record its verdict in the `U-venue-catalog` section before anything else).
 2. **`main` is `afa49dd` plus this record, clean, pushed. Schema 17.** Landed 2026-09-12 → 14, in order: `U-turn-commit` `0da64d7` (11),
    `U-press-settle-win` `fac2370`, `U-budget-reserve` `1757043`, `U-runner-1` `1e92fe3`, `U-crlf-strategy-win` `137aaa4`, `U-runner-2`
    `c758fce`, `U-containment` `7b90acf`, `U-runner-3` `5020b2b` (12), `U-api-worker` `ff8b43c` (13), `U-referee-1` `19ef096` (14),

@@ -5530,7 +5530,7 @@ line by line); draft PR #19 for the runner, closed after.
 Fault 3× → 277/277 each; Unit 1008 + Fault 277 + Integration 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 1592 = 1592.
 Runner: PR #19, run 34773625675 at `62dd169`, SUCCESS on all four jobs — windows Fault 272/272 in 9 m 34 s against 271/272 at the red sha;
 macos's `Timing` step took its one second attempt (87/88 then 88/88). Manager's gate at `53690f5 (landed as `30dc8ed` after a docs-only rebase, `tests` identical)`, Release: build → 0 warnings, 0 errors; suite →
-1008 + 277 + 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1593 = 1593); scan clean; no trailers; `rev-list --count` → 0; CI run 34843618128 at `30dc8ed`: in flight at the time of this record; verdict in a follow-up commit.
+1008 + 277 + 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1593 = 1593); scan clean; no trailers; `rev-list --count` → 0; CI run 34843618128 at `30dc8ed`: all four jobs GREEN — windows-latest with the moved fixtures, the red of `45719b2` closed on `main`'s own runner.
 
 **NOT done:** no product code; `SweepRequestIdTests` untouched (above); the pushed tip had no runner run of its own — the proof is the run
 at `62dd169`, the difference two council landings touching no Fault fixture plus the report; no box, no ATAS, no money.
