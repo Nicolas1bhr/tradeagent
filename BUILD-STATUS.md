@@ -5497,7 +5497,7 @@ classes). Nothing on the order path; no pipe op or verb reaches any of it (a tes
 timestamps checked); six touched classes 3× → 81/81 each; Unit 1008 + Fault 277 + Integration 657 = 1942 passed, 0 failed, 1 skipped —
 with two other legs' suites running on this Mac at the same time; names → 20 added, 0 removed; 159 test sources text. Manager's gate at
 `cac1787`, Release: build → 0 warnings, 0 errors; suite → 1008 + 277 + 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 20 added (sets 1573 → 1593); scan clean; no
-trailers; no order-path file touched; `rev-list --count` → 0; CI run 34840620999 at `cac1787`: in flight at the time of this record; verdict in a follow-up commit.
+trailers; no order-path file touched; `rev-list --count` → 0; CI run 34840620999 at `cac1787`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** nothing reads a disposition — a `deploy` deploys nothing, the order path is untouched (`U-allocator-1`); the allocator,
 evolution and retirement absent beyond `BoundaryKind.Retirement` as a value nothing opens (`U-allocator-2`); no boundary in the app's own

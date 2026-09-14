@@ -15,7 +15,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
    the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `cac1787`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
+2. **`main` is `c165b39`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
    `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
    `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
    `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
@@ -32,7 +32,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
    34771155930 RED on windows-latest only — a third press fixture of the two-second-budget class, `PressInFlightTests.cs`; fixer
    `U-press-inflight-win` dispatched; ubuntu and macos green), **`U-council-concurrent-1` `4753c46`** (two roles' turns may overlap; no
    schema change; CI run 34773015349 GREEN on all four jobs), **`U-council-concurrent-2` `cac1787`** (the consequential boundary;
-   **schema 16 on `main`**; CI run 34840620999 in flight when written).
+   **schema 16 on `main`**; CI run 34840620999 GREEN on all four jobs).
 3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
    - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
      after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
@@ -44,7 +44,7 @@ says a leg is running and nothing is, that leg was killed — re-brief it FRESH 
      34773625675 GREEN on all four jobs): killed at 20:07 2026-09-13 while waiting for that run; RESUMED 13:55 2026-09-14 (gate if not
      complete, report, close the PR). Test-only.
    If either is not running when you read this, re-brief it FRESH from its branch and brief on disk.
-4. **CI on `main`:** green on all four jobs at every sha from `137aaa4` to `47d1071` and at `4753c46`; RED on windows-latest at `45719b2` on ONE press fixture
+4. **CI on `main`:** green on all four jobs at every sha from `137aaa4` to `47d1071` and at `4753c46` and `cac1787`; RED on windows-latest at `45719b2` on ONE press fixture
    (`PressInFlightTests.cs`, the runner's disk and the two-second budget — the third fixture of that class, the `U-press-settle-win` shape)
    until `U-press-inflight-win` lands; its brief also moves the eleven `DispatchRecoveryTests` presses named EXPOSED on 2026-09-12.
 5. **Briefed, committed, NOT dispatched:** `U-data-2` (schema 18, after the catalogue), `U-freshness` (schema 19, money path, after the
