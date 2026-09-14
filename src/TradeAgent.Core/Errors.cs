@@ -122,6 +122,34 @@ public static class Labels
     public static string SetHoldoutFixtureArmed(string date) =>
         $"Confirm: these are fixture bars from {date} on — runs over them are never evidence";
 
+    /// <summary>
+    /// THE ALLOCATION CARD ON THE SAFETY PAGE, WHICH IS THE ONLY WAY CAPITAL IS EVER ALLOCATED.
+    ///
+    /// <para>Two presses in both directions, which the holdout card is the precedent for and which the
+    /// ordinary "widening asks twice, narrowing asks once" rule does not cover. An allocation row
+    /// cannot be edited or deleted (<c>Allocations</c>): a smaller ceiling is a NEW allocation from a
+    /// later instant, so every press writes a permanent record of capital the owner put behind one
+    /// version, and there is no press that takes one back. The first press is therefore the last
+    /// moment they can change their mind, exactly as it is on a holdout.</para>
+    ///
+    /// <para>The armed sentence carries the VERSION and the FIGURE, because "Confirm" on its own would
+    /// not say whose money is going where — and when the number widens what already stands it says so
+    /// in the words the Safety page's own <c>Widenings</c> uses.</para>
+    /// </summary>
+    public const string AllocationVersion = "The promoted strategy version this capital is for";
+
+    public const string AllocationQuantity = "The most it may hold at once";
+
+    public const string AllocationNotional = "The most that may be worth (0 for no value limit)";
+
+    public const string Allocate = "Allocate capital to this version";
+
+    /// <summary>What the second press will do, in full, with the figures the owner typed.</summary>
+    public static string AllocateArmed(string version, string quantity, string? value, bool widens) =>
+        $"Confirm: version {version} may hold up to {quantity} at a time"
+        + (value is { Length: > 0 } v ? $", worth at most {v}" : "")
+        + (widens ? " — more than it may hold now" : "");
+
     /// <summary>The AI's own daily spending ceiling, and the press that writes it.</summary>
     public const string DailyCostCap = "The most the AI may spend on itself in a day";
 

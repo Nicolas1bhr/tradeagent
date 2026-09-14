@@ -27,6 +27,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly DatasetStore _datasets;
     readonly VenueStore _venues;
     readonly CampaignStore _campaigns;
+    readonly Allocations _allocations;
     readonly Core.Strategy.Referee _referee;
     readonly CouncilBoundaries _boundaries;
     readonly HealthRegistry _health;
@@ -112,6 +113,53 @@ public sealed class TradingGateway : IAsyncDisposable
 
     /// <summary>Every verdict this installation has recorded. Read-only: the referee is the one writer.</summary>
     public Promotions Promotions => _referee.Promotions;
+
+    /// <summary>
+    /// THE CAPITAL ALLOCATIONS — what the owner has put behind each promoted version, and the ceiling
+    /// this class refuses orders against.
+    ///
+    /// <para>READ ONLY from here in the sense that matters: the one writer is the owner's own press,
+    /// through <see cref="Allocate"/>, which is in-process and has no <c>trade</c> verb and no pipe op
+    /// behind it. <c>docs/COUNCIL.md</c>:56-57 puts the capital allocator among the things that are
+    /// "code and never a role", and :59-63 makes a change of allocation a consequential boundary —
+    /// which is the owner's business and the directors', never the business of the agent whose orders
+    /// the number bounds. An agent that wanted more capital has nowhere to ask, exactly as it has
+    /// nowhere to ask for a mode, the kill switch or an approval.</para>
+    /// </summary>
+    public Allocations Allocations => _allocations;
+
+    /// <summary>
+    /// WHAT THE OWNER'S TWO PRESSES DO: one allocation of capital to one version that stands promoted
+    /// at this instant.
+    ///
+    /// <para>Here rather than in the app for the reason <see cref="SetHoldout"/> is here: the
+    /// invariant belongs to the data and not to a screen. The eligibility — <c>Promotions.Standing</c>
+    /// and never "a promotion row exists" — and the write are one transaction inside
+    /// <see cref="Allocations.Record"/>, so nothing can move the standing in between, and the promotion
+    /// the allocation is bound to is read from that standing rather than taken from the caller.</para>
+    ///
+    /// <para><b>In-process only.</b> This is operator authority (<c>CLAUDE.md</c>): it is not in the
+    /// handler table, there is no pipe op and no <c>trade</c> verb that reaches it, and the result is a
+    /// sentence for the owner's own window rather than a reply on the wire.</para>
+    /// </summary>
+    public AllocationResult Allocate(string versionId, decimal maxQuantity, decimal? maxNotional,
+        string reason)
+    {
+        if (Promotions.Standing(versionId) is not { IsPromoted: true, Promotion: { } promotion })
+            return _allocations.Record(new AllocationRow("", versionId, "", AllocationPolicy.V1,
+                maxQuantity, maxNotional, AccountCurrency, Now, null, reason, Now));
+
+        var result = _allocations.Record(new AllocationRow("", versionId, promotion.Id,
+            AllocationPolicy.V1, maxQuantity, maxNotional, AccountCurrency, Now, null, reason, Now));
+
+        if (result.Ok)
+            _log.Activity($"You allocated strategy version {versionId[..Math.Min(12, versionId.Length)]} "
+                          + $"up to {AllocationRow.Num(maxQuantity)} at a time"
+                          + (maxNotional is { } n ? $", worth at most {Labels.Money(n, AccountCurrency)}" : "")
+                          + ". Only that version may trade it, and only while its promotion stands.");
+
+        return result;
+    }
 
     /// <summary>
     /// WHAT THE OWNER'S ONE PRESS DOES: the cutoff, and the campaign that cutoff is the subject of, in
@@ -409,6 +457,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // else with it: there is no method here that assesses, challenges or disposes of a boundary,
         // and CouncilBoundaries exposes none that takes a disposition from a caller.
         _boundaries = new CouncilBoundaries(db);
+        _allocations = new Allocations(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());

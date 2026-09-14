@@ -517,6 +517,78 @@ public class TwoPressGrantTests
         Assert.Equal(0, applied);
     }
 
+    // ---- 5. the capital allocation card (U-allocator-1) ------------------------------------------
+
+    /// <summary>
+    /// ALLOCATING CAPITAL TO A PROMOTED VERSION IS TWO PRESSES IN BOTH DIRECTIONS, and the armed
+    /// sentence names the version and the figure.
+    ///
+    /// <para>The rule everywhere else on this page is "widening asks twice, narrowing asks once". This
+    /// control has no way down: <c>Allocations</c> exposes one write and it only inserts, so a smaller
+    /// ceiling is a NEW permanent record from now on and no press anywhere takes one back. The first
+    /// press is the last moment the owner can change their mind, which is the holdout card's reason.
+    /// "Confirm" alone would not say whose money is going where.</para>
+    /// </summary>
+    [Fact]
+    public void Allocating_capital_takes_two_presses_and_the_armed_sentence_names_the_version()
+    {
+        var typed = ("2b3c4d5e6f7a8b9c0d1e", 3m, (decimal?)null);
+        (string Version, decimal Quantity, decimal? Notional)? applied = null;
+        var b = SafetyPage.BuildAllocateConfirm(() => typed, () => null, () => "USD",
+            (v, q, n) => applied = (v, q, n));
+
+        Press(b);
+        Assert.Null(applied);
+        Assert.Equal("Confirm: version 2b3c4d5e6f7a may hold up to 3 at a time — more than it may hold now",
+            b.Content);
+
+        Press(b);
+        Assert.Equal("2b3c4d5e6f7a8b9c0d1e", applied?.Version);
+        Assert.Equal(3m, applied?.Quantity);
+        Assert.Null(applied?.Notional);
+    }
+
+    /// <summary>
+    /// A CHANGED FIGURE UNDER A HALF-PRESSED BUTTON DISARMS IT. The sentence the owner read named one
+    /// version and one ceiling; completing it against another would put the owner's money behind a
+    /// decision they did not agree to, and the row cannot be taken back afterwards.
+    /// </summary>
+    [Fact]
+    public void Changing_the_allocation_disarms_a_half_pressed_button()
+    {
+        var typed = ("2b3c4d5e6f7a8b9c0d1e", 3m, (decimal?)null);
+        var applied = 0;
+        var b = SafetyPage.BuildAllocateConfirm(() => typed, () => null, () => "USD", (_, _, _) => applied++);
+
+        Press(b);
+        Assert.True(Ui.IsArmed(b));
+
+        typed = ("a-different-version", 3m, null);
+        Ui.Relabel(b, Labels.Allocate, SafetyPage.AllocateArmed(typed, null, "USD"));
+
+        Assert.False(Ui.IsArmed(b));
+        Assert.Equal(Labels.Allocate, b.Content);
+        Assert.Equal(0, applied);
+    }
+
+    /// <summary>
+    /// AN EMPTY VERSION BOX ALLOCATES NOTHING, EVEN ON A SECOND PRESS. Which version the capital is
+    /// for is the whole of the decision, and a guess at what the owner meant is the one thing this
+    /// control must never make.
+    /// </summary>
+    [Fact]
+    public void An_empty_version_allocates_nothing_on_either_press()
+    {
+        var applied = 0;
+        var b = SafetyPage.BuildAllocateConfirm(() => ("  ", 3m, null), () => null, () => "USD",
+            (_, _, _) => applied++);
+
+        Press(b);
+        Press(b);
+
+        Assert.Equal(0, applied);
+    }
+
     static string RepositoryRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

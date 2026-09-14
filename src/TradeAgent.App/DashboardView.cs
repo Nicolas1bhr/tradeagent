@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 
 namespace TradeAgent.App;
@@ -1018,6 +1019,22 @@ sealed class SafetyPage
     readonly TextBlock _limitsNote = Ui.Micro("");
     readonly Border _unreadableCard;
 
+    /// <summary>
+    /// THE CAPITAL ALLOCATION CARD. A text box for the version, two ceilings, and one two-press button.
+    ///
+    /// <c>_allocationValue</c> is live rather than rebuilt, like every other reading on these pages:
+    /// the dashboard tree is built once and updated in place, and a rebuild on the five-second tick
+    /// would wipe a half-pressed confirmation.
+    /// </summary>
+    readonly TextBox _allocationVersion = Ui.With(Ui.TextField(placeholder: "a promoted version id"),
+        t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
+
+    readonly NumericUpDown _allocationQuantity = Ui.NumberField(0m);
+    readonly NumericUpDown _allocationNotional = Ui.NumberField(0m);
+    readonly TextBlock _allocationValue = Ui.Body("");
+    readonly TextBlock _allocationNote = Ui.Micro("");
+    readonly Button _allocate;
+
     public Control Root { get; }
 
 
@@ -1193,6 +1210,49 @@ sealed class SafetyPage
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
+
+    /// <summary>
+    /// THE PRESS THAT ALLOCATES CAPITAL TO ONE PROMOTED VERSION. Two presses in BOTH directions.
+    ///
+    /// <para>Unlike the three presses above it, this one does not ask once on the way down. An
+    /// allocation row cannot be edited or deleted (<c>Allocations</c> exposes one write and it only
+    /// inserts): lowering a ceiling writes a NEW permanent record from now on, and there is no press
+    /// anywhere that takes one back. That makes the first press the last moment the owner can change
+    /// their mind, which is the holdout card's reason, not the risk limits'.</para>
+    ///
+    /// <para>The armed sentence names the VERSION and both figures, and says when the proposal widens
+    /// what already stands — <c>AllocationRow.Widens</c>, in Core, where a value ceiling of zero is
+    /// "not enforced" and therefore the widest value it has.</para>
+    ///
+    /// <para>Static and handed the four things it does, like the three presses above it, so a rule
+    /// that can only be exercised by running the app is not a rule nobody is checking. Nothing typed
+    /// applies anything on either press: a version box left empty is not a guess at which version the
+    /// owner meant.</para>
+    /// </summary>
+    internal static Button BuildAllocateConfirm(
+        Func<(string Version, decimal Quantity, decimal? Notional)> typed,
+        Func<AllocationRow?> standing, Func<string> currency,
+        Action<string, decimal, decimal?> apply)
+    {
+        var b = Ui.Confirm(Labels.Allocate, AllocateArmed(typed(), standing(), currency()), () =>
+        {
+            var (version, quantity, notional) = typed();
+            if (!string.IsNullOrWhiteSpace(version)) apply(version.Trim(), quantity, notional);
+        });
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>What the second press will do, in the owner's words, with the figures in the boxes.</summary>
+    internal static string AllocateArmed((string Version, decimal Quantity, decimal? Notional) typed,
+        AllocationRow? standing, string currency) =>
+        Labels.AllocateArmed(
+            string.IsNullOrWhiteSpace(typed.Version)
+                ? "that version"
+                : typed.Version.Trim()[..Math.Min(12, typed.Version.Trim().Length)],
+            AllocationRow.Num(typed.Quantity),
+            typed.Notional is { } n && n > 0m ? MissionSituation.Money(n, currency) : null,
+            AllocationRow.Widens(standing, typed.Quantity, typed.Notional));
 
     /// <summary>Both halves of the rate, as one phrase for the armed sentence to name.</summary>
     static string Rate((decimal In, decimal Out) rate, string currency) =>
@@ -1443,6 +1503,43 @@ sealed class SafetyPage
             BuildSaveLimits(() => _host.Gateway.Settings.Risk, PendingLimits, SaveLimits),
             _limitsNote));
 
+        // THE CAPITAL ALLOCATION. Here rather than beside the holdout on the Settings page because it
+        // is about what the AI may DO with money, which is what this page is: `docs/COUNCIL.md`:14-15
+        // lists the capital gate beside the loss gate, and the card above is where the loss budgets are.
+        //
+        // TWO PRESSES IN BOTH DIRECTIONS, which only the holdout card also is. The usual rule on this
+        // page is that widening asks twice and narrowing asks once, because hesitating on the way down
+        // costs money. This control has no way down: an allocation row cannot be edited or deleted, so
+        // a smaller ceiling is a NEW permanent record and there is no press that takes one back. The
+        // armed sentence names the version and the figures, and says so when it widens.
+        //
+        // A typed value under a half-pressed button disarms it (`RelabelAllocation`), for the reason
+        // the holdout card and the unconfirmed-orders card do the same: a confirmation armed against
+        // one sentence must not be completable against a different one.
+        _allocationNote.IsVisible = false;
+        _allocationVersion.TextChanged += (_, _) => RelabelAllocation();
+        _allocationQuantity.ValueChanged += (_, _) => RelabelAllocation();
+        _allocationNotional.ValueChanged += (_, _) => RelabelAllocation();
+        _allocate = BuildAllocateConfirm(ReadAllocation, StandingAllocation, AccountCurrency, ApplyAllocation);
+
+        var allocation = Ui.Section("Capital for a promoted strategy", Ui.Col(Theme.S2,
+            Ui.Muted("Only a version TradeAgent's own referee has promoted can be given capital, and only "
+                + "that version may trade it. The AI cannot allocate anything and has no command to ask."),
+            Ui.Spacer(Theme.S2),
+            Ui.KeyValueLive("Allocated now", _allocationValue),
+            Ui.Spacer(Theme.S2),
+            Ui.FieldRow(Labels.AllocationVersion, _allocationVersion,
+                "The version id from the daily report. A version whose promotion no longer stands is refused."),
+            Ui.FieldRow(Labels.AllocationQuantity, _allocationQuantity),
+            Ui.FieldRow(Labels.AllocationNotional, _allocationNotional,
+                "0 means no value limit, exactly as it does above."),
+            Ui.Spacer(Theme.S2),
+            _allocate,
+            _allocationNote,
+            Ui.Micro("Every allocation is kept for good. Lowering one writes a new record from now on "
+                + "rather than changing the old one, so what this version was allowed to hold, and when, "
+                + "stays readable afterwards.")));
+
         // THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.
         //
         // The failure is invisible without this. The gateway refuses everything and the health row on
@@ -1465,7 +1562,7 @@ sealed class SafetyPage
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits, spending)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits, allocation, spending)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -1519,6 +1616,11 @@ sealed class SafetyPage
         // five-second tick, and the fill it wears while armed is registered with the control.
         Ui.SetResting(_stopButton,
             status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading, "emergency");
+
+        // The live line only. The three boxes and the button are left exactly as the owner left them:
+        // a tick that rewrote a typed version id, or relabelled a half-pressed confirmation, would be
+        // this page deciding what they meant.
+        ShowAllocations();
 
         Refresh();
     }
@@ -1925,6 +2027,68 @@ sealed class SafetyPage
         // later on the refresh tick. Pressing the only button a warning names and watching nothing
         // change is how an owner concludes the software is broken and stops trying.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
+    }
+
+    // ---- the capital allocation --------------------------------------------------------------
+
+    /// <summary>What is in the three boxes right now. A blank version is left blank, never guessed at.</summary>
+    (string Version, decimal Quantity, decimal? Notional) ReadAllocation() =>
+        ((_allocationVersion.Text ?? "").Trim(),
+            _allocationQuantity.Value ?? 0m,
+            _allocationNotional.Value is { } n && n > 0m ? n : null);
+
+    /// <summary>
+    /// What the version in the box is allowed to hold as things stand, or null because nothing is —
+    /// which is what the armed sentence compares the typed figures against. A ledger this build
+    /// cannot read answers null, so the sentence says the proposal widens: the conservative reading,
+    /// and the one that cannot quietly turn a grant into a one-press save.
+    /// </summary>
+    AllocationRow? StandingAllocation()
+    {
+        var version = (_allocationVersion.Text ?? "").Trim();
+        if (version.Length == 0) return null;
+        try { return _host.Gateway.Allocations.StandingFor(version, DateTimeOffset.UtcNow)?.Allocation; }
+        catch (Exception) { return null; }
+    }
+
+    string AccountCurrency() => _host.Gateway.AccountCurrency;
+
+    void ApplyAllocation(string version, decimal quantity, decimal? notional)
+    {
+        var result = _host.Gateway.Allocate(version, quantity, notional, "allocated by the account owner");
+        _allocationNote.Text = result.Why;
+        _allocationNote.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+        _allocationNote.IsVisible = true;
+        ShowAllocations();
+    }
+
+    /// <summary>
+    /// Keeps the armed sentence in step with the three boxes, and disarms as it goes. A confirmation
+    /// armed against one version and one ceiling must not be completable against another — this one
+    /// cannot be taken back afterwards.
+    /// </summary>
+    void RelabelAllocation() =>
+        Ui.Relabel(_allocate, Labels.Allocate,
+            AllocateArmed(ReadAllocation(), StandingAllocation(), AccountCurrency()));
+
+    /// <summary>
+    /// WHAT STANDS ALLOCATED RIGHT NOW, in the live line rather than a rebuilt tree. An allocation
+    /// whose promotion no longer stands is shown and MARKED: it is the one the owner most needs to
+    /// see, and hiding it would read as "nothing is allocated" while the row is still on the table.
+    /// </summary>
+    void ShowAllocations()
+    {
+        try
+        {
+            var standing = _host.Gateway.Allocations.Standing(DateTimeOffset.UtcNow);
+            _allocationValue.Text = standing.Count == 0
+                ? "nothing — no version has been given capital"
+                : string.Join("; ", standing.Select(s =>
+                    $"{s.Allocation.VersionId[..Math.Min(12, s.Allocation.VersionId.Length)]} "
+                    + $"up to {AllocationRow.Num(s.Allocation.MaxQuantity)}"
+                    + (s.Authorises ? "" : " — its promotion no longer stands, so it may trade nothing")));
+        }
+        catch (Exception) { _allocationValue.Text = "could not be read"; }
     }
 }
 

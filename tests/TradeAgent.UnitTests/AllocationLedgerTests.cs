@@ -38,7 +38,8 @@ public class AllocationLedgerTests
     /// cannot invent any of them, which is the point — an allocation of capital to nothing is the row
     /// this design exists to make unwritable.
     /// </summary>
-    sealed record Allocated(Database Db, DatasetRecord Set, string VersionId, PromotionRow Promotion);
+    sealed record Allocated(Database Db, DatasetRecord Set, string VersionId, PromotionRow Promotion,
+        string UnjudgedVersionId);
 
     static Allocated Given(string verdict = PromotionVerdict.Promoted, string reason = PromotionReason.Met)
     {
@@ -79,7 +80,17 @@ public class AllocationLedgerTests
             StrategyStore.InterpreterBuild, set.Id, set.NormalisedSha256, model.Canonical,
             Referee.EvaluatorVersion, runId, verdict, reason, At));
 
-        return new Allocated(db, set, program.StrategyId, promotion);
+        // A SECOND VERSION NOBODY HAS ASKED ABOUT, really in the table. "No verdict has been recorded"
+        // is a different state from "the answer was no", and a test that faked the version id would be
+        // caught by the foreign key instead of by the eligibility check it is about.
+        var unjudged = StrategyParser.Parse(
+            ProgramText.Replace("103", "107", StringComparison.Ordinal)).Program!;
+        strategies.RecordVersion(new StrategyVersionRow(
+            unjudged.StrategyId, unjudged.Source, unjudged.Canonical, unjudged.Manifest,
+            StrategyStore.InterpreterBuild, ParseVerdict.Accepted, unjudged.WarmUpBars,
+            Cutoff.AddDays(-1), null, null));
+
+        return new Allocated(db, set, program.StrategyId, promotion, unjudged.StrategyId);
     }
 
     /// <summary>The seven facts of one allocation, as the owner's card would have declared them.</summary>
@@ -105,7 +116,9 @@ public class AllocationLedgerTests
         var a = Given();
         using var _1 = a.Db;
 
-        var written = new Allocations(a.Db).Record(RowFor(a));
+        var recorded = new Allocations(a.Db).Record(RowFor(a));
+        Assert.True(recorded.Ok, recorded.Why);
+        var written = recorded.Allocation!;
 
         Assert.Equal(64, written.Id.Length);
         Assert.Equal(AllocationRow.IdOf(a.VersionId, a.Promotion.Id, AllocationPolicy.V1, 1m, null, "USD", At),
@@ -143,8 +156,8 @@ public class AllocationLedgerTests
         using var _1 = a.Db;
         var allocations = new Allocations(a.Db);
 
-        var first = allocations.Record(RowFor(a, at: At));
-        var second = allocations.Record(RowFor(a, at: At.AddHours(3)));
+        var first = allocations.Record(RowFor(a, at: At)).Allocation!;
+        var second = allocations.Record(RowFor(a, at: At.AddHours(3))).Allocation!;
 
         // The row count first, because it is the whole claim: one decision, one row.
         Assert.Single(allocations.For(a.VersionId));
@@ -153,20 +166,28 @@ public class AllocationLedgerTests
     }
 
     /// <summary>
-    /// AN ALLOCATION CANNOT NAME A VERSION OR A PROMOTION THAT DOES NOT EXIST. The foreign keys are
-    /// the whole point of the table: capital allocated to nothing is the row this design must not hold.
+    /// THE TABLE ITSELF CANNOT HOLD AN ALLOCATION OF CAPITAL TO NOTHING. The store refuses a version
+    /// nobody submitted a step earlier (see the standing tests below), so this reaches past it and
+    /// writes the row directly: the foreign keys are the schema's own guarantee and are what makes an
+    /// allocation naming no version unwritable rather than merely unwritten.
     /// </summary>
     [Fact]
-    public void An_allocation_cannot_name_a_version_or_a_promotion_that_does_not_exist()
+    public void The_table_refuses_an_allocation_naming_a_version_that_does_not_exist()
     {
         var a = Given();
         using var _1 = a.Db;
-        var allocations = new Allocations(a.Db);
 
-        Assert.ThrowsAny<Exception>(() =>
-            allocations.Record(RowFor(a) with { VersionId = "a-version-nobody-submitted" }));
-        Assert.ThrowsAny<Exception>(() =>
-            allocations.Record(RowFor(a) with { PromotionId = "a-promotion-nobody-took" }));
+        var boom = Assert.ThrowsAny<Exception>(() => a.Db.Write(_ =>
+        {
+            using var c = a.Db.Cmd("""
+                INSERT INTO strategy_allocation(id, version_id, promotion_id, policy_version,
+                  max_quantity, max_notional, currency, effective_from, effective_to, reason, at)
+                VALUES('an-id','a-version-nobody-submitted',$prom,'p','1',NULL,'USD','x',NULL,'r','y')
+                """, ("$prom", a.Promotion.Id));
+            return c.ExecuteNonQuery();
+        }));
+
+        Assert.Contains("FOREIGN KEY", boom.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -233,8 +254,8 @@ public class AllocationLedgerTests
         using var _1 = a.Db;
         var allocations = new Allocations(a.Db);
 
-        allocations.Record(RowFor(a, quantity: 5m, from: At));
-        allocations.Record(RowFor(a, quantity: 1m, from: At.AddDays(1)));
+        Assert.True(allocations.Record(RowFor(a, quantity: 5m, from: At)).Ok);
+        Assert.True(allocations.Record(RowFor(a, quantity: 1m, from: At.AddDays(1))).Ok);
 
         Assert.Equal(5m, allocations.StandingFor(a.VersionId, At.AddHours(1))!.Allocation.MaxQuantity);
         Assert.Equal(1m, allocations.StandingFor(a.VersionId, At.AddDays(2))!.Allocation.MaxQuantity);
@@ -242,7 +263,99 @@ public class AllocationLedgerTests
 
         // Before it takes effect, and after it has expired, nothing stands.
         Assert.Null(allocations.StandingFor(a.VersionId, At.AddDays(-1)));
-        allocations.Record(RowFor(a, quantity: 2m, from: At.AddDays(3), to: At.AddDays(4)));
+        Assert.True(allocations.Record(RowFor(a, quantity: 2m, from: At.AddDays(3), to: At.AddDays(4))).Ok);
         Assert.Equal(1m, allocations.StandingFor(a.VersionId, At.AddDays(5))!.Allocation.MaxQuantity);
+    }
+
+    // ---- item 2: only against a version that stands promoted ----------------------------------
+
+    /// <summary>
+    /// THE MUTANT: THE ELIGIBILITY WRITTEN AS "A PROMOTION ROW EXISTS".
+    ///
+    /// <para>The version here WAS promoted and the row is still on the table. Its holdout dataset has
+    /// since been rejected, so <c>Promotions.Standing</c> reads <c>invalidated</c> —
+    /// <c>docs/COUNCIL.md</c>:35, "a changed assumption invalidates the evidence that rested on it" —
+    /// and the owner's money must not be put behind evidence TradeAgent has withdrawn.</para>
+    ///
+    /// <para>With the check written as <c>_promotions.ById(allocation.PromotionId) is not null</c> the
+    /// allocation is recorded and stands: <c>Assert.False() Failure / Expected: False / Actual: True</c>,
+    /// and the row is there for the gateway to authorise orders against.</para>
+    /// </summary>
+    [Fact]
+    public void An_invalidated_promotion_cannot_be_allocated_capital()
+    {
+        var a = Given();
+        using var _1 = a.Db;
+        var allocations = new Allocations(a.Db);
+
+        new DatasetStore(a.Db).Reject(a.Set.Id, "a raw archive file changed under it");
+        Assert.Equal(PromotionState.Invalidated, new Promotions(a.Db).Standing(a.VersionId).State);
+
+        var refused = allocations.Record(RowFor(a));
+
+        Assert.False(refused.Ok, refused.Why);
+        Assert.Null(refused.Allocation);
+        Assert.Contains("does not stand promoted", refused.Why, StringComparison.Ordinal);
+        Assert.Empty(allocations.For(a.VersionId));
+        Assert.Null(allocations.StandingFor(a.VersionId, At));
+    }
+
+    /// <summary>
+    /// AN UNJUDGED VERSION CANNOT BE ALLOCATED CAPITAL — the version is really in the table, and
+    /// TradeAgent's referee has simply never been asked about it. <c>docs/COUNCIL.md</c>:32-33: only a
+    /// promoted version executes, so only a promoted version is given anything to execute with.
+    ///
+    /// <para>RED before this unit: the store wrote the row and it stood —
+    /// <c>Assert.False() Failure / Expected: False / Actual: True</c>, with
+    /// <c>Assert.Empty() Failure: Collection was not empty</c> behind it.</para>
+    /// </summary>
+    [Fact]
+    public void An_unjudged_version_cannot_be_allocated_capital()
+    {
+        var a = Given();
+        using var _1 = a.Db;
+        var allocations = new Allocations(a.Db);
+
+        var unjudged = allocations.Record(RowFor(a) with { VersionId = a.UnjudgedVersionId });
+
+        Assert.False(unjudged.Ok, unjudged.Why);
+        Assert.Contains("no verdict has been recorded", unjudged.Why, StringComparison.Ordinal);
+        Assert.Empty(allocations.For(a.UnjudgedVersionId));
+        Assert.Null(allocations.StandingFor(a.UnjudgedVersionId, At));
+    }
+
+    /// <summary>
+    /// AND A VERSION THE REFEREE SAID NO TO. "Nobody has asked" and "the answer was no" are different
+    /// facts and the refusal says which; neither of them is a promotion.
+    /// </summary>
+    [Fact]
+    public void A_refused_version_cannot_be_allocated_capital()
+    {
+        var a = Given(PromotionVerdict.Refused, PromotionReason.NotProfitable);
+        using var _1 = a.Db;
+
+        var refused = new Allocations(a.Db).Record(RowFor(a));
+
+        Assert.False(refused.Ok, refused.Why);
+        Assert.Contains("refused", refused.Why, StringComparison.Ordinal);
+        Assert.Empty(new Allocations(a.Db).For(a.VersionId));
+    }
+
+    /// <summary>
+    /// AN ALLOCATION MUST NAME THE PROMOTION THE VERSION ACTUALLY STANDS ON. The id binds the two, so
+    /// an allocation pointing at some other verdict would carry a provenance that is not the reason it
+    /// was allowed.
+    /// </summary>
+    [Fact]
+    public void An_allocation_must_name_the_promotion_the_version_stands_on()
+    {
+        var a = Given();
+        using var _1 = a.Db;
+
+        var mismatched = new Allocations(a.Db).Record(RowFor(a) with { PromotionId = new string('f', 64) });
+
+        Assert.False(mismatched.Ok);
+        Assert.Contains("is not the one", mismatched.Why, StringComparison.Ordinal);
+        Assert.Empty(new Allocations(a.Db).For(a.VersionId));
     }
 }

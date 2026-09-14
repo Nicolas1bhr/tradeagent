@@ -94,6 +94,23 @@ public sealed record AllocationRow(
     /// <summary>Whether this row is in force at <paramref name="now"/> by its own two instants.</summary>
     public bool StandsAt(DateTimeOffset now) =>
         EffectiveFrom <= now && (EffectiveTo is not { } to || now < to);
+
+    /// <summary>
+    /// WHETHER A PROPOSED ALLOCATION GIVES A VERSION MORE ROOM THAN <paramref name="from"/> DOES.
+    ///
+    /// <para>The comparison <see cref="RiskPolicy.Widenings"/> makes, applied to the two ceilings an
+    /// allocation has, and it is here rather than at the widget for the reason that one is in Core:
+    /// "wider" is not "larger" on both fields. A quantity ceiling is larger-is-wider. A VALUE ceiling
+    /// reads absent (or zero) as "not enforced", so turning it off is the widest move there is and a
+    /// plain <c>&gt;</c> would read it as a narrowing and let it through on one press.</para>
+    ///
+    /// <para>Nothing standing at all widens by definition: the version could hold nothing, and now it
+    /// can hold something.</para>
+    /// </summary>
+    public static bool Widens(AllocationRow? from, decimal quantity, decimal? notional) =>
+        from is null
+        || quantity > from.MaxQuantity
+        || (from.MaxNotional is { } cap && cap > 0m && (notional is null or <= 0m || notional > cap));
 }
 
 /// <summary>
@@ -111,6 +128,16 @@ public sealed record AllocationStanding(AllocationRow Allocation, PromotionStand
     /// <summary>Whether this allocation may authorise an order right now.</summary>
     public bool Authorises => Promotion.IsPromoted;
 }
+
+/// <summary>
+/// WHAT THE LEDGER DID WITH ONE PROPOSED ALLOCATION, and why when it did nothing.
+///
+/// <para>A result rather than an exception, for the reason <c>DatasetStore.SetHoldout</c> and
+/// <c>CampaignStore.Open</c> answer this shape: the one caller is the owner's own card, and the
+/// sentence it has to put on the screen is the refusal itself. <see cref="Why"/> is always written,
+/// including on the way through, so a surface that reports the success has something true to say.</para>
+/// </summary>
+public sealed record AllocationResult(bool Ok, string Why, AllocationRow? Allocation);
 
 /// <summary>
 /// THE ALLOCATION LEDGER: WHAT CAPITAL THE OWNER PUT BEHIND A PROMOTED VERSION, WRITTEN ONCE.
@@ -136,17 +163,48 @@ public sealed class Allocations(Database db)
         "effective_from, effective_to, reason, at";
 
     /// <summary>
-    /// RECORDS ONE ALLOCATION, or leaves the row that is already there alone. Returns the row AS
-    /// WRITTEN, with the id its seven facts hash to.
+    /// RECORDS ONE ALLOCATION AGAINST A VERSION THAT STANDS PROMOTED AT THIS INSTANT, or leaves the
+    /// row that is already there alone. Returns the row AS WRITTEN, with the id its seven facts hash
+    /// to.
     ///
-    /// <para>The id is computed here rather than taken from the caller, for the reason
+    /// <para><b>The eligibility is <see cref="Promotions.Standing"/> and never "a promotion row
+    /// exists".</b> <c>docs/COUNCIL.md</c>:32-33 lets only a PROMOTED version execute, and :35 makes a
+    /// changed assumption invalidate the evidence that rested on it — so a version whose holdout
+    /// dataset has since been rejected, re-collected or reclassified, or which was judged under an
+    /// interpreter or a scoring policy this build no longer applies, has no standing promotion and
+    /// may not be given the owner's money. A row-exists check is the mutant: it reads an invalidated
+    /// promotion as a live one and allocates capital on evidence TradeAgent has withdrawn.</para>
+    ///
+    /// <para><b>And it must be THAT promotion.</b> The id binds the allocation to the verdict that
+    /// made it eligible; a caller naming some older verdict of the same version would be recording an
+    /// allocation whose provenance does not match the reason it was allowed.</para>
+    ///
+    /// <para>The check and the write are ONE <see cref="Database.Write"/>, so nothing can change the
+    /// standing in between. The id is computed here rather than taken from the caller, for the reason
     /// <see cref="Promotions.Record"/> computes its own: a caller that had to remember to hash the
     /// tuple is a caller that can forget, and an allocation keyed by anything else is an allocation
     /// that says nothing about what it was an allocation OF.</para>
     /// </summary>
-    public AllocationRow Record(AllocationRow allocation) => db.Write(_ =>
+    public AllocationResult Record(AllocationRow allocation) => db.Write(_ =>
     {
         ArgumentNullException.ThrowIfNull(allocation);
+
+        var standing = _promotions.Standing(allocation.VersionId);
+        if (!standing.IsPromoted)
+            return new AllocationResult(false,
+                $"version {Short(allocation.VersionId)} does not stand promoted, so no capital was "
+                + $"allocated to it: {standing.Why}", null);
+
+        if (!string.Equals(standing.Promotion!.Id, allocation.PromotionId, StringComparison.Ordinal))
+            return new AllocationResult(false,
+                $"the promotion this allocation names ({Short(allocation.PromotionId)}) is not the one "
+                + $"version {Short(allocation.VersionId)} stands on ({Short(standing.Promotion.Id)}), so "
+                + "nothing was allocated.", null);
+
+        if (allocation.MaxQuantity < 0m)
+            return new AllocationResult(false,
+                "a ceiling cannot be negative, so nothing was allocated. Zero is a real allocation and "
+                + "means this version may open nothing.", null);
 
         var row = allocation with { Id = allocation.ComputedId };
 
@@ -163,8 +221,13 @@ public sealed class Allocations(Database db)
             ("$reason", row.Reason), ("$at", Sql.T(row.At)));
         c.ExecuteNonQuery();
 
-        return ById(row.Id) ?? row;
+        var written = ById(row.Id) ?? row;
+        return new AllocationResult(true,
+            $"version {Short(written.VersionId)} may trade up to {AllocationRow.Num(written.MaxQuantity)} "
+            + $"from {written.EffectiveFrom:u}.", written);
     });
+
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
     /// <summary>One allocation by its id, or null when this installation has never recorded it.</summary>
     public AllocationRow? ById(string id) => db.Read(_ =>
