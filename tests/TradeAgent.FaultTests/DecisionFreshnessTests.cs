@@ -161,6 +161,31 @@ public class DecisionFreshnessTests(ITestOutputHelper log)
         await gw.DisposeAsync();
     }
 
+    /// <summary>
+    /// A DECISION FROM A BAR THAT HAS NOT CLOSED YET IS REFUSED TOO — beyond the brief, and named as a
+    /// choice in the report.
+    ///
+    /// <para>The evaluator has no way to spell the bar that is forming, so a close in the future is a
+    /// clock or a caller that is wrong, and an order placed on data that does not exist yet is the one
+    /// outcome that cannot be right. It is a definite refusal for the same reason the other two are.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_decision_from_a_bar_that_has_not_closed_is_refused()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+
+        var intent = Decided(clock, -TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "df-future", intent));
+
+        log.WriteLine($"outcome : {outcome}");
+
+        Assert.StartsWith(ErrorCode.DECISION_EXPIRED.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Contains("has not closed", outcome, StringComparison.Ordinal);
+        Assert.Empty(conn.Broker.Orders);
+        await gw.DisposeAsync();
+    }
+
     /// <summary>A decision inside both of its bounds goes out, which is what makes the gate a gate.</summary>
     [Fact]
     public async Task A_decision_inside_both_of_its_bounds_is_sent()

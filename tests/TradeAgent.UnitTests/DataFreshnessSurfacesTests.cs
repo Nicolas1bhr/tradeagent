@@ -173,6 +173,36 @@ public class DataFreshnessSurfacesTests
         await gw.DisposeAsync();
     }
 
+    /// <summary>
+    /// AND SECTION 3 STILL FITS. The dataset lines are capped at <c>DailyReports.ListShown</c>, and a
+    /// report past <c>DailyReportText.MaxLines</c> is REFUSED rather than trimmed — so an installation
+    /// holding more datasets than this one must not be the thing that costs the owner their day's
+    /// report. Six is the cap plus the "not listed" line, which is the most this section can ever add.
+    /// </summary>
+    [Fact]
+    public async Task An_installation_at_the_dataset_cap_still_fits_inside_the_reports_line_limit()
+    {
+        var (gw, db, at) = await Promoted(barsAgeDays: 400);
+        using var _1 = db;
+
+        for (var n = 0; n < DailyReports.ListShown + 2; n++)
+        {
+            var file = Path.Combine(Paths.Data, $"cap-{Guid.NewGuid():n}.csv");
+            File.WriteAllText(file, KlineNormaliser.Header + "\n");
+            gw.Datasets.Record(new DatasetRecord(
+                0, BinanceArchive.Source, $"PAIR{n}USDT", BinanceArchive.Interval, "v1", 12, 12, [],
+                file, DatasetStore.Sha256(file)!, 1000, at.AddDays(-30), at.AddDays(-n), 0, [], false,
+                0, 0, 0, at, DatasetState.ACCEPTED, null, []));
+        }
+
+        var draft = DailyReportText.Draft(gw.Reports.Compose(at));
+
+        Assert.Null(draft.Rejected);
+        Assert.True(draft.Lines <= DailyReportText.MaxLines,
+            $"a report with the dataset list at its cap rendered {draft.Lines} lines");
+        await gw.DisposeAsync();
+    }
+
     /// <summary>Nothing promoted, nothing claimed: the line is absent rather than reassuring.</summary>
     [Fact]
     public async Task With_nothing_promoted_the_bound_line_says_nothing()

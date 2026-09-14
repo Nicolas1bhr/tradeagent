@@ -2321,8 +2321,10 @@ public sealed class TradingGateway : IAsyncDisposable
               + $"and this strategy's `{bound}` is {limit.TotalSeconds:0.#}s. Nothing was sent. Decide again on "
               + "the bar that has just closed and ask under a new request id.";
 
-        _log.Activity($"An order was not sent: its trading signal was {age.TotalSeconds:0.#}s old and the "
-                      + $"strategy allows {limit.TotalSeconds:0.#}s.", "warn");
+        _log.Activity(age < TimeSpan.Zero
+            ? "An order was not sent: the bar its trading signal was computed from has not closed yet."
+            : $"An order was not sent: its trading signal was {age.TotalSeconds:0.#}s old and the "
+              + $"strategy allows {limit.TotalSeconds:0.#}s.", "warn");
         _log.Engineering("Gateway", "decision_expired", "warn", requestId: requestId,
             metadataJson: Json.Write(new
             {
