@@ -204,7 +204,9 @@ public class PromotionLedgerTests
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(m => !m.IsSpecialName)
             .Select(m => m.Name)
-            .Where(n => n is not ("ById" or "For" or "All" or "Standing"))
+            // `Current` is a READ — the standing that still holds, computed by `Standing` — and is
+            // listed here with the other four for that reason and no other.
+            .Where(n => n is not ("ById" or "For" or "All" or "Standing" or "Current"))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -255,7 +257,12 @@ public class PromotionLedgerTests
         Assert.Equal([
             "id", "version_id", "campaign_id", "scoring_policy_sha256", "interpreter_build",
             "holdout_dataset_id", "holdout_dataset_sha256", "execution_model", "evaluator_version",
-            "holdout_run_id", "verdict", "reason", "at"
+            "holdout_run_id", "verdict", "reason", "at",
+            // Schema 19: the execution bounds the promoted program declared, frozen onto the verdict
+            // (`docs/COUNCIL.md`:35). They are additive, they are NOT in `IdOf`'s nine facts — a
+            // changed bound is already a different `version_id` — and none of them is `invalidated`,
+            // which is the absence this assertion exists to keep.
+            "timeframe", "data_freshness", "max_decision_age"
         ], columns);
     }
 

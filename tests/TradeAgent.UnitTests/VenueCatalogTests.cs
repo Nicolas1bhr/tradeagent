@@ -218,6 +218,12 @@ public class VenueCatalogTests
                 ALTER TABLE dataset DROP COLUMN source_carries_volume;
                 ALTER TABLE dataset DROP COLUMN midpoint_bars;
                 ALTER TABLE strategy_run DROP COLUMN increment_source;
+                ALTER TABLE strategy_version DROP COLUMN timeframe;
+                ALTER TABLE strategy_version DROP COLUMN data_freshness;
+                ALTER TABLE strategy_version DROP COLUMN max_decision_age;
+                ALTER TABLE strategy_promotion DROP COLUMN timeframe;
+                ALTER TABLE strategy_promotion DROP COLUMN data_freshness;
+                ALTER TABLE strategy_promotion DROP COLUMN max_decision_age;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;
                 UPDATE meta SET value='16' WHERE key='schema_version';

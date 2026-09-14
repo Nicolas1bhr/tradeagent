@@ -51,6 +51,9 @@ public class StrategyIdentityTests
             program/1
             instrument BTCUSDT
             zone UTC
+            timeframe none
+            freshness none
+            decisionage none
             days all
             ind fastma=sma(close,20)
             size fixed:1
