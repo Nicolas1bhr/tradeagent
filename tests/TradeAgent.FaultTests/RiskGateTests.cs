@@ -415,6 +415,12 @@ public class RiskGateTests(ITestOutputHelper log)
     ///
     /// The allowlist puts NQ first so the health probe's one quote read is NQ's: it is the ES
     /// position that must be unpriced, and the probe would otherwise have priced it.
+    ///
+    /// The daily budget is set AFTER the health pass, which is both how an owner does it and what
+    /// keeps this state reachable at all: since U-flatten-1 the loss watch rides that pass and pulls
+    /// a quote for every open-position symbol, so a gateway that restarts WITH a budget already set
+    /// has priced its own book by the end of the first pass. The guard is unchanged and so is every
+    /// assertion below — what moved is the moment the budget starts being enforced.
     /// </summary>
     [Fact]
     public async Task An_open_position_with_no_price_and_no_mark_refuses_rather_than_counting_as_flat()
@@ -435,9 +441,9 @@ public class RiskGateTests(ITestOutputHelper log)
             s.Risk.MaxNotionalPerOrder = 10_000_000m;
             s.Risk.MaxOpenPositions = 10;
             s.Risk.MaxOrdersPerMinute = 100;
-            s.Risk.MaxDailyLoss = 500m;
         });
         await restarted.RefreshHealthAsync();
+        restarted.Update(s => s.Risk.MaxDailyLoss = 500m);
 
         log.WriteLine($"ES held              : {conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity}");
         log.WriteLine($"ES marked by platform: {conn.Broker.Positions.First(p => p.Symbol == "ES").UnrealizedPnl?.ToString() ?? "null"}");
