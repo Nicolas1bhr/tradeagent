@@ -5534,3 +5534,43 @@ macos's `Timing` step took its one second attempt (87/88 then 88/88). Manager's 
 
 **NOT done:** no product code; `SweepRequestIdTests` untouched (above); the pushed tip had no runner run of its own — the proof is the run
 at `62dd169`, the difference two council landings touching no Fault fixture plus the report; no box, no ATAS, no money.
+
+## 2026-09-14 — U-venue-catalog landed: the instrument as a recorded fact with a source, not a number an agent typed into a request
+
+The first of the venue and data units (COUNCIL names none there; `:145,152` require an increment on the bars), by one fresh builder on
+`docs/briefs/U-venue-catalog.md` written from a read-only survey (killed by the session limit before its full suite, resumed the next day
+and rebased three times, the schema ladder reconciled 15 → 16 → 17 inside the rebase). Merge `afa49dd`, 7 commits, 31 files, +2069/−58
+(`Database.cs` **schema 17** — `venue`, `venue_instrument`, `dataset.venue_id`/`instrument_symbol`, `strategy_run.increment_source`; new
+`Db/VenueStore.cs`, `Data/VenueCatalog.cs`; `Backtests.cs`, `GatewayPipeServer.cs` (`venue-list`), `GatewaySchema.cs`, `Protocol.cs`, the
+CLI, `GrantedWorkerTools.cs`, `DailyReports.cs`, `CONTRACTS.md`, the guide; seven test classes). Not the money path: nothing near `PlaceAsync`.
+
+- **`venue` and `venue_instrument` as app-owned data,** built-ins (the simulator's four futures, verified because the venue is this app's
+  own; Binance spot's BTCUSDT, `verified = false` because nothing in this build has read Binance's own definition) overridable by
+  `venues.json`, every row with `source`, `recorded_at`, `verified`; an unreadable file empties the table and says why. RED: `no such
+  table: venue_instrument`; mutant (every row read back as verified): "nothing in this build has confirmed Binance's own instrument
+  definition".
+- **`venue-list` is a READ,** not in `Ops.Mutating`, on the harness worker's `trade` list for every role, `trade venue list`. RED: `the schema
+  does not name 'venue-list'`; mutant (on the mutating list): `ROLE_MAY_NOT_TRADE` for the one role whose job is to size positions.
+- **A dataset names its venue and instrument,** backfilled, carried by `data-list` and section 8; the backfill proved by taking a real
+  database back to 16 and reopening it. RED: `data-list carries no venue for a recorded dataset`; mutant (derived from the pair instead of
+  the recorded column): `Expected: "sim-futures" / Actual: "binance-spot"`.
+- **A run's increment comes from the catalogue when the request omits it,** by the DATASET's instrument, never the program's line; a
+  declared one wins; provenance recorded (`increment_source`) but not hashed, so no run id moves. RED: `Expected: 0.00001 / Actual: 1`;
+  mutant (provenance folded into `Canonical`): `BacktestDeterminismTests` red — every run id moves.
+- **A refusal, never a guess:** an unknown instrument, an unverified row, or a dataset naming no instrument is refused in words naming
+  both routes out. RED: `No exception was thrown` — an unknown symbol ran silently at 1; mutant (the refusal returning 1): the same.
+- **Found by the gate:** the catalogue sync in the gateway's constructor took the gateway down on a store that would not take a write
+  (`database is locked`, `UnconfirmedLatchTests`); guarded and logged, the startup sweep's own rule.
+- **Judged at landing:** the out-of-the-box consequence is real and honest — a backtest over collected Binance bars that omits `--increment`
+  is REFUSED until the owner records the row, so 15 existing fixtures now declare the increment they already ran under (no run id moved);
+  no fee and no minimum notional in the catalogue (COUNCIL is silent, fees stay declared per run); `TradingGateway.cs` gains a `Venues`
+  property and the construction-time sync, the gate chain untouched.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `0deceab`, Release: 0 warnings, 0 errors, 17
+projects; touched classes 3× → 108/108 (Unit), 33/33 (Integration), 4/4 (Fault) each; the three suites at `5bd8390` (the tip before two
+docs-only commits, `src` and `tests` identical): Unit 1029 + Fault 277 + Integration 663 = 1969 passed, 0 failed, 1 skipped; names → 27
+added, 0 removed; 141 test sources text. Manager's gate at `4eb8dc9 (landed as `afa49dd` after a docs-only rebase, `src` and `tests` identical)`, Release: build → 0 warnings, 0 errors; suite → 1029 + 277 + 663 = 1969 passed, 0 failed, 1 skipped; names vs `main`
+→ 0 removed, 27 added (sets 1593 → 1620); scan clean (`IpcToken.Ensure()` in tests, judged); no trailers; `rev-list --count` → 0; CI run 34844839257 at `afa49dd`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** nothing at `PlaceAsync` or in the risk pass (`U-freshness`, `U-allocator-1`); no fee, no min notional, no prop rulebook, no
+live instrument read from ATAS, no real venue, no `venues.json` in the repo, no card in the app's window; no box, no ATAS, no money.

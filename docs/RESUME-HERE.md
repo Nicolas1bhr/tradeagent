@@ -10,58 +10,48 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session resumed 2026-09-12 15:20 CEST after the WEEKLY limit reset (12:00). This block is kept current as legs land; if it
-says a leg is running and nothing is, that leg was killed — re-brief it FRESH from its branch and brief on disk. Restart in this order:**
+**Session closed 2026-09-14 ~14:50 CEST on the owner's instruction ("finish the running rounds, then wrap up and prepare the floor").
+Nothing is running. No worktree exists. Every landing has its ≤40-line section. Restart in this order:**
 
-1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` (the product doctrine, settled with Astra in four rounds on 2026-09-07) and
-   the `## 2026-09-07` / `## 2026-09-08` sections at the end of `BUILD-STATUS.md` (one ≤40-line section per landing).
-2. **`main` is `30dc8ed`, clean, pushed.** Landed 2026-09-07/08, in order, each with its section: `U-loss` `7b46503`, `U-seen-1`
-   `06a8636`, `U-model` `2504c5b`, `U-crlf-win` `2082091`, `U-unknown-close` `acff18a`, `U-wakes` `cef122b`, `U-data-binance`
-   `a22939d`, `U-council-thin` `96f29a6`, `U-midnight-test` `baeff48`, `U-sweep-win` `324a11b`, `U-report` `3003b89`,
-   `U-archive-win` `8197163`; **2026-09-12: `U-turn-commit` `0da64d7`** (schema 11 on `main`; CI run 34698051503 GREEN on all
-   four jobs), **`U-press-settle-win` `fac2370`** (test-only; CI run 34701889403 GREEN on all four jobs, windows included),
-   **`U-budget-reserve` `1757043`** (no schema change; CI run 34715391501 GREEN on all four jobs), **`U-runner-1` `1e92fe3`** (the
-   strategy program; no schema change; CI run 34719212649 RED on windows-latest only — a CRLF checkout of the `.strategy`
-   fixtures), **`U-crlf-strategy-win` `137aaa4`** (the fixer, test- and attributes-only; CI run 34721991796 GREEN on all four jobs),
-   **`U-runner-2` `c758fce`** (the evaluator; no schema change; CI run 34722641133 GREEN on all four jobs), **`U-containment`
-   `7b90acf`** (no schema change; CI run 34723265426 GREEN on all four jobs; draft PR #17 green at `ee2abb2`, closed),
-   **`U-runner-3` `5020b2b`** (the backtest; schema 12; CI run 34756421303 GREEN on all four jobs), **`U-api-worker` `ff8b43c`**
-   (the app-owned harness; schema 13; CI run 34758232365 GREEN on all four jobs), **`U-referee-1` `19ef096`** (the holdout, the
-   campaign, trials, the verdict budget; **schema 14 on `main`**; CI run 34767356515 GREEN on all four jobs), **`U-harness-loop`
-   `47d1071`** (the loop over a harness turn proven, a cut turn's account carried forward, `backtest` granted; CI run 34768117002 GREEN on all four jobs), **`U-referee-2` `45719b2`** (the verdict; **schema 15 on `main`**; CI run
-   34771155930 RED on windows-latest only — a third press fixture of the two-second-budget class, `PressInFlightTests.cs`; fixer
-   `U-press-inflight-win` dispatched; ubuntu and macos green), **`U-council-concurrent-1` `4753c46`** (two roles' turns may overlap; no
-   schema change; CI run 34773015349 GREEN on all four jobs), **`U-council-concurrent-2` `cac1787`** (the consequential boundary;
-   **schema 16 on `main`**; CI run 34840620999 GREEN on all four jobs), **`U-press-inflight-win` `30dc8ed`** (test-only, thirty press
-   fixtures on the generous budget; CI run 34843618128 in flight when written).
-3. **Legs in flight at the time of writing (each on its worktree under `~/Projects/ai-trading-software-for-mihael-worktrees/`):**
-   - `u-containment` (worktree `U-containment`): a fresh builder dispatched 16:10 on `docs/briefs/U-containment.md`, resumed twice
-     after Mac sleeps (17:05, 21:31) with its context intact; items 1–2 committed, item 3 in progress; no schema number; a draft
-     PR for the windows runner; told to rebase onto `main` before its gate (`U-budget-reserve` landed under it).
-   - `u-venue-catalog` (worktree `U-venue-catalog`, tip `4eb8dc9` after the manager's rebase, built and reported, its own gate green): being
-     gated by the manager for landing; its record is drafted. **Schema 17.**
-   If either is not running when you read this, re-brief it FRESH from its branch and brief on disk.
-4. **CI on `main`:** green on all four jobs at every product sha from `137aaa4` to `cac1787` except `45719b2` (windows-latest, ONE press
-   fixture of the two-second-budget class, fixed at `30dc8ed`, whose run 34843618128 is the proof on `main`'s own runner). A FOURTH fixture
-   of that class, `SweepRequestIdTests.Every_sent_not_confirmed_leg…`, went red once on a draft PR's first windows attempt and is briefed
-   as `U-sweep-latency-win` (a paired budget-and-latency change) — dispatch it first next session; it is test-only.
-5. **Briefed, committed, NOT dispatched:** `U-data-2` (schema 18, after the catalogue), `U-freshness` (schema 19, money path, after the
-   catalogue), `U-allocator-1` (schema 20, money path, after `U-freshness`), `U-allocator-2` (schema 21, after `U-allocator-1`). Schema numbers are assigned here, in landing order; a builder never takes "the next free". With these the doctrine's
-   unit order (`docs/COUNCIL.md:265-272`) is fully briefed; after them come the money path's live gates — `U-flatten`, a runner on the
-   order path, containment beyond NONE, paper on the box for weeks.
-6. **Then the doctrine's order** (`docs/COUNCIL.md`, "The unit order"): `U-containment` → `U-api-worker` → `U-runner` (the
-   strategy language) → `U-referee` → `U-council-concurrent` → venues/data → `U-allocator`; the money path's live gates
-   untouched: `U-flatten`, containment before unattended real money, paper on the box for weeks.
-7. **Three decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (c) the Revolut X
-   PUBLIC CANDLES endpoint — `docs/COUNCIL.md:167-169` names the source, the repo records only the signed trading base
-   (`docs/RESEARCH-REQUIRED.md:170`); `U-data-2` builds the source against the loopback harness with the URL as unverified data until
-   the endpoint is supplied and one real fetch authorised; (b) the
-   containment direction beyond `U-containment` (landed: job object, whitelist environment, per-launch grants, the armed live
-   configuration refusing an uncontained CLI; OS sandbox still NONE) — an AppContainer (`U-contain-2`, needs the box) or
-   harness-only execution for every role, the doctrine's honest alternative.
-8. **Machine facts that cost time:** three Opus legs in parallel reach the session limit in about two hours and the WEEKLY
-   limit in two days — budget for it; a runner-measuring fixer costs a full builder; two parallel units take their schema
-   numbers FROM THE BRIEF (assigned at dispatch), never "the next free"; `docs/briefs/` holds only work in flight.
+1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-12`, `## 2026-09-13` and `## 2026-09-14` sections at the end of
+   `BUILD-STATUS.md` (one section per landing; the last two record their merge sha's CI as "in flight" — read `gh run view 34843618128`
+   and `gh run view 34844839257` and record the verdicts in those two sections before anything else).
+2. **`main` is `afa49dd` plus this record, clean, pushed. Schema 17.** Landed 2026-09-12 → 14, in order: `U-turn-commit` `0da64d7` (11),
+   `U-press-settle-win` `fac2370`, `U-budget-reserve` `1757043`, `U-runner-1` `1e92fe3`, `U-crlf-strategy-win` `137aaa4`, `U-runner-2`
+   `c758fce`, `U-containment` `7b90acf`, `U-runner-3` `5020b2b` (12), `U-api-worker` `ff8b43c` (13), `U-referee-1` `19ef096` (14),
+   `U-harness-loop` `47d1071`, `U-referee-2` `45719b2` (15), `U-council-concurrent-1` `4753c46`, `U-council-concurrent-2` `cac1787` (16),
+   `U-press-inflight-win` `30dc8ed`, `U-venue-catalog` `afa49dd` (17). CI green on all four jobs at every product sha except two windows-only
+   fixture reds of the two-second-budget class, each fixed by the next fixer (`1e92fe3` → `137aaa4`; `45719b2` → `30dc8ed`).
+3. **Queued in `docs/briefs/`, briefed and NOT dispatched — dispatch in this order, at most two heavy legs at once, each on its own worktree
+   created from `main`:** (a) `U-sweep-latency-win` — test-only, a light leg, FIRST: the fourth press-family fixture of the class, a paired
+   budget-and-latency change, a draft PR for the windows proof; (b) `U-data-2` — **schema 18** (the second candle source, quality flags, the
+   data wake; the Revolut X endpoint is DATA, unverified, see 7c); (c) `U-freshness` — **schema 19, money path** (timeframe, data freshness and
+   decision age on the program, the gate at dispatch); (d) `U-allocator-1` — **schema 20, money path**, after `U-freshness` (both touch
+   `PlaceIntent` and the dispatch gate); (e) `U-allocator-2` — **schema 21**, after `U-allocator-1`. Schema numbers are assigned here, in
+   landing order; a builder never takes "the next free" — tell each builder which unit takes the number before theirs.
+4. **How a leg is run** (this session's pattern, all in `docs/HOW-WE-BUILD.md` and the memory): a read-only survey before a brief when the
+   unit is not yet exact; a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the manager's detached gate
+   on the reported tip (`nohup` build + three suites to files, a monitor on DONE), test-name diff from git objects, secret scan as a gate,
+   `--ff-only`, the record ≤ 40 lines measured, the brief deleted, the worktree removed, the merge sha's CI recorded when it completes. A
+   builder killed by a usage limit is RESUMED by `SendMessage` to its id with the branch state spelled out; it loses nothing committed.
+5. **What is proven and what is not, in one breath:** the whole council doctrine's unit order is now built or briefed — the runner (program,
+   evaluator, backtest), the referee (holdout, campaign, trials, verdict, promotion), the harness, containment (job object, clean
+   environment, per-launch grants; OS sandbox NONE), concurrent turns, the consequential boundary, the venue catalogue. NOT proven: any
+   of it on a screen (nothing in the suite runs Avalonia); a real provider call; a real venue; a runner on the ORDER PATH — nothing reads
+   `Promotions.Standing` or an allocation at `PlaceAsync` yet (`U-allocator-1`); no paper or live execution of a promoted version; the box
+   untouched since 2026-09-08. A milestone review of the money path on `main` (`docs/HOW-WE-BUILD.md`, "Ask questions later") is DUE before
+   any release is cut: the last was 2026-09-06 and sixteen units have landed since.
+6. **Then the money path's live gates**, untouched by doctrine: `U-flatten`, a runner on the order path, containment beyond NONE
+   (`U-contain-2`, needs the box), paper on the box for weeks before unattended real money.
+7. **Decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) the containment direction
+   beyond `U-containment` — an AppContainer (`U-contain-2`) or harness-only execution for every role; (c) the Revolut X PUBLIC CANDLES
+   endpoint (`docs/COUNCIL.md:167-169` names the source, the repo records only the signed trading base, `docs/RESEARCH-REQUIRED.md:170`);
+   (d) the Binance spot instrument row ships `verified = false` — a backtest over Binance bars that omits `--increment` is REFUSED until the
+   owner records the row in `venues.json` (or the agent declares the increment); recording it is the owner's, not a builder's.
+8. **Machine facts that cost time:** two heavy Opus legs plus the manager's gates reach the 5-hour session limit in about 2.5 hours (three
+   kills this session: 00:53, 15:35, 20:15); a survey costs ≈ 200k tokens; a builder 400–650k; the manager's gate ≈ 15 minutes on this Mac,
+   one at a time; a closed lid sleeps the Mac and stalls every leg (a pause, not a kill — resume with one message); `docs/briefs/` holds
+   only work in flight or queued.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 
