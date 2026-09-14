@@ -796,6 +796,30 @@ public sealed record LossToday
     public string Currency { get; init; } = "";
 
     /// <summary>
+    /// SINCE WHEN THE DAY HAS BEEN CLOSED TO NEW RISK, or null because it is open.
+    ///
+    /// <para>It is read off the durable closure record and never derived from <see cref="Loss"/>. The
+    /// two disagree on purpose and the disagreement is the whole point: a day closed at a thousand
+    /// down, whose loser is then closed at nine hundred and fifty, reads as under its budget again
+    /// and is still closed. A surface that computed this from today's figure would tell the owner and
+    /// the AI that the day had reopened while the gateway went on refusing — the worst kind of
+    /// disagreement, because both halves look right on their own.</para>
+    /// </summary>
+    public DateTimeOffset? DayClosedAt { get; init; }
+
+    /// <summary>
+    /// The words the closure was recorded with, written once, at the moment it was confirmed — or the
+    /// sentence saying the record could not be read. Null while nothing is closed.
+    /// </summary>
+    public string? DayClosedWhy { get; init; }
+
+    /// <summary>
+    /// The symbols closed to opens and adds for the rest of the UTC day. Empty is the honest none,
+    /// and a symbol here is closed whatever the day's own budget is doing.
+    /// </summary>
+    public IReadOnlyList<string> SymbolsClosed { get; init; } = [];
+
+    /// <summary>
     /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
     /// a ceiling and not a threshold to cross — so it is <c>&gt;=</c>, and an UNKNOWN is never
     /// "reached": it is refused by its own branch, with its own sentence, because "we could not work
@@ -820,11 +844,15 @@ public sealed record LossToday
     /// </summary>
     public string? Line()
     {
-        if (!Enforced) return null;
+        // THE CLOSURE IS SAID EVEN WHEN NOTHING IS ENFORCED ANY MORE. A budget the owner set to zero
+        // after a day was closed does not reopen it (see the gateway's LossBudgetOrThrow), so a
+        // Situation that fell silent here would be an agent planning a day it will not be allowed.
+        var closed = ClosedLine();
+        if (!Enforced) return closed;
 
         if (Unknown is { } why)
-            return "What you have lost today could not be worked out — " + why
-                   + "; new positions are refused until it can be. Closing or reducing a position still works.";
+            return Join("What you have lost today could not be worked out — " + why
+                   + "; new positions are refused until it can be. Closing or reducing a position still works.", closed);
 
         var line = DayBudget > 0m
             ? $"What you have lost today: {Labels.Money(Loss, Currency)} of a {Labels.Money(DayBudget, Currency)} daily budget"
@@ -838,12 +866,34 @@ public sealed record LossToday
             line += $" Your platform reported no fee for {FeesUnknownFills} of today's fills, so the real "
                     + "figure is a little worse than that.";
 
-        if (DayReached)
+        // Only while the day is still being decided by the figure. Once a closure is recorded, the
+        // record's own sentence says it better and says since when.
+        if (DayReached && DayClosedAt is null)
             line += " You are at the daily budget: no new positions until tomorrow (UTC). "
                     + "Closing or reducing a position still works.";
 
-        return line;
+        return Join(line, closed);
     }
+
+    /// <summary>
+    /// WHAT IS CLOSED, SINCE WHEN, AND THAT NOTHING WAS CLOSED FOR YOU — or null because nothing is.
+    ///
+    /// <para>The day's own sentence is the one written onto the record at the moment of the breach.
+    /// The symbols are named separately because they are a different refusal: opens and adds on those
+    /// instruments only, with the rest of the account untouched.</para>
+    /// </summary>
+    public string? ClosedLine()
+    {
+        var parts = new List<string>();
+        if (DayClosedWhy is { Length: > 0 } why) parts.Add(why);
+        if (SymbolsClosed.Count > 0)
+            parts.Add($"Closed to new positions for the rest of the UTC day: {string.Join(", ", SymbolsClosed)}. "
+                      + "NOTHING WAS CLOSED FOR YOU — closing or reducing those positions still works.");
+
+        return parts.Count == 0 ? null : string.Join(" ", parts);
+    }
+
+    static string Join(string line, string? closed) => closed is null ? line : line + " " + closed;
 }
 
 /// <summary>

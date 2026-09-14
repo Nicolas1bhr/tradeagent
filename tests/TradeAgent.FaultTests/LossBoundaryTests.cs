@@ -127,7 +127,7 @@ public class LossBoundaryTests(ITestOutputHelper log)
         log.WriteLine($"boundaries after 2 refusals and another pull: {boundaries.All().Count}");
         Assert.Single(boundaries.All());
         foreach (var role in CouncilRoles.All)
-            Assert.Single(events.DueFor(role, Noon.AddMinutes(5)).Where(e => e.Kind == MissionEventKind.Boundary));
+            Assert.Single(events.DueFor(role, Noon.AddMinutes(5)), e => e.Kind == MissionEventKind.Boundary);
 
         await gw.DisposeAsync();
     }

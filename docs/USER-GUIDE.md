@@ -753,6 +753,21 @@ not close anything for you**: they stop new risk, they do not tidy up. Both star
 means not enforced — but you cannot choose either real-money mode until you have set a daily one, and
 the refusal says so, because nobody is watching the day for you.
 
+**TradeAgent watches the day itself, and a breach is written down.** It re-measures your open
+positions every few seconds — not only when the AI sends something — so a position that goes through
+your daily limit while the AI is quiet is still caught. When two separate readings a few seconds
+apart agree that a limit is breached, TradeAgent records it: the Safety page then says so under the
+two boxes, the daily report says since when, and the AI is told the same thing in its own words. One
+odd price does not close a day; two readings that agree do.
+
+**Once the day is closed it stays closed until the next UTC day**, and that is deliberate. It does
+not reopen because the AI closed the losing position at a smaller loss, because TradeAgent was
+restarted, or because you raised the limit afterwards — those are all the same day, and a limit that
+unwound itself the moment the number moved would not be a limit. **Nothing was closed for you**: your
+positions are exactly where they were, closing and reducing still work, and there is no command the
+AI can send that reopens the day. If you want it trading again today, the honest answer is that this
+build does not offer one — the day reopens at UTC midnight.
+
 The defaults are deliberately small. Start there.
 
 *Note on order value:* for futures this limit is off by default, because a single contract is worth a

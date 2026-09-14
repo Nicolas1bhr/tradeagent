@@ -94,7 +94,14 @@ public static class GatewaySchema
             + "that nothing was lost. Reaching either budget REFUSES every order that could increase exposure, with "
             + "LOSS_BUDGET_REACHED, until midnight UTC for the day's budget; closing or reducing a position is never "
             + "refused by them, and nothing is closed for you. A day whose loss cannot be worked out refuses new "
-            + "positions too, with RISK_CHECK_UNAVAILABLE and a sentence saying what was missing.", []),
+            + "positions too, with RISK_CHECK_UNAVAILABLE and a sentence saying what was missing. "
+            + "loss_day_closed_at is SINCE WHEN today has been closed to new risk, and loss_symbols_closed "
+            + "names the instruments closed to opens and adds; both are ABSENT while nothing is closed. A "
+            + "closure is a RECORD TradeAgent wrote when it confirmed the breach, not a figure it recomputes: "
+            + "the day stays closed until the NEXT UTC DAY however the loss moves afterwards, so closing a "
+            + "loser, restarting TradeAgent and the account owner widening the budget all leave it closed, and "
+            + "asking again is not what reopens it. Closing and reducing are never refused, NOTHING WAS CLOSED "
+            + "FOR YOU, and there is no command here — for you or for anyone — that reopens a day.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),

@@ -979,7 +979,7 @@ order against a position and no larger than it — an order LARGER than the posi
 flips it and is checked, because the surplus is new exposure. Reaching a budget is
 `LOSS_BUDGET_REACHED` and not `RISK_LIMIT_EXCEEDED`, because the two have different answers: a
 breached order limit is answered by asking for a smaller order and a reached budget by not asking
-again today. **Nothing is flattened** — that is `U-flatten`. **An unknown refuses rather than
+again today. **Nothing is flattened** — that is `U-flatten-2`. **An unknown refuses rather than
 counting as zero**: a symbol traded today whose multiplier the platform will not state, an open
 position with neither a mark nor a price, or one with a price and no multiplier, all refuse with
 `RISK_CHECK_UNAVAILABLE` and a sentence naming what was missing — `trade pnl` reports the same gaps in
@@ -992,6 +992,37 @@ convention: an absent budget is not enforced, and an absent `loss_today` means t
 worked out. Finally, **a real-money mode cannot be SELECTED while `MaxDailyLoss` is zero**
 (`TradingGateway.SetMode`, `INVALID_REQUEST`, the sentence names the field): there is no human in the
 loop for real money, so an unattended agent with no bound on the day must not be one button away.
+
+**A confirmed breach is a durable record, and the day it closes is closed until the next UTC day**
+(`U-flatten-1`). Both budgets used to be evaluated only when an order arrived, so a breach refused
+that one order and remembered nothing: a loser closed at a smaller realised loss reopened the day, a
+restart reopened it, a widened budget reopened it, and a book bleeding while the AI sent nothing was
+never measured at all. Now `TradingGateway.LossWatchAsync` measures both budgets on a tick —
+`GatewayOptions.LossWatchInterval`, **15 seconds**, riding the health pass, with an arriving
+`QuoteChanged` scheduling one coalesced evaluation sooner — pulling a FRESH quote per open-position
+symbol outside the dispatch gate and evaluating and writing under it, so a breach and an opening
+order cannot race. A mark is the **executable** side (bid for a long, ask for a short), younger than
+`MaxQuoteAge`, from the current connection epoch; an unavailable valuation denies new risk with
+`RISK_CHECK_UNAVAILABLE`, as it already did, and records NOTHING. A breach is recorded only when a
+SECOND, DISTINCT pull inside `GatewayOptions.LossBreachConfirmWithin` (**60 seconds**) agrees — the
+admission gate still refuses on first sight, with no tolerance, and records nothing by itself,
+because refusing one order is cheap and reversible and closing a day is neither. The record is
+`loss_breach:{account}:{utcDay}` in the app-owned `kv` table (and `loss_breach:{account}:{symbol}:
+{utcDay}` for the per-position budget), written once with its evidence — both limits, a hash of the
+risk policy as the settings revision, the ledger figure and its missing-fee count, every open
+position with the mark used and where it came from, the connection epoch, both pull numbers and both
+instants — and **never updated**. `LossBudgetOrThrow` and the approval path refuse `LOSS_BUDGET_REACHED`
+off that record **before reading anything**, and ahead of the zero check, because a budget set to
+zero after a breach is the widest widening there is. A closure also opens ONE `BoundaryKind.LossBudget`
+boundary per `{account}:{utcDay}` through `CouncilBoundaries.Open` — both directors woken once, default
+disposition `hold` — so repeated refusals cannot manufacture senior spend. **Nothing is sent**: no
+close, no cancel, no order leaves the gateway because of a breach, and every surface says NOTHING WAS
+CLOSED FOR YOU. `status` carries `loss_day_closed_at` and `loss_symbols_closed`, absent rather than
+zero. **Three choices here are the account owner's to overrule, and are recorded as choices**: the day
+reopens AUTOMATICALLY at the next UTC midnight (the alternative is "closed until the owner has read
+it", which needs a press this build does not have); the record lives in `kv` rather than a table of
+its own until `U-protect` gives the protections one; and the two intervals above are judgments rather
+than measurements. There is no verb, no pipe op and no setting that reopens a day.
 
 **The open-position cap counts what is on its way to being a position, and is decided inside the
 dispatch gate.** `MaxOpenPositions` used to count the positions the platform had already FILLED, read

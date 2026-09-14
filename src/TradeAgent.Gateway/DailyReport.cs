@@ -120,6 +120,20 @@ public sealed record ReportPerformance
     public int? Fills { get; init; }
     public decimal? LossAllowanceRemaining { get; init; }
     public decimal? LossBudgetDay { get; init; }
+
+    /// <summary>
+    /// SINCE WHEN THE DAY WAS CLOSED TO NEW RISK, off the closure record — null because it was open.
+    /// Not derived from anything in this section: the figure here is the LEDGER's, and a day closed
+    /// on an unrealised loss that was then realised smaller reads as under its budget while still
+    /// being closed.
+    /// </summary>
+    public DateTimeOffset? DayClosedAt { get; init; }
+
+    /// <summary>The words the closure was recorded with, or the reason the record could not be read.</summary>
+    public string? DayClosedWhy { get; init; }
+
+    /// <summary>Instruments closed to opens and adds for the rest of that UTC day.</summary>
+    public IReadOnlyList<string> SymbolsClosed { get; init; } = [];
     public string Currency { get; init; } = "";
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
@@ -429,6 +443,17 @@ public static class DailyReportText
         Kv(b, "loss allowance left", Money(r.Performance.LossAllowanceRemaining, money)
                                      + (r.Performance.LossBudgetDay is { } d
                                          ? $" of {Labels.Money(d, money)}" : " — no daily loss budget is set"));
+        // WHETHER THE DAY WAS CLOSED, SINCE WHEN, WHY, AND THAT NOTHING WAS CLOSED FOR THE OWNER.
+        // Printed even when the figure above it is smaller than the budget, because that is exactly
+        // the case an owner would otherwise read as "the software stopped trading for no reason".
+        Kv(b, "closed to new risk", r.Performance.DayClosedAt is { } closed
+            ? $"since {Instant(closed)} — {r.Performance.DayClosedWhy ?? Unknown}"
+            : r.Performance.DayClosedWhy is { Length: > 0 } unreadable ? unreadable
+            : "no — the day was open to new positions"
+              + (r.Performance.SymbolsClosed.Count > 0 ? "" : ", and nothing was closed for you"));
+        if (r.Performance.SymbolsClosed.Count > 0)
+            Kv(b, "positions closed to adds", string.Join(", ", r.Performance.SymbolsClosed)
+                                              + " — NOTHING WAS CLOSED FOR YOU; closing and reducing still work");
         Gaps(b, r.Performance.Missing);
 
         Section(b, "5. Execution health");

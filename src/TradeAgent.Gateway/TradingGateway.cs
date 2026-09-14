@@ -795,8 +795,16 @@ public sealed class TradingGateway : IAsyncDisposable
     public async Task<LossToday> LossTodayAsync(IReadOnlyList<PositionInfo>? positions = null,
         CancellationToken ct = default)
     {
+        // THE CLOSURE FIRST, AND WHATEVER THE BUDGETS SAY NOW. A day that was closed stays closed
+        // even if the owner has since set the budget to zero, so a reading that returned NotEnforced
+        // without it would show an open day on every surface while the gateway went on refusing.
+        var closed = ClosureToday();
+
         var r = Settings.Risk;
-        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced;
+        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced with
+        {
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+        };
 
         if (positions is null)
         {
@@ -804,7 +812,10 @@ public sealed class TradingGateway : IAsyncDisposable
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 return LossBudget.CannotBeRead(r, AccountCurrency,
-                    $"your open positions could not be read ({ex.Message})");
+                    $"your open positions could not be read ({ex.Message})") with
+                {
+                    DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+                };
             }
         }
 
@@ -816,7 +827,36 @@ public sealed class TradingGateway : IAsyncDisposable
             try { await InstrumentsAsync(ct); } catch (Exception) { /* the reading names what it cannot size */ }
 
         return LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(Now), "today"),
-            positions, LastQuote, _instrumentCache);
+            positions, LastQuote, _instrumentCache) with
+        {
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+        };
+    }
+
+    /// <summary>
+    /// WHAT IS CLOSED TODAY, FOR THE SURFACES — read off the record and never recomputed from the
+    /// figure, which is the whole reason the record exists.
+    ///
+    /// <para>A row that cannot be read does not answer "open". It answers with the sentence saying so,
+    /// because the gate is refusing on exactly that row and a screen that disagreed with the gate
+    /// would send the owner looking for a fault in the wrong half of the product.</para>
+    /// </summary>
+    public (DateTimeOffset? At, string? Why, IReadOnlyList<string> Symbols) ClosureToday()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return (null, null, []);
+
+        try
+        {
+            var day = DayClosed(account);
+            return (day?.ConfirmedAt, day?.Why, SymbolsClosedToday(account));
+        }
+        catch (GatewayDeniedException ex) { return (null, ex.Message, []); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, $"TradeAgent could not read whether today is closed to new risk ({ex.Message}), "
+                          + "and new positions are refused until it can", []);
+        }
     }
 
     public FillCoverage? Coverage() =>
@@ -1032,6 +1072,8 @@ public sealed class TradingGateway : IAsyncDisposable
             LossToday = loss.Enforced && loss.Unknown is null ? loss.Loss : null,
             LossBudgetDay = loss.DayBudget > 0m ? loss.DayBudget : null,
             LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null,
+            LossDayClosedAt = loss.DayClosedAt,
+            LossSymbolsClosed = loss.SymbolsClosed.Count > 0 ? loss.SymbolsClosed : null,
             AiModel = ai.Model
         };
     }

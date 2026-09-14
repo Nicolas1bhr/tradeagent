@@ -346,8 +346,14 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             + "what is still OPEN is not valued in it; the Dashboard and 'trade pnl' do ask"));
 
         var budget = gateway.Settings.Risk.MaxDailyLoss;
+        // OFF THE RECORD, LIKE EVERY OTHER SURFACE. It costs no platform call — the closure is a row
+        // this app wrote — so it belongs in a report that asks the platform nothing.
+        var closed = gateway.ClosureToday();
         return new ReportPerformance
         {
+            DayClosedAt = closed.At,
+            DayClosedWhy = closed.Why,
+            SymbolsClosed = closed.Symbols,
             Exposure = null,
             Realized = pnl?.Realized,
             Unrealized = null,

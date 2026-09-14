@@ -944,6 +944,26 @@ sealed class SafetyPage
     /// </summary>
     readonly TextBlock _tradeLossHint = Ui.Micro(Labels.LossBudgetHint());
     readonly TextBlock _dailyLossHint = Ui.Micro(Labels.LossBudgetHint());
+
+    /// <summary>
+    /// WHETHER EITHER BUDGET HAS ALREADY FIRED TODAY, said beside the boxes that set them.
+    ///
+    /// <para>This is the one place an owner goes when the AI has stopped opening positions, and
+    /// until the closure was written down there was nothing to see here: the numbers in the boxes
+    /// are the SETTING, and the day being closed is a FACT about what happened under it. Hidden
+    /// while nothing is closed, because a permanent "the day is open" line is noise the eye stops
+    /// reading long before the day it matters.</para>
+    ///
+    /// <para>It carries the record's own sentence — since when, why, that the next UTC day reopens
+    /// it, and that NOTHING WAS CLOSED — rather than a shorter paraphrase: an owner reading "closed"
+    /// beside a flat-looking figure and assuming TradeAgent flattened the book has been told the
+    /// opposite of what happened.</para>
+    /// </summary>
+    readonly TextBlock _lossClosedNote = new()
+    {
+        Text = "", FontSize = Theme.Micro, Foreground = Theme.Caution,
+        TextWrapping = Avalonia.Media.TextWrapping.Wrap, IsVisible = false
+    };
     readonly NumericUpDown _dailyCap;
     readonly TextBlock _capNote = Ui.Micro("");
     readonly NumericUpDown _allowanceIn, _allowanceOut;
@@ -1416,6 +1436,7 @@ sealed class SafetyPage
             // permitted order at a time and break nothing above this line.
             Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint),
             Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint),
+            _lossClosedNote,
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
@@ -1483,6 +1504,16 @@ sealed class SafetyPage
         // The unit of the two loss budgets, once the platform has said what it is. Read from the
         // gateway rather than from `status`, which carries the limits but not the account's currency.
         _tradeLossHint.Text = _dailyLossHint.Text = Labels.LossBudgetHint(_host.Gateway.AccountCurrency);
+
+        // The closure, off the record and never recomputed from today's figure — see
+        // TradingGateway.ClosureToday. Updated in place on the five-second pass like every other row
+        // on this screen: rebuilding a tree is not a refresh.
+        var closed = _host.Gateway.ClosureToday();
+        _lossClosedNote.Text = new LossToday
+        {
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+        }.ClosedLine() ?? "";
+        _lossClosedNote.IsVisible = _lossClosedNote.Text.Length > 0;
 
         // Through SetResting, never by assigning Content: a half-pressed RESUME must survive the
         // five-second tick, and the fill it wears while armed is registered with the control.

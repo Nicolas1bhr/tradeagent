@@ -322,6 +322,26 @@ public sealed record GatewayStatus(
     public decimal? LossBudgetTrade { get; init; }
 
     /// <summary>
+    /// SINCE WHEN THE DAY HAS BEEN CLOSED TO NEW RISK, or ABSENT because it is open.
+    ///
+    /// <para>Off the durable record, never from <see cref="LossToday"/>: a day closed at a thousand
+    /// down whose loser is then closed at nine hundred and fifty is under its budget again and is
+    /// still closed. An agent that recomputed this would plan a session it is not going to be
+    /// allowed to have and would read every refusal as the software being broken.</para>
+    ///
+    /// <para>It is not a kill switch and nothing was closed for the agent: closing and reducing work
+    /// exactly as before, and the day reopens by itself at the next UTC midnight.</para>
+    /// </summary>
+    public DateTimeOffset? LossDayClosedAt { get; init; }
+
+    /// <summary>
+    /// The instruments closed to opens and adds for the rest of the UTC day, or ABSENT because none
+    /// are. A symbol here is closed whatever the day's own budget is doing, and everything not named
+    /// is untouched.
+    /// </summary>
+    public IReadOnlyList<string>? LossSymbolsClosed { get; init; }
+
+    /// <summary>
     /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the
     /// tool takes no model flag, or nothing has named one and it runs on its own configuration.
     ///

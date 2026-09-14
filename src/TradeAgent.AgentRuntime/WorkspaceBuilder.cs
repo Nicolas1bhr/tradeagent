@@ -340,6 +340,16 @@ public static class WorkspaceBuilder
     `loss_budget_day` and `loss_budget_trade` — each ABSENT rather than zero, and an absent
     `loss_today` means the figure could not be worked out, which refuses new positions too.
 
+    **A breached budget closes the day, and TradeAgent writes that down.** It watches the account on
+    its own clock, not only when you send something, and the moment two separate readings agree that
+    a budget is breached it records the fact. From then on `trade status` carries
+    `loss_day_closed_at` and `loss_symbols_closed`, and every order that could increase exposure is
+    refused off that record — it is not re-derived from the figure, so closing the loser, restarting
+    TradeAgent or the account owner widening the budget will not reopen the day. **The next UTC day
+    reopens it and nothing else does.** There is no command, here or anywhere, that lifts it, and
+    asking repeatedly costs you turns and changes nothing. Closing and reducing still work, and
+    NOTHING WAS CLOSED FOR YOU: the positions are exactly where you left them.
+
     ## Rules that matter
 
     **Broker credentials are not here, by design.** You cannot log in to the broker, and you do not
