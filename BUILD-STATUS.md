@@ -5644,7 +5644,7 @@ passed, 0 failed, 1 skipped; names → 0 removed, 0 added (1611 = 1611). Runner:
 peer_…` (`TimeoutException`; a file this diff does not touch, green alone in 498 ms and in all three Integration passes); run 34876672818 at `8e7e2ae`
 (`src`/`tests` identical): ALL FOUR SUCCESS — windows 23 m 26 s, macos 14 m 34 s with that test green, `package` 4 m 42 s. Manager's gate at `c53aa6a` (landed as `4961989` after a
 docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 1038 + 277 + 668 = 1983 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1665 = 1665; `[Fact]`/`[Theory]` 1634 = 1634); scan clean (`IpcToken.Ensure()`
-context lines in the test file, judged); no trailers; `rev-list --count` → 0; CI run at `4961989`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+context lines in the test file, judged); no trailers; `rev-list --count` → 0; CI run 34881215351 at `4961989`: windows-latest and macos-latest GREEN, ubuntu-latest RED outside the `Timing` category on `PeerRowTests.A_newly_arrived_silent_peer_is_not_masked_by_the_previous_peers_auth_failure` (`TimeoutException: condition was not met in time`, a file this diff does not touch; the third sighting on a third machine), `package` skipped — a hosted-runner red under step 6, the sha recorded RED, fixer briefed as `U-peer-row-ubuntu`.
 
 **NOT done:** no product code, no `Timing` membership, no box, no ATAS, no money; the macos red of the first run is not diagnosed beyond "not this diff" — the
 hosted-runner class, and a fresh fixer's if it recurs on `main`.
