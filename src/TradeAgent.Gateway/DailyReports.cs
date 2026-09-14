@@ -753,11 +753,16 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
 
         if (standing is not { IsPromoted: true, Promotion: { } promotion }) return null;
 
+        // SHORTENED THE WAY EVERY OTHER READER SHORTENS AN ID, and never by a slice that assumes a
+        // length: this runs over a row read back from the database, and a page the owner reads must
+        // not be able to throw over the spelling of an id.
+        var version = promotion.VersionId.Length <= 12 ? promotion.VersionId : promotion.VersionId[..12];
+
         if (promotion.Freshness is not { } bounds)
-            return $"version {promotion.VersionId[..12]} is promoted and declares no data freshness at all, "
+            return $"version {version} is promoted and declares no data freshness at all, "
                    + "so TradeAgent has no bound to check its signals against";
 
-        var declared = $"version {promotion.VersionId[..12]} needs bars no older than "
+        var declared = $"version {version} needs bars no older than "
                        + $"{BarAge.Words(bounds.DataFreshness)}";
 
         if (freshest is not { } age)
