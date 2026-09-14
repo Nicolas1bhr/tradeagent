@@ -26,7 +26,9 @@ Nothing is running. No worktree exists. Every landing has its ≤40-line section
    budget-and-latency change, a draft PR for the windows proof; (b) `U-data-2` — **schema 18** (the second candle source, quality flags, the
    data wake; the Revolut X endpoint is DATA, unverified, see 7c); (c) `U-freshness` — **schema 19, money path** (timeframe, data freshness and
    decision age on the program, the gate at dispatch); (d) `U-allocator-1` — **schema 20, money path**, after `U-freshness` (both touch
-   `PlaceIntent` and the dispatch gate); (e) `U-allocator-2` — **schema 21**, after `U-allocator-1`. Schema numbers are assigned here, in
+   `PlaceIntent` and the dispatch gate); (e) `U-allocator-2` — **schema 21**, after `U-allocator-1`. (f) `U-flatten-1` — **no schema**, money path, dispatchable into a free slot beside a schema unit (the day-closed record, the watch, the boundary; sends nothing);
+   (g) `U-flatten-2` — the reduction-only flatten resolved by machine, after `-1`; (h) `U-flatten-3` — the data-loss exit, after `-2`. The three were briefed
+   2026-09-14 from a read-only survey and one Astra consult (final answers only); automatic reopening next UTC day is recorded as the owner's to overrule. Schema numbers are assigned here, in
    landing order; a builder never takes "the next free" — tell each builder which unit takes the number before theirs.
 4. **How a leg is run** (this session's pattern, all in `docs/HOW-WE-BUILD.md` and the memory): a read-only survey before a brief when the
    unit is not yet exact; a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the manager's detached gate
