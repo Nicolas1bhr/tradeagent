@@ -5570,7 +5570,7 @@ CLI, `GrantedWorkerTools.cs`, `DailyReports.cs`, `CONTRACTS.md`, the guide; seve
 projects; touched classes 3× → 108/108 (Unit), 33/33 (Integration), 4/4 (Fault) each; the three suites at `5bd8390` (the tip before two
 docs-only commits, `src` and `tests` identical): Unit 1029 + Fault 277 + Integration 663 = 1969 passed, 0 failed, 1 skipped; names → 27
 added, 0 removed; 141 test sources text. Manager's gate at `4eb8dc9 (landed as `afa49dd` after a docs-only rebase, `src` and `tests` identical)`, Release: build → 0 warnings, 0 errors; suite → 1029 + 277 + 663 = 1969 passed, 0 failed, 1 skipped; names vs `main`
-→ 0 removed, 27 added (sets 1593 → 1620); scan clean (`IpcToken.Ensure()` in tests, judged); no trailers; `rev-list --count` → 0; CI run 34844839257 at `afa49dd`: in flight at the time of this record; verdict in a follow-up commit.
+→ 0 removed, 27 added (sets 1593 → 1620); scan clean (`IpcToken.Ensure()` in tests, judged); no trailers; `rev-list --count` → 0; CI run 34844839257 at `afa49dd`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done:** nothing at `PlaceAsync` or in the risk pass (`U-freshness`, `U-allocator-1`); no fee, no min notional, no prop rulebook, no
 live instrument read from ATAS, no real venue, no `venues.json` in the repo, no card in the app's window; no box, no ATAS, no money.
