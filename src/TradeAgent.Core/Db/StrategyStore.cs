@@ -43,7 +43,34 @@ public sealed record StrategyVersionRow(
     int WarmUpBars,
     DateTimeOffset CreatedAt,
     string? Role,
-    string? Attempt);
+    string? Attempt)
+{
+    /// <summary>
+    /// THE THREE EXECUTION BOUNDS THE PROGRAM DECLARED, COPIED OFF THE FROZEN PROGRAM — or null on
+    /// all three, because it declared none.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:96-97 puts them on the STRATEGY, and they are already hashed into
+    /// <see cref="Id"/> (<c>StrategyCanonical</c>), so this column pair is not a second source of
+    /// truth: it is what lets a reader ask what a version's bounds are without re-parsing its source,
+    /// which is a thing the owner's report and the dispatcher's own record both do. When the two
+    /// could disagree the PROGRAM is right — see <c>Referee.Verdict</c>, which reads the bounds it
+    /// writes onto a promotion from the parse and never from this row.</para>
+    ///
+    /// <para>Init-only with a default, like <c>StrategyRunRow.IncrementSource</c>, so adding them
+    /// re-parameterised no construction site; null on a row written before schema 19 is the truth
+    /// about that row, because the language could not spell a bound when it was written.</para>
+    /// </summary>
+    public TimeSpan? Timeframe { get; init; }
+
+    public TimeSpan? DataFreshness { get; init; }
+
+    public TimeSpan? MaxDecisionAge { get; init; }
+
+    /// <summary>The three as one value, or null unless all three are there. See <c>FreshnessBounds</c>.</summary>
+    public Strategy.FreshnessBounds? Freshness =>
+        this is { Timeframe: { } t, DataFreshness: { } d, MaxDecisionAge: { } m }
+            ? new Strategy.FreshnessBounds(t, d, m) : null;
+}
 
 /// <summary>
 /// ONE BACKTEST RUN, IDENTIFIED BY EVERYTHING THAT DECIDED ITS RESULT.
@@ -145,7 +172,9 @@ public sealed record StrategyTradeRow(
 public sealed class StrategyStore(Database db)
 {
     const string VersionCols =
-        "id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt";
+        "id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt, " +
+        // LAST, so every positional read above them keeps its index. See `StrategyVersionRow.Timeframe`.
+        "timeframe, data_freshness, max_decision_age";
 
     const string RunCols =
         "id, version_id, dataset_id, dataset_sha256, window_from, window_to, execution_model, outcome, " +
@@ -166,13 +195,15 @@ public sealed class StrategyStore(Database db)
     {
         using var c = db.Cmd($"""
             INSERT INTO strategy_version({VersionCols})
-            VALUES($id,$src,$canon,$man,$build,$verdict,$warm,$at,$role,$attempt)
+            VALUES($id,$src,$canon,$man,$build,$verdict,$warm,$at,$role,$attempt,$tf,$fresh,$age)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", version.Id), ("$src", version.Source), ("$canon", version.Canonical),
             ("$man", version.Manifest), ("$build", version.InterpreterBuild),
             ("$verdict", version.ParseVerdict), ("$warm", version.WarmUpBars),
-            ("$at", Sql.T(version.CreatedAt)), ("$role", version.Role), ("$attempt", version.Attempt));
+            ("$at", Sql.T(version.CreatedAt)), ("$role", version.Role), ("$attempt", version.Attempt),
+            ("$tf", Sql.Seconds(version.Timeframe)), ("$fresh", Sql.Seconds(version.DataFreshness)),
+            ("$age", Sql.Seconds(version.MaxDecisionAge)));
         c.ExecuteNonQuery();
         return version.Id;
     });
@@ -307,7 +338,12 @@ public sealed class StrategyStore(Database db)
             rows.Add(new StrategyVersionRow(
                 r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
                 r.GetString(5), r.GetInt32(6), Sql.Time(r.GetString(7)),
-                r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9)));
+                r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9))
+            {
+                Timeframe = Sql.Span(r, 10),
+                DataFreshness = Sql.Span(r, 11),
+                MaxDecisionAge = Sql.Span(r, 12)
+            });
         return rows;
     }
 

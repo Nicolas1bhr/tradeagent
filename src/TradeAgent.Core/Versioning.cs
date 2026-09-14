@@ -191,8 +191,16 @@ public static class Versions
     /// the row. Additive — an older database gains all three, backfilled with what every row that
     /// exists today IS: twelve months stated in days, a source that carries volume, and no
     /// midpoint-derived bars.</para>
+    ///
+    /// <para><b>19 — what the program declared about time at execution.</b> <c>timeframe</c>,
+    /// <c>data_freshness</c> and <c>max_decision_age</c>, in whole seconds, on <c>strategy_version</c>
+    /// and on <c>strategy_promotion</c>. <c>docs/COUNCIL.md</c>:96-97 has the runner check all three
+    /// again when an intent reaches execution, and until this rung a version had no timeframe at all
+    /// — the only age the money path knew was a quote's. Nullable and NOT backfilled: the language
+    /// could not spell a bound when the existing rows were written, so every one of them declared
+    /// none, and a default would invent a gate nobody submitted.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 18;
+    public const int DatabaseSchemaVersion = 19;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

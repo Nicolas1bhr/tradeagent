@@ -1076,6 +1076,45 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','18') ON CONFLICT(key) DO UPDATE SET value='18';");
         }
 
+        if (have < 19)
+        {
+            // WHAT THE PROGRAM DECLARED ABOUT TIME AT EXECUTION, ON THE VERSION AND ON THE VERDICT.
+            //
+            // `docs/COUNCIL.md`:96-97, verbatim: "A promoted strategy declares its timeframe, its
+            // required data freshness and its maximum decision age, and the runner checks them again
+            // when the intent reaches execution". Before this rung `strategy_version` had no timeframe
+            // at all — the only age anything on the money path knew was a QUOTE's, 30 seconds of it
+            // (`GatewayOptions.MaxQuoteAge`) — so rule 1's freshness gate and :33's "never a late
+            // trade" had nothing to read and no implementation.
+            //
+            // WHOLE SECONDS IN AN INTEGER COLUMN, which is the spelling `StrategyCanonical` hashes:
+            // the number in the row and the number inside `strategy_version.id` are one number, and a
+            // bound compared against a wall clock on the money path is never re-parsed from text.
+            //
+            // NULLABLE, AND NOT BACKFILLED, which is the opposite of what the schema 17 and 18 rungs
+            // did with `venue_id` and `coverage_target_days`. Those two backfilled a value this build
+            // can account for — every existing row WAS collected by the Binance collector at twelve
+            // months. Here there is no such fact: the language could not spell a bound when these rows
+            // were written, so every one of them declared none, and writing a default in would invent
+            // a gate the submitted program never asked for. Null means "declared none" and the
+            // dispatcher has nothing to refuse on, which is the truth about those versions.
+            //
+            // ON THE PROMOTION AS WELL AS ON THE VERSION, because :35 makes a changed assumption
+            // invalidate the evidence that rested on it, and the bound a verdict was taken under is
+            // one of those assumptions. They are NOT in `PromotionRow.IdOf`'s nine facts: a changed
+            // bound is already a different `version_id`, so the tuple binds them once already.
+            //
+            // Additive — six columns, no table, no index — and an older database gains them null.
+            Exec("ALTER TABLE strategy_version ADD COLUMN timeframe INTEGER;");
+            Exec("ALTER TABLE strategy_version ADD COLUMN data_freshness INTEGER;");
+            Exec("ALTER TABLE strategy_version ADD COLUMN max_decision_age INTEGER;");
+            Exec("ALTER TABLE strategy_promotion ADD COLUMN timeframe INTEGER;");
+            Exec("ALTER TABLE strategy_promotion ADD COLUMN data_freshness INTEGER;");
+            Exec("ALTER TABLE strategy_promotion ADD COLUMN max_decision_age INTEGER;");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','19') ON CONFLICT(key) DO UPDATE SET value='19';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

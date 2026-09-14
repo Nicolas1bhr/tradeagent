@@ -127,6 +127,36 @@ public sealed record PromotionRow(
     /// <summary>The id these nine facts hash to, whatever <see cref="Id"/> currently holds.</summary>
     public string ComputedId => IdOf(VersionId, CampaignId, ScoringPolicySha256, InterpreterBuild,
         HoldoutDatasetId, HoldoutDatasetSha256, ExecutionModel, EvaluatorVersion, HoldoutRunId);
+
+    /// <summary>
+    /// THE EXECUTION BOUNDS THE PROMOTED PROGRAM DECLARED, FROZEN ONTO THE VERDICT — or null on all
+    /// three because the program declared none.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:35, "a changed assumption invalidates the evidence that rested on
+    /// it". A verdict is evidence that a program is fit to trade the owner's money, and how stale a
+    /// decision that program may act on is one of the assumptions it rested on. Recording it HERE is
+    /// what makes a later reader able to say what was judged, rather than reading today's answer to
+    /// yesterday's question.</para>
+    ///
+    /// <para><b>They are copied off the FROZEN PROGRAM and never off a request.</b> See
+    /// <see cref="Strategy.Referee"/>: the referee re-parses the recorded source, checks that it still
+    /// hashes to the version id, and takes the bounds from THAT. A promotion that restated a bound
+    /// supplied at promotion time would be a record of a program nobody submitted.</para>
+    ///
+    /// <para>NOT in <see cref="Id"/>, and deliberately: a changed bound is already a different
+    /// <see cref="VersionId"/> (<c>StrategyCanonical</c> hashes all three), so the tuple already binds
+    /// them and a tenth hashed fact would only be the ninth spelled twice.</para>
+    /// </summary>
+    public TimeSpan? Timeframe { get; init; }
+
+    public TimeSpan? DataFreshness { get; init; }
+
+    public TimeSpan? MaxDecisionAge { get; init; }
+
+    /// <summary>The three as one value, or null unless all three are there. See <c>FreshnessBounds</c>.</summary>
+    public Strategy.FreshnessBounds? Freshness =>
+        this is { Timeframe: { } t, DataFreshness: { } d, MaxDecisionAge: { } m }
+            ? new Strategy.FreshnessBounds(t, d, m) : null;
 }
 
 /// <summary>WHERE A VERSION STANDS, COMPUTED AT READ TIME. Four answers; see <see cref="Promotions.Standing"/>.</summary>
@@ -182,7 +212,9 @@ public sealed class Promotions(Database db)
 
     const string Cols =
         "id, version_id, campaign_id, scoring_policy_sha256, interpreter_build, holdout_dataset_id, " +
-        "holdout_dataset_sha256, execution_model, evaluator_version, holdout_run_id, verdict, reason, at";
+        "holdout_dataset_sha256, execution_model, evaluator_version, holdout_run_id, verdict, reason, at, " +
+        // LAST, so every positional read above them keeps its index. See `PromotionRow.Timeframe`.
+        "timeframe, data_freshness, max_decision_age";
 
     /// <summary>
     /// RECORDS ONE VERDICT, or leaves the row that is already there alone. Returns the row AS WRITTEN,
@@ -205,14 +237,16 @@ public sealed class Promotions(Database db)
 
         using var c = db.Cmd($"""
             INSERT INTO strategy_promotion({Cols})
-            VALUES($id,$ver,$camp,$policy,$build,$ds,$sha,$model,$eval,$run,$verdict,$reason,$at)
+            VALUES($id,$ver,$camp,$policy,$build,$ds,$sha,$model,$eval,$run,$verdict,$reason,$at,$tf,$fresh,$age)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", row.Id), ("$ver", row.VersionId), ("$camp", row.CampaignId),
             ("$policy", row.ScoringPolicySha256), ("$build", row.InterpreterBuild),
             ("$ds", row.HoldoutDatasetId), ("$sha", row.HoldoutDatasetSha256),
             ("$model", row.ExecutionModel), ("$eval", row.EvaluatorVersion), ("$run", row.HoldoutRunId),
-            ("$verdict", row.Verdict), ("$reason", row.Reason), ("$at", Sql.T(row.At)));
+            ("$verdict", row.Verdict), ("$reason", row.Reason), ("$at", Sql.T(row.At)),
+            ("$tf", Sql.Seconds(row.Timeframe)), ("$fresh", Sql.Seconds(row.DataFreshness)),
+            ("$age", Sql.Seconds(row.MaxDecisionAge)));
         c.ExecuteNonQuery();
 
         return ById(row.Id) ?? row;
@@ -346,7 +380,12 @@ public sealed class Promotions(Database db)
             rows.Add(new PromotionRow(
                 r.GetString(0), r.GetString(1), r.GetInt64(2), r.GetString(3), r.GetString(4),
                 r.GetInt64(5), r.GetString(6), r.GetString(7), r.GetString(8), r.GetString(9),
-                r.GetString(10), r.GetString(11), Sql.Time(r.GetString(12))));
+                r.GetString(10), r.GetString(11), Sql.Time(r.GetString(12)))
+            {
+                Timeframe = Sql.Span(r, 13),
+                DataFreshness = Sql.Span(r, 14),
+                MaxDecisionAge = Sql.Span(r, 15)
+            });
         return rows;
     }
 }

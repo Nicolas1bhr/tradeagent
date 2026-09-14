@@ -390,7 +390,15 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 program.StrategyId, program.Source, program.Canonical, program.Manifest,
                 // THE ROLE AND THE ATTEMPT ARE THE CALLER'S OWN, off the launch grant, and never the
                 // folder's: a file's location is something an agent can arrange, and a grant is not.
-                StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, role, attempt));
+                StrategyStore.InterpreterBuild, ParseVerdict.Accepted, program.WarmUpBars, at, role, attempt)
+            {
+                // OFF THE PARSED PROGRAM, which is the only place they exist. They are already hashed
+                // into `program.StrategyId`, so these columns can never describe a different program
+                // than the row's own id names.
+                Timeframe = program.Freshness?.Timeframe,
+                DataFreshness = program.Freshness?.DataFreshness,
+                MaxDecisionAge = program.Freshness?.MaxDecisionAge
+            });
 
             _strategies.RecordRun(new StrategyRunRow(
                 result.RunId, result.VersionId, result.Request.DatasetId, result.Request.DatasetSha256,

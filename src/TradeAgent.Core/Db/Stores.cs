@@ -12,6 +12,20 @@ static class Sql
     public static DateTimeOffset Time(object? o) => DateTimeOffset.Parse((string)o!, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
     public static DateTimeOffset? TimeN(object? o) => o is null or DBNull ? null : Time(o);
     public static string? S(object? o) => o is null or DBNull ? null : (string)o;
+
+    /// <summary>
+    /// A DURATION AS WHOLE SECONDS, OR NULL — the one spelling for every bound this database holds.
+    ///
+    /// <para>Whole seconds and an INTEGER column rather than a string, because a bound is compared
+    /// against a wall clock on the money path and a value that has to be re-parsed is a value that
+    /// can be re-parsed differently. It is the same spelling <c>StrategyCanonical</c> hashes, so the
+    /// number in the row and the number in the id are the same number.</para>
+    /// </summary>
+    public static long? Seconds(TimeSpan? span) => span is { } s ? (long)s.TotalSeconds : null;
+
+    /// <summary>The other end of <see cref="Seconds"/>: a nullable duration column, by ordinal.</summary>
+    public static TimeSpan? Span(Microsoft.Data.Sqlite.SqliteDataReader r, int ordinal) =>
+        r.IsDBNull(ordinal) ? null : TimeSpan.FromSeconds(r.GetInt64(ordinal));
 }
 
 /// <summary>

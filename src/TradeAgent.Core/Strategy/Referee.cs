@@ -247,7 +247,20 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
                 run.Request.DatasetId, run.Request.DatasetSha256, run.Request.Model.Canonical,
                 EvaluatorVersion, run.RunId,
                 reason == PromotionReason.Met ? PromotionVerdict.Promoted : PromotionVerdict.Refused,
-                reason, at));
+                reason, at)
+            {
+                // THE BOUNDS COME OFF `program`, WHICH IS THE FROZEN PROGRAM THIS METHOD JUST PARSED
+                // AND JUST PROVED HASHES TO `version.Id` — never off `version`, whose columns are a
+                // restatement somebody else wrote, and never off a parameter of this call.
+                //
+                // `docs/COUNCIL.md`:35: a changed assumption invalidates the evidence that rested on
+                // it. A promotion that took its bounds from anywhere but the text it judged would be
+                // a verdict about a program nobody submitted — and because the bounds are hashed into
+                // the version id, the two can only disagree when the row is wrong.
+                Timeframe = program.Freshness?.Timeframe,
+                DataFreshness = program.Freshness?.DataFreshness,
+                MaxDecisionAge = program.Freshness?.MaxDecisionAge
+            });
 
             Deliver(promotion, at);
             OpenBoundary(promotion, at);

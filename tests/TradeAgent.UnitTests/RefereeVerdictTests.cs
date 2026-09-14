@@ -492,6 +492,39 @@ public class RefereeVerdictTests
         }
     }
 
+    // ---- the bounds a verdict was taken under -----------------------------------------------------
+
+    /// <summary>The same profitable program, with the three execution bounds `docs/COUNCIL.md`:96-97 asks for.</summary>
+    const string ProfitableWithBounds =
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + "exit when close > 103\nentry when close < 97\n";
+
+    /// <summary>
+    /// A PROMOTION'S BOUNDS COME OFF THE FROZEN PROGRAM, NEVER OFF THE VERSION ROW'S OWN COLUMNS.
+    ///
+    /// <para>The mutant is <c>Referee.Verdict</c> reading <c>version.Timeframe</c> — a restatement
+    /// some earlier writer put in the row — instead of <c>program.Freshness</c>, the text it just
+    /// parsed and just proved still hashes to the version id. This fixture makes the two disagree on
+    /// purpose: <c>Given</c> records the version row with no bounds at all while the source declares
+    /// three, which is exactly the shape a row written before schema 19 has. Under the mutant the
+    /// promotion restates the row's own answer — null — and the verdict says nothing about the
+    /// program it judged.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_promotion_carries_the_bounds_of_the_frozen_program_not_the_version_rows_columns()
+    {
+        var w = await Given(program: ProfitableWithBounds);
+        Assert.Null(new StrategyStore(w.Db).VersionById(w.VersionId)!.Freshness);
+
+        var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);
+
+        Assert.True(verdict.Ok, verdict.Why);
+        Assert.Equal(
+            new FreshnessBounds(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30)),
+            verdict.Promotion!.Freshness);
+        await w.Gw.DisposeAsync();
+    }
+
     /// <summary>Midday on the owner's local day, so the report's window is unambiguous. See DailyReportTests.</summary>
     static DateTimeOffset Midday()
     {
