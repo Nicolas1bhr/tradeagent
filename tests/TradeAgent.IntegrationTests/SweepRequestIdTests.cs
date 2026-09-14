@@ -1049,11 +1049,33 @@ public class SweepRequestIdTests
     /// operation's budget, so each leg is ISSUED — the deadline has not passed when its turn comes,
     /// which is the pre-issue `not-sent` branch and is already covered elsewhere — and then fails
     /// INSIDE, on the resolution read, before any record is written.
+    ///
+    /// THE SECOND FIXTURE OF <see cref="Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled"/>'s
+    /// CLASS, AND IT WAS THE ONLY OTHER ONE. It pairs a budget with an injected latency and its
+    /// verdict is WHICH call runs out — and the room it had for the runner sat, like the one that
+    /// failed on windows, BEHIND a durable commit. At <c>B = 1 s, L = 700 ms</c> the composite row's
+    /// insert had 300 ms to complete in, and if it does not the legs are never ISSUED: the error
+    /// becomes "the operation ran out of time before this leg was issued", the pre-issue branch this
+    /// fixture exists to be distinct from, and the sentence assertion below fails. Measured rather
+    /// than argued — the gap cut to 10 ms on this Mac (`B = 5010 ms, L = 5000 ms`) produces exactly
+    /// that: `Assert.Contains() Failure: Sub-string not found / String: "the operation ran out of
+    /// time before this"··· / Not found: "Nothing was placed or cancelled"`. The same run shows the
+    /// asymmetry the sizing rests on: the ORDERS READ still fitted on 10 ms of room, because
+    /// `BeginCompositeAsync` does one SELECT in front of it and the commit comes after.
+    ///
+    /// <c>B = 7 s, L = 4 s</c>: the read costs 4 of the 7, so the composite commit has 3000 ms —
+    /// the worst bare one-row commit U-press-win-3 measured on windows-latest is 2234 ms — and the
+    /// resolution cannot fit whatever happens, since at most 3000 ms can be left against the 4000 it
+    /// declares. Not `Timing`: no stopwatch is read here, and the one runner-dependent quantity is
+    /// stated above with the measurement that covers it.
     /// </summary>
     [Fact]
     public async Task A_leg_that_failed_before_the_wire_reads_not_sent_and_writes_no_record()
     {
-        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(1));
+        const int B = 7_000;   // the operation budget
+        const int L = 4_000;   // what every simulator call in it costs
+
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromMilliseconds(B));
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -1065,12 +1087,17 @@ public class SweepRequestIdTests
         Assert.True((await client.SendAsync(Buy("presend-b", "NQ")).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
         Assert.Equal(2, (await gw.OrdersAsync(false)).Count);
 
-        // Seven tenths of a one-second operation goes on the orders read, so each leg's own
-        // resolution cannot fit and gives up before it writes anything down.
-        conn.Faults.LatencyMs = 700;
+        // Four sevenths of a seven-second operation goes on the orders read, so each leg's own
+        // resolution cannot fit and gives up before it writes anything down — while the composite
+        // commit between the two keeps the 3000 ms the summary above sizes it for.
+        conn.Faults.LatencyMs = L;
 
         var sweep = (JsonElement)(await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "presend-sweep" })
             .WaitAsync(TimeSpan.FromSeconds(30))).Data!;
+
+        // The sweep is over. Everything below reads the BOOK and the ledger to check what it left
+        // behind, and has no business paying the wire latency the sweep was arranged with.
+        conn.Faults.LatencyMs = 0;
         var legs = Outcomes(sweep);
 
         Assert.Equal(2, legs.Count);
