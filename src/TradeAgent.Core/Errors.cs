@@ -58,6 +58,17 @@ public enum ErrorCode
     // campaign has no attempts left, so the repair is a renewal the OWNER authorises, never a
     // smaller version of the same ask. The distinction LOSS_BUDGET_REACHED already makes.
     CAMPAIGN_BUDGET_REACHED,
+    // THE DECISION BEHIND THIS ORDER IS OLDER THAN THE PROGRAM SAID IT MAY BE, or the closed bar it
+    // was computed from is. `docs/COUNCIL.md`:33: "an expired opportunity takes the policy's safe
+    // outcome, never a late trade".
+    //
+    // Its own code rather than MARKET_DATA_UNAVAILABLE, which is what the QUOTE-age refusal says and
+    // means "no price is arriving": here prices are arriving perfectly well and the SIGNAL is old,
+    // and an agent told to check its data connection would go hunting a fault that is not there.
+    // Not RISK_LIMIT_EXCEEDED either — nothing about the order's size is wrong, and halving it would
+    // not help. The repair is to decide again on the bar that has just closed, which is a thing the
+    // runner does by itself and the owner does not have to do anything about.
+    DECISION_EXPIRED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -574,6 +585,11 @@ public static class Errors
         // doubles it. Nothing was sent, and it is a changed decision rather than a broken machine —
         // which is why the repair is "ask again", not "check something".
         [ErrorCode.POSITION_MOVED]                 = ("The position moved while TradeAgent was preparing to close it, so the closing order no longer matched it.", "Nothing was sent and your position is untouched. Ask again and it will be sized against the position as it is now.", false),
+        // AN OLD SIGNAL, AND THE STRATEGY'S OWN NUMBER IS WHAT MADE IT OLD. The sentence says whose
+        // rule it was, because "TradeAgent refused your order" reads as a fault in the software and
+        // this is the software doing exactly what the promoted program asked for. Nothing for the
+        // owner to press: the runner decides again on the next closed bar without being told to.
+        [ErrorCode.DECISION_EXPIRED]               = ("The trading signal behind this order was older than the strategy itself allows, so it was not sent.", "Nothing was sent and your position is untouched. The strategy decides again when the next bar closes; there is nothing for you to do.", false),
         // THE OTHER HALF OF POSITION_MOVED, and the owner has to be told which half this is. Above:
         // the position already changed. Here: TradeAgent is holding an earlier order on the same
         // instrument that it never got an answer for, and that order can still fill and move the

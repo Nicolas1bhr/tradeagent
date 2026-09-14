@@ -2265,6 +2265,76 @@ public sealed class TradingGateway : IAsyncDisposable
         if (reduces) RefuseAnUnresolvedReducerOrThrow(intent.Symbol, intent.Side);
     }
 
+    /// <summary>
+    /// REFUSES AN ORDER WHOSE DECISION HAS GONE STALE — the third gate <c>docs/COUNCIL.md</c>:96-97
+    /// names, evaluated where the other two that matter are: at DISPATCH, after every awaited read
+    /// and immediately before the wire.
+    ///
+    /// <para>":33 — an expired opportunity takes the policy's safe outcome, never a late trade". The
+    /// safe outcome here is to send nothing and say so. It throws before the write-ahead transition,
+    /// so the record stays <see cref="ExecutionState.CREATED"/> and a sweep leg reads it as
+    /// `not-sent` — the shape <see cref="RefuseAStaleCloseOrThrow"/> already has. A DEFINITE refusal
+    /// and never an UNKNOWN: nothing left this process, so there is nothing to reconcile.</para>
+    ///
+    /// <para><b>Why it is not in <see cref="RiskCheckOrThrow"/>, beside the quote age.</b> Everything
+    /// between that check and the wire is an awaited connector read — the account, the quote, the
+    /// positions, the loss budget — and at shipped ATAS deadlines that chain is tens of seconds
+    /// wide. A decision-age verdict taken out there is a verdict about a moment that has passed by
+    /// the time anything is sent, which is exactly the defect
+    /// <see cref="ReauthorizeAtDispatchOrThrow"/> exists for (REVIEW 2026-09-05 finding 6, probe P3).
+    /// <c>DecisionFreshnessTests</c> measures that mutant: the clock advanced inside the position
+    /// read, and the order must still not go out.</para>
+    ///
+    /// <para><b>The age is measured from the bar's CLOSE</b> (<c>IntentDecision.BarClose</c>), which
+    /// is when the signal existed and the earliest instant it could be acted on. Both bounds are
+    /// measured from it and the refusal names which one was passed: on a decision taken at a bar's
+    /// close the freshest observation behind it and the decision itself are the SAME instant, so
+    /// these are two limits on one measurement rather than two measurements — and the tighter of the
+    /// two binds, which is what a program declaring both means.</para>
+    ///
+    /// <para><b>A decision from a bar that has not closed is refused too.</b> The evaluator has no
+    /// way to spell the bar that is forming, so a close in the future is a clock or a caller that is
+    /// wrong, and an order placed on data that does not exist yet is the one outcome that cannot be
+    /// right. It is a definite refusal for the same reason the other two are.</para>
+    ///
+    /// <para>An order with no <see cref="PlaceIntent.Decision"/> passes untouched. The owner's own
+    /// buy, a close, a leg of the emergency press and every modification have no closed bar behind
+    /// them, and refusing one for staleness would be this gate inventing a rule nobody declared.</para>
+    /// </summary>
+    void RefuseAStaleDecisionOrThrow(PlaceIntent intent, string requestId)
+    {
+        if (intent.Decision is not { } decision) return;
+
+        var age = decision.AgeAt(Now);
+        var (bound, limit) =
+            age < TimeSpan.Zero ? ("its bar has not closed yet", TimeSpan.Zero)
+            : age > decision.MaxDecisionAge ? ("max_decision_age", decision.MaxDecisionAge)
+            : age > decision.DataFreshness ? ("data_freshness", decision.DataFreshness)
+            : (null, TimeSpan.Zero);
+
+        if (bound is null) return;
+
+        var why = age < TimeSpan.Zero
+            ? $"the bar behind this order closes at {decision.BarClose:u} and it is {Now:u}: the signal was "
+              + "computed from a bar that has not closed, so nothing was sent"
+            : $"the bar behind this order closed at {decision.BarClose:u}, which is {age.TotalSeconds:0.#}s ago, "
+              + $"and this strategy's `{bound}` is {limit.TotalSeconds:0.#}s. Nothing was sent. Decide again on "
+              + "the bar that has just closed and ask under a new request id.";
+
+        _log.Activity($"An order was not sent: its trading signal was {age.TotalSeconds:0.#}s old and the "
+                      + $"strategy allows {limit.TotalSeconds:0.#}s.", "warn");
+        _log.Engineering("Gateway", "decision_expired", "warn", requestId: requestId,
+            metadataJson: Json.Write(new
+            {
+                bound,
+                bar_close = decision.BarClose,
+                age_seconds = age.TotalSeconds,
+                limit_seconds = limit.TotalSeconds
+            }));
+
+        throw new GatewayDeniedException(ErrorCode.DECISION_EXPIRED, why);
+    }
+
     async Task<ExecutionRequest> DispatchPlaceAsync(AgentContext ctx, ExecutionRequest stored, PlaceIntent intent, CancellationToken ct)
     {
         // A CLOSE IS SIZED HERE, not where it was decided. See RefuseAStaleCloseOrThrow: an
@@ -2291,6 +2361,11 @@ public sealed class TradingGateway : IAsyncDisposable
         // authority was also revoked. Both are true, both refuse, and nothing is sent; the agent's
         // next attempt is refused at the top of PlaceAsync with the authority code.
         ReauthorizeAtDispatchOrThrow(ctx, stored);
+
+        // AND THE DECISION'S OWN AGE, HERE, FOR THE SAME REASON THE RE-AUTHORIZATION IS HERE. See
+        // RefuseAStaleDecisionOrThrow: every read above this line is awaited, and a signal that was
+        // inside its bound when the risk check ran can be minutes past it by now.
+        RefuseAStaleDecisionOrThrow(intent, stored.RequestId);
 
         using var slot = ReserveDispatchOrThrow();
 
