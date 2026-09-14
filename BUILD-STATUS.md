@@ -5611,7 +5611,7 @@ normaliser, reader, feed, stores, pipe server, schema, report and loop; `CONTRAC
 Integration 668 = 1983 passed, 0 failed, 1 skipped; touched classes 3× → 107/107 Unit and 27/27 Integration each run; names → 14 added, 0 removed. Manager's gate
 at `c8306d4` (the report commit on the gated sha, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 1038 + 277 + 668 = 1983 passed, 0 failed, 1 skipped (Integration 10 m 46 s, the other leg's suite overlapping, no `Timing` red); names vs `main` → 0 removed, 14 added (`[Fact]`/`[Theory]`
 1620 → 1634; method sets 1650 → 1665); scan clean (`CancellationToken`, `IpcToken.Ensure()` in tests, a hunk header's `string token`, judged); no trailers;
-`rev-list --count` → 0; CI run at `c8306d4`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+`rev-list --count` → 0; CI run 34877523943 at `c8306d4`: all four jobs GREEN — ubuntu, macos, windows-latest and `package`.
 
 **NOT done, NOT verified:** no network, no box, no ATAS, no money, no order, no credential; nothing on the agent pipe collects, rebuilds or wakes; the Settings press
 not seen on a screen; the second source's real URL and response shape NOT VERIFIED from here; no Revolut X connector, no `U-bars`, no Databento, no live bars.
