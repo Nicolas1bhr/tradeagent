@@ -5462,3 +5462,43 @@ no gateway or protocol file touched; `rev-list --count` → 0; CI run 3477301534
 but a second driver is not this unit; `WorkspaceRevisions.Snapshot` still reads its two size-capped files inside the transaction (only the
 relay's unbounded `out/` read moved out); one existing test's setup changed, not its assertion (each simulated "process" its own register);
 the boundary, assessments, dispositions and the trial-budget race (`U-council-concurrent-2`); a third role; no box, no money.
+
+## 2026-09-13 — U-council-concurrent-2 landed: the consequential boundary — two sealed assessments, one bounded challenge, one disposition applied by code
+
+`docs/COUNCIL.md:59-65`, the one paragraph of the doctrine that had no product code, by one fresh builder on
+`docs/briefs/U-council-concurrent-2.md`. Merge `cac1787`, 6 commits, 22 files, +2034/−44 (`Database.cs` **schema 16** — `boundary_event`,
+`boundary_submission`; new `Db/BoundaryStore.cs`; `CouncilRelay.cs` (`CommitSealed`, `Land`), `PublicationStore.cs`, `MissionEventStore.cs`,
+`MissionLoop.cs`, `CampaignStore.cs`, `DailyReports.cs`, `DailyReport.cs` (section 9), both directors' guides, `CONTRACTS.md`; six test
+classes). Nothing on the order path; no pipe op or verb reaches any of it (a test asks the shipped `Ops` vocabulary by name).
+
+- **A boundary event keyed (kind, entity, revision),** opened by the referee in the verdict's own transaction, waking both directors once
+  with one paid turn each; a repeat writes nothing (a UNIQUE index, proved by writing past the store). RED: `no such table: boundary_event`;
+  mutant (the key from the attempt): `Expected: 2 / Actual: 4` paid wakes after a restart.
+- **The sealed pair:** each assessment committed at once, its `delivery` WITHHELD (a delivery STATE, not a missing row, so a restart can
+  tell held from failed) until both exist, released together by `Deliver`; a second from one director refused by words and by the primary
+  key. RED (`Commit` in place of `CommitSealed`): the first assessment in the chair's `in/` before it wrote its own; mutant (released when
+  one exists): the same.
+- **One bounded challenge per boundary,** from either director after both assessments are delivered, buying the peer one turn; a second
+  refused and unpaid. RED: two `challenge` wakes; mutant (the cap dropped): the over-length challenge's wake.
+- **The disposition written by CODE** at the deadline or when the challenge window closes (both delivered AND the one challenge written),
+  from the policy's default — `Promotions.Standing` for a promotion boundary; the window a 24-hour CONSTANT, not a setting, because a
+  deadline the owner could move is the veto `:62` forbids; the loop sleeps until the earliest deadline and launches nothing to settle one;
+  section 9 lists every boundary with its evidence, owner and deadline, OVERDUE past it. RED: `Expected: "deploy" / Actual: null`; mutant
+  (`now <= DeadlineAt`): disposed a minute after opening, before either assessment.
+- **The trial charged in ONE `Database.Write`** (the by-one race `U-referee-1` named). RED (two real threads on the last of 200):
+  `Expected: 200 / Actual: 201`; mutant (the already-registered return dropped): a re-asked trial refused in words. **NOT VERIFIED:** the
+  brief's own mutant (the count read outside the write) did not go red, because the test's barrier synchronises the pre-run look, not the
+  store's read; the substitute mutant above is the one quoted, and a deterministic version would need a second seam inside `RegisterTrial`.
+- **Choices where COUNCIL is silent, in `CONTRACTS.md`:** a promotion boundary is (version, campaign); opening buys the two turns and
+  releasing buys none; which boundary a submission answers is the app's (the oldest open one that role has not answered); a trial
+  refused after its run rolls the run back and its figures are never served. Items 2 and 3 share one commit (one protocol, one file).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `0937b43`, Release: 0 warnings, 0 errors (DLL
+timestamps checked); six touched classes 3× → 81/81 each; Unit 1008 + Fault 277 + Integration 657 = 1942 passed, 0 failed, 1 skipped —
+with two other legs' suites running on this Mac at the same time; names → 20 added, 0 removed; 159 test sources text. Manager's gate at
+`cac1787`, Release: build → 0 warnings, 0 errors; suite → 1008 + 277 + 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 20 added (sets 1573 → 1593); scan clean; no
+trailers; no order-path file touched; `rev-list --count` → 0; CI run 34840620999 at `cac1787`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** nothing reads a disposition — a `deploy` deploys nothing, the order path is untouched (`U-allocator-1`); the allocator,
+evolution and retirement absent beyond `BoundaryKind.Retirement` as a value nothing opens (`U-allocator-2`); no boundary in the app's own
+window, no way for the owner to open, extend or answer one; no box, no ATAS, no money.
