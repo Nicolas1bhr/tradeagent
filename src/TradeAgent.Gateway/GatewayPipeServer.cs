@@ -2115,7 +2115,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + (result.Request.Model.Frictionful
                 ? "This run declared friction: see 'execution_model'."
                 : "THIS RUN DECLARED NO FEE AND NO SLIPPAGE, so it is an upper bound on a frictionless "
-                  + "market — pass --fees and --slippage for a figure that is about a venue."),
+                  + "market — pass --fees and --slippage for a figure that is about a venue.")
+            // AND WHAT THESE BARS ARE. A run over midpoint-derived candles that reported like a run
+            // over traded bars would be handing back a figure the caller cannot read correctly —
+            // `docs/COUNCIL.md`:164-172, never trade evidence. The same sentence `data-list`,
+            // `data-bars` and the owner's report carry, from the one place it is written.
+            + (ran.Dataset.MidpointNote is { } midpoint ? " " + midpoint : ""),
             new BacktestReplyMetrics(
                 m.Bars, m.ExposureBars, m.Signals, m.Fills, m.NoTrades, m.Trades, m.Wins, m.WinRate,
                 m.GrossPnl, m.Fees, m.NetPnl, m.MaxDrawdown, m.FinalEquity, m.MissingMinutes, m.Gaps,
@@ -2278,9 +2283,17 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             "Closed bars in UTC, ascending, nothing filled in. They are hypothesis evidence and establish "
             + "no fill, no queue position and no intrabar ordering. A minute that is missing is missing: "
             + "'gaps_in_dataset' counts them across the whole dataset and 'trade data list' lists where "
-            + "they are.",
+            + "they are. EVERY BAR CARRIES A 'quality': 'traded' means the source published a volume "
+            + "for it, and 'midpoint_derived' means it published none — that bar's volume of 0 is not a "
+            + "measurement and the bar is never trade evidence."
+            + (set.MidpointNote is { } midpoint ? " " + midpoint : ""),
             from, to, window.Bars.Count, set.Gaps, set.Incomplete,
-            [.. window.Bars.Select(b => new DataBarsReplyBar(b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume))]);
+            // THE WINDOW'S OWN COUNT AND THE DATASET'S, because a caller asking for a week of a year
+            // is being told about the week it asked for and about the evidence it is a week of.
+            window.Bars.Count(b => b.Quality == BarQuality.MidpointDerived), set.MidpointBars,
+            set.MidpointNote,
+            [.. window.Bars.Select(b => new DataBarsReplyBar(
+                b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume, b.Quality))]);
     }
 
     /// <summary>
@@ -2316,6 +2329,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         set.Gaps, [.. set.GapRuns.Select(g => new DataListReplyGap(g.From, g.To, g.Minutes))],
         set.GapRunsTruncated, set.Duplicates, set.Incomplete, set.Unreadable, set.AcceptedAt,
         set.HoldoutFrom, set.EvaluationClass,
+        // WHAT THE SOURCE DECLARED AND WHAT THE NORMALISER COUNTED, on the row rather than inferred
+        // from the bars: the target it was asked for, the depth that arrived, whether the source can
+        // publish a candle with no volume at all, and how many of these bars are one.
+        set.CoverageTargetDays, set.CoverageActualDays, set.SourceCarriesVolume, set.MidpointBars,
+        set.MidpointNote,
         [.. set.Files.Select(f => new DataListReplyFile(f.Month, f.Url, f.PublishedSha256,
             f.ComputedSha256, f.Bytes, f.DownloadedAt, f.Unit.ToString()))]);
 
@@ -2346,6 +2364,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         // different answer from "this build cannot hold anything back".
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? HoldoutFrom,
         string EvaluationClass,
+        int CoverageTargetDays, int CoverageActualDays, bool SourceCarriesVolume, int MidpointBars,
+        // NEVER DROPPED WHEN NULL: "these bars are all traded" and "this build cannot tell you" are
+        // different answers.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? MidpointVolumeNote,
         IReadOnlyList<DataListReplyFile> Files);
 
     /// <inheritdoc cref="DataListReply"/>
@@ -2362,11 +2384,16 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
         int Count, int GapsInDataset, int IncompleteExcluded,
+        int MidpointBarsInWindow, int MidpointBarsInDataset,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? MidpointVolumeNote,
         IReadOnlyList<DataBarsReplyBar> Bars);
 
     /// <inheritdoc cref="DataListReply"/>
     sealed record DataBarsReplyBar(
-        DateTimeOffset OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume);
+        DateTimeOffset OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume,
+        // ON EVERY BAR, NEVER ONLY IN THE NOTE. A caller that reads the note and then reasons over a
+        // window has to be able to tell WHICH bars it is about, and a volume of 0 cannot say so.
+        string Quality);
 
     /// <summary>
     /// WHAT INSTRUMENTS THIS INSTALLATION KNOWS OF, AND WHO SAID SO.

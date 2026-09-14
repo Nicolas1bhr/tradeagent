@@ -29,6 +29,38 @@ public static class BarQuality
     /// fact nobody measured.
     /// </summary>
     public static string Or(string? quality) => IsKnown(quality) ? quality! : Traded;
+
+    /// <summary>
+    /// WHAT A DATASET WITH MIDPOINT-DERIVED BARS IN IT SAYS ABOUT ITSELF, or null when there is
+    /// nothing to say. <b>One definition, read by four surfaces</b> — <c>data-list</c>,
+    /// <c>data-bars</c>, the backtest reply and section 8 of the owner's report — because four copies
+    /// of a warning are four wordings, and the one that drifts is the one nobody re-reads.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:164-172: a candle without volume is midpoint-derived and is flagged
+    /// as such, "never as trade evidence". The sentence has to reach the caller in the ANSWER and not
+    /// only in a schema: an agent that ran a backtest over these bars and got back a reply identical to
+    /// one over traded bars has been handed a number it cannot read correctly.</para>
+    ///
+    /// <para>The second case — a source that MAY publish volume-less candles where none of these bars
+    /// is one — is stated too, and deliberately. It is a fact about the evidence rather than about
+    /// these particular rows, and a caller comparing two datasets from two sources is entitled to know
+    /// which of them could contain a candle nobody traded on.</para>
+    /// </summary>
+    public static string? Note(int midpointBars, int bars, bool sourceCarriesVolume)
+    {
+        if (midpointBars > 0)
+            return $"{midpointBars:N0} of these {bars:N0} bars carry NO traded volume: no volume was "
+                   + "published for them, so they are MIDPOINT-DERIVED — a price with no trade behind "
+                   + "it — and their volume of 0 is not a measurement. They are never trade evidence, "
+                   + "and a figure computed over them says nothing about what would have filled. The "
+                   + "'quality' column on each bar says which is which.";
+
+        return sourceCarriesVolume
+            ? null
+            : "This source may publish candles with no traded volume at all — midpoint-derived, never "
+              + "trade evidence — and none of these bars is one. Every bar here carries a volume the "
+              + "source published.";
+    }
 }
 
 /// <summary>

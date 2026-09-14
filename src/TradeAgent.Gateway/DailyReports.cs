@@ -457,7 +457,17 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                 metrics.Add($"{set.Source} {set.Pair} {set.Interval} v{set.Version} on "
                             + $"{set.VenueId ?? "no venue recorded"}/"
                             + $"{set.InstrumentSymbol ?? "no instrument recorded"}: {set.Bars} bars, "
-                            + $"{set.MonthsPresent} of {set.MonthsAttempted} months, {set.Gaps} gaps, "
+                            + $"{set.MonthsPresent} of {set.MonthsAttempted} periods, "
+                            + $"{set.CoverageActualDays} of {set.CoverageTargetDays} days deep, "
+                            + $"{set.Gaps} gaps, "
+                            // MIDPOINT-DERIVED BARS ARE NAMED ON THE LINE, not left to the bar count.
+                            // `trade report` serves this document to the AI as well as to the owner,
+                            // and a bar count with no midpoint count beside it is a claim about depth
+                            // neither of them can check (docs/COUNCIL.md:164-172).
+                            + (set.MidpointBars > 0
+                                ? $"{set.MidpointBars} bars with NO traded volume (midpoint-derived, "
+                                  + "never trade evidence), "
+                                : set.SourceCarriesVolume ? "" : "0 midpoint-derived bars, ")
                             + $"{set.State}");
         }
         catch (Exception ex) { gaps.Add(new ReportGap("datasets", $"the dataset ledger could not be read ({ex.Message})")); }

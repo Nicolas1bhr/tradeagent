@@ -412,7 +412,9 @@ public sealed class GrantedWorkerTools(
 
         new(Data,
             "Historical market data TradeAgent holds: 'data-list' for what there is and where every "
-            + "byte came from, 'data-bars' for the bars. Bars are hypothesis evidence — they establish "
+            + "byte came from, 'data-bars' for the bars, each with a 'quality' — a 'midpoint_derived' "
+            + "bar had no volume published for it at all and is never trade evidence. Bars are "
+            + "hypothesis evidence — they establish "
             + "no fill, no queue position and no intrabar ordering. Nothing here collects or changes "
             + "data; the account owner does that in TradeAgent.",
             Schema(("op", "string", "data-list or data-bars"),

@@ -84,6 +84,18 @@ public sealed class BarFeed
     public DatasetRecord Dataset { get; }
 
     /// <summary>
+    /// WHAT THESE BARS' VOLUMES ARE, in words, or null when every one of them was traded.
+    ///
+    /// <para>A feed is where a run gets its bars, so it is where a run has to be able to read that some
+    /// of them are MIDPOINT-DERIVED: a candle for which no volume was published at all, whose zero is
+    /// not a measurement and which is never trade evidence (<c>docs/COUNCIL.md</c>:164-172). Every bar
+    /// this feed yields carries its own <see cref="KlineBar.Quality"/> as well, so a consumer can tell
+    /// them apart one at a time; this is the sentence for the whole window, and it is the same sentence
+    /// <c>data-bars</c>, the backtest reply and the owner's report carry.</para>
+    /// </summary>
+    public string? MidpointNote => Dataset.MidpointNote;
+
+    /// <summary>
     /// Opens a feed on one dataset by its ledger id, for a named audience over a named window, or
     /// refuses and says why.
     ///

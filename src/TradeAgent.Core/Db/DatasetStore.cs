@@ -149,6 +149,13 @@ public sealed record DatasetRecord(
     /// installation cannot support.</para>
     /// </summary>
     public int MidpointBars { get; init; }
+
+    /// <summary>
+    /// WHAT THIS DATASET SAYS ABOUT ITS OWN VOLUMES, in words, or null when it has nothing to say.
+    /// The one definition every surface that describes a dataset reads — see
+    /// <see cref="Data.BarQuality.Note"/>.
+    /// </summary>
+    public string? MidpointNote => Data.BarQuality.Note(MidpointBars, Bars, SourceCarriesVolume);
 }
 
 /// <summary>
