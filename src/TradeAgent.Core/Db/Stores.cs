@@ -52,7 +52,8 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
     const string Cols = """
         request_id, agent_session_id, connector_id, account_id, instrument, intent, parameters,
         client_order_id, created_at, dispatched_at, execution_state, connector_order_id,
-        filled_quantity, average_price, needs_reconciliation, last_reconciled_at, last_error, mode
+        filled_quantity, average_price, needs_reconciliation, last_reconciled_at, last_error, mode,
+        strategy_version_id, allocation_id
         """;
 
     public (bool Created, ExecutionRequest Request) TryCreate(ExecutionRequest r)
@@ -61,13 +62,17 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
         {
             using var c = db.Cmd($"""
                 INSERT INTO execution_request({Cols}, updated_at)
-                VALUES($rid,$sess,$conn,$acct,$inst,$intent,$params,$coid,$created,NULL,$state,NULL,'0',NULL,0,NULL,NULL,$mode,$upd)
+                VALUES($rid,$sess,$conn,$acct,$inst,$intent,$params,$coid,$created,NULL,$state,NULL,'0',NULL,0,NULL,NULL,$mode,$ver,$alloc,$upd)
                 ON CONFLICT(request_id) DO NOTHING
                 """,
                 ("$rid", r.RequestId), ("$sess", r.AgentSessionId), ("$conn", r.ConnectorId), ("$acct", r.AccountId),
                 ("$inst", r.Instrument), ("$intent", r.Intent.ToString()), ("$params", r.ParametersJson),
                 ("$coid", r.ClientOrderId), ("$created", Sql.T(r.CreatedAt)), ("$state", r.State.ToString()),
-                ("$mode", r.Mode.ToString()), ("$upd", Sql.T(Now)));
+                ("$mode", r.Mode.ToString()),
+                // THE ATTRIBUTION, WRITTEN BY THE INSERT THAT MAKES THE ROW AND BY NOTHING ELSE. No
+                // update in this class names either column, so what an order was placed under is
+                // settled the moment the record exists and can never be restated afterwards.
+                ("$ver", r.StrategyVersionId), ("$alloc", r.AllocationId), ("$upd", Sql.T(Now)));
             return c.ExecuteNonQuery();
         });
 
@@ -360,6 +365,9 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
         LastReconciledAt = Sql.TimeN(r.GetValue(15)),
         LastError = Sql.S(r.GetValue(16)),
         Mode = Enum.Parse<TradingMode>(r.GetString(17)),
+        // READ FROM THEIR OWN COLUMNS, never from `parameters`. See ExecutionRequest.StrategyVersionId.
+        StrategyVersionId = Sql.S(r.GetValue(18)),
+        AllocationId = Sql.S(r.GetValue(19)),
     };
 }
 

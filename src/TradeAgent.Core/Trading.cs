@@ -976,4 +976,25 @@ public sealed class ExecutionRequest
     public DateTimeOffset? LastReconciledAt { get; set; }
     public string? LastError { get; set; }
     public TradingMode Mode { get; init; }
+
+    /// <summary>
+    /// WHICH PROMOTED STRATEGY VERSION THIS ORDER WAS PLACED FOR, and under WHICH ALLOCATION — or null
+    /// on both because no strategy placed it.
+    ///
+    /// <para>Two columns of their own, never re-derived from <see cref="ParametersJson"/>.
+    /// <c>docs/COUNCIL.md</c>:210-211 makes "which strategy or allocation caused an operation"
+    /// unrecoverable once it is not recorded, and a blob is not a record of it: the parameters are one
+    /// text column that a later build, a migration or anything holding this database could rewrite, and
+    /// re-reading the attribution out of it would let a rewritten blob re-attribute an order that has
+    /// already been sent. The columns are written once, by the insert that creates the row.</para>
+    ///
+    /// <para><see cref="AllocationId"/> is settable where <see cref="StrategyVersionId"/> is not, and
+    /// only because of WHERE it is known: the version arrives on the intent, and the allocation is the
+    /// one that authorised this order, read inside the dispatch gate with the position that the three
+    /// gates beside it are decided on. It is assigned once, before the row exists, and no store method
+    /// ever writes it again — <c>ExecutionRequestStore</c> has no update that names either column.</para>
+    /// </summary>
+    public string? StrategyVersionId { get; init; }
+
+    public string? AllocationId { get; set; }
 }

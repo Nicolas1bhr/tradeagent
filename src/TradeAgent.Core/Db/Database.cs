@@ -1162,6 +1162,23 @@ public sealed class Database : IDisposable
               ON strategy_allocation(version_id, effective_from);
             """);
 
+            // AND WHAT AN ORDER WAS PLACED UNDER, ON THE ORDER'S OWN ROW. Two columns rather than a
+            // field inside `parameters`, because `parameters` is a blob: re-deriving the attribution
+            // from it would let a rewritten blob re-attribute an order that has already been sent, and
+            // :210-211 is exactly about provenance that cannot be reconstructed afterwards.
+            //
+            // NO FOREIGN KEY, deliberately, and this is the opposite reading from the table above. An
+            // execution request is a record of something that may already have reached a broker; a
+            // version or an allocation removed from this installation later must not be able to make an
+            // existing order row unreadable or its reference dangling. The reading `dataset.venue_id`
+            // takes at schema 17, for the same reason.
+            //
+            // Nullable and NOT backfilled. No order this installation has ever placed named a version —
+            // nothing could, until this rung — so every existing row genuinely has none, and a default
+            // would attribute a sent order to a decision nobody made.
+            Exec("ALTER TABLE execution_request ADD COLUMN strategy_version_id TEXT;");
+            Exec("ALTER TABLE execution_request ADD COLUMN allocation_id TEXT;");
+
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','20') ON CONFLICT(key) DO UPDATE SET value='20';");
         }
 

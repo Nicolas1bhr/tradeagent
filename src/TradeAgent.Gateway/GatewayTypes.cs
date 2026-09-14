@@ -216,6 +216,27 @@ public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, 
     /// pressed the button.</para>
     /// </summary>
     public IntentDecision? Decision { get; init; }
+
+    /// <summary>
+    /// WHICH PROMOTED STRATEGY VERSION IS PLACING THIS ORDER, or null because no strategy is.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:210-211 names "which strategy or allocation caused an operation"
+    /// as one of the four things that cannot be recovered later. Before this field nothing on the
+    /// order path said which version an order came from — <c>execution_request</c> recorded none — so
+    /// a fill could never be attributed to the program that decided it, and the capital gate
+    /// (<c>:14-15</c>) had nothing to be a gate ABOUT.</para>
+    ///
+    /// <para>Null is a real state and not an omission, exactly as on <see cref="Decision"/>: the
+    /// owner's own buy, a close, a leg of the emergency press and every modification are orders no
+    /// strategy version decided, and there is no allocation for them to be charged against. What it
+    /// must never mean is "a version's order that lost its name on the way", which is why the id
+    /// travels on the intent from the caller that decided it rather than being looked up later.</para>
+    ///
+    /// <para>It is a CLAIM and not a permission. Naming a version grants nothing: the gateway asks
+    /// the promotion ledger and the allocation ledger what that version actually stands on, at
+    /// dispatch, and refuses when the answer is nothing (<c>TradingGateway</c>'s allocation gate).</para>
+    /// </summary>
+    public string? StrategyVersionId { get; init; }
 }
 
 /// <summary>

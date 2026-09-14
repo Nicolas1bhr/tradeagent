@@ -1559,6 +1559,37 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE ALLOCATION THIS ORDER IS BEING PLACED UNDER, or null because there is none.
+    ///
+    /// <para>Null has two causes and they are both real: the intent names no version at all — the
+    /// owner's own buy, a close, a leg of the emergency press — or the version it names has no
+    /// allocation that authorises it right now. <see cref="AllocationStanding.Authorises"/> is the
+    /// only question asked, and it is true only when the row is in force AND the promotion under it
+    /// still reads <c>promoted</c>: a version whose evidence TradeAgent has withdrawn is attributed
+    /// nothing, because an allocation id on a sent order is a statement that the order was covered.</para>
+    ///
+    /// <para>Read inside the dispatch gate, with the position reading the gates beside it use, and the
+    /// answer is written onto the record at create. A ledger this build cannot read answers null and
+    /// says so in the engineering log: an order attributed to an allocation nobody could look up is
+    /// worse than one honestly attributed to none.</para>
+    /// </summary>
+    AllocationRow? AllocationFor(PlaceIntent intent)
+    {
+        if (intent.StrategyVersionId is not { Length: > 0 } version) return null;
+
+        try
+        {
+            return _allocations.StandingFor(version, Now) is { Authorises: true } standing
+                ? standing.Allocation : null;
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "allocation_not_read", "error", ex: ex);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// THE LOSS BUDGETS, REFUSING NEW RISK — the only limits in this class that are about what has
     /// HAPPENED rather than about what is being sent.
     ///
@@ -2219,7 +2250,11 @@ public sealed class TradingGateway : IAsyncDisposable
             CreatedAt = Now,
             State = Settings.Mode == TradingMode.LIVE_CONFIRM && !ctx.IsOperator
                 ? ExecutionState.AWAITING_APPROVAL : ExecutionState.CREATED,
-            Mode = Settings.Mode
+            Mode = Settings.Mode,
+            // WHICH VERSION IS PLACING THIS, onto its own column rather than left in the parameters
+            // blob. It is the caller's claim, carried verbatim; what that version is ALLOWED to do is
+            // decided inside the gate below, against the ledgers.
+            StrategyVersionId = intent.StrategyVersionId
         };
 
         await _dispatchGate.WaitAsync(ct);
@@ -2248,6 +2283,13 @@ public sealed class TradingGateway : IAsyncDisposable
             RefuseAnUnresolvedReducerOrThrow(intent, positions);
 
             await LossBudgetOrThrow(intent, account, positions, ct);
+
+            // AND WHICH ALLOCATION THIS ORDER IS BEING PLACED UNDER, onto the record at create. See
+            // AllocationFor: it is read HERE, beside the three gates above, because the next unit's
+            // ceiling is a question about the POSITION and a second read to ask it could disagree with
+            // this one. Assigned rather than constructed with, because the standing is only known
+            // inside this gate; no store method writes the column again.
+            record.AllocationId = AllocationFor(intent)?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
