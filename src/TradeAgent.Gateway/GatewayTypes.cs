@@ -71,6 +71,37 @@ public sealed class GatewayOptions
     public TimeSpan? DispatchStrandedAfter { get; set; }
 
     public TimeSpan HealthInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// HOW OFTEN THE LOSS BUDGETS ARE MEASURED WHEN NO ORDER IS ARRIVING — the backbone of the
+    /// watch, and the answer to "a bleeding book that nobody asks about is never measured".
+    ///
+    /// <para>Fifteen seconds: three passes of <see cref="HealthInterval"/>, which is the tick the
+    /// watch rides on, and the longest gap this product is willing to leave between a position
+    /// going through the owner's budget and the app knowing it. It is not a promise about the
+    /// market — a quote can move a book through a budget and back inside one tick, and no interval
+    /// short of a tick-by-tick subscription would see that. <c>QuoteChanged</c> is what makes it
+    /// faster than this when the platform is talking: an arriving quote schedules one immediate
+    /// evaluation, coalesced.</para>
+    ///
+    /// <para>Recorded in <c>docs/CONTRACTS.md</c> as a choice the account owner may overrule.</para>
+    /// </summary>
+    public TimeSpan LossWatchInterval { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// HOW LONG A FIRST SIGHTING OF A BREACH STAYS STANDING WHILE IT WAITS FOR A SECOND, DISTINCT
+    /// PULL TO AGREE WITH IT.
+    ///
+    /// <para>Sixty seconds, four ticks of <see cref="LossWatchInterval"/>. The window exists because
+    /// the admission gate and the watch answer different questions: an order that arrives on a
+    /// single bad print is refused on that print, which costs nothing and is undone by the next one
+    /// — but CLOSING THE DAY on a single print is a decision nothing undoes until tomorrow. So a
+    /// closure needs two agreeing pulls, and this bounds how long the first one counts for. Any pull
+    /// that disagrees drops the sighting immediately, whatever the window says.</para>
+    ///
+    /// <para>Recorded in <c>docs/CONTRACTS.md</c> as a choice the account owner may overrule.</para>
+    /// </summary>
+    public TimeSpan LossBreachConfirmWithin { get; set; } = TimeSpan.FromSeconds(60);
 }
 
 /// <summary>

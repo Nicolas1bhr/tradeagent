@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradeAgent.Core;
 
 namespace TradeAgent.Gateway;
 
@@ -54,6 +55,40 @@ public static class LossBreach
 
     /// <summary>What a scan for one account's closures asks for.</summary>
     public static string AccountPrefix(string account) => $"{Prefix}{account}:";
+
+    /// <summary>
+    /// THE SENTENCE THE DAY'S CLOSURE IS REFUSED WITH, AND SHOWN WITH, EVERYWHERE — written ONCE,
+    /// onto the record, at the moment it is confirmed.
+    ///
+    /// <para>It is on the record rather than recomposed per surface because the figure it names is
+    /// the one that closed the day, and a sentence recomposed later would quietly re-read the
+    /// ledger: the refusal would then say a number that is not the number it refused on. Four things
+    /// have to be in it — since when, why, that it lasts the whole UTC day, and that TRADEAGENT
+    /// CLOSED NOTHING — because an owner who reads "the day is closed" and assumes the app flattened
+    /// the book has been told the opposite of what happened.</para>
+    /// </summary>
+    public static string DaySentence(decimal loss, decimal budget, string currency,
+        DateTimeOffset at, int feesUnknownFills) =>
+        $"TradeAgent closed today to new risk at {at.UtcDateTime:HH:mm} UTC: the day was down "
+        + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
+        + $"“{Labels.MaxDailyLoss}”{Fees(feesUnknownFills)}. It stays closed until the next UTC "
+        + "day, whatever the figure does afterwards. NOTHING WAS CLOSED FOR YOU — closing or reducing a "
+        + "position is still allowed.";
+
+    /// <summary>The same, for one position, which is closed to opens and adds and to nothing else.</summary>
+    public static string SymbolSentence(string symbol, decimal loss, decimal budget, string currency,
+        DateTimeOffset at, int feesUnknownFills) =>
+        $"TradeAgent closed {symbol} to new risk at {at.UtcDateTime:HH:mm} UTC: it was down "
+        + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
+        + $"“{Labels.MaxLossPerTrade}”{Fees(feesUnknownFills)}. It stays closed until the next "
+        + "UTC day, whatever the figure does afterwards. NOTHING WAS CLOSED FOR YOU — closing or reducing "
+        + "it is still allowed.";
+
+    /// <summary>The clause every loss figure carries while the platform has reported no fee for a fill.</summary>
+    static string Fees(int fills) =>
+        fills == 0 ? ""
+            : $" (your platform reported no fee for {fills} of today's fills, so the real figure is a "
+              + "little worse)";
 
     /// <summary>
     /// The symbol a key closes, or null when it is not a symbol closure of THIS account and day.

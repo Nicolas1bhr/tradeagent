@@ -516,6 +516,12 @@ public sealed class TradingGateway : IAsyncDisposable
         // on the health pass that follows, which every host runs immediately after connecting and
         // every five seconds after that.
         if (s == HealthState.READY) _fillPullDue = true;
+
+        // AND A CONNECTION THAT HAS GONE DOWN ENDS AN EPOCH. Every quote remembered under the old
+        // one is now a memory rather than a reading: see _quoteEpoch. Incremented on the way DOWN so
+        // that a reconnect cannot be mistaken for continuity by anything that read the epoch before
+        // the drop.
+        else _connectionEpoch++;
     }
 
     // ---------------------------------------------------------------- the fill ledger
@@ -672,7 +678,39 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>The last quote this gateway saw for each symbol, for valuing an open position.</summary>
     readonly System.Collections.Concurrent.ConcurrentDictionary<string, QuoteInfo> _quotes = new(StringComparer.Ordinal);
 
-    void OnQuoteChanged(QuoteInfo q) => _quotes[q.Symbol] = q;
+    /// <summary>
+    /// WHICH CONNECTION EACH REMEMBERED QUOTE CAME FROM, and the counter that makes the answer mean
+    /// something.
+    ///
+    /// <para>A quote is a reading of a book this process was being told about. The moment the
+    /// connection drops, the telling stops — and the newest quote in the map is then a memory whose
+    /// age says nothing about how far the market has moved since. The epoch advances on every
+    /// connection state that is not READY, so the loss watch can refuse a mark from before the gap
+    /// without this class having to throw away a map that other readers legitimately use as "the
+    /// last price TradeAgent saw" (<c>trade pnl</c>, the Performance card, the order-value check).
+    /// Stamping rather than clearing is what keeps that distinction: the watch is strict about the
+    /// connection, the reports are honest about being the last thing seen.</para>
+    /// </summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _quoteEpoch = new(StringComparer.Ordinal);
+
+    volatile int _connectionEpoch;
+
+    void OnQuoteChanged(QuoteInfo q) => StoreQuote(q, _connectionEpoch);
+
+    /// <summary>Remembers one quote against the connection it was read on. Null is not a quote.</summary>
+    void StoreQuote(QuoteInfo? q, int epoch)
+    {
+        if (q is null) return;
+        _quotes[q.Symbol] = q;
+        _quoteEpoch[q.Symbol] = epoch;
+
+        // AN ARRIVING PRICE SCHEDULES ONE EVALUATION, COALESCED. A flag and not a task: this runs on
+        // the connector's own thread, where an async read started here would be a fire-and-forget
+        // nothing can wait for or cancel — the reason OnConnectionChanged marks the fill pull due
+        // rather than starting one. Every quote between two passes collapses into the one flag, so a
+        // fast tape buys one evaluation per tick and not one per print.
+        _lossWatchDue = true;
+    }
 
     /// <summary>The last quote seen for a symbol, or null when this gateway has never seen one.</summary>
     public QuoteInfo? LastQuote(string symbol) => _quotes.GetValueOrDefault(symbol);
@@ -1569,6 +1607,275 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         return [.. rows.Select(x => LossBreach.SymbolOf(x.Key, accountId, day)).OfType<string>()];
+    }
+
+    // ---------------------------------------------------------------- the watch
+
+    /// <summary>What one pass of the watch did. Returned so a caller — and a test — can read it.</summary>
+    /// <param name="At">The gateway clock when the pass ran.</param>
+    /// <param name="Pull">The pull number this pass valued the book at, or the last one when it did not run.</param>
+    /// <param name="Ran">False when nothing was measured: no budget, no account, or a read that failed.</param>
+    /// <param name="DayReached">Whether this pass saw the day through its budget. One sighting is not a closure.</param>
+    /// <param name="SymbolsReached">The symbols this pass saw through the per-position budget.</param>
+    /// <param name="Closed">The keys this pass WROTE. Empty on a first sighting, and empty once the row exists.</param>
+    /// <param name="Why">Why nothing was measured, or why the figure could not be worked out. Null when it could.</param>
+    public sealed record LossWatchPass(DateTimeOffset At, long Pull, bool Ran, bool DayReached,
+        IReadOnlyList<string> SymbolsReached, IReadOnlyList<string> Closed, string? Why);
+
+    /// <summary>A breach seen once: which pull saw it, and when. Two of these close a day.</summary>
+    readonly record struct LossSighting(long Pull, DateTimeOffset At);
+
+    /// <summary>Keyed by the kv key the sighting would be written under. Touched only under the gate.</summary>
+    readonly Dictionary<string, LossSighting> _sightings = new(StringComparer.Ordinal);
+
+    long _lossPull;
+    DateTimeOffset? _lastLossWatch;
+    volatile bool _lossWatchDue;
+
+    /// <summary>
+    /// THE WATCH — the loss budgets measured on a TICK rather than only when an order happens to
+    /// arrive, which is the hole this unit closes.
+    ///
+    /// <para><b>Why a tick at all.</b> Both budgets used to be evaluated inside the dispatch gate and
+    /// nowhere else. An account with an open position and an AI that has stopped sending — because
+    /// it is thinking, because its budget for the day is spent, because it crashed — is an account
+    /// whose loss is never measured: the book can go through the owner's daily budget and out the
+    /// other side and nothing in the product would ever have asked. The tick asks.</para>
+    ///
+    /// <para><b>The pull is the point.</b> It asks the platform for a fresh quote per open-position
+    /// symbol, OUTSIDE the dispatch gate, because the valuation is what has to be current and
+    /// holding a lock across a connector round trip would stall every order for the length of it.
+    /// The evaluation and the write are then done UNDER the gate, so a breach and an opening order
+    /// cannot decide about the same instant in two different places.</para>
+    ///
+    /// <para><b>Two agreeing pulls close a day.</b> A single print through a budget refuses the order
+    /// in front of it — that is the admission gate, on first sight, with no tolerance, and it is
+    /// cheap and reversible. CLOSING the day is neither: it lasts until the next UTC day and nothing
+    /// undoes it. So this writes only when a SECOND, DISTINCT pull inside
+    /// <see cref="GatewayOptions.LossBreachConfirmWithin"/> agrees, and any pull that disagrees drops
+    /// the sighting. One bad print therefore costs an order and not a day.</para>
+    ///
+    /// <para><b>It sends nothing.</b> No close, no cancel, no order of any kind leaves the gateway
+    /// because of anything in here. What it does is write a record and open a boundary; flattening a
+    /// book is a different unit, and this one deliberately leaves the positions exactly where the
+    /// owner's platform has them.</para>
+    ///
+    /// <para><b>It never throws for a failed read.</b> A platform that will not answer means the day
+    /// cannot be valued, and a day that cannot be valued records NOTHING — the admission gate already
+    /// refuses new risk on an unknown (<see cref="ErrorCode.RISK_CHECK_UNAVAILABLE"/>), which is the
+    /// safe half, and inventing a closure out of a failed read is the unsafe one.</para>
+    /// </summary>
+    public async Task<LossWatchPass> LossWatchAsync(CancellationToken ct = default)
+    {
+        var at = Now;
+        var r = Settings.Risk;
+
+        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m)
+            return Idle(at, "neither loss budget is set, so nothing is measured");
+
+        // The epoch READ FIRST, so a disconnect that happens during the pulls invalidates what this
+        // pass collected rather than being absorbed by it.
+        var epoch = _connectionEpoch;
+
+        AccountInfo? account;
+        IReadOnlyList<PositionInfo> positions;
+        try
+        {
+            account = await AccountAsync(ct);
+            if (account is null) return Idle(at, "no account is selected, so there is no book to value");
+
+            positions = await Connector.GetPositionsAsync(account.Id, ct);
+            if (_instrumentCache.Count == 0) await InstrumentsAsync(ct);
+
+            // THE FRESH PULL, one per open symbol, outside the gate. Without it this measures
+            // whatever price last happened to arrive, which on a platform that pushes quotes only
+            // while something is subscribed is a price from before the move that matters.
+            foreach (var p in positions.Where(p => p.Quantity != 0))
+                StoreQuote(await Connector.GetQuoteAsync(p.Symbol, ct), epoch);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { return Idle(at, $"the platform could not be read ({ex.Message})"); }
+
+        var pull = Interlocked.Increment(ref _lossPull);
+
+        var marks = new Dictionary<string, QuoteInfo>(StringComparer.Ordinal);
+        var notes = new List<LossBreachMark>();
+        foreach (var p in positions.Where(p => p.Quantity != 0))
+        {
+            var (mark, note) = MarkFor(p, epoch);
+            if (mark is not null) marks[p.Symbol] = mark;
+            notes.Add(note);
+        }
+
+        await _dispatchGate.WaitAsync(ct);
+        try
+        {
+            var loss = LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(at), "today"),
+                positions, s => marks.GetValueOrDefault(s), _instrumentCache);
+
+            // AN UNAVAILABLE VALUATION RECORDS NOTHING AND DROPS NOTHING. It is not a disagreement —
+            // a pull that could not be worked out has not said the breach is over — so a standing
+            // sighting is left to expire on its own window rather than being cleared by silence.
+            if (loss.Unknown is { } why)
+                return Settled(new LossWatchPass(at, pull, true, false, [], [],
+                    Refusals(notes) is { Length: > 0 } detail ? $"{why} \u2014 {detail}" : why));
+
+            var reached = positions
+                .Where(p => p.Quantity != 0 && loss.TradeReached(p.Symbol))
+                .Select(p => p.Symbol).Distinct(StringComparer.Ordinal).ToList();
+
+            var closed = new List<string>();
+
+            if (loss.DayReached)
+            {
+                var key = LossBreach.DayKey(account.Id, at);
+                if (Confirmed(key, pull, at, out var first))
+                    closed.Add(Close(key, Compose(account.Id, null, loss.Loss, r.MaxDailyLoss, loss, at,
+                        first, pull, epoch, notes)));
+            }
+            else _sightings.Remove(LossBreach.DayKey(account.Id, at));
+
+            foreach (var symbol in reached)
+            {
+                var key = LossBreach.SymbolKey(account.Id, symbol, at);
+                if (Confirmed(key, pull, at, out var first))
+                    closed.Add(Close(key, Compose(account.Id, symbol, loss.LossOn(symbol), r.MaxLossPerTrade,
+                        loss, at, first, pull, epoch, notes)));
+            }
+
+            foreach (var p in positions.Where(p => p.Quantity != 0 && !reached.Contains(p.Symbol)))
+                _sightings.Remove(LossBreach.SymbolKey(account.Id, p.Symbol, at));
+
+            return Settled(new LossWatchPass(at, pull, true, loss.DayReached, reached, closed, null));
+        }
+        finally { _dispatchGate.Release(); }
+    }
+
+    /// <summary>
+    /// WHETHER THIS PULL IS THE SECOND ONE TO SEE IT. A first sighting is recorded and answers false;
+    /// a sighting from THIS pull is not a second opinion; a sighting older than the window has
+    /// expired and starts again from here. A row that already exists answers false and is never
+    /// rewritten — see <see cref="LossBreach"/>.
+    /// </summary>
+    bool Confirmed(string key, long pull, DateTimeOffset at, out LossSighting first)
+    {
+        first = default;
+        if (_db.GetKv(key) is not null) return false;
+
+        if (_sightings.TryGetValue(key, out var seen)
+            && seen.Pull != pull
+            && at - seen.At <= _opt.LossBreachConfirmWithin)
+        {
+            first = seen;
+            return true;
+        }
+
+        _sightings[key] = new LossSighting(pull, at);
+        return false;
+    }
+
+    /// <summary>Writes the record, says so once, and answers the key it wrote.</summary>
+    string Close(string key, LossBreachRecord record)
+    {
+        _db.SetKv(key, Json.Write(record));
+        _sightings.Remove(key);
+        if (record.Symbol is null) SayOnceToday(ref _dailyLossSaidFor, record.Why);
+        else SayOnceToday(ref _tradeLossSaidFor, record.Why);
+        _log.TryEngineering("Gateway", "loss_budget_closed", "warn",
+            metadataJson: Json.Write(new { key, record.Loss, record.Symbol, record.ConfirmedAt }));
+        return key;
+    }
+
+    LossBreachRecord Compose(string account, string? symbol, decimal loss, decimal budget, LossToday reading,
+        DateTimeOffset at, LossSighting first, long pull, int epoch, IReadOnlyList<LossBreachMark> marks) => new()
+        {
+            Account = account,
+            Day = LossBreach.Stamp(at),
+            Symbol = symbol,
+            FirstSeenAt = first.At,
+            ConfirmedAt = at,
+            FirstPull = first.Pull,
+            ConfirmingPull = pull,
+            Loss = loss,
+            DayBudget = reading.DayBudget,
+            TradeBudget = reading.TradeBudget,
+            Currency = reading.Currency,
+            SettingsRevision = Sha256Hex.Of(Json.Write(Settings.Risk))[..12],
+            Realized = reading.Realized,
+            Unrealized = reading.Unrealized,
+            FeesUnknownFills = reading.FeesUnknownFills,
+            ConnectionEpoch = epoch,
+            Marks = marks,
+            Why = symbol is null
+                ? LossBreach.DaySentence(loss, budget, reading.Currency, at, reading.FeesUnknownFills)
+                : LossBreach.SymbolSentence(symbol, loss, budget, reading.Currency, at, reading.FeesUnknownFills)
+        };
+
+    /// <summary>
+    /// THE MARK ONE POSITION IS VALUED AT, and the note that says what it was.
+    ///
+    /// <para>The platform's own mark wins where it reports one: it is stated by the party holding the
+    /// position, in the account's currency, and it needs no multiplier this project has never
+    /// measured. Otherwise the EXECUTABLE side of this gateway's newest quote — the bid for a long,
+    /// the ask for a short — because a book is worth what it can be closed at, and a mid values a
+    /// long at a price no buyer is showing.</para>
+    ///
+    /// <para>Three things disqualify a quote and each answers a null mark, which makes the whole
+    /// reading UNKNOWN and records nothing: none seen, one older than
+    /// <see cref="GatewayOptions.MaxQuoteAge"/>, and one from a previous connection. The third is the
+    /// one that is easy to miss — a reconnect means the gateway was not being told about prices for
+    /// a while, so the newest quote it holds is a memory of a book rather than a reading of it.</para>
+    /// </summary>
+    (QuoteInfo? Mark, LossBreachMark Note) MarkFor(PositionInfo p, int epoch)
+    {
+        var side = p.Quantity > 0m ? "long" : "short";
+
+        if (p.UnrealizedPnl is { } marked)
+            return (null, new LossBreachMark(p.Symbol, p.Quantity, side, null, "platform mark", null, marked));
+
+        var quote = _quotes.GetValueOrDefault(p.Symbol);
+        var age = quote is null ? (double?)null : (DateTimeOffset.UtcNow - quote.At).TotalSeconds;
+
+        string? refused =
+            quote is null ? "no quote"
+            : _quoteEpoch.GetValueOrDefault(p.Symbol, -1) != epoch ? "from a previous connection"
+            : quote.IsStale(_opt.MaxQuoteAge) ? $"older than {_opt.MaxQuoteAge.TotalSeconds:0}s"
+            : (p.Quantity > 0m ? quote.Bid : quote.Ask) is null ? "no executable side"
+            : null;
+
+        if (refused is not null)
+            return (null, new LossBreachMark(p.Symbol, p.Quantity, side, null, refused, age, 0m));
+
+        var price = (p.Quantity > 0m ? quote!.Bid : quote!.Ask)!.Value;
+        var multiplier = Pnl.MultiplierFor(p.Symbol, _instrumentCache);
+        return (new QuoteInfo(p.Symbol, null, null, price, null, null, quote.At),
+            new LossBreachMark(p.Symbol, p.Quantity, side, price, p.Quantity > 0m ? "bid" : "ask", age,
+                multiplier.Known ? (price - p.AveragePrice) * p.Quantity * multiplier.Value : 0m));
+    }
+
+    /// <summary>
+    /// WHY THE MARKS WERE REFUSED, in the watch's own words. <see cref="LossBudget"/> says "TradeAgent
+    /// has never seen a price for it" whenever it is handed no mark, which is true of the value it was
+    /// given and false about the gateway: the watch may be holding a price and refusing it for being
+    /// too old or from a previous connection. The reason the mark was refused is the news.
+    /// </summary>
+    static string Refusals(IReadOnlyList<LossBreachMark> notes) =>
+        string.Join(", ", notes.Where(n => n.Mark is null && n.Source != "platform mark")
+            .Select(n => $"{n.Symbol}: {n.Source}"));
+
+    LossWatchPass Idle(DateTimeOffset at, string why) =>
+        Settled(new LossWatchPass(at, Interlocked.Read(ref _lossPull), false, false, [], [], why));
+
+    /// <summary>
+    /// Marks the pass done. The due flag is cleared HERE rather than on the way in, because the
+    /// watch's own pulls raise <c>QuoteChanged</c> on several backends — including the simulator —
+    /// and a flag cleared first would be set again by this pass's own work and run for ever.
+    /// </summary>
+    LossWatchPass Settled(LossWatchPass pass)
+    {
+        _lastLossWatch = pass.At;
+        _lossWatchDue = false;
+        return pass;
     }
 
     LossBreachRecord? ReadBreach(string key)
@@ -4831,6 +5138,16 @@ public sealed class TradingGateway : IAsyncDisposable
             // be written whatever the platform's execution list does.
             if (_fillPullDue || _lastFillPull is null || Now - _lastFillPull >= FillPullInterval)
                 await PullFillsAsync(ct);
+
+            // THE LOSS WATCH RIDES THIS PASS FOR THE REASON THE FILL PULL DOES: every host already
+            // runs this method immediately after connecting and every HealthInterval after that, so
+            // a second timer would be a second thing to start, stop and get wrong. It is LAST because
+            // it is not a gate — the rows above are what the screen and the authorization chain read
+            // — and it never throws: see LossWatchAsync, which answers a failed read rather than
+            // raising one, so a platform that will not serve quotes cannot turn the health pass into
+            // a connection failure.
+            if (_lossWatchDue || _lastLossWatch is null || Now - _lastLossWatch >= _opt.LossWatchInterval)
+                await LossWatchAsync(ct);
         }
         catch (Exception ex)
         {
