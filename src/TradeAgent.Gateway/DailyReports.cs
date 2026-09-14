@@ -273,8 +273,37 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         if (newest is null)
             gaps.Add(new ReportGap("newest price", "TradeAgent has not seen a price on this run"));
 
+        // HOW OLD THE BARS ARE, PER DATASET, AND WHETHER A PROMOTED STRATEGY COULD ACT ON THEM.
+        //
+        // `docs/COUNCIL.md`:14-15 puts freshness among the gates code enforces, and the gate itself
+        // is in the gateway (`TradingGateway.RefuseAStaleDecisionOrThrow`). This is the owner's half:
+        // a promoted strategy that is healthy and silent because every bar here is older than it will
+        // act on looks exactly like one that has not signalled, and nothing else on this page would
+        // tell the two apart.
+        var ages = new List<string>();
+        TimeSpan? freshest = null;
+        try
+        {
+            foreach (var set in gateway.Datasets.All())
+            {
+                ages.Add(BarAge.Line(set, at));
+
+                // The bound is judged against MARKET data only. A fixture establishes plumbing and is
+                // never evidence (`EvaluationClass`), so a fixture written a minute ago must not be
+                // able to make a stale installation read as one a strategy could trade on.
+                if (set.State != DatasetState.ACCEPTED
+                    || string.Equals(set.EvaluationClass, Core.Data.EvaluationClass.Fixture, StringComparison.Ordinal))
+                    continue;
+
+                if (BarAge.Of(set, at) is { } age && (freshest is null || age < freshest)) freshest = age;
+            }
+        }
+        catch (Exception ex) { gaps.Add(new ReportGap("newest bars", $"the dataset ledger could not be read ({ex.Message})")); }
+
         return new ReportReadiness
         {
+            DataAges = Cap(ages, ListShown, "dataset"),
+            FreshnessBound = FreshnessBoundLine(freshest, gaps),
             Connector = gateway.Connector.DisplayName,
             ConnectorIsPaper = caps.IsPaper,
             Account = settings.SelectedAccountId,
@@ -693,6 +722,54 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// The first <paramref name="take"/> entries, and a COUNT of what is left rather than silence.
     /// A list quietly cut short is the one thing a report about completeness may not do.
     /// </summary>
+    /// <summary>
+    /// WHETHER THE PROMOTED STRATEGY'S OWN <c>data_freshness</c> COULD BE MET RIGHT NOW, in words —
+    /// or null because nothing stands promoted.
+    ///
+    /// <para>Four answers, and they are four because reading any of them as another is a wrong
+    /// conclusion about whether the software is working: nothing promoted; promoted but declaring no
+    /// bound at all (the shape of every version frozen before schema 19, and a real state rather than
+    /// a generous default); promoted with a bound the freshest market bars meet; and promoted with a
+    /// bound nothing here meets, which is a strategy that will refuse every order it decides and is
+    /// the case this line exists for.</para>
+    ///
+    /// <para>The FRESHEST market-data bar in the installation is what the bound is measured against,
+    /// and not the dataset the version was promoted over: the holdout is by construction history, and
+    /// a bound measured against it would read as unsatisfiable on a machine that is collecting
+    /// perfectly current bars. A dataset of the wrong instrument still counts here, because a
+    /// promotion row names no instrument and re-parsing a version's source to learn one is work this
+    /// page should not be doing (`Promotions.Standing` takes the same reading).</para>
+    /// </summary>
+    string? FreshnessBoundLine(TimeSpan? freshest, List<ReportGap> gaps)
+    {
+        PromotionStanding? standing;
+        try { standing = _promotions.Current(); }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("promoted strategy's data bound",
+                $"the promotion ledger could not be read ({ex.Message})"));
+            return null;
+        }
+
+        if (standing is not { IsPromoted: true, Promotion: { } promotion }) return null;
+
+        if (promotion.Freshness is not { } bounds)
+            return $"version {promotion.VersionId[..12]} is promoted and declares no data freshness at all, "
+                   + "so TradeAgent has no bound to check its signals against";
+
+        var declared = $"version {promotion.VersionId[..12]} needs bars no older than "
+                       + $"{BarAge.Words(bounds.DataFreshness)}";
+
+        if (freshest is not { } age)
+            return declared + ", and this installation holds no market bars at all — nothing it decides "
+                            + "would be sent";
+
+        return age <= bounds.DataFreshness
+            ? $"{declared}, and the freshest here are {BarAge.Words(age)} old: satisfiable now"
+            : $"{declared}, and the freshest here are {BarAge.Words(age)} old: NOT satisfiable — every "
+              + "signal it decides would be refused as stale and nothing would be sent";
+    }
+
     static List<string> Cap(IReadOnlyList<string> items, int take, string what)
     {
         if (items.Count <= take) return [.. items];

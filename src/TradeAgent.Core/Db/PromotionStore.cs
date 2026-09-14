@@ -286,6 +286,37 @@ public sealed class Promotions(Database db)
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     });
 
+    /// <summary>How far back <see cref="Current"/> looks. A version promoted long ago is still promoted.</summary>
+    public const int Recent = 20;
+
+    /// <summary>
+    /// WHAT STANDS PROMOTED RIGHT NOW, or null when this installation has judged nothing at all.
+    ///
+    /// <para>Each recent judgement is asked in turn and the first that still HOLDS is the answer —
+    /// <see cref="Standing"/> computes invalidation at read time, so a promotion whose dataset was
+    /// rejected or whose interpreter has moved is skipped rather than reported as current. When none
+    /// holds, the newest INVALIDATED standing is returned anyway, so a caller can say what was
+    /// withdrawn and why; told only "none", a turn would go looking for a verdict that is on the
+    /// table.</para>
+    ///
+    /// <para>Here rather than at either caller because there are now two — the Situation's promoted
+    /// line and section 3 of the owner's report — and two copies of "what is promoted" are two
+    /// answers about the one fact that decides whether anything may trade at all.</para>
+    /// </summary>
+    public PromotionStanding? Current(int look = Recent)
+    {
+        PromotionStanding? withdrawn = null;
+
+        foreach (var row in All(look))
+        {
+            var standing = Standing(row.VersionId);
+            if (standing.IsPromoted) return standing;
+            withdrawn ??= standing.State == PromotionState.Invalidated ? standing : null;
+        }
+
+        return withdrawn;
+    }
+
     /// <summary>
     /// WHERE THIS VERSION STANDS RIGHT NOW — the one reader, and the only place the word
     /// <c>invalidated</c> is ever produced.

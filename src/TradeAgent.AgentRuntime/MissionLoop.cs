@@ -633,7 +633,7 @@ public sealed record MissionSituation
     /// running loop, and so the three cases are visibly three: history, no history, and history the
     /// ledger has stopped standing behind.
     /// </summary>
-    public static string DataLine(DatasetRecord? set)
+    public static string DataLine(DatasetRecord? set, DateTimeOffset now)
     {
         if (set is null)
             return "Data: no dataset yet. Your owner collects history in TradeAgent, on the Settings page "
@@ -648,7 +648,16 @@ public sealed record MissionSituation
             : "no bars";
 
         return $"Data: {set.Pair} {set.Interval}, {period}, {set.Bars:N0} bars, {set.Gaps:N0} gaps — "
-               + "`trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
+               // HOW OLD THE FRESHEST BAR IS, AND WHETHER THESE BARS ARE EVIDENCE AT ALL. The age is
+               // measured from the last BAR and never from when the dataset was collected (`BarAge`,
+               // one definition shared with section 3 of the owner's report): a turn planning against
+               // a promoted strategy's `data_freshness` has to be able to see that history collected
+               // this morning may still be a year stale. And `docs/COUNCIL.md`:74-76 puts fixture
+               // versus market data in the Situation, because a plan built on a fixture is a plan
+               // built on bars nobody traded.
+               + $" Freshest bar {(BarAge.Of(set, now) is { } age ? BarAge.Words(age) + " old" : "none at all")}, "
+               + $"{BarAge.Class(set)}."
+               + " `trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
                + "evidence and establish no fill."
                // AND WHAT THEIR VOLUMES ARE, from the one place that sentence is written. The line is
                // where a turn decides what to run; a dataset of midpoint-derived candles that read here

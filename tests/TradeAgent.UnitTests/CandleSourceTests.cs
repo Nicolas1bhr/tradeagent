@@ -348,7 +348,7 @@ public class CandleSourceTests
             e => e.Kind == MissionEventKind.Data);
 
         // AND THE SITUATION NAMES IT, which is where a turn reads what it has to work with.
-        var line = MissionSituation.DataLine(svc.Store.Newest(Wakes));
+        var line = MissionSituation.DataLine(svc.Store.Newest(Wakes), DateTimeOffset.UtcNow);
         Assert.Contains(Wakes, line);
         Assert.Contains(BinanceArchive.Interval, line);
         Assert.Contains($"{got.Dataset.Bars:N0} bars", line);

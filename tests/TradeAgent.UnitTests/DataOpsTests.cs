@@ -65,8 +65,8 @@ public class DataOpsTests
     [Fact]
     public void The_situation_says_what_history_there_is_or_that_there_is_none()
     {
-        Assert.Contains("no dataset yet", MissionSituation.DataLine(null));
-        Assert.Contains("no command you can run that does it", MissionSituation.DataLine(null));
+        Assert.Contains("no dataset yet", MissionSituation.DataLine(null, DateTimeOffset.UtcNow));
+        Assert.Contains("no command you can run that does it", MissionSituation.DataLine(null, DateTimeOffset.UtcNow));
 
         var set = new DatasetRecord(1, "binance-spot-monthly-klines", "BTCUSDT", "1m", "v1", 12, 12, [],
             "/x/v1.csv", new string('a', 64), 525_600,
@@ -74,12 +74,20 @@ public class DataOpsTests
             new DateTimeOffset(2026, 8, 31, 23, 59, 0, TimeSpan.Zero),
             41, [], false, 0, 3, 0, DateTimeOffset.UtcNow, DatasetState.ACCEPTED, null, []);
 
-        var line = MissionSituation.DataLine(set);
+        var line = MissionSituation.DataLine(set, new DateTimeOffset(2026, 9, 1, 4, 0, 0, TimeSpan.Zero));
         Assert.Contains("Data: BTCUSDT 1m, 2025-09-01 \u2192 2026-08-31, 525,600 bars, 41 gaps", line);
         Assert.Contains("trade data list", line);
         Assert.Contains("hypothesis evidence", line);
 
-        var rejected = MissionSituation.DataLine(set with { State = DatasetState.REJECTED, RejectedReason = "a raw file changed" });
+        // THE AGE IS FROM THE LAST BAR, NOT FROM WHEN IT WAS COLLECTED. This dataset was accepted at
+        // the wall clock the suite runs at and its newest bar closed at 23:59 the night before the
+        // instant asked about: the line says the second.
+        Assert.Contains("Freshest bar 4h old", line);
+        Assert.Contains("market data", line);
+
+        var rejected = MissionSituation.DataLine(
+            set with { State = DatasetState.REJECTED, RejectedReason = "a raw file changed" },
+            DateTimeOffset.UtcNow);
         Assert.Contains("REJECTED", rejected);
         Assert.Contains("a raw file changed", rejected);
     }

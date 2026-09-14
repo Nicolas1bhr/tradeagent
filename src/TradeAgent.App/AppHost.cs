@@ -1170,7 +1170,7 @@ public sealed class AppHost : IAsyncDisposable
                 Guidance = host.Gateway.Settings.Guidance,
                 Spend = host.SpendToday,
                 Loss = loss,
-                Data = MissionSituation.DataLine(NewestDataset()),
+                Data = MissionSituation.DataLine(NewestDataset(), DateTimeOffset.UtcNow),
                 Promoted = MissionSituation.PromotedLine(PromotedStanding())
             };
         }
@@ -1202,25 +1202,12 @@ public sealed class AppHost : IAsyncDisposable
         /// </summary>
         PromotionStanding? PromotedStanding()
         {
-            try
-            {
-                var promotions = new Promotions(host._db!);
-                PromotionStanding? newest = null;
-
-                foreach (var row in promotions.All(ListedJudgements))
-                {
-                    var standing = promotions.Standing(row.VersionId);
-                    if (standing.IsPromoted) return standing;
-                    newest ??= standing.State == PromotionState.Invalidated ? standing : null;
-                }
-
-                return newest;
-            }
+            // The selection itself is `Promotions.Current` — section 3 of the owner's report asks the
+            // same question, and two copies of "what is promoted" are two answers about the one fact
+            // that decides whether anything may trade at all.
+            try { return new Promotions(host._db!).Current(); }
             catch (Exception) { return null; }
         }
-
-        /// <summary>How far back the promoted line looks. A version promoted long ago is still promoted.</summary>
-        const int ListedJudgements = 20;
 
         /// <summary>
         /// The newest dataset this installation holds, verified as it is read, or null when there

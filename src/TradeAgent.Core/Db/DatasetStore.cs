@@ -26,6 +26,59 @@ public sealed record DatasetFile(
     string Path);
 
 /// <summary>
+/// HOW OLD THE BARS A DATASET HOLDS ARE, AND WHETHER THEY ARE EVIDENCE AT ALL.
+///
+/// <para><b>One definition, read by two surfaces</b> — section 3 of the owner's report and the
+/// Situation's data line — because two copies of an age are two answers, and the one nobody
+/// re-reads is the one that drifts. <c>docs/COUNCIL.md</c>:74-76 puts "fixture versus market data"
+/// in the Situation and :14-15 puts freshness among the code-enforced gates; this is the sentence
+/// both of them say.</para>
+///
+/// <para><b>From <see cref="DatasetRecord.LastBar"/> and never from
+/// <see cref="DatasetRecord.AcceptedAt"/>.</b> That is the whole point of the class. A dataset
+/// collected this morning whose newest bar is from last year is a year-old dataset, and a
+/// collection time read as a freshness would make every re-collection of stale months look like
+/// fresh data — which is a promoted strategy's <c>data_freshness</c> bound reading as satisfiable
+/// when nothing about the bars has moved.</para>
+/// </summary>
+public static class BarAge
+{
+    /// <summary>How old the freshest bar is at <paramref name="now"/>, or null when there are no bars.</summary>
+    public static TimeSpan? Of(DatasetRecord set, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        return set.LastBar is { } last ? now - last : null;
+    }
+
+    /// <summary>`4h`, `3d`, `12m` — a duration a person reads, never a raw TimeSpan.</summary>
+    public static string Words(TimeSpan age) =>
+        age < TimeSpan.Zero ? "in the future"
+        : age.TotalMinutes < 1 ? $"{(int)age.TotalSeconds}s"
+        : age.TotalHours < 1 ? $"{(int)age.TotalMinutes}m"
+        : age.TotalDays < 1 ? $"{(int)age.TotalHours}h"
+        : $"{(int)age.TotalDays}d";
+
+    /// <summary>Whether a run over these bars is evidence, in the words both surfaces print.</summary>
+    public static string Class(DatasetRecord set)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        return string.Equals(set.EvaluationClass, Data.EvaluationClass.Fixture, StringComparison.Ordinal)
+            ? "FIXTURE, never evidence"
+            : "market data";
+    }
+
+    /// <summary>One dataset's freshness, named, with what it is a dataset OF and what class it is.</summary>
+    public static string Line(DatasetRecord set, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        var age = Of(set, now);
+        return $"{set.Source} {set.Pair} {set.Interval} v{set.Version}: "
+               + (age is { } a ? $"freshest bar {Words(a)} old" : "no bars at all")
+               + $" ({Class(set)})";
+    }
+}
+
+/// <summary>
 /// One normalised dataset and its whole provenance. Every field is the app's own measurement.
 /// </summary>
 public sealed record DatasetRecord(

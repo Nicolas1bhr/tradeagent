@@ -68,6 +68,28 @@ public sealed record ReportReadiness
     /// <summary>How old the newest price this installation has seen is, at the snapshot.</summary>
     public TimeSpan? DataAge { get; init; }
 
+    /// <summary>
+    /// HOW OLD THE FRESHEST BAR IN EACH DATASET IS, one line each, with fixture marked as fixture.
+    ///
+    /// <para>Beside <see cref="DataAge"/> and not instead of it, because they are two different
+    /// facts: that one is the newest PRICE the platform has quoted, this is the newest BAR this
+    /// installation holds, and a promoted strategy's <c>data_freshness</c> is about the second.
+    /// Measured from the dataset's last bar and never from when it was collected — see
+    /// <c>BarAge</c>, which is the one definition this and the Situation's data line share.</para>
+    /// </summary>
+    public IReadOnlyList<string> DataAges { get; init; } = [];
+
+    /// <summary>
+    /// WHETHER THE PROMOTED STRATEGY'S OWN FRESHNESS BOUND CAN BE MET BY THE BARS THIS INSTALLATION
+    /// HOLDS, in words — or null because nothing is promoted.
+    ///
+    /// <para>The gate that refuses a stale decision is in the gateway and needs no report. This line
+    /// is the OWNER's half of it: a strategy that is promoted, healthy and silent because every bar
+    /// here is older than it will act on is otherwise indistinguishable from one that simply has not
+    /// signalled, and nothing else on this page would say which.</para>
+    /// </summary>
+    public string? FreshnessBound { get; init; }
+
     public IReadOnlyList<string> MissingCapabilities { get; init; } = [];
     public IReadOnlyList<string> ActivationBlockers { get; init; } = [];
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
@@ -381,6 +403,11 @@ public static class DailyReportText
             null => Unknown
         });
         Kv(b, "newest price", r.Readiness.DataAge is { } age ? Age(age) : Unknown);
+        // THE BARS, BESIDE THE PRICE. Two facts and two lines: the price is what the platform last
+        // quoted and these are the history this installation holds, and a promoted strategy's
+        // declared freshness is about the second.
+        List(b, "newest bars", r.Readiness.DataAges);
+        Kv(b, "promoted strategy's data bound", r.Readiness.FreshnessBound ?? Unknown);
         List(b, "missing capabilities", r.Readiness.MissingCapabilities);
         List(b, "activation blockers", r.Readiness.ActivationBlockers);
         Gaps(b, r.Readiness.Missing);
