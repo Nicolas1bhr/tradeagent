@@ -522,7 +522,8 @@ public static class StrategyEvaluator
         return new StrategyIntent(
             IntentKind.Enter, IntentCause.Rule, program.Instrument, quantity,
             bar.OpenTime, state.Bars - 1, bar.OpenTime + state.BarInterval, reference,
-            stop, TargetPrice(program.Target, reference), program.Sizing, fired);
+            stop, TargetPrice(program.Target, reference), program.Sizing, fired)
+        { Freshness = program.Freshness };
     }
 
     /// <summary>An exit closes exactly what the caller says is open.</summary>
@@ -537,7 +538,8 @@ public static class StrategyEvaluator
         return new StrategyIntent(
             IntentKind.Exit, cause, state.Program.Instrument, account.Quantity,
             bar.OpenTime, state.Bars - 1, bar.OpenTime + state.BarInterval, bar.Close,
-            null, null, state.Program.Sizing, ruleIndex);
+            null, null, state.Program.Sizing, ruleIndex)
+        { Freshness = state.Program.Freshness };
     }
 
     /// <summary>Whether the program may take an entry at this wall clock.</summary>

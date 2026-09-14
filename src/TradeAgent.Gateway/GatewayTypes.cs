@@ -168,6 +168,68 @@ public sealed record PlaceIntent(string Symbol, OrderSide Side, OrderType Type, 
 {
     /// <summary>Why the order is being placed. See <see cref="OrderIntent"/>.</summary>
     public OrderIntent Intent { get; init; } = OrderIntent.Open;
+
+    /// <summary>
+    /// WHEN THIS ORDER WAS DECIDED AND UNDER WHAT BOUNDS — <see cref="IntentDecision"/> — or null
+    /// because no strategy decided it.
+    ///
+    /// <para>Null is a real state and not an omission: the owner's own buy, a close, a leg of the
+    /// emergency press and a modification are all orders with no closed bar behind them, and there is
+    /// nothing there for a freshness gate to be about. What null must never mean is "a strategy's
+    /// intent that lost its stamp on the way", which is why <see cref="IntentDecision"/> is
+    /// all-or-nothing and why <c>IntentDecision.From</c> is the only thing that builds one.</para>
+    ///
+    /// <para>Init-only with a default, like <see cref="Intent"/>, and PERSISTED in
+    /// <c>ParametersJson</c> — read back when a parked order is approved, so an order that waited for
+    /// a person is still measured against the bar it was decided on rather than the moment somebody
+    /// pressed the button.</para>
+    /// </summary>
+    public IntentDecision? Decision { get; init; }
+}
+
+/// <summary>
+/// THE CLOSED BAR AN ORDER WAS DECIDED FROM, AND THE TWO BOUNDS ITS PROGRAM DECLARED.
+///
+/// <para><c>docs/COUNCIL.md</c>:96-97, verbatim: "A promoted strategy declares its timeframe, its
+/// required data freshness and its maximum decision age, and the runner checks them again when the
+/// intent reaches execution". This record is what makes that possible to check at all: before it,
+/// the only age the money path knew was a QUOTE's — 30 seconds of it,
+/// <see cref="GatewayOptions.MaxQuoteAge"/> — and nothing anywhere said how old the BAR behind an
+/// order was, so :33's "never a late trade" had no implementation.</para>
+///
+/// <para><b>All four, or nothing.</b> Every field is required, and <see cref="From"/> answers null
+/// for an intent whose program declared no bounds. A block carrying times and no bounds would be a
+/// decision the dispatcher can see and cannot judge, which reads as a gate and is not one.</para>
+///
+/// <para><b><paramref name="BarClose"/> is the decision instant</b>, not <paramref name="BarOpen"/>.
+/// The signal was computed from the bar's CLOSE, so that is when the decision existed and the
+/// earliest instant it may be acted on — <c>StrategyIntent.NotBefore</c>. Measuring the age from the
+/// open instead would read a one-minute intent as a whole bar older than it is, and on a program
+/// whose <c>max_decision_age</c> is under one timeframe it would refuse every order the moment it
+/// was made. <paramref name="BarOpen"/> is carried beside it because a reader settling "which bar
+/// was this" needs the bar and not only its edge.</para>
+/// </summary>
+public sealed record IntentDecision(
+    DateTimeOffset BarOpen,
+    DateTimeOffset BarClose,
+    TimeSpan DataFreshness,
+    TimeSpan MaxDecisionAge)
+{
+    /// <summary>
+    /// THE ONE WAY A DECISION BLOCK IS BUILT — off an intent the evaluator emitted, and off nothing
+    /// else. Null when the program declared no bounds: there is then nothing to gate, and inventing
+    /// one here would be the fake `CLAUDE.md` rule 1 forbids.
+    /// </summary>
+    public static IntentDecision? From(Core.Strategy.StrategyIntent intent)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        return intent.Freshness is { } bounds
+            ? new IntentDecision(intent.Bar, intent.NotBefore, bounds.DataFreshness, bounds.MaxDecisionAge)
+            : null;
+    }
+
+    /// <summary>How old the decision and the bars behind it are at <paramref name="now"/>.</summary>
+    public TimeSpan AgeAt(DateTimeOffset now) => now - BarClose;
 }
 
 public sealed record GatewayStatus(

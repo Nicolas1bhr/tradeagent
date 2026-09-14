@@ -92,7 +92,29 @@ public sealed record StrategyIntent(
     decimal? StopPrice,
     decimal? TargetPrice,
     Sizing Sizing,
-    int RuleIndex);
+    int RuleIndex)
+{
+    /// <summary>
+    /// THE PROGRAM'S OWN EXECUTION BOUNDS, STAMPED ONTO THE INTENT THAT CAME OUT OF IT — or null
+    /// because the program declared none.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:96-97 has the RUNNER check these again when the intent reaches
+    /// execution, and the dispatcher is a different process boundary from the evaluator: it has the
+    /// order, not the program. So the bounds travel WITH the decision rather than being looked up
+    /// beside it — a lookup could be answered by a version that was promoted after this intent was
+    /// computed, which is a gate reading a rule the decision was never taken under.</para>
+    ///
+    /// <para>What the bounds are measured against is already on this record: <see cref="Bar"/> is the
+    /// bar's OPEN and <see cref="NotBefore"/> is its CLOSE, which is the instant the signal existed
+    /// and the earliest one it may be acted on. Nothing new was needed for the times; what was
+    /// missing was any way to carry them past this assembly. See <c>IntentDecision</c>.</para>
+    ///
+    /// <para>Init-only with a default, like <c>PlaceIntent.Intent</c>: adding it re-parameterised no
+    /// construction site, and an intent from a program with no bounds carries none rather than a
+    /// generous default nobody declared.</para>
+    /// </summary>
+    public FreshnessBounds? Freshness { get; init; }
+}
 
 /// <summary>What one event produced.</summary>
 public enum EvaluationStatus
