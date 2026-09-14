@@ -5502,3 +5502,35 @@ trailers; no order-path file touched; `rev-list --count` → 0; CI run 348406209
 **NOT done:** nothing reads a disposition — a `deploy` deploys nothing, the order path is untouched (`U-allocator-1`); the allocator,
 evolution and retirement absent beyond `BoundaryKind.Retirement` as a value nothing opens (`U-allocator-2`); no boundary in the app's own
 window, no way for the owner to open, extend or answer one; no box, no ATAS, no money.
+
+## 2026-09-14 — U-press-inflight-win landed: the press family's fixtures take the generous budget, thirty of them, judged first
+
+The windows-only red at `45719b2` (run 34771155930: `CancelAllAgainstOpenWorkTests.An_agent_modify_inside_the_connector_call_does_not_
+survive_the_cancel_all_press`, the press's own write-ahead row left `UNKNOWN` because its order read was refused at the two-second
+deadline), by one fresh fixer on `docs/briefs/U-press-inflight-win.md` (killed by the session limit while waiting for its runners,
+resumed the next day). Merge `30dc8ed`, 3 commits, test-only: `git diff main -- src/` empty, no assertion changed (seven files diffed
+line by line); draft PR #19 for the runner, closed after.
+
+- **Judged, not assumed:** the red fixture's budget cut on this Mac — 100, 50, 20, 10, 5 ms all PASS (this disk carries the press from
+  its deadline to the wire in under 5 ms); at 1 ms it fails with the CI's own assertion and all five of its output lines byte for byte; a
+  temporary print named the single row, the press's write-ahead with no leg behind it. The product refused honestly: no product change.
+- **The fixture, once:** all five presses in `PressInFlightTests` take `PressBudget` (20 s) through a new `emergencyBudget:` on
+  `Stranded.Ready` and `SlowRead.Ready`; none of them has the two-second promise as its verdict, so none stays on two seconds and no
+  `Timing` trait was added. Mutant (the generous budget removed with the 1 ms injection in place): RED in 5 of 5 runs.
+- **The sweep, thirty fixtures moved:** the eleven `DispatchRecoveryTests` presses named EXPOSED on 2026-09-12 (every verdict a record, a
+  state or a book, the EXPOSED paragraph rewritten); ten in `EmergencyPressTests` (its three deadline tests keep two seconds, their verdict
+  IS the promise, the `Timing` trait untouched); all four of `PressAtomicityTests`. `AgentCloseAtDispatchTests` and `CompositeOwnerTests`
+  NOT at risk, structurally: `RiskReducingScope.Begin` exists at three places in `src/`, none on their path.
+- **A FOURTH fixture of the class found on the PR's first windows attempt:** `SweepRequestIdTests.Every_sent_not_confirmed_leg_carries_an_
+  unknown_record_that_will_be_reconciled` (`Assert.NotEmpty() Failure`, green on the re-run) — it takes a 5 s budget and arranges a 2000 ms
+  cancel to be the call that runs out, so a disk that spends the budget first turns `sent-not-confirmed` into `not-sent`; a paired
+  budget-and-latency change, briefed as `U-sweep-latency-win`, not done here.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `0a531b5`, Release: 17 projects, 0 warnings, 0 errors;
+Fault 3× → 277/277 each; Unit 1008 + Fault 277 + Integration 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 1592 = 1592.
+Runner: PR #19, run 34773625675 at `62dd169`, SUCCESS on all four jobs — windows Fault 272/272 in 9 m 34 s against 271/272 at the red sha;
+macos's `Timing` step took its one second attempt (87/88 then 88/88). Manager's gate at `53690f5 (landed as `30dc8ed` after a docs-only rebase, `tests` identical)`, Release: build → 0 warnings, 0 errors; suite →
+1008 + 277 + 657 = 1942 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1593 = 1593); scan clean; no trailers; `rev-list --count` → 0; CI run 34843618128 at `30dc8ed`: in flight at the time of this record; verdict in a follow-up commit.
+
+**NOT done:** no product code; `SweepRequestIdTests` untouched (above); the pushed tip had no runner run of its own — the proof is the run
+at `62dd169`, the difference two council landings touching no Fault fixture plus the report; no box, no ATAS, no money.
