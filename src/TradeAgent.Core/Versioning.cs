@@ -199,8 +199,18 @@ public static class Versions
     /// — the only age the money path knew was a quote's. Nullable and NOT backfilled: the language
     /// could not spell a bound when the existing rows were written, so every one of them declared
     /// none, and a default would invent a gate nobody submitted.</para>
+    ///
+    /// <para><b>20 — the capital allocation, and which one caused an order.</b> One table,
+    /// <c>strategy_allocation</c>, whose id is the SHA-256 of the seven facts an allocation IS
+    /// (<c>AllocationRow.IdOf</c>), written once with <c>ON CONFLICT DO NOTHING</c> and never updated
+    /// or deleted; plus <c>strategy_version_id</c> and <c>allocation_id</c> on
+    /// <c>execution_request</c>, so what an order was placed UNDER is a column rather than something
+    /// re-derived from the parameters blob (<c>docs/COUNCIL.md</c>:210-211, "which strategy or
+    /// allocation caused an operation" cannot be recovered later). Both request columns are nullable
+    /// and NOT backfilled: no order this installation has already placed named a version, and a
+    /// default would attribute a sent order to a decision nobody made.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 19;
+    public const int DatabaseSchemaVersion = 20;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

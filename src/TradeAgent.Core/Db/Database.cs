@@ -1115,6 +1115,56 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','19') ON CONFLICT(key) DO UPDATE SET value='19';");
         }
 
+        if (have < 20)
+        {
+            // THE CAPITAL ALLOCATION: WHAT A PROMOTED VERSION MAY TRADE, AND WHICH ONE CAUSED AN ORDER.
+            //
+            // `docs/COUNCIL.md`:56-57 puts the capital allocator among the things that are "code and
+            // never a role"; :14-15 makes every order pass a code-enforced CAPITAL gate; :32-33 lets
+            // only a promoted version execute. Before this rung no line of `src` allocated capital at
+            // all — the only thing called an allocation was the AI budget's split between roles — and
+            // nothing on the order path read `Promotions.Standing`. A promoted version and a quantity
+            // the gateway would allow had nothing binding them.
+            //
+            // `id` IS THE BINDING, the same way `strategy_promotion.id` is: the SHA-256 of the seven
+            // columns between `version_id` and `effective_from`, in the order `AllocationRow.IdOf`
+            // spells them. `effective_to`, `reason` and `at` are NOT in it — they are the account of
+            // the decision and not the decision — and ON CONFLICT DO NOTHING makes the first row
+            // stand. An id minted from the clock is the mutant this table was built against: one
+            // decision, two rows, and no way to say which one the gateway was enforcing.
+            //
+            // THERE IS NO UPDATE AND NO DELETE. A ceiling is lowered or withdrawn by recording a
+            // FRESH allocation from a later instant, and `Allocations.StandingFor` answers with the
+            // newest row in force. A limit its subject could edit is not a limit, and a capital
+            // decision that can be moved after the outcome is known is not a record
+            // (`docs/COUNCIL.md`:210-212, provenance and precommitment).
+            //
+            // THE FOREIGN KEYS ARE THE POINT OF THE TABLE. An allocation must name a version that
+            // exists and the promotion that made it eligible; an allocation of capital to nothing is
+            // the row this design cannot be allowed to hold. Whether that promotion still STANDS is a
+            // read-time question and is deliberately not a column here, for the reason
+            // `strategy_promotion` has no `invalidated` column.
+            Exec("""
+            CREATE TABLE IF NOT EXISTS strategy_allocation(
+              id             TEXT PRIMARY KEY,
+              version_id     TEXT NOT NULL REFERENCES strategy_version(id),
+              promotion_id   TEXT NOT NULL REFERENCES strategy_promotion(id),
+              policy_version TEXT NOT NULL,
+              max_quantity   TEXT NOT NULL,
+              max_notional   TEXT,
+              currency       TEXT NOT NULL,
+              effective_from TEXT NOT NULL,
+              effective_to   TEXT,
+              reason         TEXT NOT NULL,
+              at             TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_allocation_version
+              ON strategy_allocation(version_id, effective_from);
+            """);
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','20') ON CONFLICT(key) DO UPDATE SET value='20';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
