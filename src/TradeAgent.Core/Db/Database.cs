@@ -1141,6 +1141,28 @@ public sealed class Database : IDisposable
         return c.ExecuteNonQuery();
     });
 
+    /// <summary>
+    /// EVERY KV ROW UNDER ONE KEY PREFIX, in key order — the read a family of keys needs when the
+    /// members are not known in advance (the day's closed symbols, which are whichever symbols
+    /// breached).
+    ///
+    /// <para><c>substr</c> rather than <c>LIKE</c>, because a prefix holding <c>%</c> or <c>_</c>
+    /// would match rows it does not own under <c>LIKE</c> and the escaping is one more thing to get
+    /// wrong; and rather than a range comparison, because that decides the answer by collation.
+    /// This table holds tens of rows, so the scan costs nothing worth the ambiguity.</para>
+    /// </summary>
+    public IReadOnlyList<(string Key, string Value)> KvStartingWith(string prefix) => Read(_ =>
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+        using var c = Cmd("SELECT key,value FROM kv WHERE substr(key,1,$n)=$p ORDER BY key",
+            ("$n", prefix.Length), ("$p", prefix));
+
+        var rows = new List<(string, string)>();
+        using var r = c.ExecuteReader();
+        while (r.Read()) rows.Add((r.GetString(0), r.GetString(1)));
+        return (IReadOnlyList<(string, string)>)rows;
+    });
+
     public void Dispose()
     {
         lock (_gate) _conn.Dispose();

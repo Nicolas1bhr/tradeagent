@@ -1012,6 +1012,10 @@ public sealed class TradingGateway : IAsyncDisposable
     AccountInfo? Remember(AccountInfo? account)
     {
         if (account?.Currency is { Length: > 0 } c) AccountCurrency = c;
+        // The id too, and for the same reason the currency is here: the surfaces have to name the
+        // account a closure was filed under, and on an installation that chose no account the only
+        // evidence of which one that is, is the one this gateway was last told about.
+        if (account?.Id is { Length: > 0 } id) _lastAccountId = id;
         return account;
     }
 
@@ -1446,9 +1450,29 @@ public sealed class TradingGateway : IAsyncDisposable
     async Task LossBudgetOrThrow(PlaceIntent intent, AccountInfo account,
         IReadOnlyList<PositionInfo> positions, CancellationToken ct)
     {
+        // WHAT CANNOT TAKE ON RISK IS NEVER REFUSED, AND THAT TEST COMES FIRST — before the record,
+        // before the budgets, before anything is read. A closed day must not become a day an account
+        // cannot be flattened out of; see the summary above and OpenPositionCapOrThrow.
+        if (!CanIncreaseExposure(intent, positions)) return;
+
+        // THE RECORD OUTRANKS THE LEDGER, AND IT IS READ BEFORE THE LEDGER IS. A day that has been
+        // closed is closed on the evidence that closed it: the figure is not recomputed here, so a
+        // loser closed at a smaller realised loss, a restart, and a budget the owner widened
+        // afterwards all leave the day shut. The key carries the UTC day, so tomorrow asks for a key
+        // nothing has written and the day opens by itself.
+        //
+        // It is ahead of the zero check on purpose. Zero means "not enforced" everywhere else in
+        // this class, but a budget set to zero AFTER a breach is the widest widening there is, and
+        // "the day reopens because the limit was removed" is the one reading this record exists to
+        // make impossible.
+        if (DayClosed(account.Id) is { } day)
+            throw new GatewayDeniedException(ErrorCode.LOSS_BUDGET_REACHED, day.Why);
+
+        if (SymbolClosed(account.Id, intent.Symbol) is { } sym)
+            throw new GatewayDeniedException(ErrorCode.LOSS_BUDGET_REACHED, sym.Why);
+
         var r = Settings.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return;
-        if (!CanIncreaseExposure(intent, positions)) return;
 
         // The multiplier lives in the instrument list, and a cold cache is the state a configured
         // install is always in. A read that fails is not a zero loss: it is a loss nobody can state.
@@ -1498,6 +1522,80 @@ public sealed class TradingGateway : IAsyncDisposable
                 $"your {intent.Symbol} position is down {Labels.Money(down, currency)} and the most one position "
                 + $"may lose is {Labels.Money(r.MaxLossPerTrade, currency)}, so nothing is added to it"
                 + $"{Fees(loss)}. Closing or reducing it is still allowed.");
+        }
+    }
+
+    // ---------------------------------------------------------------- the day, closed
+
+    /// <summary>
+    /// THE ACCOUNT EVERY CLOSURE IS FILED UNDER, for the surfaces — the one the owner chose, and
+    /// otherwise the last one this gateway was told about. The gate does not use it: it is handed an
+    /// <see cref="AccountInfo"/> that was read inside the same dispatch, and a refusal decided
+    /// against a remembered id would be a refusal about a different account.
+    /// </summary>
+    public string ClosureAccountId =>
+        Settings.SelectedAccountId is { Length: > 0 } chosen ? chosen : _lastAccountId;
+
+    string _lastAccountId = "";
+
+    /// <summary>
+    /// TODAY'S CLOSURE FOR THIS ACCOUNT, or null because the day is open.
+    ///
+    /// <para>It THROWS <see cref="ErrorCode.RISK_CHECK_UNAVAILABLE"/> when the row is there and
+    /// cannot be read, rather than answering null. "TradeAgent cannot tell whether the day is
+    /// closed" is not "the day is open", and the difference is a live order — the same rule the
+    /// unreadable settings row follows, and the reason an unknown loss refuses.</para>
+    /// </summary>
+    public LossBreachRecord? DayClosed(string accountId) => ReadBreach(LossBreach.DayKey(accountId, Now));
+
+    /// <summary>The closure of one symbol on this account today, or null because it is open.</summary>
+    public LossBreachRecord? SymbolClosed(string accountId, string symbol) =>
+        ReadBreach(LossBreach.SymbolKey(accountId, symbol, Now));
+
+    /// <summary>
+    /// Every symbol closed on this account today, in key order. Scanned rather than indexed: the
+    /// closed symbols are whichever ones breached, and a second row listing them is a second copy of
+    /// a fact that can disagree with the first.
+    /// </summary>
+    public IReadOnlyList<string> SymbolsClosedToday(string accountId)
+    {
+        var day = Now;
+        List<(string Key, string Value)> rows;
+        try { rows = [.. _db.KvStartingWith(LossBreach.AccountPrefix(accountId))]; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"TradeAgent could not read whether any position is closed for today ({ex.Message})");
+        }
+
+        return [.. rows.Select(x => LossBreach.SymbolOf(x.Key, accountId, day)).OfType<string>()];
+    }
+
+    LossBreachRecord? ReadBreach(string key)
+    {
+        string? json;
+        try { json = _db.GetKv(key); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"TradeAgent could not read whether today is closed to new risk ({ex.Message}), and a "
+                + "day it cannot read is not a day it may treat as open");
+        }
+
+        if (json is null) return null;
+
+        try
+        {
+            return Json.Read<LossBreachRecord>(json)
+                   ?? throw new InvalidOperationException("the row is the JSON literal null");
+        }
+        catch (Exception ex)
+        {
+            // THE ROW EXISTS. Something closed this day, and the only thing in doubt is the evidence
+            // — so this refuses with the same code an unknown loss refuses with, and says so.
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"today was closed to new risk by a record TradeAgent can no longer read ({ex.Message}), "
+                + "so nothing that could increase exposure is placed; closing or reducing still works");
         }
     }
 
