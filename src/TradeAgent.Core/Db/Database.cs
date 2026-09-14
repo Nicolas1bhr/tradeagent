@@ -1045,6 +1045,37 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','17') ON CONFLICT(key) DO UPDATE SET value='17';");
         }
 
+        if (have < 18)
+        {
+            // WHAT THE SOURCE DECLARED, AND WHAT THE NORMALISER COUNTED. Three columns, and the split
+            // between them is the point: the first two are a SOURCE's statements about itself and the
+            // third is a measurement of the file this build wrote.
+            //
+            // `docs/COUNCIL.md`:164-172 names a second source — Revolut X public candles, five
+            // minutes, a ninety-day target, actual depth recorded, and "a candle WITHOUT volume is
+            // midpoint-derived and is flagged as such, never as trade evidence". Before this rung the
+            // interval a dataset could be of and the depth a collection could target were constants in
+            // `BinanceArchive`, so a row for such a source would have read `1m` over twelve months: a
+            // provenance record of a collection that never happened.
+            //
+            // THERE IS NO `coverage_actual_days` COLUMN. The actual depth is the span between
+            // `first_bar` and `last_bar`, which are already on the row, and two columns that can
+            // disagree about one fact are two facts — the one nobody re-measures is the one that drifts.
+            //
+            // `source_carries_volume` defaults to 1 and `midpoint_bars` to 0, and for every row that
+            // exists today that is not a default but the truth: all of them were written by the Binance
+            // collector, whose archive publishes a traded volume on every kline. `coverage_target_days`
+            // is backfilled with twelve months stated in days for the same reason — it is a statement
+            // about rows this build can account for, not a value applied to whatever arrives later.
+            Exec("ALTER TABLE dataset ADD COLUMN coverage_target_days INTEGER;");
+            Exec("ALTER TABLE dataset ADD COLUMN source_carries_volume INTEGER NOT NULL DEFAULT 1;");
+            Exec("ALTER TABLE dataset ADD COLUMN midpoint_bars INTEGER NOT NULL DEFAULT 0;");
+            Exec($"UPDATE dataset SET coverage_target_days={Data.BinanceCandleSource.TwelveMonthsInDays} "
+                 + "WHERE coverage_target_days IS NULL;");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','18') ON CONFLICT(key) DO UPDATE SET value='18';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

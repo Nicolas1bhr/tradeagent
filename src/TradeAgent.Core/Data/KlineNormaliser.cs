@@ -35,7 +35,18 @@ public sealed record NormalisedDataset(
     int Duplicates,
     int Incomplete,
     int Unreadable,
-    IReadOnlyList<MonthReading> Months);
+    IReadOnlyList<MonthReading> Months)
+{
+    /// <summary>
+    /// HOW MANY OF THESE BARS CARRY NO TRADED VOLUME — <c>midpoint_derived</c>, never trade evidence
+    /// (<c>docs/COUNCIL.md</c>:164-172).
+    ///
+    /// <para>Init-only with a default of zero, like <c>DatasetRecord.HoldoutFrom</c>, so adding it
+    /// re-parameterised no construction site — and zero is what every dataset written before this unit
+    /// IS, because Binance's archive publishes a traded volume on every kline.</para>
+    /// </summary>
+    public int MidpointDerived { get; init; }
+}
 
 /// <summary>
 /// TWELVE ZIPS INTO ONE TIMELINE, with every reading that could be wrong counted rather than
@@ -49,10 +60,49 @@ public static class KlineNormaliser
     /// <summary>How many gap runs are listed before the list says it was cut short.</summary>
     public const int MaxGapRunsListed = 50;
 
-    /// <summary>The header of the normalised file. UTC instants, LF endings, no BOM.</summary>
+    /// <summary>
+    /// THE HEADER OF A NORMALISED FILE FROM A SOURCE WHOSE CANDLES ALWAYS CARRY VOLUME. UTC instants,
+    /// LF endings, no BOM — and byte for byte what this build wrote before this unit, which is why
+    /// every Binance dataset already on disk still hashes to the number its row recorded.
+    /// </summary>
     public const string Header = "open_time,open,high,low,close,volume";
 
-    static readonly TimeSpan Bar = TimeSpan.FromMinutes(1);
+    /// <summary>
+    /// THE HEADER OF A FILE WHOSE SOURCE MAY PUBLISH A CANDLE WITHOUT VOLUME — one more column, the
+    /// per-bar <see cref="BarQuality"/>.
+    ///
+    /// <para><b>Versioned by the header line and keyed on the SOURCE, not on the data.</b> A reader
+    /// tells the two apart by counting columns (<see cref="DatasetReader.TryBar"/>), so a file written
+    /// before this unit still reads and every bar in it reads as <c>traded</c>, which is what those
+    /// bars are. Keyed on the source rather than on whether a volume-less candle actually turned up,
+    /// because "this dataset came from a source that may publish candles without volume" is a fact
+    /// about the evidence that a file whose candles all happened to carry volume must still state.</para>
+    /// </summary>
+    public const string HeaderWithQuality = Header + ",quality";
+
+    /// <summary>
+    /// THE BAR LENGTH ONE INTERVAL NAMES, for counting gaps. A source declaring <c>5m</c> whose gaps
+    /// were counted a minute at a time would report four missing minutes between every pair of
+    /// consecutive bars — a dataset with no holes at all read as one that is 80% holes.
+    /// </summary>
+    public static TimeSpan BarLength(string? interval)
+    {
+        var text = (interval ?? "").Trim().ToLowerInvariant();
+        if (text.Length < 2 || !int.TryParse(text[..^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
+            || n <= 0)
+            throw new TradeAgentException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"'{interval}' is not a bar length this build can read. It reads 1m, 5m, 1h and 1d.");
+
+        return text[^1] switch
+        {
+            'm' => TimeSpan.FromMinutes(n),
+            'h' => TimeSpan.FromHours(n),
+            'd' => TimeSpan.FromDays(n),
+            's' => TimeSpan.FromSeconds(n),
+            _ => throw new TradeAgentException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"'{interval}' is not a bar length this build can read. It reads 1m, 5m, 1h and 1d.")
+        };
+    }
 
     /// <summary>
     /// The unit a kline timestamp is written in, decided by its MAGNITUDE.
@@ -90,10 +140,21 @@ public static class KlineNormaliser
     /// close time is after the moment the archive was fetched had not finished when it was written
     /// down, so it is excluded and counted rather than presented as a closed minute.
     /// </summary>
+    /// <param name="candlesCarryVolume">
+    /// The SOURCE's declaration (<see cref="ICandleSource.CandlesCarryVolume"/>). True writes the
+    /// six-column <see cref="Header"/> this build has always written; false writes
+    /// <see cref="HeaderWithQuality"/> and flags every candle that arrived without a volume as
+    /// <see cref="BarQuality.MidpointDerived"/>. A source that says its candles always carry one gets
+    /// today's behaviour exactly: a row with an empty volume column is UNREADABLE and counted, because
+    /// for such a source it is a broken row and not a midpoint.
+    /// </param>
+    /// <param name="interval">The bar length these rows are of, for counting gaps. See <see cref="BarLength"/>.</param>
     public static NormalisedDataset Normalise(
-        IReadOnlyList<RawArchiveFile> raws, DateTimeOffset downloadedAt, string destFile)
+        IReadOnlyList<RawArchiveFile> raws, DateTimeOffset downloadedAt, string destFile,
+        bool candlesCarryVolume = true, string interval = "1m")
     {
-        var bars = new SortedDictionary<DateTimeOffset, string>();
+        var bar = BarLength(interval);
+        var bars = new SortedDictionary<DateTimeOffset, Priced>();
         var months = new List<MonthReading>();
         int duplicates = 0, incomplete = 0, unreadable = 0;
 
@@ -127,7 +188,7 @@ public static class KlineNormaliser
                 // change as January 1970.
                 var unit = magnitude.Value;
 
-                if (!TryPrices(f, out var priced)) { unreadable++; continue; }
+                if (!TryPrices(f, candlesCarryVolume, out var priced)) { unreadable++; continue; }
 
                 var open = At(openT, unit);
                 if (At(closeT, unit) > downloadedAt) { incomplete++; continue; }
@@ -138,15 +199,22 @@ public static class KlineNormaliser
             months.Add(new MonthReading(raw.Month, magnitude ?? KlineTimeUnit.Milliseconds, rows));
         }
 
-        Write(destFile, bars);
+        Write(destFile, bars, candlesCarryVolume);
 
-        var (gaps, runs, truncated) = GapsIn(bars.Keys);
+        var (gaps, runs, truncated) = GapsIn(bars.Keys, bar);
 
         return new NormalisedDataset(
             destFile, Sha256(destFile), bars.Count,
             bars.Count == 0 ? null : bars.Keys.First(),
             bars.Count == 0 ? null : bars.Keys.Last(),
-            gaps, runs, truncated, duplicates, incomplete, unreadable, months);
+            gaps, runs, truncated, duplicates, incomplete, unreadable, months)
+        {
+            // COUNTED, NOT ONLY WRITTEN. The flag in the file tells a reader which bar it is looking
+            // at; the count is what the dataset ROW carries, and without it every surface that
+            // describes a dataset — `data-list`, the backtest reply, the owner's report — would state
+            // a bar count that reads as depth the source never measured.
+            MidpointDerived = bars.Values.Count(v => v.Quality == BarQuality.MidpointDerived)
+        };
     }
 
     /// <summary>
@@ -162,7 +230,8 @@ public static class KlineNormaliser
     /// The run list is bounded because a dataset with a dead venue in the middle of it can have tens
     /// of thousands of runs, and a provenance row is read by a person. The COUNT is never bounded.
     /// </summary>
-    static (int Gaps, IReadOnlyList<GapRun> Runs, bool Truncated) GapsIn(IEnumerable<DateTimeOffset> minutes)
+    static (int Gaps, IReadOnlyList<GapRun> Runs, bool Truncated) GapsIn(
+        IEnumerable<DateTimeOffset> minutes, TimeSpan bar)
     {
         var runs = new List<GapRun>();
         var gaps = 0;
@@ -171,11 +240,11 @@ public static class KlineNormaliser
 
         foreach (var at in minutes)
         {
-            if (previous is { } last && at - last > Bar)
+            if (previous is { } last && at - last > bar)
             {
-                var missing = (int)((at - last) / Bar) - 1;
+                var missing = (int)((at - last) / bar) - 1;
                 gaps += missing;
-                if (runs.Count < MaxGapRunsListed) runs.Add(new GapRun(last + Bar, at - Bar, missing));
+                if (runs.Count < MaxGapRunsListed) runs.Add(new GapRun(last + bar, at - bar, missing));
                 else truncated = true;
             }
             previous = at;
@@ -184,24 +253,71 @@ public static class KlineNormaliser
         return (gaps, runs, truncated);
     }
 
-    /// <summary>Parses the five price columns and returns them in the normalised file's own text.</summary>
-    static bool TryPrices(string[] f, out string priced)
-    {
-        priced = "";
-        Span<decimal> v = stackalloc decimal[5];
-        for (var i = 0; i < 5; i++)
-            if (!decimal.TryParse(f[i + 1], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
-                    CultureInfo.InvariantCulture, out v[i]))
-                return false;
+    /// <summary>One bar's five numbers as the file writes them, and what its volume is a measurement of.</summary>
+    readonly record struct Priced(string Text, string Quality);
 
-        priced = string.Create(CultureInfo.InvariantCulture, $"{v[0]},{v[1]},{v[2]},{v[3]},{v[4]}");
+    /// <summary>
+    /// Parses the five price columns, and decides what the VOLUME column is.
+    ///
+    /// <para><b>An empty volume is a midpoint-derived candle for a source that said it may publish
+    /// one, and a broken row for a source that said it may not.</b> The same bytes, read two ways,
+    /// because the difference is a fact about the vendor and not about the row: writing
+    /// <c>volume=0</c> for a candle nobody traded on is honest only when something says so beside it
+    /// (<c>docs/COUNCIL.md</c>:164-172), and inventing that flag for a source that publishes a traded
+    /// volume on every candle would turn a corrupt row into a quality claim.</para>
+    /// </summary>
+    static bool TryPrices(string[] f, bool candlesCarryVolume, out Priced priced)
+    {
+        priced = default;
+        Span<decimal> v = stackalloc decimal[5];
+        var quality = BarQuality.Traded;
+
+        for (var i = 0; i < 5; i++)
+        {
+            if (decimal.TryParse(f[i + 1], NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture, out v[i])) continue;
+
+            // THE VOLUME COLUMN IS THE ONLY ONE THAT MAY BE ABSENT. A missing price is a row nobody
+            // can read whatever the source says about its candles.
+            if (i != 4 || candlesCarryVolume || !string.IsNullOrWhiteSpace(f[5])) return false;
+
+            v[4] = 0m;
+            quality = BarQuality.MidpointDerived;
+        }
+
+        priced = new Priced(
+            string.Create(CultureInfo.InvariantCulture, $"{v[0]},{v[1]},{v[2]},{v[3]},{v[4]}"), quality);
         return true;
     }
 
-    /// <summary>The lines of the one CSV inside a month's zip.</summary>
-    static IEnumerable<string> RowsOf(string zipPath)
+    /// <summary>
+    /// THE ROWS OF ONE RAW FILE — the CSV inside a zip, or the file's own lines.
+    ///
+    /// <para>Decided by the EXTENSION, because it is a fact about the bytes on disk: Binance publishes
+    /// its months as zips and a source that publishes plain text is kept exactly as it arrived
+    /// (<c>CandleSourceEntry.RawFileExtension</c>). Converting either into the other's shape would make
+    /// the raw file something other than what the vendor sent, and the whole reproducibility claim is
+    /// that it is not.</para>
+    ///
+    /// <para>The COLUMN ORDER is the same in both, and that is this build's requirement of a source
+    /// rather than a discovery about one: open time, the four prices, volume, close time. For the
+    /// second source it is as unverified as its URL is — nothing here has seen the vendor's real
+    /// answer — and the loopback harness serves what this build would accept.</para>
+    /// </summary>
+    static IEnumerable<string> RowsOf(string path)
     {
-        using var zip = ZipFile.OpenRead(zipPath);
+        if (!path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var line in File.ReadLines(path))
+            {
+                var row = line.Trim();
+                if (row.Length == 0 || row.StartsWith("open_time", StringComparison.OrdinalIgnoreCase)) continue;
+                yield return row;
+            }
+            yield break;
+        }
+
+        using var zip = ZipFile.OpenRead(path);
         foreach (var entry in zip.Entries)
         {
             if (!entry.FullName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)) continue;
@@ -219,7 +335,7 @@ public static class KlineNormaliser
         }
     }
 
-    static void Write(string destFile, SortedDictionary<DateTimeOffset, string> bars)
+    static void Write(string destFile, SortedDictionary<DateTimeOffset, Priced> bars, bool candlesCarryVolume)
     {
         var dir = System.IO.Path.GetDirectoryName(destFile);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
@@ -228,9 +344,11 @@ public static class KlineNormaliser
         // dataset's identity and a line ending is not a difference of opinion.
         using var stream = new FileStream(destFile, FileMode.Create, FileAccess.Write, FileShare.None);
         using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" };
-        writer.WriteLine(Header);
+        writer.WriteLine(candlesCarryVolume ? Header : HeaderWithQuality);
         foreach (var (at, priced) in bars)
-            writer.WriteLine($"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced}");
+            writer.WriteLine(candlesCarryVolume
+                ? $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text}"
+                : $"{at.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ},{priced.Text},{priced.Quality}");
     }
 
     static string Sha256(string file)

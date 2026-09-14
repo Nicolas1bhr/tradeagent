@@ -448,10 +448,10 @@ public sealed class AppHost : IAsyncDisposable
     /// what it produced through <c>data-list</c> and <c>data-bars</c> and has no way to ask for a
     /// collection, a rebuild or a deletion.
     /// </summary>
-    public BinanceDataService MarketData => _marketData
+    public MarketDataService MarketData => _marketData
         ?? throw new InvalidOperationException("the market data service is not available before startup");
 
-    BinanceDataService? _marketData;
+    MarketDataService? _marketData;
 
     /// <summary>
     /// Whether TradeAgent asks GitHub about new versions on its own.
@@ -501,7 +501,7 @@ public sealed class AppHost : IAsyncDisposable
             Connector = chosen == "atas" ? new AtasConnector() : new FakeConnector();
 
             Gateway = new TradingGateway(_db, Connector, Health);
-            _marketData = new BinanceDataService(_db);
+            _marketData = new MarketDataService(_db);
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();

@@ -182,8 +182,17 @@ public static class Versions
     /// columns, no fee field and no minimum notional, because <c>docs/COUNCIL.md</c> is silent on a fee
     /// table and :155 keeps fees declared per backtest — and an older database gains them, the datasets
     /// backfilled and the catalogue empty until the app syncs it.
+    ///
+    /// <para><b>18 is <c>U-data-2</c>:</b> three columns on <c>dataset</c> — the coverage TARGET in
+    /// UTC days and whether the SOURCE said its candles always carry a traded volume, both of them the
+    /// source's own declarations, and the count of bars that arrived with none, which is the
+    /// normaliser's own measurement (<c>docs/COUNCIL.md</c>:164-172). No <c>coverage_actual_days</c>:
+    /// the actual depth is the span between <c>first_bar</c> and <c>last_bar</c>, which are already on
+    /// the row. Additive — an older database gains all three, backfilled with what every row that
+    /// exists today IS: twelve months stated in days, a source that carries volume, and no
+    /// midpoint-derived bars.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 17;
+    public const int DatabaseSchemaVersion = 18;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

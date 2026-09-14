@@ -101,6 +101,54 @@ public sealed record DatasetRecord(
     /// <c>research</c> unless the owner said otherwise, which is what every older row was.
     /// </summary>
     public string EvaluationClass { get; init; } = Data.EvaluationClass.Research;
+
+    /// <summary>
+    /// HOW DEEP THE SOURCE WAS ASKED TO GO, in UTC days, as it declared at collection time
+    /// (<see cref="Data.ICandleSource.CoverageTargetDays"/>). A TARGET and never a measurement:
+    /// <see cref="CoverageActualDays"/> is what arrived.
+    ///
+    /// <para>Zero means the row was written before this build recorded one — every such row was
+    /// collected by the Binance collector at twelve months, which is what the migration backfilled.</para>
+    /// </summary>
+    public int CoverageTargetDays { get; init; }
+
+    /// <summary>
+    /// HOW DEEP IT ACTUALLY WENT: the UTC days from the first bar to the last, inclusive, or 0 when
+    /// there are no bars. <c>docs/COUNCIL.md</c>:164-172 asks for "actual depth recorded".
+    ///
+    /// <para>Computed from the row's own <see cref="FirstBar"/> and <see cref="LastBar"/> rather than
+    /// stored beside them: two columns that can disagree about one fact are two facts, and the one
+    /// that would drift is the one nobody re-measures. It is the SPAN and not the coverage — the gaps
+    /// inside it are counted separately and nothing here fills them.</para>
+    /// </summary>
+    public int CoverageActualDays =>
+        FirstBar is { } first && LastBar is { } last
+            ? DateOnly.FromDateTime(last.UtcDateTime).DayNumber - DateOnly.FromDateTime(first.UtcDateTime).DayNumber + 1
+            : 0;
+
+    /// <summary>
+    /// WHETHER THE SOURCE SAID EVERY CANDLE IT PUBLISHES CARRIES A TRADED VOLUME.
+    ///
+    /// <para>A declaration about the SOURCE, recorded with the bytes, and not a reading of them: a
+    /// dataset from a source that MAY publish midpoint-derived candles is one whose volumes are not
+    /// all trade evidence even when <see cref="MidpointBars"/> happens to be zero. It is also what a
+    /// rebuild writes the file's header from, so the same raw files still produce the same SHA-256
+    /// after <c>sources.json</c> has been edited.</para>
+    ///
+    /// <para>True by default, which is what every row written before this build is: Binance's archive
+    /// publishes a traded volume on every kline.</para>
+    /// </summary>
+    public bool SourceCarriesVolume { get; init; } = true;
+
+    /// <summary>
+    /// HOW MANY OF <see cref="Bars"/> CARRY NO TRADED VOLUME. Midpoint-derived, flagged in the file
+    /// and counted here — never trade evidence (<c>docs/COUNCIL.md</c>:164-172).
+    ///
+    /// <para>The count is on the ROW because every surface that describes a dataset describes it from
+    /// the row: a bar count with no midpoint count beside it is a claim about depth that this
+    /// installation cannot support.</para>
+    /// </summary>
+    public int MidpointBars { get; init; }
 }
 
 /// <summary>
@@ -127,7 +175,7 @@ public sealed class DatasetStore(Database db)
         source, pair, interval, version, months_attempted, months_present, months_not_published,
         normalised_path, normalised_sha256, bars, first_bar, last_bar, gaps, gap_runs,
         gap_runs_truncated, duplicates, incomplete, unreadable, accepted_at, state, rejected_reason,
-        venue_id, instrument_symbol
+        venue_id, instrument_symbol, coverage_target_days, source_carries_volume, midpoint_bars
         """;
 
     /// <summary>
@@ -156,7 +204,7 @@ public sealed class DatasetStore(Database db)
         using var insert = db.Cmd($"""
             INSERT INTO dataset({Written})
             VALUES($src,$pair,$int,$ver,$att,$pres,$notpub,$npath,$nsha,$bars,$first,$last,$gaps,
-                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why,$venue,$sym);
+                   $runs,$trunc,$dup,$inc,$unread,$at,$state,$why,$venue,$sym,$target,$vol,$mid);
             SELECT last_insert_rowid();
             """,
             ("$src", set.Source), ("$pair", set.Pair), ("$int", set.Interval), ("$ver", set.Version),
@@ -172,7 +220,13 @@ public sealed class DatasetStore(Database db)
             // THE ROW'S OWN, and the collector is who says what they are. There is no default here and
             // no derivation from the pair: a dataset whose collector recorded no venue reads as one
             // that recorded no venue, and a run over it is refused an increment rather than given one.
-            ("$venue", set.VenueId), ("$sym", set.InstrumentSymbol));
+            ("$venue", set.VenueId), ("$sym", set.InstrumentSymbol),
+            // THE SOURCE'S OWN DECLARATIONS AND THE NORMALISER'S OWN COUNT. Neither is derived from
+            // the pair and neither is a default: a dataset that recorded no coverage target reads as
+            // one that recorded none, and a midpoint count is a measurement of the file that was
+            // written rather than an opinion about the vendor.
+            ("$target", set.CoverageTargetDays), ("$vol", set.SourceCarriesVolume ? 1 : 0),
+            ("$mid", set.MidpointBars));
 
         var id = Convert.ToInt64(insert.ExecuteScalar(), CultureInfo.InvariantCulture);
 
@@ -360,8 +414,11 @@ public sealed class DatasetStore(Database db)
                 {
                     VenueId = r.IsDBNull(22) ? null : r.GetString(22),
                     InstrumentSymbol = r.IsDBNull(23) ? null : r.GetString(23),
-                    HoldoutFrom = Sql.TimeN(r.IsDBNull(24) ? null : r.GetString(24)),
-                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(25) ? null : r.GetString(25))
+                    CoverageTargetDays = r.IsDBNull(24) ? 0 : r.GetInt32(24),
+                    SourceCarriesVolume = r.IsDBNull(25) || r.GetInt32(25) != 0,
+                    MidpointBars = r.IsDBNull(26) ? 0 : r.GetInt32(26),
+                    HoldoutFrom = Sql.TimeN(r.IsDBNull(27) ? null : r.GetString(27)),
+                    EvaluationClass = Data.EvaluationClass.Or(r.IsDBNull(28) ? null : r.GetString(28))
                 });
 
         return [.. rows.Select(row => row with { Files = FilesOf(row.Id) })];

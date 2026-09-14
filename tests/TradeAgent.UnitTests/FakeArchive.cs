@@ -160,6 +160,27 @@ public sealed class FakeArchive : IDisposable
         PublishBytes(pair, month, bytes, new string('a', 64));
     }
 
+    /// <summary>
+    /// PUBLISHES BYTES AT AN ARBITRARY PATH, which is what a source that is not a monthly archive
+    /// needs: the second source's URL shape is its own and this server answers whatever path it asks
+    /// for, with a sidecar only when the caller gives it one.
+    ///
+    /// <para>The path is what <c>HttpListener</c> calls <c>AbsolutePath</c> — the query string is not
+    /// part of it, so a source whose window is in its query publishes once, here.</para>
+    /// </summary>
+    /// <param name="checksumFor">
+    /// The file name the sidecar should NAME, or null for a source that publishes no checksum. It is
+    /// the name the CLIENT will check against — <c>CandlePeriod.FileName</c> — and not the URL's last
+    /// segment, because a sidecar naming a different file is exactly the case
+    /// <c>BinanceArchive.Sha256FromSidecar</c> refuses.
+    /// </param>
+    public void PublishAt(string path, string body, string? checksumFor = null)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        _files[path] = bytes;
+        if (checksumFor is not null) _sidecars[path + ".CHECKSUM"] = $"{Sha256(bytes)}  {checksumFor}";
+    }
+
     /// <summary>Publishes the zip and no sidecar at all.</summary>
     public void PublishWithoutSidecar(string pair, DateOnly month, string csv)
     {

@@ -10,7 +10,19 @@ public sealed record KlineBar(
     decimal High,
     decimal Low,
     decimal Close,
-    decimal Volume);
+    decimal Volume)
+{
+    /// <summary>
+    /// WHAT THIS BAR'S <see cref="Volume"/> IS A MEASUREMENT OF — <see cref="BarQuality.Traded"/>, or
+    /// <see cref="BarQuality.MidpointDerived"/> for a candle that arrived with no volume at all and is
+    /// never trade evidence (<c>docs/COUNCIL.md</c>:164-172).
+    ///
+    /// <para>Init-only with a default, like <c>DatasetRecord.HoldoutFrom</c>: adding it
+    /// re-parameterised no construction site, and <see cref="BarQuality.Traded"/> is what a bar out of
+    /// a six-column file IS rather than a guess standing in for a missing column.</para>
+    /// </summary>
+    public string Quality { get; init; } = BarQuality.Traded;
+}
 
 /// <summary>
 /// What a window of a dataset holds, whether it is more than a caller may have at once, and whether
@@ -106,7 +118,16 @@ public static class DatasetReader
         if (!decimal.TryParse(f[4], CultureInfo.InvariantCulture, out var c)) return false;
         if (!decimal.TryParse(f[5], CultureInfo.InvariantCulture, out var v)) return false;
 
-        bar = new KlineBar(at, o, h, l, c, v);
+        // THE SEVENTH COLUMN IS THE QUALITY, AND A FILE WITH SIX COLUMNS IS NOT A FILE MISSING ONE.
+        // `KlineNormaliser.Header` is what every dataset collected before this unit carries, and every
+        // bar in one came from a source that publishes a traded volume on every candle — so those rows
+        // read as `traded`, which is what they are. An unknown word reads as `traded` too: it is the
+        // reading that claims nothing, and a dataset written by a newer build is one this build must
+        // not silently describe as midpoint-derived.
+        bar = new KlineBar(at, o, h, l, c, v)
+        {
+            Quality = f.Length >= 7 ? BarQuality.Or(f[6].Trim()) : BarQuality.Traded
+        };
         return true;
     }
 

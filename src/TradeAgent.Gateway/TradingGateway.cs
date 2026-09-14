@@ -73,7 +73,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <summary>
     /// The dataset ledger — what market data this installation collected and where every byte of it
     /// came from. READ ONLY from here: it is written by the app's own collector
-    /// (<c>BinanceDataService</c>), which the agent-facing pipe cannot reach, and this gateway
+    /// (<c>MarketDataService</c>), which the agent-facing pipe cannot reach, and this gateway
     /// serves it over <c>data-list</c> and <c>data-bars</c> without ever writing a row.
     /// </summary>
     public DatasetStore Datasets => _datasets;

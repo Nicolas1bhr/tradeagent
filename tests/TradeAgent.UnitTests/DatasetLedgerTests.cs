@@ -35,13 +35,13 @@ public class DatasetLedgerTests
         return b.ToString();
     }
 
-    static async Task<(BinanceDataService Svc, DataCollection First, Database Db, FakeArchive Archive)> Collected()
+    static async Task<(MarketDataService Svc, DataCollection First, Database Db, FakeArchive Archive)> Collected()
     {
         var archive = new FakeArchive();
         foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Pair, m, Rows(m));
 
         var db = TestEnv.NewDb();
-        var svc = new BinanceDataService(db, new BinanceArchiveClient(archive.BaseUrl));
+        var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl));
         return (svc, await svc.CollectAsync(Pair, Now), db, archive);
     }
 
