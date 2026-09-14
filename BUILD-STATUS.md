@@ -5574,3 +5574,44 @@ added, 0 removed; 141 test sources text. Manager's gate at `4eb8dc9 (landed as `
 
 **NOT done:** nothing at `PlaceAsync` or in the risk pass (`U-freshness`, `U-allocator-1`); no fee, no min notional, no prop rulebook, no
 live instrument read from ATAS, no real venue, no `venues.json` in the repo, no card in the app's window; no box, no ATAS, no money.
+
+## 2026-09-14 — U-data-2 landed: a second candle source behind an interface, a bar that says what it is, and validated data arrival as a wake
+
+The second of the venue and data units (COUNCIL `:145` quality flags on bars, `:164-172` Revolut X public candles, `:89-91` data arrival among the wakes), by
+one fresh builder on `docs/briefs/U-data-2.md`, rebased once (docs only). Merge `c8306d4`, 5 commits, 29 files, +2223/−352 (`Versioning.cs` **schema 18**; new
+`Core/Data/CandleSource.cs`, `CandleSourceCatalog.cs`, `Provisioning/CandleSourceClient.cs`, `MarketDataService.cs` replacing `BinanceDataService.cs`; the
+normaliser, reader, feed, stores, pipe server, schema, report and loop; `CONTRACTS.md` "Candle sources"; four test classes). Not the money path.
+
+- **The collector is an interface** (`ICandleSource`: id, venue, interval, coverage target in UTC days, URL shape, publishes-a-checksum, carries-volume), Binance
+  one implementation, the declarations recorded per dataset. RED (interval and target read off `BinanceArchive.Interval` and twelve months — the brief's mutant,
+  which is the red here): `Expected: "5m" / Actual: "1m"`. Binance's normalised file byte-identical, measured not asserted: SHA-256 `6a5958f4…84bb` taken on
+  `main`@`39d3e4f` before any product change and still the constant the test meets, header and bar count with it.
+- **A per-bar quality flag** (`traded` / `midpoint_derived`), the header versioned (six columns for a source whose candles always carry volume, seven with
+  `quality`), an older file reading every bar `traded`, both counts on the row. RED (the flag not produced): the FILE's midpoint rows `Expected: 4 / Actual: 0`;
+  mutant (written, not counted): the ROW's count, the same figure, the assertions ordered so the two are distinguishable.
+- **Never trade evidence, in words, from one definition** (`BarQuality.Note`): `data-bars` (a `quality` per bar), the backtest reply, section 8, `BarFeed`,
+  `data-list`, the pipe schema, the Situation's Data line. RED (suppressed everywhere): `Failed: 5, Passed: 0`, the backtest reply `Not found: "MIDPOINT-DERIVED"`;
+  mutant (removed from the backtest reply only): `Failed: 1, Passed: 4`, the same `Not found`.
+- **The second source end to end against the loopback harness:** one request per period, no `.CHECKSUM` ever asked for, provenance identical (url, computed hash,
+  bytes, download time), `published_sha256` EMPTY where the vendor publishes none, the dataset naming `revolut-x` — a venue now in the catalogue with NO
+  instruments and `verified=false`, so a run over it is refused an increment rather than given a guess. RED (the sidecar demanded unconditionally, what the code
+  did before): `Assert.NotNull() Failure: Value is null` — no dataset, no raw file; mutant (the computed hash recorded as the published one): `Expected: "" /
+  Actual: "7b657e…"`. The host scan extended to the vendor's host; a separate test holds the shipped row to having NO endpoint at all.
+- **`data` is a wake** for Research, raised by the app's collector, keyed by the dataset's own SHA-256; a rebuild of the same bytes raises nothing; the Situation
+  names the dataset. RED: `Expected: True / Actual: False`; mutant (keyed by the attempt): `data:6a5958f4…` vs `data:2026-09-14T17:23:22…` — a paid turn every press.
+- **THE ENDPOINT FACT:** this repository records NO Revolut X public-candles endpoint (`RESEARCH-REQUIRED.md:170`, the SIGNED base only, no sandbox). The shipped
+  `revolut-x-public-candles` row carries an EMPTY base URL and an unverified shape (`CandleSourceCatalog.BuiltIn()`, overridable by `sources.json` in TradeAgent's
+  home, none in the repo); asking it for a period is a refusal in words; no run of this repository has ever sent Revolut X a request; the first real fetch is
+  the owner's, by recording the endpoint. In `CONTRACTS.md`. The response format required of the source is as unverified as its URL.
+- **Judged at landing, the builder's choices kept:** items 1 and 2 one commit (they share the normaliser and the rung); `BinanceDataService` → `MarketDataService`;
+  `month` kept as one PERIOD; the coverage target in UTC days (365), the actual depth computed from `first_bar`/`last_bar`; gaps counted at the SOURCE's interval
+  (at one minute a clean 5-minute dataset read as 80% holes); the schema-rollback fixture now drops 18's columns too.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `4f78646`, Release: 0 warnings, 0 errors; Unit 1038 + Fault 277 +
+Integration 668 = 1983 passed, 0 failed, 1 skipped; touched classes 3× → 107/107 Unit and 27/27 Integration each run; names → 14 added, 0 removed. Manager's gate
+at `c8306d4` (the report commit on the gated sha, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 1038 + 277 + 668 = 1983 passed, 0 failed, 1 skipped (Integration 10 m 46 s, the other leg's suite overlapping, no `Timing` red); names vs `main` → 0 removed, 14 added (`[Fact]`/`[Theory]`
+1620 → 1634; method sets 1650 → 1665); scan clean (`CancellationToken`, `IpcToken.Ensure()` in tests, a hunk header's `string token`, judged); no trailers;
+`rev-list --count` → 0; CI run at `c8306d4`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no network, no box, no ATAS, no money, no order, no credential; nothing on the agent pipe collects, rebuilds or wakes; the Settings press
+not seen on a screen; the second source's real URL and response shape NOT VERIFIED from here; no Revolut X connector, no `U-bars`, no Databento, no live bars.
