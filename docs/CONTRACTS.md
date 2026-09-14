@@ -1530,6 +1530,51 @@ so removing a venue cannot dangle a dataset. Rows written before schema 17 are b
 owner's daily report carry both, null included. A run's increment is looked up by THAT pair and never by
 the instrument named in the program, which is a line an agent types.
 
+## Candle sources — `src/TradeAgent.Core/Data/CandleSource.cs`, `CandleSourceCatalog.cs`, `Provisioning/CandleSourceClient.cs`
+
+**The collector is an interface, and every declaration on it is recorded on the dataset row.**
+`ICandleSource` states the id, the venue, the interval, the coverage target in UTC days, the URL shape,
+whether the vendor publishes a checksum and whether its candles always carry a traded volume;
+`MarketDataService` records the first four on the row at schema 18 and reads no constant. Before this,
+`BinanceArchive.Interval` was the only interval a dataset could be of and `MonthsWanted` the only depth
+a collection could target, so a source declaring five minutes over ninety days would have produced a row
+saying `1m` over twelve months. `coverage_target_days` is what was ASKED for; the actual depth is the
+span between `first_bar` and `last_bar` and is computed, never stored twice. Binance is one
+implementation and its normalised bytes did not move: a test holds the file to the SHA-256 measured on
+the build before this unit.
+
+**The sources are DATA.** `CandleSourceCatalog.BuiltIn()` ships them and a `sources.json` in TradeAgent's
+own folder overrides them, entry by id — the `runtimes.json` / `venues.json` pattern of
+`docs/DECISIONS.md`:73-78, with the same rule for an unreadable file: NO sources at all, never the
+shipped ones standing in for a file the owner wrote to correct an endpoint.
+
+**THE REVOLUT X ENDPOINT IS NOT RECORDED IN THIS REPOSITORY, AND THE FIRST REAL FETCH IS THE OWNER'S TO
+AUTHORISE.** `docs/RESEARCH-REQUIRED.md`:170 holds only the SIGNED trading base for Revolut X; there is
+no public-candles path in it and no sandbox. So the shipped row for `revolut-x-public-candles` carries an
+**empty base URL** and an **unverified** URL shape — this build's guess at the shape such an endpoint
+would take — its response format (kline column order, an empty volume column for a candle with none) is
+equally unverified, and asking it for a period is a refusal in words rather than a request. Everything
+this build knows about that source was proved against a loopback `HttpListener` and nothing else: no run
+of this repository has ever sent Revolut X a request. Putting the real endpoint in `sources.json` is what
+authorises the first one, and it is the account owner's press.
+
+**A source that publishes no checksum is recorded as one and is never recorded as verified.** Where the
+vendor publishes a sidecar it is fetched FIRST and pinned, and a period whose sidecar cannot be read is
+simply not collected. Where the vendor publishes none the bytes are taken under `Integrity.Unverified` —
+which writes the decision into the owner's activity log before the file is used — and the provenance row
+carries an **empty** `published_sha256`. The app's own computed hash is recorded beside it and never in
+it: that hash proves the file has not changed SINCE, which is a different claim from proving it is what
+the vendor meant to publish, and merging the two would make an unchecked source indistinguishable from a
+checked one.
+
+**A candle with no volume is midpoint-derived, and four surfaces say so.** `docs/COUNCIL.md`:164-172. The
+normalised file's header is versioned — six columns for a source whose candles always carry volume,
+seven with a per-bar `quality` for one that may not — so a file written before schema 18 still reads and
+every bar in it reads as `traded`, which is what those bars are. The count is on the row
+(`midpoint_bars`), the flag is on every bar `data-bars` serves, and one sentence
+(`BarQuality.Note`) reaches `data-list`, `data-bars`, the backtest reply and section 8 of the owner's
+daily report. A run over such bars must not report like a run over traded ones.
+
 ## The holdout — `src/TradeAgent.Core/Data/Holdout.cs`, `Db/DatasetStore.cs`
 
 **A holdout is a TIME CUTOFF on a dataset, not a second dataset, and that is a CHOICE this build made

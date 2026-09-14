@@ -203,8 +203,10 @@ public class VenueCatalogTests
         using (var db = new Database(file))
             id = new DatasetStore(db).Record(Collected());
 
-        // Back to 16: the two columns gone and the stamp lowered, which is what a database collected on
-        // before this unit landed actually looks like.
+        // Back to 16: the columns every rung above it added are gone and the stamp is lowered, which is
+        // what a database collected on before this unit landed actually looks like. EVERY rung above
+        // 16 has to be undone, not only 17's — a reopen runs all of them, and a half-rolled-back
+        // database is one no installation has ever had.
         using (var raw = new SqliteConnection($"Data Source={file}"))
         {
             raw.Open();
@@ -212,6 +214,9 @@ public class VenueCatalogTests
             c.CommandText = """
                 ALTER TABLE dataset DROP COLUMN venue_id;
                 ALTER TABLE dataset DROP COLUMN instrument_symbol;
+                ALTER TABLE dataset DROP COLUMN coverage_target_days;
+                ALTER TABLE dataset DROP COLUMN source_carries_volume;
+                ALTER TABLE dataset DROP COLUMN midpoint_bars;
                 ALTER TABLE strategy_run DROP COLUMN increment_source;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;
@@ -226,6 +231,13 @@ public class VenueCatalogTests
         Assert.NotNull(set);
         Assert.Equal(VenueCatalog.BinanceSpot, set.VenueId);
         Assert.Equal("BTCUSDT", set.InstrumentSymbol);
+
+        // AND 18's BACKFILL, on the same row and for the same reason: every dataset that predates it
+        // was collected by the Binance collector at twelve months, from an archive that publishes a
+        // traded volume on every kline.
+        Assert.Equal(BinanceCandleSource.TwelveMonthsInDays, set.CoverageTargetDays);
+        Assert.True(set.SourceCarriesVolume);
+        Assert.Equal(0, set.MidpointBars);
     }
 
     /// <summary>

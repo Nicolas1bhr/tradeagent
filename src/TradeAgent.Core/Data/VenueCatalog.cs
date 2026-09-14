@@ -111,6 +111,19 @@ public static class VenueCatalog
     public const string Simulator = "sim-futures";
 
     /// <summary>
+    /// REVOLUT X, THE CRYPTO VENUE <c>docs/COUNCIL.md</c>:164-172 NAMES AS THE SECOND CANDLE SOURCE —
+    /// and a venue this build has confirmed NOTHING about.
+    ///
+    /// <para>It is here because a dataset records the venue its bars are of
+    /// (<c>DatasetRecord.VenueId</c>) and a venue id naming nothing in this catalogue would be a
+    /// provenance row pointing at a fact nobody holds. It ships with NO INSTRUMENTS, which is not an
+    /// omission: nothing in this build has read Revolut X's instrument definition, so a run over its
+    /// bars is REFUSED an increment rather than given a guessed one, and the owner who confirms a
+    /// step size writes one line into <c>venues.json</c>.</para>
+    /// </summary>
+    public const string RevolutX = "revolut-x";
+
+    /// <summary>
     /// WHEN THE ROWS BELOW WERE WRITTEN INTO THIS BUILD, as a constant and not a clock reading.
     ///
     /// A <c>DateTimeOffset.UtcNow</c> here would stamp every installation with the moment it happened
@@ -121,6 +134,11 @@ public static class VenueCatalog
 
     const string NotConfirmed =
         "shipped with TradeAgent; NOT confirmed against the venue's own instrument definition";
+
+    const string NothingConfirmed =
+        "named by docs/COUNCIL.md as a second data source; NOTHING about this venue has been confirmed "
+        + "by this build — no endpoint, no instrument and no increment — so it carries no instruments "
+        + "and a run over its bars is refused an increment rather than given one";
 
     const string TheSimulatorItself =
         "TradeAgent's own practice simulator, which is the venue these instruments trade on";
@@ -168,6 +186,18 @@ public static class VenueCatalog
                     Verified = false
                 }
             ]
+        },
+        new VenueEntry
+        {
+            Id = RevolutX,
+            DisplayName = "Revolut X",
+            // Crypto spot. Nothing in this build has read a calendar for it either; continuous is what
+            // a crypto spot venue is, and `CalendarKind.Sessioned` would be a claim that it closes.
+            CalendarKind = Data.CalendarKind.Continuous,
+            Source = NothingConfirmed,
+            RecordedAt = ShippedAt,
+            Verified = false,
+            Instruments = []
         },
         new VenueEntry
         {

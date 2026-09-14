@@ -224,4 +224,78 @@ public class CandleSourceTests
         Assert.True(DatasetReader.TryBar("2026-08-01T00:10:00Z,100,101,99,100.5,1,whatever", out var newer));
         Assert.Equal(BarQuality.Traded, newer.Quality);
     }
+
+    /// <summary>
+    /// ITEM 4, RED FIRST: the second source collected END TO END against the loopback harness, with
+    /// the provenance a Binance month gets — the URL, the computed hash, the byte count and the
+    /// moment it was read — and the venue the bars are of.
+    ///
+    /// <para>Red first: there was no second source, so a collection through one recorded no raw file
+    /// at all and the dataset had no provenance to check.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_second_sources_dataset_records_its_raw_file_its_provenance_and_its_venue()
+    {
+        using var archive = new FakeArchive();
+        var source = Second(archive);
+        var url = source.Periods(Symbol, Now).Single().Url;
+        var (got, db) = await CollectSecond(archive);
+        using var _d = db;
+
+        Assert.NotNull(got.Dataset);
+        var file = Assert.Single(got.Dataset!.Files);
+
+        // PROVENANCE IDENTICAL TO A BINANCE MONTH'S, minus the one thing this vendor does not publish.
+        Assert.Equal(url, file.Url);
+        Assert.Equal(64, file.ComputedSha256.Length);
+        Assert.Equal(new FileInfo(file.Path).Length, file.Bytes);
+        Assert.Equal(DatasetStore.Sha256(file.Path), file.ComputedSha256);
+        Assert.True(file.DownloadedAt > Now.AddDays(-1) && file.DownloadedAt < DateTimeOffset.UtcNow.AddMinutes(1));
+
+        // THE PUBLISHED HASH IS EMPTY BECAUSE THIS VENDOR PUBLISHES NONE — never this app's own
+        // computed one, which would make an unchecked source indistinguishable from a checked one.
+        Assert.Equal("", file.PublishedSha256);
+
+        // AND THE DATASET NAMES ITS VENUE, which the catalogue knows of and has confirmed nothing about.
+        Assert.Equal(VenueCatalog.RevolutX, got.Dataset.VenueId);
+        var venue = Assert.Single(VenueCatalog.Read(NoOverrideFile).Venues, v => v.Id == VenueCatalog.RevolutX);
+        Assert.False(venue.Verified);
+        Assert.Empty(venue.Instruments);
+
+        // AND IT WAS FETCHED FROM THE LOOPBACK LISTENER AND FROM NOWHERE ELSE, by its own marks: one
+        // request, for the one period this source declares, and no sidecar was ever asked for.
+        Assert.StartsWith("http://127.0.0.1:", url, StringComparison.Ordinal);
+        var got_ = archive.Marks.Where(m => m.Contains("got ", StringComparison.Ordinal)).ToList();
+        Assert.Single(got_);
+        Assert.Contains("GET /candles", got_[0]);
+        Assert.DoesNotContain(archive.Marks, m => m.Contains(".CHECKSUM", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A SOURCE WITH NO PUBLISHED CHECKSUM IS NEVER RECORDED AS VERIFIED — and the decision is the
+    /// owner's to read, not a silence.
+    /// </summary>
+    [Fact]
+    public async Task A_source_that_publishes_no_checksum_records_no_published_hash_and_says_why()
+    {
+        var decisions = new List<string>();
+        var previous = Downloader.RecordDecision;
+        Downloader.RecordDecision = decisions.Add;
+
+        try
+        {
+            using var archive = new FakeArchive();
+            var (got, db) = await CollectSecond(archive);
+            using var _d = db;
+
+            Assert.Equal("", Assert.Single(got.Dataset!.Files).PublishedSha256);
+            Assert.False(CandleSourceCatalog.Require(
+                CandleSourceCatalog.RevolutXCandles, NoOverrideFile, archive.BaseUrl).PublishesChecksum);
+
+            // THE UNVERIFIED DOWNLOAD WROTE ITS REASON WHERE THE OWNER READS IT, before the bytes
+            // were used. `Integrity.Unverified` has no way to be asked for without one.
+            Assert.Contains(decisions, d => d.Contains("publishes no checksum", StringComparison.Ordinal));
+        }
+        finally { Downloader.RecordDecision = previous; }
+    }
 }

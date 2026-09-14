@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using TradeAgent.Core;
 using TradeAgent.AgentRuntime;
 using TradeAgent.Core.Data;
 using TradeAgent.Provisioning;
@@ -43,6 +44,16 @@ public class SuiteReachesNoVendorTests
     /// place in the test tree these two names may appear, so a scan for them cannot find itself.
     /// </summary>
     const string ProviderHost = "api" + ".openai" + ".com";
+
+    /// <summary>
+    /// THE SECOND CANDLE SOURCE'S VENDOR (<c>U-data-2</c> item 4), spelled the same way.
+    ///
+    /// <para>This repository records NO public-candles endpoint for it — <c>RESEARCH-REQUIRED.md</c>
+    /// has only the SIGNED trading base — so the hazard is not a test that forgets to repoint a
+    /// client: it is a test that INVENTS an endpoint out of the one host this repository does know and
+    /// sends a request to a vendor nobody has agreed to reach. The scan refuses the name outright.</para>
+    /// </summary>
+    const string SecondSourceHost = "revolut" + ".com";
 
     /// <summary>Every C# source file in both test projects.</summary>
     public static IReadOnlyList<string> TestSources()
@@ -93,6 +104,10 @@ public class SuiteReachesNoVendorTests
 
                 if (code.Contains(ProviderHost, StringComparison.OrdinalIgnoreCase))
                     offenders.Add($"{name}:{n} names the AI provider's own host");
+
+                if (code.Contains(SecondSourceHost, StringComparison.OrdinalIgnoreCase))
+                    offenders.Add($"{name}:{n} names the second candle source's vendor host, which this "
+                                  + "build has never reached and has no endpoint for");
 
                 // `new BinanceArchiveClient()` with nothing in the brackets takes the default, which
                 // is the vendor. Every test has to say where it is pointing.
@@ -159,6 +174,28 @@ public class SuiteReachesNoVendorTests
         // Unverified against the real provider by design: the brief forbids a real call, and nothing in
         // this repository has ever made one.
         Assert.False(manifest.Verified);
+    }
+
+    /// <summary>
+    /// AND THE SECOND SOURCE SHIPS WITH NO ENDPOINT AT ALL, which is the strongest form of this rule:
+    /// a client that forgot to point somewhere cannot reach a vendor, because the build holds no
+    /// address for one. The row is served — as unverified — and it refuses to fetch, in words.
+    /// </summary>
+    [Fact]
+    public void The_second_candle_source_ships_with_no_endpoint_and_says_why()
+    {
+        var entry = Assert.Single(CandleSourceCatalog.BuiltIn(),
+            s => s.Id == CandleSourceCatalog.RevolutXCandles);
+
+        Assert.Equal("", entry.BaseUrl);
+        Assert.False(entry.Verified);
+        Assert.Contains("records NO public-candles endpoint", entry.Source);
+        Assert.DoesNotContain(SecondSourceHost, entry.UrlShape, StringComparison.OrdinalIgnoreCase);
+
+        // AND ASKING IT FOR A PERIOD IS A REFUSAL IN WORDS, not a request to a relative path.
+        var refused = Assert.Throws<TradeAgentException>(
+            () => CandleSourceCatalog.Of(entry).Periods("BTC-USD", DateTimeOffset.UtcNow));
+        Assert.Contains("has no endpoint to ask", refused.Message);
     }
 
     /// <summary>

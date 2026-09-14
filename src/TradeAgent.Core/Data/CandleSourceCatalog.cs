@@ -137,7 +137,7 @@ public static class CandleSourceCatalog
         {
             Id = RevolutXCandles,
             DisplayName = "Revolut X",
-            VenueId = "revolut-x",
+            VenueId = VenueCatalog.RevolutX,
             // docs/COUNCIL.md:164-172: five minutes, a ninety-day target, actual depth recorded, and a
             // candle WITHOUT volume is midpoint-derived and flagged — never trade evidence.
             Interval = "5m",
