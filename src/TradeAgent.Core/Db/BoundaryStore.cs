@@ -28,6 +28,24 @@ public static class BoundaryKind
     /// of one protocol. There is no evolution, no team and no allocator yet — see the unit's report.</para>
     /// </summary>
     public const string Retirement = "retirement";
+
+    /// <summary>
+    /// A LOSS-BUDGET EVENT — <c>docs/COUNCIL.md</c>:59 names "the post-mortem after a loss-budget
+    /// event" in the same breath as promotion, and this is the first one the app opens for itself.
+    ///
+    /// <para>The entity is the ACCOUNT and the revision is the UTC day, so the id is
+    /// <c>loss_budget:{account}:{yyyyMMdd}</c>: one boundary per account per day, however many
+    /// budgets were breached and however many orders were refused afterwards. That is :64 —
+    /// "deduplicated by entity and revision, so repeated proposals cannot manufacture senior spend"
+    /// — applied to the one event an agent in trouble can generate over and over.</para>
+    ///
+    /// <para>Its default disposition is <c>hold</c>, written at open like every other: a day that
+    /// closed itself on the owner's limit does not reopen because two directors ran out of clock.
+    /// Nothing about the closure waits for the council — the record and the refusal are already in
+    /// place before this is written, and an exhausted AI budget or an unreachable provider delays
+    /// neither.</para>
+    /// </summary>
+    public const string LossBudget = "loss_budget";
 }
 
 /// <summary>What a director may hand the app about a boundary. Both are publications, and the app decides which.</summary>

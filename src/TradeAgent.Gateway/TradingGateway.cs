@@ -28,6 +28,7 @@ public sealed class TradingGateway : IAsyncDisposable
     readonly VenueStore _venues;
     readonly CampaignStore _campaigns;
     readonly Core.Strategy.Referee _referee;
+    readonly CouncilBoundaries _boundaries;
     readonly HealthRegistry _health;
     readonly GatewayOptions _opt;
     readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -403,6 +404,11 @@ public sealed class TradingGateway : IAsyncDisposable
         try { _venues.Sync(Core.Data.VenueCatalog.Read()); }
         catch (Exception ex) { _log.TryEngineering("Gateway", "venue_catalogue_not_recorded", "error", ex: ex); }
         _campaigns = new CampaignStore(db);
+        // The council's boundary ledger, because a confirmed loss-budget breach is one of the four
+        // consequential boundaries docs/COUNCIL.md:59 names. This class OPENS one and can do nothing
+        // else with it: there is no method here that assesses, challenges or disposes of a boundary,
+        // and CouncilBoundaries exposes none that takes a disposition from a caller.
+        _boundaries = new CouncilBoundaries(db);
         // On this gateway's clock and in UTC, like the backtest runner beside it: a verdict's instant is
         // a record of when the app judged, and nothing inside the judging reads a clock.
         _referee = new Core.Strategy.Referee(db, () => _opt.Clock.GetUtcNow());
@@ -1774,16 +1780,62 @@ public sealed class TradingGateway : IAsyncDisposable
         return false;
     }
 
-    /// <summary>Writes the record, says so once, and answers the key it wrote.</summary>
+    /// <summary>Writes the record, opens the boundary, says so once, and answers the key it wrote.</summary>
     string Close(string key, LossBreachRecord record)
     {
+        // THE RECORD FIRST AND ON ITS OWN. Everything after this line is a consequence of the day
+        // being closed; the day being closed is this line.
         _db.SetKv(key, Json.Write(record));
         _sightings.Remove(key);
         if (record.Symbol is null) SayOnceToday(ref _dailyLossSaidFor, record.Why);
         else SayOnceToday(ref _tradeLossSaidFor, record.Why);
         _log.TryEngineering("Gateway", "loss_budget_closed", "warn",
             metadataJson: Json.Write(new { key, record.Loss, record.Symbol, record.ConfirmedAt }));
+
+        OpenLossBoundary(record);
         return key;
+    }
+
+    /// <summary>
+    /// A CLOSED DAY IS A CONSEQUENTIAL BOUNDARY, AND THE APP OPENS IT ITSELF.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:59 lists "the post-mortem after a loss-budget event" among the
+    /// four boundaries the strongest model is spent at; :61-62 say what one IS — both directors'
+    /// assessments sealed before either sees the other's, one bounded challenge, a deadline with a
+    /// predetermined default, and code applying the disposition. None of that is in this class: it
+    /// writes the row and the two wakes through <see cref="CouncilBoundaries.Open"/>, which is the
+    /// only writer of <c>boundary_event</c> there is.</para>
+    ///
+    /// <para><b>One per account per day.</b> The id is <c>loss_budget:{account}:{yyyyMMdd}</c>, so a
+    /// day whose per-position budget goes first and whose daily budget follows opens ONE, and the
+    /// orders refused afterwards open none: an agent in trouble sends many orders, and a boundary
+    /// that counted them would let it manufacture senior spend — :64, which is the reason the id is
+    /// a function of the FACT and never of the event that noticed it.</para>
+    ///
+    /// <para><b>It cannot fail the closure.</b> The record is already written and the refusal is
+    /// already in force when this runs; a boundary that cannot be written is a wake the directors do
+    /// not get, which is a worse day and not an open one. So it is guarded, and it is said out loud
+    /// in the engineering log rather than swallowed.</para>
+    /// </summary>
+    void OpenLossBoundary(LossBreachRecord record)
+    {
+        try
+        {
+            var day = long.Parse(record.ConfirmedAt.UtcDateTime.ToString("yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture);
+
+            var opened = _boundaries.Open(BoundaryKind.LossBudget, record.Account, day,
+                BoundaryDisposition.Hold, record.Why, record.ConfirmedAt);
+
+            if (opened.Fresh)
+                _log.TryEngineering("Gateway", "loss_boundary_opened", "warn",
+                    metadataJson: Json.Write(new { boundary = opened.Row.Id, deadline = opened.Row.DeadlineAt }));
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "loss_boundary_not_opened", "error", ex: ex,
+                metadataJson: Json.Write(new { record.Account, record.Day }));
+        }
     }
 
     LossBreachRecord Compose(string account, string? symbol, decimal loss, decimal budget, LossToday reading,
