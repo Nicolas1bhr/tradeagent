@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 namespace TradeAgent.Core.Db;
 
 /// <summary>
-/// The seven reasons the AI is allowed to be woken. Strings rather than an enum because the row is
+/// The reasons the AI is allowed to be woken. Strings rather than an enum because the row is
 /// read by a human as often as by this code, and an unknown kind arriving from a newer build must
 /// read as itself rather than as whichever enum member happens to be zero.
 /// </summary>
@@ -15,6 +15,23 @@ public static class MissionEventKind
 
     /// <summary>A scan pass recorded material that was not there before.</summary>
     public const string Inbox = "inbox";
+
+    /// <summary>
+    /// VALIDATED DATA ARRIVED — an ACCEPTED dataset the AI has never been told about.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:89-91 lists "validated data arrival" among the persisted events a
+    /// role may be woken for, and until this unit nothing raised one: the owner could collect twelve
+    /// months of history and the research process would find out at its next scheduled look, or not at
+    /// all. Written only by <c>MarketDataService</c>, which is the app's own collector and has no verb
+    /// and no pipe op behind it, and raised for Research — the role whose work it is.</para>
+    ///
+    /// <para>VALIDATED is the operative word. A REJECTED dataset raises nothing, and neither does a
+    /// re-verification: <see cref="DatasetStore.Checked"/> re-hashes a row on every read and finding it
+    /// unchanged is not news. The id is the dataset's own SHA-256 — the ENTITY
+    /// (<c>docs/COUNCIL.md</c>:64) — so a rebuild that reproduces the same bytes raises an id the table
+    /// already holds and buys nobody a turn.</para>
+    /// </summary>
+    public const string Data = "data";
 
     /// <summary>An execution reached the fill ledger.</summary>
     public const string Fill = "fill";
@@ -190,6 +207,17 @@ public static class MissionEventIds
         $"{MissionEventKind.Inbox}:{scanAt.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)}";
 
     public static string Fill(string executionId) => $"{MissionEventKind.Fill}:{executionId}";
+
+    /// <summary>
+    /// THE DATA WAKE, KEYED BY THE DATASET'S OWN SHA-256 AND NEVER BY THE PRESS THAT PRODUCED IT.
+    ///
+    /// <para>The normalised file's hash IS the dataset's identity — it is what the ledger re-reads to
+    /// decide whether the row still stands — so a rebuild of the same raw files raises the id that is
+    /// already there, which is what makes "the same evidence, delivered twice" free. Keyed by the
+    /// collection attempt, an owner pressing rebuild four times would have bought four paid turns to
+    /// be told the same thing (<c>docs/COUNCIL.md</c>:64).</para>
+    /// </summary>
+    public static string Data(string normalisedSha256) => $"{MissionEventKind.Data}:{normalisedSha256}";
 
     public static string Order(string requestId, string state) => $"{MissionEventKind.Order}:{requestId}:{state}";
 

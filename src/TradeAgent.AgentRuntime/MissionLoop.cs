@@ -649,7 +649,11 @@ public sealed record MissionSituation
 
         return $"Data: {set.Pair} {set.Interval}, {period}, {set.Bars:N0} bars, {set.Gaps:N0} gaps — "
                + "`trade data list` for its provenance, `trade data bars` for the bars. They are hypothesis "
-               + "evidence and establish no fill.";
+               + "evidence and establish no fill."
+               // AND WHAT THEIR VOLUMES ARE, from the one place that sentence is written. The line is
+               // where a turn decides what to run; a dataset of midpoint-derived candles that read here
+               // like traded bars would be planned over as though somebody had traded on it.
+               + (set.MidpointNote is { } midpoint ? " " + midpoint : "");
     }
 
     /// <summary>
@@ -1833,6 +1837,8 @@ public sealed class MissionLoop
     {
         MissionEventKind.Owner => "your owner typed something",
         MissionEventKind.Inbox => "new material arrived in `../inbox`",
+        MissionEventKind.Data => "TradeAgent collected and validated a dataset — the Data line below "
+                                 + "names it, and `trade data list` has its provenance",
         MissionEventKind.Fill => "an order filled",
         MissionEventKind.Order => "an order reached a final state",
         MissionEventKind.Renewal => "the day turned over, so your spending allowance is a new one",

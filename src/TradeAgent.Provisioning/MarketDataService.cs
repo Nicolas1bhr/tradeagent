@@ -8,7 +8,15 @@ namespace TradeAgent.Provisioning;
 /// What one press of "Download" produced: the dataset if one was accepted, every period's outcome
 /// including the ones that produced no file, and a sentence for the owner's screen.
 /// </summary>
-public sealed record DataCollection(DatasetRecord? Dataset, IReadOnlyList<MonthResult> Months, string Summary);
+public sealed record DataCollection(DatasetRecord? Dataset, IReadOnlyList<MonthResult> Months, string Summary)
+{
+    /// <summary>
+    /// Whether this collection RAISED the <c>data</c> wake — a dataset the AI has never been told
+    /// about. False for a rebuild that reproduced bytes the ledger already holds, which is a
+    /// re-verification and not news. See <see cref="MarketDataService.Wake"/>.
+    /// </summary>
+    public bool Woke { get; init; }
+}
 
 /// <summary>
 /// COLLECT, NORMALISE, RECORD — the whole of the owner's one press, and the only thing that ever
@@ -26,11 +34,17 @@ public sealed record DataCollection(DatasetRecord? Dataset, IReadOnlyList<MonthR
 /// months for a source declaring five minutes over ninety days would be a provenance record of a
 /// collection that never happened.</para>
 /// </summary>
-public sealed class MarketDataService(Database db, BinanceArchiveClient? client = null)
+/// <param name="nudge">
+/// What to poke when a collection raises a wake — the mission loop, in the app. Null in a test and in
+/// any process with no loop behind it: the ROW is what matters and it is written either way, and a
+/// loop that is not there cannot be woken.
+/// </param>
+public sealed class MarketDataService(Database db, BinanceArchiveClient? client = null, Action? nudge = null)
 {
     readonly BinanceArchiveClient _binance = client ?? new BinanceArchiveClient();
     readonly CandleSourceClient _fetcher = new();
     readonly DatasetStore _store = new(db);
+    readonly MissionEventStore _wakes = new(db);
 
     public DatasetStore Store => _store;
 
@@ -86,7 +100,7 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
             source.CandlesCarryVolume, source.Interval);
 
         var record = Recorded(source, symbol, version, periods, collected, set, DateTimeOffset.UtcNow);
-        return new DataCollection(record, periods, Describe(record, periods));
+        return new DataCollection(record, periods, Describe(record, periods)) { Woke = Wake(record) };
     }
 
     /// <summary>
@@ -143,7 +157,48 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
 
         var id = _store.Record(record);
         var stored = record with { Id = id };
-        return new DataCollection(stored, [], Describe(stored, []));
+        return new DataCollection(stored, [], Describe(stored, [])) { Woke = Wake(stored) };
+    }
+
+    /// <summary>
+    /// <b>VALIDATED DATA ARRIVAL IS A WAKE</b> (<c>docs/COUNCIL.md</c>:89-91), and it is Research's.
+    ///
+    /// <para><b>Keyed by the dataset's own SHA-256 and never by the press.</b> A rebuild re-derives the
+    /// same bytes from the same raw files — that is the whole point of it — so its id is one the queue
+    /// already holds and it buys nobody a turn. Keyed by the collection ATTEMPT, an owner pressing
+    /// "rebuild" four times would have bought four paid turns to be told the same thing, which is
+    /// <c>docs/COUNCIL.md</c>:64 exactly: deduplicate by entity, so a repeated proposal cannot
+    /// manufacture senior spend. A dataset whose bytes are genuinely new has a different hash and is
+    /// genuinely news.</para>
+    ///
+    /// <para>A REJECTED dataset raises nothing: the wake says data ARRIVED, and bars nothing will serve
+    /// have not. A re-verification raises nothing either — <c>DatasetStore.Checked</c> writes no row
+    /// here and never calls this.</para>
+    ///
+    /// <para>Written by the app, like every other wake. There is no verb and no pipe op that raises
+    /// one, so an agent cannot buy itself a turn by asking for data.</para>
+    /// </summary>
+    bool Wake(DatasetRecord set)
+    {
+        if (set.State != DatasetState.ACCEPTED || set.Bars == 0) return false;
+
+        var raised = _wakes.Raise(
+            MissionEventIds.ForRole(MissionEventIds.Data(set.NormalisedSha256), CouncilRoles.Research),
+            MissionEventKind.Data, DateTimeOffset.UtcNow,
+            Json.Write(new
+            {
+                dataset = set.Id,
+                source = set.Source,
+                pair = set.Pair,
+                interval = set.Interval,
+                version = set.Version,
+                bars = set.Bars,
+                midpoint_bars = set.MidpointBars
+            }),
+            CouncilRoles.Research);
+
+        if (raised) nudge?.Invoke();
+        return raised;
     }
 
     DatasetRecord Recorded(

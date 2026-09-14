@@ -1,4 +1,5 @@
 using System.Text;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -297,5 +298,88 @@ public class CandleSourceTests
             Assert.Contains(decisions, d => d.Contains("publishes no checksum", StringComparison.Ordinal));
         }
         finally { Downloader.RecordDecision = previous; }
+    }
+
+    // ---- item 5: validated data arrival is a wake ----------------------------------------------
+
+    /// <summary>
+    /// ITEM 5, RED FIRST: collecting twelve months woke nobody. <c>docs/COUNCIL.md</c>:89-91 lists
+    /// "validated data arrival" among the persisted wakes, and nothing raised one — the owner could
+    /// collect a year of history and the research process would find out at its next scheduled look.
+    ///
+    /// <para>And the dedup is by the DATASET, not by the press: a rebuild reproduces the same bytes
+    /// from the same raw files, so it raises an id the queue already holds and costs nobody a turn.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_accepted_dataset_wakes_research_once_and_a_rebuild_wakes_nobody()
+    {
+        var archive = new FakeArchive();
+        using var _a = archive;
+        foreach (var m in BinanceArchive.RecentCompleteMonths(Now)) archive.Publish(Wakes, m, Rows(m));
+
+        using var db = TestEnv.NewDb();
+        var nudges = 0;
+        var svc = new MarketDataService(db, new BinanceArchiveClient(archive.BaseUrl), () => nudges++);
+        var events = new MissionEventStore(db);
+
+        var got = await svc.CollectAsync(Wakes, Now);
+        Assert.NotNull(got.Dataset);
+        Assert.True(got.Woke);
+        Assert.Equal(1, nudges);
+
+        // ONE EVENT, RESEARCH'S, KEYED BY THE DATASET'S OWN SHA-256.
+        var raised = events.DueFor(CouncilRoles.Research, DateTimeOffset.UtcNow)
+                           .Where(e => e.Kind == MissionEventKind.Data).ToList();
+        var wake = Assert.Single(raised);
+        Assert.Equal(
+            MissionEventIds.ForRole(MissionEventIds.Data(got.Dataset!.NormalisedSha256), CouncilRoles.Research),
+            wake.Id);
+        Assert.Equal(CouncilRoles.Research, wake.Role);
+        Assert.Contains($"\"dataset\":{got.Dataset.Id}", wake.Payload);
+        Assert.DoesNotContain(events.DueFor(CouncilRoles.Operations, DateTimeOffset.UtcNow),
+            e => e.Kind == MissionEventKind.Data);
+
+        // A REBUILD IS A RE-VERIFICATION, NOT NEWS: same raw files, same bytes, same id, no turn.
+        var again = svc.Rebuild(Wakes);
+        Assert.Equal(got.Dataset.NormalisedSha256, again.Dataset!.NormalisedSha256);
+        Assert.False(again.Woke);
+        Assert.Equal(1, nudges);
+        Assert.Single(events.DueFor(CouncilRoles.Research, DateTimeOffset.UtcNow),
+            e => e.Kind == MissionEventKind.Data);
+
+        // AND THE SITUATION NAMES IT, which is where a turn reads what it has to work with.
+        var line = MissionSituation.DataLine(svc.Store.Newest(Wakes));
+        Assert.Contains(Wakes, line);
+        Assert.Contains(BinanceArchive.Interval, line);
+        Assert.Contains($"{got.Dataset.Bars:N0} bars", line);
+    }
+
+    /// <summary>A pair of its own: this class's other collections must not raise this one's wake.</summary>
+    const string Wakes = "WAKEUSDT";
+
+    /// <summary>
+    /// A DATASET WITH DIFFERENT BYTES IS DIFFERENT NEWS. The dedup is by the evidence and not by the
+    /// pair, the press or the clock.
+    /// </summary>
+    [Fact]
+    public async Task A_second_dataset_with_different_bytes_raises_a_second_wake()
+    {
+        using var archive = new FakeArchive();
+        var (first, db) = await CollectSecond(archive, candles: 6);
+        using var _d = db;
+
+        var events = new MissionEventStore(db);
+        Assert.Single(events.DueFor(CouncilRoles.Research, DateTimeOffset.UtcNow),
+            e => e.Kind == MissionEventKind.Data);
+
+        // The same source and symbol, different bars: a new file, a new hash, a new reason to look.
+        var source = Second(archive);
+        archive.PublishAt(SecondPath(archive, source), Candles(Now.AddDays(-3), 9));
+        var second = await new MarketDataService(db).CollectAsync(source, Symbol, Now);
+
+        Assert.NotEqual(first.Dataset!.NormalisedSha256, second.Dataset!.NormalisedSha256);
+        Assert.True(second.Woke);
+        Assert.Equal(2, events.DueFor(CouncilRoles.Research, DateTimeOffset.UtcNow)
+                              .Count(e => e.Kind == MissionEventKind.Data));
     }
 }

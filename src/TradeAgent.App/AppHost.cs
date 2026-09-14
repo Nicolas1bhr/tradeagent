@@ -501,7 +501,11 @@ public sealed class AppHost : IAsyncDisposable
             Connector = chosen == "atas" ? new AtasConnector() : new FakeConnector();
 
             Gateway = new TradingGateway(_db, Connector, Health);
-            _marketData = new MarketDataService(_db);
+            // THE COLLECTOR RAISES THE `data` WAKE ITSELF and this is what pokes the loop, the way
+            // `ScanMaterials` does for new material: the ROW is the fact and is written in the
+            // collector's own transaction, and this only stops a sleeping loop from waiting for its
+            // next scheduled look to find out.
+            _marketData = new MarketDataService(_db, nudge: () => Mission?.Wake());
             Gateway.StateChanged += OnGatewayStateChanged;
             Health.Changed += _ => Changed?.Invoke();
             Updates.Changed += () => Changed?.Invoke();
