@@ -14,6 +14,7 @@ matter except among rules. Keywords and names are read case-insensitively; a sym
 
 ```
 declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, required; zone default UTC
+             | "timeframe" DURATION | "data_freshness" DURATION | "max_decision_age" DURATION
              | "const" NAME "=" (NUMBER | "true" | "false") | "indicator" NAME "=" indicator
              | "size" ("fixed" | "capital_fraction" | "risk_fraction") value      # required
              | "stop" ("fixed" value | "percent" value | "atr" value value)
@@ -24,8 +25,14 @@ declaration := "instrument" SYMBOL | "timezone" ZONE      # one instrument, requ
 indicator   := ("sma" | "ema" | "rsi" | "highest" | "lowest") "(" SERIES "," value ")"
              | "atr" "(" value ")" | ("opening_range_high" | "opening_range_low") "(" ")"
 value       := NUMBER | NAME     # a declared number constant;  CLOCK := HH ":" MM, 24-hour
+DURATION    := INT ("s" | "m" | "h" | "d")   # `30s`, `5m`, `2h`, `1d`; no default unit, no fractions
 SERIES      := "open" | "high" | "low" | "close" | "volume"
 ```
+
+The three execution bounds are **all three or none**: a `timeframe` and a `data_freshness` with no
+`max_decision_age` beside them read like an execution gate and are not one, because nothing there
+refuses a late order. They are what the dispatcher checks again when an intent reaches execution
+(`docs/COUNCIL.md`:96-97), and they are in the canonical form — a changed bound is a different id.
 
 Rules are evaluated **in declared order, every exit before every entry**; an exit written below an entry
 is refused, not reordered. A program is **long or flat**: one position, and no rule takes a side.
@@ -96,7 +103,8 @@ before it is refused rather than answered from a half-filled window.
 8192 source bytes · 200 lines · 240 characters a line · 32 characters a name · 32 constants ·
 16 indicators · 20 rules · 200 expression nodes · 8 levels of nesting · history depth 20 · 500 bars of
 period and of warm-up · 4 entry windows · 10000 holding bars · fixed quantity 1000000 · sizing fraction
-1 (above one is leverage) · 100 percent and 100 ATR multiples. Zones a program may name: `UTC`,
+1 (above one is leverage) · 100 percent and 100 ATR multiples · every execution bound at least 1
+second and at most one week. Zones a program may name: `UTC`,
 `America/New_York`, `America/Chicago`, `Europe/London`, `Europe/Berlin`, `Asia/Tokyo` — data rather than
 an OS lookup, so a program means the same thing on every machine that hashes it.
 
@@ -165,6 +173,9 @@ constants sorted by name, `StrategyVersions`. The source is retained. `docs/CONT
 # A moving-average crossover with fixed sizing and a stop.
 instrument BTCUSDT
 timezone UTC
+timeframe 1m
+data_freshness 2m
+max_decision_age 60s
 const fast = 20
 const slow = 50
 indicator fastma = sma(close, fast)
@@ -180,6 +191,9 @@ entry when crosses_above(fastma, slowma)
 # An opening-range breakout with ATR risk sizing and a time stop.
 instrument BTCUSDT
 timezone America/New_York
+timeframe 1m
+data_freshness 2m
+max_decision_age 30s
 const atrperiod = 14
 const atrmultiple = 2
 const riskfraction = 0.01
@@ -202,6 +216,9 @@ entry when close > rangehigh
 # An RSI mean reversion with a profit exit and a maximum holding time.
 instrument BTCUSDT
 timezone UTC
+timeframe 1m
+data_freshness 5m
+max_decision_age 5m
 const period = 14
 const oversold = 30
 const recovered = 55

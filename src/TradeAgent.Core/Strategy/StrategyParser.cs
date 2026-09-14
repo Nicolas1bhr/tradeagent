@@ -50,8 +50,8 @@ public static class StrategyParser
     // ---- the vocabulary, in one place each -------------------------------------------------------
 
     const string Keywords =
-        "instrument, timezone, const, indicator, size, stop, target, max_hold_bars, weekdays, " +
-        "entry_window, opening_range, session_exit, exit, entry";
+        "instrument, timezone, timeframe, data_freshness, max_decision_age, const, indicator, size, " +
+        "stop, target, max_hold_bars, weekdays, entry_window, opening_range, session_exit, exit, entry";
 
     const string IndicatorList =
         "sma, ema, rsi, atr, highest, lowest, opening_range_high, opening_range_low";
@@ -93,7 +93,8 @@ public static class StrategyParser
 
     static bool IsKeyword(string word) => word switch
     {
-        "instrument" or "timezone" or "const" or "indicator" or "size" or "stop" or "target"
+        "instrument" or "timezone" or "timeframe" or "data_freshness" or "max_decision_age"
+            or "const" or "indicator" or "size" or "stop" or "target"
             or "max_hold_bars" or "weekdays" or "entry_window" or "opening_range" or "session_exit"
             or "exit" or "entry" => true,
         _ => false
@@ -183,6 +184,33 @@ public static class StrategyParser
                 "an opening-range indicator is declared but no `opening_range <from>-<to>` interval is: " +
                 "the accumulator has no window to accumulate over");
 
+        // ALL THREE EXECUTION BOUNDS, OR NONE OF THEM — and the refusal names the ones that are
+        // missing rather than the one that is there.
+        //
+        // `docs/COUNCIL.md`:96-97 states them as one declaration: a promoted strategy declares its
+        // timeframe, its required data freshness AND its maximum decision age. Two of the three is
+        // the shape that would do damage: a program declaring a timeframe and a freshness reads as
+        // though it had been given an execution gate, and the one bound that actually refuses a late
+        // order — the decision age — is the one nobody wrote. So it is refused while it is still
+        // text, which is also what makes `IntentDecision` able to be all-or-nothing downstream.
+        var declared = new[]
+        {
+            ("timeframe", settings.Timeframe.HasValue),
+            ("data_freshness", settings.DataFreshness.HasValue),
+            ("max_decision_age", settings.MaxDecisionAge.HasValue)
+        };
+        var missing = declared.Where(x => !x.Item2).Select(x => x.Item1).ToArray();
+        if (missing.Length is > 0 and < 3)
+            throw new Refused(0,
+                $"this program declares {string.Join(" and ", declared.Where(x => x.Item2).Select(x => $"`{x.Item1}`"))} "
+                + $"and not {string.Join(" or ", missing.Select(m => $"`{m}`"))}. The three are one declaration: a "
+                + "timeframe and a freshness with no `max_decision_age` beside them read like an execution gate and "
+                + "are not one, because nothing there refuses a late order. Declare all three, or none of them");
+
+        var freshness = settings is { Timeframe: { } tf, DataFreshness: { } df, MaxDecisionAge: { } mda }
+            ? new FreshnessBounds(tf, df, mda)
+            : null;
+
         var time = new TimeFilters(
             settings.TimeZone ?? "UTC",
             settings.Days ?? Weekdays.All,
@@ -200,7 +228,8 @@ public static class StrategyParser
             settings.Stop,
             settings.Target,
             settings.MaxHoldBars,
-            time);
+            time,
+            freshness);
 
         // A WARM-UP THAT CANNOT BE REACHED IS A REFUSAL, not a program that waits for ever. One limit
         // covers the period and the warm-up, so a period at the limit inside a crossing — which reads
@@ -382,6 +411,9 @@ public static class StrategyParser
         public List<TimeWindow> EntryWindows = [];
         public TimeWindow? OpeningRange;
         public TimeOfDay? SessionExit;
+        public TimeSpan? Timeframe;
+        public TimeSpan? DataFreshness;
+        public TimeSpan? MaxDecisionAge;
     }
 
     static Settings ReadSettings(List<Decl> decls, Dictionary<string, StrategyConstant> constants)
@@ -451,6 +483,21 @@ public static class StrategyParser
                 case "session_exit":
                     Once(d, s.SessionExit is not null);
                     s.SessionExit = Clock(d.No, d.Rest);
+                    break;
+
+                case "timeframe":
+                    Once(d, s.Timeframe is not null);
+                    s.Timeframe = Duration(d);
+                    break;
+
+                case "data_freshness":
+                    Once(d, s.DataFreshness is not null);
+                    s.DataFreshness = Duration(d);
+                    break;
+
+                case "max_decision_age":
+                    Once(d, s.MaxDecisionAge is not null);
+                    s.MaxDecisionAge = Duration(d);
                     break;
             }
         }
@@ -596,6 +643,49 @@ public static class StrategyParser
                 $"{from} is not before {to}. An interval that wraps past midnight is not something this language can say");
 
         return new TimeWindow(from, to);
+    }
+
+    /// <summary>
+    /// A DURATION: a whole number and a unit, written together — `30s`, `5m`, `2h`, `1d`.
+    ///
+    /// <para>Its own spelling rather than the language's NUMBER, because the three bounds are the one
+    /// place a number's UNIT decides whether an order is sent: `max_decision_age 30` is thirty of
+    /// something, and a reader who assumed minutes where the parser assumed seconds would be reading
+    /// a gate sixty times looser than the one that runs. There is no default unit to get wrong.</para>
+    ///
+    /// <para>No fractions and no compound forms (`1m30s`): a bound is compared against a wall clock
+    /// on the money path, and the two ways to spell one duration are already one duration in the
+    /// canonical form, where it is written in seconds.</para>
+    /// </summary>
+    static TimeSpan Duration(Decl d)
+    {
+        var text = d.Rest.Trim().ToLowerInvariant();
+        var unit = text.Length == 0 ? '\0' : text[^1];
+
+        var seconds = unit switch
+        {
+            's' => 1L,
+            'm' => 60L,
+            'h' => 3600L,
+            'd' => 86400L,
+            _ => 0L
+        };
+
+        if (seconds == 0
+            || !long.TryParse(text[..^1], NumberStyles.None, CultureInfo.InvariantCulture, out var count))
+            throw new Refused(d.No,
+                $"`{Clip(d.Rest)}` is not a duration. Write a whole number and one of s, m, h or d — " +
+                "`30s`, `5m`, `2h`, `1d` — because a bound with no unit on it is a gate whose reader " +
+                "has to guess which one, and guessing wrong by a factor of sixty is not visible anywhere");
+
+        var total = count * seconds;
+        if (total < 1 || total > StrategyLimits.MaxBoundSeconds)
+            throw new Refused(d.No,
+                $"`{d.Keyword}` must be at least 1 second and at most {StrategyLimits.MaxBoundSeconds} " +
+                $"(one week), and this one is {total} seconds. A bound of nothing refuses every order " +
+                "rather than gating one, and a bound of months admits every order there will ever be");
+
+        return TimeSpan.FromSeconds(total);
     }
 
     static TimeOfDay Clock(int line, string text)

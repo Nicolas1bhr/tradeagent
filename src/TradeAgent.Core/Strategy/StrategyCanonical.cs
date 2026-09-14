@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace TradeAgent.Core.Strategy;
@@ -38,6 +39,18 @@ public static class StrategyCanonical
         text.Append(Header).Append('\n');
         text.Append("instrument ").Append(p.Instrument).Append('\n');
         text.Append("zone ").Append(p.Time.TimeZone).Append('\n');
+
+        // THE THREE EXECUTION BOUNDS, ALWAYS STATED — as a duration in seconds, or as `none`.
+        //
+        // Always, because "this program declares no bound" is a fact about it and not an absence: a
+        // canonical form that simply omitted the lines would give a program with no bounds the same
+        // text as one whose bounds the next build learns to read, and the two are not one program.
+        // In SECONDS, because `60s` and `1m` are one duration and one meaning must have one text —
+        // the rule the trailing zeros on every other number in here already follow.
+        text.Append("timeframe ").Append(Duration(p.Freshness?.Timeframe)).Append('\n');
+        text.Append("freshness ").Append(Duration(p.Freshness?.DataFreshness)).Append('\n');
+        text.Append("decisionage ").Append(Duration(p.Freshness?.MaxDecisionAge)).Append('\n');
+
         text.Append("days ").Append(Days(p.Time.Days)).Append('\n');
 
         foreach (var window in p.Time.EntryWindows.OrderBy(w => w.From.MinuteOfDay).ThenBy(w => w.To.MinuteOfDay))
@@ -77,6 +90,10 @@ public static class StrategyCanonical
             .Select(c => c.Type == ValueKind.Number
                 ? $"{c.Name}=number:{StrategyParser.Number(c.Number)}"
                 : $"{c.Name}=boolean:{(c.Boolean ? "true" : "false")}"));
+
+    /// <summary>A bound as whole seconds, or `none`. Spelled here so a unit's name is never in a hash.</summary>
+    static string Duration(TimeSpan? span) =>
+        span is { } d ? ((long)d.TotalSeconds).ToString(CultureInfo.InvariantCulture) + "s" : "none";
 
     static string Days(Weekdays days)
     {

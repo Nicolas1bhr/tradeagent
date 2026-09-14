@@ -73,6 +73,18 @@ public static class StrategyLimits
     /// <summary>The most entry windows one program may declare.</summary>
     public const int MaxEntryWindows = 4;
 
+    /// <summary>
+    /// THE LONGEST A `timeframe`, `data_freshness` OR `max_decision_age` MAY BE, in seconds: one week.
+    ///
+    /// <para>A bound is a promise that an order is not sent on old information, and a bound longer
+    /// than the history a person would recognise as current is a promise with nothing behind it — a
+    /// `max_decision_age` of a year admits every intent this installation will ever build. The
+    /// SHORTEST is one second, enforced beside this: a bound of zero is satisfiable by nothing and
+    /// would refuse every order rather than gate one, which is a different failure wearing the same
+    /// word.</para>
+    /// </summary>
+    public const int MaxBoundSeconds = 7 * 24 * 60 * 60;
+
     /// <summary>The largest holding time a program may state, in bars.</summary>
     public const int MaxHoldBars = 10_000;
 

@@ -1,6 +1,9 @@
 # An opening-range breakout with ATR risk sizing and a time stop.
 instrument BTCUSDT
 timezone America/New_York
+timeframe 1m
+data_freshness 2m
+max_decision_age 30s
 const atrperiod = 14
 const atrmultiple = 2
 const riskfraction = 0.01

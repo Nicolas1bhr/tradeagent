@@ -191,3 +191,29 @@ public sealed record TimeFilters(
 {
     public static readonly TimeFilters Default = new("UTC", Weekdays.All, [], null, null);
 }
+
+/// <summary>
+/// WHAT THE PROGRAM DECLARES ABOUT TIME AT EXECUTION, AND THE ONLY THING IN THIS LANGUAGE THAT IS
+/// ABOUT THE WALL CLOCK RATHER THAN ABOUT A BAR.
+///
+/// <para><c>docs/COUNCIL.md</c>:96-97, verbatim: "A promoted strategy declares its timeframe, its
+/// required data freshness and its maximum decision age, and the runner checks them again when the
+/// intent reaches execution". :33 is what that is for — "an expired opportunity takes the policy's
+/// safe outcome, never a late trade" — and before this record the only age anything on the money
+/// path knew was a QUOTE's (<c>GatewayOptions.MaxQuoteAge</c>). Nothing knew how old the BAR an
+/// intent was computed from was, so neither of those two sentences had an implementation.</para>
+///
+/// <para><b>All three, or none.</b> The parser refuses a program that declares some of them, and
+/// <c>IntentDecision</c> is all-or-nothing for the same reason: a timeframe with no freshness bound
+/// beside it reads like a gate and is not one, and half a bound is a refusal the dispatcher cannot
+/// make.</para>
+///
+/// <para><b>They are in the canonical form, so they are part of the identity.</b> Two programs that
+/// differ only in how stale a decision may be are two programs — one of them sends an order the
+/// other refuses — and a shared id would attach one's results to the other's behaviour.</para>
+///
+/// <para><paramref name="Timeframe"/> is the bar interval the program is written for; it is DECLARED
+/// rather than inferred from whatever dataset a caller happened to pass, because a program written
+/// for hourly bars evaluated over minutes is a different strategy with the same text.</para>
+/// </summary>
+public sealed record FreshnessBounds(TimeSpan Timeframe, TimeSpan DataFreshness, TimeSpan MaxDecisionAge);

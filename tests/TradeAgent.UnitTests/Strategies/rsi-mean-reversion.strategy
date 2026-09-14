@@ -1,6 +1,9 @@
 # An RSI mean reversion with a profit exit and a maximum holding time.
 instrument BTCUSDT
 timezone UTC
+timeframe 1m
+data_freshness 5m
+max_decision_age 5m
 const period = 14
 const oversold = 30
 const recovered = 55

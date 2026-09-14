@@ -25,8 +25,10 @@ public sealed class StrategyProgram
         StopRule stop,
         TargetRule target,
         int? maxHoldBars,
-        TimeFilters time)
+        TimeFilters time,
+        FreshnessBounds? freshness)
     {
+        Freshness = freshness;
         Source = source;
         Instrument = instrument;
         Constants = constants;
@@ -81,6 +83,17 @@ public sealed class StrategyProgram
     public int? MaxHoldBars { get; }
 
     public TimeFilters Time { get; }
+
+    /// <summary>
+    /// WHAT THIS PROGRAM DECLARES ABOUT TIME AT EXECUTION — <see cref="FreshnessBounds"/> — or NULL
+    /// because it declared none of the three.
+    ///
+    /// <para>Null is a real state and is not a default: a program with no bounds emits intents the
+    /// dispatcher has nothing to refuse on, and reading a missing bound as a generous one would be
+    /// exactly the fake `CLAUDE.md` rule 1 forbids. It is stated on the frozen program and hashed
+    /// into <see cref="StrategyId"/>, so a changed bound is a different program.</para>
+    /// </summary>
+    public FreshnessBounds? Freshness { get; }
 
     /// <summary>Every exit rule, in declared order. Exits are evaluated before entries.</summary>
     public IEnumerable<StrategyRule> ExitRules => Rules.Where(r => r.Kind == RuleKind.Exit);

@@ -57,9 +57,9 @@ public class DayOneStrategyTests
     /// `docs/COUNCIL.md` states the rule — so what is pinned here is the documented formula's answer
     /// rather than whatever this build happened to produce. Every input to them is asserted below.
     /// </summary>
-    const string CrossoverId = "8873b58693fc00af44a0a630ddcad9a7b6c3b61dcbbbb45f8ea6373e6b14edaf";
-    const string BreakoutId = "88f6586a99138dde124993655df33f074ea5711fb1b712525f59e495247386a0";
-    const string MeanReversionId = "eeb614304febec859879ee3f747d91a44dc899d525eb294a37454e803a806548";
+    const string CrossoverId = "3b3364734ea97e715479476ffd9992ade4074bfd52bc1a9220ef4b7605ffbd42";
+    const string BreakoutId = "70ec1a6e45dc45096995564fc11d76f24f13c5ae156beab05aa9d1639ee7d26d";
+    const string MeanReversionId = "16d6192f798908637d3ae246056f4e2d65e0231531604202204783e62760b624";
 
     /// <summary>
     /// THE FIXTURES AND THE DOCUMENT ARE THE SAME BYTES. The document is what a model is shown; these
@@ -88,12 +88,16 @@ public class DayOneStrategyTests
         Assert.Equal(new Sizing(SizingKind.FixedQuantity, 1m), p.Sizing);
         Assert.Equal(new StopRule(StopKind.Percent, 1.5m, 0), p.Stop);
         Assert.Equal(51, p.WarmUpBars);
+        Assert.Equal(new FreshnessBounds(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(60)), p.Freshness);
         Assert.Equal([RuleKind.Exit, RuleKind.Entry], p.Rules.Select(r => r.Kind));
 
         Assert.Equal("""
             program/1
             instrument BTCUSDT
             zone UTC
+            timeframe 60s
+            freshness 120s
+            decisionage 60s
             days all
             ind fastma=sma(close,20)
             ind slowma=sma(close,50)
@@ -123,11 +127,15 @@ public class DayOneStrategyTests
         Assert.Equal(new TimeWindow(new TimeOfDay(9, 30), new TimeOfDay(10, 0)), p.Time.OpeningRange);
         Assert.Equal("America/New_York", p.Time.TimeZone);
         Assert.Equal(15, p.WarmUpBars);                                      // atr(14) needs fifteen bars
+        Assert.Equal(new FreshnessBounds(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30)), p.Freshness);
 
         Assert.Equal("""
             program/1
             instrument BTCUSDT
             zone America/New_York
+            timeframe 60s
+            freshness 120s
+            decisionage 30s
             days mon,tue,wed,thu,fri
             window 10:00-15:30
             openrange 09:30-10:00
@@ -159,11 +167,15 @@ public class DayOneStrategyTests
         Assert.Equal(60, p.MaxHoldBars);                                      // the maximum holding time
         Assert.Equal(new StopRule(StopKind.Percent, 2m, 0), p.Stop);
         Assert.Equal(15, p.WarmUpBars);                                       // rsi(14) needs fifteen bars
+        Assert.Equal(new FreshnessBounds(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5)), p.Freshness);
 
         Assert.Equal("""
             program/1
             instrument BTCUSDT
             zone UTC
+            timeframe 60s
+            freshness 300s
+            decisionage 300s
             days all
             ind momentum=rsi(close,14)
             size capital_fraction:0.25

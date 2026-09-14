@@ -1,6 +1,9 @@
 # A moving-average crossover with fixed sizing and a stop.
 instrument BTCUSDT
 timezone UTC
+timeframe 1m
+data_freshness 2m
+max_decision_age 60s
 const fast = 20
 const slow = 50
 indicator fastma = sma(close, fast)
