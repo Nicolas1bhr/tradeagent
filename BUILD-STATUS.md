@@ -5615,3 +5615,36 @@ at `c8306d4` (the report commit on the gated sha, `src` and `tests` identical), 
 
 **NOT done, NOT verified:** no network, no box, no ATAS, no money, no order, no credential; nothing on the agent pipe collects, rebuilds or wakes; the Settings press
 not seen on a screen; the second source's real URL and response shape NOT VERIFIED from here; no Revolut X connector, no `U-bars`, no Databento, no live bars.
+
+## 2026-09-14 — U-sweep-latency-win landed: the fourth press-family fixture of the class judged first, the sweep's budget-and-latency pair sized by arithmetic
+
+The windows-only red of draft PR #19's first attempt (run 34773625675: `SweepRequestIdTests.Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_
+reconciled`, `Assert.NotEmpty() Failure: Collection was empty`), by one fresh builder on `docs/briefs/U-sweep-latency-win.md`. Merge `4961989`, 3 commits, test-only:
+`git diff main -- src/` empty, one file (`SweepRequestIdTests.cs`, +94/−12), no assertion added, removed or altered, no `Timing` trait; draft PR #20 for the runner,
+closed after; the three commits rebased at landing over `U-data-2`, which touches neither.
+
+- **Judged first, on this Mac:** the shipped 5 s budget against a 2 s cancel left the cancel exactly 1000 ms of slack (sweep 5029 ms, both legs `sent-not-confirmed`),
+  and the `RefuseBeforeSend = 1` beside it never fires — it is consulted only after the deadline check — so it is gone, with the measurement at the test. Cutting
+  the budget to 4 s and nothing else reproduces the CI byte for byte: `Assert.NotEmpty() Failure: Collection was empty`, both legs `not-sent`, `attempted=0`, "the
+  operation deadline passed before the simulator answered". The product's answer is honest: no product change, no RED-first test.
+- **The fixture, once:** a 17 s budget against 6 s calls. A read sleeps its full latency, so at most `B − 2L = 5000 ms` can be left when the cancel takes its turn
+  against the 6000 it declares — that half is arithmetic, not a clock. The runner's half: `sent-not-confirmed` rather than `not-sent` while the disk has spent under
+  5000 ms, five times the old room, against 15–32 ms measured for this step over 96 windows sweeps (`U-sweep-win`) and 2234 ms for the worst bare commit
+  (`U-press-win-3`). Price: the sweep IS the budget, 5 s → 17 s. Mutant (the new budget with the old 2 s latency): RED, the same `Assert.NotEmpty()`.
+- **The sweep of the file, six fixtures injecting latency:** `A_leg_that_failed_before_the_wire_…` AT RISK and moved to 7 s against 4 s — its 300 ms for the composite
+  commit sat behind that commit, and a 10 ms gap reproduces `Not found: "Nothing was placed or cancelled"` — with the latency reset to 0 once the sweep is over so
+  its closing book read stops paying it. NOT at risk, each argued at the test: `A_sweep_pays_the_emergency_budget_once_…` and `A_five_order_sweep_answers_within_
+  the_budget_…` hold their margin in front of the book read, where `BeginCompositeAsync` does one SELECT and no commit; `A_five_order_sweep_carries_a_mix_…` already
+  takes `SweepBudget` with 17.75 s of room and asserts that bound itself; `The_simulators_two_latencies_add_up_…` is one direct connector call, no gateway, no database.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `0fd3f14` (`src`/`tests` identical to the code tip `aa16362`), Release:
+17 projects, 0 warnings, 0 errors; Integration 3× → 663 passed, 1 skipped each (11 m 2 s, 11 m 1 s, 11 m 2 s); Unit 1029 + Fault 277 + Integration 663 = 1969
+passed, 0 failed, 1 skipped; names → 0 removed, 0 added (1611 = 1611). Runner: PR #20, run 34872880789 at `0fd3f14` — windows-latest SUCCESS in 24 m 6 s (Fault
+272 in 13 m 27 s, Integration 575+1 in 13 m 16 s, `Timing` 88/88 first attempt), ubuntu SUCCESS, macos FAILURE on `BridgeRoundTripTests.A_newly_arrived_silent_
+peer_…` (`TimeoutException`; a file this diff does not touch, green alone in 498 ms and in all three Integration passes); run 34876672818 at `8e7e2ae`
+(`src`/`tests` identical): ALL FOUR SUCCESS — windows 23 m 26 s, macos 14 m 34 s with that test green, `package` 4 m 42 s. Manager's gate at `c53aa6a` (landed as `4961989` after a
+docs-only rebase, `src` and `tests` identical), Release: build → 0 warnings, 0 errors; suite → 1038 + 277 + 668 = 1983 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added (sets 1665 = 1665; `[Fact]`/`[Theory]` 1634 = 1634); scan clean (`IpcToken.Ensure()`
+context lines in the test file, judged); no trailers; `rev-list --count` → 0; CI run at `4961989`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done:** no product code, no `Timing` membership, no box, no ATAS, no money; the macos red of the first run is not diagnosed beyond "not this diff" — the
+hosted-runner class, and a fresh fixer's if it recurs on `main`.

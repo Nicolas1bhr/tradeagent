@@ -15,16 +15,15 @@ Nothing is running. No worktree exists. Every landing has its ≤40-line section
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-12`, `## 2026-09-13` and `## 2026-09-14` sections at the end of
    `BUILD-STATUS.md` (one section per landing, every merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `c8306d4` (`U-data-2`, schema 18) plus this record, clean, pushed. Schema 18.** Landed 2026-09-12 → 14, in order: `U-turn-commit` `0da64d7` (11),
+2. **`main` is `4961989` (`U-sweep-latency-win`, test-only, over `U-data-2`) plus this record, clean, pushed. Schema 18.** Landed 2026-09-12 → 14, in order: `U-turn-commit` `0da64d7` (11),
    `U-press-settle-win` `fac2370`, `U-budget-reserve` `1757043`, `U-runner-1` `1e92fe3`, `U-crlf-strategy-win` `137aaa4`, `U-runner-2`
    `c758fce`, `U-containment` `7b90acf`, `U-runner-3` `5020b2b` (12), `U-api-worker` `ff8b43c` (13), `U-referee-1` `19ef096` (14),
    `U-harness-loop` `47d1071`, `U-referee-2` `45719b2` (15), `U-council-concurrent-1` `4753c46`, `U-council-concurrent-2` `cac1787` (16),
-   `U-press-inflight-win` `30dc8ed`, `U-venue-catalog` `afa49dd` (17), `U-data-2` `c8306d4` (18, landed 2026-09-14 evening). CI green on all four jobs at every product sha except two windows-only
+   `U-press-inflight-win` `30dc8ed`, `U-venue-catalog` `afa49dd` (17), `U-data-2` `c8306d4` (18) and `U-sweep-latency-win` `4961989` (test-only), both landed 2026-09-14 evening. CI green on all four jobs at every product sha except two windows-only
    fixture reds of the two-second-budget class, each fixed by the next fixer (`1e92fe3` → `137aaa4`; `45719b2` → `30dc8ed`).
-3. **IN FLIGHT 2026-09-14 evening, each with a fresh builder on its own worktree: (a) `U-sweep-latency-win` (draft PR for the windows proof) and (c)
-   `U-freshness` (worktree created at `c8306d4`, schema 19). Queued in `docs/briefs/`, briefed and NOT dispatched — dispatch in this order, at most two heavy legs at once, each on its own worktree
-   created from `main`:** (a) `U-sweep-latency-win` — test-only, a light leg, FIRST: the fourth press-family fixture of the class, a paired
-   budget-and-latency change, a draft PR for the windows proof; (b) `U-data-2` — LANDED `c8306d4`, **schema 18** (the Revolut X endpoint is DATA, unverified, see 7c); (c) `U-freshness` — **schema 19, money path** (timeframe, data freshness and
+3. **IN FLIGHT 2026-09-14 evening, each with a fresh builder on its own worktree: (c) `U-freshness` (worktree created at `c8306d4`, schema 19) and
+   (f) `U-flatten-1` (worktree created at `f7c4f31`, no schema, sends nothing). Queued in `docs/briefs/`, briefed and NOT dispatched — dispatch in this order, at most two heavy legs at once, each on its own worktree
+   created from `main`:** (a) `U-sweep-latency-win` — LANDED `4961989`; (b) `U-data-2` — LANDED `c8306d4`, **schema 18** (the Revolut X endpoint is DATA, unverified, see 7c); (c) `U-freshness` — **schema 19, money path** (timeframe, data freshness and
    decision age on the program, the gate at dispatch); (d) `U-allocator-1` — **schema 20, money path**, after `U-freshness` (both touch
    `PlaceIntent` and the dispatch gate); (e) `U-allocator-2` — **schema 21**, after `U-allocator-1`. (f) `U-flatten-1` — **no schema**, money path, dispatchable into a free slot beside a schema unit (the day-closed record, the watch, the boundary; sends nothing);
    (g) `U-flatten-2` — the reduction-only flatten resolved by machine, after `-1`; (h) `U-flatten-3` — the data-loss exit, after `-2`. The three were briefed
