@@ -5648,3 +5648,43 @@ context lines in the test file, judged); no trailers; `rev-list --count` → 0; 
 
 **NOT done:** no product code, no `Timing` membership, no box, no ATAS, no money; the macos red of the first run is not diagnosed beyond "not this diff" — the
 hosted-runner class, and a fresh fixer's if it recurs on `main`.
+
+## 2026-09-14 — U-freshness landed: a strategy declares its timeframe, its data freshness and its maximum decision age, and the gate asks again at the wire
+
+The first money-path unit of the council line (COUNCIL `:96-97` verbatim; `:14-15` freshness among the code-enforced gates; `:33` "never a late trade"), by one fresh
+builder on `docs/briefs/U-freshness.md` on the `U-data-2` tip, rebased by the builder onto `f7c4f31` and at landing over the sweep-latency test change (`src`
+untouched by both). Merge `570279b`, 9 commits, 39 files, +1695/−51 (`Versioning.cs` **schema 19** — `timeframe`, `data_freshness`, `max_decision_age` on
+`strategy_version` and `strategy_promotion`, INTEGER seconds, nullable, not backfilled; the parser, `StrategyCanonical.cs`, `StrategyEvaluator.cs`, `GatewayTypes.cs`
+(`IntentDecision` on `PlaceIntent`), `TradingGateway.cs` (`RefuseAStaleDecisionOrThrow`), `Referee`, section 3, `MissionLoop.cs`, `Promotions.Current` out of
+`AppHost`, `STRATEGY-LANGUAGE.md`, `CONTRACTS.md`; the test classes). MONEY PATH: the dispatch gate.
+
+- **Three declarations on the program** (`timeframe`, `data_freshness`, `max_decision_age`; durations `INT(s|m|h|d)`, 1 s–7 d; all three or none; canonicalised as
+  whole seconds and hashed). RED: ``line 5: `timeframe` is not a declaration this language has``; mutant (dropped from `StrategyCanonical.Of`): `Assert.NotEqual()
+  Failure: Strings are equal` — two bounds, one id. The three day-one golden ids moved once — crossover `8873b586…`→`3b336473…`, breakout `88f6586a…`→`70ec1a6e…`,
+  mean reversion `eeb61430…`→`16d6192f…` — each recomputed outside the build and matched.
+- **They travel onto the version and the promotion row,** taken off the frozen program the referee re-parses. RED: `table strategy_version has no column named
+  timeframe` (SQLite names the first missing column, not `max_decision_age` as the brief guessed); mutant (`Referee.Verdict` reading `version.Timeframe` instead
+  of the re-parsed program): `Expected: FreshnessBounds {…} / Actual: null`.
+- **An intent carries the bar it was computed from and the bounds it was computed under** — `IntentDecision`, all four or nothing, `IntentDecision.From` its only
+  builder. RED is a compile failure, the guard being a type that did not exist (`CS0117 … 'Freshness'`); mutant (the bar's OPEN as the decision instant): the intent
+  reads one minute OLDER — `Expected: …12:01:00 / Actual: …12:00:00` (the brief said younger; the builder's correction, the magnitude exact).
+- **The gate at DISPATCH,** `RefuseAStaleDecisionOrThrow` after `ReauthorizeAtDispatchOrThrow` with nothing awaited after it: past `max_decision_age` or
+  `data_freshness` → `DECISION_EXPIRED`, the record stays `CREATED`, `NeedsReconciliation` false, the wire empty — a definite refusal, never an UNKNOWN. Beyond the
+  brief, a decision whose bar has not closed is refused with its own sentence. RED: `String: "ok — FILLED"`, `orders at the broker: 1`; mutant (moved into
+  `RiskCheckOrThrow`, above the awaited reads, the clock advanced 5 m inside the position read): `aged inside the reads: True / outcome: ok — FILLED`.
+- **The owner and the roles are told:** section 3 gains a freshest-bar line per dataset and whether the promoted bound is satisfiable now, judged against the
+  freshest MARKET-data bar (fixtures excluded); the Situation's data line says the same and marks fixture versus market. RED: `Not found: "newest bars:"`; mutant
+  (`now − AcceptedAt` instead of `now − LastBar`): `Not found: "freshest bar 400d old"` — a year of history collected today read fresh.
+- **Judged at landing:** the declarations are OPTIONAL and all-or-none (required would have refused ~120 existing program texts), so a program declaring none emits
+  an intent with no `Decision` and the gate has nothing to refuse on — and NOTHING YET FORCES A PROMOTED VERSION TO DECLARE THEM. That is a hole on the money
+  path: briefed as `U-promote-bounds` (the referee refuses promotion without the three), queued before any runner reaches the order path. The two bounds are two
+  limits on one measurement at dispatch (the tighter binds, the refusal names which) and diverge only in the report. Four pinned tests UPDATED, none deleted.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `2902d9c`, Release: 0 warnings, 0 errors; touched classes 3× → Unit
+101/101, Fault 6/6 each; Unit 1072 + Fault 283 + Integration 668 = 2023 passed, 0 failed, 1 skipped (Integration 10 m 50 s); names → 29 added, 0 removed (1680 →
+1709). Manager's gate at `570279b` (the nine commits rebased over `4961989`), Release: build → 0 warnings, 0 errors; suite → 1072 + 283 + 668 = 2023 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 29 added (sets 1665 → 1694;
+`[Fact]`/`[Theory]` 1634 → 1663); scan clean; no trailers; `rev-list --count` → 0; CI run at `570279b`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no live or paper bar feed — the gate is proved over recorded bars and `GatewayOptions.Clock`; no runner turns a `StrategyIntent` into a
+`PlaceIntent`, so `IntentDecision.From` has no production caller yet; nothing reached a venue, ATAS, the box or real money; `U-flatten`, the allocator, the
+connectors and the referee's verdict untouched; section 3 and the Situation never seen on a screen.
