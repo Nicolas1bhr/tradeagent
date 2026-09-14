@@ -647,11 +647,49 @@ public class SweepRequestIdTests
     /// than argued from the mapping. A leg that says "it reached the wire and we do not know" must
     /// have a record that will be reconciled, or the word is an instruction to go and look at
     /// something nothing will ever settle.
+    ///
+    /// THE PAIR BELOW IS ONE NUMBER CHOSEN TWICE, AND THE REASON IS A WINDOWS DISK. The shape this
+    /// fixture needs is the CANCEL running out of budget: three simulator calls in series — the
+    /// orders read, each leg's target resolution, the cancel — are charged to one operation budget,
+    /// the first two must fit and the third must not. The cancel therefore starts with
+    /// <c>B - 2L - D</c> left, where D is everything the RUNNER spends in between: the composite
+    /// row's insert and each leg's write-ahead row, which are durable SQLite commits at
+    /// <c>synchronous=FULL</c>.
+    ///
+    /// At <c>B = 5 s, L = 2 s</c> that left D exactly 1000 ms, and a windows-latest disk spent it:
+    /// PR #19's run 34773625675, first attempt — `Assert.NotEmpty() Failure: Collection was empty`,
+    /// because a leg whose resolution ran out is `not-sent` with no record at all, which is the
+    /// product's honest answer and not the one this fixture is about. Reproduced here by cutting
+    /// nothing but the budget: at <c>B = 4 s</c> with the same 2 s, both legs read `not-sent`,
+    /// `attempted=0`, `transport: null`, "'orders' could not be read, so the operation was not
+    /// started", and the same assertion fails.
+    ///
+    /// <c>B = 17 s, L = 6 s</c> makes both halves true without a clock deciding either:
+    ///
+    ///   * THE CANCEL ALWAYS RUNS OUT. A read sleeps its full latency, so no more than
+    ///     <c>B - 2L = 5000 ms</c> can ever be left when the cancel's turn comes, and 5000 is less
+    ///     than the 6000 the cancel declares — by a whole second, whatever the runner does. The
+    ///     simulator compares the two as arithmetic (`HonourTheOperationDeadline`), so this half is
+    ///     decided before any timer fires.
+    ///   * THE CANCEL IS STILL SENT. It reads `sent-not-confirmed` rather than `not-sent` while
+    ///     what is left is above zero, which is D under 5000 ms. That is the runner's part, and it
+    ///     is now five times the old room: U-sweep-win measured THIS step — the composite commit
+    ///     between the book read and the leg — at 15-32 ms over 96 windows-latest sweeps, and
+    ///     U-press-win-3 measured ten bare one-row commits on the same runner image at 16-2234 ms.
+    ///     5000 ms is two of the worst of those plus half a second.
+    ///
+    /// The price is the sweep's wall time, which is the budget: ~17 s, inside the 30 s this fixture
+    /// waits for its reply. NOT `Timing`: the verdict needs the runner to keep no clock of its own —
+    /// nothing here is measured with a stopwatch, and the one runner-dependent quantity is covered
+    /// 150x over by its own measurement.
     /// </summary>
     [Fact]
     public async Task Every_sent_not_confirmed_leg_carries_an_unknown_record_that_will_be_reconciled()
     {
-        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromSeconds(5));
+        const int B = 17_000;   // the operation budget
+        const int L = 6_000;    // what every simulator call in it costs
+
+        var (gw, conn, db) = await ReadyWithBudget(TimeSpan.FromMilliseconds(B));
         using var _1 = db;
         var pipe = NewPipe();
         await using var server = new GatewayPipeServer(gw, IpcToken.Ensure(), pipe);
@@ -662,13 +700,18 @@ public class SweepRequestIdTests
         foreach (var sym in new[] { "ES", "NQ" })
             Assert.True((await client.SendAsync(Buy($"f4b-{sym}", sym)).WaitAsync(TimeSpan.FromSeconds(10))).Ok);
 
-        // One leg is refused before the wire, one is lost after it: the two halves of the tri-state
-        // that are not an answer.
-        conn.Faults.RefuseBeforeSend = 1;
-        // Two seconds a call against a five-second operation: the orders read and each leg's target
-        // resolution fit, and the CANCEL is the call that runs out of budget — which is the shape
-        // that produces an ambiguous mutation rather than a read that never reached the wire.
-        conn.Faults.LatencyMs = 2000;
+        // Six seconds a call against a seventeen-second operation: the orders read and each leg's
+        // target resolution fit, and the CANCEL is the call that runs out of budget — which is the
+        // shape that produces an ambiguous mutation rather than a read that never reached the wire.
+        // The arithmetic that makes that true on any runner's disk is on the summary above.
+        //
+        // A `RefuseBeforeSend = 1` stood here, with a comment claiming one leg was refused before
+        // the wire and one lost after it. Neither happens and neither can: the simulator consults
+        // that one-shot only AFTER the deadline check, and under these numbers — as under the old
+        // ones — every mutating call is stopped by the deadline check first. Measured on the
+        // shipped 5 s/2 s pair on this Mac: `attempted=2 not_sent=0`, both legs `PossiblyWritten`,
+        // the one-shot still unspent. A knob that cannot fire is not part of the arrangement.
+        conn.Faults.LatencyMs = L;
 
         var reply = await client.SendAsync(new IpcRequest { Op = Ops.CancelAll, RequestId = "f4-sweep-b" })
             .WaitAsync(TimeSpan.FromSeconds(30));
