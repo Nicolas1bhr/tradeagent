@@ -111,6 +111,25 @@ public class AllocationGateTests(ITestOutputHelper log)
             Intent = intent
         };
 
+    /// <summary>
+    /// Lets nobody past <paramref name="on"/> until <paramref name="n"/> callers are standing at it —
+    /// <c>RiskGateTests</c>' barrier, and the only honest way to state "these two placements were in
+    /// flight together". It is at the QUOTE because that is the last call on the placement path both
+    /// callers make OUTSIDE the dispatch gate: hold them anywhere inside it and the second never
+    /// arrives, because the first is holding the gate (<see cref="RecordingConnector.Quote"/>).
+    /// </summary>
+    static Func<RecordingConnector.HeldCall, Task> Barrier(int n, RecordingConnector.HeldCall on)
+    {
+        var arrived = 0;
+        var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        return async kind =>
+        {
+            if (kind != on) return;
+            if (Interlocked.Increment(ref arrived) >= n) open.TrySetResult();
+            await open.Task;
+        };
+    }
+
     static async Task<string> SwallowAsync(Task<ExecutionRequest> t)
     {
         try { var r = await t; return $"ok — {r.State}"; }
@@ -211,6 +230,212 @@ public class AllocationGateTests(ITestOutputHelper log)
 
         Assert.Null(stored.StrategyVersionId);
         Assert.Null(stored.AllocationId);
+        Assert.Single(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    // ---- item 4: the ceiling, inside the dispatch gate -----------------------------------------
+
+    /// <summary>
+    /// AN ORDER TEN TIMES THE ALLOCATION IS REFUSED AND NOTHING IS SENT.
+    ///
+    /// <para>RED before this unit: <c>ok — FILLED</c>, one order at the broker, one open position of
+    /// ten against an allocation of one. Every per-order limit on this gateway passed it — the
+    /// quantity cap is 100 here and the value cap is a hundred million — because no limit anywhere
+    /// knew what a promoted version had been given.</para>
+    ///
+    /// <para>The refusal is DEFINITE: nothing left the process, so the record stays
+    /// <see cref="ExecutionState.CREATED"/> and is not flagged for reconciliation. Actually it stays
+    /// unwritten — the gate refuses BEFORE <c>TryCreate</c>, so there is no row at all, which is the
+    /// shape the three gates beside it have.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_order_ten_times_its_allocation_is_refused_and_nothing_is_sent()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        Assert.True(gw.Allocate(version, 1m, null, "test").Ok);
+
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-over", By(version, qty: 10m)));
+
+        log.WriteLine($"outcome              : {outcome}");
+        log.WriteLine($"record               : {gw.GetRequest("alloc-over")?.State.ToString() ?? "none"}");
+        log.WriteLine($"connector place calls: {conn.Places}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_EXCEEDED.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
+        Assert.Empty(conn.Broker.Orders);
+        Assert.Null(gw.GetRequest("alloc-over"));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// THE MUTANT: THE CEILING EVALUATED ABOVE THE AWAITED READS.
+    ///
+    /// <para>Two placements of one contract each, against an allocation of one, barriered at the quote
+    /// so that neither is past the risk check while the other is still before it. The ceiling belongs
+    /// inside the dispatch gate with the position reading, where the second caller sees what the first
+    /// one did; decided out there, each sees the same empty account, each passes a ceiling of one and
+    /// both go out — <c>connector place calls: 2</c>, two orders at the broker, a version holding
+    /// twice what the owner gave it. It is the shape of REVIEW 2026-09-05b, Codex F1.</para>
+    /// </summary>
+    [Fact]
+    public async Task Two_placements_in_flight_together_cannot_both_pass_one_allocation()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        Assert.True(gw.Allocate(version, 1m, null, "test").Ok);
+        conn.Seam = Barrier(2, RecordingConnector.HeldCall.Quote);
+
+        var first = gw.PlaceAsync(new AgentContext("a"), "alloc-race-1", By(version));
+        var second = gw.PlaceAsync(new AgentContext("a"), "alloc-race-2", By(version));
+        var outcomes = await Task.WhenAll(SwallowAsync(first), SwallowAsync(second));
+
+        log.WriteLine($"allocation           : 1");
+        log.WriteLine($"first                : {outcomes[0]}");
+        log.WriteLine($"second               : {outcomes[1]}");
+        log.WriteLine($"connector place calls: {conn.Places}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.Equal(1, conn.Places);
+        Assert.Single(conn.Broker.Orders);
+        Assert.Contains(outcomes, o =>
+            o.StartsWith(ErrorCode.ALLOCATION_EXCEEDED.ToString(), StringComparison.Ordinal));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A VERSION WITH NO CAPITAL BEHIND IT PLACES NOTHING. It is promoted — the referee said yes — and
+    /// that is not permission to trade the owner's money: <c>docs/COUNCIL.md</c>:135-136 puts forward
+    /// evidence before capital, and the allocation is the owner's separate act.
+    /// </summary>
+    [Fact]
+    public async Task An_order_naming_a_version_with_no_allocation_is_refused()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-nil", By(version)));
+
+        log.WriteLine($"outcome              : {outcome}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
+        Assert.Null(gw.GetRequest("alloc-nil"));
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AN ALLOCATION WHOSE PROMOTION HAS BEEN WITHDRAWN AUTHORISES NOTHING, AND THE ROW IS STILL THERE.
+    ///
+    /// <para>The standing is computed at the moment the order arrives, never copied onto the allocation
+    /// when it was written: the dataset the verdict rested on is rejected after the capital was
+    /// allocated, and the very next order is refused. <c>docs/COUNCIL.md</c>:35 — a changed assumption
+    /// invalidates the evidence that rested on it.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_allocation_whose_promotion_no_longer_stands_authorises_nothing()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        Assert.True(gw.Allocate(version, 5m, null, "test").Ok);
+        await gw.PlaceAsync(new AgentContext("a"), "alloc-live", By(version));
+        Assert.Single(conn.Placed);
+
+        new DatasetStore(db).Reject(1, "a raw archive file changed under it");
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-dead", By(version)));
+
+        log.WriteLine($"outcome after reject : {outcome}");
+        log.WriteLine($"allocation row still : {gw.Allocations.For(version).Count}");
+        log.WriteLine($"connector place calls: {conn.Places}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_NONE.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Single(gw.Allocations.For(version));
+        Assert.Equal(1, conn.Places);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A CLOSE ALWAYS PASSES THE CEILING, and is still attributed to the version that placed it. A
+    /// ceiling that stopped a position being flattened would be a trap, and the day it fired is the day
+    /// the owner most needs out — the loss budget's reason, applied to capital.
+    /// </summary>
+    [Fact]
+    public async Task A_close_passes_the_ceiling_and_is_still_attributed()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        var allocated = gw.Allocate(version, 1m, null, "test");
+        Assert.True(allocated.Ok, allocated.Why);
+        await gw.PlaceAsync(new AgentContext("a"), "alloc-open", By(version));
+
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-close",
+            By(version, qty: 1m, side: ConnectorSdk.OrderSide.Sell, intent: ConnectorSdk.OrderIntent.Close)));
+        var stored = gw.GetRequest("alloc-close")!;
+
+        log.WriteLine($"outcome              : {outcome}");
+        log.WriteLine($"allocation_id        : {stored.AllocationId ?? "none"}");
+        log.WriteLine($"connector place calls: {conn.Places}");
+
+        Assert.StartsWith("ok", outcome, StringComparison.Ordinal);
+        Assert.Equal(allocated.Allocation!.Id, stored.AllocationId);
+        Assert.Equal(2, conn.Places);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// THE VALUE CEILING, WHERE THE OWNER SET ONE, against the same reference price the notional cap
+    /// multiplies. A ceiling of one unit of the account's currency refuses an order of any size at any
+    /// price this simulator quotes, which is what makes the assertion independent of the quote.
+    /// </summary>
+    [Fact]
+    public async Task An_order_over_the_allocations_value_ceiling_is_refused()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        Assert.True(gw.Allocate(version, 5m, 1m, "test").Ok);
+
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-value", By(version)));
+
+        log.WriteLine($"outcome              : {outcome}");
+        log.WriteLine($"orders at the broker : {conn.Broker.Orders.Count}");
+
+        Assert.StartsWith(ErrorCode.ALLOCATION_EXCEEDED.ToString(), outcome, StringComparison.Ordinal);
+        Assert.Empty(conn.Placed);
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND A GENEROUS VALUE CEILING LETS THE SAME ORDER THROUGH, which is what makes the one above a
+    /// ceiling rather than a refusal of everything.
+    /// </summary>
+    [Fact]
+    public async Task An_order_inside_both_ceilings_is_sent()
+    {
+        var (gw, conn, db) = await Ready();
+        using var _1 = db;
+
+        var version = PromotedVersion(db);
+        Assert.True(gw.Allocate(version, 5m, 50_000_000m, "test").Ok);
+
+        var outcome = await SwallowAsync(gw.PlaceAsync(new AgentContext("a"), "alloc-inside", By(version)));
+
+        log.WriteLine($"outcome              : {outcome}");
+
+        Assert.StartsWith("ok", outcome, StringComparison.Ordinal);
         Assert.Single(conn.Placed);
         await gw.DisposeAsync();
     }

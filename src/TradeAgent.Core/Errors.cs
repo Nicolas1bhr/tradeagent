@@ -69,6 +69,20 @@ public enum ErrorCode
     // not help. The repair is to decide again on the bar that has just closed, which is a thing the
     // runner does by itself and the owner does not have to do anything about.
     DECISION_EXPIRED,
+    // THE CAPITAL GATE, AND IT IS TWO CODES BECAUSE THE TWO HAVE DIFFERENT REPAIRS.
+    //
+    // ALLOCATION_NONE: this version has no capital behind it at all — nobody allocated any, or the
+    // promotion the allocation rested on no longer stands. A smaller order does not help and nothing
+    // the caller can do helps: the owner allocates capital, in the app, and no verb asks for it.
+    //
+    // ALLOCATION_EXCEEDED: capital IS allocated and this order would take the version past it. A
+    // smaller order genuinely does help, which is the whole difference, and it is the same
+    // distinction LOSS_BUDGET_REACHED makes against RISK_LIMIT_EXCEEDED.
+    //
+    // Neither is RISK_LIMIT_EXCEEDED, which is about a limit the owner set on EVERY order: these are
+    // about what one promoted strategy version may hold, and an agent told the wrong one would go
+    // looking in Settings for a number that is not there.
+    ALLOCATION_NONE, ALLOCATION_EXCEEDED,
     INVALID_REQUEST, GATEWAY_ALREADY_RUNNING, ILLEGAL_STATE_TRANSITION,
     UPDATE_FAILED, UPDATE_INTEGRITY_FAILED, UPDATE_INSTALL_IN_PROGRESS,
     // An override file EXISTS and could not be parsed. Their own codes because the codes that used
@@ -618,6 +632,12 @@ public static class Errors
         // this is the software doing exactly what the promoted program asked for. Nothing for the
         // owner to press: the runner decides again on the next closed bar without being told to.
         [ErrorCode.DECISION_EXPIRED]               = ("The trading signal behind this order was older than the strategy itself allows, so it was not sent.", "Nothing was sent and your position is untouched. The strategy decides again when the next bar closes; there is nothing for you to do.", false),
+        // THE TWO CAPITAL SENTENCES, AND THE OWNER IS THE ONLY PERSON WHO CAN ANSWER EITHER. Nothing
+        // the AI does changes the first: capital is allocated on the Safety page, by the owner, and no
+        // command anywhere asks for it. The second is a ceiling doing its job and needs nothing done at
+        // all, which the sentence says so that a working limit does not read as a fault.
+        [ErrorCode.ALLOCATION_NONE]                = ("The strategy that tried to place this order has no capital behind it, so nothing was sent.", "Nothing was sent and your positions are untouched. Allocate capital to that version on the Safety page — and if it used to have some, TradeAgent has withdrawn the evidence its promotion rested on, which the Capital card names.", false),
+        [ErrorCode.ALLOCATION_EXCEEDED]            = ("This order would take a strategy past the capital you allocated to it, so it was not sent.", "Nothing was sent and your positions are untouched. There is nothing to do: the strategy may trade again once it is holding less, or you can raise its allocation on the Safety page.", false),
         // THE OTHER HALF OF POSITION_MOVED, and the owner has to be told which half this is. Above:
         // the position already changed. Here: TradeAgent is holding an earlier order on the same
         // instrument that it never got an answer for, and that order can still fill and move the

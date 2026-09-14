@@ -1399,7 +1399,13 @@ public sealed class TradingGateway : IAsyncDisposable
         throw new GatewayDeniedException(code ?? ErrorCode.TRADING_PERMISSION_UNAVAILABLE, reason ?? "execution is not available");
     }
 
-    async Task RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
+    /// <summary>
+    /// Every per-order limit, and it ANSWERS WITH the reference price it established. The value the
+    /// notional cap multiplied is the one the allocation's own value ceiling multiplies inside the
+    /// dispatch gate (<see cref="AllocationCeilingOrThrow"/>), so the two are stated against one
+    /// price rather than two reads that can disagree.
+    /// </summary>
+    async Task<decimal> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
     {
         var r = Settings.Risk;
 
@@ -1448,6 +1454,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                     $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
         }
+
+        return reference.Value;
     }
 
     /// <summary>
@@ -1568,10 +1576,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// still reads <c>promoted</c>: a version whose evidence TradeAgent has withdrawn is attributed
     /// nothing, because an allocation id on a sent order is a statement that the order was covered.</para>
     ///
-    /// <para>Read inside the dispatch gate, with the position reading the gates beside it use, and the
-    /// answer is written onto the record at create. A ledger this build cannot read answers null and
-    /// says so in the engineering log: an order attributed to an allocation nobody could look up is
-    /// worse than one honestly attributed to none.</para>
+    /// <para>Read inside the dispatch gate, with the position reading the gates beside it use.
+    /// <see cref="AllocationCeilingOrThrow"/> is what turns a null into a refusal; this is the read
+    /// alone, so a ledger that cannot be read is one place rather than two. A failure answers null and
+    /// says so in the engineering log, and the gate above then refuses: an order attributed to an
+    /// allocation nobody could look up is worse than one refused.</para>
     /// </summary>
     AllocationRow? AllocationFor(PlaceIntent intent)
     {
@@ -1588,6 +1597,123 @@ public sealed class TradingGateway : IAsyncDisposable
             return null;
         }
     }
+
+    /// <summary>
+    /// THE CAPITAL CEILING — <c>docs/COUNCIL.md</c> rule 1's capital gate, decided where the other
+    /// three position gates are and on the reading they share.
+    ///
+    /// <para><b>What it bounds is EXPOSURE, not one order.</b> A per-order cap is already
+    /// <see cref="RiskPolicy.MaxOrderQuantity"/>, and it bounds nothing a strategy can do over a
+    /// minute: an allocation of one contract that admitted one-contract orders all afternoon would be
+    /// a number with no meaning. So the arithmetic is what this version would be HOLDING — the
+    /// position the account reports on the instrument, plus every opening order of this version the
+    /// store still calls open, plus this one — against <c>max_quantity</c>, and the same figure
+    /// multiplied out against <c>max_notional</c> where the owner set one.</para>
+    ///
+    /// <para><b>Which is why it is inside the dispatch gate.</b> Evaluated in
+    /// <see cref="RiskCheckOrThrow"/>, above the awaited reads, two placements in flight together each
+    /// read the same empty account, each pass a ceiling of one, and both go out — the shape the
+    /// open-position cap had before REVIEW 2026-09-05b, Codex F1, and the mutant
+    /// <c>AllocationGateTests</c> measures with two callers barriered at the quote.</para>
+    ///
+    /// <para><b>A position is not attributable to a version, and this counts it anyway.</b> The
+    /// platform reports one number per instrument and says nothing about who opened it, so a position
+    /// the owner opened by hand counts against a strategy trading the same instrument. That is
+    /// conservative in the one direction that is safe — it can only refuse — and it is a choice
+    /// `docs/CONTRACTS.md` states rather than a fact the code discovered.</para>
+    ///
+    /// <para><b>A close and a reduce always pass</b>, for the loss budget's reason
+    /// (<see cref="LossBudgetOrThrow"/>): a ceiling that stopped an account being flattened would be a
+    /// trap, and the day it fired is the day the owner most needs out. They are still ATTRIBUTED — the
+    /// allocation the version stands on goes onto the record — because a close a strategy placed is
+    /// still that strategy's operation.</para>
+    ///
+    /// <para><b>An order naming no version is not gated at all.</b> The reading
+    /// <see cref="RefuseAStaleDecisionOrThrow"/> takes of a null decision: the owner's own buy and the
+    /// emergency press have no allocation to be charged against, and refusing them would be this gate
+    /// inventing a rule nobody declared. The honest limit that follows is stated in the unit's brief —
+    /// no runner emits a live or paper intent yet, so what this ceilings is a deployment that does not
+    /// exist, and the gate is what will be there when it does.</para>
+    /// </summary>
+    async Task<AllocationRow?> AllocationCeilingOrThrow(PlaceIntent intent,
+        IReadOnlyList<PositionInfo> positions, decimal reference, string requestId, CancellationToken ct)
+    {
+        if (intent.StrategyVersionId is not { Length: > 0 } version) return null;
+
+        var allocation = AllocationFor(intent);
+
+        // A CLOSE OR A REDUCE IS ATTRIBUTED AND NEVER REFUSED, whether or not anything stands.
+        if (!CanIncreaseExposure(intent, positions)) return allocation;
+
+        if (allocation is null)
+            throw new GatewayDeniedException(ErrorCode.ALLOCATION_NONE,
+                $"strategy version {Short(version)} has no capital allocated to it that stands right now, "
+                + "so nothing was sent. Capital is allocated by the account owner in TradeAgent, on the "
+                + "Safety page; there is no command that asks for it, and an allocation whose promotion "
+                + "has been withdrawn stops standing the moment it is withdrawn.");
+
+        var exposure = Math.Abs(positions.FirstOrDefault(p =>
+                           string.Equals(p.Symbol, intent.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m)
+                       + OpeningQuantityOf(version, requestId)
+                       + intent.Quantity;
+
+        if (exposure > allocation.MaxQuantity)
+            throw new GatewayDeniedException(ErrorCode.ALLOCATION_EXCEEDED,
+                $"strategy version {Short(version)} would be holding {AllocationRow.Num(exposure)} of "
+                + $"{intent.Symbol} and the capital allocated to it is {AllocationRow.Num(allocation.MaxQuantity)}, "
+                + "so nothing was sent. Closing and reducing are still allowed.");
+
+        if (allocation.MaxNotional is not { } cap || cap <= 0m) return allocation;
+
+        var value = exposure * reference * await ContractSizeOrThrow(intent.Symbol, ct);
+        if (value > cap)
+            throw new GatewayDeniedException(ErrorCode.ALLOCATION_EXCEEDED,
+                $"strategy version {Short(version)} would be holding {Labels.Money(value, allocation.Currency)} "
+                + $"of {intent.Symbol} and the capital allocated to it is {Labels.Money(cap, allocation.Currency)}, "
+                + "so nothing was sent. Closing and reducing are still allowed.");
+
+        return allocation;
+    }
+
+    /// <summary>
+    /// HOW MUCH THIS VERSION ALREADY HAS ON THE WIRE — every opening placement the store still calls
+    /// open that names it, excluding this request.
+    ///
+    /// <para>The version is read from the request's own COLUMN and never from the parameters blob, for
+    /// the reason the column exists at all (<see cref="ExecutionRequest.StrategyVersionId"/>). The
+    /// QUANTITY is read from the blob, because that is where it is and it is not an attribution — and
+    /// a row whose intent cannot be read at all makes this version's exposure UNKNOWN, which is
+    /// refused rather than counted as zero: an unreadable order is not evidence that nothing is out
+    /// there. <see cref="ErrorCode.RISK_CHECK_UNAVAILABLE"/> rather than an allocation code, because no
+    /// ceiling was breached — TradeAgent could not work out whether one would be.</para>
+    /// </summary>
+    decimal OpeningQuantityOf(string version, string requestId)
+    {
+        var total = 0m;
+        foreach (var work in _requests.Open())
+        {
+            if (work.Intent != RequestIntent.PLACE) continue;
+            if (!string.Equals(work.StrategyVersionId, version, StringComparison.Ordinal)) continue;
+            if (string.Equals(work.RequestId, requestId, StringComparison.Ordinal)) continue;
+
+            PlaceIntent? open;
+            try { open = Json.Read<PlaceIntent>(work.ParametersJson); }
+            catch (Exception) { open = null; }
+
+            if (open is null)
+                throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                    $"{work.RequestId} is an open order of strategy version {Short(version)} whose own "
+                    + "request TradeAgent cannot read, so what that version is holding cannot be worked "
+                    + "out against its allocation and nothing was sent.");
+
+            if (open.Intent == OrderIntent.Close) continue;
+            total += open.Quantity;
+        }
+        return total;
+    }
+
+    /// <summary>An id in the twelve characters every surface in this product shortens one to.</summary>
+    static string Short(string id) => id.Length <= 12 ? id : id[..12];
 
     /// <summary>
     /// THE LOSS BUDGETS, REFUSING NEW RISK — the only limits in this class that are about what has
@@ -2235,7 +2361,11 @@ public sealed class TradingGateway : IAsyncDisposable
 
         AuthorizeOrThrow(ctx);
         var account = await AccountAsync(ct) ?? throw new GatewayDeniedException(ErrorCode.ACCOUNT_NOT_FOUND, "no account");
-        await RiskCheckOrThrow(intent, account, ct);
+        // THE PRICE THE RISK CHECK ALREADY TRUSTED, CARRIED RATHER THAN READ AGAIN. The allocation's
+        // value ceiling multiplies the same reference the notional cap does, so the two limits are
+        // stated in one number; a second quote read inside the gate would be a second answer to the
+        // same question and an awaited round trip in the one place that must stay short.
+        var reference = await RiskCheckOrThrow(intent, account, ct);
 
         var record = new ExecutionRequest
         {
@@ -2284,12 +2414,15 @@ public sealed class TradingGateway : IAsyncDisposable
 
             await LossBudgetOrThrow(intent, account, positions, ct);
 
-            // AND WHICH ALLOCATION THIS ORDER IS BEING PLACED UNDER, onto the record at create. See
-            // AllocationFor: it is read HERE, beside the three gates above, because the next unit's
-            // ceiling is a question about the POSITION and a second read to ask it could disagree with
-            // this one. Assigned rather than constructed with, because the standing is only known
-            // inside this gate; no store method writes the column again.
-            record.AllocationId = AllocationFor(intent)?.Id;
+            // A FOURTH GATE ON THE SAME READING, AND THE ONE THAT ANSWERS WITH A ROW. See
+            // AllocationCeilingOrThrow: what a promoted version may be HOLDING is a question about the
+            // position, so it is decided here with the other three rather than out there with the
+            // reads, where two callers arriving together would each see the same empty account and
+            // both pass one allocation. The allocation it was decided against goes onto the record at
+            // create — assigned rather than constructed with, because the standing is only known
+            // inside this gate, and no store method writes the column again.
+            record.AllocationId =
+                (await AllocationCeilingOrThrow(intent, positions, reference, requestId, ct))?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
