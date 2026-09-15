@@ -2619,6 +2619,36 @@ public sealed class TradingGateway : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// THE BREACH THAT LANDED AFTER THIS PROPOSAL WAS WRITTEN, or null because none did.
+    ///
+    /// <para>Both scopes are asked and the LATER one wins: a request for ES is invalidated by the
+    /// account's own closure and by ES's, and either one means the same thing — this app closed
+    /// something the proposal was sized against.</para>
+    ///
+    /// <para>It is compared to <c>ConfirmedAt</c> and NEVER to the instant the closure became
+    /// liftable. A proposal written DURING a closure was written by an AI that could already see the
+    /// closure on its status, against the book as the flatten left it; nothing about it is stale,
+    /// and refusing it would be refusing work the closure never invalidated.</para>
+    ///
+    /// <para>A closure that has since been reopened still counts, which is the whole point: the
+    /// receipt says the account may trade again, not that the flatten un-happened.</para>
+    /// </summary>
+    LossBreachRecord? BreachAfterTheProposal(ExecutionRequest stored, PlaceIntent? intent)
+    {
+        var found = After(LatestBreach(stored.AccountId, null));
+
+        if (intent?.Symbol is { Length: > 0 } symbol
+            && After(LatestBreach(stored.AccountId, symbol)) is { } onSymbol
+            && (found is null || onSymbol.ConfirmedAt > found.ConfirmedAt))
+            found = onSymbol;
+
+        return found;
+
+        LossBreachRecord? After(LossBreachRecord? rec) =>
+            rec is not null && rec.ConfirmedAt > stored.CreatedAt ? rec : null;
+    }
+
     /// <summary>The positions one closure is about: the whole book, or just its own instrument.</summary>
     static IEnumerable<PositionInfo> InScope(LossBreachRecord breach, IReadOnlyList<PositionInfo> positions) =>
         positions.Where(p => breach.Symbol is null
@@ -3888,6 +3918,50 @@ public sealed class TradingGateway : IAsyncDisposable
                 throw new GatewayDeniedException(ErrorCode.APPROVAL_EXPIRED, untrustworthy
                     ? $"this order is recorded {(-age).TotalMinutes:0} minutes in the future, so its age cannot be trusted; it has been declined, and the AI has to propose it again"
                     : $"this order waited {age.TotalMinutes:0} minutes for approval and the limit is {minutes}; it has been declined, and the AI has to propose it again");
+            }
+
+            // A PROPOSAL THAT PREDATES A LOSS-BUDGET BREACH DIES WITH IT, AND STAYS DEAD AFTER THE
+            // REOPEN.
+            //
+            // A parked proposal is a question about the account as it WAS: this size, against that
+            // position, at that price. A confirmed breach then cancels every working order that
+            // could add risk and closes what is open — so the book it was sized from is not merely
+            // older, it is gone, and this app is what removed it. Approving it afterwards puts on a
+            // position nobody has looked at since, against an account that no longer resembles the
+            // one the AI was answering about.
+            //
+            // It is refused HERE, above the mode and the budgets, and the request is DECLINED rather
+            // than left parked, for two reasons. While the scope was closed the answer used to be
+            // LOSS_BUDGET_REACHED — which says "the scope is shut" and leaves a button on the
+            // Dashboard that will never do anything. And once a closure can END (U-reopen-1) that
+            // refusal simply stops, and the stale proposal would go through a day late. Its own code
+            // says the one thing that is actually true and the one repair that works: ask the AI to
+            // propose it again against the account as it is now.
+            //
+            // The platform is compared first, because a breach row is filed under the ACCOUNT id
+            // (U-flatten-1's key, unchanged) and an account id is unique only within a platform.
+            if (string.Equals(Connector.Id, stored.ConnectorId, StringComparison.Ordinal)
+                && BreachAfterTheProposal(stored, intent) is { } breach)
+            {
+                var sentence =
+                    $"this order was proposed at {stored.CreatedAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC, before your "
+                    + $"loss budget was reached at {breach.ConfirmedAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC"
+                    + $"{(breach.Symbol is null ? "" : $" on {breach.Symbol}")}. TradeAgent closed the account to "
+                    + "new risk after that and closed what was open, so the position it was sized against is no "
+                    + "longer there. It has been declined, and the AI has to propose it again.";
+
+                _requests.Transition(requestId, ExecutionState.AWAITING_APPROVAL, ExecutionState.CANCELLED,
+                    error: $"proposed before the loss budget was reached ({LossBreach.KeyFor(breach)})");
+                _log.Activity($"{what} was declined: it was proposed before your loss budget was reached and "
+                              + "TradeAgent has closed the account since. Nothing was sent; the AI can propose it "
+                              + "again.", "warn");
+                _log.Engineering("Gateway", "approval_predates_loss_breach", "warn", requestId: requestId,
+                    metadataJson: Json.Write(new
+                    {
+                        breach = LossBreach.KeyFor(breach), breach.ConfirmedAt, stored.CreatedAt
+                    }));
+                StateChanged?.Invoke();
+                throw new GatewayDeniedException(ErrorCode.APPROVAL_PREDATES_LOSS_BREACH, sentence);
             }
 
             // Authorized as the AI, never as the operator. A parked record always carries the

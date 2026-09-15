@@ -14,6 +14,14 @@ public enum ErrorCode
     // Authority / policy codes (TradeAgent-owned, not in the original brief).
     AI_TRADING_STOPPED, LIVE_NOT_ACTIVATED, MODE_FORBIDS_EXECUTION, MODE_ACCOUNT_MISMATCH,
     APPROVAL_REQUIRED, APPROVAL_EXPIRED, RISK_LIMIT_EXCEEDED, RISK_CHECK_UNAVAILABLE, TRADING_PAUSED_UNRECONCILED,
+    // A PARKED PROPOSAL THAT PREDATES A LOSS-BUDGET BREACH DIES WITH IT, and it needs its own code
+    // because the three neighbouring ones each tell the owner to do something different. It is not
+    // APPROVAL_EXPIRED: nothing waited too long, and the AI may well be right to propose it again in
+    // a minute. It is not LOSS_BUDGET_REACHED: that says the scope is shut, and by the time this can
+    // be read the scope may be open again. What it says is that the ACCOUNT THIS ORDER WAS SIZED
+    // AGAINST no longer exists — TradeAgent closed the book after the proposal was written — so
+    // approving it would be answering a question about a position that has been closed.
+    APPROVAL_PREDATES_LOSS_BREACH,
     // Its own code rather than RISK_LIMIT_EXCEEDED, because the two say different things to whoever
     // reads them: a breached ORDER limit is answered by asking for a smaller order, and a reached
     // LOSS budget is answered by not asking again today. An agent told the first when the second is
@@ -651,6 +659,10 @@ public static class Errors
         // owner is being told is that this one is the exception and may still be open.
         [ErrorCode.CLOSE_UNRESOLVED_ON_INSTRUMENT] = ("One instrument was left alone by the emergency press: TradeAgent has an earlier order on it that it could not confirm and could not stop, so it sent nothing rather than close on top of it. That position may still be open.", "Every other position was closed. Open ATAS and look at this instrument, confirm the unconfirmed order on the Dashboard, then press Close all positions again.", false),
         [ErrorCode.APPROVAL_EXPIRED]               = ("An order the AI proposed waited too long for your approval and was declined.", "Nothing was sent. If you still want it, ask the AI to propose it again.", false),
+        // NOT "you waited too long" and NOT "the budget is reached". The proposal was written against
+        // a book TradeAgent has since closed for you, so approving it would put on a position sized
+        // from an account that is gone. The repair is the AI's, and it takes one turn.
+        [ErrorCode.APPROVAL_PREDATES_LOSS_BREACH]  = ("An order the AI proposed BEFORE your loss budget was reached was declined. TradeAgent closed the account to new risk after that, and closed what was open, so the position this order was sized against is no longer there.", "Nothing was sent. If you still want it, ask the AI to propose it again against the account as it is now.", false),
         [ErrorCode.RISK_LIMIT_EXCEEDED]            = ("The order was refused because it breaks a safety limit you set.", "Change the limit in Settings if it is too strict.", false),
         // NOT the same sentence as a breached order limit, and not the same repair. Nothing about
         // this order was wrong; the day, or the position, is already down as far as the owner said
