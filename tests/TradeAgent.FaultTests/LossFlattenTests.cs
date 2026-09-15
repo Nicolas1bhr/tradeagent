@@ -309,6 +309,170 @@ public class LossFlattenTests(ITestOutputHelper log)
 
         await gw.DisposeAsync();
     }
+
+    /// <summary>
+    /// A FLATTEN THE APP CAN PROVE RESOLVES ITSELF, AND TOMORROW STARTS CLEAN (item 3).
+    ///
+    /// <para>Every row a press writes is written FLAGGED, which pauses all order flow — that is what
+    /// makes "a press ends when a person has read them" true, and it is right for a press. It cannot
+    /// be right for a flatten nobody pressed: an app that closed the book correctly and then paused
+    /// itself until somebody clicked would have made every breach a manual outage, and the day after
+    /// would open refused.</para>
+    ///
+    /// <para>So the app resolves what it can PROVE: the close is FILLED and the position READS BACK
+    /// flat. Both halves, on a fresh read. Nothing else clears a flag, and a person's confirmation
+    /// still clears anything the app could not.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_all_filled_flatten_resolves_itself_and_the_next_day_opens_clean()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "es", TestEnv.Buy("ES", 2m));
+        await Breach(gw, conn, clock);
+
+        var flatten = gw.FlattenToday(account);
+        Assert.NotNull(flatten);
+        Assert.True(flatten.Flat);
+        Assert.All(flatten.Legs, l => Assert.True(l.Resolved));
+        log.WriteLine($"unconfirmed work      : {gw.HasUnconfirmedWork()}");
+        Assert.False(gw.HasUnconfirmedWork());
+
+        // THE NEXT UTC DAY. The closure's key carries the day, so tomorrow asks for a key nothing
+        // wrote — and the rows this flatten left behind must not be what refuses the first order.
+        conn.Broker.PriceOffset = 0m;
+        clock.Advance(TimeSpan.FromDays(1));
+        await gw.RefreshHealthAsync();
+
+        // What DOES still refuse it is the figure, because the simulator stamps its fills with the
+        // machine's wall clock rather than with this test's, so yesterday's realised loss is still in
+        // the ledger's "today". That is the fixture's limit and not the product's: the verdict this
+        // test is about is WHICH refusal, and TRADING_PAUSED_UNRECONCILED is the one that must be gone.
+        var figure = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "tomorrow", TestEnv.Buy("ES")));
+        log.WriteLine($"tomorrow's refusal    : {figure.Code}");
+        Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, figure.Code);
+        Assert.NotEqual(ErrorCode.TRADING_PAUSED_UNRECONCILED, figure.Code);
+
+        // And with a budget that today's figure is inside, the first order of the new day goes out.
+        gw.Update(x => x.Risk.MaxDailyLoss = 100_000m);
+        var tomorrow = await gw.PlaceAsync(new AgentContext("a"), "tomorrow-2", TestEnv.Buy("ES"));
+        log.WriteLine($"tomorrow's first order: {tomorrow.State}");
+        Assert.Equal(ExecutionState.FILLED, tomorrow.State);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// TERMINAL IS NOT FLATNESS (item 3, the read-back).
+    ///
+    /// <para>A close the platform REJECTED is terminal, and it closed nothing. So is a cancelled one.
+    /// Resolving on terminality alone would clear the flag, lift the pause and write a record saying
+    /// the app had dealt with the breach, over a position that is exactly where it was — and the only
+    /// thing that would have noticed is the owner, later.</para>
+    ///
+    /// <para>The state here is UNKNOWN rather than REJECTED, and that is the shared close path being
+    /// conservative rather than this unit being vague: it catches a <c>ConnectorRejectedException</c>
+    /// in the same arm as a timeout and records an indefinite outcome, so a definite refusal of a
+    /// close is treated as "we do not know". That is the safe direction and it is not this unit's to
+    /// change. The REJECTED half of the same rule is held by
+    /// <see cref="A_position_that_shrinks_before_the_wire_is_not_closed_at_the_size_that_was_captured"/>,
+    /// whose leg is terminal, failed, and left unresolved over an open position.</para>
+    ///
+    /// <para>The second half of the answer is a FRESH read of the position, and it is the half that
+    /// cannot be argued with. Here it says 2, so nothing resolves: the row keeps the flag it was
+    /// written with, order flow stays paused, and the record names what is still open.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_close_with_no_confirmed_outcome_does_not_resolve_while_the_position_is_open()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "es", TestEnv.Buy("ES", 2m));
+
+        // A DEFINITE refusal of the close — the one thing safety rule 3 lets us record as one.
+        conn.Faults.RejectNext = 1;
+        await Breach(gw, conn, clock);
+
+        var flatten = gw.FlattenToday(account);
+        Assert.NotNull(flatten);
+        var leg = Assert.Single(flatten.Legs);
+        log.WriteLine($"leg                   : {leg.State}, position now {leg.PositionAfter}, resolved {leg.Resolved}");
+        log.WriteLine($"why                   : {flatten.Why}");
+        log.WriteLine($"residual              : [{string.Join(", ", flatten.Residual)}]");
+
+        Assert.Equal(nameof(ExecutionState.UNKNOWN), leg.State);
+        Assert.Equal(2m, leg.PositionAfter);
+        Assert.False(leg.Resolved);
+        Assert.False(flatten.Flat);
+        Assert.Contains("ES 2", flatten.Residual);
+
+        // THE ROW KEEPS ITS FLAG AND ORDER FLOW IS PAUSED, exactly as an owner's press pauses it.
+        Assert.True(gw.Requests.Get(leg.RequestId)!.NeedsReconciliation);
+        Assert.True(gw.HasUnconfirmedWork());
+        var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "after", TestEnv.Buy("NQ")));
+        log.WriteLine($"next order            : {denied.Code}");
+        Assert.Equal(ErrorCode.TRADING_PAUSED_UNRECONCILED, denied.Code);
+
+        await gw.DisposeAsync();
+    }
+
+    /// <summary>
+    /// THE OUTCOME IS ITS OWN RECORD AND THE BREACH ROW IS NEVER TOUCHED (item 3, the record).
+    ///
+    /// <para>The breach row is the MEASUREMENT — what two agreeing pulls saw, with the marks they saw
+    /// it at. This is the CLAIM about what was then done. Keeping them apart is the same rule the
+    /// material ledger follows: a record the observed party can rewrite is not a record. So the
+    /// breach's bytes are compared before and after, and the flatten's own row is written once — a
+    /// second pass of the watch adds nothing and sends nothing.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_flatten_is_written_once_beside_the_breach_and_never_onto_it()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "es", TestEnv.Buy("ES", 2m));
+
+        conn.Broker.PriceOffset = -20m;
+        clock.Advance(Tick);
+        await gw.RefreshHealthAsync();
+        clock.Advance(Tick);
+        await gw.LossWatchAsync();
+
+        var breachKey = LossBreach.DayKey(account, Noon);
+        var breachAfterTheFlatten = db.GetKv(breachKey);
+        var flatten = gw.FlattenToday(account);
+        Assert.NotNull(flatten);
+        Assert.Equal(breachKey, flatten.BreachKey);
+        Assert.Equal(conn.Id, flatten.Connector);
+        Assert.Equal(account, flatten.Account);
+        log.WriteLine($"breach key            : {breachKey}");
+        log.WriteLine($"flatten record        : loss_flatten:{conn.Id}:{account}:{flatten.Day}");
+
+        // A SECOND PASS SENDS NOTHING AND REWRITES NOTHING.
+        var closes = conn.Closes;
+        clock.Advance(Tick);
+        await gw.LossWatchAsync();
+        clock.Advance(Tick);
+        await gw.LossWatchAsync();
+
+        log.WriteLine($"closes                : {closes} -> {conn.Closes}");
+        Assert.Equal(closes, conn.Closes);
+        Assert.Equal(breachAfterTheFlatten, db.GetKv(breachKey));
+        Assert.Equal(flatten.FinishedAt, gw.FlattenToday(account)!.FinishedAt);
+
+        // The breach record carries none of the flatten's fields: they are two rows on purpose.
+        Assert.DoesNotContain("Flat", breachAfterTheFlatten!, StringComparison.Ordinal);
+
+        await gw.DisposeAsync();
+    }
 }
 
 /// <summary>
