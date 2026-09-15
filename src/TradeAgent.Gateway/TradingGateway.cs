@@ -2446,6 +2446,59 @@ public sealed class TradingGateway : IAsyncDisposable
         if (at < eligible)
             return $"the closure runs until {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC";
 
+        // THE READING HAS TO BELONG TO THE CONNECTION IT WAS TAKEN ON. A reconnect between the pull
+        // and this line means the gateway was not being told about the account for a while, so the
+        // positions in hand are a memory of a book rather than a reading of it — the rule the
+        // breach's own marks follow, and here it is the difference between "flat" and "was flat".
+        if (epoch != _connectionEpoch)
+            return "your platform reconnected while TradeAgent was checking, so what it has read of "
+                   + "your book is from before that";
+
+        // FLATNESS IS FRESH EVIDENCE AND NEVER A TERMINAL STATE. The flatten's record says what was
+        // true when it finished; this says what is true now. They disagree exactly when something
+        // has moved — an order filled late, or the owner opened something by hand — and "something
+        // moved" is the only case that matters.
+        var stillOpen = InScope(breach, positions).Where(p => p.Quantity != 0m).ToList();
+        if (stillOpen.Count > 0)
+            return "your platform still shows "
+                   + string.Join(", ", stillOpen.Select(p => $"{p.Symbol} {p.Quantity}")) + " open";
+
+        // AND WHAT THE APP DID ABOUT THE CLOSURE HAS TO HAVE ANSWERED. A flat book with a flatten
+        // that could not confirm itself is the state a killed run leaves; the sweep is what finishes
+        // it, and until it has, nothing here may decide the episode ended well.
+        LossFlattenRecord? flatten;
+        try { flatten = ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach)); }
+        catch (GatewayDeniedException ex)
+            { return $"TradeAgent cannot read what it did about the closure ({ex.Message})"; }
+
+        if (flatten is not null)
+        {
+            // Named separately from the flag below because it is a different fact and a different
+            // repair: an order that is still LIVE at the platform can fill into the account the
+            // moment it is let back in, which is the failure the cancel-first rule exists to stop.
+            if (flatten.OpenersNotSettled.Count > 0)
+                return "an order TradeAgent tried to cancel for you is still working at your platform ("
+                       + string.Join(", ", flatten.OpenersNotSettled) + ")";
+
+            if (!flatten.Flat)
+                return "TradeAgent cannot confirm that what it closed for you is closed";
+        }
+
+        // NOTHING OF THE APP'S OWN IS STILL OPEN OR FLAGGED. The two app press kinds are asked by
+        // name, because a leg of either one is an order this gateway put on the wire and cannot
+        // account for; and then everything else, because a stranded order on the same account is the
+        // same problem with a different author. It is the startup sweep's rule — never over an
+        // unreconciled row — applied to the decision to admit rather than to the decision to close.
+        if (UnresolvedPressNonce(BudgetClosePress) is { } closing)
+            return $"TradeAgent cannot account for the close it sent when it flattened your account ({closing})";
+
+        if (UnresolvedPressNonce(BudgetCancelPress) is { } cancelling)
+            return $"TradeAgent cannot account for the cancel it sent when it flattened your account ({cancelling})";
+
+        if (HasUnconfirmedWork())
+            return "TradeAgent is still holding an order it cannot account for, and it will not let "
+                   + "the account trade again over one";
+
         return null;
     }
 
