@@ -1230,6 +1230,30 @@ public sealed class Database : IDisposable
             Exec("UPDATE strategy_trial SET charged_to=campaign_id WHERE charged_to IS NULL;");
             Exec("CREATE INDEX IF NOT EXISTS ix_trial_charged_to ON strategy_trial(charged_to, charged);");
 
+            // THE EXPLORATION RESERVE, AND WHICH POT A TRIAL CAME OUT OF.
+            //
+            // `docs/COUNCIL.md`:220 asks for "exploration and diversity budgets". A campaign's trial
+            // budget becomes two pots that SUM to it: the reserve, for versions with no declared parent
+            // or one nothing has promoted, and the rest, for refinements of something already judged
+            // worth capital. Two pots rather than one cap on each, so that declaring a parent moves a
+            // trial from one pot to the other and creates no allowance — a submitter cannot widen a
+            // campaign by claiming an ancestry, whatever it claims.
+            //
+            // `exploration` IS COPIED ONTO THE TRIAL as the question stood at registration, exactly as
+            // `kind` is: a parent promoted next month must not reclassify what a trial made last month
+            // cost, because a count that moves under a promotion is a budget the process being measured
+            // can move.
+            //
+            // BOTH BACKFILLED, and to the only values that are true of the rows that exist. Every
+            // campaign written before this rung had no reserve declared, which IS its whole trial budget
+            // set aside for exploration — no version could declare a parent, so every trial any of them
+            // registered was an exploration. Leaving the reserve at 0 would refuse the next research run
+            // of every installation that upgrades.
+            Exec("ALTER TABLE strategy_campaign ADD COLUMN exploration_budget INTEGER NOT NULL DEFAULT 0;");
+            Exec("UPDATE strategy_campaign SET exploration_budget=trial_budget;");
+            Exec("ALTER TABLE strategy_trial ADD COLUMN exploration INTEGER NOT NULL DEFAULT 0;");
+            Exec("UPDATE strategy_trial SET exploration=1;");
+
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','21') ON CONFLICT(key) DO UPDATE SET value='21';");
         }
 

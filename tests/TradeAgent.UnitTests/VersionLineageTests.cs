@@ -36,15 +36,14 @@ public class VersionLineageTests
     sealed record Ledger(Database Db, DatasetRecord Set, CampaignRow Campaign, StrategyStore Strategies,
         CampaignStore Campaigns);
 
-    static Ledger Given(int trialBudget = 10)
+    static Ledger Given(int trialBudget = 10, int? exploration = null)
     {
         var db = TestEnv.NewDb();
-        var l = Holdout(db, "BTCUSDT", trialBudget);
-        return l;
+        return Holdout(db, "BTCUSDT", trialBudget, exploration);
     }
 
     /// <summary>One held-back dataset with its own open campaign, in a database that may hold several.</summary>
-    static Ledger Holdout(Database db, string pair, int trialBudget = 10)
+    static Ledger Holdout(Database db, string pair, int trialBudget = 10, int? exploration = null)
     {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"lineage-{Guid.NewGuid():n}.csv");
@@ -60,7 +59,7 @@ public class VersionLineageTests
         var set = datasets.ById(id)!;
 
         var campaigns = new CampaignStore(db);
-        var opened = campaigns.Open($"{pair} 1m v1", set, trialBudget, 3, At);
+        var opened = campaigns.Open($"{pair} 1m v1", set, trialBudget, 3, At, exploration: exploration);
         Assert.True(opened.Ok, opened.Why);
 
         return new Ledger(db, set, opened.Campaign!, new StrategyStore(db), campaigns);
@@ -221,5 +220,131 @@ public class VersionLineageTests
 
         // The parent's own campaign is closed and spent, and the renewal is where the family now pays.
         Assert.Equal(1, first.Campaigns.TrialsCharged(first.Campaign.Id));
+    }
+
+    /// <summary>Promotes one version on a real holdout run, so a child of it is a REFINEMENT.</summary>
+    static void Promote(Ledger l, string versionId)
+    {
+        var model = ExecutionModel.Declare(0.002m, 0m, 0.0001m, 10_000m).Model!;
+        var request = new BacktestRequest(l.Set.Id, l.Set.NormalisedSha256, model, Cutoff, null);
+        var runId = request.RunIdFor(versionId);
+        l.Strategies.RecordRun(new StrategyRunRow(
+            runId, versionId, l.Set.Id, l.Set.NormalisedSha256, Cutoff, null, model.Canonical,
+            BacktestOutcome.COMPLETED.ToString(), null, 500, 4, 3, 4, 4, 100, 0, 0,
+            12m, 2m, 10m, 3m, "trace-sha", At, Referee.RunRole, null), []);
+
+        new Promotions(l.Db).Record(new PromotionRow(
+            "", versionId, l.Campaign.Id, l.Campaign.ScoringPolicySha256, StrategyStore.InterpreterBuild,
+            l.Set.Id, l.Set.NormalisedSha256, model.Canonical, Referee.EvaluatorVersion, runId,
+            PromotionVerdict.Promoted, PromotionReason.Met, At));
+
+        Assert.True(new Promotions(l.Db).Standing(versionId).IsPromoted);
+    }
+
+    // ---- item 3: the exploration reserve ----------------------------------------------------------
+
+    /// <summary>
+    /// ITEM 3 — EXPLORATION CANNOT SPEND THE WHOLE TRIAL BUDGET, and refinement cannot spend the
+    /// reserve.
+    ///
+    /// <para><b>What was wrong.</b> A campaign had one number and every registered run came out of it,
+    /// so a process could spend all two hundred trials on fresh programs that no verdict ever looked at
+    /// — or, once parentage exists, on refinements of a single promoted program and never look anywhere
+    /// else. <c>docs/COUNCIL.md</c>:220 asks for exploration budgets beside comparable opportunity, and
+    /// neither existed.</para>
+    ///
+    /// <para><b>Two pots that SUM to the trial budget,</b> so declaring a parent moves a trial from one
+    /// to the other and creates no allowance. That is what makes the parent declaration safe to take
+    /// from the submitter: it cannot widen a campaign by claiming an ancestry.</para>
+    /// </summary>
+    [Fact]
+    public void An_exploration_trial_cannot_spend_the_whole_trial_budget()
+    {
+        var l = Given(trialBudget: 5, exploration: 2);
+        using var _ = l.Db;
+
+        var root = Record(l, 103, parent: null);
+        Assert.True(l.Campaigns
+            .RegisterTrial(l.Campaign.Id, root, Run(l, root, 0.001m), EvaluationClass.Research, At).Ok);
+
+        var other = Record(l, 105, parent: null);
+        Assert.True(l.Campaigns
+            .RegisterTrial(l.Campaign.Id, other, Run(l, other, 0.001m), EvaluationClass.Research, At).Ok);
+
+        // THE THIRD EXPLORATION, with three of the five trials still unspent.
+        var third = Record(l, 106, parent: null);
+        var refused = l.Campaigns.RegisterTrial(
+            l.Campaign.Id, third, Run(l, third, 0.001m), EvaluationClass.Research, At);
+
+        Assert.False(refused.Ok);
+        Assert.Contains("all 2 of the trials it reserves for EXPLORATION", refused.Why,
+            StringComparison.Ordinal);
+        Assert.Equal(2, l.Campaigns.TrialsCharged(l.Campaign.Id));
+        Assert.Null(l.Campaigns.TrialRefusal(l.Campaign.Id, third, EvaluationClass.Fixture));
+
+        // AND THE OTHER POT IS UNTOUCHED BY ANY OF IT: a refinement of a PROMOTED parent still runs.
+        Promote(l, root);
+        var refinement = Record(l, 107, parent: root);
+        var taken = l.Campaigns.RegisterTrial(
+            l.Campaign.Id, refinement, Run(l, refinement, 0.001m), EvaluationClass.Research, At);
+
+        Assert.True(taken.Ok, taken.Why);
+        Assert.False(Assert.Single(l.Campaigns.Trials(l.Campaign.Id), t => t.VersionId == refinement)
+            .Exploration);
+    }
+
+    /// <summary>
+    /// ITEM 3 — TWO ROLES RACING FOR THE LAST EXPLORATION TRIAL TAKE EXACTLY ONE, because the reserve is
+    /// read inside the transaction that writes the row.
+    ///
+    /// <para><c>U-referee-1</c> named this race and <c>U-council-concurrent-2</c> closed it for the
+    /// campaign-wide count: <c>TrialRefusal</c> is a LOOK taken before a run that takes minutes, so two
+    /// roles asking for the last trial are both honestly told there is room, and the GATE has to be the
+    /// write. A reserve added outside that write would reopen the same hole under a new name, which is
+    /// the mutant this test exists to catch.</para>
+    ///
+    /// <para>Two real threads against one <see cref="Database"/>, with a <see cref="Barrier"/> at the
+    /// look — the idiom <c>CampaignLedgerTests</c> uses, because "both were admitted" is a fact about
+    /// two callers and a shared table and a stand-in for either would exercise neither.</para>
+    /// </summary>
+    [Fact]
+    public void Two_roles_racing_for_the_last_exploration_trial_take_exactly_one()
+    {
+        var l = Given(trialBudget: 9, exploration: 1);
+        using var _ = l.Db;
+
+        var first = Record(l, 103, parent: null);
+        var second = Record(l, 105, parent: null);
+        var runs = new[] { Run(l, first, 0.001m), Run(l, second, 0.001m) };
+        var versions = new[] { first, second };
+
+        var looked = new string?[2];
+        var registered = new TrialRegistered[2];
+        using var read = new Barrier(2);
+
+        void Ask(int i)
+        {
+            // The cheap first look, taken before the run. On a reserve with one trial left BOTH callers
+            // are honestly told there is room, which is what a look taken before a run can say.
+            looked[i] = l.Campaigns.TrialRefusal(l.Campaign.Id, versions[i], EvaluationClass.Research);
+            read.SignalAndWait();
+            registered[i] = l.Campaigns.RegisterTrial(
+                l.Campaign.Id, versions[i], runs[i], EvaluationClass.Research, At);
+        }
+
+        var a = new Thread(() => Ask(0));
+        var b = new Thread(() => Ask(1));
+        a.Start();
+        b.Start();
+        Assert.True(a.Join(TimeSpan.FromSeconds(30)), "the first caller never finished");
+        Assert.True(b.Join(TimeSpan.FromSeconds(30)), "the second caller never finished");
+
+        Assert.All(looked, why => Assert.Null(why));
+        Assert.Equal(1, l.Campaigns.TrialsCharged(l.Campaign.Id));
+        Assert.Single(registered, r => r.Ok);
+
+        var refused = Assert.Single(registered, r => !r.Ok);
+        Assert.Contains("all 1 of the trials it reserves for EXPLORATION", refused.Why,
+            StringComparison.Ordinal);
     }
 }

@@ -229,6 +229,8 @@ public class VenueCatalogTests
                 ALTER TABLE strategy_version DROP COLUMN parent_version_id;
                 DROP INDEX ix_trial_charged_to;
                 ALTER TABLE strategy_trial DROP COLUMN charged_to;
+                ALTER TABLE strategy_trial DROP COLUMN exploration;
+                ALTER TABLE strategy_campaign DROP COLUMN exploration_budget;
                 DROP TABLE strategy_allocation;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;

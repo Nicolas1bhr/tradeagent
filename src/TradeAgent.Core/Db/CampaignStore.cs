@@ -72,6 +72,31 @@ public sealed record CampaignRow(
     DateTimeOffset? ClosedAt)
 {
     public bool IsOpen => ClosedAt is null;
+
+    /// <summary>
+    /// THE PART OF <see cref="TrialBudget"/> RESERVED FOR EXPLORATION, fixed at open like every other
+    /// number on this row.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:220 asks for "exploration and diversity budgets" beside comparable
+    /// opportunity. A trial is an EXPLORATION trial when the version it registers has no declared parent
+    /// or has one nothing has promoted: the research process is trying something rather than refining
+    /// something that has already been judged worth capital. Without a reserve those trials are simply
+    /// trials, and a campaign can spend its entire allowance on them — or, once parentage exists, on
+    /// refinements of one promoted program, and never look anywhere else.</para>
+    ///
+    /// <para><b>Two pots that sum to the budget.</b> Exploration is bounded by this number and
+    /// refinement by <see cref="RefinementBudget"/>, which is the rest. So a declared parent moves a
+    /// trial from one pot to the other and creates no allowance: a submitter cannot widen a campaign by
+    /// claiming an ancestry, whatever it claims.</para>
+    ///
+    /// <para>A campaign opened with no reserve declared carries its whole trial budget here, which is
+    /// what every campaign written before schema 21 genuinely had — no version had a parent, so every
+    /// trial any of them registered was exploration.</para>
+    /// </summary>
+    public int ExplorationBudget { get; init; }
+
+    /// <summary>What is left for versions whose declared parent is promoted. Never negative.</summary>
+    public int RefinementBudget => Math.Max(0, TrialBudget - ExplorationBudget);
 }
 
 /// <summary>What opening or renewing a campaign did, or why it did nothing. A value, not an exception.</summary>
@@ -119,6 +144,17 @@ public sealed record TrialRow(
     /// there was no ancestry to charge one anywhere else.</para>
     /// </summary>
     public long? ChargedTo { get; init; }
+
+    /// <summary>
+    /// WHETHER THIS TRIAL CAME OUT OF THE CAMPAIGN'S EXPLORATION RESERVE, as the question stood WHEN IT
+    /// WAS REGISTERED.
+    ///
+    /// <para>Copied onto the row rather than worked out from the version's ancestry at read time, for
+    /// the reason <see cref="Kind"/> is copied: a parent promoted next month must not reclassify what a
+    /// trial made last month cost. A count that changed under a promotion would be a budget the process
+    /// being measured can move.</para>
+    /// </summary>
+    public bool Exploration { get; init; }
 }
 
 /// <summary>What registering a trial did: whether it was charged, and where the campaign now stands.</summary>
@@ -148,9 +184,25 @@ public sealed record TrialAdmission
     /// <summary>A fixture run is charged nothing, so no budget has anything to refuse.</summary>
     public required bool Charged { get; init; }
 
+    /// <summary>
+    /// Whether this trial comes out of the exploration reserve: the version declared no parent, or it
+    /// declared one that nothing has promoted. See <see cref="CampaignRow.ExplorationBudget"/>.
+    /// </summary>
+    public required bool Exploration { get; init; }
+
     /// <summary>Whether the two campaigns above are one row, which is the ordinary case.</summary>
     public bool OneCampaign => RunCampaign?.Id == HomeCampaign?.Id;
+
+    /// <summary>The pot this trial comes out of, on whichever campaign is being asked about.</summary>
+    public int PotOf(CampaignRow campaign) =>
+        Exploration ? campaign.ExplorationBudget : campaign.RefinementBudget;
 }
+
+/// <summary>
+/// THE COUNTS A <see cref="TrialAdmission"/> IS DECIDED ON — read INSIDE the transaction that writes,
+/// never carried into it. See <c>AiAdmissionRule</c>, which omits the day's totals for the same reason.
+/// </summary>
+public sealed record TrialCounts(int Run, int RunPot, int Home, int HomePot);
 
 /// <summary>
 /// ONE VERDICT THAT WAS ASKED FOR. The row exists because the question was put, not because it was
@@ -191,7 +243,9 @@ public sealed class CampaignStore(Database db)
 {
     const string Cols =
         "id, name, scoring_policy, scoring_policy_sha256, trial_budget, verdict_budget, " +
-        "holdout_dataset_id, holdout_from, opened_at, renewed_from, closed_at";
+        "holdout_dataset_id, holdout_from, opened_at, renewed_from, closed_at, " +
+        // LAST, so every positional read above it keeps its index. See `CampaignRow.ExplorationBudget`.
+        "exploration_budget";
 
     /// <summary>
     /// Opens the campaign for a dataset the owner has just held back, or refuses in words.
@@ -202,7 +256,7 @@ public sealed class CampaignStore(Database db)
     /// standard under evidence already collected, which is the same defect as an editable policy.</para>
     /// </summary>
     public CampaignOpened Open(string name, DatasetRecord holdout, int trialBudget, int verdictBudget,
-        DateTimeOffset at, string? policy = null) => db.Write(_ =>
+        DateTimeOffset at, string? policy = null, int? exploration = null) => db.Write(_ =>
     {
         ArgumentNullException.ThrowIfNull(holdout);
 
@@ -219,8 +273,24 @@ public sealed class CampaignStore(Database db)
         var text = policy ?? CampaignPolicy.V1;
         return CampaignOpened.Yes(Insert(new CampaignRow(
             0, name, text, CampaignPolicy.Sha256Of(text), Budget(trialBudget), Budget(verdictBudget),
-            holdout.Id, cutoff, at, null, null)));
+            holdout.Id, cutoff, at, null, null)
+        {
+            ExplorationBudget = Reserve(exploration, Budget(trialBudget))
+        }));
     });
+
+    /// <summary>
+    /// The exploration reserve a campaign opens with: what was declared, never more than the trial
+    /// budget it is carved out of and never less than nothing.
+    ///
+    /// <para>NULL is "no reserve declared", and it records the WHOLE trial budget — which is what a
+    /// campaign with no reserve genuinely has, and what every campaign written before schema 21 had:
+    /// no version could declare a parent, so every trial any of them registered was exploration. It is
+    /// not a licence: a reserve equal to the budget leaves nothing for refinement, which is exactly the
+    /// state those campaigns were in.</para>
+    /// </summary>
+    static int Reserve(int? declared, int trialBudget) =>
+        declared is not { } n ? trialBudget : Math.Clamp(n, 0, trialBudget);
 
     /// <summary>
     /// RENEWS A CAMPAIGN: the parent closes, a child opens with fresh ATTEMPTS and nothing else fresh.
@@ -234,8 +304,8 @@ public sealed class CampaignStore(Database db)
     /// only caller in this build is the owner's own window; a scheduled renewal is a later unit's, and it
     /// will call this same method.</para>
     /// </summary>
-    public CampaignOpened Renew(long parentId, int trialBudget, int verdictBudget, DateTimeOffset at) =>
-        db.Write(_ =>
+    public CampaignOpened Renew(long parentId, int trialBudget, int verdictBudget, DateTimeOffset at,
+        int? exploration = null) => db.Write(_ =>
         {
             if (ById(parentId) is not { } parent)
                 return CampaignOpened.No($"there is no campaign {parentId} in this installation's ledger.");
@@ -250,7 +320,14 @@ public sealed class CampaignStore(Database db)
             return CampaignOpened.Yes(Insert(new CampaignRow(
                 0, parent.Name, parent.ScoringPolicy, parent.ScoringPolicySha256,
                 Budget(trialBudget), Budget(verdictBudget),
-                parent.HoldoutDatasetId, parent.HoldoutFrom, at, parent.Id, null)));
+                parent.HoldoutDatasetId, parent.HoldoutFrom, at, parent.Id, null)
+            {
+                // THE RESERVE IS DECLARED AGAIN, because the trial budget is: a renewal buys attempts,
+                // and how many of them are kept for exploration is a fact about the attempts bought and
+                // not about the parent's. Carrying the parent's number onto a different budget would
+                // silently widen or narrow the reserve nobody decided to move.
+                ExplorationBudget = Reserve(exploration, Budget(trialBudget))
+            }));
         });
 
     /// <summary>One campaign by its id, or null when this installation has no such row.</summary>
@@ -318,11 +395,25 @@ public sealed class CampaignStore(Database db)
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     });
 
+    /// <summary>
+    /// How many charged trials of ONE POT this campaign has registered — the exploration reserve, or
+    /// the rest of the trial budget. The two together are <see cref="TrialsCharged(long)"/>.
+    /// </summary>
+    public int TrialsCharged(long campaignId, bool exploration) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            "SELECT COUNT(*) FROM strategy_trial WHERE charged=1 AND exploration=$e "
+            + "AND (campaign_id=$id OR charged_to=$id)",
+            ("$id", campaignId), ("$e", exploration ? 1 : 0));
+        return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
+    });
+
     /// <summary>Every trial registered against this campaign, oldest first.</summary>
     public IReadOnlyList<TrialRow> Trials(long campaignId) => db.Read(_ =>
     {
         using var c = db.Cmd("""
-            SELECT campaign_id, version_id, run_id, kind, charged, registered_at, charged_to
+            SELECT campaign_id, version_id, run_id, kind, charged, registered_at, charged_to,
+                   exploration
             FROM strategy_trial WHERE campaign_id=$id ORDER BY registered_at, run_id
             """, ("$id", campaignId));
 
@@ -332,7 +423,8 @@ public sealed class CampaignStore(Database db)
             rows.Add(new TrialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3),
                 r.GetInt32(4) != 0, Sql.Time(r.GetString(5)))
             {
-                ChargedTo = r.IsDBNull(6) ? null : r.GetInt64(6)
+                ChargedTo = r.IsDBNull(6) ? null : r.GetInt64(6),
+                Exploration = r.GetInt32(7) != 0
             });
         return rows;
     });
@@ -435,39 +527,80 @@ public sealed class CampaignStore(Database db)
     TrialAdmission Admission(long campaignId, string versionId, string kind) => new()
     {
         Charged = kind != EvaluationClass.Fixture,
+        Exploration = IsExploration(versionId),
         RunCampaign = ById(campaignId),
         HomeCampaign = ById(ChargedCampaignFor(versionId, campaignId))
     };
 
     /// <summary>
+    /// WHETHER THIS VERSION IS AN EXPLORATION: it declared no parent, or it declared one that nothing
+    /// has promoted.
+    ///
+    /// <para>The promotion is read through <c>Promotions.Standing</c> and never as "a promotion row
+    /// exists", the reading <c>Allocations.Record</c> takes for the same reason: a verdict TradeAgent
+    /// has since withdrawn is not evidence that a parent is worth refining.</para>
+    /// </summary>
+    public bool IsExploration(string versionId)
+    {
+        if (new StrategyStore(db).VersionById(versionId)?.ParentVersionId is not { } parent) return true;
+        return !new Promotions(db).Standing(parent).IsPromoted;
+    }
+
+    /// <summary>
     /// The counts this rule is decided on. Read by the LOOK in its own transaction, where they are a
     /// cheap honest answer, and by the GATE inside the write, where nothing can move them.
     /// </summary>
-    (int Run, int Home) Counts(TrialAdmission rule) =>
-        (rule.RunCampaign is { } run ? TrialsCharged(run.Id) : 0,
-         rule.HomeCampaign is { } home ? TrialsCharged(home.Id) : 0);
+    TrialCounts Counts(TrialAdmission rule) => new(
+        rule.RunCampaign is { } run ? TrialsCharged(run.Id) : 0,
+        rule.RunCampaign is { } runPot ? TrialsCharged(runPot.Id, rule.Exploration) : 0,
+        rule.HomeCampaign is { } home ? TrialsCharged(home.Id) : 0,
+        rule.HomeCampaign is { } homePot ? TrialsCharged(homePot.Id, rule.Exploration) : 0);
 
     /// <summary>
     /// WHY THIS TRIAL WOULD NOT BE REGISTERED, in words, or null because it would. One rule, both
     /// callers; <paramref name="made"/> only chooses the tense of the sentence.
     /// </summary>
-    static string? Refusal(TrialAdmission rule, (int Run, int Home) spent, bool made)
+    static string? Refusal(TrialAdmission rule, TrialCounts spent, bool made)
     {
         if (!rule.Charged || rule.RunCampaign is not { } run) return null;
 
         if (spent.Run >= run.TrialBudget) return Spent(run.Id, run.TrialBudget, made);
 
+        // THE POT, AND IT IS READ AT THE GATE. A campaign's trial budget is two budgets: the reserve
+        // kept for versions with no promoted parent, and the rest. Both ceilings are inside the
+        // transaction that writes the row, because a reservation taken outside it is the look
+        // `U-referee-1` named — two roles both honestly told there is room, and both taking it.
+        if (spent.RunPot >= rule.PotOf(run)) return Pot(rule, run, made);
+
         // AND THE FAMILY'S OWN CAMPAIGN, which is a second ceiling and never a looser one: a variant
         // run against a fresh holdout is charged back to the campaign lineage its ancestry is already
         // being charged to (`docs/COUNCIL.md`:201, comparable trials).
-        return rule.HomeCampaign is { } home && !rule.OneCampaign && spent.Home >= home.TrialBudget
-            ? Spent(home.Id, home.TrialBudget, made)
-              + " This run is over another holdout, and it is charged there as well as here because the "
-              + "version it runs declares a parent: a variant is charged to the campaign lineage its "
-              + "ancestry is already being charged to, so a family cannot buy itself an untouched trial "
-              + "budget by submitting a new hash against a second dataset."
-            : null;
+        if (rule.HomeCampaign is not { } home || rule.OneCampaign) return null;
+
+        if (spent.Home >= home.TrialBudget) return Spent(home.Id, home.TrialBudget, made) + Elsewhere;
+
+        return spent.HomePot >= rule.PotOf(home) ? Pot(rule, home, made) + Elsewhere : null;
     }
+
+    /// <summary>The sentence a spent POT answers with, naming which of the two had no room.</summary>
+    static string Pot(TrialAdmission rule, CampaignRow campaign, bool made) =>
+        $"campaign {campaign.Id} has registered all {rule.PotOf(campaign)} of the trials it reserves for "
+        + (rule.Exploration
+            ? "EXPLORATION — versions that declare no parent, or one nothing has promoted — so "
+            : "REFINEMENT — versions whose declared parent is promoted — so ")
+        + (made ? "this run is not recorded and its result is not served. " : "this run is refused before it is made. ")
+        + $"The reserve is {campaign.ExplorationBudget} of this campaign's {campaign.TrialBudget} trials "
+        + $"for exploration and {campaign.RefinementBudget} for refinement, fixed when the campaign "
+        + "opened. The two sum to the trial budget, so declaring a parent moves a trial from one pot to "
+        + "the other and creates no allowance: what is left is a renewal, which the account owner "
+        + "authorises in TradeAgent's own window.";
+
+    /// <summary>The clause a refusal adds when the budget that had no room was the family's, not this run's.</summary>
+    const string Elsewhere =
+        " This run is over another holdout and is charged there as well as here, because the version it "
+        + "runs declares a parent: a variant is charged to the campaign lineage its ancestry is already "
+        + "being charged to, so a family cannot buy itself an untouched trial budget by submitting a new "
+        + "hash against a second dataset.";
 
     /// <summary>
     /// REGISTERS ONE TRIAL, CHARGING IT AGAINST THE BUDGET IN THE SAME TRANSACTION THAT READS IT — or
@@ -519,14 +652,17 @@ public sealed class CampaignStore(Database db)
 
         using var c = db.Cmd("""
             INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at,
-                                       charged_to)
-            VALUES($id,$ver,$run,$kind,$charged,$at,$home)
+                                       charged_to, exploration)
+            VALUES($id,$ver,$run,$kind,$charged,$at,$home,$explore)
             ON CONFLICT(campaign_id, version_id, run_id) DO NOTHING
             """,
             ("$id", campaignId), ("$ver", versionId), ("$run", runId), ("$kind", kind),
             ("$charged", charged ? 1 : 0), ("$at", Sql.T(at)),
             // THE COST, BESIDE THE PEEK. They are one number for a version that declared no parent.
-            ("$home", chargedTo));
+            ("$home", chargedTo),
+            // AND WHICH POT IT CAME OUT OF, as the question stood now. Copied, never re-derived: a
+            // parent promoted later must not reclassify what this trial cost.
+            ("$explore", rule.Exploration ? 1 : 0));
         c.ExecuteNonQuery();
 
         return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);
@@ -678,14 +814,14 @@ public sealed class CampaignStore(Database db)
         using var c = db.Cmd("""
             INSERT INTO strategy_campaign(name, scoring_policy, scoring_policy_sha256, trial_budget,
                                           verdict_budget, holdout_dataset_id, holdout_from, opened_at,
-                                          renewed_from, closed_at)
-            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL);
+                                          renewed_from, closed_at, exploration_budget)
+            VALUES($name,$policy,$sha,$trials,$verdicts,$ds,$cut,$at,$from,NULL,$reserve);
             SELECT last_insert_rowid();
             """,
             ("$name", row.Name), ("$policy", row.ScoringPolicy), ("$sha", row.ScoringPolicySha256),
             ("$trials", row.TrialBudget), ("$verdicts", row.VerdictBudget),
             ("$ds", row.HoldoutDatasetId), ("$cut", Sql.T(row.HoldoutFrom)), ("$at", Sql.T(row.OpenedAt)),
-            ("$from", row.RenewedFrom));
+            ("$from", row.RenewedFrom), ("$reserve", row.ExplorationBudget));
 
         return row with { Id = Convert.ToInt64(c.ExecuteScalar(), CultureInfo.InvariantCulture) };
     });
@@ -699,7 +835,10 @@ public sealed class CampaignStore(Database db)
                 r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetInt32(4),
                 r.GetInt32(5), r.GetInt64(6), Sql.Time(r.GetString(7)), Sql.Time(r.GetString(8)),
                 r.IsDBNull(9) ? null : r.GetInt64(9),
-                Sql.TimeN(r.IsDBNull(10) ? null : r.GetString(10))));
+                Sql.TimeN(r.IsDBNull(10) ? null : r.GetString(10)))
+            {
+                ExplorationBudget = r.GetInt32(11)
+            });
         return rows;
     }
 }

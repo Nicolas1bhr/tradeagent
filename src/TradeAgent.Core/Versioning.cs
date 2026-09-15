@@ -224,6 +224,13 @@ public static class Versions
     /// column above, because there IS a knowable fact: every trial registered before this rung was
     /// charged to its own campaign, there being no ancestry in the product to charge one anywhere
     /// else.</para>
+    ///
+    /// <para>And the EXPLORATION RESERVE: <c>strategy_campaign.exploration_budget</c> with
+    /// <c>strategy_trial.exploration</c> beside it, two pots that sum to the trial budget — one for
+    /// versions with no promoted parent, one for refinements — so that declaring a parent moves a trial
+    /// between pots and creates no allowance (<c>docs/COUNCIL.md</c>:220). Both backfilled, and to the
+    /// only values true of the rows that exist: every campaign written before this rung had its whole
+    /// budget open to exploration, because no version could declare a parent at all.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 21;
 

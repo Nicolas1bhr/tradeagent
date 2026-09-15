@@ -361,9 +361,10 @@ public class CampaignLedgerTests
 
         Assert.Equal(
             ["campaign_id", "version_id", "run_id", "kind", "charged", "registered_at",
-             // Schema 21: which campaign the trial was CHARGED to, beside the one it PEEKED at.
-             // Still nothing about who asked — that is the property this list is asserted for.
-             "charged_to"],
+             // Schema 21: which campaign the trial was CHARGED to beside the one it PEEKED at, and
+             // which of the two pots of the trial budget it came out of. Still nothing about who
+             // asked — that is the property this list is asserted for.
+             "charged_to", "exploration"],
             columns);
     }
 

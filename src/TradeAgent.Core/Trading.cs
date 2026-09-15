@@ -464,6 +464,28 @@ public sealed class TradeAgentSettings
     public int CampaignVerdictBudget { get; set; } = 3;
 
     /// <summary>
+    /// HOW MANY OF A CAMPAIGN'S TRIALS ARE RESERVED FOR EXPLORATION (<c>docs/COUNCIL.md</c>:220,
+    /// "exploration and diversity budgets").
+    ///
+    /// <para>An exploration trial is one registered by a version that declares no parent, or one whose
+    /// declared parent nothing has promoted: the process is trying something rather than refining
+    /// something already judged worth capital. This number and the rest of
+    /// <see cref="CampaignTrialBudget"/> are two pots that SUM to it, so declaring a parent moves a
+    /// trial between pots and creates no allowance.</para>
+    ///
+    /// <para><b>Fifty of two hundred, and it is a choice, stated.</b> What matters is that BOTH pots are
+    /// finite: a campaign that could spend everything on refinements of one promoted program would
+    /// stop looking anywhere else, and one that could spend everything on fresh programs would never
+    /// develop the one that worked. A quarter is enough to keep looking and small enough that the
+    /// campaign's evidence is mostly about programs with a history.</para>
+    ///
+    /// <para>It is COPIED onto the campaign at open, like the two budgets above, so changing it does not
+    /// move the standard under evidence already collected. Zero means no exploration at all; a number
+    /// above the trial budget is clamped to it; a negative number reads as zero.</para>
+    /// </summary>
+    public int CampaignExplorationBudget { get; set; } = 50;
+
+    /// <summary>
     /// WHAT THE OWNER SAYS THEIR AI TOOL CHARGES THEM, per million tokens in and out, or null for
     /// "use the list price this build shipped".
     ///
@@ -569,6 +591,10 @@ public sealed class TradeAgentSettings
         // the row is written again.
         CampaignTrialBudget = 0,
         CampaignVerdictBudget = 0,
+        // And the reserve inside a budget of zero, which is zero however it is written. It is stated
+        // rather than left to the clamp, because a default read off the shipped value would be a
+        // number from a row nobody can vouch for.
+        CampaignExplorationBudget = 0,
         Risk = new RiskPolicy
         {
             MaxOrderQuantity = 0m,

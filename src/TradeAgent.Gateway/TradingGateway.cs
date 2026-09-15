@@ -186,7 +186,8 @@ public sealed class TradingGateway : IAsyncDisposable
 
         var opened = _campaigns.Open(
             $"{set.Pair} {set.Interval} {set.Version}", set,
-            Settings.CampaignTrialBudget, Settings.CampaignVerdictBudget, Now);
+            Settings.CampaignTrialBudget, Settings.CampaignVerdictBudget, Now,
+            exploration: Settings.CampaignExplorationBudget);
 
         return (done, opened.Campaign);
     });
