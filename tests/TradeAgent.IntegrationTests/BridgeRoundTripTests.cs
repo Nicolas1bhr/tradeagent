@@ -836,12 +836,14 @@ public class BridgeRoundTripTests
         }
         Assert.Contains("speaks protocol 2", connector.StatusDetail);
 
-        // A different program takes the pipe and says nothing whatever.
-        using var quiet = new System.IO.Pipes.NamedPipeClientStream(
-            ".", pipe, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
-        await quiet.ConnectAsync(10_000);
+        // A different program takes the pipe and says nothing whatever. HANDED OVER rather than
+        // merely connected, for the reason `Redial` gives just above and `HandOver` measures: off
+        // Windows a connect against the instance this refusal is closing succeeds and dies with it,
+        // and a peer that never writes has nothing to raise. This fixture is the macos-latest red of
+        // run 34872880789; its namesake in PeerRowTests is the ubuntu-latest red of run 34881215351.
+        using var quiet = await HandOver.ToASilentPeer(
+            connector, pipe, () => connector.Unauthenticated is not null);
 
-        await Wait(async () => await Task.FromResult(connector.Unauthenticated is not null));
         var row = connector.StatusDetail!;
         Assert.Contains("neither proved itself nor said", row);
         Assert.DoesNotContain("speaks protocol", row);
