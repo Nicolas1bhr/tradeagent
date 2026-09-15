@@ -24,17 +24,17 @@ resolved when its close is terminal AND the position reads back flat; anything e
    "you pressed"; `LOSS_BUDGET_REACHED` stays the caller's answer. RED: two open positions, a confirmed breach → the book flat. Mutant (routed through
    `CloseAsync`): `TRADING_PAUSED_UNRECONCILED` after the first leg. Second mutant (size check removed, position drifted smaller): a long 2 reads short.
 3. **Resolved by machine, or paused.** A leg whose close is terminal and whose position reads back flat is resolved by the app — flag cleared, the
-   outcome appended once to the breach record (request ids, fills, residual); a rejected, cancelled, timed-out or unsettled leg stays flagged, pauses
+   outcome written ONCE as its own record keyed to the breach (`loss_flatten:{account}:{utcDay}` / `…:{symbol}:{utcDay}` in `kv`: request ids, fills, residual, the read-back) — the breach record is NEVER updated; a rejected, cancelled, timed-out or unsettled leg stays flagged, pauses
    order flow as today, and the report says which. The owner's button is never refused because of an app press (a third kind in `IsPressRecord`/
    `PressKindOf`); an app leg unresolved on a symbol refuses the owner's leg there in words — the existing rule. RED: after an all-filled app flatten
    the next day's first order is refused `TRADING_PAUSED_UNRECONCILED`. Mutant (resolved on "terminal" alone, no read-back): a cancelled close resolves
    with the position still open.
-4. **Crash recovery.** A breach record with no outcome at startup re-runs the flatten, after reconciliation and never over an unreconciled row (the
+4. **Crash recovery.** A breach record with no flatten record at startup re-runs the flatten, after reconciliation and never over an unreconciled row (the
    startup sweep's rule). RED: killed between the record and the composite, restarted → the position stays open and nothing says so. Mutant (recovery
    keyed on the composite's existence instead of the outcome): a composite begun and killed is never finished.
-5. **Told.** Section 4, the Situation, `status` (`loss_flatten`: `flat` / `unresolved` / `review-pending` / `eligible`), the Safety rows; every sentence
+5. **Told.** Section 4, the Situation, `status` (`loss_flatten`: `flat` / `unresolved`; the reopen's own states belong to `U-reopen-1`), the Safety rows; every sentence
    promising "nothing is closed for you" (`GatewaySchema.cs:90-97`, `WorkspaceBuilder.cs:331-341`, `USER-GUIDE.md:747-754`, `LossBudgetOrThrow`'s doc,
    `CONTRACTS.md`) rewritten. RED: the report after a flatten reads as before. Mutant (`flat` from the composite's ok, not the read-back): an
    unresolved leg reads flat.
-Not this unit: the data-loss exit (`U-flatten-3`); strategy stops (`U-protect`); the directors' assessments; the box.
+Not this unit: the reopen of a closed day — cooldown, strikes, receipts (`U-reopen-1`); the data-loss exit (`U-flatten-3`); strategy stops (`U-protect`); the directors' assessments; the box.
 Gate and report as `U-flatten-1`, plus: a press fixture whose verdict is the book takes `PressBudget`, never the simulator's 2 s (the windows-red family).
