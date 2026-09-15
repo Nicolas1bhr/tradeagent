@@ -19,7 +19,16 @@ public sealed record BacktestAsk(
     decimal? Fees = null,
     decimal? Slippage = null,
     decimal? Increment = null,
-    decimal? Capital = null);
+    decimal? Capital = null,
+    /// <summary>
+    /// THE VERSION THIS PROGRAM DECLARES IT WAS DERIVED FROM, or null because it declares none.
+    ///
+    /// <para>It is the SUBMITTER'S own declaration and the app never infers one
+    /// (<see cref="StrategyVersionRow.ParentVersionId"/>). It grants nothing and it cannot create
+    /// budget: a declared parent moves a trial out of the campaign's exploration reserve and into the
+    /// rest of the trial budget, and the two sum to the budget that was already there.</para>
+    /// </summary>
+    string? Parent = null);
 
 /// <summary>
 /// THE APP'S OWN RUNNER, ON THE AGENT'S REQUEST — AND IT IS A READ AS FAR AS TRADING IS CONCERNED.
@@ -112,6 +121,26 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"that is not a program TradeAgent will run — {parse.Why}");
 
+        // THE DECLARED PARENT IS CHECKED BEFORE ANYTHING IS RUN, because a parentage claim about a
+        // version this installation does not hold is a claim about nothing — and every count taken over
+        // an ancestry would then be a count over an invention. A version cannot be its own parent
+        // either: the walk `StrategyStore.Ancestry` makes would be a one-element cycle.
+        var parent = ask.Parent is { Length: > 0 } claimed ? claimed : null;
+        if (parent is not null)
+        {
+            if (_strategies.VersionById(parent) is null)
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    $"'{parent}' is not a strategy version this installation has accepted, so it cannot "
+                    + "be declared as this program's parent. A parent is the id of a version already in "
+                    + "the ledger — TradeAgent never works one out for you, and a program that is not a "
+                    + "variant of anything declares none and is its own root.");
+
+            if (string.Equals(parent, program.StrategyId, StringComparison.Ordinal))
+                throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                    "a version cannot be its own parent. This text hashes to the very id it declares it "
+                    + "was derived from, which means it is that version and not a variant of it.");
+        }
+
         // AFTER the parse, so a text that is not a program is refused for being one rather than for
         // the instrument of a dataset it was never going to be run over.
         var step = Increment(ask);
@@ -153,7 +182,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
             // not the program's, and a FAULTED row blaming the strategy for it would be a record of
             // something that did not happen.
             if (!stop.IsCancellationRequested)
-                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source);
+                Record(result, program, role, caller.AttemptId, campaign, kind, step.Source, parent);
 
             return new BacktestRan(result, program, role, gateway.Datasets.ById(ask.Dataset)!, step.Source);
         }
@@ -376,7 +405,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         value.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
 
     void Record(BacktestResult result, StrategyProgram program, string role, string? attempt,
-        CampaignRow? campaign, string kind, string? incrementSource)
+        CampaignRow? campaign, string kind, string? incrementSource, string? parent)
     {
         var at = _now();
         var metrics = result.Metrics;
@@ -397,7 +426,13 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
                 // than the row's own id names.
                 Timeframe = program.Freshness?.Timeframe,
                 DataFreshness = program.Freshness?.DataFreshness,
-                MaxDecisionAge = program.Freshness?.MaxDecisionAge
+                MaxDecisionAge = program.Freshness?.MaxDecisionAge,
+
+                // THE SUBMITTER'S OWN DECLARATION, checked above against the ledger and passed straight
+                // through. `RecordVersion` is ON CONFLICT DO NOTHING, so the FIRST submission of this
+                // program is the one whose declaration stands: a resubmission cannot restate its
+                // ancestry once evidence has been charged against it.
+                ParentVersionId = parent
             });
 
             _strategies.RecordRun(new StrategyRunRow(

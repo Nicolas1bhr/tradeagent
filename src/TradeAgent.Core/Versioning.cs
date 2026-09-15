@@ -209,8 +209,16 @@ public static class Versions
     /// allocation caused an operation" cannot be recovered later). Both request columns are nullable
     /// and NOT backfilled: no order this installation has already placed named a version, and a
     /// default would attribute a sent order to a decision nobody made.</para>
+    ///
+    /// <para><b>21 — evolution: a version's declared parent.</b> One nullable self-referencing column,
+    /// <c>strategy_version.parent_version_id</c>, DECLARED by the submitter and never inferred, and
+    /// deliberately OUTSIDE the version's own hash so that parentage never moves an id
+    /// (<c>docs/COUNCIL.md</c>:201). Before it the only lineage in the product was the campaign's
+    /// <c>renewed_from</c>, so a variant of a promoted program was a fresh hash related to nothing at
+    /// all. Not backfilled: every row written before this rung declared no parent, which is exactly
+    /// what NULL says about it.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 20;
+    public const int DatabaseSchemaVersion = 21;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

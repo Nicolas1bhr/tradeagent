@@ -1182,6 +1182,38 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','20') ON CONFLICT(key) DO UPDATE SET value='20';");
         }
 
+        if (have < 21)
+        {
+            // EVOLUTION: A VERSION'S DECLARED PARENT.
+            //
+            // `docs/COUNCIL.md`:201, "evolution adds versioned parentage, comparable trials,
+            // exploration and bounded replacement". Before this rung the only lineage in the product
+            // was `strategy_campaign.renewed_from`: a variant of a promoted program was a fresh hash
+            // related to nothing at all, so the trial budget it was charged against was whichever
+            // campaign it happened to be run under, untouched.
+            //
+            // DECLARED BY THE SUBMITTER AND NEVER INFERRED (`StrategyVersionRow.ParentVersionId`), and
+            // OUTSIDE the version's own hash. `strategy_version.id` is a hash over what the program
+            // MEANS; folding a parent into it would make the same twelve lines two versions depending
+            // on what their submitter said about where they came from, and every run, trial and verdict
+            // already charged against the first would be evidence about a row nobody can find. So
+            // parentage never moves an id, and `RecordVersion`'s ON CONFLICT DO NOTHING means the first
+            // declaration is the one that stands.
+            //
+            // THE SELF REFERENCE IS THE POINT OF THE COLUMN. A parent that this installation does not
+            // hold is a parentage claim about nothing, and a count taken over such an ancestry is a
+            // count over an invention — so it is unwritable rather than merely unwritten, the reading
+            // `strategy_allocation`'s two foreign keys take. ADD COLUMN can carry a REFERENCES clause
+            // only with a NULL default, which is exactly what is wanted here: NULL is "declared none",
+            // which is what every row written before this rung genuinely did.
+            //
+            // Additive — one nullable column, NOT backfilled — and an older database gains it null,
+            // which reads correctly as "every version this installation holds is its own root".
+            Exec("ALTER TABLE strategy_version ADD COLUMN parent_version_id TEXT REFERENCES strategy_version(id);");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','21') ON CONFLICT(key) DO UPDATE SET value='21';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,

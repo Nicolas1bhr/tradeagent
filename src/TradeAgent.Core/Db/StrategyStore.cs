@@ -70,6 +70,30 @@ public sealed record StrategyVersionRow(
     public Strategy.FreshnessBounds? Freshness =>
         this is { Timeframe: { } t, DataFreshness: { } d, MaxDecisionAge: { } m }
             ? new Strategy.FreshnessBounds(t, d, m) : null;
+
+    /// <summary>
+    /// THE VERSION THIS ONE WAS DERIVED FROM, DECLARED BY THE SUBMITTER AND NEVER INFERRED — or null,
+    /// which means this version is its own root.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:201, "evolution adds versioned parentage". Before schema 21 the only
+    /// lineage in this build was the campaign's <c>renewed_from</c>: a variant of a promoted program was
+    /// a fresh hash with no relation to anything, so the trial budget it was charged against was
+    /// whichever campaign it happened to be run under (<see cref="CampaignStore.RegisterTrial"/>).</para>
+    ///
+    /// <para><b>It is OUTSIDE the strategy hash, deliberately.</b> <see cref="Id"/> is
+    /// <c>StrategyProgram.StrategyId</c> — a hash over what the program MEANS — and folding a parent
+    /// into it would make the same twelve lines two different versions depending on what their submitter
+    /// said about where they came from, which is the one thing the id exists to prevent. Parentage
+    /// therefore never moves an id, and the first declaration stands: <c>ON CONFLICT(id) DO NOTHING</c>
+    /// means a second submission of the same program cannot restate its own ancestry.</para>
+    ///
+    /// <para><b>Never inferred.</b> The app does not guess a parent from the submitting role's previous
+    /// version, from the clock or from any textual similarity: two unrelated programs from one role
+    /// would read as parent and child, and every count taken over a lineage would then be a count over
+    /// an invention. A version that declares none IS a root, and that is a statement rather than a
+    /// gap.</para>
+    /// </summary>
+    public string? ParentVersionId { get; init; }
 }
 
 /// <summary>
@@ -174,7 +198,9 @@ public sealed class StrategyStore(Database db)
     const string VersionCols =
         "id, source, canonical, manifest, interpreter_build, parse_verdict, warm_up_bars, created_at, role, attempt, " +
         // LAST, so every positional read above them keeps its index. See `StrategyVersionRow.Timeframe`.
-        "timeframe, data_freshness, max_decision_age";
+        "timeframe, data_freshness, max_decision_age, " +
+        // LAST AGAIN, for the same reason, at schema 21. See `StrategyVersionRow.ParentVersionId`.
+        "parent_version_id";
 
     const string RunCols =
         "id, version_id, dataset_id, dataset_sha256, window_from, window_to, execution_model, outcome, " +
@@ -195,7 +221,7 @@ public sealed class StrategyStore(Database db)
     {
         using var c = db.Cmd($"""
             INSERT INTO strategy_version({VersionCols})
-            VALUES($id,$src,$canon,$man,$build,$verdict,$warm,$at,$role,$attempt,$tf,$fresh,$age)
+            VALUES($id,$src,$canon,$man,$build,$verdict,$warm,$at,$role,$attempt,$tf,$fresh,$age,$parent)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", version.Id), ("$src", version.Source), ("$canon", version.Canonical),
@@ -203,10 +229,38 @@ public sealed class StrategyStore(Database db)
             ("$verdict", version.ParseVerdict), ("$warm", version.WarmUpBars),
             ("$at", Sql.T(version.CreatedAt)), ("$role", version.Role), ("$attempt", version.Attempt),
             ("$tf", Sql.Seconds(version.Timeframe)), ("$fresh", Sql.Seconds(version.DataFreshness)),
-            ("$age", Sql.Seconds(version.MaxDecisionAge)));
+            ("$age", Sql.Seconds(version.MaxDecisionAge)),
+            // WHAT THE SUBMITTER DECLARED, AND NOTHING THIS METHOD WORKED OUT FOR ITSELF. There is no
+            // fallback here on purpose: no "the role's last version", no "the newest row", no guess.
+            ("$parent", version.ParentVersionId));
         c.ExecuteNonQuery();
         return version.Id;
     });
+
+    /// <summary>
+    /// THIS VERSION AND EVERY VERSION IT DECLARED ITSELF DERIVED FROM, child first — the chain
+    /// <see cref="CampaignStore"/> charges a trial over.
+    ///
+    /// <para>It walks <c>parent_version_id</c> and stops at a row it has already seen, so a cycle
+    /// written by a future bug is a short list rather than a hang — the shape
+    /// <c>CampaignStore.Lineage</c> already has over <c>renewed_from</c>. An id this installation does
+    /// not hold answers an empty list, because a version it has never accepted has no ancestry here to
+    /// report.</para>
+    /// </summary>
+    public IReadOnlyList<string> Ancestry(string versionId)
+    {
+        var chain = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var at = versionId;
+
+        while (at is not null && seen.Add(at) && VersionById(at) is { } row)
+        {
+            chain.Add(at);
+            at = row.ParentVersionId;
+        }
+
+        return chain;
+    }
 
     /// <summary>One version by its id, or null when this installation has never accepted that program.</summary>
     public StrategyVersionRow? VersionById(string id) => db.Read(_ =>
@@ -342,7 +396,8 @@ public sealed class StrategyStore(Database db)
             {
                 Timeframe = Sql.Span(r, 10),
                 DataFreshness = Sql.Span(r, 11),
-                MaxDecisionAge = Sql.Span(r, 12)
+                MaxDecisionAge = Sql.Span(r, 12),
+                ParentVersionId = r.IsDBNull(13) ? null : r.GetString(13)
             });
         return rows;
     }

@@ -2095,7 +2095,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             req.Dec("fees"),
             req.Dec("slippage"),
             req.Dec("increment"),
-            req.Dec("capital")), ct);
+            req.Dec("capital"),
+            // DECLARED BY THE SUBMITTER, never worked out by the app. It grants nothing: see
+            // `BacktestAsk.Parent`.
+            req.Str("parent")), ct);
 
         var result = ran.Result;
         var m = result.Metrics;
