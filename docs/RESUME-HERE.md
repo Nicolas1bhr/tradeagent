@@ -30,7 +30,9 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-decision-hook-race` and `U-close-all-win` (the two hosted-runner
    reds of the docs-only `44f33a4`, briefed 2026-09-15 morning — each takes the first free slot, a fixer never runs beside two heavy legs); `U-promote-bounds` (one item, light — the referee refusing promotion without
    the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
-   by machine, after `-1`); `U-flatten-3` (the data-loss exit, after `-2`). At most two heavy legs at once, each on its own worktree from `main`; a schema number is
+   by machine, after `-1`); `U-reopen-1` and `U-reopen-2` (the reopen by code the owner chose on 2026-09-15 — option B on condition of "exquisite logic and edge
+   case handling": a computed instant, fresh flatness, a write-once receipt, a clock guard, then two strikes and the owner's two-press release; after `U-flatten-2`);
+   `U-flatten-3` (the data-loss exit, after `-2`). At most two heavy legs at once, each on its own worktree from `main`; a schema number is
    assigned here in landing order — tell each builder which unit takes the number before theirs.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
