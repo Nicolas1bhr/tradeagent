@@ -295,7 +295,7 @@ public class LossFlattenTests(ITestOutputHelper log)
         log.WriteLine($"why                   : {flatten.Why}");
 
         var leg = Assert.Single(gw.Requests.Query("request_id LIKE $p",
-            ("$p", $"{TradingGateway.BudgetClosePress}-%")).Where(r => r.Instrument == "ES"));
+            ("$p", $"{TradingGateway.BudgetClosePress}-%")), r => r.Instrument == "ES");
         log.WriteLine($"leg row               : {leg.RequestId} {leg.State} — {leg.LastError}");
 
         Assert.True(landed);
