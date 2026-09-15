@@ -5948,3 +5948,29 @@ LossReopenSurfacesTests 4, every run green; names 1759 → 1776, 20 added, 0 rem
 
 **NOT done, NOT verified:** no schema rung; `LossMinClosure` is not a setting, no strikes, no review card, no bounded director hold (`U-reopen-2`); no data-loss exit
 (`U-flatten-3`); no stops (`U-protect`); no screen, no box, no ATAS, no money — every wire assertion is `RecordingConnector`.
+
+## 2026-09-15 — U-loopback-listener-mac landed: a failed bind leaves the managed listener closed, so every loopback fixture now borrows a free port and retries from a fresh listener
+
+A hosted-runner red judged under step 6 — `DownloadPartBindingTests.A_stale_part_from_another_download_is_never_resumed_into_this_one`, `ObjectDisposedException:
+'System.Net.HttpListener'` in 8 ms, macos-latest at the DOCS-ONLY `5415a8f` (run 34967255830); the family's earlier sighting is `UpdateTrustTests` at `:3738` — briefed
+this afternoon and fixed by one fresh fixer. Merge `4b0c6e8`, 3 commits, 8 files, +148/−59, TEST-ONLY (no product file touched). Not the money path.
+
+- **The mechanism, measured on .NET 10.0.11 / macOS 26.5.1, not assumed:** a `Start()` that fails to bind leaves the `HttpListener` CLOSED, not stopped — `IsListening`
+  false, and the NEXT TOUCH of `Prefixes` throws `ObjectDisposedException: Cannot access a disposed object. Object name: 'System.Net.HttpListener'.` The fixture's
+  retry died at `Prefixes.Clear()` without ever reaching `Start()` again: the twenty attempts were one, and the first collision was fatal. Both bind failures end there —
+  in-process `…conflicts with an existing registration on the machine`, and over a socket another process holds `Address already in use` (the `:3738` wording).
+- **Reproduced here in the real shape:** the four classes sharing the band 18000–19999, 20 runs → 1 red, in 1 ms, at `HttpListener.get_Prefixes() … FakeArchive..ctor
+  FakeArchive.cs:line 47` — `DatasetLedgerTests.A_dataset_whose_normalised_file_was_edited_is_rejected_too`, the CI red's shape in another class. After the fix, 20/20.
+- **Fixed once, in `tests/Shared/Loopback.cs`** (linked into all three test projects): a port the OS says nothing on the machine is on, from a `TcpListener` at 0; borrow
+  and bind in one critical section; every retry from a FRESH listener, which is why it hands back a started listener rather than a number. MOVED: `DownloadPartBinding-
+  Tests.Vendor` (the CI red), `FakeArchive` (the red above), `FakeProvider` (the same loop; its band 21000–23999 luckier, not safer), `UpdateTrustTests.Server` (its `Bind`
+  borrowed a port properly but retried on the same instance — the `:3738` sighting; `Bind` deleted). LEFT ALONE: `SuiteReachesNoVendorTests`, which owns no listener;
+  it gains the guard `No_test_builds_its_own_loopback_listener`, RED on two mutants (`FakeArchive.cs:30`, `DownloadPartBindingTests.cs:42`) — its first version matched
+  only the named constructor, missed the target-typed `= new()` every fixture used, and PASSED its mutant; the fixer caught that and rewrote it.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `9eb4040` (rebased onto `28438b4`), Release: build `--no-incremental`, 17 projects →
+0 warnings, 0 errors; Unit 1117/1117 (19 s), Fault 329/329 (1 m 23 s), Integration 668 passed + 1 skipped of 669 (11 m 5 s), each `--no-build` to a file → 0 failed;
+Unit 5× → 0 failed, 1117 each; names vs `main` → 0 removed, 1 added (1781 → 1782; `[Fact]`/`[Theory]` 1749 → 1750). Manager's gate at `4b0c6e8` (the reported tip `9d1f20a` rebased onto `3c3b3f2`, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1117/1117 (19 s), Fault 329/329 (1 m 25 s), Integration 668/669, 1 skipped (11 m 5 s) → 0 failed; names vs `main` → 0 removed, 1 added (sets 1781 → 1782; `[Fact]`/`[Theory]` 1749 → 1750); scan clean; no trailers; `rev-list --count` → 0; CI at `4b0c6e8`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no product file touched, so no RED-first product test; no `[Collection]`; no assertion loosened or widened; no test deleted; no draft PR — the
+hosted runners' verdict on this fix is the merge sha's CI, recorded below; no box, no money.
