@@ -227,8 +227,17 @@ static class Recovery
     /// kept by the disk. Null leaves the simulator's own two seconds, which is what a fixture about
     /// the budget itself needs. See <c>UnknownCloseTests</c>' <c>PressBudget</c>.
     ///
-    /// THE ELEVEN PRESSES IN THIS FILE NOW PASS IT, and the red that changed the answer is
-    /// U-press-inflight-win's. They were named EXPOSED here on 2026-09-12 — five in
+    /// THE ELEVEN PRESSES IN THIS FILE PASS <c>Unresolved.PressBudgetFor(legs)</c> RATHER THAN THE
+    /// FLAT 20 SECONDS, and the red that changed the answer is U-close-all-win's: one of them was
+    /// already on <c>PressBudget</c> and went red anyway on windows-latest at the docs-only
+    /// <c>44f33a4</c> (CI run 34944735920), because a two-leg close-all press makes 14 durable
+    /// commits and 20 seconds was argued for a shape making eight. Each site names its own leg count
+    /// — the positions a close-all will close, or the orders a cancel-all will cancel — and the
+    /// arithmetic that turns that count into a number is at <c>PressBudgetFor</c>, with the commit
+    /// counts measured and the runner's worst commit quoted. Every assertion is byte-identical.
+    ///
+    /// THE PARAGRAPH THAT PRECEDED IT, kept because it is the history of the same defect: the eleven
+    /// took the flat budget from U-press-inflight-win. They were named EXPOSED here on 2026-09-12 — five in
     /// <c>OperatorEmergencyRecordTests</c>, one in <c>UnconfirmedLatchTests</c>, three in
     /// <c>CloseAllOutcomeTests</c>, two in <c>CancelAllPerOrderSettlementTests</c> — on the argument
     /// that two durable commits before the leg is a smaller exposure than four and that none had
@@ -237,7 +246,9 @@ static class Recovery
     /// the press's own write-ahead row and nothing else, with its book read refused straight after.
     /// Smaller is not immune, and every verdict below is what the press DID with its legs — a
     /// record, a state, a book, an account — never how long it took. So they take the generous
-    /// budget, every assertion unchanged, and nothing in this file is left judging the runner's disk.
+    /// budget, every assertion unchanged, and nothing in this file is left judging the runner's disk
+    /// — THAT LAST CLAUSE WAS WRONG, and the paragraph above is what it cost: generous was one
+    /// number for every press, and a press's record-keeping is counted in legs.
     /// </param>
     public static async Task<(TradingGateway Gw, RecoveryConnector C, Database Db)> Ready(
         FaultProfile? faults = null, Action<TradeAgentSettings>? settings = null, GatewayOptions? options = null,
@@ -918,7 +929,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task A_close_that_landed_then_failed_leaves_a_flagged_record()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(1));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pos-1", TestEnv.Buy(qty: 2m));
         Assert.Single(c.Inner.Broker.Positions);
@@ -946,7 +957,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task Close_all_with_a_healthy_connector_closes_each_position_once_and_records_each()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "flat-es", TestEnv.Buy(qty: 2m));
         await gw.PlaceAsync(AgentContext.Operator, "flat-nq", TestEnv.Buy("NQ", 1m));
@@ -974,7 +985,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task Cancel_all_records_every_order_it_cancels()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "w-1", TestEnv.Buy());
         var b = await gw.PlaceAsync(AgentContext.Operator, "w-2", TestEnv.Buy("NQ"));
@@ -1005,7 +1016,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task A_cancel_all_that_failed_on_the_wire_leaves_its_orders_flagged()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(1));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "wf-1", TestEnv.Buy());
         // U2c1b: the wire call is a per-ORDER cancel now, so the wire fails where a per-order
@@ -1030,7 +1041,7 @@ public class OperatorEmergencyRecordTests
     [Fact]
     public async Task The_emergency_controls_still_work_while_trading_is_paused()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(1));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "eh-1", TestEnv.Buy());
         c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
@@ -1312,7 +1323,7 @@ public class UnconfirmedLatchTests
     [Fact]
     public async Task Confirming_one_outcome_does_not_lift_another_requests_pause()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(1));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "latch-pos", TestEnv.Buy(qty: 2m));   // a position to close
 
@@ -1431,7 +1442,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task Close_all_keeps_going_after_one_position_fails()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "cp-es", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "cp-nq", TestEnv.Buy("NQ", 1m));
@@ -1457,7 +1468,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task A_close_that_is_only_submitted_is_not_counted_as_a_closed_position()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "sub-es", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "sub-nq", TestEnv.Buy("NQ", 1m));
@@ -1488,7 +1499,7 @@ public class CloseAllOutcomeTests
     [Fact]
     public async Task Close_all_says_it_closed_everything_only_when_the_account_is_flat()
     {
-        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "flat-a", TestEnv.Buy("ES", 2m));
         await gw.PlaceAsync(AgentContext.Operator, "flat-b", TestEnv.Buy("NQ", 1m));
@@ -1919,7 +1930,7 @@ public class CancelAllPerOrderSettlementTests
     [Fact]
     public async Task Each_order_is_settled_by_the_answer_to_its_own_cancel()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "pa-1",
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
@@ -1948,7 +1959,7 @@ public class CancelAllPerOrderSettlementTests
     [Fact]
     public async Task A_sweep_that_accounted_for_everything_settles_every_record()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pb-1",
             new PlaceIntent("ES", OrderSide.Buy, OrderType.Limit, 1m, 1m, null, TimeInForce.Day, null));
