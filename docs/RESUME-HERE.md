@@ -15,14 +15,14 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `473178c` (`U-flatten-2`, product sha `d7f235d`, plus its record), clean, pushed — 2026-09-15 15:45 CEST.** Landed today in order: `U-flatten-1` `1c5d71f`
-   (no schema), `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2` (test-only), `U-flatten-2` `d7f235d` (no schema) — every merge sha's CI green on all four
-   jobs where recorded; the rest in the 2026-09-15 sections. Before them, 2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-freshness` `570279b` (19).
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-decision-hook-race` (worktree, tip `00a316f`
-   rebased onto `473178c`, gated by the fixer, the manager's gate running; its record drafted): land it. (b) `u-reopen-1` (worktree `U-reopen-1`, cut from the
-   flatten-2 tip `d7f235d`; no schema): a fresh builder on `docs/briefs/U-reopen-1.md` told to mirror `U-flatten-2`'s connector-keyed records. (c) `u-promote-bounds`
-   (worktree, cut from `473178c`): a fresh builder on its one-item brief. Re-brief any of them FRESH from its brief on disk: "read your branch first; judge uncommitted
-   files on their merits; finish, rebase onto `main`, gate, report".
+2. **`main` is `8701cc2` (`U-reopen-1`, product sha `bacd4e3`, plus its record), clean, pushed — 2026-09-15 16:55 CEST.** Landed today in order: `U-flatten-1` `1c5d71f`,
+   `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds` `a816f1a`, `U-reopen-1`
+   `bacd4e3` — every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`. Before them, 2026-09-12 → 14, `U-turn-commit`
+   `0da64d7` (11) … `U-freshness` `570279b` (19).
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-reopen-2` (worktree `U-reopen-2`, cut from the
+   reopen-1 tip `bacd4e3`, now on `main`; no schema): a fresh builder on `docs/briefs/U-reopen-2.md` — strikes, the two-press "Reopen after review" card, the durations as
+   owner settings narrowed two-press, the bounded director hold. (b) `u-loopback-listener-mac` (worktree, cut from `8092667`): a fresh fixer on its brief. Re-brief either
+   FRESH from its brief on disk: "read your branch first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
 4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-close-all-win` (windows, a press fixture, the docs-only `44f33a4`) and `U-loopback-listener-mac` (macos, a listener fixture, the docs-only `5415a8f`) —
    hosted-runner reds briefed 2026-09-15, each takes the first free slot, a fixer never runs beside two heavy legs; `U-promote-bounds` (one item, light — the referee refusing promotion without
    the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
