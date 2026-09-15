@@ -5843,3 +5843,32 @@ LossFlattenSurfacesTests 5, LossDayClosedSurfacesTests 6, 15 runs exit 0; names 
 **NOT done, NOT verified:** no reopen of a closed day — no cooldown, no strikes, no receipts (`U-reopen-1`); no data-loss exit (`U-flatten-3`); no stops or targets
 (`U-protect`); no schema, no table, no assessments; NOT VERIFIED anywhere but this Mac — no box, no ATAS, no real money; every order in every test went to the
 simulator through `RecordingConnector`, the wire counts asserted.
+
+## 2026-09-15 — U-decision-hook-race landed: the decision hook is scoped per call, so no test can read another class's line through the process-wide static
+
+A hosted-runner red judged under step 6 — `DownloadPartBindingTests.An_install_with_no_checksum_writes_the_decision_and_the_reason`, `Assert.Single(): 2 items`, three
+sightings (a builder's DEBUG run, the manager's contaminated gate at `ec0f443`, and macos-latest at the DOCS-ONLY `44f33a4`, run 34944735920) — briefed this morning
+and fixed by one fresh fixer. Merge `4809e58`, 3 commits, 6 files, +117/−42. The product gains ONE optional parameter and no behaviour: `recordDecision` defaults to
+null, and null means `Downloader.RecordDecision` exactly as before (`AppHost.cs:520` untouched). Not the money path.
+
+- **The producer, named, and the red reproduced on this Mac both ways:** `CandleSourceTests.A_source_that_publishes_no_checksum_records_no_published_hash_and_says_why`
+  is the ONLY other test that swaps the static; it installs `BTC-USD-5m-2026-06-09_2026-09-06.csv`, and whichever class assigned the hook second owned both classes'
+  decisions. The two classes alone, Release, 10 runs → 4 red: `Assert.Single() Failure: The collection contained 2 items / Collection: ["Installed ATASPlatform.exe
+  without checking it aga"…, "Installed BTC-USD-5m-2026-06-09_2026-09-06.csv wit"…] at DownloadPartBindingTests.cs:line 208`. The two TESTS alone, 10 runs → 10 red
+  the other way: `Assert.Contains() Failure: Filter not matched in collection / Collection: []` at `CandleSourceTests.cs:line 298`.
+- **Scoped per call, not serialised:** `Action<string>? recordDecision` on `Downloader.DownloadAsync`, `CandleSourceClient.FetchPeriodAsync`/`CollectAsync` and both
+  `MarketDataService.CollectAsync`; the static is the app's default only. Both tests pass their own sink; `Assert.Single(recorded)` unchanged; NO `[Collection]` added.
+  The same 10 + 10 runs after the fix → 0 red. A guard test, `No_test_assigns_the_process_wide_decision_hook`, scans `tests/` through
+  `SuiteReachesNoVendorTests.TestSources()`; mutant (the swap put back at `CandleSourceTests.cs:288`) → RED: "…pass `recordDecision:` on the call instead:
+  CandleSourceTests.cs:288".
+- **The sweep of every other `finally`-restored shared state in `tests/` — none at risk, none changed:** `CoreTests.cs:371-381` `CultureInfo.CurrentCulture` (per async
+  flow, not process-wide); `CoreTests.cs:626-644` the `RuntimeCatalog` override FILE (already under `[Collection(VendorOverrideFiles.Name)]`); `CoreTests.cs:730-739`
+  `PathEntry` PATH (the suite's only PATH writer, its class serial); `AgentEnvironmentTests.cs:26-36,59-70` two `TA_TEST_*` names nothing else reads;
+  `PressAtomicityTests.cs:105` `Pressing`, an `AsyncLocal` declared in the test.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `aaf9a20` (rebased onto `25f79b7`), Release: build `--no-incremental` → 0 warnings,
+0 errors; Unit 1098/1098, Fault 304/304, Integration 668 passed + 1 skipped of 669, each `--no-build` to a file → 0 failed; Unit 5× → 0 failed (1098 each time);
+names vs `main` → 0 removed, 1 added (1756 → 1757); scan clean before each commit; no trailers. Manager's gate at `00a316f` (the reported tip `f314cdf` rebased onto `473178c`, the branch's patch-id identical before and after; landed as `4809e58` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1103/1103 (19 s), Fault 320/320 (1 m 26 s), Integration 668/669, 1 skipped (11 m 5 s) → 0 failed; names vs `main` → 0 removed, 1 added (sets 1758 → 1759; `[Fact]`/`[Theory]` 1726 → 1727); scan clean; no trailers; `rev-list --count` → 0; CI at `4809e58`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no `[Collection]`; no assertion loosened or widened; no test deleted; no product behaviour changed and so no RED-first product test; no
+Windows box, no ATAS, no money. The hosted runners' verdict on this fix is the merge sha's CI, recorded below.
