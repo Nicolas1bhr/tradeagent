@@ -944,7 +944,7 @@ sealed class SafetyPage
     /// this page where a SMALLER number is the grant, which is why they carry their own hint and why
     /// <c>RiskPolicy.Widenings</c> compares them the other way round.
     /// </summary>
-    readonly NumericUpDown _lossMinClosure, _lossStrikeWindow;
+    readonly NumericUpDown _lossMinClosure, _lossStrikeWindow, _valuationExit;
 
     /// <summary>
     /// The two loss hints, kept because they name the ACCOUNT'S currency and the account has not
@@ -1421,6 +1421,7 @@ sealed class SafetyPage
         _maxDailyLoss = Ui.NumberField(r.MaxDailyLoss, 0m, 50m);
         _lossMinClosure = Ui.NumberField(r.LossMinClosureHours, 0m, 1m);
         _lossStrikeWindow = Ui.NumberField(r.LossStrikeWindowDays, 0m, 1m);
+        _valuationExit = Ui.NumberField(r.ValuationLossExitMinutes, 0m, 1m);
         // The placeholder is what an empty box MEANS, and an empty box now means nothing is allowed
         // rather than everything is. It said "any".
         _allowlist = Ui.TextField(string.Join(", ", r.InstrumentAllowlist), "none");
@@ -1575,6 +1576,7 @@ sealed class SafetyPage
             // the one that hands the AI more room.
             Ui.FieldRow(Labels.LossMinClosure, _lossMinClosure),
             Ui.FieldRow(Labels.LossStrikeWindow, _lossStrikeWindow, Labels.LossClosureHint),
+            Ui.FieldRow(Labels.ValuationLossExit, _valuationExit, Labels.ValuationLossExitHint),
             _lossClosedNote,
             _lossFlattenNote,
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
@@ -2127,6 +2129,7 @@ sealed class SafetyPage
             MaxDailyLoss = _maxDailyLoss.Value ?? now.MaxDailyLoss,
             LossMinClosureHours = _lossMinClosure.Value ?? now.LossMinClosureHours,
             LossStrikeWindowDays = (int)(_lossStrikeWindow.Value ?? now.LossStrikeWindowDays),
+            ValuationLossExitMinutes = _valuationExit.Value ?? now.ValuationLossExitMinutes,
             InstrumentAllowlist = (_allowlist.Text ?? "")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList()
@@ -2146,6 +2149,7 @@ sealed class SafetyPage
             s.Risk.MaxDailyLoss = pending.MaxDailyLoss;
             s.Risk.LossMinClosureHours = pending.LossMinClosureHours;
             s.Risk.LossStrikeWindowDays = pending.LossStrikeWindowDays;
+            s.Risk.ValuationLossExitMinutes = pending.ValuationLossExitMinutes;
             s.Risk.InstrumentAllowlist = pending.InstrumentAllowlist;
         });
         _host.Gateway.Log.Activity("You changed the safety limits");

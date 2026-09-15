@@ -549,6 +549,25 @@ public static class Labels
         + "release that yourself. Making either number SMALLER gives the AI more room, so it asks again "
         + "first. Neither one changes a closure that is already standing.";
 
+    /// <summary>
+    /// THE DATA-LOSS EXIT, as the owner's own number. LENGTHENING it is the grant here — see
+    /// <c>RiskPolicy.ValuationLossExitMinutes</c> — so it is the one box on this page whose risky
+    /// direction is neither of the two the boxes above it have.
+    /// </summary>
+    public const string ValuationLossExit = "Close a position nobody can value after (minutes)";
+
+    /// <summary>
+    /// What the data-loss box says under it. It has to carry the zero's reading and what the exit
+    /// is NOT, because an owner who reads "TradeAgent closed my position" and assumes their loss
+    /// budget went will go looking for a loss that did not happen.
+    /// </summary>
+    public const string ValuationLossExitHint =
+        "If TradeAgent cannot work out what an open position is worth for that long without a break — a "
+        + "silent feed, a platform that stops marking — it closes the position, because your loss budget "
+        + "cannot bound what nothing is measuring. It is NOT a budget breach: no day and no instrument is "
+        + "closed by it. 0 switches the exit off and leaves such a position open. A LONGER wait gives the "
+        + "AI more room, so lengthening it asks again first.";
+
     public const string InstrumentAllowlist = "Instruments it may touch";
 
     /// <summary>

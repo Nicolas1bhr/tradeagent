@@ -137,6 +137,24 @@ public sealed class GatewayOptions
     /// that says "day" means a UTC date.</para>
     /// </summary>
     public int LossStrikeWindow { get; set; } = 7;
+
+    /// <summary>
+    /// HOW LONG AN OPEN POSITION MAY GO UNVALUED BEFORE THE DATA-LOSS EXIT CLOSES IT — <b>fifteen
+    /// minutes</b>, and this is the FALLBACK rather than the rule.
+    ///
+    /// <para>The number in force is the owner's
+    /// <see cref="TradeAgent.Core.RiskPolicy.ValuationLossExitMinutes"/>, and it is what an episode
+    /// is judged by. This is what an installation whose settings row could not be read is judged by,
+    /// and it is the figure every threshold disclosure falls back to — the rule that was in force
+    /// when the build shipped, in place of a number nobody could read.</para>
+    ///
+    /// <para>It bounds a stretch of CONTINUOUS unavailability and nothing else: a tick that values
+    /// the position ends the episode, and the next silence starts a new one with a new clock. And it
+    /// is only ever counted with the connection UP — with it down nothing can be sent at all, so the
+    /// clock keeps running and the exit does not (<c>CLAUDE.md</c> rule 3: an unavailable valuation
+    /// is never a refusal by the broker).</para>
+    /// </summary>
+    public TimeSpan ValuationLossExitAfter { get; set; } = TimeSpan.FromMinutes(15);
 }
 
 /// <summary>
@@ -467,6 +485,32 @@ public sealed record GatewayStatus(
     /// than left to be reconstructed.</para>
     /// </summary>
     public string? LossClosureRule { get; init; }
+
+    /// <summary>
+    /// OPEN POSITIONS TRADEAGENT CANNOT VALUE AT ALL RIGHT NOW, and since when — or ABSENT because
+    /// there are none (<c>U-flatten-3</c>).
+    ///
+    /// <para>It is on the wire because <c>RISK_CHECK_UNAVAILABLE</c> on its own tells an agent that
+    /// this order was refused and not that a POSITION has been unmeasurable for twenty minutes and
+    /// is about to be closed by the app. An agent planning around a book it believes is still there
+    /// is an agent planning a session it will not have.</para>
+    ///
+    /// <para>Nothing here is a closure and nothing here is a permission: while an entry stands, the
+    /// figure cannot be worked out, so every order that could increase exposure is refused anyway.</para>
+    /// </summary>
+    public IReadOnlyList<string>? LossValuationLost { get; init; }
+
+    /// <summary>
+    /// POSITIONS TRADEAGENT CLOSED TODAY BECAUSE NOTHING COULD VALUE THEM — reason
+    /// <c>VALUATION_LOST</c> — or ABSENT because it closed none.
+    ///
+    /// <para><b>This is not a loss-budget breach and it must not be read as one.</b> No day and no
+    /// instrument is closed to new risk by it, no strike is counted, and your budget was not
+    /// reached: the position was closed because the app could not measure it, and an unmeasured
+    /// position is one the budget is not bounding. The instrument goes on being refused new risk for
+    /// exactly as long as it still cannot be valued, and not one tick longer.</para>
+    /// </summary>
+    public IReadOnlyList<string>? LossValuationExit { get; init; }
 
     /// <summary>
     /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the

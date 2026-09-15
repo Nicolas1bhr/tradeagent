@@ -46,6 +46,25 @@ public static class BoundaryKind
     /// neither.</para>
     /// </summary>
     public const string LossBudget = "loss_budget";
+
+    /// <summary>
+    /// A POSITION CLOSED BECAUSE NOTHING COULD VALUE IT — <c>U-flatten-3</c>'s data-loss exit, and
+    /// its OWN kind rather than a second use of <see cref="LossBudget"/>.
+    ///
+    /// <para>The entity is the account and the revision the UTC day, so the id is
+    /// <c>valuation_loss:{account}:{yyyyMMdd}</c>: one boundary per account per day, however many
+    /// instruments lost their valuation on it. Separate from the loss-budget kind because the two
+    /// are different events with different post-mortems — one is "we lost the owner's money to the
+    /// market", the other is "we could not see the owner's book" — and because a shared id would let
+    /// a valuation exit open the very boundary a loss-budget episode's extension names
+    /// (<c>TradingGateway.LossBoundaryIdFor</c>), which would be a closure's clock moved by an event
+    /// that was never about the closure.</para>
+    ///
+    /// <para>Its default disposition is <c>hold</c>, like every other, and it holds NOTHING: no
+    /// closure, no refusal and no position waits on it. Nothing about the exit waits for the council
+    /// — the position is closed and the record written before this is opened.</para>
+    /// </summary>
+    public const string ValuationLoss = "valuation_loss";
 }
 
 /// <summary>What a director may hand the app about a boundary. Both are publications, and the app decides which.</summary>

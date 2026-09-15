@@ -851,6 +851,12 @@ public sealed class TradingGateway : IAsyncDisposable
         var flattened = FlattenStateToday();
         var reopen = ReopenReading();
 
+        // AND WHAT CANNOT BE VALUED, WHATEVER THE BUDGETS NOW SAY — rows this app wrote, no platform
+        // call, and it is above the zero check for the closure's reason: an owner who sets both
+        // budgets to zero after TradeAgent closed a position it could not value must still be able
+        // to read that it happened.
+        var valuation = ValuationReading();
+
         var r = Settings.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced with
         {
@@ -859,7 +865,8 @@ public sealed class TradingGateway : IAsyncDisposable
             ReopensAt = reopen.At, ReopenHeld = reopen.Held,
             ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
             HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
-            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
+            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended,
+            ValuationLost = valuation.Lost, ValuationExits = valuation.Exits
         };
 
         if (positions is null)
@@ -875,7 +882,8 @@ public sealed class TradingGateway : IAsyncDisposable
                     ReopensAt = reopen.At, ReopenHeld = reopen.Held,
                     ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
                     HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
-                    ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
+                    ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended,
+                    ValuationLost = valuation.Lost, ValuationExits = valuation.Exits
                 };
             }
         }
@@ -895,7 +903,8 @@ public sealed class TradingGateway : IAsyncDisposable
             ReopensAt = reopen.At, ReopenHeld = reopen.Held,
             ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
             HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
-            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
+            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended,
+            ValuationLost = valuation.Lost, ValuationExits = valuation.Exits
         };
     }
 
@@ -1196,6 +1205,8 @@ public sealed class TradingGateway : IAsyncDisposable
             LossHeldForReview = loss.HeldForReview,
             LossReleasedAt = loss.ReleasedAt,
             LossClosureRule = loss.ClosureRule,
+            LossValuationLost = loss.ValuationLost.Count > 0 ? loss.ValuationLost : null,
+            LossValuationExit = loss.ValuationExits.Count > 0 ? loss.ValuationExits : null,
             AiModel = ai.Model
         };
     }
@@ -2098,6 +2109,12 @@ public sealed class TradingGateway : IAsyncDisposable
     public async Task<LossWatchPass> LossWatchAsync(CancellationToken ct = default)
     {
         var at = Now;
+
+        // A REAL WALL CLOCK, deliberately, and not GatewayOptions.Clock: this is how long a reading
+        // TAKES rather than when it happened, it is reported as the sampling half of what the
+        // thresholds cannot promise, and a substituted clock that does not advance would report
+        // every reading as instantaneous. It decides nothing. See LastLossWatchTook.
+        var took = System.Diagnostics.Stopwatch.StartNew();
         var r = Settings.Risk;
 
         // A CLOSURE THAT IS STANDING IS WORK THIS TICK OWES WHATEVER THE BUDGETS NOW SAY. With
@@ -2149,11 +2166,19 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         LossWatchPass pass;
+        List<ValuationUnavailableRecord> unvaluable;
         await _dispatchGate.WaitAsync(ct);
         try
         {
             var loss = LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(at), "today"),
                 positions, s => marks.GetValueOrDefault(s), _instrumentCache);
+
+            // EVERY OPEN POSITION'S VALUATION EPISODE, OPENED, REFRESHED OR ENDED — under the gate
+            // with the figure it belongs to, and BEFORE the figure is judged, so that a book that
+            // cannot be valued has its clock running whatever the rest of this pass decides. It
+            // sends nothing: what is done about a standing episode is decided outside the gate, by
+            // AnswerLostValuationsAsync, exactly as the flatten is (U-flatten-3).
+            unvaluable = TrackValuations(account.Id, positions, at, epoch);
 
             // AN UNAVAILABLE VALUATION RECORDS NOTHING AND DROPS NOTHING. It is not a disagreement —
             // a pull that could not be worked out has not said the breach is over — so a standing
@@ -2180,6 +2205,14 @@ public sealed class TradingGateway : IAsyncDisposable
         // ran first and died would leave a book half closed and nothing saying why.
         await FlattenWhatWasJustClosedAsync(pass.Closed, ct);
 
+        // AND THE DATA-LOSS EXIT, AFTER THE FLATTEN AND OUTSIDE THE GATE FOR ITS REASONS. After,
+        // because a book the budget has just closed is a book whose positions are already going, and
+        // sending a second close on the strength of a valuation nobody could take would be the
+        // reversal the reduction-only check exists to refuse. With nothing standing it costs a
+        // Count == 0 and returns.
+        await AnswerLostValuationsAsync(account.Id, unvaluable, at, epoch, ct);
+
+        LastLossWatchTook = took.Elapsed;
         return pass;
     }
 
@@ -5462,9 +5495,34 @@ public sealed class TradingGateway : IAsyncDisposable
 
     public const string BudgetClosePress = "op-budget-close";
 
+    /// <summary>
+    /// THE OTHER TWO APP-OWNED KINDS — the data-loss exit's (<c>U-flatten-3</c>), and they are
+    /// SEPARATE from the budget's for the same reason the budget's are separate from the owner's.
+    ///
+    /// <para>They answer a different event. A budget flatten is what the app does when the owner's
+    /// money has gone; this is what it does when the app cannot SEE the owner's book. Sharing the
+    /// budget's kinds would put that difference nowhere a reader could find it: the refusal an owner
+    /// is shown names the control by kind (<see cref="PressName"/>), the drift sentence dates itself
+    /// by it ("when the budget was reached"), the order carries it as its note, and every one of
+    /// those would then tell an owner a budget was reached when none was. Worse, a stuck valuation
+    /// exit under the budget's kind would REFUSE the next real budget flatten, which is the more
+    /// urgent of the two events.</para>
+    ///
+    /// <para>The prefix rule <see cref="IsPressRecord"/> depends on still holds: an agent cannot mint
+    /// an id beginning <c>op-</c>, and an agent sweep's <c>op-{hex}-{intent}-{i}</c> can never begin
+    /// <c>op-valuation-</c>, because "valuation" is not hex.</para>
+    /// </summary>
+    public const string ValuationCancelPress = "op-valuation-cancel";
+
+    public const string ValuationClosePress = "op-valuation-close";
+
     /// <summary>Whether a press kind is the app's own rather than a person's.</summary>
     public static bool IsAppPress(string kind) =>
-        kind is BudgetCancelPress or BudgetClosePress;
+        kind is BudgetCancelPress or BudgetClosePress or ValuationCancelPress or ValuationClosePress;
+
+    /// <summary>Whether a press kind belongs to the data-loss exit rather than to a loss budget.</summary>
+    public static bool IsValuationPress(string kind) =>
+        kind is ValuationCancelPress or ValuationClosePress;
 
     /// <summary>
     /// ONE PRESS'S OWN NAME, MINTED ONCE AND NEVER HANDED BACK.
@@ -5498,7 +5556,9 @@ public sealed class TradingGateway : IAsyncDisposable
         requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ||
         requestId.StartsWith($"{CancelPress}-", StringComparison.Ordinal) ||
         requestId.StartsWith($"{BudgetClosePress}-", StringComparison.Ordinal) ||
-        requestId.StartsWith($"{BudgetCancelPress}-", StringComparison.Ordinal);
+        requestId.StartsWith($"{BudgetCancelPress}-", StringComparison.Ordinal) ||
+        requestId.StartsWith($"{ValuationClosePress}-", StringComparison.Ordinal) ||
+        requestId.StartsWith($"{ValuationCancelPress}-", StringComparison.Ordinal);
 
     /// <summary>
     /// Which control wrote this row. Only meaningful for a <see cref="IsPressRecord"/> id.
@@ -5511,6 +5571,8 @@ public sealed class TradingGateway : IAsyncDisposable
     public static string PressKindOf(string requestId) =>
         requestId.StartsWith($"{BudgetClosePress}-", StringComparison.Ordinal) ? BudgetClosePress
         : requestId.StartsWith($"{BudgetCancelPress}-", StringComparison.Ordinal) ? BudgetCancelPress
+        : requestId.StartsWith($"{ValuationClosePress}-", StringComparison.Ordinal) ? ValuationClosePress
+        : requestId.StartsWith($"{ValuationCancelPress}-", StringComparison.Ordinal) ? ValuationCancelPress
         : requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ? ClosePress
         : CancelPress;
 
@@ -5552,6 +5614,8 @@ public sealed class TradingGateway : IAsyncDisposable
         ClosePress => "close-all",
         BudgetClosePress => "the loss budget's close of your open positions",
         BudgetCancelPress => "the loss budget's cancel of your opening orders",
+        ValuationClosePress => "TradeAgent's close of a position it could not value",
+        ValuationCancelPress => "TradeAgent's cancel of orders on a position it could not value",
         _ => "cancel-all"
     };
 
@@ -6319,7 +6383,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 var run = await CloseCapturedAsync(BudgetClosePress, closeNonce, account.Id, captured,
                     paused, reductionOnly: true, ct);
 
-                (legs, residual) = await AccountForTheFlattenAsync(closeNonce, account.Id, captured, run, ct);
+                (legs, residual) = await AccountForTheFlattenAsync(BudgetClosePress, BudgetCancelPress,
+                    closeNonce, account.Id, captured, run, ct);
                 CompleteComposite(pressId, Json.Write(new
                 {
                     breach = breachKey, legs, residual, run.Drifted, run.Waited, run.Unsettled, run.Refused
@@ -6412,16 +6477,39 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <para>A per-symbol breach touches that symbol's orders and nothing else: the rest of the
     /// account has not breached anything.</para>
     /// </summary>
-    async Task<OpenersCancelled> CancelOpenersForBreachAsync(LossBreachRecord breach, string accountId,
+    Task<OpenersCancelled> CancelOpenersForBreachAsync(LossBreachRecord breach, string accountId,
         string paused, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(breach);
+        return CancelWorkingOrdersAsync(BudgetCancelPress, accountId, breach.Symbol,
+            alsoEveryOrderOnAScopePosition: true, paused, "a loss budget was reached", ct);
+    }
+
+    /// <summary>
+    /// THE CANCEL HALF, FOR EITHER APP EVENT — one method, because the budget flatten and the
+    /// data-loss exit are two DECISIONS and were never allowed to become two copies of this.
+    /// </summary>
+    /// <param name="kind">The app press kind the rows go under. Its own claim, and its own name.</param>
+    /// <param name="scopeSymbol">One instrument, or null for the whole account.</param>
+    /// <param name="alsoEveryOrderOnAScopePosition">
+    /// True where the caller is about to CLOSE the positions in scope, which takes the reducing
+    /// orders on them too: a protective sell under a long is a reducer only while the long exists.
+    /// FALSE where nothing is being closed — <c>U-flatten-3</c>'s precautionary cancel while a
+    /// valuation is merely missing — and then a resting protective order is left exactly where the
+    /// owner put it, because removing the one thing bounding a position nobody can measure is the
+    /// opposite of what that episode is about. Only what could INCREASE exposure goes.
+    /// </param>
+    /// <param name="because">What happened, in a few words, for the refusal sentence.</param>
+    async Task<OpenersCancelled> CancelWorkingOrdersAsync(string kind, string accountId, string? scopeSymbol,
+        bool alsoEveryOrderOnAScopePosition, string paused, string because, CancellationToken ct)
+    {
         var nonce = NewPressNonce();
-        var pressId = PressPrefix(BudgetCancelPress, nonce);
+        var pressId = PressPrefix(kind, nonce);
 
         // The press's own row, written flagged, BEFORE anything is read or sent. It is also this
         // run's claim on the kind: the insert refuses while another app cancel is unresolved.
         OpenPressRow(pressId, accountId, RequestIntent.CANCEL_ALL, "-",
-            Json.Write(new { order = (string?)null, press = nonce }), paused, claims: BudgetCancelPress);
+            Json.Write(new { order = (string?)null, press = nonce }), paused, claims: kind);
 
         IReadOnlyList<OrderInfo> book;
         IReadOnlyList<PositionInfo> positions;
@@ -6437,20 +6525,22 @@ public sealed class TradingGateway : IAsyncDisposable
             // reversal this step exists to prevent. Rule 3: the read said nothing, so nothing is
             // recorded as done.
             SafelyRecordIndefinite(pressId, ex.Message,
-                "TradeAgent could not read your working orders after a loss budget was reached, so nothing "
+                $"TradeAgent could not read your working orders after {because}, so nothing "
                 + "was cancelled and nothing was closed.", ex);
             return new OpenersCancelled(nonce, [], [$"the working orders could not be read ({ex.Message})"]);
         }
 
-        var flattening = positions
-            .Where(p => p.Quantity != 0m
-                        && (breach.Symbol is null || string.Equals(p.Symbol, breach.Symbol, StringComparison.Ordinal)))
-            .Select(p => p.Symbol)
-            .ToHashSet(StringComparer.Ordinal);
+        var flattening = alsoEveryOrderOnAScopePosition
+            ? positions
+                .Where(p => p.Quantity != 0m
+                            && (scopeSymbol is null || string.Equals(p.Symbol, scopeSymbol, StringComparison.Ordinal)))
+                .Select(p => p.Symbol)
+                .ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
 
         var targets = book
             .Where(o => !OrderStateMachine.IsTerminal(o.State))
-            .Where(o => breach.Symbol is null || string.Equals(o.Symbol, breach.Symbol, StringComparison.Ordinal))
+            .Where(o => scopeSymbol is null || string.Equals(o.Symbol, scopeSymbol, StringComparison.Ordinal))
             .Where(o => flattening.Contains(o.Symbol) || CouldIncreaseExposure(o, positions))
             .ToList();
 
@@ -6468,7 +6558,7 @@ public sealed class TradingGateway : IAsyncDisposable
         for (var i = 0; i < targets.Count; i++)
         {
             var target = targets[i].ConnectorOrderId;
-            var rid = PressLegId(BudgetCancelPress, nonce, i);
+            var rid = PressLegId(kind, nonce, i);
             OpenPressRow(rid, accountId, RequestIntent.CANCEL, "-",
                 Json.Write(new { order = target, press = nonce }), paused);
             try
@@ -6521,7 +6611,7 @@ public sealed class TradingGateway : IAsyncDisposable
             SafelyRecordIndefinite(pressId,
                 string.Join("; ", notSettled),
                 $"TradeAgent could not confirm that {notSettled.Count} of your working order(s) were cancelled "
-                + "after a loss budget was reached, so it closed nothing: an order that can still fill must not "
+                + $"after {because}, so it closed nothing: an order that can still fill must not "
                 + "be closed underneath.");
         else
             SafelySettle(pressId, ExecutionState.CANCELLED,
@@ -6565,9 +6655,15 @@ public sealed class TradingGateway : IAsyncDisposable
     /// it was written with, pauses order flow exactly as an owner's press does, and is named in the
     /// record and in the report.</para>
     /// </summary>
+    /// <param name="closeKind">
+    /// The app press kind whose legs are being accounted for, and — with <paramref name="cancelKind"/>
+    /// — the pair whose press-level rows are cleared once every leg has resolved. Parameters rather
+    /// than the budget's two constants because the data-loss exit resolves by exactly the same
+    /// evidence and must not be a second copy of this method to get it wrong in.
+    /// </param>
     async Task<(List<LossFlattenLeg> Legs, List<string> Residual)> AccountForTheFlattenAsync(
-        string nonce, string accountId, IReadOnlyList<(string Symbol, decimal Quantity)> captured,
-        CloseRun run, CancellationToken ct)
+        string closeKind, string cancelKind, string nonce, string accountId,
+        IReadOnlyList<(string Symbol, decimal Quantity)> captured, CloseRun run, CancellationToken ct)
     {
         IReadOnlyList<PositionInfo>? after = null;
         string? unreadable = null;
@@ -6575,9 +6671,9 @@ public sealed class TradingGateway : IAsyncDisposable
         catch (Exception ex) { unreadable = ex.Message; }
 
         var legs = new List<LossFlattenLeg>();
-        var pressId = PressPrefix(BudgetClosePress, nonce);
+        var pressId = PressPrefix(closeKind, nonce);
 
-        foreach (var row in PressRows(BudgetClosePress, nonce)
+        foreach (var row in PressRows(closeKind, nonce)
                      .Where(r => !string.Equals(r.RequestId, pressId, StringComparison.Ordinal)))
         {
             decimal? position = after is null
@@ -6601,7 +6697,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // must not leave the AI paused on this app's own housekeeping — that would make a correct
         // flatten indistinguishable from a failed one for the rest of the day.
         if (legs.Count > 0 && legs.All(l => l.Resolved))
-            foreach (var kind in new[] { BudgetCancelPress, BudgetClosePress })
+            foreach (var kind in new[] { cancelKind, closeKind })
                 foreach (var row in _requests.Query("request_id LIKE $p", ("$p", $"{kind}-%"))
                              .Where(r => r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId)))
                     ClearTheFlatteningFlag(row.RequestId);
@@ -6668,6 +6764,562 @@ public sealed class TradingGateway : IAsyncDisposable
                + $"the account is flat: {(trouble.Count == 0 ? "nothing was open to close" : string.Join("; ", trouble))}. "
                + "AI trading is paused until you confirm those records on the Dashboard. Check the platform.";
     }
+
+    // ------------------------------------------- the data-loss exit (app-owned, U-flatten-3)
+
+    /// <summary>
+    /// THE BOUND IN FORCE — the owner's number, and the shipped fallback where their settings row
+    /// could not be read at all. A row nobody could read is not an owner who chose zero, and reading
+    /// it as one would switch the exit off on exactly the installation that has already lost a file.
+    /// </summary>
+    TimeSpan ValuationExitBound() =>
+        Settings.CouldNotBeRead
+            ? _opt.ValuationLossExitAfter
+            : ValuationLoss.BoundOf(Settings.Risk.ValuationLossExitMinutes);
+
+    /// <summary>
+    /// CAN THIS OPEN POSITION BE VALUED AT ALL, and if not, in the watch's own words why not.
+    ///
+    /// <para>It asks EXACTLY what <see cref="LossBudget.Read"/> needs and nothing else, because the
+    /// two must never disagree: a symbol this said was fine while the figure came back unknown would
+    /// be an episode clock that never started, and a symbol this said was lost while the figure was
+    /// computed would be an exit over a book that was being measured the whole time. The platform's
+    /// own mark first, then this gateway's newest FRESH, in-epoch, executable quote, and then the
+    /// multiplier — because a price with no contract size is not a value on a futures account.</para>
+    ///
+    /// <para><b>The staleness and the epoch are the whole of it.</b> A cached quote always exists
+    /// after the first one arrives, so a check that merely asked whether a price had ever been seen
+    /// would answer "valuable" for ever, clear the episode on every tick, and the unavailability
+    /// would never age past one tick however long the feed stayed silent. That is the mutant this
+    /// unit's first test watches go red.</para>
+    /// </summary>
+    (bool Valuable, string Refusal) CanBeValued(PositionInfo p, int epoch)
+    {
+        if (p.UnrealizedPnl is not null) return (true, "");
+
+        var (mark, note) = MarkFor(p, epoch);
+        if (mark is null) return (false, note.Source is { Length: > 0 } why ? why : "no mark");
+
+        return Pnl.MultiplierFor(p.Symbol, _instrumentCache).Known
+            ? (true, "")
+            : (false, "your platform did not say what one contract of it is worth");
+    }
+
+    /// <summary>
+    /// EVERY OPEN POSITION'S VALUATION EPISODE, OPENED, REFRESHED OR ENDED ON THIS TICK — the half
+    /// of the data-loss exit that runs UNDER the dispatch gate, and it sends nothing.
+    ///
+    /// <para><b>An episode is a stretch of time, not a tick.</b> <c>Since</c> is written when the
+    /// first tick fails to value the position and is CARRIED FORWARD unchanged on every tick after
+    /// it; only a tick that actually valued the position ends the episode, and only a NEW episode
+    /// gets a new <c>Since</c>. That is what makes "unavailable since" age at all, and the exit's
+    /// whole decision is an arithmetic over it.</para>
+    ///
+    /// <para><b>A position that is GONE ends its episode too.</b> There is nothing left to value and
+    /// nothing left at risk. The row stays on disk with its <c>ClearedAt</c>, because the exit that
+    /// may have just closed the position is reported beside it.</para>
+    ///
+    /// <para><b>A row that cannot be read or written leaves the symbol alone.</b> Nothing is sent on
+    /// a reading nobody could take (<c>CLAUDE.md</c> rule 3), and the gate is refusing new risk off
+    /// the unknown valuation anyway — which is the safe half and is not this method's to undo.</para>
+    /// </summary>
+    List<ValuationUnavailableRecord> TrackValuations(string accountId,
+        IReadOnlyList<PositionInfo> positions, DateTimeOffset at, int epoch)
+    {
+        var standing = new List<ValuationUnavailableRecord>();
+        var bound = ValuationExitBound();
+        var open = positions.Where(p => p.Quantity != 0m).ToList();
+        var held = open.Select(p => p.Symbol).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var p in open)
+        {
+            var key = ValuationLoss.KeyFor(Connector.Id, accountId, p.Symbol);
+
+            ValuationUnavailableRecord? row;
+            try { row = ReadValuationEpisode(key); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.TryEngineering("Gateway", "valuation_episode_unreadable", "error", ex: ex,
+                    metadataJson: Json.Write(new { key }));
+                continue;
+            }
+
+            var (valuable, refusal) = CanBeValued(p, epoch);
+
+            if (valuable)
+            {
+                if (row is { ClearedAt: null })
+                {
+                    WriteValuationEpisode(key, row with { ClearedAt = at, Quantity = p.Quantity });
+                    _log.Activity($"TradeAgent can value your {p.Symbol} position again; it could not "
+                                  + $"since {row.Since.UtcDateTime:yyyy-MM-dd HH:mm} UTC.");
+                    _log.TryEngineering("Gateway", "valuation_recovered", metadataJson: Json.Write(new
+                    {
+                        key, since = row.Since, at, for_seconds = row.Age(at).TotalSeconds
+                    }));
+                    StateChanged?.Invoke();
+                }
+                continue;
+            }
+
+            var episode = row is { ClearedAt: null }
+                ? row with { LastSeenAt = at, Quantity = p.Quantity, Refusal = refusal }
+                : new ValuationUnavailableRecord
+                {
+                    Connector = Connector.Id,
+                    Account = accountId,
+                    Symbol = p.Symbol,
+                    Mode = Settings.Mode,
+                    Quantity = p.Quantity,
+                    Since = at,
+                    SinceEpoch = epoch,
+                    LastSeenAt = at,
+                    Refusal = refusal,
+                    Why = ValuationLoss.OpenSentence(p.Symbol, p.Quantity, at, refusal, bound)
+                };
+
+            if (!WriteValuationEpisode(key, episode)) continue;
+
+            if (row is not { ClearedAt: null })
+            {
+                _log.Activity(episode.Why, "warn");
+                _log.TryEngineering("Gateway", "valuation_lost", "warn", metadataJson: Json.Write(new
+                {
+                    key, symbol = p.Symbol, quantity = p.Quantity, refusal, epoch, bound_seconds = bound.TotalSeconds
+                }));
+                StateChanged?.Invoke();
+            }
+
+            standing.Add(episode);
+        }
+
+        // AND EVERY EPISODE WHOSE POSITION HAS GONE. Closed by the owner, closed by a budget flatten,
+        // closed by this unit's own exit — whichever it was, there is nothing left to value.
+        try
+        {
+            foreach (var (key, json) in _db.KvStartingWith($"{ValuationLoss.Prefix}{ValuationLoss.Scope(Connector.Id, accountId)}:"))
+            {
+                var row = Json.Read<ValuationUnavailableRecord>(json);
+                if (row is not { ClearedAt: null } || held.Contains(row.Symbol)) continue;
+                WriteValuationEpisode(key, row with { ClearedAt = at, Quantity = 0m });
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "valuation_episode_scan_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { account = accountId }));
+        }
+
+        return standing;
+    }
+
+    ValuationUnavailableRecord? ReadValuationEpisode(string key) =>
+        _db.GetKv(key) is { } json ? Json.Read<ValuationUnavailableRecord>(json) : null;
+
+    /// <summary>
+    /// The episode row, written. False means it was NOT written, and then the caller does nothing
+    /// with the symbol on this tick: an episode the app cannot record is not an episode it may act
+    /// on, and an exit sent against a clock that was never persisted is an exit no record explains.
+    /// </summary>
+    bool WriteValuationEpisode(string key, ValuationUnavailableRecord row)
+    {
+        try { _db.SetKv(key, Json.Write(row)); return true; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "valuation_episode_not_written", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// WHAT IS DONE ABOUT THE EPISODES THIS TICK LEFT STANDING — outside the dispatch gate, for
+    /// <see cref="FlattenForBreachAsync"/>'s reason: it is a whole emergency's worth of connector
+    /// round trips and holding the gate across them would stall every caller for the length.
+    ///
+    /// <para><b>WITH THE CONNECTION DOWN, NOTHING IS SENT AT ALL.</b> <c>CLAUDE.md</c> rule 3: an
+    /// unavailable valuation is not a refusal by anybody, and a connection that is not up cannot
+    /// carry a cancel or a close. The clock goes on running — the episode is exactly as long as it
+    /// is — and the pause the gate is already enforcing holds. Every surface says so on every day it
+    /// lasts, which is the honest answer and not a smaller one.</para>
+    /// </summary>
+    async Task AnswerLostValuationsAsync(string accountId, IReadOnlyList<ValuationUnavailableRecord> standing,
+        DateTimeOffset at, int epoch, CancellationToken ct)
+    {
+        if (standing.Count == 0) return;
+
+        if (_health.Get(Components.TradingConnection).State != HealthState.READY)
+        {
+            _log.TryEngineering("Gateway", "valuation_exit_connection_down", "warn", metadataJson: Json.Write(new
+            {
+                account = accountId,
+                symbols = standing.Select(x => x.Symbol).ToList(),
+                state = _health.Get(Components.TradingConnection).State.ToString()
+            }));
+            return;
+        }
+
+        var bound = ValuationExitBound();
+
+        foreach (var episode in standing)
+        {
+            try
+            {
+                if (bound > TimeSpan.Zero && episode.ExitKey is null && episode.Age(at) >= bound)
+                    await ExitLostValuationAsync(accountId, episode, at, epoch, bound, ct);
+                else if (episode.ExitKey is null
+                         && (episode.CancelNonce is null || episode.CancelsNotSettled.Count > 0))
+                    await CancelWhileUnvaluableAsync(accountId, episode, at, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.TryEngineering("Gateway", "valuation_answer_failed", "error", ex: ex,
+                    metadataJson: Json.Write(new { account = accountId, episode.Symbol, episode.Since }));
+            }
+        }
+    }
+
+    /// <summary>
+    /// THE ORDERS THAT COULD MAKE AN UNMEASURABLE POSITION BIGGER, CANCELLED — through the same
+    /// press mechanics the budget flatten uses, under this unit's own kind, ONCE per episode.
+    ///
+    /// <para><b>Only what could INCREASE exposure.</b> Nothing is being closed here: the position is
+    /// merely unvaluable, and a resting protective order under it is the one thing bounding a
+    /// position nobody can measure. Cancelling it would be the software removing the owner's own
+    /// stop because it had stopped being able to see. The budget flatten takes those too, and it is
+    /// entitled to — it is about to remove the position they were protecting.</para>
+    ///
+    /// <para><b>Once per episode, retried only while a cancel did not settle</b>, and never while a
+    /// press of this kind is unresolved. New openers cannot arrive during an episode — the gate
+    /// refuses every order that could increase exposure while the figure is unknown — so a cancel a
+    /// tick would be a press row every fifteen seconds for a book that cannot change.</para>
+    /// </summary>
+    async Task CancelWhileUnvaluableAsync(string accountId, ValuationUnavailableRecord episode,
+        DateTimeOffset at, CancellationToken ct)
+    {
+        if (UnresolvedPressNonce(ValuationCancelPress) is { } busy)
+        {
+            _log.TryEngineering("Gateway", "valuation_cancel_press_already_open", "warn",
+                metadataJson: Json.Write(new { episode.Symbol, nonce = busy }));
+            return;
+        }
+
+        var paused = $"TradeAgent has been unable to work out what your {episode.Symbol} position is worth since "
+                     + $"{episode.Since.UtcDateTime:HH:mm} UTC, so it cancelled the working orders that could have "
+                     + "made it bigger; it is waiting for you on the Dashboard";
+
+        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+        var cancelled = await CancelWorkingOrdersAsync(ValuationCancelPress, accountId, episode.Symbol,
+            alsoEveryOrderOnAScopePosition: false, paused,
+            $"your {episode.Symbol} position could not be valued", ct);
+
+        WriteValuationEpisode(ValuationLoss.KeyFor(Connector.Id, accountId, episode.Symbol), episode with
+        {
+            LastSeenAt = at,
+            CancelNonce = cancelled.Nonce,
+            CancelledOrders = cancelled.Cancelled,
+            CancelsNotSettled = cancelled.NotSettled
+        });
+
+        // THE FLAGS THIS CANCEL WROTE ARE LIFTED BEHIND ITS OWN READ-BACK, and kept otherwise.
+        //
+        // A press's rows stay flagged until a PERSON has read them, and that is right for a person's
+        // press and for a flatten that moved the owner's book. This moved nothing: nothing was
+        // closed, and the read-back has already said that every order this cancel named is gone from
+        // the working book. Leaving them flagged would pause every order in the product for as long
+        // as a data outage lasted — a manual outage the owner never asked for, imposed by the one
+        // event that is already refusing new risk on its own. So a cancel whose targets are all gone
+        // clears the flags IT wrote (writing no state: ClearTheFlatteningFlag's rule), and a cancel
+        // that could not confirm one keeps every flag and pauses, because then this gateway really is
+        // holding an order it cannot account for.
+        if (cancelled.NotSettled.Count == 0)
+        {
+            foreach (var row in PressRows(ValuationCancelPress, cancelled.Nonce)
+                         .Where(r => r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId)))
+                ClearTheFlatteningFlag(row.RequestId);
+
+            if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
+                && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+                _health.Set(Components.ExecutionCapability, HealthState.READY);
+        }
+
+        _log.TryEngineering("Gateway", "valuation_openers_cancelled",
+            cancelled.NotSettled.Count > 0 ? "warn" : "info", metadataJson: Json.Write(new
+            {
+                episode.Symbol, cancelled.Cancelled, cancelled.NotSettled
+            }));
+
+        if (cancelled.Cancelled.Count > 0 || cancelled.NotSettled.Count > 0) StateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// THE DATA-LOSS EXIT: A POSITION NOBODY HAS BEEN ABLE TO VALUE FOR LONGER THAN THE BOUND IS
+    /// CLOSED, BY CODE, UNDER ITS OWN REASON.
+    ///
+    /// <para><b>It is <c>U-flatten-2</c>'s mechanics and NOT its event.</b> The same cancel-then-
+    /// settle-then-close order, the same write-ahead rows, the same reduction-only check at the wire,
+    /// the same resolution by machine behind a flat read-back — all of it, under this unit's own
+    /// press kinds. What is different is what it is ABOUT and therefore what it records: no breach
+    /// row, no <c>LOSS_BUDGET_REACHED</c>, no closed day, no closed instrument and no strike. The
+    /// owner's budget was not reached; nobody has measured a loss at all, which is the problem.</para>
+    ///
+    /// <para><b>One attempt per episode, and then a person.</b> The record is written whatever the
+    /// outcome and the key is the episode's, so nothing re-sends over rows it left behind. An exit
+    /// that could not confirm leaves its rows FLAGGED, which pauses every order exactly as an
+    /// owner's press does — the product's answer everywhere else, and the only safe one when the app
+    /// is holding an order it cannot account for on an instrument it cannot value.</para>
+    /// </summary>
+    async Task<ValuationExitRecord?> ExitLostValuationAsync(string accountId, ValuationUnavailableRecord episode,
+        DateTimeOffset at, int epoch, TimeSpan bound, CancellationToken ct)
+    {
+        var key = ValuationLoss.ExitKey(Connector.Id, accountId, episode.Symbol, episode.Since);
+
+        // WRITTEN ONCE, PER EPISODE. A second run would be a second close over a book the first one
+        // already closed, and the day is deliberately not in the key: see ValuationLoss.ExitKey.
+        try { if (_db.GetKv(key) is not null) return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "valuation_exit_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            return null;
+        }
+
+        // ONE APP PRESS OF EACH KIND AT A TIME — the budget flatten's rule, and here for its reason:
+        // an unresolved leg is an order this gateway put on the wire and cannot account for, and the
+        // one thing not to do about that is send another.
+        foreach (var kind in new[] { ValuationClosePress, ValuationCancelPress })
+            if (UnresolvedPressNonce(kind) is { } openNonce)
+            {
+                _log.TryEngineering("Gateway", "valuation_exit_press_already_open", "warn",
+                    metadataJson: Json.Write(new { key, kind, nonce = openNonce }));
+                return null;
+            }
+
+        var startedAt = Now;
+        var paused = $"TradeAgent could not work out what your {episode.Symbol} position was worth for "
+                     + $"{ValuationLoss.Spell(episode.Age(at))} and closed it; your loss budget was NOT reached. "
+                     + "It is waiting for you on the Dashboard";
+
+        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+
+        // EVERY WORKING ORDER ON THE INSTRUMENT, reducers included — the position they were for is
+        // about to be removed, and a protective sell under a long that no longer exists is an opener.
+        var openers = await CancelWorkingOrdersAsync(ValuationCancelPress, accountId, episode.Symbol,
+            alsoEveryOrderOnAScopePosition: true, paused,
+            $"your {episode.Symbol} position could not be valued", ct);
+
+        var legs = new List<LossFlattenLeg>();
+        var residual = new List<string>();
+        var closeNonce = "";
+        var couldNotRead = openers.NotSettled.Count > 0 ? "" : null;
+        List<(string Symbol, decimal Quantity)> captured = [];
+
+        if (openers.NotSettled.Count == 0)
+        {
+            IReadOnlyList<PositionInfo> positions = [];
+            try { positions = await Connector.GetPositionsAsync(accountId, ct); }
+            catch (Exception ex) { couldNotRead = $"your open positions could not be read ({ex.Message})"; }
+
+            captured = positions
+                .Where(p => p.Quantity != 0m && string.Equals(p.Symbol, episode.Symbol, StringComparison.Ordinal))
+                .Select(p => (p.Symbol, p.Quantity))
+                .ToList();
+
+            if (captured.Count > 0)
+            {
+                closeNonce = NewPressNonce();
+                var pressId = PressPrefix(ValuationClosePress, closeNonce);
+                BeginComposite(AgentContext.Operator, pressId, Ops.CloseAll,
+                    captured.Select(p => p.Symbol).ToList(), () => closeNonce);
+
+                var run = await CloseCapturedAsync(ValuationClosePress, closeNonce, accountId, captured,
+                    paused, reductionOnly: true, ct);
+
+                (legs, residual) = await AccountForTheFlattenAsync(ValuationClosePress, ValuationCancelPress,
+                    closeNonce, accountId, captured, run, ct);
+
+                CompleteComposite(pressId, Json.Write(new
+                {
+                    exit = key, legs, residual, run.Drifted, run.Waited, run.Unsettled, run.Refused
+                }));
+            }
+        }
+
+        var flat = couldNotRead is null
+                   && openers.NotSettled.Count == 0
+                   && residual.Count == 0
+                   && legs.All(l => l.Resolved);
+
+        var trouble = new List<string>();
+        if (couldNotRead is { Length: > 0 }) trouble.Add(couldNotRead);
+        if (openers.NotSettled.Count > 0)
+            trouble.Add("nothing was closed, because these working orders could not be confirmed cancelled: "
+                        + string.Join("; ", openers.NotSettled));
+        foreach (var l in legs.Where(l => !l.Resolved)) trouble.Add(l.Outcome);
+        foreach (var r in residual) trouble.Add($"still open: {r}");
+        if (captured.Count == 0 && couldNotRead is null && openers.NotSettled.Count == 0)
+            trouble.Add("nothing was open to close by the time TradeAgent looked");
+
+        var record = new ValuationExitRecord
+        {
+            Account = accountId,
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
+            Symbol = episode.Symbol,
+            Day = LossBreach.Stamp(at),
+            Since = episode.Since,
+            Bound = bound,
+            Refusal = episode.Refusal,
+            StartedAt = startedAt,
+            FinishedAt = Now,
+            ConnectionEpoch = epoch,
+            CancelNonce = openers.Nonce,
+            CloseNonce = closeNonce,
+            CancelledOrders = openers.Cancelled,
+            OpenersNotSettled = openers.NotSettled,
+            Legs = legs,
+            Residual = residual,
+            Flat = flat,
+            Why = ValuationLoss.ExitSentence(episode.Symbol, episode.Quantity, episode.Since, at, bound,
+                flat, trouble.Count == 0 ? null : string.Join("; ", trouble))
+        };
+
+        // WRITE-ONCE AT THE SQL LAYER, on LossReopen's rule: this row is what stops a second close
+        // going out over the same episode, so a check-then-write is not enough to state that no
+        // second one did.
+        bool inserted;
+        try { inserted = _db.AddKvOnce(key, Json.Write(record)); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "valuation_exit_record_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            inserted = false;
+        }
+
+        // THE EPISODE ROW POINTS AT ITS EXIT whether or not the insert was ours: the row that is
+        // already there is the one that counts, and either way this episode has had its one attempt.
+        WriteValuationEpisode(ValuationLoss.KeyFor(Connector.Id, accountId, episode.Symbol), episode with
+        {
+            LastSeenAt = at,
+            ExitKey = key,
+            CancelNonce = openers.Nonce,
+            CancelledOrders = openers.Cancelled,
+            CancelsNotSettled = openers.NotSettled
+        });
+
+        OpenValuationBoundary(record);
+
+        _log.Activity(record.Why, "warn");
+        _log.TryEngineering("Gateway", "valuation_exit", flat ? "info" : "warn", metadataJson: Json.Write(new
+        {
+            key, inserted, record.Symbol, record.Since, record.Flat, legs = legs.Count, residual
+        }));
+
+        // THE PAUSE THIS EXIT IMPOSED IS LIFTED BY THE SAME TWO LINES THE BUDGET FLATTEN USES, so a
+        // correct exit is not a manual outage for the rest of the day.
+        if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
+            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+            _health.Set(Components.ExecutionCapability, HealthState.READY);
+
+        StateChanged?.Invoke();
+        return record;
+    }
+
+    /// <summary>
+    /// THE POST-MORTEM, WOKEN ONCE PER ACCOUNT PER DAY — and under its OWN kind, so that a lost
+    /// valuation can never open the boundary a loss-budget episode's extension names.
+    ///
+    /// <para>It holds nothing: the position is already closed and the record already written when
+    /// this runs, exactly as <see cref="OpenLossBoundary"/> does, and a boundary that could not be
+    /// opened is said out loud rather than failing the exit.</para>
+    /// </summary>
+    void OpenValuationBoundary(ValuationExitRecord record)
+    {
+        try
+        {
+            var day = long.Parse(record.FinishedAt.UtcDateTime.ToString("yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture);
+
+            var opened = _boundaries.Open(BoundaryKind.ValuationLoss, record.Account, day,
+                BoundaryDisposition.Hold, record.Why, record.FinishedAt);
+
+            if (opened.Fresh)
+                _log.TryEngineering("Gateway", "valuation_boundary_opened", "warn",
+                    metadataJson: Json.Write(new { boundary = opened.Row.Id, deadline = opened.Row.DeadlineAt }));
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "valuation_boundary_not_opened", "error", ex: ex,
+                metadataJson: Json.Write(new { record.Account, record.Symbol, record.Day }));
+        }
+    }
+
+    /// <summary>
+    /// WHAT CANNOT BE VALUED AND WHAT WAS CLOSED FOR IT, FOR THE SURFACES — rows this app wrote, and
+    /// it asks the platform NOTHING, so it is free to run on the five-second status tick.
+    ///
+    /// <para>The episodes shown are the STANDING ones. The exits shown are TODAY's, by the exit
+    /// record's own UTC day, because the episode that caused one ends the moment the position goes
+    /// and an exit that vanished from every screen the instant it succeeded would be the software
+    /// closing a position and then saying nothing about it.</para>
+    /// </summary>
+    public (IReadOnlyList<string> Lost, IReadOnlyList<string> Exits) ValuationReading()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return ([], []);
+
+        var lost = new List<string>();
+        var exits = new List<string>();
+        var scope = ValuationLoss.Scope(Connector.Id, account);
+        var at = Now;
+
+        try
+        {
+            foreach (var (_, json) in _db.KvStartingWith($"{ValuationLoss.Prefix}{scope}:"))
+                if (Json.Read<ValuationUnavailableRecord>(json) is { ClearedAt: null } row)
+                    lost.Add($"{row.Why} It has now been {ValuationLoss.Spell(row.Age(at))}"
+                             + (row.Refusal is { Length: > 0 } ? $" ({row.Refusal})" : "") + ".");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            lost.Add($"TradeAgent could not read whether any of your positions has become impossible to "
+                     + $"value ({ex.Message}).");
+        }
+
+        try
+        {
+            var today = LossBreach.Stamp(at);
+            foreach (var (_, json) in _db.KvStartingWith($"{ValuationLoss.ExitPrefix}{scope}:"))
+                if (Json.Read<ValuationExitRecord>(json) is { } row
+                    && string.Equals(row.Day, today, StringComparison.Ordinal))
+                    exits.Add(row.Why);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            exits.Add($"TradeAgent could not read whether it closed a position it could not value ({ex.Message}).");
+        }
+
+        return (lost, exits);
+    }
+
+    /// <summary>
+    /// THE DISCLOSURE, ASSEMBLED FROM THE NUMBERS ACTUALLY IN FORCE — one method, so the daily report
+    /// and anything else that states what the thresholds do cannot drift into two promises.
+    /// </summary>
+    public string ThresholdDisclosure() =>
+        ValuationLoss.Disclosure(_opt.LossWatchInterval, _opt.LossBreachConfirmWithin, _opt.MaxQuoteAge,
+            ValuationExitBound(), LastLossWatchTook);
+
+    /// <summary>
+    /// HOW LONG THE LAST READING OF THE OPEN BOOK ACTUALLY TOOK, on a real wall clock and not on
+    /// <see cref="GatewayOptions.Clock"/> — the SAMPLING half of what the thresholds cannot promise.
+    ///
+    /// <para>It is measured rather than declared because the figure is a property of the machine,
+    /// the platform and the number of open positions, and a constant compiled into this build would
+    /// be a claim about somebody else's computer. Null until the watch has taken one reading.</para>
+    /// </summary>
+    public TimeSpan? LastLossWatchTook { get; private set; }
 
     /// <summary>
     /// One flatten record, or null because there is none. An unreadable row THROWS, on
@@ -6817,11 +7469,16 @@ public sealed class TradingGateway : IAsyncDisposable
 
         // WHAT THE ORDER SAYS IT IS FOR, carried onto the intent and read back off the row by every
         // surface. "you" is a claim about who decided, and the app's own flatten must never make it.
-        var note = IsAppPress(kind) ? "close position (loss budget)" : "close position (you)";
+        var note = IsValuationPress(kind) ? "close position (valuation lost)"
+            : IsAppPress(kind) ? "close position (loss budget)"
+            : "close position (you)";
 
         // The same for the drift sentence: "when you pressed" is a claim about who decided and
         // when, and the app's flatten was decided by a budget going through rather than by a press.
-        var when = IsAppPress(kind) ? "when the budget was reached" : "when you pressed";
+        // The exit's own sentence names neither — no budget was reached and nobody pressed anything.
+        var when = IsValuationPress(kind) ? "when the valuation was lost"
+            : IsAppPress(kind) ? "when the budget was reached"
+            : "when you pressed";
 
         for (var i = 0; i < captured.Count; i++)
         {

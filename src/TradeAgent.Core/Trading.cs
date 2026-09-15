@@ -107,6 +107,37 @@ public sealed class RiskPolicy
     public int LossStrikeWindowDays { get; set; } = 7;
 
     /// <summary>
+    /// HOW LONG AN OPEN POSITION MAY GO UNVALUED BEFORE TRADEAGENT CLOSES IT BY ITSELF, IN MINUTES —
+    /// <b>15</b> out of the box, and zero switches it off.
+    ///
+    /// <para>The loss budgets bound a figure, and the figure is only computed while the book can be
+    /// valued. A feed that goes silent, a platform that stops marking and a disconnect that outlives
+    /// the day all leave a position open with nobody measuring it: the gate refuses new risk on the
+    /// unknown (<c>RISK_CHECK_UNAVAILABLE</c>), which is the safe half, and the position already
+    /// there goes on being exposed indefinitely, which is the half nothing answered until
+    /// <c>U-flatten-3</c>. After this many minutes of CONTINUOUS unavailability, with the connection
+    /// UP, the position is closed under its own reason <c>VALUATION_LOST</c>.</para>
+    ///
+    /// <para><b>It is NOT a loss-budget breach and it is not treated as one.</b> Nothing is recorded
+    /// as a breach, no day and no instrument is closed to new risk by it, and it counts towards no
+    /// strike. What it closes is the exposure nobody could measure; the instrument goes on being
+    /// refused new risk for exactly as long as it still cannot be valued, and not one tick longer.</para>
+    ///
+    /// <para><b>Lengthening it is the risky direction</b>, which is why it is in
+    /// <see cref="Widenings"/>: a longer wait is more minutes of a position the owner's budget is
+    /// not bounding. Zero is the widest value it has — no exit at all, whatever happens to the feed
+    /// — exactly as zero is on the notional cap and on both loss budgets. Shortening it saves in one
+    /// press.</para>
+    ///
+    /// <para>Fifteen minutes is a judgment and not a measurement: sixty ticks of the loss watch and
+    /// thirty times the age at which a price is refused, which is long enough that a reconnect or a
+    /// quiet auction does not liquidate a book, and short enough that "exposed and unmeasured" stays
+    /// in the same order of magnitude as a person noticing. It is recorded as a choice in
+    /// <c>docs/CONTRACTS.md</c>.</para>
+    /// </summary>
+    public decimal ValuationLossExitMinutes { get; set; } = 15m;
+
+    /// <summary>
     /// THE INSTRUMENTS THE AI MAY TOUCH. AN EMPTY LIST IS NOT A WILDCARD.
     ///
     /// It used to be: <c>InstrumentAllowed</c> began <c>Count == 0 ||</c>, so "the owner has named
@@ -163,6 +194,12 @@ public sealed class RiskPolicy
         // closure beyond the UTC day, and no strike rule at all — and Shortens reads it that way.
         if (Shortens(from.LossMinClosureHours, to.LossMinClosureHours)) wider.Add(Labels.LossMinClosure);
         if (Shortens(from.LossStrikeWindowDays, to.LossStrikeWindowDays)) wider.Add(Labels.LossStrikeWindow);
+
+        // AND THE DATA-LOSS EXIT, WHICH WIDENS BY GETTING LONGER — the opposite of the two above it
+        // and the same shape as the caps: a longer wait is more minutes of a position nobody can
+        // measure, and switching it off (zero) is the widest value it has. Widens reads zero that
+        // way already, so this is the helper the loss budgets use and not the duration one.
+        if (Widens(from.ValuationLossExitMinutes, to.ValuationLossExitMinutes)) wider.Add(Labels.ValuationLossExit);
         if (to.InstrumentAllowlist.Any(i => !from.InstrumentAllowed(i))) wider.Add(Labels.InstrumentAllowlist);
 
         return wider;
@@ -938,6 +975,29 @@ public sealed record LossToday
 
     /// <summary>The bounded extension in force, as a sentence naming its END. Null while there is none.</summary>
     public string? ExtendedWhy { get; init; }
+
+    /// <summary>
+    /// OPEN POSITIONS NOBODY CAN VALUE RIGHT NOW, one sentence each, EMPTY as the honest none
+    /// (<c>U-flatten-3</c>).
+    ///
+    /// <para>It is a different fact from <see cref="Unknown"/> and neither replaces the other.
+    /// <c>Unknown</c> says the DAY's figure could not be worked out, which is what the gate refuses
+    /// on; this says which instrument has been impossible to value and SINCE WHEN, which is what the
+    /// data-loss exit's clock runs on and what an owner has to see before a position is closed for
+    /// it. A reading that is unknown for a reason that is not a lost valuation — a symbol traded
+    /// today whose multiplier the platform will not state — leaves this empty.</para>
+    /// </summary>
+    public IReadOnlyList<string> ValuationLost { get; init; } = [];
+
+    /// <summary>
+    /// POSITIONS CLOSED TODAY BECAUSE NOTHING COULD VALUE THEM, in the exit record's own words.
+    /// EMPTY is the honest none.
+    ///
+    /// <para>These are NOT budget breaches and every sentence in here says so. Nothing is closed to
+    /// new risk because of one, no strike is counted, and the instrument is refused new risk only
+    /// while it still cannot be valued.</para>
+    /// </summary>
+    public IReadOnlyList<string> ValuationExits { get; init; } = [];
 
     /// <summary>
     /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
