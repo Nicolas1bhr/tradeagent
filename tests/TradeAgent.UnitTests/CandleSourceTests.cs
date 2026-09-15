@@ -129,14 +129,15 @@ public class CandleSourceTests
         new Uri(source.Periods(Symbol, Now).Single().Url).AbsolutePath;
 
     static async Task<(DataCollection Got, Database Db)> CollectSecond(
-        FakeArchive archive, int candles = 12, int withoutVolume = 0)
+        FakeArchive archive, int candles = 12, int withoutVolume = 0,
+        Action<string>? recordDecision = null)
     {
         var source = Second(archive);
         archive.PublishAt(SecondPath(archive, source), Candles(Now.AddDays(-2), candles, withoutVolume));
 
         var db = TestEnv.NewDb();
         var svc = new MarketDataService(db);
-        return (await svc.CollectAsync(source, Symbol, Now), db);
+        return (await svc.CollectAsync(source, Symbol, Now, recordDecision: recordDecision), db);
     }
 
     /// <summary>
@@ -279,25 +280,23 @@ public class CandleSourceTests
     [Fact]
     public async Task A_source_that_publishes_no_checksum_records_no_published_hash_and_says_why()
     {
+        // THE SINK IS THIS COLLECTION'S, not the process's — see the note in
+        // `DownloadPartBindingTests.An_install_with_no_checksum_writes_the_decision_and_the_reason`.
+        // This test used to swap `Downloader.RecordDecision`, and the two classes stole each other's
+        // decisions whenever they overlapped.
         var decisions = new List<string>();
-        var previous = Downloader.RecordDecision;
-        Downloader.RecordDecision = decisions.Add;
 
-        try
-        {
-            using var archive = new FakeArchive();
-            var (got, db) = await CollectSecond(archive);
-            using var _d = db;
+        using var archive = new FakeArchive();
+        var (got, db) = await CollectSecond(archive, recordDecision: decisions.Add);
+        using var _d = db;
 
-            Assert.Equal("", Assert.Single(got.Dataset!.Files).PublishedSha256);
-            Assert.False(CandleSourceCatalog.Require(
-                CandleSourceCatalog.RevolutXCandles, NoOverrideFile, archive.BaseUrl).PublishesChecksum);
+        Assert.Equal("", Assert.Single(got.Dataset!.Files).PublishedSha256);
+        Assert.False(CandleSourceCatalog.Require(
+            CandleSourceCatalog.RevolutXCandles, NoOverrideFile, archive.BaseUrl).PublishesChecksum);
 
-            // THE UNVERIFIED DOWNLOAD WROTE ITS REASON WHERE THE OWNER READS IT, before the bytes
-            // were used. `Integrity.Unverified` has no way to be asked for without one.
-            Assert.Contains(decisions, d => d.Contains("publishes no checksum", StringComparison.Ordinal));
-        }
-        finally { Downloader.RecordDecision = previous; }
+        // THE UNVERIFIED DOWNLOAD WROTE ITS REASON WHERE THE OWNER READS IT, before the bytes
+        // were used. `Integrity.Unverified` has no way to be asked for without one.
+        Assert.Contains(decisions, d => d.Contains("publishes no checksum", StringComparison.Ordinal));
     }
 
     // ---- item 5: validated data arrival is a wake ----------------------------------------------

@@ -195,15 +195,19 @@ public class DownloadPartBindingTests
     public async Task An_install_with_no_checksum_writes_the_decision_and_the_reason()
     {
         var root = Scratch();
-        var previous = Downloader.RecordDecision;
+
+        // THE SINK IS THIS CALL'S, not the process's. Until `recordDecision` existed this test
+        // swapped `Downloader.RecordDecision`, a process-wide static, and so did
+        // `CandleSourceTests`: whichever assigned second owned the hook, and the other class's
+        // download was recorded into THIS list. Measured on this Mac, the two classes alone,
+        // ten runs: four reds here — `Assert.Single(): 2 items`, the second item
+        // "Installed BTC-USD-5m-2026-06-09_2026-09-06.csv …" — and, with the two tests alone,
+        // ten of ten in the other direction. CI run 34944735920 on macos-latest was the same red.
         var recorded = new List<string>();
-        Downloader.RecordDecision = t => { lock (recorded) recorded.Add(t); };
-        try
-        {
-            using var vendor = new Vendor("REAL-INSTALLER-BYTES"u8.ToArray());
-            await Downloader.DownloadAsync(vendor.Url, Path.Combine(root, "ATASPlatform.exe"), NoChecksum);
-        }
-        finally { Downloader.RecordDecision = previous; }
+
+        using var vendor = new Vendor("REAL-INSTALLER-BYTES"u8.ToArray());
+        await Downloader.DownloadAsync(vendor.Url, Path.Combine(root, "ATASPlatform.exe"), NoChecksum,
+            recordDecision: recorded.Add);
 
         var line = Assert.Single(recorded);
         Assert.Contains("ATASPlatform.exe", line);
@@ -229,6 +233,38 @@ public class DownloadPartBindingTests
         Assert.False(File.Exists(dest));
         Assert.Empty(Directory.GetFiles(root, "*.part*"));
         Assert.Throws<ArgumentException>(() => Integrity.Pinned("   "));
+    }
+
+    /// <summary>
+    /// AND NO TEST GOES BACK TO THE PROCESS-WIDE HOOK. <see cref="Downloader.RecordDecision"/> is
+    /// the app's default sink and one property for the whole process; xUnit runs test classes in
+    /// parallel, so two classes that assign it swap each other's sink and then restore each other's
+    /// value, and the decisions of one land in the other's list. Removing the two assignments fixes
+    /// the classes that exist today; this scan is what stops the third one from being written.
+    ///
+    /// <para>A test that wants to read a download's decisions passes <c>recordDecision</c> on the
+    /// call — <c>DownloadAsync</c>, <c>CandleSourceClient.CollectAsync</c> and
+    /// <c>MarketDataService.CollectAsync</c> all take it — which is per call and races nothing.</para>
+    /// </summary>
+    [Fact]
+    public void No_test_assigns_the_process_wide_decision_hook()
+    {
+        // Spelled in pieces so the scan cannot find itself, the way the vendor-host scan does.
+        const string Assignment = "Downloader.Record" + "Decision" + " =";
+
+        var offenders =
+            (from file in SuiteReachesNoVendorTests.TestSources()
+             where Path.GetFileName(file) != nameof(DownloadPartBindingTests) + ".cs"
+             from pair in File.ReadAllText(file).Replace("\r\n", "\n").Split('\n')
+                              .Select((l, i) => (Line: l, Number: i + 1))
+             where pair.Line.Contains(Assignment, StringComparison.Ordinal)
+                && !pair.Line.TrimStart().StartsWith("//", StringComparison.Ordinal)
+             select $"{Path.GetFileName(file)}:{pair.Number}").ToList();
+
+        Assert.True(offenders.Count == 0,
+            "these tests assign the process-wide download decision hook and will steal, or lose, the "
+            + "decisions of any test class running beside them; pass `recordDecision:` on the call "
+            + "instead: " + string.Join(", ", offenders));
     }
 
     static string UrlKey(string url) =>
