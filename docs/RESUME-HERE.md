@@ -10,48 +10,48 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session closed 2026-09-14 ~14:50 CEST on the owner's instruction ("finish the running rounds, then wrap up and prepare the floor").
-Nothing is running. No worktree exists. Every landing has its ≤40-line section. Restart in this order:**
+**Session closed 2026-09-15 ~10:30 CEST, the morning after the session limit took both running legs at ~21:40 CEST (the owner: "round off surgically
+what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees exist for the branches in 3. Restart in this order:**
 
-1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-12`, `## 2026-09-13` and `## 2026-09-14` sections at the end of
-   `BUILD-STATUS.md` (one section per landing, every merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `570279b` (`U-freshness`, schema 19) plus this record, clean, pushed. Schema 19.** Landed 2026-09-12 → 14, in order: `U-turn-commit` `0da64d7` (11),
-   `U-press-settle-win` `fac2370`, `U-budget-reserve` `1757043`, `U-runner-1` `1e92fe3`, `U-crlf-strategy-win` `137aaa4`, `U-runner-2`
-   `c758fce`, `U-containment` `7b90acf`, `U-runner-3` `5020b2b` (12), `U-api-worker` `ff8b43c` (13), `U-referee-1` `19ef096` (14),
-   `U-harness-loop` `47d1071`, `U-referee-2` `45719b2` (15), `U-council-concurrent-1` `4753c46`, `U-council-concurrent-2` `cac1787` (16),
-   `U-press-inflight-win` `30dc8ed`, `U-venue-catalog` `afa49dd` (17), `U-data-2` `c8306d4` (18), `U-sweep-latency-win` `4961989` (test-only) and `U-freshness` `570279b` (19), all landed 2026-09-14 evening. CI green on all four jobs at every product sha except two windows-only
-   fixture reds of the two-second-budget class, each fixed by the next fixer (`1e92fe3` → `137aaa4`; `45719b2` → `30dc8ed`).
-3. **IN FLIGHT 2026-09-14 evening, each with a fresh builder on its own worktree: (f) `U-flatten-1` (worktree created at `f7c4f31`, no schema, sends
-   nothing) and (d) `U-allocator-1` (worktree created at `570279b`, schema 20). Queued for the next free slot, in this order: `U-peer-row-ubuntu` (the hosted-runner red at `4961989`, run 34881215351,
-   ubuntu-only, `PeerRowTests`; a draft PR for the proof) FIRST, then `U-promote-bounds` (one item, light: the referee refusing promotion without the three bounds). Queued in `docs/briefs/`, briefed and NOT dispatched — dispatch in this order, at most two heavy legs at once, each on its own worktree
-   created from `main`:** (a) `U-sweep-latency-win` — LANDED `4961989`; (b) `U-data-2` — LANDED `c8306d4`, **schema 18** (the Revolut X endpoint is DATA, unverified, see 7c); (c) `U-freshness` — LANDED `570279b`; (d) `U-allocator-1` — **schema 20, money path**, after `U-freshness` (both touch
-   `PlaceIntent` and the dispatch gate); (e) `U-allocator-2` — **schema 21**, after `U-allocator-1`. (f) `U-flatten-1` — **no schema**, money path, dispatchable into a free slot beside a schema unit (the day-closed record, the watch, the boundary; sends nothing);
-   (g) `U-flatten-2` — the reduction-only flatten resolved by machine, after `-1`; (h) `U-flatten-3` — the data-loss exit, after `-2`. The three were briefed
-   2026-09-14 from a read-only survey and one Astra consult (final answers only); automatic reopening next UTC day is recorded as the owner's to overrule. Schema numbers are assigned here, in
-   landing order; a builder never takes "the next free" — tell each builder which unit takes the number before theirs.
-4. **How a leg is run** (this session's pattern, all in `docs/HOW-WE-BUILD.md` and the memory): a read-only survey before a brief when the
-   unit is not yet exact; a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the manager's detached gate
-   on the reported tip (`nohup` build + three suites to files, a monitor on DONE), test-name diff from git objects, secret scan as a gate,
-   `--ff-only`, the record ≤ 40 lines measured, the brief deleted, the worktree removed, the merge sha's CI recorded when it completes. A
-   builder killed by a usage limit is RESUMED by `SendMessage` to its id with the branch state spelled out; it loses nothing committed.
-5. **What is proven and what is not, in one breath:** the whole council doctrine's unit order is now built or briefed — the runner (program,
-   evaluator, backtest), the referee (holdout, campaign, trials, verdict, promotion), the harness, containment (job object, clean
-   environment, per-launch grants; OS sandbox NONE), concurrent turns, the consequential boundary, the venue catalogue. NOT proven: any
-   of it on a screen (nothing in the suite runs Avalonia); a real provider call; a real venue; a runner on the ORDER PATH — nothing reads
-   `Promotions.Standing` or an allocation at `PlaceAsync` yet (`U-allocator-1`); no paper or live execution of a promoted version; the box
-   untouched since 2026-09-08. A milestone review of the money path on `main` (`docs/HOW-WE-BUILD.md`, "Ask questions later") is DUE before
-   any release is cut: the last was 2026-09-06 and sixteen units have landed since.
-6. **Then the money path's live gates**, untouched by doctrine: `U-flatten`, a runner on the order path, containment beyond NONE
-   (`U-contain-2`, needs the box), paper on the box for weeks before unattended real money.
-7. **Decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) the containment direction
-   beyond `U-containment` — an AppContainer (`U-contain-2`) or harness-only execution for every role; (c) the Revolut X PUBLIC CANDLES
-   endpoint (`docs/COUNCIL.md:167-169` names the source, the repo records only the signed trading base, `docs/RESEARCH-REQUIRED.md:170`);
-   (d) the Binance spot instrument row ships `verified = false` — a backtest over Binance bars that omits `--increment` is REFUSED until the
-   owner records the row in `venues.json` (or the agent declares the increment); recording it is the owner's, not a builder's.
-8. **Machine facts that cost time:** two heavy Opus legs plus the manager's gates reach the 5-hour session limit in about 2.5 hours (three
-   kills this session: 00:53, 15:35, 20:15); a survey costs ≈ 200k tokens; a builder 400–650k; the manager's gate ≈ 15 minutes on this Mac,
-   one at a time; a closed lid sleeps the Mac and stalls every leg (a pause, not a kill — resume with one message); `docs/briefs/` holds
-   only work in flight or queued.
+1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` sections at the end of `BUILD-STATUS.md`** (one per landing, every merge sha's CI
+   verdict recorded — nothing is in flight).
+2. **`main` is ``1c5d71f` (`U-flatten-1`) plus this record`, clean, pushed. Schema 19.** Landed 2026-09-14 evening, in order: `U-data-2` `c8306d4` (18), `U-sweep-latency-win` `4961989` (test-only;
+   its CI RED on ubuntu only, `PeerRowTests`, a hosted-runner red under step 6, fixer briefed — see 3b), `U-freshness` `570279b` (19), `U-flatten-1` `1c5d71f` (no schema; landed 2026-09-15 morning
+   after a same-build re-run cleared the dying session's reds). Before
+   them, 2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-venue-catalog` `afa49dd` (17): the list is in the 2026-09-14 sections.
+3. **Killed by the session limit, branches intact, NOT on `main` — read each branch before anything else:**
+   (a) `u-allocator-1` (worktree `U-allocator-1`, tip `3fe1232`, base `570279b` which `main` now contains; **schema 20**): items 1–4 COMMITTED (the allocation row,
+   the two-press card, the intent's version on the request, the ceiling in the dispatch gate); item 5 (section 4 and the Situation) UNCOMMITTED — four modified
+   files (`MissionLoop.cs`, `AppHost.cs`, `DailyReport.cs`, `DailyReports.cs`, +109/−3) and an untracked `tests/TradeAgent.UnitTests/AllocationSurfacesTests.cs`
+   (194 lines); no gate, no report. Re-brief a FRESH builder from `docs/briefs/U-allocator-1.md`: "read your branch first; items 1–4 are on it with their commits;
+   judge the uncommitted files on their merits; finish item 5, rebase onto `main`, gate, report". Dispatch FIRST.
+   (b) `u-peer-row-ubuntu` (worktree `U-peer-row-ubuntu`, tip `761af5f` = its base): NO commits, killed while reading. Re-brief fresh from
+   `docs/briefs/U-peer-row-ubuntu.md`; a runner-measuring fixer costs a full builder and never runs beside two builders. Dispatch SECOND, alone with (a).
+4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-promote-bounds` (one item, light — the referee refusing promotion without
+   the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
+   by machine, after `-1`); `U-flatten-3` (the data-loss exit, after `-2`). At most two heavy legs at once, each on its own worktree from `main`; a schema number is
+   assigned here in landing order — tell each builder which unit takes the number before theirs.
+5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
+   unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
+   Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
+   sentence naming a judged false positive trips it, exclude by name (`CancellationToken`, `IpcToken`, `string token`), never loosen; `--ff-only` with its exit
+   checked; `rev-list --count` 0; push the PRODUCT sha before the record commit so CI runs at it; the record ≤ 40 lines measured; the brief deleted; the worktree
+   removed; the merge sha's CI recorded when it completes. A gate whose Integration run reads three times its normal 11 min is contaminated (a dying session, a
+   sleep, three legs): re-run alone on the same build (`--no-build`) and quote both runs before judging.
+6. **What is proven and what is not:** nothing on a screen (nothing in the suite runs Avalonia); no real provider call; no real venue; no runner on the ORDER PATH
+   (nothing turns a `StrategyIntent` into a `PlaceIntent`; nothing reads `Promotions.Standing` at `PlaceAsync` until `U-allocator-1` lands); no paper or live
+   execution; the box untouched since 2026-09-08. The dispatch gate refuses a stale decision (`U-freshness`) but nothing forces a promoted version to declare
+   bounds (`U-promote-bounds`, queued). A confirmed loss-budget breach is now a durable record the gate refuses off, watched on a
+   15 s tick and reported — and NOTHING IS SENT on it until `U-flatten-2`. A milestone review of the money path on `main` is DUE before any release is cut: the last was
+   2026-09-06; run it after `U-allocator-1` and the two fixers land.
+7. **Decisions only Nicolas can take** (nothing else is blocked on them): (a) the ATAS installer hash pin; (b) containment beyond `U-containment`; (c) the Revolut X
+   PUBLIC CANDLES endpoint — `U-data-2` ships the row with an EMPTY base URL, unverified, the first real fetch is the owner's by recording it in `sources.json`;
+   (d) the Binance spot instrument row in `venues.json` (`verified = false` until then); (e) NEW: after an app-initiated flatten on a loss-budget breach, option A
+   (the order path stays paused until the owner reads it) or option B (reopens the next UTC day by code — the briefs' default, recorded in `CONTRACTS.md` as the
+   owner's to overrule; Astra's answer, final answers only, was handed to the owner on 2026-09-14).
+8. **Machine facts that cost time:** the session limit hit at ~21:40 CEST after ≈ 3 h 20 m of two heavy legs plus the manager's gates (resets at 23:50; the fourth
+   such kill in three sessions); a survey ≈ 200k tokens and 7.5 min; a builder 280–540k tokens; the manager's gate ≈ 13 min alone and 30+ min under three legs;
+   `docs/briefs/` holds only work in flight or queued.
 
 The text below is the 2026-09-01 handoff and is still accurate about the machine and the traps; its "work queue" is done.
 

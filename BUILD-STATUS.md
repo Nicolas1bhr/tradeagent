@@ -5688,3 +5688,44 @@ untouched by both). Merge `570279b`, 9 commits, 39 files, +1695/−51 (`Versioni
 **NOT done, NOT verified:** no live or paper bar feed — the gate is proved over recorded bars and `GatewayOptions.Clock`; no runner turns a `StrategyIntent` into a
 `PlaceIntent`, so `IntentDecision.From` has no production caller yet; nothing reached a venue, ATAS, the box or real money; `U-flatten`, the allocator, the
 connectors and the referee's verdict untouched; section 3 and the Situation never seen on a screen.
+
+## 2026-09-14 — U-flatten-1 landed: a loss-budget breach is a durable fact the app watches for, refuses off and reports — nothing is sent yet
+
+The first of the three `U-flatten` units briefed from a read-only survey and one Astra consult (COUNCIL `:14-15` the loss gate, `:33` "never a late trade", `:59-63`
+a loss-budget event as a consequential boundary), by one fresh builder on `docs/briefs/U-flatten-1.md`, rebased by the builder onto `bc0e89c` and at landing over
+two docs-only commits. Merge `1c5d71f`, 6 commits, 19 files, +2043/−13, NO schema rung — the record lives in `kv` (`LossBreach`, `LossWatchAsync`, `LossBudgetOrThrow`
+and the boundary in `TradingGateway.cs`; `GatewayTypes.cs`, `GatewayOptions`, `BoundaryStore`, section 4, `MissionLoop.cs`, the Safety page, `GatewaySchema.cs`,
+`WorkspaceBuilder.cs`, `USER-GUIDE.md`, `CONTRACTS.md`; four Fault and four Unit classes). MONEY PATH: the dispatch gate and the approval path.
+
+- **The record, written once and outranking the ledger:** `loss_breach:{account}:{utcDay}` and `…:{symbol}:{utcDay}` in `kv` with the evidence; `LossBudgetOrThrow`
+  refuses off it before reading the ledger and AHEAD of the zero check (a budget the owner later sets to zero does not reopen the day), after `CanIncreaseExposure`
+  so a close is never refused. RED (the two throws removed): all four `LossDayClosureTests` `Assert.Throws() Failure: No exception was thrown`; mutant (the stamp
+  on the local date): "breach at 22:30Z, local 23:30 / still the same UTC day: 23:30Z, local 00:30" — no exception.
+- **The watch rides the health pass both hosts already run:** every `LossWatchInterval` (15 s) a fresh quote per open-position symbol is pulled OUTSIDE the gate,
+  both budgets evaluated and the record written UNDER `_dispatchGate`; the mark is the executable side (bid long, ask short), younger than `MaxQuoteAge`, stamped
+  with the connection epoch; `QuoteChanged` schedules one coalesced pass; the record is written only when a second DISTINCT pull within `LossBreachConfirmWithin`
+  (60 s) agrees. RED (`Confirmed` forced false): 3 of 5 `LossWatchTests` `Assert.NotNull() Failure`; mutant (the confirming read off `_quotes`): "pull 3: day
+  reached True, closed [loss_breach:SIM-001:2026-03-10]" — one bad print closed the day.
+- **One boundary per account and UTC day** (`BoundaryKind.LossBudget`, entity the account, revision `yyyyMMdd`, default `hold`, both directors woken once), guarded so
+  it cannot fail the closure. RED (the call removed): both `LossBoundaryTests` `Assert.Single() Failure: The collection was empty`; mutant (opened in the refusal
+  path, keyed by the refused order): `The collection contained 2 items` after two refusals.
+- **The day is told closed:** `loss_day_closed_at` and `loss_symbols_closed` on `status` (absent when open), the Situation line, the Safety row, section 4, the schema
+  text, the AGENTS text, the guide, `CONTRACTS.md`. RED (`ClosureToday` forced to "nothing closed"): 4 of 6 `LossDayClosedSurfacesTests`, `Not found: "closed today to
+  new risk at 12:00 UTC"`; mutant (`LossDayClosedAt` derived from the ledger figure): "figure now: 950.00 of 1000, day reached False" — reads open after a recovery.
+- **Judged at landing, the builder's choices and deviations kept:** an unreadable closure row refuses `RISK_CHECK_UNAVAILABLE`, never reads as an open day; either
+  budget's first confirmed closure opens the ONE boundary. (a) `_quotes` is NOT dropped on a disconnect (that would change the order-value gate and `trade pnl`):
+  each quote carries a connection epoch and the watch refuses an older one; (b) the watch is stricter about a mark than the admission gate, which still values off
+  `LastQuote` with no side, age or epoch filter — A NAMED GAP; (c) one test's SETUP moved, no assertion loosened. Owner-overrulable in `CONTRACTS.md`: automatic
+  reopening at the next UTC midnight; `kv` until `U-protect`; 15 s and 60 s.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `1750cbd`, Release: 17 projects, 0 warnings, 0 errors; Unit 1078 + Fault 294 +
+Integration 668 = 2040 passed, 0 failed, 1 skipped; touched classes 3× → Fault 26/26 and Unit 21/21 each; names → 17 added, 0 removed (1639 → 1656). Manager's
+gate at `ec0f443` (landed as `1c5d71f` after docs-only rebases, `src`/`tests` identical to `1750cbd`), Release: build → 0 warnings, 0 errors; the first suite run,
+under the session-limit kill of both legs (Integration 31 m 42 s, three times its length): Unit 1077/1078 (`DownloadPartBindingTests`, `Assert.Single(): 2 items`), Fault
+294/294, Integration 666/669 (`ConnectorSendDeadlineTests.A_bridge_that_only_heartbeats_…` ×2, `TimeoutException` at 15 s, the `Timing` class) — CONTAMINATED, judged
+so; the same build re-run alone next morning: Unit 1078 + Integration 668 = 0 failed, 1 skipped (11 m 2 s), the two classes alone 3× → 5/5 and 51/51, exit 0 on all eight; names vs `main` → 0 removed, 18 added (sets
+1694 → 1712; `[Fact]`/`[Theory]` 1663 → 1680); scan clean; no trailers; `rev-list --count` → 0; CI run at `1c5d71f`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** NOTHING IS SENT — no close, cancel or order leaves the gateway because of a breach, asserted at the wire (order count and position
+unchanged across a closure); the flatten (`U-flatten-2`), the data-loss exit (`U-flatten-3`), stops and targets (`U-protect`), a table, the assessments' content, the
+admission gate's mark validity (b); no screen, no box, no ATAS, no money. `DownloadPartBindingTests` also flaked once in the builder's DEBUG run — the loopback class, watched.
