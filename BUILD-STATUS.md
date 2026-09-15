@@ -5802,3 +5802,44 @@ Manager's gate at `69657b2` (the reported tip `036dcc0` rebased onto `3725179`, 
 **NOT done, NOT verified:** no product code, so no RED-first test and no mutant; the SHIPPED 50 ms-poll body was never reproduced on this Mac (a starved-thread-pool
 attempt stalled the test host and was killed by PID) — the runner logs stay its only sighting; the two fixtures moved beside the red have no red of their own,
 only the same shape and measurement; no `Timing`, no box, no ATAS, no money.
+
+## 2026-09-15 — U-flatten-2 landed: a confirmed breach closes the book by code — openers cancelled and settled first, reduction-only enforced in code, resolved by machine only behind a flat read-back
+
+The second `U-flatten` unit (COUNCIL `:14-15` the loss gate, `:33` "never a late trade"; `CLAUDE.md` rule 3, two-press), briefed from the day's survey and consult, the
+brief amended before dispatch so the breach record stays immutable, built by one fresh builder on a worktree cut from the allocator's tip. Merge `d7f235d`, 7 commits,
+17 files, +2252/−144, NO schema rung — the record is `kv`. MONEY PATH: the dispatch gate, the press mechanics, the connector's close.
+
+- **Openers first:** on a confirmed breach every working order that could increase exposure on the scope is cancelled under the app's own press kind
+  (`op-budget-cancel-`) and SETTLED before any close; then the working book is read again. RED (no flatten): `book after the flatten: [FB-1 Buy 2 FILLED | FB-3 Buy 1
+  WORKING]` → `after the opener fills: ES 3`, `Expected: 0 Actual: 3`. Mutant (the cancel skipped): `[… FB-3 Buy 1 WORKING | FB-4 Sell 2 FILLED]`, `position: ES 0`,
+  `after the opener fills: ES 1`. A platform that refuses the cancel leaves `closes` unchanged, ES 2, `HasUnconfirmedWork` true — its own test.
+- **The reduction-only exception, enforced in code,** through ONE shared `CloseCapturedAsync` the owner's press and the app's legs both use, plus `ReductionOnlyOrThrow`
+  before the wire — a leg that would reverse or open throws. RED (flatten and sweep disabled): `Assert.NotNull() Failure: Value is null`. Mutant (routed through
+  `CloseAsync`): `still open: ES: TRADING_PAUSED_UNRECONCILED; still open: NQ: …`, `book: [ES 2 | NQ 1]`. Second mutant (size check removed): 3 red, `Expected:
+  typeof(GatewayDeniedException)` twice, `closes on the wire: 0 -> 1`. `LOSS_BUDGET_REACHED` stays the caller's answer, asserted.
+- **Resolved by machine, or paused:** a leg resolves only when its close is terminal AND a fresh read-back says flat; the outcome is its own write-once `kv` row
+  `loss_flatten:{connector}:{account}:{utcDay}`, and the breach row's bytes are compared before and after. RED (judged, never cleared): `unconfirmed work: True`.
+  Mutant (terminal alone, no read-back): the REJECTED leg over `position: ES 1` resolves, `Expected: True Actual: False` on `HasUnconfirmedWork`.
+- **Crash recovery,** keyed on the ABSENCE of the outcome record, never on the composite, never while anything is unreconciled. RED (no sweep): `Assert.NotNull()
+  Failure: Value is null`, ES 2 still open. Mutant (keyed on the composite): the same red — a composite begun and killed is never finished.
+- **Told:** `status.loss_flatten` `flat` / `unresolved`, the Situation, section 4, the Safety row, and every sentence that promised "nothing is closed for you" rewritten
+  to "TradeAgent CLOSED YOUR OPEN POSITIONS …". RED: 4 of 5, `Not found: "CLOSED YOUR OPEN POSITIONS"`, `Not found: ""loss_flatten":"flat""`. Mutant (`flat` from the
+  composite's ok): reads flat over an open ES 1, `Expected: False Actual: True`.
+- **Choices, in `CONTRACTS.md`:** (a) the key carries the CONNECTOR, not the brief's `{account}:{utcDay}` — an account id is unique only within a platform and a PAPER
+  flatten must not answer for a LIVE closure; the account is read off the breach record and the flatten refuses unless the gateway operates it; (b) the cancel takes
+  every working order on an instrument about to be closed, reducers included — a protective sell is a reducer only while the long exists; (c) the app clears its OWN
+  flags behind a read-back and restores `ExecutionCapability` on `ReconcileAsync`'s two lines, else a correct flatten is a manual outage; (d) only app legs take the
+  extra position read before the wire; the owner's press is byte for byte what it was. Deviations kept: the shared close and `ReductionOnlyOrThrow` landed in item 1's
+  commit; two `LossWatchTests` wire assertions changed from "nothing is sent" to one close, the right symbol, a flat read-back — stronger, not looser; `ClosedDay`'s
+  SETUP moved; two tests RENAMED because their NAME stated the withdrawn promise.
+- **Two limits, named:** `FakeConnector.ClosePositionAsync` re-reads and re-sizes itself, so a wire-level REVERSAL cannot be produced against the simulator — the flow
+  test states no close reached the connector and the row says why, and `ReductionOnlyTests` holds the arithmetic directly. Inherited: the shared close path catches a
+  definite `ConnectorRejectedException` in the same arm as a timeout and records UNKNOWN — the safe direction, not this unit's to change.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `ebd6b2a` (rebased onto `3725179`), Release: 17 projects, 0 warnings, 0 errors;
+Unit 1102 + Fault 320 + Integration 668 = 2090 passed, 0 failed, 1 skipped; touched classes 3× → LossFlattenTests 9, ReductionOnlyTests 7, LossWatchTests 5,
+LossFlattenSurfacesTests 5, LossDayClosedSurfacesTests 6, 15 runs exit 0; names 1741 → 1758, 19 added, 0 removed, 2 renamed. Manager's gate at `d7f235d` (the reported tip `5de5445` rebased onto `25f79b7`, the branch's patch-id identical before and after), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1102/1102 (18 s), Fault 320/320 (1 m 23 s), Integration 668/669, 1 skipped (11 m 4 s) → 0 failed; names vs `main` → 2 removed = the 2 RENAMED, 19 added (sets 1741 → 1758; `[Fact]`/`[Theory]` 1709 → 1726); scan clean; no trailers; `rev-list --count` → 0; CI at `d7f235d`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no reopen of a closed day — no cooldown, no strikes, no receipts (`U-reopen-1`); no data-loss exit (`U-flatten-3`); no stops or targets
+(`U-protect`); no schema, no table, no assessments; NOT VERIFIED anywhere but this Mac — no box, no ATAS, no real money; every order in every test went to the
+simulator through `RecordingConnector`, the wire counts asserted.
