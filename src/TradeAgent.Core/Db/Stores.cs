@@ -151,7 +151,7 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
             using var c = db.Cmd($"""
                 INSERT INTO execution_request({Cols}, updated_at)
                 SELECT $rid,$sess,$conn,$acct,$inst,$intent,$params,$coid,$created,NULL,$state,NULL,
-                       '0',NULL,1,NULL,$why,$mode,$upd
+                       '0',NULL,1,NULL,$why,$mode,$ver,$alloc,$upd
                 WHERE NOT EXISTS (SELECT 1 FROM execution_request WHERE request_id=$rid)
                   AND ($claim IS NULL OR NOT EXISTS (
                         SELECT 1 FROM execution_request
@@ -166,6 +166,13 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
                 ("$inst", r.Instrument), ("$intent", r.Intent.ToString()), ("$params", r.ParametersJson),
                 ("$coid", r.ClientOrderId), ("$created", Sql.T(r.CreatedAt)), ("$state", r.State.ToString()),
                 ("$why", reason), ("$mode", r.Mode.ToString()), ("$upd", Sql.T(Now)),
+                // THE ATTRIBUTION, ON THE INSERT THAT MAKES THIS ROW TOO. Every column in Cols is
+                // written by the statement that creates the record and by no later update, and this
+                // is the second such statement — a press row that named neither column would not be
+                // "no strategy placed this", it would be a row the schema could not hold. Carried off
+                // the record rather than hardcoded null: what the caller declared is what is stored,
+                // and the operator's own press declares neither.
+                ("$ver", r.StrategyVersionId), ("$alloc", r.AllocationId),
                 ("$claim", blockedWhileOpenLike), ("$wire", blockedWhileWorkIsOpenOn));
             return c.ExecuteNonQuery();
         });

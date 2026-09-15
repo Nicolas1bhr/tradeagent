@@ -224,6 +224,9 @@ public class VenueCatalogTests
                 ALTER TABLE strategy_promotion DROP COLUMN timeframe;
                 ALTER TABLE strategy_promotion DROP COLUMN data_freshness;
                 ALTER TABLE strategy_promotion DROP COLUMN max_decision_age;
+                ALTER TABLE execution_request DROP COLUMN strategy_version_id;
+                ALTER TABLE execution_request DROP COLUMN allocation_id;
+                DROP TABLE strategy_allocation;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;
                 UPDATE meta SET value='16' WHERE key='schema_version';
