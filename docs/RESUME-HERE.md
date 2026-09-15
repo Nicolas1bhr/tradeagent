@@ -13,9 +13,9 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 **Session closed 2026-09-15 ~10:30 CEST, the morning after the session limit took both running legs at ~21:40 CEST (the owner: "round off surgically
 what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees exist for the branches in 3. Restart in this order:**
 
-1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` sections at the end of `BUILD-STATUS.md`** (one per landing, every merge sha's CI
-   verdict recorded — nothing is in flight).
-2. **`main` is ``1c5d71f` (`U-flatten-1`) plus this record`, clean, pushed. Schema 19.** Landed 2026-09-14 evening, in order: `U-data-2` `c8306d4` (18), `U-sweep-latency-win` `4961989` (test-only;
+1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
+   merge sha's CI verdict recorded — nothing is in flight).
+2. **`main` is `1c5d71f` (`U-flatten-1`) plus this record, clean, pushed. Schema 19.** Landed 2026-09-14 evening, in order: `U-data-2` `c8306d4` (18), `U-sweep-latency-win` `4961989` (test-only;
    its CI RED on ubuntu only, `PeerRowTests`, a hosted-runner red under step 6, fixer briefed — see 3b), `U-freshness` `570279b` (19), `U-flatten-1` `1c5d71f` (no schema; landed 2026-09-15 morning
    after a same-build re-run cleared the dying session's reds). Before
    them, 2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-venue-catalog` `afa49dd` (17): the list is in the 2026-09-14 sections.

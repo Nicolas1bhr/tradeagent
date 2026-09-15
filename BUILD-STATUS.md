@@ -5689,7 +5689,7 @@ untouched by both). Merge `570279b`, 9 commits, 39 files, +1695/−51 (`Versioni
 `PlaceIntent`, so `IntentDecision.From` has no production caller yet; nothing reached a venue, ATAS, the box or real money; `U-flatten`, the allocator, the
 connectors and the referee's verdict untouched; section 3 and the Situation never seen on a screen.
 
-## 2026-09-14 — U-flatten-1 landed: a loss-budget breach is a durable fact the app watches for, refuses off and reports — nothing is sent yet
+## 2026-09-15 — U-flatten-1 landed: a loss-budget breach is a durable fact the app watches for, refuses off and reports — nothing is sent yet
 
 The first of the three `U-flatten` units briefed from a read-only survey and one Astra consult (COUNCIL `:14-15` the loss gate, `:33` "never a late trade", `:59-63`
 a loss-budget event as a consequential boundary), by one fresh builder on `docs/briefs/U-flatten-1.md`, rebased by the builder onto `bc0e89c` and at landing over
