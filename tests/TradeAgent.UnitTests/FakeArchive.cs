@@ -27,7 +27,7 @@ public sealed class FakeArchive : IDisposable
     /// <summary>The methods that carry an entity body. A HEAD answer is headers and nothing else.</summary>
     const string Head = "HEAD";
 
-    readonly HttpListener _http = new();
+    readonly HttpListener _http;
     readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _sidecars = new(StringComparer.Ordinal);
     readonly ConcurrentQueue<string> _marks = new();
@@ -41,14 +41,8 @@ public sealed class FakeArchive : IDisposable
     {
         Answers = answers;
 
-        for (var attempt = 0; ; attempt++)
-        {
-            Port = 18000 + Random.Shared.Next(2000);
-            _http.Prefixes.Clear();
-            _http.Prefixes.Add($"http://127.0.0.1:{Port}/");
-            try { _http.Start(); break; }
-            catch (HttpListenerException) when (attempt < 20) { }
-        }
+        _http = Loopback.Start(out var port);
+        Port = port;
 
         Serving = Task.Run(async () =>
         {

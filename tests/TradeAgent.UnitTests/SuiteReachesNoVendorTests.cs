@@ -137,6 +137,48 @@ public class SuiteReachesNoVendorTests
     }
 
     /// <summary>
+    /// AND THE LOOPBACK LISTENER IS BUILT IN ONE PLACE (<c>U-loopback-listener-mac</c>). Four fixtures
+    /// each chose their own port out of a random band and each retried <c>Start()</c> on the SAME
+    /// <see cref="System.Net.HttpListener"/>, which a failed bind has already closed: the retry threw
+    /// <c>ObjectDisposedException</c> out of the constructor, so a collision between two classes
+    /// running in parallel killed a test in milliseconds while the product was green. Moving the four
+    /// fixes the fixtures that exist today; this scan is what stops the fifth one being written.
+    ///
+    /// <para><see cref="Loopback.Start"/> is the only place in the test tree that may construct one —
+    /// it borrows a port the OS says is free and retries from a fresh instance.</para>
+    /// </summary>
+    [Fact]
+    public void No_test_builds_its_own_loopback_listener()
+    {
+        // BOTH SPELLINGS, and the second is the one that matters: every fixture this unit moved wrote
+        // `readonly HttpListener _http = new();`, where the constructor's name is nowhere on the line.
+        // Measured here — with the field initialiser put back in FakeArchive, a check for
+        // `new HttpListener(` alone found nothing and this test passed. It is the same trap the
+        // ApiAgentRuntime check above records, one file over.
+        //
+        // The type name is spelled in pieces so the scan cannot find itself.
+        const string Type = "Http" + "Listener";
+        var construction = $@"new\s+{Type}\s*\(|\b{Type}\b[^=;]*=\s*new\b";
+
+        var offenders =
+            (from file in TestSources()
+             where Path.GetFileName(file) != nameof(Loopback) + ".cs"
+                && Path.GetFileName(file) != nameof(SuiteReachesNoVendorTests) + ".cs"
+             from pair in File.ReadAllText(file).Replace("\r\n", "\n").Split('\n')
+                              .Select((l, i) => (Line: l, Number: i + 1))
+             let code = pair.Line.TrimStart()
+             where Regex.IsMatch(code, construction)
+                && !code.StartsWith("//", StringComparison.Ordinal)
+                && !code.StartsWith("*", StringComparison.Ordinal)
+             select $"{Path.GetFileName(file)}:{pair.Number}").ToList();
+
+        Assert.True(offenders.Count == 0,
+            "these fixtures build their own HttpListener, and a port collision with a class running "
+            + "beside them will throw ObjectDisposedException out of the constructor; take one from "
+            + "Loopback.Start instead: " + string.Join(", ", offenders));
+    }
+
+    /// <summary>
     /// The scan has to be looking at both test projects. A scan that quietly covers one of them is a
     /// rule that holds where nobody was going to break it.
     /// </summary>

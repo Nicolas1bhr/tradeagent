@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using TradeAgent.Core;
 using TradeAgent.Diagnostics;
@@ -1555,7 +1554,7 @@ public class UpdateTrustTests
     /// </summary>
     sealed class Server : IAsyncDisposable
     {
-        readonly HttpListener _listener = new();
+        readonly HttpListener _listener;
         readonly CancellationTokenSource _stop = new();
         readonly Task _loop;
 
@@ -1564,9 +1563,8 @@ public class UpdateTrustTests
 
         public Server(Func<HttpListenerResponse, CancellationToken, Task> handle)
         {
-            var port = Bind(_listener);
+            _listener = Loopback.Start(out var port);
             Url = $"http://127.0.0.1:{port}/SHA256SUMS.txt";
-            _listener.Start();
 
             _loop = Task.Run(async () =>
             {
@@ -1594,32 +1592,6 @@ public class UpdateTrustTests
             try { _listener.Close(); } catch (Exception) { }
             try { await _loop; } catch (Exception) { }
             _stop.Dispose();
-        }
-
-        /// <summary>
-        /// A port nobody else is on. HttpListener will not take port 0, so one is borrowed from the
-        /// OS and handed straight over; the retry covers losing that race to another process.
-        /// </summary>
-        static int Bind(HttpListener listener)
-        {
-            for (var attempt = 0; ; attempt++)
-            {
-                var probe = new TcpListener(IPAddress.Loopback, 0);
-                probe.Start();
-                var port = ((IPEndPoint)probe.LocalEndpoint).Port;
-                probe.Stop();
-
-                listener.Prefixes.Clear();
-                listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-                try
-                {
-                    listener.Start();
-                    listener.Stop();
-                    return port;
-                }
-                catch (HttpListenerException) when (attempt < 4) { }
-                catch (SocketException) when (attempt < 4) { }
-            }
         }
 
         /// <summary>Writes <paramref name="count"/> bytes and pushes them at the client now.</summary>

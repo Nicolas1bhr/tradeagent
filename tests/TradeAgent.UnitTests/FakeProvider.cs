@@ -31,7 +31,7 @@ public sealed class FakeProvider : IDisposable
     /// <summary>The one method that carries no entity body. See the comment at the write below.</summary>
     const string Head = "HEAD";
 
-    readonly HttpListener _http = new();
+    readonly HttpListener _http;
     readonly ConcurrentQueue<string> _responses = new();
     readonly ConcurrentQueue<string> _bodies = new();
     readonly ConcurrentQueue<string> _marks = new();
@@ -48,14 +48,8 @@ public sealed class FakeProvider : IDisposable
     {
         Answers = answers;
 
-        for (var attempt = 0; ; attempt++)
-        {
-            Port = 21000 + Random.Shared.Next(3000);
-            _http.Prefixes.Clear();
-            _http.Prefixes.Add($"http://127.0.0.1:{Port}/");
-            try { _http.Start(); break; }
-            catch (HttpListenerException) when (attempt < 20) { }
-        }
+        _http = Loopback.Start(out var port);
+        Port = port;
 
         Serving = Task.Run(async () =>
         {

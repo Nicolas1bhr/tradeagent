@@ -34,19 +34,13 @@ public class DownloadPartBindingTests
     /// </summary>
     sealed class Vendor : IDisposable
     {
-        readonly HttpListener _http = new();
+        readonly HttpListener _http;
         readonly List<string?> _ranges = [];
 
         public Vendor(byte[] body, int abortAfter = 0, long? claimTotal = null)
         {
-            for (var attempt = 0; ; attempt++)
-            {
-                Port = 18000 + Random.Shared.Next(2000);
-                _http.Prefixes.Clear();
-                _http.Prefixes.Add($"http://127.0.0.1:{Port}/");
-                try { _http.Start(); break; }
-                catch (HttpListenerException) when (attempt < 20) { }
-            }
+            _http = Loopback.Start(out var port);
+            Port = port;
 
             Serving = Task.Run(async () =>
             {
