@@ -50,9 +50,14 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
     /// error: an archive is published on the vendor's own schedule and a twelve-month ask near the
     /// start of a month legitimately finds eleven.
     /// </summary>
+    /// <param name="recordDecision">
+    /// Where an unpinned period's recorded decision goes, when the caller wants to read it rather
+    /// than leave it to the app's log. Null means <see cref="Downloader.RecordDecision"/>.
+    /// </param>
     public async Task<MonthResult> FetchPeriodAsync(
         ICandleSource source, CandlePeriod period, string rawDir,
-        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default)
+        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default,
+        Action<string>? recordDecision = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(period);
@@ -100,7 +105,7 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         {
             await Downloader.DownloadAsync(period.Url, dest,
                 published is null ? Unpinned(source, name) : Integrity.Pinned(published),
-                progress, ct, ErrorCode.MARKET_DATA_UNAVAILABLE);
+                progress, ct, ErrorCode.MARKET_DATA_UNAVAILABLE, recordDecision);
         }
         catch (TradeAgentException ex) when (published is not null && ex.Info.Code == ErrorCode.MARKET_DATA_UNAVAILABLE)
         {
@@ -166,9 +171,11 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
     /// ACTUAL coverage recorded beside it is what <c>docs/COUNCIL.md</c> asks for, and a loop that
     /// returned only what it got would leave the difference invisible.
     /// </summary>
+    /// <param name="recordDecision"><inheritdoc cref="FetchPeriodAsync" path="/param[@name='recordDecision']"/></param>
     public async Task<IReadOnlyList<MonthResult>> CollectAsync(
         ICandleSource source, string symbol, DateTimeOffset nowUtc,
-        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default)
+        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default,
+        Action<string>? recordDecision = null)
     {
         ArgumentNullException.ThrowIfNull(source);
 
@@ -179,7 +186,7 @@ public sealed class CandleSourceClient(TimeSpan? requestTimeout = null)
         foreach (var period in periods)
         {
             ct.ThrowIfCancellationRequested();
-            results.Add(await FetchPeriodAsync(source, period, rawDir, progress, ct));
+            results.Add(await FetchPeriodAsync(source, period, rawDir, progress, ct, recordDecision));
         }
 
         return results;

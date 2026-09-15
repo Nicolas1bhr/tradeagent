@@ -52,10 +52,16 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     /// Fetches the twelve most recent complete months of <paramref name="pair"/> from Binance and
     /// records the whole provenance. The owner's press on the Settings page.
     /// </summary>
+    /// <param name="recordDecision">
+    /// Where an unpinned period's recorded decision goes, when the caller wants to read THIS
+    /// collection's decisions rather than leave them to the app's log. Null means
+    /// <see cref="Downloader.RecordDecision"/>.
+    /// </param>
     public Task<DataCollection> CollectAsync(
         string pair, DateTimeOffset nowUtc,
-        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default) =>
-        CollectAsync(_binance.Source(), _binance.Fetcher, pair, nowUtc, progress, ct);
+        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default,
+        Action<string>? recordDecision = null) =>
+        CollectAsync(_binance.Source(), _binance.Fetcher, pair, nowUtc, progress, ct, recordDecision);
 
     /// <summary>
     /// Fetches every period <paramref name="source"/> declares for <paramref name="symbol"/>,
@@ -65,19 +71,21 @@ public sealed class MarketDataService(Database db, BinanceArchiveClient? client 
     /// be a provenance record for an absence, and "no dataset yet" is already what an empty ledger
     /// says.
     /// </summary>
+    /// <param name="recordDecision"><inheritdoc cref="CollectAsync(string, DateTimeOffset, IProgress{ProvisionProgress}, CancellationToken, Action{string})" path="/param[@name='recordDecision']"/></param>
     public Task<DataCollection> CollectAsync(
         ICandleSource source, string symbol, DateTimeOffset nowUtc,
-        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default) =>
-        CollectAsync(source, _fetcher, symbol, nowUtc, progress, ct);
+        IProgress<ProvisionProgress>? progress = null, CancellationToken ct = default,
+        Action<string>? recordDecision = null) =>
+        CollectAsync(source, _fetcher, symbol, nowUtc, progress, ct, recordDecision);
 
     async Task<DataCollection> CollectAsync(
         ICandleSource source, CandleSourceClient fetcher, string symbol, DateTimeOffset nowUtc,
-        IProgress<ProvisionProgress>? progress, CancellationToken ct)
+        IProgress<ProvisionProgress>? progress, CancellationToken ct, Action<string>? recordDecision)
     {
         ArgumentNullException.ThrowIfNull(source);
         symbol = source.RequireSymbol(symbol);
 
-        var periods = await fetcher.CollectAsync(source, symbol, nowUtc, progress, ct);
+        var periods = await fetcher.CollectAsync(source, symbol, nowUtc, progress, ct, recordDecision);
         var collected = periods.Where(m => m.Outcome == MonthOutcome.Collected && m.File is not null)
                                .Select(m => m.File!)
                                .OrderBy(f => f.Month, StringComparer.Ordinal)

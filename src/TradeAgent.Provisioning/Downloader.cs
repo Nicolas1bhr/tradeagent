@@ -76,14 +76,20 @@ public static class Downloader
     public const string UserAgent = "TradeAgent/0.1 (+https://github.com/nicolasbeeckman/tradeagent)";
 
     /// <summary>
-    /// Where an "installed without a checksum" decision is written so the owner can read it
-    /// afterwards. Wired once, at startup, to the activity log.
+    /// THE APP'S DEFAULT sink for an "installed without a checksum" decision, wired once at startup
+    /// to the activity log, and used by any download whose caller passes no sink of its own.
     ///
     /// Static because this layer sits below the database on purpose — a downloader that opens a
     /// database is a downloader that cannot run during setup, before there is one. The recording is
     /// done HERE rather than at each call site so that no caller can decide to skip it; the reason
     /// it prints is the caller's, and there is no way to ask for an unverified download without
     /// supplying one.
+    ///
+    /// <para><b>It is a default, never a channel to be borrowed.</b> A caller that wants to READ the
+    /// decisions of one download passes <c>recordDecision</c> on the call instead of swapping this
+    /// property: the property is process-wide, and two callers swapping it at once send each other's
+    /// decisions down each other's sink and then restore each other's value. That is not theoretical
+    /// — it is what two parallel test classes did to each other, on CI and on a developer machine.</para>
     /// </summary>
     public static Action<string>? RecordDecision { get; set; }
 
@@ -120,18 +126,23 @@ public static class Downloader
     /// renamed to ATASPlatform.exe and run elevated. Resuming is still worth having on a 459 MB
     /// installer over a domestic line. What is gone is resuming into a different download.
     /// </summary>
+    /// <param name="recordDecision">
+    /// Where THIS download's "installed without a checksum" decision goes, when the caller wants to
+    /// read it rather than leave it to the app's log. Null means <see cref="RecordDecision"/>.
+    /// </param>
     public static Task<string> DownloadAsync(
         string url,
         string destFile,
         Integrity integrity,
         IProgress<ProvisionProgress>? progress = null,
         CancellationToken ct = default,
-        ErrorCode integrityCode = ErrorCode.AI_INSTALL_FAILED) =>
-        DownloadAsync(url, destFile, integrity, progress, ct, integrityCode, restarted: false);
+        ErrorCode integrityCode = ErrorCode.AI_INSTALL_FAILED,
+        Action<string>? recordDecision = null) =>
+        DownloadAsync(url, destFile, integrity, progress, ct, integrityCode, recordDecision, restarted: false);
 
     static async Task<string> DownloadAsync(
         string url, string destFile, Integrity integrity, IProgress<ProvisionProgress>? progress,
-        CancellationToken ct, ErrorCode integrityCode, bool restarted)
+        CancellationToken ct, ErrorCode integrityCode, Action<string>? recordDecision, bool restarted)
     {
         ArgumentNullException.ThrowIfNull(integrity);
 
@@ -171,7 +182,7 @@ public static class Downloader
                 throw new TradeAgentException(ErrorCode.AI_INSTALL_FAILED,
                     $"the download of {name} could not be continued and could not be started again");
             response.Dispose();
-            return await DownloadAsync(url, destFile, integrity, progress, ct, integrityCode, restarted: true);
+            return await DownloadAsync(url, destFile, integrity, progress, ct, integrityCode, recordDecision, restarted: true);
         }
 
         // A body whose length the server never declared gets a part file named for length 0, which
@@ -232,7 +243,7 @@ public static class Downloader
             // to state the reason; this is where those words go.
             var decision = $"Installed {name} without checking it against a publisher's checksum: {integrity.Because}";
             progress?.Report(new ProvisionProgress("verify", decision));
-            try { RecordDecision?.Invoke(decision); }
+            try { (recordDecision ?? RecordDecision)?.Invoke(decision); }
             catch (Exception) { /* a sink that throws must not fail the install it is only describing */ }
         }
 
