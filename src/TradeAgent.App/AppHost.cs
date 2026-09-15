@@ -1171,7 +1171,7 @@ public sealed class AppHost : IAsyncDisposable
                 Spend = host.SpendToday,
                 Loss = loss,
                 Data = MissionSituation.DataLine(NewestDataset(), DateTimeOffset.UtcNow),
-                Promoted = MissionSituation.PromotedLine(PromotedStanding())
+                Promoted = MissionSituation.PromotedLine(PromotedStanding(), PromotedAllocation())
             };
         }
 
@@ -1206,6 +1206,26 @@ public sealed class AppHost : IAsyncDisposable
             // same question, and two copies of "what is promoted" are two answers about the one fact
             // that decides whether anything may trade at all.
             try { return new Promotions(host._db!).Current(); }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// WHAT CAPITAL STANDS BEHIND THE PROMOTED VERSION, or null because none does.
+        ///
+        /// <para>The gateway's own reader, so the Situation and the order path agree on one answer.
+        /// <c>Authorises</c> and not merely "a row is in force": an allocation whose promotion has
+        /// been withdrawn authorises nothing, and telling a turn about it would be telling it about
+        /// capital it cannot spend. A failure to read answers null, which the line reads as "none" —
+        /// the safe direction, and the one <see cref="PromotedStanding"/> already takes.</para>
+        /// </summary>
+        AllocationRow? PromotedAllocation()
+        {
+            try
+            {
+                if (PromotedStanding() is not { IsPromoted: true, Promotion: { } promotion }) return null;
+                return host.Gateway.Allocations.StandingFor(promotion.VersionId, DateTimeOffset.UtcNow)
+                    is { Authorises: true } standing ? standing.Allocation : null;
+            }
             catch (Exception) { return null; }
         }
 

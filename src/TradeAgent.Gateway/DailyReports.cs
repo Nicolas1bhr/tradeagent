@@ -345,12 +345,30 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             "this report is written from TradeAgent's own ledger and asks your platform nothing, so "
             + "what is still OPEN is not valued in it; the Dashboard and 'trade pnl' do ask"));
 
+        // WHAT CAPITAL STANDS BEHIND A PROMOTED VERSION. Read at the snapshot instant, like everything
+        // else in this document, and a ledger that cannot be read becomes a named gap rather than an
+        // empty list — "nothing is allocated" and "TradeAgent could not look" are different facts and
+        // this section is the one place they must not collapse into each other.
+        var allocations = new List<string>();
+        try
+        {
+            foreach (var standing in gateway.Allocations.Standing(at))
+                allocations.Add(AllocationLine(standing));
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("allocated",
+                $"the allocation ledger could not be read ({ex.Message}), so what capital stands behind "
+                + "a promoted version is not in this report"));
+        }
+
         var budget = gateway.Settings.Risk.MaxDailyLoss;
         // OFF THE RECORD, LIKE EVERY OTHER SURFACE. It costs no platform call — the closure is a row
         // this app wrote — so it belongs in a report that asks the platform nothing.
         var closed = gateway.ClosureToday();
         return new ReportPerformance
         {
+            Allocations = Cap(allocations, ListShown, "allocation"),
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,
             SymbolsClosed = closed.Symbols,
@@ -368,6 +386,32 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Currency = gateway.AccountCurrency,
             Missing = gaps
         };
+    }
+
+    /// <summary>
+    /// ONE STANDING ALLOCATION, in the owner's words: the version, what it may hold, in which currency,
+    /// from when, and under which allocation policy.
+    ///
+    /// <para>The policy version is on the line rather than implied, for the reason a promotion's
+    /// scoring-policy sha is on its row: what the app applied when it wrote the allocation is part of
+    /// what the allocation MEANS, and a reader a release later has no other way to know which rules
+    /// were in force.</para>
+    ///
+    /// <para>A version whose promotion no longer stands is marked HERE rather than filtered upstream.
+    /// The mutant is printing the line without the mark: the row is still on the table and the version
+    /// may trade nothing, so an unmarked line tells the owner their capital is working when it is not.</para>
+    /// </summary>
+    internal static string AllocationLine(AllocationStanding standing)
+    {
+        var a = standing.Allocation;
+        var line = $"{Short(a.VersionId)} up to {AllocationRow.Num(a.MaxQuantity)}"
+                   + (a.MaxNotional is { } n and > 0m ? $" and {Labels.Money(n, a.Currency)}" : "")
+                   + $" {a.Currency}, from {a.EffectiveFrom:yyyy-MM-dd HH:mm:ssK}, policy {a.PolicyVersion}";
+
+        return standing.Authorises
+            ? line
+            : line + " — WITHDRAWN: its promotion no longer stands, so it may trade nothing. "
+                   + standing.Promotion.Why;
     }
 
     ReportExecution ComposeExecution(DateTimeOffset from, DateTimeOffset to, DateTimeOffset at)

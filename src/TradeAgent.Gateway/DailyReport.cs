@@ -135,6 +135,23 @@ public sealed record ReportPerformance
     /// <summary>Instruments closed to opens and adds for the rest of that UTC day.</summary>
     public IReadOnlyList<string> SymbolsClosed { get; init; } = [];
     public string Currency { get; init; } = "";
+
+    /// <summary>
+    /// WHAT CAPITAL STANDS BEHIND EACH PROMOTED VERSION, one line each: the version, the ceiling, the
+    /// currency, the instant it took effect, and the allocation policy that was applied.
+    ///
+    /// <para>Here, in the money section, because that is what an allocation is. Empty is "nothing is
+    /// allocated", which is the truth on every installation that has not pressed the Capital card, and
+    /// is printed as <c>none</c> rather than omitted — a silent section would read as "no allocations
+    /// exist" and as "this build does not know" identically.</para>
+    ///
+    /// <para>An allocation whose promotion no longer stands is LISTED AND MARKED rather than filtered
+    /// out. It is the line that most needs printing: the row is still on the table, the version can
+    /// trade nothing, and a reader shown only the live ones would be told the owner's capital is
+    /// somewhere it is not.</para>
+    /// </summary>
+    public IReadOnlyList<string> Allocations { get; init; } = [];
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -454,6 +471,10 @@ public static class DailyReportText
         if (r.Performance.SymbolsClosed.Count > 0)
             Kv(b, "positions closed to adds", string.Join(", ", r.Performance.SymbolsClosed)
                                               + " — NOTHING WAS CLOSED FOR YOU; closing and reducing still work");
+        // WHAT IS ALLOCATED, AND TO WHAT. See ReportPerformance.Allocations: a withdrawn promotion is
+        // listed and marked rather than dropped, because the row is still there and the version can
+        // trade nothing.
+        List(b, "allocated", r.Performance.Allocations);
         Gaps(b, r.Performance.Missing);
 
         Section(b, "5. Execution health");

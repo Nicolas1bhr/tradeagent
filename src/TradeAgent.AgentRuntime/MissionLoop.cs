@@ -674,12 +674,33 @@ public sealed record MissionSituation
     /// withdrawn. Nothing here is a permission: what may execute is decided in the gateway, which the
     /// agent cannot reach.</para>
     /// </summary>
-    public static string PromotedLine(PromotionStanding? standing) => standing?.State switch
+    /// <param name="allocation">
+    /// WHAT CAPITAL STANDS BEHIND THAT VERSION RIGHT NOW, or null because none does.
+    ///
+    /// <para>The line says it because a turn planning against a promoted version has to know whether
+    /// anything it decides can be executed at all: a version with no allocation places nothing
+    /// (<c>ALLOCATION_NONE</c>), and a turn told only "promoted" would plan a deployment the gateway
+    /// will refuse. It carries the CEILING and no holdout figure — the same disclosure boundary the
+    /// promotion half of this line has (<c>docs/COUNCIL.md</c>:196-197): a ceiling is the owner's own
+    /// number, declared on their own screen, and says nothing about the held-back months.</para>
+    ///
+    /// <para>An allocation whose promotion no longer stands must never be passed here as a live one.
+    /// The caller asks <see cref="AllocationStanding.Authorises"/>, which is false for exactly that
+    /// case, and the mutant — printing it while the standing reads <c>invalidated</c> — makes a
+    /// withdrawn allocation read live to the agent planning against it.</para>
+    /// </param>
+    public static string PromotedLine(PromotionStanding? standing, AllocationRow? allocation = null) => standing?.State switch
     {
         PromotionState.Promoted =>
             $"Promoted strategy: version {Short(standing!.Promotion!.VersionId)}, promoted by "
             + $"TradeAgent's referee on {standing.Promotion.At.UtcDateTime:yyyy-MM-dd} over months you "
-            + "have never been shown. The figures behind it are your owner's and are not yours to see.",
+            + "have never been shown. The figures behind it are your owner's and are not yours to see."
+            + (allocation is { } a
+                ? $" Your owner has allocated it up to {AllocationRow.Num(a.MaxQuantity)} at a time"
+                  + (a.MaxNotional is { } n and > 0m ? $", worth at most {Money(n, a.Currency)}" : "")
+                  + ", and that ceiling is enforced when an order arrives."
+                : " No capital is allocated to it, so it can place nothing. Only your owner allocates "
+                  + "capital, in TradeAgent; there is no command that asks for it."),
         PromotionState.Invalidated =>
             $"Promoted strategy: none. Version {Short(standing!.Promotion!.VersionId)} was promoted and "
             + "no longer stands — " + standing.Why,
