@@ -1961,6 +1961,7 @@ public sealed class TradingGateway : IAsyncDisposable
             notes.Add(note);
         }
 
+        LossWatchPass pass;
         await _dispatchGate.WaitAsync(ct);
         try
         {
@@ -1970,10 +1971,150 @@ public sealed class TradingGateway : IAsyncDisposable
             // AN UNAVAILABLE VALUATION RECORDS NOTHING AND DROPS NOTHING. It is not a disagreement —
             // a pull that could not be worked out has not said the breach is over — so a standing
             // sighting is left to expire on its own window rather than being cleared by silence.
-            if (loss.Unknown is { } why)
-                return Settled(new LossWatchPass(at, pull, true, false, [], [],
-                    Refusals(notes) is { Length: > 0 } detail ? $"{why} \u2014 {detail}" : why));
+            // Assigned rather than returned, all the way down: the flatten below runs OUTSIDE this
+            // gate, and an early return would take it and the startup sweep with it.
+            pass = loss.Unknown is { } why
+                ? Settled(new LossWatchPass(at, pull, true, false, [], [],
+                    Refusals(notes) is { Length: > 0 } detail ? $"{why} \u2014 {detail}" : why))
+                : Measured(loss, account.Id, r, at, pull, epoch, positions, notes);
+        }
+        finally { _dispatchGate.Release(); }
 
+
+        // THE FLATTEN RUNS OUTSIDE THE GATE, AND AFTER THE RECORD, NEVER INSTEAD OF IT.
+        //
+        // Outside, because it is a whole emergency's worth of connector round trips — cancels, a
+        // book read-back, a close per position, a position read-back — and holding the dispatch gate
+        // across those would stall every caller for the length of them. It costs nothing to release:
+        // the record is already written, so LossBudgetOrThrow is already refusing every order that
+        // could increase exposure, which is the only thing the gate was protecting here.
+        //
+        // After, because the record is the fact and this is what was done about it. A flatten that
+        // ran first and died would leave a book half closed and nothing saying why.
+        await FlattenWhatWasJustClosedAsync(pass.Closed, ct);
+
+        // AND THEN THE SWEEP, which is the same work arrived at from a restart rather than from a
+        // pull. It is here rather than in a startup path of its own because every host already runs
+        // this pass immediately after connecting: a second place to start, stop and forget would be
+        // a second way for a killed flatten to stay killed.
+        await ReFlattenClosuresWithNoOutcomeAsync(account.Id, at, ct);
+
+        return pass;
+    }
+
+
+    /// <summary>
+    /// THE CLOSURES THIS PULL JUST WROTE, FLATTENED IN THE ORDER THEIR SCOPES CONTAIN EACH OTHER.
+    ///
+    /// <para>The day goes first and the day subsumes: a pull that puts both budgets through at once
+    /// writes both records, and flattening the symbol first would send a close on an instrument the
+    /// account-wide flatten is about to close again. Neither closure is cleared by the other — both
+    /// records stand for the rest of the UTC day — but only one set of orders goes out.</para>
+    ///
+    /// <para>It never throws. A flatten that fails is a record the owner has to read and a pause the
+    /// gate is already enforcing; turning it into an exception here would make a failed flatten look
+    /// like a failed health pass, which is a connection fault and a different screen.</para>
+    /// </summary>
+    async Task FlattenWhatWasJustClosedAsync(IReadOnlyList<string> keys, CancellationToken ct)
+    {
+        if (keys.Count == 0) return;
+
+        var records = new List<LossBreachRecord>();
+        foreach (var key in keys)
+        {
+            try { if (ReadBreach(key) is { } rec) records.Add(rec); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.TryEngineering("Gateway", "loss_flatten_breach_unreadable", "error", ex: ex,
+                    metadataJson: Json.Write(new { key }));
+            }
+        }
+
+        foreach (var breach in records.Where(x => x.Symbol is null).Concat(records.Where(x => x.Symbol is not null)))
+        {
+            try { await FlattenForBreachAsync(breach, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.TryEngineering("Gateway", "loss_flatten_failed", "error", ex: ex,
+                    metadataJson: Json.Write(new { breach.Account, breach.Symbol, breach.Day }));
+            }
+        }
+    }
+
+    /// <summary>
+    /// A CLOSURE WITH NO OUTCOME RECORD IS A FLATTEN THAT WAS KILLED, AND IT RE-RUNS — AFTER
+    /// RECONCILIATION, NEVER OVER AN UNRECONCILED ROW.
+    ///
+    /// <para><b>Keyed on the OUTCOME and never on the composite.</b> A composite row is written
+    /// before the first close goes out, so a process killed half way through the legs leaves one
+    /// behind; recovery that skipped on its existence would decide that a flatten which never
+    /// finished had finished, and the position would stay open with nothing saying so. The flatten's
+    /// own record is the only thing written AFTER the work, so its absence is the only honest
+    /// evidence that the work did not happen.</para>
+    ///
+    /// <para><b>Never over an unreconciled row</b> — the startup sweep's own rule, and here it is
+    /// doing more than being consistent. The rows a killed flatten leaves are flagged and UNKNOWN:
+    /// orders this gateway put on the wire and cannot account for. Re-running over them would send a
+    /// second close on top of an order that may have filled, which is the long-2-becomes-short-2
+    /// failure the press mechanics exist to prevent. So the sweep waits for reconciliation to say
+    /// what became of them, and the gate keeps every order refused while it waits.</para>
+    /// </summary>
+    async Task ReFlattenClosuresWithNoOutcomeAsync(string accountId, DateTimeOffset at, CancellationToken ct)
+    {
+        if (HasUnconfirmedWork()) return;
+
+        List<LossBreachRecord> owed;
+        try
+        {
+            owed = [];
+            if (DayClosed(accountId) is { } day
+                && ReadFlattenRecord(LossFlatten.DayKey(Connector.Id, accountId, at)) is null)
+                owed.Add(day);
+            else
+                foreach (var symbol in SymbolsClosedToday(accountId))
+                    if (SymbolClosed(accountId, symbol) is { } sym
+                        && ReadFlattenRecord(LossFlatten.SymbolKey(Connector.Id, accountId, symbol, at)) is null)
+                        owed.Add(sym);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A ROW THAT CANNOT BE READ IS NOT A ROW THAT SAYS NOTHING IS OWED. Nothing is sent on a
+            // reading nobody could take, and the gate is already refusing off the same rows.
+            _log.TryEngineering("Gateway", "loss_flatten_sweep_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { account = accountId }));
+            return;
+        }
+
+        if (owed.Count == 0) return;
+
+        _log.TryEngineering("Gateway", "loss_flatten_sweep", "warn", metadataJson: Json.Write(new
+        {
+            account = accountId, connector = Connector.Id,
+            owed = owed.Select(x => x.Symbol ?? "(day)").ToList()
+        }));
+
+        foreach (var breach in owed.Where(x => x.Symbol is null).Concat(owed.Where(x => x.Symbol is not null)))
+        {
+            try { await FlattenForBreachAsync(breach, ct); }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.TryEngineering("Gateway", "loss_flatten_failed", "error", ex: ex,
+                    metadataJson: Json.Write(new { breach.Account, breach.Symbol, breach.Day, sweep = true }));
+            }
+        }
+    }
+
+    /// <summary>
+    /// ONE PULL'S VERDICT, AND THE ROWS IT WRITES — the half of <see cref="LossWatchAsync"/> that runs
+    /// UNDER the dispatch gate, so a breach and an opening order cannot decide about the same instant
+    /// in two different places. It sends nothing: what is done about a closure is decided outside the
+    /// gate, by <see cref="FlattenForBreachAsync"/>, once the record exists.
+    /// </summary>
+    LossWatchPass Measured(LossToday loss, string accountId, RiskPolicy r, DateTimeOffset at, long pull,
+        int epoch, IReadOnlyList<PositionInfo> positions, IReadOnlyList<LossBreachMark> notes)
+    {
             var reached = positions
                 .Where(p => p.Quantity != 0 && loss.TradeReached(p.Symbol))
                 .Select(p => p.Symbol).Distinct(StringComparer.Ordinal).ToList();
@@ -1982,27 +2123,25 @@ public sealed class TradingGateway : IAsyncDisposable
 
             if (loss.DayReached)
             {
-                var key = LossBreach.DayKey(account.Id, at);
+                var key = LossBreach.DayKey(accountId, at);
                 if (Confirmed(key, pull, at, out var first))
-                    closed.Add(Close(key, Compose(account.Id, null, loss.Loss, r.MaxDailyLoss, loss, at,
+                    closed.Add(Close(key, Compose(accountId, null, loss.Loss, r.MaxDailyLoss, loss, at,
                         first, pull, epoch, notes)));
             }
-            else _sightings.Remove(LossBreach.DayKey(account.Id, at));
+            else _sightings.Remove(LossBreach.DayKey(accountId, at));
 
             foreach (var symbol in reached)
             {
-                var key = LossBreach.SymbolKey(account.Id, symbol, at);
+                var key = LossBreach.SymbolKey(accountId, symbol, at);
                 if (Confirmed(key, pull, at, out var first))
-                    closed.Add(Close(key, Compose(account.Id, symbol, loss.LossOn(symbol), r.MaxLossPerTrade,
+                    closed.Add(Close(key, Compose(accountId, symbol, loss.LossOn(symbol), r.MaxLossPerTrade,
                         loss, at, first, pull, epoch, notes)));
             }
 
             foreach (var p in positions.Where(p => p.Quantity != 0 && !reached.Contains(p.Symbol)))
-                _sightings.Remove(LossBreach.SymbolKey(account.Id, p.Symbol, at));
+                _sightings.Remove(LossBreach.SymbolKey(accountId, p.Symbol, at));
 
             return Settled(new LossWatchPass(at, pull, true, loss.DayReached, reached, closed, null));
-        }
-        finally { _dispatchGate.Release(); }
     }
 
     /// <summary>
@@ -4002,6 +4141,35 @@ public sealed class TradingGateway : IAsyncDisposable
     public const string CancelPress = "op-cancel";
 
     /// <summary>
+    /// THE TWO APP-OWNED KINDS, AND THEY ARE A REDUCTION-ONLY EXCEPTION TO EVERYTHING TWO-PRESS
+    /// MEANS.
+    ///
+    /// <para>A press is a PERSON's: its rows stay flagged until that person has read them, which is
+    /// what pauses every order after one. That machinery is right and these kinds keep all of it —
+    /// the write-ahead row, the claim, the settle-before-send, the drift re-read, the pause. What is
+    /// different is who pressed and what may be sent: nobody pressed, and the only thing these kinds
+    /// may put on the wire is a cancel of an order that could increase exposure and a close that
+    /// opposes a position and is at most its size (<see cref="ReductionOnlyOrThrow"/>). There is no
+    /// verb, no pipe op and no setting that reaches them; the watch that confirms a breach is their
+    /// only caller.</para>
+    ///
+    /// <para><b>They are separate kinds so that the owner's button is never refused because of
+    /// one.</b> <see cref="RefuseWhileAPressIsOpen"/> is per kind and asks the store for
+    /// <c>{kind}-%</c>; an app flatten's rows are <c>op-budget-close-…</c>, which no <c>op-close-%</c>
+    /// scan matches, so an unresolved app flatten cannot stop a person pressing Close all positions.
+    /// What it DOES do is refuse the owner's leg on the one instrument it is still holding an order
+    /// for, in words — that is <see cref="SettleAnUnresolvedReducerOrRefuse"/>'s existing rule, and
+    /// it is why <see cref="IsPressRecord"/> has to recognise these ids too.</para>
+    /// </summary>
+    public const string BudgetCancelPress = "op-budget-cancel";
+
+    public const string BudgetClosePress = "op-budget-close";
+
+    /// <summary>Whether a press kind is the app's own rather than a person's.</summary>
+    public static bool IsAppPress(string kind) =>
+        kind is BudgetCancelPress or BudgetClosePress;
+
+    /// <summary>
     /// ONE PRESS'S OWN NAME, MINTED ONCE AND NEVER HANDED BACK.
     ///
     /// It used to be minted by the SCREEN and reused: an object called `OperatorPress` held the
@@ -4031,11 +4199,23 @@ public sealed class TradingGateway : IAsyncDisposable
     /// </summary>
     public static bool IsPressRecord(string requestId) =>
         requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ||
-        requestId.StartsWith($"{CancelPress}-", StringComparison.Ordinal);
+        requestId.StartsWith($"{CancelPress}-", StringComparison.Ordinal) ||
+        requestId.StartsWith($"{BudgetClosePress}-", StringComparison.Ordinal) ||
+        requestId.StartsWith($"{BudgetCancelPress}-", StringComparison.Ordinal);
 
-    /// <summary>Which control wrote this row. Only meaningful for a <see cref="IsPressRecord"/> id.</summary>
+    /// <summary>
+    /// Which control wrote this row. Only meaningful for a <see cref="IsPressRecord"/> id.
+    ///
+    /// <para>The app's kinds are tested FIRST and every arm is an explicit prefix test, because the
+    /// last arm used to be a fallthrough to <see cref="CancelPress"/>: a row under a kind this method
+    /// did not know would have been named as a cancel-all, and <see cref="NonceIn"/> would then have
+    /// cut its nonce at the wrong offset — a press refusal naming somebody else's press.</para>
+    /// </summary>
     public static string PressKindOf(string requestId) =>
-        requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ? ClosePress : CancelPress;
+        requestId.StartsWith($"{BudgetClosePress}-", StringComparison.Ordinal) ? BudgetClosePress
+        : requestId.StartsWith($"{BudgetCancelPress}-", StringComparison.Ordinal) ? BudgetCancelPress
+        : requestId.StartsWith($"{ClosePress}-", StringComparison.Ordinal) ? ClosePress
+        : CancelPress;
 
     /// <summary>
     /// ONE LEG OF ONE PRESS: <c>{kind}-{nonce}-{index}</c>, and every part of it is a string this
@@ -4063,8 +4243,20 @@ public sealed class TradingGateway : IAsyncDisposable
     static string NonceIn(string requestId) =>
         requestId[(PressKindOf(requestId).Length + 1)..].Split('-')[0];
 
-    /// <summary>The owner-facing name of a control, as it appears in the refusal.</summary>
-    static string PressName(string kind) => kind == ClosePress ? "close-all" : "cancel-all";
+    /// <summary>
+    /// The owner-facing name of a control, as it appears in the refusal.
+    ///
+    /// The app's two kinds name the BUDGET rather than a button, because nobody pressed one and
+    /// "close-all sent at 12:00; resolve it first" would be the software telling the owner they did
+    /// something they did not do.
+    /// </summary>
+    static string PressName(string kind) => kind switch
+    {
+        ClosePress => "close-all",
+        BudgetClosePress => "the loss budget's close of your open positions",
+        BudgetCancelPress => "the loss budget's cancel of your opening orders",
+        _ => "cancel-all"
+    };
 
     // ---- what one press did -------------------------------------------------------------------
 
@@ -4653,147 +4845,9 @@ public sealed class TradingGateway : IAsyncDisposable
         BeginComposite(AgentContext.Operator, PressPrefix(ClosePress, nonce), Ops.CloseAll,
             captured.Select(p => p.Symbol).ToList(), () => nonce);
 
-        var drifted = new List<string>();
-
-        // THE OTHER HALF OF DRIFT, AND IT IS NOT THE SAME QUESTION. `drifted` is a position that has
-        // ALREADY changed; this is one that is about to, by an order the gateway itself still has on
-        // the wire. The re-read below cannot see it — a request inside a connector call has moved no
-        // position yet — so it is asked of the store instead, in the same insert that writes the
-        // leg's write-ahead row (REVIEW 2026-09-05b finding 2, probe P6).
-        var waited = new List<string>();
-
-        // AND THE THIRD, WHICH IS NEITHER OF THOSE TWO. `drifted` is a position that already changed
-        // and `waited` is an order a handler is inside the connector call for right now; this is an
-        // order that is OVER with no answer and may still be resting at the broker. It is the state
-        // U-press-inflight stated it was leaving open, and the press now tries to settle it before it
-        // sends rather than either refusing on it or closing on top of it. What is listed here is the
-        // instrument where that could not be done.
-        var unsettled = new List<string>();
-
-        // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
-        // position — so the claim rides on the first row this press actually writes, and only that
-        // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
-        // flagged write-ahead.
-        var claimed = false;
-        for (var i = 0; i < captured.Count; i++)
-        {
-            var (symbol, quantity) = captured[i];
-            var closingSide = quantity > 0 ? OrderSide.Sell : OrderSide.Buy;
-            var rid = PressLegId(ClosePress, nonce, i);
-
-            // SETTLED BEFORE ANYTHING IS READ FOR THIS LEG, because what it settles CHANGES the
-            // reading. An unresolved order that turns out to have filled has moved the position, and
-            // the drift re-read below is then the honest look at what is actually there; one that
-            // turns out to be resting is cancelled here, so the close this press sends is the only
-            // one on the instrument. See SettleAnUnresolvedReducerOrRefuse.
-            if (await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct) is { } stuck)
-            {
-                // REFUSED, AND THE ROW IS ITS ACCOUNT. Nothing is sent for this instrument and the
-                // position may still be open, so the leg leaves a flagged record naming it rather
-                // than a line in a summary nobody has to acknowledge: the press stays the owner's to
-                // resolve, and this is the target they have to look at.
-                var refusal = $"nothing was sent for {symbol}: {stuck}. Your {symbol} position may still be open.";
-                var refused = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol,
-                    Json.Write(new PlaceIntent(symbol, closingSide, OrderType.Market, Math.Abs(quantity),
-                        null, null, TimeInForce.Day, "close position (you)") { Intent = OrderIntent.Close }),
-                    refusal, claims: claimed ? null : ClosePress, waitsForWorkOn: null, out _, sending: false);
-                if (refused is not null) claimed = true;
-                unsettled.Add(stuck);
-                continue;
-            }
-
-            // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
-            // changed sends nothing for that instrument (Codex round-3 F10).
-            //
-            // The press captured a size and a side and turned them into a MARKET order for that
-            // size. Between the capture and this call a fill can land, a hedge can close, another
-            // window can flatten it — and the order this press computed is then wrong in the one
-            // direction that matters: closing 2 of a position that is now 1 opens a short, and
-            // closing a long that has already flipped short doubles it. The old code sent whatever
-            // it had captured and let ATAS's close-position sort it out.
-            //
-            // Refused rather than recomputed. A different position is a different decision, and the
-            // owner makes decisions here — they press again, against what is actually there.
-            decimal? live = null;
-            Exception? unreadable = null;
-            try
-            {
-                live = (await Connector.GetPositionsAsync(accountId, ct))
-                    .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
-            }
-            catch (Exception ex) { unreadable = ex; }
-
-            // A DEFINITE DIFFERENT ANSWER AND NO ANSWER AT ALL ARE NOT THE SAME NEWS, and they get
-            // different treatment. A position the platform says is 1 when the press captured 2 is a
-            // changed decision: no record, nothing sent, and the owner is told to press again. A
-            // read that never came back tells us nothing about anything — including whether this
-            // press ought to be over — so it gets a record, and the record pauses trading.
-            if (unreadable is null && live != quantity)
-            {
-                drifted.Add($"{symbol} was {quantity} when you pressed and is {live} now");
-                continue;
-            }
-
-            var intent = new PlaceIntent(symbol, closingSide,
-                OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, "close position (you)")
-                { Intent = OrderIntent.Close };
-            var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
-                claims: claimed ? null : ClosePress, waitsForWorkOn: symbol, out var waitingOn);
-
-            // REFUSED, AND THE OWNER IS TOLD WHAT IT IS WAITING ON. Nothing was written under this
-            // id and nothing was sent; the claim is still unclaimed, so the next symbol may take it.
-            if (current is null)
-            {
-                waited.Add($"{symbol} is waited on by {waitingOn!.RequestId}, still {waitingOn.State}");
-                continue;
-            }
-            claimed = true;
-
-            if (unreadable is { } readFailed)
-            {
-                SafelyRecordIndefinite(rid, readFailed.Message,
-                    $"TradeAgent could not check your {symbol} position before closing it, so nothing was sent for it.",
-                    readFailed);
-                continue;
-            }
-
-            OrderInfo? order;
-            try
-            {
-                using var dispatch = TransportLedger.MarkDispatch();
-                order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
-            }
-            catch (Exception ex)
-            {
-                // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
-                // press that hit trouble on the first symbol left every other position open and
-                // unrecorded — an emergency control that stops half way through the emergency.
-                SafelyRecordIndefinite(rid, ex.Message,
-                    $"TradeAgent could not confirm whether the close of {symbol} reached the platform.", ex);
-                continue;
-            }
-
-            if (order is null)
-            {
-                // No order came back. The one implementation that returns null means "there was no
-                // position to close", but a connector that submitted the close and could not read it
-                // back looks identical from here, and the SDK does not say which. Unknown it is.
-                SafelyRecordIndefinite(rid, "the platform returned no order for the close",
-                    $"TradeAgent could not confirm whether {symbol} was closed.");
-                continue;
-            }
-
-            var (to, indefinite) = MapDispatchOutcome(order.State);
-            if (indefinite)
-                SafelyRecordIndefinite(rid, $"the platform answered {order.State} for the close",
-                    $"The platform answered {order.State} when closing {symbol}, which is not something TradeAgent can record as done.",
-                    connectorOrderId: order.ConnectorOrderId);
-            else
-                // SAFELY. `Settle` throws when the store cannot write the outcome down, and this
-                // loop used to let that escape — abandoning every position after this one, in the
-                // one situation where finishing matters most (the previous unit's residual).
-                SafelySettle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
-        }
+        var run = await CloseCapturedAsync(ClosePress, nonce, accountId, captured, paused,
+            reductionOnly: false, ct);
+        var (drifted, waited, unsettled) = (run.Drifted, run.Waited, run.Unsettled);
 
         var drift = drifted.Count == 0 ? ""
             : $" Nothing was sent for {drifted.Count} of them, because what is there changed after you " +
@@ -4835,6 +4889,807 @@ public sealed class TradingGateway : IAsyncDisposable
         StateChanged?.Invoke();
         return outcome;
     }
+
+
+
+    // ------------------------------------------------- the loss budget's own flatten (app-owned)
+
+    /// <summary>
+    /// A CONFIRMED BREACH CLOSES WHAT IS OPEN, BY CODE, AND NOBODY PRESSED ANYTHING.
+    ///
+    /// <para>Its only caller is <see cref="LossWatchAsync"/>, after the breach record is written and
+    /// OUTSIDE the dispatch gate. There is no verb, no pipe op and no setting that reaches it — an
+    /// agent cannot ask for a flatten any more than it can ask for the kill switch to come off.</para>
+    ///
+    /// <para><b>The order is openers, then closes, then a read-back.</b> Cancelling first is not a
+    /// tidiness: a flatten that closes the position and leaves a working buy on the book has not
+    /// flattened anything, because the opener fills a second later against a day that is now closed
+    /// to every order that could hedge it. And the cancels must have SETTLED before a single close
+    /// goes out — an order still live at the platform is an order that can still fill, so a cancel
+    /// that did not take stops the closes rather than racing them.</para>
+    ///
+    /// <para><b>Resolved by machine, or flagged and paused.</b> A leg is resolved when its close is
+    /// FILLED <i>and</i> a fresh read of the position says flat. Terminal alone is not flatness — a
+    /// rejected or cancelled close is terminal and closed nothing — and a composite answering "ok" is
+    /// this app agreeing with itself. Anything else leaves the row flagged, which pauses order flow
+    /// exactly as an owner's press does, and the record says which.</para>
+    ///
+    /// <para><b>The account is the BREACH's.</b> Never the currently selected one, and never implied:
+    /// this refuses outright unless the account this gateway is actually operating is the account the
+    /// breach was recorded for, on the platform it was recorded on. A PAPER account's flatten may not
+    /// answer for a LIVE closure.</para>
+    ///
+    /// <para>Returns the record it wrote, or null when it did not run — already done, subsumed by the
+    /// day's own flatten, another app press still unresolved, or the wrong account.</para>
+    /// </summary>
+    public async Task<LossFlattenRecord?> FlattenForBreachAsync(LossBreachRecord breach,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+
+        var startedAt = Now;
+        var breachKey = breach.Symbol is null
+            ? LossBreach.DayKey(breach.Account, startedAt)
+            : LossBreach.SymbolKey(breach.Account, breach.Symbol, startedAt);
+
+        var account = await AccountAsync(ct);
+        if (account is null || !string.Equals(account.Id, breach.Account, StringComparison.Ordinal))
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_not_this_account", "warn",
+                metadataJson: Json.Write(new
+                {
+                    breach = breachKey, breach.Account, connector = Connector.Id,
+                    operating = account?.Id ?? "(none)"
+                }));
+            return null;
+        }
+
+        var dayKey = LossFlatten.DayKey(Connector.Id, breach.Account, startedAt);
+        var key = breach.Symbol is null
+            ? dayKey
+            : LossFlatten.SymbolKey(Connector.Id, breach.Account, breach.Symbol, startedAt);
+
+        // WRITTEN ONCE. The outcome of a flatten is a fact about one breach on one day, and a second
+        // run would be a second set of closes sent over a book the first one already flattened.
+        if (ReadFlattenRecord(key) is not null) return null;
+
+        // THE DAILY SCOPE SUBSUMES THE SYMBOL'S. A day that has already been flattened has no
+        // position left for a per-symbol breach to close, and sending a second reducer on the
+        // strength of the smaller record is how a flat account becomes a short one. Neither closure
+        // is cleared by this: both records stand, and the day's flatten is the account of both.
+        if (breach.Symbol is not null && ReadFlattenRecord(dayKey) is not null)
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_subsumed", metadataJson: Json.Write(new
+            {
+                breach = breachKey, by = dayKey
+            }));
+            return null;
+        }
+
+        // ONE APP PRESS OF EACH KIND AT A TIME — the claim an owner's press makes, made by the app
+        // about itself. An unresolved app flatten means this gateway is still holding an order it
+        // cannot account for, and the one thing that must not be done about that is send another.
+        foreach (var kind in new[] { BudgetClosePress, BudgetCancelPress })
+            if (UnresolvedPressNonce(kind) is { } openNonce)
+            {
+                _log.TryEngineering("Gateway", "loss_flatten_press_already_open", "warn",
+                    metadataJson: Json.Write(new { breach = breachKey, kind, nonce = openNonce }));
+                return null;
+            }
+
+        // THE WHOLE FLATTEN IS THE EMERGENCY, NOT ITS LAST FRAME — OperatorCloseAllAsync's own
+        // reasoning, and it applies here with nobody waiting at the keyboard to notice a stall.
+        using var emergency = RiskReducingScope.Begin(Connector.EmergencyBudget);
+
+        // THE SENTENCE EVERY FLAGGED ROW CARRIES. It names the budget and the record; it never says
+        // "you pressed", because nobody did, and an owner sent looking for a button they did not
+        // touch is an owner who does not trust the next thing the software tells them.
+        var paused = breach.Symbol is null
+            ? $"your daily loss budget was reached at {breach.ConfirmedAt.ToLocalTime():HH:mm} and TradeAgent "
+              + $"closed what was open (record {breachKey}); it is waiting for you on the Dashboard"
+            : $"your loss budget for {breach.Symbol} was reached at {breach.ConfirmedAt.ToLocalTime():HH:mm} and "
+              + $"TradeAgent closed it (record {breachKey}); it is waiting for you on the Dashboard";
+
+        var openers = await CancelOpenersForBreachAsync(breach, account.Id, paused, ct);
+
+        var legs = new List<LossFlattenLeg>();
+        var residual = new List<string>();
+        var closeNonce = "";
+        var couldNotRead = openers.NotSettled.Count > 0 ? "" : null;
+        List<(string Symbol, decimal Quantity)> captured = [];
+
+        if (openers.NotSettled.Count == 0)
+        {
+            IReadOnlyList<PositionInfo> positions = [];
+            try { positions = await Connector.GetPositionsAsync(account.Id, ct); }
+            catch (Exception ex) { couldNotRead = $"your open positions could not be read ({ex.Message})"; }
+
+            captured = positions
+                .Where(p => p.Quantity != 0m
+                            && (breach.Symbol is null || string.Equals(p.Symbol, breach.Symbol, StringComparison.Ordinal)))
+                .Select(p => (p.Symbol, p.Quantity))
+                .ToList();
+
+            if (captured.Count > 0)
+            {
+                closeNonce = NewPressNonce();
+                var pressId = PressPrefix(BudgetClosePress, closeNonce);
+
+                // The plan is written down before a single close goes out, exactly as a press's is.
+                BeginComposite(AgentContext.Operator, pressId, Ops.CloseAll,
+                    captured.Select(p => p.Symbol).ToList(), () => closeNonce);
+
+                var run = await CloseCapturedAsync(BudgetClosePress, closeNonce, account.Id, captured,
+                    paused, reductionOnly: true, ct);
+
+                (legs, residual) = await AccountForTheFlattenAsync(closeNonce, account.Id, captured, run, ct);
+                CompleteComposite(pressId, Json.Write(new
+                {
+                    breach = breachKey, legs, residual, run.Drifted, run.Waited, run.Unsettled, run.Refused
+                }));
+            }
+        }
+
+        var flat = couldNotRead is null
+                   && openers.NotSettled.Count == 0
+                   && residual.Count == 0
+                   && legs.All(l => l.Resolved);
+
+        var why = FlattenSentence(breach, openers, legs, residual, couldNotRead, flat);
+
+        var record = new LossFlattenRecord
+        {
+            Account = breach.Account,
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
+            Day = LossBreach.Stamp(startedAt),
+            Symbol = breach.Symbol,
+            BreachKey = breachKey,
+            StartedAt = startedAt,
+            FinishedAt = Now,
+            CancelNonce = openers.Nonce,
+            CloseNonce = closeNonce,
+            CancelledOrders = openers.Cancelled,
+            OpenersNotSettled = openers.NotSettled,
+            Legs = legs,
+            Residual = residual,
+            Flat = flat,
+            Why = why
+        };
+
+        // THE OUTCOME IS ITS OWN RECORD AND THE BREACH ROW IS NEVER TOUCHED. A record the app appends
+        // to is a record the app can rewrite, and the evidence that closed the day has to stay the
+        // evidence that closed it. Written whatever the outcome: the ABSENCE of this row is what makes
+        // the startup sweep re-run a flatten that was killed, so an honest "could not confirm" must
+        // not look like a flatten that never happened.
+        try { _db.SetKv(key, Json.Write(record)); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_record_failed", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+        }
+
+        _log.Activity(why, "warn");
+        _log.TryEngineering("Gateway", "loss_flatten", flat ? "info" : "warn",
+            metadataJson: Json.Write(new { key, breach = breachKey, flat, legs = legs.Count, residual }));
+
+        // THE PAUSE THIS FLATTEN IMPOSED IS LIFTED BY THE SAME EVIDENCE THAT SETTLED IT — the two
+        // lines ReconcileAsync uses when nothing is pending, so the two cannot drift apart.
+        //
+        // LatchUnconfirmed writes the PAUSED health row and ClearLatch does not write it back; until
+        // now only the five-second health pass or a reconcile did, so a flatten that resolved every
+        // one of its own rows still left the AI refused TRADING_PERMISSION_UNAVAILABLE in between.
+        // Guarded by the two conditions that are NOT about unconfirmed work — an unreadable settings
+        // row and a mode this version does not know also pause here, and neither is a thing this
+        // method has proved anything about.
+        if (Unreconciled().Count == 0 && _unconfirmed.IsEmpty
+            && !Settings.CouldNotBeRead && Settings.ModeIsRecognised)
+            _health.Set(Components.ExecutionCapability, HealthState.READY);
+
+        StateChanged?.Invoke();
+        return record;
+    }
+
+    /// <summary>What the cancel half of one flatten did.</summary>
+    /// <param name="NotSettled">
+    /// Non-empty means NO close was sent at all. An order still working at the platform can still
+    /// fill, and a close sent underneath one leaves the account open a second later — which is the
+    /// exact failure the cancel exists to prevent, arrived at from the other side.
+    /// </param>
+    sealed record OpenersCancelled(string Nonce, List<string> Cancelled, List<string> NotSettled);
+
+    /// <summary>
+    /// EVERY WORKING ORDER THE FLATTEN MUST NOT LEAVE BEHIND, CANCELLED THROUGH THE PRESS MECHANICS
+    /// UNDER THE APP'S OWN KIND — and then READ BACK, because a cancel that was accepted is not a
+    /// cancel that took.
+    ///
+    /// <para><b>What is cancelled, and this is wider than "openers".</b> Two sets, and the second is
+    /// a choice this unit makes rather than one the brief handed down. The first is every working
+    /// order that could INCREASE exposure, which is the failure everyone sees coming. The second is
+    /// every working order on an instrument this flatten is about to CLOSE — including a reducing one.
+    /// A protective sell resting under a long is a reducer only for as long as the long exists; the
+    /// moment the flatten removes it that same order is an opener, and it fills into a day that is
+    /// closed to everything that could hedge it. An order is judged by what it would do when it fills,
+    /// not by what it was for when it was sent.</para>
+    ///
+    /// <para>A per-symbol breach touches that symbol's orders and nothing else: the rest of the
+    /// account has not breached anything.</para>
+    /// </summary>
+    async Task<OpenersCancelled> CancelOpenersForBreachAsync(LossBreachRecord breach, string accountId,
+        string paused, CancellationToken ct)
+    {
+        var nonce = NewPressNonce();
+        var pressId = PressPrefix(BudgetCancelPress, nonce);
+
+        // The press's own row, written flagged, BEFORE anything is read or sent. It is also this
+        // run's claim on the kind: the insert refuses while another app cancel is unresolved.
+        OpenPressRow(pressId, accountId, RequestIntent.CANCEL_ALL, "-",
+            Json.Write(new { order = (string?)null, press = nonce }), paused, claims: BudgetCancelPress);
+
+        IReadOnlyList<OrderInfo> book;
+        IReadOnlyList<PositionInfo> positions;
+        try
+        {
+            book = await Connector.GetOrdersAsync(accountId, false, null, ct);
+            positions = await Connector.GetPositionsAsync(accountId, ct);
+        }
+        catch (Exception ex)
+        {
+            // NOTHING CAN BE CANCELLED AND THEREFORE NOTHING MAY BE CLOSED. A book that cannot be
+            // read names no orders to stop, and closing over orders nobody could enumerate is the
+            // reversal this step exists to prevent. Rule 3: the read said nothing, so nothing is
+            // recorded as done.
+            SafelyRecordIndefinite(pressId, ex.Message,
+                "TradeAgent could not read your working orders after a loss budget was reached, so nothing "
+                + "was cancelled and nothing was closed.", ex);
+            return new OpenersCancelled(nonce, [], [$"the working orders could not be read ({ex.Message})"]);
+        }
+
+        var flattening = positions
+            .Where(p => p.Quantity != 0m
+                        && (breach.Symbol is null || string.Equals(p.Symbol, breach.Symbol, StringComparison.Ordinal)))
+            .Select(p => p.Symbol)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var targets = book
+            .Where(o => !OrderStateMachine.IsTerminal(o.State))
+            .Where(o => breach.Symbol is null || string.Equals(o.Symbol, breach.Symbol, StringComparison.Ordinal))
+            .Where(o => flattening.Contains(o.Symbol) || CouldIncreaseExposure(o, positions))
+            .ToList();
+
+        if (targets.Count == 0)
+        {
+            SafelySettle(pressId, ExecutionState.CANCELLED,
+                error: "no working order could have increased exposure, so none was cancelled");
+            return new OpenersCancelled(nonce, [], []);
+        }
+
+        BeginComposite(AgentContext.Operator, pressId, Ops.CancelAll,
+            targets.Select(o => o.ConnectorOrderId).ToList(), () => nonce);
+
+        var cancelled = new List<string>();
+        for (var i = 0; i < targets.Count; i++)
+        {
+            var target = targets[i].ConnectorOrderId;
+            var rid = PressLegId(BudgetCancelPress, nonce, i);
+            OpenPressRow(rid, accountId, RequestIntent.CANCEL, "-",
+                Json.Write(new { order = target, press = nonce }), paused);
+            try
+            {
+                using var dispatch = TransportLedger.MarkDispatch();
+                await Connector.CancelOrderAsync(target, ct);
+            }
+            catch (ConnectorRejectedException ex)
+            {
+                // A DEFINITE refusal about THIS order — rule 3 says it is the only thing allowed to
+                // be recorded as one. The read-back below is what decides whether it still matters.
+                SafelySettle(rid, ExecutionState.REJECTED, error: ex.Message);
+                continue;
+            }
+            catch (Exception ex)
+            {
+                SafelyRecordIndefinite(rid, ex.Message,
+                    $"TradeAgent could not confirm whether order {target} was cancelled.", ex);
+                continue;
+            }
+            SafelySettle(rid, ExecutionState.CANCELLED, error: "the platform accepted the cancel for this order");
+            cancelled.Add(target);
+        }
+
+        // THE CANCELS HAVE TO HAVE SETTLED, AND ONLY THE PLATFORM CAN SAY SO. "The cancel call
+        // returned" is a statement about a round trip; what the next step needs is that the order can
+        // no longer fill. So the WORKING book is read again and every target has to be gone from it —
+        // absence from a book that was asked for working orders is the platform saying it is not
+        // working, which is the one thing this step is asking.
+        List<string> notSettled;
+        try
+        {
+            var after = (await Connector.GetOrdersAsync(accountId, false, null, ct))
+                .Where(o => !OrderStateMachine.IsTerminal(o.State))
+                .ToDictionary(o => o.ConnectorOrderId, o => o.State, StringComparer.Ordinal);
+
+            notSettled = targets
+                .Where(o => after.ContainsKey(o.ConnectorOrderId))
+                .Select(o => $"{o.ConnectorOrderId} ({o.Side} {o.Quantity} {o.Symbol}) is still {after[o.ConnectorOrderId]} at the platform")
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            // Rule 3 again, and in the direction that sends nothing: a read that did not come back
+            // is not evidence that the orders are gone.
+            notSettled = [$"the working orders could not be read back after the cancels ({ex.Message})"];
+        }
+
+        if (notSettled.Count > 0)
+            SafelyRecordIndefinite(pressId,
+                string.Join("; ", notSettled),
+                $"TradeAgent could not confirm that {notSettled.Count} of your working order(s) were cancelled "
+                + "after a loss budget was reached, so it closed nothing: an order that can still fill must not "
+                + "be closed underneath.");
+        else
+            SafelySettle(pressId, ExecutionState.CANCELLED,
+                error: $"{cancelled.Count} of {targets.Count} working order(s) were cancelled and none is working");
+
+        return new OpenersCancelled(nonce, cancelled, notSettled);
+    }
+
+    /// <summary>
+    /// Would this working order, if it fills, push the position further out rather than back in?
+    /// <see cref="CanIncreaseExposure"/>'s question, asked of an order on the book instead of an
+    /// intent — and it errs the same way: an unheld instrument is new exposure by definition, and an
+    /// order larger than the position it opposes flips it, so the surplus is new exposure.
+    /// </summary>
+    static bool CouldIncreaseExposure(OrderInfo order, IReadOnlyList<PositionInfo> positions)
+    {
+        var held = positions.FirstOrDefault(p =>
+            string.Equals(p.Symbol, order.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m;
+        if (held == 0m) return true;
+
+        // What is left to fill, and the WHOLE order where the platform reports no fill at all: an
+        // unstated remainder is not a remainder of nothing.
+        var remaining = order.Quantity - order.FilledQuantity;
+        if (remaining <= 0m) remaining = order.Quantity;
+
+        var signed = order.Side == OrderSide.Buy ? remaining : -remaining;
+        return Math.Sign(signed) == Math.Sign(held) || Math.Abs(signed) > Math.Abs(held);
+    }
+
+    /// <summary>
+    /// RESOLVED BY MACHINE, OR FLAGGED AND PAUSING — leg by leg, on a FRESH read of the book.
+    ///
+    /// <para>Two halves, and both are required. The record has to be <see cref="ExecutionState.FILLED"/>
+    /// — terminal is not flatness, because REJECTED and CANCELLED are terminal and closed nothing —
+    /// and the position has to READ BACK flat. Either alone is a claim the app is making about itself:
+    /// a platform that answered FILLED and a position that is still 2 long are not the same news, and
+    /// the owner is the one who would have to notice.</para>
+    ///
+    /// <para>A leg that passes both has its flag cleared by the app, which is what stops a flatten
+    /// that worked from pausing the AI until a person clicks something. Everything else keeps the flag
+    /// it was written with, pauses order flow exactly as an owner's press does, and is named in the
+    /// record and in the report.</para>
+    /// </summary>
+    async Task<(List<LossFlattenLeg> Legs, List<string> Residual)> AccountForTheFlattenAsync(
+        string nonce, string accountId, IReadOnlyList<(string Symbol, decimal Quantity)> captured,
+        CloseRun run, CancellationToken ct)
+    {
+        IReadOnlyList<PositionInfo>? after = null;
+        string? unreadable = null;
+        try { after = await Connector.GetPositionsAsync(accountId, ct); }
+        catch (Exception ex) { unreadable = ex.Message; }
+
+        var legs = new List<LossFlattenLeg>();
+        var pressId = PressPrefix(BudgetClosePress, nonce);
+
+        foreach (var row in PressRows(BudgetClosePress, nonce)
+                     .Where(r => !string.Equals(r.RequestId, pressId, StringComparison.Ordinal)))
+        {
+            decimal? position = after is null
+                ? null
+                : after.FirstOrDefault(p => string.Equals(p.Symbol, row.Instrument, StringComparison.Ordinal))?.Quantity ?? 0m;
+
+            var filledAndFlat = row.State == ExecutionState.FILLED && position == 0m;
+            var resolved = filledAndFlat && ClearTheFlatteningFlag(row.RequestId);
+
+            legs.Add(new LossFlattenLeg(row.RequestId, row.Instrument,
+                captured.FirstOrDefault(c => string.Equals(c.Symbol, row.Instrument, StringComparison.Ordinal)).Quantity,
+                row.State.ToString(), row.FilledQuantity, position, resolved,
+                resolved ? $"{row.Instrument} was closed and reads flat"
+                : unreadable is not null ? $"{row.Instrument} was answered {row.State}, and the account could not be read back ({unreadable})"
+                : row.State != ExecutionState.FILLED ? $"{row.Instrument} was answered {row.State}, which is not a close that happened"
+                : position != 0m ? $"{row.Instrument} was answered FILLED and still reads {position}"
+                : $"{row.Instrument} was closed, and its record could not be cleared"));
+        }
+
+        // THE PRESS-LEVEL ROWS OF BOTH APP KINDS, once every leg is resolved. A flatten that worked
+        // must not leave the AI paused on this app's own housekeeping — that would make a correct
+        // flatten indistinguishable from a failed one for the rest of the day.
+        if (legs.Count > 0 && legs.All(l => l.Resolved))
+            foreach (var kind in new[] { BudgetCancelPress, BudgetClosePress })
+                foreach (var row in _requests.Query("request_id LIKE $p", ("$p", $"{kind}-%"))
+                             .Where(r => r.NeedsReconciliation || _unconfirmed.ContainsKey(r.RequestId)))
+                    ClearTheFlatteningFlag(row.RequestId);
+
+        var residual = after is null
+            ? [$"the account could not be read back after the closes ({unreadable})"]
+            : captured
+                .Select(c => (c.Symbol, Now: after.FirstOrDefault(p => string.Equals(p.Symbol, c.Symbol, StringComparison.Ordinal))?.Quantity ?? 0m))
+                .Where(x => x.Now != 0m)
+                .Select(x => $"{x.Symbol} {x.Now}")
+                .ToList();
+
+        foreach (var left in run.Drifted.Concat(run.Waited).Concat(run.Unsettled).Concat(run.Refused))
+            if (!residual.Contains(left)) residual.Add(left);
+
+        return (legs, residual);
+    }
+
+    /// <summary>
+    /// Clears the flag the app itself wrote, on a record the app itself has just proved. It is
+    /// deliberately NOT <see cref="ForceResolve"/>: that one is a PERSON asserting a fact the
+    /// software could not prove, it is logged as a person's act, and it can write a terminal state
+    /// onto a row. This writes no state at all — the state is whatever the platform said — and only
+    /// ever runs behind a read-back that already agreed with it.
+    /// </summary>
+    bool ClearTheFlatteningFlag(string requestId)
+    {
+        try
+        {
+            _requests.ClearReconciliation(requestId);
+            ClearLatch(requestId);
+            _log.TryEngineering("Gateway", "loss_flatten_resolved", requestId: requestId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_resolve_failed", "warn", requestId: requestId, ex: ex);
+            return false;
+        }
+    }
+
+    /// <summary>The one sentence, written once onto the record and shown everywhere unchanged.</summary>
+    static string FlattenSentence(LossBreachRecord breach, OpenersCancelled openers,
+        IReadOnlyList<LossFlattenLeg> legs, IReadOnlyList<string> residual, string? couldNotRead, bool flat)
+    {
+        var what = breach.Symbol is null ? "your daily loss budget" : $"your loss budget for {breach.Symbol}";
+        var cancels = openers.Cancelled.Count == 0 ? "no working order needed cancelling"
+            : $"{openers.Cancelled.Count} working order(s) were cancelled first";
+
+        if (flat)
+            return $"TradeAgent CLOSED YOUR OPEN POSITIONS because {what} was reached: {cancels}, "
+                   + $"{legs.Count} position(s) were closed, and the account reads flat. It stays closed to new "
+                   + "risk until the next UTC day.";
+
+        var trouble = new List<string>();
+        if (couldNotRead is { Length: > 0 }) trouble.Add(couldNotRead);
+        if (openers.NotSettled.Count > 0)
+            trouble.Add("nothing was closed, because these working orders could not be confirmed cancelled and "
+                        + $"an order that can still fill must not be closed underneath: {string.Join("; ", openers.NotSettled)}");
+        foreach (var l in legs.Where(l => !l.Resolved)) trouble.Add(l.Outcome);
+        foreach (var r in residual) trouble.Add($"still open: {r}");
+
+        return $"TradeAgent tried to close your open positions because {what} was reached, and CANNOT CONFIRM "
+               + $"the account is flat: {(trouble.Count == 0 ? "nothing was open to close" : string.Join("; ", trouble))}. "
+               + "AI trading is paused until you confirm those records on the Dashboard. Check the platform.";
+    }
+
+    /// <summary>
+    /// One flatten record, or null because there is none. An unreadable row THROWS, on
+    /// <see cref="ReadBreach"/>'s rule: "TradeAgent cannot tell whether this was flattened" is not
+    /// "it was not", and the difference is a second set of closes.
+    /// </summary>
+    LossFlattenRecord? ReadFlattenRecord(string key)
+    {
+        string? json;
+        try { json = _db.GetKv(key); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"TradeAgent could not read what it did about a reached loss budget ({ex.Message})");
+        }
+
+        if (json is null) return null;
+
+        try
+        {
+            return Json.Read<LossFlattenRecord>(json)
+                   ?? throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                       $"the record of what TradeAgent did about a reached loss budget ({key}) is empty");
+        }
+        catch (Exception ex) when (ex is not GatewayDeniedException and not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"the record of what TradeAgent did about a reached loss budget ({key}) could not be read ({ex.Message})");
+        }
+    }
+
+    /// <summary>What TradeAgent did about today's closure on this account, or null because nothing.</summary>
+    public LossFlattenRecord? FlattenToday(string accountId) =>
+        ReadFlattenRecord(LossFlatten.DayKey(Connector.Id, accountId, Now));
+
+    /// <summary>The same, for one symbol's closure.</summary>
+    public LossFlattenRecord? FlattenToday(string accountId, string symbol) =>
+        ReadFlattenRecord(LossFlatten.SymbolKey(Connector.Id, accountId, symbol, Now));
+
+    /// <summary>
+    /// THE ONE THING AN APP-OWNED LEG MAY PUT ON THE WIRE: an order that OPPOSES a position and is
+    /// at most its size. Anything else throws, and nothing is sent.
+    ///
+    /// <para><b>Why a separate check when the intent is already a close.</b> <c>OrderIntent.Close</c>
+    /// is a LABEL the composer wrote; this is an arithmetic statement about the position the order is
+    /// about to be sent against, checked against a reading taken immediately before the call. The two
+    /// disagree exactly when something has moved, and "something moved" is the only case that matters:
+    /// a sell of 2 against a long that is now 1 does not close anything, it opens a short 1, and a
+    /// sell against a position that has already flipped short doubles it. Those are the two ways an
+    /// automatic flatten becomes an automatic position, and there is no person between this line and
+    /// the broker to notice.</para>
+    ///
+    /// <para><b>A flat position refuses too.</b> Nothing to reduce means the order is a new position
+    /// in full, which is the plainest version of the same fault.</para>
+    ///
+    /// <para>It is the code-enforced half of the reduction-only exception to two-press that
+    /// <c>docs/CONTRACTS.md</c> names: the app may send this and may send nothing else, and the
+    /// enforcement is here rather than in the prose.</para>
+    /// </summary>
+    /// <param name="live">The SIGNED position, as read immediately before the wire. Positive is long.</param>
+    public static void ReductionOnlyOrThrow(PlaceIntent intent, decimal live)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+
+        if (intent.Intent is not OrderIntent.Close)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"nothing was sent: this order on {intent.Symbol} is not declared a close, and the loss "
+                + "budget may only send orders that reduce a position");
+
+        if (live == 0m)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"nothing was sent: {intent.Symbol} reads flat immediately before the order, so this "
+                + $"{intent.Side} {intent.Quantity} would OPEN a position rather than close one");
+
+        var signed = intent.Side == OrderSide.Buy ? intent.Quantity : -intent.Quantity;
+
+        if (Math.Sign(signed) == Math.Sign(live))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"nothing was sent: {intent.Symbol} reads {live} immediately before the order, and a "
+                + $"{intent.Side} {intent.Quantity} would ADD to it rather than reduce it");
+
+        if (Math.Abs(signed) > Math.Abs(live))
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"nothing was sent: {intent.Symbol} reads {live} immediately before the order, and a "
+                + $"{intent.Side} {intent.Quantity} is larger than that, so it would REVERSE the position "
+                + $"into a {(live > 0m ? "short" : "long")} of {Math.Abs(signed) - Math.Abs(live)}");
+    }
+
+    /// <summary>
+    /// ONE SEQUENCE CLOSES POSITIONS IN THIS PRODUCT, AND BOTH CALLERS GO THROUGH IT.
+    ///
+    /// <para>The owner's Close all positions button and the loss budget's own flatten are different
+    /// DECISIONS — one is a person, one is a confirmed breach — and they were never allowed to become
+    /// different CODE. Everything a press does between the capture and the wire is a safety
+    /// property that took a review round each to get right: settle an unresolved reducer before
+    /// sending, re-read the position immediately before the call, refuse a leg the store says has an
+    /// order in flight on it, write the flagged row BEFORE the wire, record an ambiguous answer as
+    /// UNKNOWN rather than as a failure. A second copy of that would be a second place for one of
+    /// them to be missing.</para>
+    ///
+    /// <para><paramref name="reductionOnly"/> is the ONE difference, and it only ever adds a refusal.
+    /// A person pressing a button has looked at their account; the app has not, and nothing between
+    /// its decision and the wire is a human. So the app's legs re-read the position one last time
+    /// after the write-ahead row and pass it through <see cref="ReductionOnlyOrThrow"/>, and a leg
+    /// that would reverse or open a position throws BEFORE the send rather than being sized against
+    /// a reading that has moved. The owner's press is byte for byte what it was.</para>
+    /// </summary>
+    /// <param name="captured">Symbol and SIGNED quantity, as read when the operation began.</param>
+    /// <param name="paused">The sentence every row of this run carries while it is flagged.</param>
+    async Task<CloseRun> CloseCapturedAsync(string kind, string nonce, string accountId,
+        IReadOnlyList<(string Symbol, decimal Quantity)> captured, string paused, bool reductionOnly,
+        CancellationToken ct)
+    {
+        var drifted = new List<string>();
+
+        // THE OTHER HALF OF DRIFT, AND IT IS NOT THE SAME QUESTION. `drifted` is a position that has
+        // ALREADY changed; this is one that is about to, by an order the gateway itself still has on
+        // the wire. The re-read below cannot see it — a request inside a connector call has moved no
+        // position yet — so it is asked of the store instead, in the same insert that writes the
+        // leg's write-ahead row (REVIEW 2026-09-05b finding 2, probe P6).
+        var waited = new List<string>();
+
+        // AND THE THIRD, WHICH IS NEITHER OF THOSE TWO. `drifted` is a position that already changed
+        // and `waited` is an order a handler is inside the connector call for right now; this is an
+        // order that is OVER with no answer and may still be resting at the broker. It is the state
+        // U-press-inflight stated it was leaving open, and the press now tries to settle it before it
+        // sends rather than either refusing on it or closing on top of it. What is listed here is the
+        // instrument where that could not be done.
+        var unsettled = new List<string>();
+
+        // AND THE FOURTH, WHICH ONLY AN APP LEG CAN REACH: a close this method refused at the wire
+        // because the position it re-read there does not make it a reduction. Nothing was sent.
+        var refused = new List<string>();
+
+        // WHICH ROW CARRIES THE CLAIM. Close-all has no press-level row — its records are one per
+        // position — so the claim rides on the first row this press actually writes, and only that
+        // one: a press must not be blocked by its own second symbol. Every later row is an ordinary
+        // flagged write-ahead.
+        var claimed = false;
+
+        // WHAT THE ORDER SAYS IT IS FOR, carried onto the intent and read back off the row by every
+        // surface. "you" is a claim about who decided, and the app's own flatten must never make it.
+        var note = IsAppPress(kind) ? "close position (loss budget)" : "close position (you)";
+
+        // The same for the drift sentence: "when you pressed" is a claim about who decided and
+        // when, and the app's flatten was decided by a budget going through rather than by a press.
+        var when = IsAppPress(kind) ? "when the budget was reached" : "when you pressed";
+
+        for (var i = 0; i < captured.Count; i++)
+        {
+            var (symbol, quantity) = captured[i];
+            var closingSide = quantity > 0 ? OrderSide.Sell : OrderSide.Buy;
+            var rid = PressLegId(kind, nonce, i);
+
+            // SETTLED BEFORE ANYTHING IS READ FOR THIS LEG, because what it settles CHANGES the
+            // reading. An unresolved order that turns out to have filled has moved the position, and
+            // the drift re-read below is then the honest look at what is actually there; one that
+            // turns out to be resting is cancelled here, so the close this press sends is the only
+            // one on the instrument. See SettleAnUnresolvedReducerOrRefuse.
+            if (await SettleAnUnresolvedReducerOrRefuse(symbol, closingSide, ct) is { } stuck)
+            {
+                // REFUSED, AND THE ROW IS ITS ACCOUNT. Nothing is sent for this instrument and the
+                // position may still be open, so the leg leaves a flagged record naming it rather
+                // than a line in a summary nobody has to acknowledge: the press stays the owner's to
+                // resolve, and this is the target they have to look at.
+                var refusal = $"nothing was sent for {symbol}: {stuck}. Your {symbol} position may still be open.";
+                var row = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol,
+                    Json.Write(new PlaceIntent(symbol, closingSide, OrderType.Market, Math.Abs(quantity),
+                        null, null, TimeInForce.Day, note) { Intent = OrderIntent.Close }),
+                    refusal, claims: claimed ? null : kind, waitsForWorkOn: null, out _, sending: false);
+                if (row is not null) claimed = true;
+                unsettled.Add(stuck);
+                continue;
+            }
+
+            // THE POSITION IS READ AGAIN IMMEDIATELY BEFORE THE WIRE CALL, and a press that finds it
+            // changed sends nothing for that instrument (Codex round-3 F10).
+            //
+            // The press captured a size and a side and turned them into a MARKET order for that
+            // size. Between the capture and this call a fill can land, a hedge can close, another
+            // window can flatten it — and the order this press computed is then wrong in the one
+            // direction that matters: closing 2 of a position that is now 1 opens a short, and
+            // closing a long that has already flipped short doubles it. The old code sent whatever
+            // it had captured and let ATAS's close-position sort it out.
+            //
+            // Refused rather than recomputed. A different position is a different decision, and the
+            // owner makes decisions here — they press again, against what is actually there.
+            decimal? live = null;
+            Exception? unreadable = null;
+            try
+            {
+                live = (await Connector.GetPositionsAsync(accountId, ct))
+                    .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
+            }
+            catch (Exception ex) { unreadable = ex; }
+
+            // A DEFINITE DIFFERENT ANSWER AND NO ANSWER AT ALL ARE NOT THE SAME NEWS, and they get
+            // different treatment. A position the platform says is 1 when the press captured 2 is a
+            // changed decision: no record, nothing sent, and the owner is told to press again. A
+            // read that never came back tells us nothing about anything — including whether this
+            // press ought to be over — so it gets a record, and the record pauses trading.
+            if (unreadable is null && live != quantity)
+            {
+                drifted.Add($"{symbol} was {quantity} {when} and is {live} now");
+                continue;
+            }
+
+            var intent = new PlaceIntent(symbol, closingSide,
+                OrderType.Market, Math.Abs(quantity), null, null, TimeInForce.Day, note)
+                { Intent = OrderIntent.Close };
+            var current = OpenPressRow(rid, accountId, RequestIntent.PLACE, symbol, Json.Write(intent), paused,
+                claims: claimed ? null : kind, waitsForWorkOn: symbol, out var waitingOn);
+
+            // REFUSED, AND THE OWNER IS TOLD WHAT IT IS WAITING ON. Nothing was written under this
+            // id and nothing was sent; the claim is still unclaimed, so the next symbol may take it.
+            if (current is null)
+            {
+                waited.Add($"{symbol} is waited on by {waitingOn!.RequestId}, still {waitingOn.State}");
+                continue;
+            }
+            claimed = true;
+
+            if (unreadable is { } readFailed)
+            {
+                SafelyRecordIndefinite(rid, readFailed.Message,
+                    $"TradeAgent could not check your {symbol} position before closing it, so nothing was sent for it.",
+                    readFailed);
+                continue;
+            }
+
+            // THE LAST THING BEFORE THE WIRE, AND ONLY FOR A LEG NOBODY PRESSED.
+            //
+            // The drift re-read above happens BEFORE the write-ahead row, and the row is a durable
+            // commit: on windows-latest one has measured 2234 ms. A position can move inside that
+            // window — an external fill, another window, the platform itself — and the order this
+            // method is about to send was sized against the reading from before it. For the owner's
+            // press that window is closed by the person, who is looking at the account and can press
+            // again; for an app leg there is no person at all, so it costs one more read and refuses.
+            //
+            // A READ THAT FAILS REFUSES THE LEG. Rule 3 cuts the other way here than it does after a
+            // send: nothing has gone out, so "TradeAgent could not check" is a reason to send nothing
+            // rather than a reason to record an unknown.
+            if (reductionOnly)
+            {
+                decimal atTheWire;
+                try
+                {
+                    atTheWire = (await Connector.GetPositionsAsync(accountId, ct))
+                        .FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0m;
+                }
+                catch (Exception ex)
+                {
+                    SafelySettle(rid, ExecutionState.REJECTED, error:
+                        $"nothing was sent: your {symbol} position could not be read immediately before the "
+                        + $"close, so TradeAgent cannot prove the order would only reduce it ({ex.Message})");
+                    refused.Add($"{symbol}: the position could not be read at the wire ({ex.Message})");
+                    continue;
+                }
+
+                try { ReductionOnlyOrThrow(intent, atTheWire); }
+                catch (GatewayDeniedException notAReduction)
+                {
+                    // THROWN, AND CAUGHT HERE RATHER THAN OUT OF THE LOOP. The throw is the point —
+                    // the guard is stated where it cannot be walked past, and a caller that forgot to
+                    // check gets an exception rather than a sent order. One instrument failing still
+                    // says nothing about the next one, which is why this loop catches it.
+                    SafelySettle(rid, ExecutionState.REJECTED, error: notAReduction.Message);
+                    refused.Add($"{symbol}: {notAReduction.Message}");
+                    continue;
+                }
+            }
+
+            OrderInfo? order;
+            try
+            {
+                using var dispatch = TransportLedger.MarkDispatch();
+                order = await Connector.ClosePositionAsync(accountId, symbol, current.ClientOrderId, ct);
+            }
+            catch (Exception ex)
+            {
+                // ONE POSITION FAILING SAYS NOTHING ABOUT THE NEXT ONE. This used to rethrow, so a
+                // press that hit trouble on the first symbol left every other position open and
+                // unrecorded — an emergency control that stops half way through the emergency.
+                SafelyRecordIndefinite(rid, ex.Message,
+                    $"TradeAgent could not confirm whether the close of {symbol} reached the platform.", ex);
+                continue;
+            }
+
+            if (order is null)
+            {
+                // No order came back. The one implementation that returns null means "there was no
+                // position to close", but a connector that submitted the close and could not read it
+                // back looks identical from here, and the SDK does not say which. Unknown it is.
+                SafelyRecordIndefinite(rid, "the platform returned no order for the close",
+                    $"TradeAgent could not confirm whether {symbol} was closed.");
+                continue;
+            }
+
+            var (to, indefinite) = MapDispatchOutcome(order.State);
+            if (indefinite)
+                SafelyRecordIndefinite(rid, $"the platform answered {order.State} for the close",
+                    $"The platform answered {order.State} when closing {symbol}, which is not something TradeAgent can record as done.",
+                    connectorOrderId: order.ConnectorOrderId);
+            else
+                // SAFELY. `Settle` throws when the store cannot write the outcome down, and this
+                // loop used to let that escape — abandoning every position after this one, in the
+                // one situation where finishing matters most (the previous unit's residual).
+                SafelySettle(rid, to, order.ConnectorOrderId, order.FilledQuantity);
+        }
+        return new CloseRun(drifted, waited, unsettled, refused);
+    }
+
+    /// <summary>What one run of <see cref="CloseCapturedAsync"/> could not do, and why.</summary>
+    /// <param name="Drifted">Instruments whose position changed after the capture. Nothing sent.</param>
+    /// <param name="Waited">Instruments with an order inside a connector call. Nothing sent, no row.</param>
+    /// <param name="Unsettled">Instruments holding an order that could not be accounted for. Nothing sent.</param>
+    /// <param name="Refused">Reduction-only legs refused at the wire. Nothing sent; the row says why.</param>
+    sealed record CloseRun(List<string> Drifted, List<string> Waited, List<string> Unsettled,
+        List<string> Refused);
 
     // ---------------------------------------------------------------- reconciliation
 

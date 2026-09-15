@@ -18,9 +18,12 @@ namespace TradeAgent.Tests.Fault;
 /// valuation off the executable side of it, and a durable closure when a SECOND distinct pull agrees.
 /// </para>
 ///
-/// <para><b>Nothing here sends anything.</b> The wire is asserted in the same tests: no order, no
-/// close, no cancel leaves the gateway because a budget was breached. The positions are exactly where
-/// the platform had them when the watch started. Flattening is <c>U-flatten-2</c>.</para>
+/// <para><b>What the wire does is asserted in the same tests, and it changed with
+/// <c>U-flatten-2</c>.</b> Until that unit a confirmed breach sent nothing at all and these tests said
+/// so. It now closes what is open, by code, under the app's own press kind — so what is asserted here
+/// is the number of closes, which symbol they were for, and the position read back after them. The
+/// measurement this class is about is unchanged: the pulls, the confirmation window and the record are
+/// exactly what they were.</para>
 /// </summary>
 public class LossWatchTests(ITestOutputHelper log)
 {
@@ -119,17 +122,25 @@ public class LossWatchTests(ITestOutputHelper log)
         Assert.Equal(conn.Broker.Quote("ES", Noon).Bid, mark.Mark);
         Assert.Contains("NOTHING WAS CLOSED FOR YOU", rec.Why, StringComparison.Ordinal);
 
-        // THE WIRE. No order, no close, no cancel — and the position is exactly where it was.
+        // THE WIRE. ONE close, for the one open position, and the book reads flat afterwards
+        // (U-flatten-2; until that unit this asserted that nothing was sent at all).
         log.WriteLine($"mutations before/after: {mutations}/{conn.Mutations}, orders {orders}/{conn.Broker.Orders.Count}");
-        Assert.Equal(mutations, conn.Mutations);
-        Assert.Equal(orders, conn.Broker.Orders.Count);
-        Assert.Equal(1m, conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity);
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(mutations + 1, conn.Mutations);
+        Assert.Equal(orders + 1, conn.Broker.Orders.Count);
+        Assert.Equal(0m, conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "ES")?.Quantity ?? 0m);
 
-        // AND THE NEXT ORDER IS REFUSED OFF THE RECORD.
+        var flatten = gw.FlattenToday(account);
+        Assert.NotNull(flatten);
+        log.WriteLine($"flatten               : flat={flatten.Flat} {flatten.Why}");
+        Assert.True(flatten.Flat);
+
+        // AND THE NEXT ORDER IS REFUSED OFF THE RECORD — nothing more reaches the wire for it.
+        var afterFlatten = conn.Mutations;
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "after-watch", TestEnv.Buy("NQ")));
         Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, denied.Code);
-        Assert.Equal(mutations, conn.Mutations);
+        Assert.Equal(afterFlatten, conn.Mutations);
 
         await gw.DisposeAsync();
     }
@@ -288,9 +299,16 @@ public class LossWatchTests(ITestOutputHelper log)
         Assert.Equal(500m, es.TradeBudget);
         Assert.True(es.Loss >= 500m);
 
-        // The wire again: a breached position is not closed for anybody.
-        Assert.Equal(mutations, conn.Mutations);
-        Assert.Equal(2m, conn.Broker.Positions.First(p => p.Symbol == "ES").Quantity);
+        // THE WIRE AGAIN, AND THE SCOPE IS THE SYMBOL. ES is closed by the app and reads flat; YM
+        // breached nothing and is exactly where it was (U-flatten-2; this asserted that a breached
+        // position is not closed for anybody until that unit).
+        log.WriteLine($"mutations before/after: {mutations}/{conn.Mutations}, closes {conn.Closes}");
+        Assert.Equal(1, conn.Closes);
+        Assert.Equal(mutations + 1, conn.Mutations);
+        Assert.Equal(0m, conn.Broker.Positions.FirstOrDefault(p => p.Symbol == "ES")?.Quantity ?? 0m);
+        Assert.Equal(1m, conn.Broker.Positions.First(p => p.Symbol == "YM").Quantity);
+        Assert.True(gw.FlattenToday(account, "ES")!.Flat);
+        Assert.Null(gw.FlattenToday(account, "YM"));
 
         // ES is refused; YM is not.
         var denied = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
