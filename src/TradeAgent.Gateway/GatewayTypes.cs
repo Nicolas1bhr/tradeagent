@@ -107,17 +107,18 @@ public sealed class GatewayOptions
     /// THE SHORTEST A CLOSURE MAY LAST, measured from the instant the breach was confirmed — the
     /// second half of <c>LossReopen.EligibleAt</c>, and the half that does the work.
     ///
-    /// <para><b>Twenty-four hours, and it is fixed in this build.</b> Until <c>U-reopen-1</c> a
-    /// closure ended at the next UTC midnight, which meant a breach confirmed at 23:58Z was two
-    /// minutes of pause: the account was handed back, freshly flattened, to the same market that
-    /// had just taken it through the owner's daily budget. A whole day is the shortest pause that
-    /// cannot be shorter than the event it is answering, and it is the same unit the budget itself
-    /// is stated in.</para>
+    /// <para><b>Twenty-four hours, and since <c>U-reopen-2</c> this is the FALLBACK rather than the
+    /// rule.</b> The number in force is the owner's
+    /// <see cref="TradeAgent.Core.RiskPolicy.LossMinClosureHours"/>, and what governs an episode is
+    /// the value SNAPSHOT onto its own breach record. This is what a record written before that
+    /// existed — one carrying no snapshot — is judged by, so a row from an older build is judged by
+    /// the rule that was in force when it was written rather than by whatever is set today.</para>
     ///
-    /// <para>It is an OPTION rather than a setting on purpose: <see cref="GatewayOptions"/> is
-    /// in-process and no pipe op, verb or agent reaches it. Making it the account owner's number —
-    /// with a floor, and two-press — is <c>U-reopen-2</c>. Recorded in <c>docs/CONTRACTS.md</c> as a
-    /// choice the owner may overrule.</para>
+    /// <para>Until <c>U-reopen-1</c> a closure ended at the next UTC midnight, which meant a breach
+    /// confirmed at 23:58Z was two minutes of pause: the account was handed back, freshly flattened,
+    /// to the same market that had just taken it through the owner's daily budget. A whole day is the
+    /// shortest pause that cannot be shorter than the event it is answering, and it is the same unit
+    /// the budget itself is stated in.</para>
     /// </summary>
     public TimeSpan LossMinClosure { get; set; } = TimeSpan.FromHours(24);
 
@@ -435,6 +436,37 @@ public sealed record GatewayStatus(
     /// <c>loss_symbols_closed</c> are both absent, and that is what makes them a pair worth reading.
     /// </summary>
     public DateTimeOffset? LossReopenedAt { get; init; }
+
+    /// <summary>
+    /// PRESENT WHEN A CLOSURE IS BEING HELD FOR THE OWNER TO LOOK AT, carrying the hold's own
+    /// sentence — the scope reached the loss budget more than once inside the strike window.
+    ///
+    /// <para>It is a separate field from <see cref="LossReopenHeld"/>, which carries whatever is in
+    /// the way including this, because it is the only entry in that list WAITING DOES NOT FIX.
+    /// Everything else there resolves when a flatten finishes or a clock is put right; this resolves
+    /// when a person presses something on a screen you cannot reach. An agent that cannot tell the
+    /// two apart will plan a session it is never going to be allowed, and there is no verb, no op and
+    /// no setting here or anywhere that lifts it.</para>
+    /// </summary>
+    public string? LossHeldForReview { get; init; }
+
+    /// <summary>
+    /// When the account owner last released a review hold, or ABSENT because they never have. It is
+    /// on the wire so that an agent reading a scope that is trading again after a run of losing days
+    /// can see that a person decided that, rather than inferring that the rule had lapsed.
+    /// </summary>
+    public DateTimeOffset? LossReleasedAt { get; init; }
+
+    /// <summary>
+    /// THE RULE THE STANDING CLOSURE IS BEING JUDGED UNDER — the closure length and the strike window
+    /// SNAPSHOT onto that closure's own record, in words, or ABSENT because nothing is closed.
+    ///
+    /// <para>The owner may change both numbers, and the number in force is NOT what governs a closure
+    /// that is already standing. An agent that read the live settings and did the arithmetic itself
+    /// would get a different answer from the gateway's, which is why the rule is stated here rather
+    /// than left to be reconstructed.</para>
+    /// </summary>
+    public string? LossClosureRule { get; init; }
 
     /// <summary>
     /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the

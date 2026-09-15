@@ -763,7 +763,28 @@ odd price does not close a day; two readings that agree do.
 reopen because the AI closed the losing position at a smaller loss, because TradeAgent was restarted,
 or because you raised the limit afterwards — those are all the same event, and a limit that unwound
 itself the moment the number moved would not be a limit. There is no command the AI can send that
-reopens anything, and no button here either.
+reopens anything.
+
+**The 24 hours is yours to change, and so is the window below it.** Two more boxes on the Safety
+page: *How long it stays closed after a losing day (hours)*, and *Days in which a second losing day
+holds it for you*. They start at 24 and 7. On these two the SMALLER number is the one that gives the
+AI more room — a shorter pause is more days it can lose a budget in — so **making either one smaller
+asks you twice**, exactly as raising a limit does, and making one larger saves in a press. Neither
+change touches a closure that is already standing: every closure is judged by the numbers that were
+in force when it happened, and the Safety page and the daily report both say which those were. A
+number you set today applies to the next one.
+
+**Twice in a week and TradeAgent will not reopen it at all — you do.** One bad day is what the limit
+is for, and TradeAgent handles it. A scope that reaches the limit a SECOND time inside that window is
+a strategy or a market for you to look at, and letting code hand it another budget every day is not
+what you set a limit for. So it is held: the Safety page shows a *Held for you to look at* card
+naming both days, and the AI is told the same thing and told that nothing it can do changes it.
+
+The card is how you release it. You type what you looked at — that box is required, because it is the
+only record of why you decided it could trade again — and press twice. **Releasing lifts that hold
+and nothing else:** the closure still has to run its time, and TradeAgent still has to see your book
+flat, before anything trades. Your note is kept and is quoted back on the Safety page and in the
+daily report. The AI has no command that asks for this, and nothing it puts in a document reaches it.
 
 **TradeAgent reopens it itself, and only once it has looked.** It used to lift at the next UTC
 midnight, which meant a limit reached at 23:58 was two minutes of pause on an account that had just
@@ -773,6 +794,8 @@ that everything it sent when it closed your book is accounted for, and that this
 not been moved backwards. The Safety page and the daily report both say the earliest it can lift, and
 if something is in the way they say what — those are the cases where you have to look, because
 waiting will not clear them. When it does lift, TradeAgent writes that down too, with what it checked.
+Section 4 of the daily report lists every closure inside the window with the rule it was judged by
+and how it ended, so a run of them is visible as a run rather than as one line about today.
 
 **And TradeAgent closes your open positions.** A budget about what has already been lost that left
 the losing position open would go on losing, so the moment a breach is confirmed TradeAgent cancels

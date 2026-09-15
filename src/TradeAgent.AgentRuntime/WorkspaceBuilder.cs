@@ -346,8 +346,10 @@ public static class WorkspaceBuilder
     refused off that record — it is not re-derived from the figure, so closing the loser, restarting
     TradeAgent or the account owner widening the budget will not reopen it.
 
-    **It does not end at midnight, and TradeAgent is what ends it.** A closure lasts **at least 24
-    hours** from the moment the breach was confirmed, and it lifts only when TradeAgent writes a
+    **It does not end at midnight, and TradeAgent is what ends it.** A closure lasts **at least the
+    closure length the account owner had set when the breach was confirmed** — 24 hours out of the
+    box, snapshot onto the record, so a number they change afterwards governs the next breach and not
+    this one; `loss_closure_rule` states it. It lifts only when TradeAgent writes a
     receipt for it — which it does on its own clock, after checking that the time has run, that a
     fresh reading of the platform shows nothing open on that scope, that everything it sent when it
     closed your book is accounted for, and that this computer's clock has not gone backwards.
@@ -356,6 +358,14 @@ public static class WorkspaceBuilder
     `loss_reopened_at` is when the last closure was lifted, and it is absent whenever anything is
     still closed. There is no command, here or anywhere, that lifts a closure, and asking repeatedly
     costs you turns and changes nothing.
+
+    **Twice in the window and code does not reopen it at all.** A scope that reaches the budget a
+    second time inside the strike window (7 UTC dates out of the box) is HELD: `loss_held_for_review`
+    is present and carries the reason, and the only thing that lifts it is the account owner pressing
+    a button on a screen you cannot reach. Nothing here asks for it, releases it or shortens it, and
+    waiting does not fix it — plan a session without that scope. `loss_released_at` is when they last
+    released one, and a release lifts the hold ONLY: the closure still has to run its time and the
+    book still has to read flat.
 
     **And it closes your open positions for you.** This is new and it changes what you should do
     next. On a confirmed breach TradeAgent cancels every working order of yours that could increase

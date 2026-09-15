@@ -857,7 +857,9 @@ public sealed class TradingGateway : IAsyncDisposable
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
             FlattenState = flattened.State, FlattenWhy = flattened.Why,
             ReopensAt = reopen.At, ReopenHeld = reopen.Held,
-            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
+            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
+            HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
+            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
         };
 
         if (positions is null)
@@ -871,7 +873,9 @@ public sealed class TradingGateway : IAsyncDisposable
                     DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
                     FlattenState = flattened.State, FlattenWhy = flattened.Why,
                     ReopensAt = reopen.At, ReopenHeld = reopen.Held,
-                    ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
+                    ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
+                    HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
+                    ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
                 };
             }
         }
@@ -889,7 +893,9 @@ public sealed class TradingGateway : IAsyncDisposable
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
             FlattenState = flattened.State, FlattenWhy = flattened.Why,
             ReopensAt = reopen.At, ReopenHeld = reopen.Held,
-            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
+            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy,
+            HeldForReview = reopen.HeldForReview, ReleasedAt = reopen.ReleasedAt,
+            ReleasedWhy = reopen.ReleasedWhy, ClosureRule = reopen.Rule, ExtendedWhy = reopen.Extended
         };
     }
 
@@ -1187,6 +1193,9 @@ public sealed class TradingGateway : IAsyncDisposable
             LossReopensAt = loss.ReopensAt,
             LossReopenHeld = loss.ReopenHeld,
             LossReopenedAt = loss.ReopenedAt,
+            LossHeldForReview = loss.HeldForReview,
+            LossReleasedAt = loss.ReleasedAt,
+            LossClosureRule = loss.ClosureRule,
             AiModel = ai.Model
         };
     }
@@ -3031,6 +3040,91 @@ public sealed class TradingGateway : IAsyncDisposable
             $"Released. TradeAgent will reopen {(written.Count == 1 ? "it" : "them")} itself once the "
             + "closure has run its time and a fresh reading of your platform shows nothing open — the "
             + "hold is lifted and none of the other conditions are.", written);
+    }
+
+    /// <summary>
+    /// EVERY CLOSURE OF THIS ACCOUNT INSIDE THE STRIKE WINDOW, WITH THE RULE IT WAS JUDGED BY, THE
+    /// INSTANT IT HAPPENED AND HOW IT ENDED — one line each, newest last, for section 4 of the
+    /// owner's report (<c>U-reopen-2</c>, item 5).
+    ///
+    /// <para>The window is the LIVE setting, because this is a listing and not a decision: it is how
+    /// much history the owner is shown, and the count that decides a hold was taken at a confirmation
+    /// that has passed and is on the hold's own row. Each line names the rule THAT episode was
+    /// recorded under, which is the point — an owner reading three closures judged under three
+    /// different numbers has to be able to see that from the report rather than infer it.</para>
+    ///
+    /// <para>It asks the platform nothing: every line is a row this app wrote, which is what lets the
+    /// report — written from TradeAgent's own ledger — carry it at all.</para>
+    /// </summary>
+    public IReadOnlyList<string> ClosureHistory()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return [];
+
+        var now = Now;
+        var window = Math.Max(Settings.Risk.LossStrikeWindowDays, 1);
+        var lines = new List<(DateTimeOffset At, string Line)>();
+
+        List<(string Key, string Value)> rows;
+        try { rows = [.. _db.KvStartingWith(LossBreach.AccountPrefix(account))]; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return [$"TradeAgent could not read this account's closures ({ex.Message})"];
+        }
+
+        foreach (var (key, value) in rows)
+        {
+            if (LossBreach.ScopeOf(key, account) is not { } scope) continue;
+            if (!LossHold.InWindow(scope.Day, now, window)) continue;
+
+            LossBreachRecord? rec;
+            try { rec = Json.Read<LossBreachRecord>(value); }
+            catch (Exception)
+            {
+                lines.Add((DateTimeOffset.MinValue,
+                    $"{scope.Symbol ?? "the account"} on {scope.Day} — TradeAgent cannot read that row"));
+                continue;
+            }
+
+            if (rec is null) continue;
+            lines.Add((rec.ConfirmedAt,
+                $"{rec.Symbol ?? "the account"} reached the budget at "
+                + $"{rec.ConfirmedAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC; rule: {RuleFor(rec)}; {Outcome(rec)}"));
+        }
+
+        return [.. lines.OrderBy(x => x.At).Select(x => x.Line)];
+    }
+
+    /// <summary>
+    /// HOW ONE EPISODE ENDED, in the owner's words: reopened by code, released by them (with the note
+    /// they typed, quoted), held for them to look at, or still running its closure. Read off the rows
+    /// and never inferred from the clock.
+    /// </summary>
+    string Outcome(LossBreachRecord breach)
+    {
+        LossReopenRecord? receipt = null;
+        try
+        {
+            receipt = _db.GetKv(LossReopen.KeyFor(Connector.Id, breach)) is { } json
+                ? Json.Read<LossReopenRecord>(json)
+                : null;
+        }
+        catch (Exception) { /* an unreadable receipt is reported as a closure still standing */ }
+
+        var released = ReadRelease(breach);
+        var note = released is null
+            ? ""
+            : $" It was released by you at {released.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC, with this note: "
+              + $"\u201c{released.Note}\u201d.";
+
+        if (receipt is { } r)
+            return $"reopened at {r.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC by code.{note}";
+
+        if (released is null && ReviewHold(breach) is { } hold)
+            return "HELD for you to look at — TradeAgent will not reopen it by itself, and you release "
+                   + $"it on the Safety page. {hold.Episodes.Count} closures were counted.";
+
+        return $"still closed — earliest {EligibleFor(breach).UtcDateTime:yyyy-MM-dd HH:mm} UTC.{note}";
     }
 
     /// <summary>The owner's release of one closure's hold, or null because there is none.</summary>

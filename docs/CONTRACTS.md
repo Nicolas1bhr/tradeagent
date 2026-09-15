@@ -1180,6 +1180,103 @@ budgets after a breach is not closed for ever. **Inherited limit:** a breach row
 ACCOUNT and not the platform (`U-flatten-1`'s key, unchanged), so on a switch to a platform carrying
 the same account id, that account's closures and the approval rule above still apply.
 
+**A SCOPE THAT REACHES THE BUDGET TWICE IN THE WINDOW IS NOT REOPENED BY CODE AT ALL**
+(`U-reopen-2`). `U-reopen-1` reopens every closure once it has earned it, which is the right answer
+to ONE bad day and the wrong answer to a run of them: a strategy or a market going through the
+owner's budget repeatedly would be handed one daily budget a day, for ever, with nobody ever asked
+whether that is what should be happening. So at CONFIRMATION — inside `Close`, under the dispatch
+gate, in the same pass that writes the breach — the scope's earlier breach records inside the strike
+window are counted, and a second one writes `loss_hold:{connector}:{account}[:{symbol}]:{utcDay}`
+through `AddKvOnce`, naming every episode it counted and the window it counted them in. A held scope
+has NO eligibility instant: `HeldBy` answers the hold above the arithmetic, the tick writes no
+receipt, and `status.loss_held_for_review` says so.
+
+**The count is taken once and written down, and that is the guard.** A window evaluated when the
+closure is asked to lift is a window the closure itself moves — the scope sits shut, the dates go by,
+and the earlier breach drops out of the count that was about it, so the worse the run the sooner the
+software stops noticing. Everything after confirmation reads the ROW. Each scope counts once per
+incident: the account's own closures and one instrument's are different keys, so a day on which both
+budgets go through is one incident for each and neither is the other's second strike; a restart or a
+duplicate pull adds none, because a breach key is written once and the watch records nothing further
+for a scope that is already closed. A breach row that cannot be PARSED is still counted, through its
+key — dropping it would let a rotted row buy an extra strike — and an unreadable HOLD row answers
+held, because a scope whose history cannot be read is a scope a person has to look at.
+
+**The way out is the owner's, in process, two-press, with a required note.**
+`TradingGateway.ReleaseHold` writes `loss_release:{connector}:{account}[:{symbol}]:{utcDay}` once,
+with the note and the episodes acknowledged, and it is called by a *Reopen after review* card on the
+Safety page and by NOTHING else: no `trade` verb, no pipe op, no setting — `CLAUDE.md`'s rule that
+operator authority is in-process only, applied to the one permission this unit adds. The note is
+required because the row is the durable trace of a person overruling the software's own refusal, and
+a blank one is refused in words having written nothing. **The release lifts the HOLD only**: the
+receipt still needs the eligibility instant, the fresh flat read, the settled flatten and the honest
+clock. It takes no dispatch gate — it admits nothing by itself and `AddKvOnce` is atomic, so the
+worst a race with a running tick can do is leave the release to be noticed fifteen seconds later.
+
+**BOTH DURATIONS ARE THE OWNER'S NUMBERS, NARROWING IS TWO-PRESS, AND EVERY RECORD SNAPSHOTS WHAT
+APPLIED TO IT.** `RiskPolicy.LossMinClosureHours` (24) and `RiskPolicy.LossStrikeWindowDays` (7) are
+on the Safety page under the two budgets. They are the only fields on that page where the SMALLER
+number is the grant — a shorter pause is more days the AI may lose a budget in, a shorter window is
+fewer episodes that ever add up to a hold — so `RiskPolicy.Widenings` names a shortened one and
+`BuildSaveLimits` arms the second press, and lengthening either saves in one. Zero is the widest
+value each has: no closure beyond the UTC day, and no strike rule at all. **Eligibility comes from
+the record's own snapshot and never from the live setting**: `LossBreachRecord.MinClosure` and
+`.StrikeWindowDays` are written at `Compose`, `LossReopenRecord` carries both, and a closure narrowed
+after the event cannot bring its reopen forward while one widened after it cannot delay a receipt
+already written. **A record written before this unit carries no snapshot and is judged by the FIXED
+defaults** (`GatewayOptions.LossMinClosure` 24 h, `GatewayOptions.LossStrikeWindow` 7 dates) — the
+rule that was in force when it was written. Both fields are NULLABLE for that reason: a zero from an
+absent JSON field is indistinguishable from an owner who switched the rule off.
+
+**THE DIRECTORS' HOLD IS BOUNDED, OR IT IS NOTHING.** A closure opens a `BoundaryKind.LossBudget`
+boundary whose default disposition is `hold`, and `CouncilBoundaries.ApplyDue` writes that default
+onto the row when the deadline passes; nothing in the protocol ever revises it. Reading that `hold`
+as holding the closure would be a closure with no end at all — an account shut for good because two
+directors said nothing — so **no line of `ExtensionFor` looks at `BoundaryRow.Disposition`**. The
+only thing that can move an episode's eligibility instant is a
+`loss_extend:{connector}:{account}[:{symbol}]:{utcDay}` row, and four bounds are checked where the
+instant is used rather than assumed of whoever wrote it: no `Until` extends nothing; a row naming a
+boundary other than this episode's (`loss_budget:{account}:{yyyyMMdd}`) is not about this episode;
+the instant is clamped to at most ONE closure length past eligibility; and it is one row per episode
+by key, so it is applied ONCE rather than re-applied per tick, which would outrun the clock. It is
+never applied past a release, and it is stated with its end wherever the instant is shown. An
+unreadable row extends nothing.
+
+**What is NOT there, said rather than implied: nothing in this build WRITES an extension.** A
+director's assessment is free markdown (`PublicationKind.Assessment`, an `assessment-*.md` file
+capped in lines) and `CouncilBoundaries` deliberately exposes no method that takes a disposition from
+a director at all, so there is no structured way for one to ask for more time. Scraping a phrase out
+of a director's prose would be an agent moving a money-path state by writing words in a document,
+which is what `AGENTS.md` forbids of everything handed to an agent. The BOUND is implemented and the
+request channel is not.
+
+**Told.** `status` gains `loss_held_for_review` (the hold's own sentence, separate from
+`loss_reopen_held` because it is the only entry there that waiting does not fix), `loss_released_at`
+and `loss_closure_rule` (the SNAPSHOT, so an agent doing the arithmetic off the live settings cannot
+get a different answer from the gateway). The Situation and the Safety page carry the hold, the
+extension with its end, the rule and the release with the owner's note quoted; section 4 of the daily
+report adds `held for review`, `closure rule`, `held open until` and a `loss closures in the window`
+list — one line per episode with the scope, the instant, the rule THAT episode was judged by and how
+it ended (reopened by code, released by you with the note, held, or still running). The listing
+window is the LIVE setting, because it is how much history is shown and not a decision; the count
+that decides a hold is on the hold's own row. `AGENTS.md` and `USER-GUIDE.md` say the same.
+
+**Choices in this unit, and the owner's to overrule.** The connector is in all three new keys
+(`U-flatten-2`'s reason; the breach key is still `U-flatten-1`'s and untouched). One press releases
+EVERY hold standing on the account, each getting its own row carrying the same note, because the
+owner reviews an account rather than a key. A hold that cannot be WRITTEN is said out loud in the
+engineering log and does not fail the closure (`OpenLossBoundary`'s precedent) — a worse day than a
+held one, and not an open account. There is no press that re-imposes a hold, because the count that
+wrote it was taken at a confirmation that has passed. A release is refused when nothing is held,
+rather than written as a no-op. And the report's listing window follows the live setting while every
+decision follows a snapshot, which is deliberate and is the only place the two differ.
+
+**Not this unit, and said here rather than implied.** There is no ALLOCATION LADDER: a hold is per
+scope — the account, or one instrument — and nothing in this build enforces or attributes risk across
+an aggregate of scopes, so a strategy losing on three instruments at once is three independent
+counts and not one. Aggregate enforcement and attribution do not exist yet. The data-loss exit is
+`U-flatten-3`.
+
 **One thing the simulator cannot prove, named rather than implied.** `FakeConnector.ClosePositionAsync`
 re-reads the position and sizes the order itself, so a reversal cannot be produced through it however
 wrong the composed size is; what the flow test can state is that no close reached the connector and

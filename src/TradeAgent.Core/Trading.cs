@@ -918,6 +918,28 @@ public sealed record LossToday
     public string? ReopenedWhy { get; init; }
 
     /// <summary>
+    /// THE HOLD'S OWN SENTENCE while a standing closure is held for the owner to look at, or null.
+    /// Separate from <see cref="ReopenHeld"/> — which carries whatever is in the way, this one
+    /// included — because it is the only entry in that list that waiting does not fix.
+    /// </summary>
+    public string? HeldForReview { get; init; }
+
+    /// <summary>When the owner last released a review hold on this account, or null because none was.</summary>
+    public DateTimeOffset? ReleasedAt { get; init; }
+
+    /// <summary>The release's own sentence, carrying the owner's note verbatim. Null while there is none.</summary>
+    public string? ReleasedWhy { get; init; }
+
+    /// <summary>
+    /// The rule the standing closure is judged under — the closure length and strike window snapshot
+    /// onto its own record, in words. Null while nothing is closed.
+    /// </summary>
+    public string? ClosureRule { get; init; }
+
+    /// <summary>The bounded extension in force, as a sentence naming its END. Null while there is none.</summary>
+    public string? ExtendedWhy { get; init; }
+
+    /// <summary>
     /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
     /// a ceiling and not a threshold to cross — so it is <c>&gt;=</c>, and an UNKNOWN is never
     /// "reached": it is refused by its own branch, with its own sentence, because "we could not work
@@ -1005,8 +1027,20 @@ public sealed record LossToday
                       + "once it can see your book is flat and everything it sent is accounted for. There is "
                       + "nothing to press and no command that lifts it sooner.");
 
+        // THE EXTENSION, ALWAYS WITH ITS END, beside the instant it moved. An instant that has moved
+        // and does not say why reads as the software changing its mind.
+        if (ExtendedWhy is { Length: > 0 } longer) parts.Add(longer);
+
+        // AND THE RULE IT IS BEING JUDGED UNDER, because the owner may have changed both numbers
+        // since and what governs this closure is what was in force when it was recorded.
+        if (ClosureRule is { Length: > 0 } rule) parts.Add($"The rule this closure was recorded under: {rule}.");
+
         // A REOPEN IS ITS OWN NEWS, and it is said only when nothing is closed — see ReopenedAt.
         if (ReopenedWhy is { Length: > 0 } back) parts.Add(back);
+
+        // AND SO IS A RELEASE — the owner's own words, quoted, wherever the closure is shown. It is
+        // last because it is about a decision a person made rather than about the state of the book.
+        if (ReleasedWhy is { Length: > 0 } released) parts.Add(released);
 
         return parts.Count == 0 ? null : string.Join(" ", parts);
     }

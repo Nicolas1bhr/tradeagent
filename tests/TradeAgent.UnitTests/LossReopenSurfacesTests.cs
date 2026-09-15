@@ -220,7 +220,13 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
         Assert.Contains("loss_reopens_at", schema, StringComparison.Ordinal);
         Assert.Contains("loss_reopened_at", schema, StringComparison.Ordinal);
         Assert.Contains("loss_reopen_held", schema, StringComparison.Ordinal);
-        Assert.Contains("AT LEAST 24 HOURS", schema, StringComparison.Ordinal);
+        // RE-PINNED BY U-reopen-2, item 3: the schema used to say "AT LEAST 24 HOURS", and 24 hours
+        // stopped being a constant when the closure length became the account owner's number. The
+        // sentence it has to carry now is the one that replaced it and says strictly more — that the
+        // length is the SNAPSHOT on the record rather than the setting in force when the agent asks.
+        Assert.Contains("AT LEAST the closure length that applied WHEN THE BREACH WAS CONFIRMED",
+            schema, StringComparison.Ordinal);
+        Assert.Contains("loss_closure_rule", schema, StringComparison.Ordinal);
 
         // And the refusal's own next step, which used to send the owner away to wait for midnight.
         var reached = Errors.Get(ErrorCode.LOSS_BUDGET_REACHED, "x");
@@ -234,7 +240,10 @@ public class LossReopenSurfacesTests(ITestOutputHelper log)
             Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root);
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("loss_reopens_at", agents, StringComparison.Ordinal);
-        Assert.Contains("at least 24", agents, StringComparison.Ordinal);
+        // RE-PINNED with the schema above, and for the same reason.
+        Assert.Contains("closure length the account owner had set when the breach was",
+            agents, StringComparison.Ordinal);
+        Assert.Contains("24 hours out of the", agents, StringComparison.Ordinal);
         Directory.Delete(root, true);
     }
 

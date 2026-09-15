@@ -162,6 +162,29 @@ public sealed record ReportPerformance
 
     /// <summary>The receipt's own sentence, written once with it.</summary>
     public string? ReopenedWhy { get; init; }
+
+    /// <summary>
+    /// EVERY CLOSURE OF THIS ACCOUNT INSIDE THE STRIKE WINDOW, one line each, oldest first: the
+    /// scope, the instant the budget was reached, the RULE that episode was judged by, and how it
+    /// ended — reopened by code, released by the owner with their note quoted, held for review, or
+    /// still running.
+    ///
+    /// <para>A list rather than a figure, because a run of losing days is the thing the strike rule
+    /// exists to notice and a count would hide exactly what the owner has to look at. The rule is on
+    /// every line because the owner may have changed both numbers since, and what governs an episode
+    /// is what was in force when it was recorded.</para>
+    /// </summary>
+    public IReadOnlyList<string> Closures { get; init; } = [];
+
+    /// <summary>The hold's own sentence while a standing closure is held for review. Null otherwise.</summary>
+    public string? HeldForReview { get; init; }
+
+    /// <summary>The rule the standing closure is judged under, in words. Null while nothing is closed.</summary>
+    public string? ClosureRule { get; init; }
+
+    /// <summary>The bounded extension in force, naming its END. Null while there is none.</summary>
+    public string? ExtendedWhy { get; init; }
+
     public string Currency { get; init; } = "";
 
     /// <summary>
@@ -509,10 +532,29 @@ public static class DailyReportText
                       + "and everything it sent is accounted for. Nothing to press."
                     : Unknown);
 
+        // HELD FOR REVIEW IS ITS OWN LINE, above the flatten and below the instant that is NOT being
+        // shown: it is the one thing in the "waiting on" list that waiting does not fix, and an owner
+        // who reads "not yet" without reading "this one is yours to release" waits for ever.
+        if (r.Performance.HeldForReview is { Length: > 0 } review)
+            Kv(b, "held for review", review);
+
+        // AND THE RULE THE STANDING CLOSURE IS BEING JUDGED BY, because both numbers are the owner's
+        // now and what governs an episode is what was in force when it was recorded.
+        if (r.Performance.ClosureRule is { Length: > 0 } rule)
+            Kv(b, "closure rule", rule);
+
+        if (r.Performance.ExtendedWhy is { Length: > 0 } extended)
+            Kv(b, "held open until", extended);
+
         // AND WHEN ONE WAS LIFTED, as its own line and in the receipt's own words. Only ever printed
         // while nothing is closed: see ReportPerformance.ReopenedAt.
         if (r.Performance.ReopenedAt is { } back)
             Kv(b, "reopened", $"{Instant(back)} — {r.Performance.ReopenedWhy ?? Unknown}");
+
+        // EVERY CLOSURE IN THE WINDOW, WITH ITS RULE AND ITS OUTCOME. A run of losing days is what
+        // the strike rule exists to notice, and it is what this document exists to put in front of a
+        // person: a single "closed to new risk" line says nothing about the third one this week.
+        List(b, "loss closures in the window", r.Performance.Closures);
 
         // AND WHAT WAS DONE ABOUT IT, AS ITS OWN LINE. A closed day and a flattened book are two
         // facts, and this is the one that says where the owner's money is. It is the flatten
