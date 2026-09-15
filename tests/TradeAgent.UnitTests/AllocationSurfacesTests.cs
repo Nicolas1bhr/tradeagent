@@ -191,4 +191,44 @@ public class AllocationSurfacesTests
         Assert.Contains("no command that asks for it", line, StringComparison.Ordinal);
         await gw.DisposeAsync();
     }
+
+    /// <summary>
+    /// AND THE FROZEN CONTRACT STATES THE THREE CHOICES, because a choice only the code knows is not a
+    /// choice anybody made. <c>docs/COUNCIL.md</c> never names what capital is allocated TO; this unit
+    /// answered "a promoted strategy version", declared the ceiling to be the owner's own number rather
+    /// than a fraction of a balance TradeAgent does not persist, and counts a position it cannot
+    /// attribute against the version anyway. <c>AllocationCeilingOrThrow</c> cites
+    /// <c>docs/CONTRACTS.md</c> for the third of those by name, so the file has to carry it.
+    ///
+    /// <para>The guard is the one <c>LossBudgetSurfacesTests</c> already puts on its own contract: a
+    /// paragraph nothing reads drifts from the code in one release.</para>
+    /// </summary>
+    [Fact]
+    public void The_contract_states_what_capital_is_allocated_to_and_who_declares_the_ceiling()
+    {
+        var contracts = File.ReadAllText(Path.Combine(Repo(), "docs", "CONTRACTS.md"));
+
+        Assert.Contains("What capital is allocated TO is a promoted strategy version — a choice, stated.",
+            contracts, StringComparison.Ordinal);
+        Assert.Contains(
+            "The ceiling is the owner's own declared number, not a fraction of a balance — a choice, stated.",
+            contracts, StringComparison.Ordinal);
+        Assert.Contains(
+            "A position is not attributable to a version, and the ceiling counts it anyway — a choice, stated.",
+            contracts, StringComparison.Ordinal);
+        Assert.Contains("ALLOCATION_NONE", contracts, StringComparison.Ordinal);
+        Assert.Contains("ALLOCATION_EXCEEDED", contracts, StringComparison.Ordinal);
+        // The honest limit belongs in the contract too: what is frozen here is the gate, not a
+        // deployment, and a reader must not take the section for a claim that something trades.
+        Assert.Contains("No runner emits a live or paper intent yet", contracts, StringComparison.Ordinal);
+    }
+
+    /// <summary>The repository root, found from the test assembly rather than assumed.</summary>
+    static string Repo()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "TradeAgent.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir.FullName;
+    }
 }

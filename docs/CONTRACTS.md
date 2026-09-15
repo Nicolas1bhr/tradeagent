@@ -1783,3 +1783,72 @@ refusal and invalidation under "measured by TradeAgent", and its "no evaluation 
 when a run or a verdict exists. **The holdout run is listed in that report without its figures**, because
 `trade report` serves the same document to the agent — naming it is the record, valuing it would hand
 back through the report exactly what `data-bars` and `backtest` refuse.
+
+## The capital allocation — `src/TradeAgent.Core/Db/AllocationStore.cs`, `Gateway/TradingGateway.cs`
+
+**An allocation is one immutable row whose id is the SHA-256 of the seven facts it binds**: version id,
+promotion id, policy version, `max_quantity`, `max_notional`, currency and `effective_from`
+(`AllocationRow.IdOf`, and the order is part of the contract). `effective_to`, `reason` and `at` are NOT
+in the hash — they are the account of the decision and not the decision — and the write is one `INSERT …
+ON CONFLICT DO NOTHING` with **no update and no delete method at all**. Schema 20. A ceiling is lowered
+or withdrawn by recording a FRESH allocation from a later instant, and `Allocations.StandingFor` answers
+with the newest row in force: a limit its subject could edit is not a limit, and a capital decision that
+can be moved after the outcome is known is not a record (`docs/COUNCIL.md`:210-212).
+
+**What capital is allocated TO is a promoted strategy version — a choice, stated.** `docs/COUNCIL.md`
+never names the subject of an allocation; rule 8 makes a promoted version the only executable thing, so
+it is the only thing a ceiling can be attached to. `Allocations.Record` refuses unless
+`Promotions.Standing` reads `promoted` **at that instant** — not "a promotion row exists" — so evidence
+TradeAgent has since withdrawn allocates nothing; and the foreign keys to `strategy_version` and
+`strategy_promotion` make an allocation of capital to nothing unwritable rather than merely unwritten.
+
+**The ceiling is the owner's own declared number, not a fraction of a balance — a choice, stated.**
+TradeAgent does not persist an account balance or an equity curve, and a ceiling derived from a figure
+this app re-reads from a platform would move without anyone deciding that it should. So `max_quantity`
+(and `max_notional` where the owner sets one) are typed on the Safety page in the account's currency and
+mean exactly what they say. Zero is a real allocation and means the version may open nothing.
+
+**The ceiling bounds EXPOSURE, not one order**, and it is evaluated **inside the dispatch gate on the
+same position reading** as the open-position cap, the unresolved-reducer refusal and the loss budgets.
+The arithmetic is what the version would be HOLDING — the account's position on the instrument, plus
+every opening placement of that version the store still calls open, plus this order — against
+`max_quantity`, and that figure multiplied against `max_notional`. Decided above the awaited reads
+instead, two placements in flight together each read the same empty account and both pass one
+allocation. Refusals are `ALLOCATION_NONE` (nothing stands behind this version) and `ALLOCATION_EXCEEDED`
+(something does and this order would pass it); **nothing is sent and no request row is written**. A
+version's exposure that cannot be worked out at all answers `RISK_CHECK_UNAVAILABLE` rather than an
+allocation code — no ceiling was breached, TradeAgent could not tell whether one would be.
+
+**A close and a reduce always pass**, the loss budgets' reason: a ceiling that stopped an account being
+flattened would be a trap. They are still attributed. **An order naming no version is not gated at all**
+— the owner's own buy and the emergency press have nothing to be charged against.
+
+**A position is not attributable to a version, and the ceiling counts it anyway — a choice, stated.** The
+platform reports one number per instrument and says nothing about who opened it, so a position the owner
+opened by hand counts against a strategy trading the same instrument. It is conservative in the one
+direction that is safe: it can only refuse.
+
+**What an order was placed under is two columns, never the parameters blob.**
+`execution_request.strategy_version_id` and `allocation_id` are written by the INSERT that creates the
+row — both of them, by `TryCreate` and by `TryCreateFlagged` — and by no later update, and they are read
+back from their own columns. `docs/COUNCIL.md`:210-211: which strategy or allocation caused an operation
+cannot be recovered later, and a text column anything can rewrite re-attributes a sent order. Both are
+nullable and NOT backfilled.
+
+**Allocating is two presses, in process, and the agent cannot reach it.** `TradingGateway.Allocate` has
+no `trade` verb and no pipe op, like every other operator authority. Widening is two presses for the
+reason `Widens()` is; so is narrowing, because a lower ceiling is a new permanent record and no press
+anywhere takes one back.
+
+**The owner and the roles are told.** Section 4 of the daily report lists one line per standing
+allocation — version, ceiling, currency, `effective_from`, policy version — printed as `none` rather
+than omitted when nothing is allocated, and an allocation whose promotion no longer stands is **listed
+and marked WITHDRAWN** rather than filtered out: the row is still on the table and the version may trade
+nothing. A ledger that could not be read becomes a named gap instead of an empty list.
+`MissionSituation.PromotedLine` says what is allocated and **carries no holdout figure** (:196-197), and
+says so plainly when nothing is, because a turn told only "promoted" would plan a deployment the gateway
+refuses with `ALLOCATION_NONE`.
+
+**The honest limit, stated.** No runner emits a live or paper intent yet, so the deployment this gate
+ceilings does not exist. What is contracted here is the gate, end to end, and it is what will be there
+when one does.
