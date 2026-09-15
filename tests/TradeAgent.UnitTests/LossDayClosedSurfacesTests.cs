@@ -119,7 +119,9 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
 
         Assert.NotNull(line);
         Assert.Contains("closed today to new risk at 12:00 UTC", line, StringComparison.Ordinal);
-        Assert.Contains("next UTC day", line, StringComparison.Ordinal);
+        // The rule it lasts by, re-pinned by U-reopen-1: "until the next UTC day" was true of a
+        // record that expired with its key, and a breach at 23:58Z had two minutes of it.
+        Assert.Contains("stays closed for at least 24 hours", line, StringComparison.Ordinal);
         Assert.Contains("CLOSES YOUR OPEN POSITIONS", line, StringComparison.Ordinal);
 
         // And it is in the Situation the mission actually renders, not only in the helper.
@@ -148,7 +150,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
 
         Assert.Contains("closed to new risk", section, StringComparison.Ordinal);
         Assert.Contains("CLOSES YOUR OPEN POSITIONS", section, StringComparison.Ordinal);
-        Assert.Contains("next UTC day", section, StringComparison.Ordinal);
+        Assert.Contains("stays closed for at least 24 hours", section, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -229,7 +231,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         Assert.Contains("_host.Gateway.ClosureToday()", screen, StringComparison.Ordinal);
 
         var guide = File.ReadAllText(Path.Combine(repo, "docs", "USER-GUIDE.md"));
-        Assert.Contains("stays closed until the next UTC day", guide, StringComparison.Ordinal);
+        Assert.Contains("stays closed for at least 24 hours", guide, StringComparison.Ordinal);
 
         var contracts = File.ReadAllText(Path.Combine(repo, "docs", "CONTRACTS.md"));
         Assert.Contains("loss_day_closed_at", contracts, StringComparison.Ordinal);
@@ -241,7 +243,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         var schema = Json.Write(GatewaySchema.Describe());
         Assert.Contains("loss_day_closed_at", schema, StringComparison.Ordinal);
         Assert.Contains("loss_symbols_closed", schema, StringComparison.Ordinal);
-        Assert.Contains("NEXT UTC DAY", schema, StringComparison.Ordinal);
+        Assert.Contains("A CLOSURE DOES NOT END AT MIDNIGHT", schema, StringComparison.Ordinal);
         Assert.Contains("CLOSES what is open", schema, StringComparison.Ordinal);
 
         var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));

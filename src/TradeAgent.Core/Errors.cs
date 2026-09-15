@@ -668,7 +668,7 @@ public static class Errors
         // this order was wrong; the day, or the position, is already down as far as the owner said
         // it may go. Closing and reducing are untouched, which is the half an owner has to be told
         // — a refusal that reads as "trading is off" is one they would answer by raising the budget.
-        [ErrorCode.LOSS_BUDGET_REACHED]            = ("The AI has lost as much as you allow it to, so it is not being allowed to take on any more risk.", $"Nothing was sent. Closing or reducing a position is still allowed, and the day starts again at midnight UTC. Change the budget on the {Labels.SafetyPage} page if it is too tight.", false),
+        [ErrorCode.LOSS_BUDGET_REACHED]            = ("The AI has lost as much as you allow it to, so it is not being allowed to take on any more risk.", $"Nothing was sent. Closing or reducing a position is still allowed. If TradeAgent has confirmed the breach it has also closed what was open, and it reopens the account itself once the closure has run its 24 hours and it can see your book is flat — there is nothing to press. Change the budget on the {Labels.SafetyPage} page if it is too tight.", false),
         // Distinct from RISK_LIMIT_EXCEEDED, and the difference is the whole of it: no limit was
         // broken — TradeAgent could not work out whether one would be. A change to an order it
         // cannot read is a change whose effect on your exposure is unknown; so is an order in an

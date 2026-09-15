@@ -955,9 +955,11 @@ sealed class SafetyPage
     /// while nothing is closed, because a permanent "the day is open" line is noise the eye stops
     /// reading long before the day it matters.</para>
     ///
-    /// <para>It carries the record's own sentence — since when, why, and that the next UTC day
-    /// reopens it — rather than a shorter paraphrase: an owner reading "closed" beside a flat-looking
-    /// figure has to be told which figure closed it and when it lifts.</para>
+    /// <para>It carries the record's own sentence — since when, why, and that TradeAgent reopens it
+    /// itself once the closure has run and the book reads flat — rather than a shorter paraphrase: an
+    /// owner reading "closed" beside a flat-looking figure has to be told which figure closed it and
+    /// when it lifts. The earliest instant, and whatever is holding it, come from
+    /// <c>TradingGateway.ReopenReading</c> on the same pass.</para>
     /// </summary>
     readonly TextBlock _lossClosedNote = new()
     {
@@ -1620,10 +1622,16 @@ sealed class SafetyPage
         // The closure, off the record and never recomputed from today's figure — see
         // TradingGateway.ClosureToday. Updated in place on the five-second pass like every other row
         // on this screen: rebuilding a tree is not a refresh.
+        // AND WHEN IT LIFTS, off the same records on the same pass: since U-reopen-1 a closure ends
+        // on a decision with conditions rather than at the next midnight, so a row that said only
+        // "closed since" would leave the owner with no answer to the question they actually have.
         var closed = _host.Gateway.ClosureToday();
+        var reopen = _host.Gateway.ReopenReading();
         _lossClosedNote.Text = new LossToday
         {
-            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
+            ReopensAt = reopen.At, ReopenHeld = reopen.Held,
+            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
         }.ClosedLine() ?? "";
         _lossClosedNote.IsVisible = _lossClosedNote.Text.Length > 0;
 

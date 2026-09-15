@@ -329,7 +329,7 @@ public static class WorkspaceBuilder
     - at most **{c.Risk.MaxOpenPositions}** open positions
     - at most **{c.Risk.MaxOrdersPerMinute}** orders per minute
     - {(c.Risk.MaxLossPerTrade > 0 ? $"a position that is down **{c.Risk.MaxLossPerTrade:N0}** may not be added to" : "no per-position loss budget is set")}
-    - {(c.Risk.MaxDailyLoss > 0 ? $"once the day is down **{c.Risk.MaxDailyLoss:N0}** — realised and unrealised together — every order that could increase exposure is refused until midnight UTC" : "no daily loss budget is set")}
+    - {(c.Risk.MaxDailyLoss > 0 ? $"once the day is down **{c.Risk.MaxDailyLoss:N0}** — realised and unrealised together — every order that could increase exposure is refused, and a confirmed breach closes the account for at least 24 hours" : "no daily loss budget is set")}
     - instruments: {(c.Risk.InstrumentAllowlist.Count == 0 ? "**none** — the owner has not named any, so every order will be refused" : string.Join(", ", c.Risk.InstrumentAllowlist))}
 
     These are not suggestions you can negotiate. There is no command that raises them — only the
@@ -339,14 +339,23 @@ public static class WorkspaceBuilder
     `loss_today`, `loss_budget_day` and `loss_budget_trade` — each ABSENT rather than zero, and an
     absent `loss_today` means the figure could not be worked out, which refuses new positions too.
 
-    **A breached budget closes the day, and TradeAgent writes that down.** It watches the account on
-    its own clock, not only when you send something, and the moment two separate readings agree that
-    a budget is breached it records the fact. From then on `trade status` carries
+    **A breached budget closes the account, and TradeAgent writes that down.** It watches the account
+    on its own clock, not only when you send something, and the moment two separate readings agree
+    that a budget is breached it records the fact. From then on `trade status` carries
     `loss_day_closed_at` and `loss_symbols_closed`, and every order that could increase exposure is
     refused off that record — it is not re-derived from the figure, so closing the loser, restarting
-    TradeAgent or the account owner widening the budget will not reopen the day. **The next UTC day
-    reopens it and nothing else does.** There is no command, here or anywhere, that lifts it, and
-    asking repeatedly costs you turns and changes nothing.
+    TradeAgent or the account owner widening the budget will not reopen it.
+
+    **It does not end at midnight, and TradeAgent is what ends it.** A closure lasts **at least 24
+    hours** from the moment the breach was confirmed, and it lifts only when TradeAgent writes a
+    receipt for it — which it does on its own clock, after checking that the time has run, that a
+    fresh reading of the platform shows nothing open on that scope, that everything it sent when it
+    closed your book is accounted for, and that this computer's clock has not gone backwards.
+    `loss_reopens_at` is the **earliest** that can happen. When it is ABSENT while something is
+    closed, `loss_reopen_held` says what is in the way — and none of those are things waiting fixes.
+    `loss_reopened_at` is when the last closure was lifted, and it is absent whenever anything is
+    still closed. There is no command, here or anywhere, that lifts a closure, and asking repeatedly
+    costs you turns and changes nothing.
 
     **And it closes your open positions for you.** This is new and it changes what you should do
     next. On a confirmed breach TradeAgent cancels every working order of yours that could increase

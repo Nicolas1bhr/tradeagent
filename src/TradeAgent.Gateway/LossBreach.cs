@@ -18,11 +18,13 @@ namespace TradeAgent.Gateway;
 /// <para><b>The record outranks the ledger.</b> Once it is written, <c>LossBudgetOrThrow</c> refuses
 /// off IT and reads neither the ledger nor the platform: the figure that closed the day is the one
 /// on the row, and a later figure — smaller because a loser was closed, or smaller because the owner
-/// widened the budget — is not evidence that the day did not happen. The next UTC day expires it,
-/// because the key carries the day and nothing rewrites a key.</para>
+/// widened the budget — is not evidence that the day did not happen. Nothing expires it: a closure
+/// ends when a RECEIPT is written for this record (<c>U-reopen-1</c>), and until then every reader
+/// finds it whatever day it is.</para>
 ///
 /// <para><b>Written once and never updated.</b> The first CONFIRMED breach writes it with everything
-/// that was true at that instant; a second breach of the same budget on the same day writes nothing.
+/// that was true at that instant; while the scope is still closed no further breach of it writes
+/// anything at all — one episode, whatever day the watch is on.
 /// A record that could be rewritten is a record whose evidence is whatever the last writer thought,
 /// which is exactly what the ledger already is.</para>
 ///
@@ -35,7 +37,11 @@ public static class LossBreach
     /// <summary>Every key this record family uses starts here, so a scan can find them all.</summary>
     public const string Prefix = "loss_breach:";
 
-    /// <summary>The UTC day a key names. The whole expiry mechanism: tomorrow asks for another key.</summary>
+    /// <summary>
+    /// The UTC day a key names. It used to be the whole expiry mechanism — tomorrow asked for
+    /// another key — and since <c>U-reopen-1</c> it is only an identity: what ENDS a closure is a
+    /// receipt, and the day in the key is how the receipt names the record it releases.
+    /// </summary>
     public static string Stamp(DateTimeOffset at) =>
         at.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -48,7 +54,7 @@ public static class LossBreach
 
     /// <summary>
     /// ONE SYMBOL'S CLOSURE: <c>loss_breach:{account}:{symbol}:{utcDay}</c>. Opens and adds on that
-    /// symbol are refused for the rest of the day; everything else on the account is untouched.
+    /// symbol are refused until TradeAgent reopens it; everything else on the account is untouched.
     /// </summary>
     public static string SymbolKey(string account, string symbol, DateTimeOffset at) =>
         $"{Prefix}{account}:{symbol}:{Stamp(at)}";
@@ -78,31 +84,41 @@ public static class LossBreach
     /// <para>It is on the record rather than recomposed per surface because the figure it names is
     /// the one that closed the day, and a sentence recomposed later would quietly re-read the
     /// ledger: the refusal would then say a number that is not the number it refused on. Four things
-    /// have to be in it — since when, why, that it lasts the whole UTC day, and that TradeAgent
+    /// have to be in it — since when, why, HOW LONG it lasts and what ends it, and that TradeAgent
     /// CLOSES what is open when this happens. The fourth used to be its opposite, and changing it was
     /// the point of <c>U-flatten-2</c>: an owner who reads "the day is closed" and assumes their
     /// positions are where they left them has been told the opposite of what happened. It says the
     /// RULE rather than the outcome, because this sentence is written at the moment of the breach and
     /// the flatten has not run yet; what was actually closed is on the flatten's own record.</para>
+    ///
+    /// <para>The third used to say "until the next UTC day". That was true of a record which expired
+    /// with its key, and it is the defect <c>U-reopen-1</c> closes: a breach at 23:58Z was two
+    /// minutes of closure. It now says the LENGTH, and that a reopen is something TradeAgent DOES
+    /// after looking — "it lifts by itself at midnight" and "it lifts once the software has checked"
+    /// are different things to be waiting for.</para>
     /// </summary>
     public static string DaySentence(decimal loss, decimal budget, string currency,
-        DateTimeOffset at, int feesUnknownFills) =>
+        DateTimeOffset at, int feesUnknownFills, TimeSpan minClosure) =>
         $"TradeAgent closed today to new risk at {at.UtcDateTime:HH:mm} UTC: the day was down "
         + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
-        + $"“{Labels.MaxDailyLoss}”{Fees(feesUnknownFills)}. It stays closed until the next UTC "
-        + "day, whatever the figure does afterwards. TradeAgent CLOSES YOUR OPEN POSITIONS when this "
-        + "happens — it cancels the orders that could add risk and closes what is open, and the result "
-        + "is reported separately. Closing or reducing a position is still allowed.";
+        + $"“{Labels.MaxDailyLoss}”{Fees(feesUnknownFills)}. It stays closed for at least "
+        + $"{LossReopen.Hours(minClosure)}, whatever the figure does afterwards, and TradeAgent reopens it "
+        + "itself once that time has run and it can see your book is flat — there is nothing to press. "
+        + "TradeAgent CLOSES YOUR OPEN POSITIONS when this happens — it cancels the orders that could add "
+        + "risk and closes what is open, and the result is reported separately. Closing or reducing a "
+        + "position is still allowed.";
 
     /// <summary>The same, for one position, which is closed to opens and adds and to nothing else.</summary>
     public static string SymbolSentence(string symbol, decimal loss, decimal budget, string currency,
-        DateTimeOffset at, int feesUnknownFills) =>
+        DateTimeOffset at, int feesUnknownFills, TimeSpan minClosure) =>
         $"TradeAgent closed {symbol} to new risk at {at.UtcDateTime:HH:mm} UTC: it was down "
         + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
-        + $"“{Labels.MaxLossPerTrade}”{Fees(feesUnknownFills)}. It stays closed until the next "
-        + "UTC day, whatever the figure does afterwards. TradeAgent CLOSES THIS POSITION when this "
-        + "happens — it cancels that instrument's working orders and closes what is open, and the "
-        + "result is reported separately. Closing or reducing it is still allowed.";
+        + $"“{Labels.MaxLossPerTrade}”{Fees(feesUnknownFills)}. It stays closed for at least "
+        + $"{LossReopen.Hours(minClosure)}, whatever the figure does afterwards, and TradeAgent reopens it "
+        + "itself once that time has run and it can see nothing is open on it — there is nothing to press. "
+        + "TradeAgent CLOSES THIS POSITION when this happens — it cancels that instrument's working orders "
+        + "and closes what is open, and the result is reported separately. Closing or reducing it is still "
+        + "allowed.";
 
     /// <summary>The clause every loss figure carries while the platform has reported no fee for a fill.</summary>
     static string Fees(int fills) =>

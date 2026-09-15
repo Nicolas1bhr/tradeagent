@@ -1106,6 +1106,80 @@ own flags behind a read-back (the alternative is a person confirming every corre
 makes a breach a manual outage); and the flatten running on the watch's thread rather than on a queue
 of its own.
 
+**A CLOSURE IS A STATE, NOT A KEY, AND IT ENDS ON A RECEIPT TRADEAGENT WRITES AFTER LOOKING**
+(`U-reopen-1`). `U-flatten-1` filed a breach under `loss_breach:{account}:{utcDay}` and every reader
+asked for TODAY's key, so a closure ended when the key went out of scope: a breach confirmed at
+23:58Z was two minutes of pause on an account that had just been flattened, with nothing checking
+that the flatten had resolved, that the book was flat, that the clock had moved forward honestly, or
+that any time had passed at all — and nothing recorded that a reopen had happened, because nothing
+had. Now `DayClosed`, `SymbolClosed` and `ClosureToday` SCAN `loss_breach:{account}:` across every
+day, and a scope is closed from the record's `ConfirmedAt` until a RECEIPT exists for that record.
+The breach key is unchanged. **While a scope is closed the watch writes no further breach record for
+it** — one episode, whatever day the tick is on, and one `BoundaryKind.LossBudget` boundary with it;
+a second breach on the next UTC day is the same event still going, and the flatten's own fills after
+midnight are not a new one. Every flatten key is now taken off the BREACH's day rather than the
+clock's (`LossFlatten.KeyFor`), so a flatten that runs, is swept or is reported on after a midnight
+still names the row it belongs to.
+
+**Eligibility is computed from the immutable record; the reopen is a positive act.** `EligibleAt` is
+the LATER of the first UTC midnight after `ConfirmedAt` and `ConfirmedAt + GatewayOptions.LossMinClosure`
+— **24 hours**, fixed in this build and **the account owner's to overrule** (`U-reopen-2` makes it a
+setting with a floor; both terms are kept because a shorter one must still not end a closure inside
+the UTC day whose ledger figure closed it). The receipt `loss_reopen:{connector}:{account}:{utcDay}`
+(and `…:{symbol}:{utcDay}`, both carrying the BREACH's day and symbol) is written ONLY by the watch
+tick, under the dispatch gate, **write-once at the SQL layer** — `Database.AddKvOnce`, `INSERT … ON
+CONFLICT DO NOTHING`, answering whether it inserted — with its evidence: the eligibility instant and
+the closure length it was computed with, the instant it was written, the clock high-water mark, the
+connection epoch, the positions read for the scope and what the flatten said. **The admission gate
+never writes it**: the gate is the one piece of code an agent can reach, so it only ever READS, and a
+restart after eligibility but before the tick admits nothing. The key carries the CONNECTOR for
+`U-flatten-2`'s reason — a PAPER reopen must never answer for a LIVE closure.
+
+**Flatness is fresh evidence, never a terminal state.** The tick writes a receipt only when, on that
+tick: the position read is from the CURRENT connection epoch and shows nothing open on the scope; the
+flatten record for that breach reads `Flat` with no opener left unsettled, where one exists (a breach
+confirmed with nothing open needs none); no `op-budget-close-`/`op-budget-cancel-` press is
+unresolved and `HasUnconfirmedWork` is false; and — inherited, because the reopen runs inside the
+watch's measured branch — the book could be valued at all, so `RISK_CHECK_UNAVAILABLE` stays
+independently blocking while a budget is enforced. A daily closure and a symbol closure compose by
+AND: each has its own receipt and its own scope, and the account-wide press conditions apply to both.
+**A clock that stepped BACK never reopens anything**: every tick that runs while something is closed
+raises `loss_clock_high_water:{connector}:{account}` (monotone, seeded with the breach), eligibility
+also requires `Now` at or above it, and a reading below it writes `loss_clock_suspect:{connector}:
+{account}` ONCE, refuses, and says so on every surface. A step forward is ordinary and lengthens
+nothing.
+
+**A parked proposal that predates the breach dies with it**, with its own code
+(`APPROVAL_PREDATES_LOSS_BREACH`) and its own sentence, never `LOSS_BUDGET_REACHED` — and the request
+is DECLINED rather than left on the Dashboard. It is compared to the latest breach's `ConfirmedAt`
+for the account scope or the intent's symbol, checked above the mode and the budgets, and it holds
+AFTER the reopen too: the receipt says the account may trade again, not that the flatten un-happened.
+A proposal written DURING a closure is untouched — it was written by an AI that could already see the
+closure, against the book as the flatten left it.
+
+**Told, and the old sentences withdrawn.** `status` carries `loss_reopens_at` (the EARLIEST instant,
+ABSENT when something other than time is holding it), `loss_reopen_held` (what, and none of them are
+fixed by waiting) and `loss_reopened_at` (ABSENT whenever anything is still closed, so it can never
+read as permission). The Situation line, the Safety row and section 4 of the daily report carry the
+same three, the report adding a `reopens` line under the closure and a `reopened` line in the
+receipt's own words. Every sentence that said a closure lasts "until the next UTC day" or "until
+midnight UTC" is rewritten — the breach record's own sentence, the flatten's, the schema the agent
+reads, `AGENTS.md`, the guide and `LOSS_BUDGET_REACHED`'s next step — because that promise was the
+defect. The reopened day's loss figure is its own UTC date's ledger, flatten fills included: the
+FIGURE still starts again at midnight and the CLOSURE does not, and they are deliberately different.
+
+**Owner-overrulable, and recorded as choices** (`U-reopen-1`): the 24 hours; keeping the names
+`ClosureToday` / `SymbolsClosedToday` / `FlattenToday` although they now answer across days; the
+clock mark being kept only while something is closed rather than on every tick; the surfaces judging
+"held" only from rows this app wrote, never from a platform read, so `loss_reopens_at` is the
+earliest and never a promise; `LatestBreach` SKIPPING a breach row it cannot parse (so one rotted row
+from an episode that ended cannot make an account unable to approve anything ever again) while
+`OpenClosures` still THROWS on an unreadable STANDING closure; and the watch reading the platform on
+a tick when both budgets are zero but a closure stands, which is the only way an owner who zeroed the
+budgets after a breach is not closed for ever. **Inherited limit:** a breach row is keyed by the
+ACCOUNT and not the platform (`U-flatten-1`'s key, unchanged), so on a switch to a platform carrying
+the same account id, that account's closures and the approval rule above still apply.
+
 **One thing the simulator cannot prove, named rather than implied.** `FakeConnector.ClosePositionAsync`
 re-reads the position and sizes the order itself, so a reversal cannot be produced through it however
 wrong the composed size is; what the flow test can state is that no close reached the connector and

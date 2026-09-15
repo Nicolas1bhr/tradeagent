@@ -145,6 +145,23 @@ public sealed record ReportPerformance
 
     /// <summary>The flatten's own sentence, written once with its record.</summary>
     public string? FlattenWhy { get; init; }
+
+    /// <summary>
+    /// THE EARLIEST INSTANT A STANDING CLOSURE MAY BE LIFTED, or null because nothing is closed or
+    /// because <see cref="ReopenHeld"/> names what is standing in the way. The report is the
+    /// document an owner reads the morning after, so "when does this end" is the question it is most
+    /// often opened to answer.
+    /// </summary>
+    public DateTimeOffset? ReopensAt { get; init; }
+
+    /// <summary>What is holding a closure that has already served its time. Null while nothing is.</summary>
+    public string? ReopenHeld { get; init; }
+
+    /// <summary>When the last closure was lifted, or null. Null whenever anything is still closed.</summary>
+    public DateTimeOffset? ReopenedAt { get; init; }
+
+    /// <summary>The receipt's own sentence, written once with it.</summary>
+    public string? ReopenedWhy { get; init; }
     public string Currency { get; init; } = "";
 
     /// <summary>
@@ -480,6 +497,22 @@ public static class DailyReportText
             : "no — the day was open to new positions");
         if (r.Performance.SymbolsClosed.Count > 0)
             Kv(b, "positions closed to adds", string.Join(", ", r.Performance.SymbolsClosed));
+
+        // WHEN IT LIFTS, OR WHAT IS STOPPING IT. Printed whenever anything is closed, because the
+        // first thing an owner reading a closure wants is the end of it — and because since
+        // U-reopen-1 the answer is a decision with conditions rather than the next midnight.
+        if (r.Performance.DayClosedAt is not null || r.Performance.SymbolsClosed.Count > 0)
+            Kv(b, "reopens", r.Performance.ReopenHeld is { Length: > 0 } stuck
+                ? $"not yet — waiting on: {stuck}"
+                : r.Performance.ReopensAt is { } when
+                    ? $"by code, at the earliest {Instant(when)} — once TradeAgent can see your book is flat "
+                      + "and everything it sent is accounted for. Nothing to press."
+                    : Unknown);
+
+        // AND WHEN ONE WAS LIFTED, as its own line and in the receipt's own words. Only ever printed
+        // while nothing is closed: see ReportPerformance.ReopenedAt.
+        if (r.Performance.ReopenedAt is { } back)
+            Kv(b, "reopened", $"{Instant(back)} — {r.Performance.ReopenedWhy ?? Unknown}");
 
         // AND WHAT WAS DONE ABOUT IT, AS ITS OWN LINE. A closed day and a flattened book are two
         // facts, and this is the one that says where the owner's money is. It is the flatten

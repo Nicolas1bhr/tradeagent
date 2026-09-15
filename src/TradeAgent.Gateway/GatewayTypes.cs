@@ -396,6 +396,31 @@ public sealed record GatewayStatus(
     public string? LossFlatten { get; init; }
 
     /// <summary>
+    /// THE EARLIEST INSTANT TRADEAGENT MAY REOPEN WHAT IS CLOSED, or ABSENT — either because nothing
+    /// is closed, or because something other than time is holding it, and then
+    /// <see cref="LossReopenHeld"/> says what.
+    ///
+    /// <para>It is on the wire because an agent that cannot see when a closure lifts will either ask
+    /// every turn or plan a session it is not going to be allowed. It is the EARLIEST and not a
+    /// promise: a reopen also needs a fresh reading of the platform's book, which this status does
+    /// not take. There is no command here, for you or for anyone, that brings it forward.</para>
+    /// </summary>
+    public DateTimeOffset? LossReopensAt { get; init; }
+
+    /// <summary>
+    /// What is holding a closure that has already served its time, or ABSENT because nothing is.
+    /// Waiting is not what to do about any of these: a person has to look.
+    /// </summary>
+    public string? LossReopenHeld { get; init; }
+
+    /// <summary>
+    /// WHEN THE LAST CLOSURE WAS LIFTED, or ABSENT. Absent whenever anything is STILL closed, so it
+    /// can never be read as permission: if this is present, <c>loss_day_closed_at</c> and
+    /// <c>loss_symbols_closed</c> are both absent, and that is what makes them a pair worth reading.
+    /// </summary>
+    public DateTimeOffset? LossReopenedAt { get; init; }
+
+    /// <summary>
     /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the
     /// tool takes no model flag, or nothing has named one and it runs on its own configuration.
     ///

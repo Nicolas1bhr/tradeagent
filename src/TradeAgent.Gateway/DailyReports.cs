@@ -367,10 +367,15 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // this app wrote — so it belongs in a report that asks the platform nothing.
         var closed = gateway.ClosureToday();
         var flattened = gateway.FlattenStateToday();
+        var reopen = gateway.ReopenReading();
         return new ReportPerformance
         {
             FlattenState = flattened.State,
             FlattenWhy = flattened.Why,
+            ReopensAt = reopen.At,
+            ReopenHeld = reopen.Held,
+            ReopenedAt = reopen.ReopenedAt,
+            ReopenedWhy = reopen.ReopenedWhy,
             Allocations = Cap(allocations, ListShown, "allocation"),
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,

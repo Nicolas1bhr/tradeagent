@@ -747,7 +747,7 @@ The seven:
 **The two loss limits are the only ones about what has happened rather than about what is being
 sent**, and they are in your account's currency: once the day is down by the amount you set — money
 already lost plus what your open positions are down right now — the AI is refused every order that
-could take on more, until midnight UTC, and once one position is down by the per-position amount it
+could take on more, and once one position is down by the per-position amount it
 may not be added to. **Closing or reducing a position is never refused by them.** Both start at **0**,
 which means not enforced — but you cannot choose either real-money mode until you have set a daily
 one, and the refusal says so, because nobody is watching the day for you.
@@ -759,12 +759,20 @@ apart agree that a limit is breached, TradeAgent records it: the Safety page the
 two boxes, the daily report says since when, and the AI is told the same thing in its own words. One
 odd price does not close a day; two readings that agree do.
 
-**Once the day is closed it stays closed until the next UTC day**, and that is deliberate. It does
-not reopen because the AI closed the losing position at a smaller loss, because TradeAgent was
-restarted, or because you raised the limit afterwards — those are all the same day, and a limit that
-unwound itself the moment the number moved would not be a limit. There is no command the AI can send
-that reopens the day. If you want it trading again today, the honest answer is that this build does
-not offer one — the day reopens at UTC midnight.
+**Once it is closed it stays closed for at least 24 hours**, and that is deliberate. It does not
+reopen because the AI closed the losing position at a smaller loss, because TradeAgent was restarted,
+or because you raised the limit afterwards — those are all the same event, and a limit that unwound
+itself the moment the number moved would not be a limit. There is no command the AI can send that
+reopens anything, and no button here either.
+
+**TradeAgent reopens it itself, and only once it has looked.** It used to lift at the next UTC
+midnight, which meant a limit reached at 23:58 was two minutes of pause on an account that had just
+been closed out. It now lasts a full day from the moment the breach was confirmed, and even then it
+lifts only when TradeAgent can see that a fresh reading of your platform shows nothing open on it,
+that everything it sent when it closed your book is accounted for, and that this computer's clock has
+not been moved backwards. The Safety page and the daily report both say the earliest it can lift, and
+if something is in the way they say what — those are the cases where you have to look, because
+waiting will not clear them. When it does lift, TradeAgent writes that down too, with what it checked.
 
 **And TradeAgent closes your open positions.** A budget about what has already been lost that left
 the losing position open would go on losing, so the moment a breach is confirmed TradeAgent cancels

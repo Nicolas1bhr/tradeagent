@@ -836,6 +836,33 @@ public sealed record LossToday
     public string? FlattenWhy { get; init; }
 
     /// <summary>
+    /// THE EARLIEST INSTANT A STANDING CLOSURE MAY BE LIFTED, or null — either because nothing is
+    /// closed, or because something other than the passing of time is holding it and
+    /// <see cref="ReopenHeld"/> says what.
+    ///
+    /// <para>It is the EARLIEST and never a promise: the reopen also needs a fresh reading of the
+    /// platform's book, which no surface takes. An owner told a time that then passed with nothing
+    /// happening would read the software as broken, so the word on every surface is "earliest".</para>
+    /// </summary>
+    public DateTimeOffset? ReopensAt { get; init; }
+
+    /// <summary>
+    /// What is holding a closure that has already served its time — an unresolved flatten, an order
+    /// this app cannot account for, a clock that went backwards. Null while nothing is.
+    /// </summary>
+    public string? ReopenHeld { get; init; }
+
+    /// <summary>
+    /// WHEN THE LAST CLOSURE WAS LIFTED, or null. ABSENT whenever anything is still closed: a scope
+    /// that reopened on Tuesday and closed again on Wednesday has not reopened, and this field
+    /// saying otherwise beside a refusal is the disagreement the records exist to prevent.
+    /// </summary>
+    public DateTimeOffset? ReopenedAt { get; init; }
+
+    /// <summary>The receipt's own sentence, written once onto it. Null while there is none.</summary>
+    public string? ReopenedWhy { get; init; }
+
+    /// <summary>
     /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
     /// a ceiling and not a threshold to cross — so it is <c>&gt;=</c>, and an UNKNOWN is never
     /// "reached": it is refused by its own branch, with its own sentence, because "we could not work
@@ -905,12 +932,26 @@ public sealed record LossToday
         var parts = new List<string>();
         if (DayClosedWhy is { Length: > 0 } why) parts.Add(why);
         if (SymbolsClosed.Count > 0)
-            parts.Add($"Closed to new positions for the rest of the UTC day: {string.Join(", ", SymbolsClosed)}.");
+            parts.Add($"Closed to new positions until TradeAgent reopens them: {string.Join(", ", SymbolsClosed)}.");
 
-        // WHAT WAS DONE ABOUT IT, LAST AND IN ITS OWN WORDS. It is the flatten's own sentence rather
-        // than one composed here, for the reason the closure's is: it names what was actually closed
-        // and what was not, and a sentence recomposed per surface would quietly say something else.
+        // WHAT WAS DONE ABOUT IT, IN ITS OWN WORDS. It is the flatten's own sentence rather than one
+        // composed here, for the reason the closure's is: it names what was actually closed and what
+        // was not, and a sentence recomposed per surface would quietly say something else.
         if (FlattenWhy is { Length: > 0 } did) parts.Add(did);
+
+        // AND WHEN IT LIFTS, WHICH IS THE PART AN OWNER AND AN AGENT BOTH PLAN AROUND. Until
+        // U-reopen-1 this needed no sentence: the answer was midnight, and every surface said so.
+        // Now it is a decision with conditions, so the honest answer is either the EARLIEST instant
+        // or the thing that is standing in the way — never a time nothing is going to honour.
+        if (ReopenHeld is { Length: > 0 } stuck)
+            parts.Add($"It will not reopen yet: {stuck}.");
+        else if (ReopensAt is { } when)
+            parts.Add($"TradeAgent reopens it by itself, at the earliest {when.UtcDateTime:yyyy-MM-dd HH:mm} UTC, "
+                      + "once it can see your book is flat and everything it sent is accounted for. There is "
+                      + "nothing to press and no command that lifts it sooner.");
+
+        // A REOPEN IS ITS OWN NEWS, and it is said only when nothing is closed — see ReopenedAt.
+        if (ReopenedWhy is { Length: > 0 } back) parts.Add(back);
 
         return parts.Count == 0 ? null : string.Join(" ", parts);
     }

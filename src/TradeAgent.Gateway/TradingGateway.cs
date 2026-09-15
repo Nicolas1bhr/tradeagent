@@ -849,12 +849,15 @@ public sealed class TradingGateway : IAsyncDisposable
         // without it would show an open day on every surface while the gateway went on refusing.
         var closed = ClosureToday();
         var flattened = FlattenStateToday();
+        var reopen = ReopenReading();
 
         var r = Settings.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced with
         {
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
-            FlattenState = flattened.State, FlattenWhy = flattened.Why
+            FlattenState = flattened.State, FlattenWhy = flattened.Why,
+            ReopensAt = reopen.At, ReopenHeld = reopen.Held,
+            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
         };
 
         if (positions is null)
@@ -866,7 +869,9 @@ public sealed class TradingGateway : IAsyncDisposable
                     $"your open positions could not be read ({ex.Message})") with
                 {
                     DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
-                    FlattenState = flattened.State, FlattenWhy = flattened.Why
+                    FlattenState = flattened.State, FlattenWhy = flattened.Why,
+                    ReopensAt = reopen.At, ReopenHeld = reopen.Held,
+                    ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
                 };
             }
         }
@@ -882,7 +887,9 @@ public sealed class TradingGateway : IAsyncDisposable
             positions, LastQuote, _instrumentCache) with
         {
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
-            FlattenState = flattened.State, FlattenWhy = flattened.Why
+            FlattenState = flattened.State, FlattenWhy = flattened.Why,
+            ReopensAt = reopen.At, ReopenHeld = reopen.Held,
+            ReopenedAt = reopen.ReopenedAt, ReopenedWhy = reopen.ReopenedWhy
         };
     }
 
@@ -1177,6 +1184,9 @@ public sealed class TradingGateway : IAsyncDisposable
             LossDayClosedAt = loss.DayClosedAt,
             LossSymbolsClosed = loss.SymbolsClosed.Count > 0 ? loss.SymbolsClosed : null,
             LossFlatten = loss.FlattenState,
+            LossReopensAt = loss.ReopensAt,
+            LossReopenHeld = loss.ReopenHeld,
+            LossReopenedAt = loss.ReopenedAt,
             AiModel = ai.Model
         };
     }
@@ -1790,9 +1800,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// flatten's own record is what says where the owner's money went. They are deliberately two
     /// pieces of code: a gate that could send an order would be a gate that could be made to send one.
     ///
-    /// IT IS NOT A KILL SWITCH AND REMOVES NO PERMISSION. Nothing is written by THIS method, the mode
-    /// is untouched, and the next UTC day starts clean — the same day <c>trade pnl</c> and the
-    /// Performance card mean by "today" (<see cref="StartOfDay"/>).
+    /// IT IS NOT A KILL SWITCH AND REMOVES NO PERMISSION. Nothing is written by THIS method and the
+    /// mode is untouched. It does NOT end at midnight: a confirmed closure lasts at least
+    /// <see cref="GatewayOptions.LossMinClosure"/> and is lifted by a receipt the watch writes
+    /// (<c>LossReopen</c>). The day <c>trade pnl</c> and the Performance card mean by "today" is
+    /// still the UTC day (<see cref="StartOfDay"/>), and the two are deliberately different things:
+    /// the FIGURE starts again at midnight, the CLOSURE does not.
     ///
     /// A BUDGET OF ZERO READS NOTHING. Both at zero and the ledger is not touched, the instrument
     /// list is not asked for and nothing can refuse — the rule <c>MaxNotionalPerOrder</c> has, for
@@ -2058,8 +2071,8 @@ public sealed class TradingGateway : IAsyncDisposable
     ///
     /// <para><b>Two agreeing pulls close a day.</b> A single print through a budget refuses the order
     /// in front of it — that is the admission gate, on first sight, with no tolerance, and it is
-    /// cheap and reversible. CLOSING the day is neither: it lasts until the next UTC day and nothing
-    /// undoes it. So this writes only when a SECOND, DISTINCT pull inside
+    /// cheap and reversible. CLOSING the day is neither: it lasts at least a day and is lifted only
+    /// by a receipt this gateway writes after looking (<c>LossReopen</c>). So this writes only when a SECOND, DISTINCT pull inside
     /// <see cref="GatewayOptions.LossBreachConfirmWithin"/> agrees, and any pull that disagrees drops
     /// the sighting. One bad print therefore costs an order and not a day.</para>
     ///
@@ -2445,34 +2458,39 @@ public sealed class TradingGateway : IAsyncDisposable
     /// state an owner and an agent both have to be able to plan around, and "waiting on" is the only
     /// part of it that tells them whether waiting is what to do.</para>
     /// </summary>
-    string? HeldBy(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at, int epoch,
-        IReadOnlyList<PositionInfo> positions, (DateTimeOffset HighWater, bool Suspect) clock)
+    string? HeldBy(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at, int? epoch,
+        IReadOnlyList<PositionInfo>? positions, (DateTimeOffset HighWater, bool Suspect) clock)
     {
         // THE CLOCK FIRST, because every other line here is an arithmetic over instants it produced.
-        if (clock.Suspect || at < clock.HighWater)
-            return $"this computer's clock reads {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC, which is BEFORE the "
-                   + $"{clock.HighWater.UtcDateTime:yyyy-MM-dd HH:mm} UTC TradeAgent has already seen — a clock "
-                   + "that moved backwards cannot be used to decide that a closure has run its course";
+        if (clock.Suspect || at < clock.HighWater) return ClockBackwards(at, clock.HighWater);
 
         if (at < eligible)
             return $"the closure runs until {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC";
 
-        // THE READING HAS TO BELONG TO THE CONNECTION IT WAS TAKEN ON. A reconnect between the pull
-        // and this line means the gateway was not being told about the account for a while, so the
-        // positions in hand are a memory of a book rather than a reading of it — the rule the
-        // breach's own marks follow, and here it is the difference between "flat" and "was flat".
-        if (epoch != _connectionEpoch)
-            return "your platform reconnected while TradeAgent was checking, so what it has read of "
-                   + "your book is from before that";
+        // THE BOOK IS ONLY ASKED ABOUT BY THE TICK, which is the only caller that has just read it.
+        // A SURFACE passes null and says nothing about the platform: the screen and the daily report
+        // ask it nothing (the report asks it nothing by design), and a "reopens at" that quietly
+        // spent a connector round trip on the five-second pass would be a different product. What a
+        // surface can state is everything below that is a row this app wrote.
+        if (positions is not null)
+        {
+            // THE READING HAS TO BELONG TO THE CONNECTION IT WAS TAKEN ON. A reconnect between the
+            // pull and this line means the gateway was not being told about the account for a while,
+            // so the positions in hand are a memory of a book rather than a reading of it — the rule
+            // the breach's own marks follow, and the difference between "flat" and "was flat".
+            if (epoch != _connectionEpoch)
+                return "your platform reconnected while TradeAgent was checking, so what it has read of "
+                       + "your book is from before that";
 
-        // FLATNESS IS FRESH EVIDENCE AND NEVER A TERMINAL STATE. The flatten's record says what was
-        // true when it finished; this says what is true now. They disagree exactly when something
-        // has moved — an order filled late, or the owner opened something by hand — and "something
-        // moved" is the only case that matters.
-        var stillOpen = InScope(breach, positions).Where(p => p.Quantity != 0m).ToList();
-        if (stillOpen.Count > 0)
-            return "your platform still shows "
-                   + string.Join(", ", stillOpen.Select(p => $"{p.Symbol} {p.Quantity}")) + " open";
+            // FLATNESS IS FRESH EVIDENCE AND NEVER A TERMINAL STATE. The flatten's record says what
+            // was true when it finished; this says what is true now. They disagree exactly when
+            // something has moved — an order filled late, or the owner opened something by hand —
+            // and "something moved" is the only case that matters.
+            var stillOpen = InScope(breach, positions).Where(p => p.Quantity != 0m).ToList();
+            if (stillOpen.Count > 0)
+                return "your platform still shows "
+                       + string.Join(", ", stillOpen.Select(p => $"{p.Symbol} {p.Quantity}")) + " open";
+        }
 
         // AND WHAT THE APP DID ABOUT THE CLOSURE HAS TO HAVE ANSWERED. A flat book with a flatten
         // that could not confirm itself is the state a killed run leaves; the sweep is what finishes
@@ -2596,6 +2614,104 @@ public sealed class TradingGateway : IAsyncDisposable
     }
 
     /// <summary>
+    /// THE CLOCK MARK AS IT STANDS, WITHOUT RAISING IT — what a surface asks. Suspect when a suspect
+    /// row was ever written, or when the clock reads below the mark right now.
+    /// </summary>
+    (DateTimeOffset HighWater, bool Suspect) ClockAsRead(string accountId, DateTimeOffset at)
+    {
+        if (ClockSuspect(accountId) is not null) return (at, true);
+
+        try
+        {
+            var mark = _db.GetKv(LossReopen.ClockKey(Connector.Id, accountId)) is { } json
+                ? Json.Read<LossClockMark>(json)
+                : null;
+            return mark is null ? (at, false) : (mark.At, at < mark.At);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (at, true);
+        }
+    }
+
+    /// <summary>
+    /// WHEN A STANDING CLOSURE MAY EARLIEST BE LIFTED, WHAT IS HOLDING IT, AND WHEN THE LAST ONE WAS
+    /// LIFTED — the whole of what the surfaces say about reopening, from one reading.
+    ///
+    /// <para><c>At</c> is the computed eligibility instant of the closure that governs — the LATEST
+    /// of the standing ones — and it is ABSENT when something other than the passing of time is
+    /// holding the scope, which is when <c>Held</c> carries the sentence. A surface that showed an
+    /// instant while a flatten was unresolved would be promising an owner a time nothing is going to
+    /// honour.</para>
+    ///
+    /// <para><c>ReopenedAt</c> is the receipt's own instant and is ABSENT whenever ANYTHING is still
+    /// closed. It is not derived from a key or a day: an account that reopened on Tuesday and closed
+    /// again on Wednesday has not reopened, and a surface saying otherwise beside a refusal is the
+    /// disagreement this whole family of records exists to prevent.</para>
+    ///
+    /// <para>It asks the platform NOTHING. Every condition it can state is a row this app wrote; the
+    /// fresh book read belongs to the tick, and its absence here is why <c>At</c> is the EARLIEST it
+    /// could be and never a promise.</para>
+    /// </summary>
+    public (DateTimeOffset? At, string? Held, DateTimeOffset? ReopenedAt, string? ReopenedWhy) ReopenReading()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return (null, null, null, null);
+
+        var now = Now;
+        try
+        {
+            var standing = OpenClosures(account);
+            if (standing.Count == 0)
+            {
+                var receipt = LatestReceipt(account);
+                return (null, null, receipt?.At, receipt?.Why);
+            }
+
+            // THE CLOCK IS THE ONE HOLDER THAT FIRES BEFORE THE INSTANT ARRIVES, so it is asked
+            // first: an instant computed off a clock this app does not trust is not an instant.
+            var clock = ClockAsRead(account, now);
+            if (clock.Suspect)
+                return (null, ClockSuspect(account)?.Why ?? ClockBackwards(now, clock.HighWater), null, null);
+
+            DateTimeOffset? at = null;
+            foreach (var breach in standing)
+            {
+                var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, _opt.LossMinClosure);
+
+                // Only once the instant has passed can anything else be what is holding it — before
+                // that, "waiting" IS the answer and naming the flatten as well would be noise.
+                if (now >= eligible && HeldBy(breach, eligible, now, null, null, clock) is { } reason)
+                    return (null, reason, null, null);
+
+                if (at is null || eligible > at) at = eligible;
+            }
+
+            return (at, null, null, null);
+        }
+        catch (GatewayDeniedException ex) { return (null, ex.Message, null, null); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (null, $"TradeAgent could not work out when this lifts ({ex.Message})", null, null);
+        }
+    }
+
+    /// <summary>The most recent receipt on this account and platform, or null because there is none.</summary>
+    LossReopenRecord? LatestReceipt(string accountId)
+    {
+        LossReopenRecord? latest = null;
+        foreach (var (_, value) in _db.KvStartingWith($"{LossReopen.Prefix}{LossReopen.Scope(Connector.Id, accountId)}:"))
+        {
+            LossReopenRecord? rec;
+            try { rec = Json.Read<LossReopenRecord>(value); }
+            catch (Exception) { continue; }
+            if (rec is not null && (latest is null || rec.At > latest.At)) latest = rec;
+        }
+
+        return latest;
+    }
+
+    /// <summary>
     /// The clock mark's own verdict for the SURFACES, which take no tick: the suspect row if one was
     /// ever written, and null otherwise. Read-only — nothing outside the tick writes either row.
     /// </summary>
@@ -2648,6 +2764,12 @@ public sealed class TradingGateway : IAsyncDisposable
         LossBreachRecord? After(LossBreachRecord? rec) =>
             rec is not null && rec.ConfirmedAt > stored.CreatedAt ? rec : null;
     }
+
+    /// <summary>What a clock that has gone backwards is said with, in one place, to every reader.</summary>
+    static string ClockBackwards(DateTimeOffset at, DateTimeOffset highWater) =>
+        $"this computer's clock reads {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC, which is BEFORE the "
+        + $"{highWater.UtcDateTime:yyyy-MM-dd HH:mm} UTC TradeAgent has already seen — a clock that moved "
+        + "backwards cannot be used to decide that a closure has run its course";
 
     /// <summary>The positions one closure is about: the whole book, or just its own instrument.</summary>
     static IEnumerable<PositionInfo> InScope(LossBreachRecord breach, IReadOnlyList<PositionInfo> positions) =>
@@ -2773,8 +2895,10 @@ public sealed class TradingGateway : IAsyncDisposable
             ConnectionEpoch = epoch,
             Marks = marks,
             Why = symbol is null
-                ? LossBreach.DaySentence(loss, budget, reading.Currency, at, reading.FeesUnknownFills)
-                : LossBreach.SymbolSentence(symbol, loss, budget, reading.Currency, at, reading.FeesUnknownFills)
+                ? LossBreach.DaySentence(loss, budget, reading.Currency, at, reading.FeesUnknownFills,
+                    _opt.LossMinClosure)
+                : LossBreach.SymbolSentence(symbol, loss, budget, reading.Currency, at,
+                    reading.FeesUnknownFills, _opt.LossMinClosure)
         };
 
     /// <summary>
@@ -5928,7 +6052,7 @@ public sealed class TradingGateway : IAsyncDisposable
         if (flat)
             return $"TradeAgent CLOSED YOUR OPEN POSITIONS because {what} was reached: {cancels}, "
                    + $"{legs.Count} position(s) were closed, and the account reads flat. It stays closed to new "
-                   + "risk until the next UTC day.";
+                   + "risk until TradeAgent reopens it.";
 
         var trouble = new List<string>();
         if (couldNotRead is { Length: > 0 }) trouble.Add(couldNotRead);
