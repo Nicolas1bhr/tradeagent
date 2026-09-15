@@ -5872,3 +5872,38 @@ names vs `main` → 0 removed, 1 added (1756 → 1757); scan clean before each c
 
 **NOT done, NOT verified:** no `[Collection]`; no assertion loosened or widened; no test deleted; no product behaviour changed and so no RED-first product test; no
 Windows box, no ATAS, no money. The hosted runners' verdict on this fix is the merge sha's CI, recorded below.
+
+## 2026-09-15 — U-promote-bounds landed: the referee refuses to judge a version whose frozen program declares no timeframe, data freshness or maximum decision age
+
+The hole `U-freshness` disclosed at its landing (the three declarations are optional and all-or-none in the language; a program declaring none emits an intent with no
+`Decision`, so the dispatch gate has nothing to refuse on), briefed the same hour on 2026-09-14 as one light item, built by one fresh builder. Merge `a816f1a`,
+2 commits (the item, then the report), 7 files, +445/−16. No schema rung. MONEY PATH: what may execute.
+
+- **No bounds, no promotion.** `Referee.Verdict` refuses a version whose RE-PARSED FROZEN PROGRAM declares none of the three, in a sentence naming `timeframe`,
+  `data_freshness` and `max_decision_age`; no promotion row is written, and `AllocationLine` marks a live allocation whose promotion carries none. RED (the bound-less
+  fixture is profitable over the holdout and was frozen before it, so it met every clause and promoted): `Failed …PromotionBoundsTests.A_version_that_declares_none_of_
+  the_three_is_not_promotable_and_no_row_is_written [32 ms] / a version declaring none of the three execution bounds was judged`; section 4 and the contract RED beside
+  it — `Not found: "NO EXECUTION BOUNDS"`, `Not found: "## U-promote-bounds"`. MUTANT (the check applied when `Standing` is READ instead of at the verdict): three tests
+  red; the one that separates the mutant from the fix is `A_promotion_already_recorded_without_bounds_still_stands` → `Assert.Equal() Failure: Expected: "promoted" /
+  Actual: "refused"` — the brief predicted `Assert.Null()` on the row; what the row-level claim actually separates is the promotion recorded BEFORE this rule, which
+  the mutant withdraws and the fix leaves standing (the builder's correction, kept).
+- **Choices, all in `CONTRACTS.md` under `## U-promote-bounds` and pinned by a test:** (a) the refusal is a failure to JUDGE (`RefereeVerdict.Ok` false) — no promotion
+  row at all, not even a recorded `refused`, which is a verdict about evidence where this is about the submission; (b) asked BEFORE the verdict charge, so a bound-less
+  version spends no verdict budget, reads no held-back bar, opens no boundary and wakes nobody; (c) `RequestVerdict` and `HoldoutFeed` unchanged — the rule is about
+  promotion, not about who may look at evidence; (d) the bounds come off the recorded source re-parsed, never off `strategy_version`'s columns; a source that no
+  longer parses falls through to the refusals `Verdict` already had; (e) NOTHING already promoted is invalidated — COUNCIL `:35` spends invalidation on a changed
+  ASSUMPTION, and this build's opinion about what may be judged is not one, so `Promotions.Standing` is untouched; (f) section 4 marks such an allocation
+  `NO EXECUTION BOUNDS`, names the three and says the dispatch gate cannot judge how stale its decisions are — the opposite of `WITHDRAWN`, never both; (g) the
+  language is unchanged, the three stay optional and all-or-none.
+- **Fixtures, no assertion loosened, no test deleted:** `RefereeVerdictTests`' `ProfitableText`/`LosingText` and `VerdictOverPipeTests`' `ProgramText` gained the three
+  declarations, because every test in those classes is about what happens after the referee agrees to judge; their version ids move; the duplicate
+  `ProfitableWithBounds` constant folded into `ProfitableText`, its test keeping its name and every assertion.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `51bf6e3` (the same commit before a rebase onto a one-line record no test reads;
+`git diff --stat 51bf6e3 cfb03b0 -- src tests docs` empty), Release: 0 warnings, 0 errors; Unit 1108 + Fault 320 + Integration 668 = 2096 passed, 0 failed, 1 skipped
+(Integration 11 m 5 s); touched classes 3× → PromotionBoundsTests 5, RefereeVerdictTests 12, VerdictOverPipeTests 1, all `Passed!`; names 1759 → 1764, 5 added,
+0 removed. Manager's gate at `a816f1a` (the reported tip; `src`/`tests` identical to the code tip `cfb03b0`; 0 behind `main` `8092667`), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1108/1108 (21 s), Fault 320/320 (1 m 25 s), Integration 668/669, 1 skipped (11 m 4 s) → 0 failed; names vs `main` → 0 removed, 5 added (sets 1759 → 1764; `[Fact]`/`[Theory]` 1727 → 1732); scan clean; no trailers; `rev-list --count` → 0; CI at `a816f1a`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** the declarations stay OPTIONAL in the parser (requiring them would refuse program texts this installation has already accepted; the brief
+excludes it); no runner on the order path, so no live or paper intent exists for this rule to gate; no promotion already recorded withdrawn, by code or by hand;
+section 4's new mark never seen on a screen, only asserted in the rendered text; no box, no ATAS, no money, no order, no venue.
