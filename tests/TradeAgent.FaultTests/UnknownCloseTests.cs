@@ -85,6 +85,63 @@ static class Unresolved
     public static readonly TimeSpan PressBudget = TimeSpan.FromSeconds(20);
 
     /// <summary>
+    /// THE SAME BUDGET, SIZED BY THE NUMBER OF LEGS THE PRESS WILL RUN — because
+    /// <see cref="PressBudget"/> is one number and a press's record-keeping is not.
+    ///
+    /// <para><b>The red this exists for.</b> CI run 34944735920, windows-latest, at the DOCS-ONLY
+    /// sha <c>44f33a4</c>: <c>OperatorEmergencyRecordTests.Close_all_with_a_healthy_connector_closes_
+    /// each_position_once_and_records_each</c> — a fixture ALREADY on the 20-second
+    /// <see cref="PressBudget"/> — failed <c>Assert.Empty()</c> on the broker's positions with
+    /// <c>[PositionInfo { Id = P-NQ, … Quantity = 1 … }]</c> after its first two assertions passed:
+    /// two targets, two closes on the wire. The press reached NQ's leg with the deadline already
+    /// gone, so the simulator refused the close before it read the book and the gateway recorded
+    /// UNKNOWN and flagged it. The product did the right thing; 20 seconds was the wrong number.</para>
+    ///
+    /// <para><b>The arithmetic, and it is the press's commit count rather than a guess.</b> Measured
+    /// on the dev Mac in Release by counting every commit <c>Database.Write</c> makes between
+    /// <c>RiskReducingScope.Begin</c> and the press returning: a CLOSE-all press makes 9 durable
+    /// commits for one position and 14 for two (12 of them before the second leg's close reaches the
+    /// wire); a CANCEL-all press makes 10 for one order and 13 for two. So <c>5 + 5 × legs</c> bounds
+    /// both shapes — 10 at one leg against 9 and 10 measured, 15 at two against 14 and 13 — and it is
+    /// the close-all's five-commits-per-leg that sets the slope.</para>
+    ///
+    /// <para><b>The other factor is the runner's worst commit, already quoted above: 2234 ms</b>
+    /// (U-press-win-3, ten bare one-row commits on the windows-latest image measuring 16-2234 ms).
+    /// <c>(5 + 5 × legs) × 2234 ms</c> is therefore 23 s for one leg, 34 s for two, 45 s for three —
+    /// and 20 s is short of ALL of them, which is why a two-leg fixture went red on a budget that had
+    /// been argued for a shape making eight commits.</para>
+    ///
+    /// <para><b>Why the red's own test spent 65 s,</b> from its trx rather than from a story: the
+    /// whole fixture makes 35 durable commits (21 in <c>Recovery.Ready</c> and the two places, 14 in
+    /// the press), and 65.58 s over 35 commits is 1874 ms each — inside the 16-2234 ms band measured
+    /// on that image, on a run whose whole Fault project averaged 8.6 s a test (2484.9 s over 289)
+    /// against 0.26 s here. The press's own 14 commits at that rate are 26 s against a 20 s budget,
+    /// so the deadline fell inside the press — between NQ's write-ahead row and NQ's close, which is
+    /// exactly the row the record named. It is the settle's-own-commits family of U-sweep-win,
+    /// U-press-settle-win and U-press-inflight-win, one term further along: not a press whose budget
+    /// a stalled disk ate, but a press whose budget was never sized for its own leg count.</para>
+    ///
+    /// <para><b>Reproduced on this Mac before it was changed,</b> by holding every one of the press's
+    /// commits for that same 2234 ms (a throwaway hook in <c>Database.Write</c>, reverted): the press
+    /// took 33.6 s, ES closed, and NQ came back
+    /// <c>Assert.Empty() Failure: Collection was not empty / Collection: [PositionInfo { Id = P-NQ,
+    /// AccountId = SIM-001, Symbol = NQ, Quantity = 1, AveragePrice = 112.50, UnrealizedPnl =  }]</c>
+    /// — the CI failure byte for byte, with the record saying
+    /// <c>op-close-…-1 NQ UNKNOWN needsRecon=True err='positions' could not be read, so the operation
+    /// was not started. Nothing was placed or cancelled. the operation deadline had already passed and
+    /// nothing was sent to the simulator.</c> No leg was abandoned unflagged, so nothing in the
+    /// product changed.</para>
+    ///
+    /// <para>Nothing is loosened: a budget is fixture setup and not an assertion, every assertion in
+    /// every moved fixture is byte-identical, and no fixture whose verdict IS the two-second promise
+    /// comes near this — those keep the simulator's own two seconds. NOT <c>Timing</c>: the verdict is
+    /// still what the press DID, and this number exists to keep the runner's clock out of it.</para>
+    /// </summary>
+    /// <param name="legs">Positions a close-all will close, or orders a cancel-all will cancel.</param>
+    public static TimeSpan PressBudgetFor(int legs) =>
+        TimeSpan.FromSeconds(Math.Ceiling((5 + 5 * legs) * 2.234));
+
+    /// <summary>
     /// A long position, and an agent's close of it that the broker ACCEPTED and never acknowledged:
     /// the order is RESTING at the platform and the record is UNKNOWN.
     ///
