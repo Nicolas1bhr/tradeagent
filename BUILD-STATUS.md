@@ -5770,3 +5770,35 @@ Manager's gate at `65ba93f` (landed as `8cb95de` after a docs-only rebase, `src`
 **NOT done, NOT verified:** no runner emits a live or paper intent, so the deployment this gate ceilings does not exist — the gate is bound end to end and the
 limit is stated in `CONTRACTS.md`; `docs/USER-GUIDE.md` untouched (the Capital card is the owner's only route); no screen, no box, no ATAS, no money, nothing
 sent to any venue. Not this unit: parentage, exploration, retirement (`U-allocator-2`); the boundary event and the sealed assessments; a balance-derived ceiling.
+
+## 2026-09-15 — U-peer-row-ubuntu landed: the fixture handed the pipe over instead of racing the connector's teardown; the product was right on every platform
+
+A hosted-runner red judged under step 6 (ubuntu-latest at `4961989`, a test-only sha; the same test red once on macos-latest and once on a Mac, never twice in a
+row), briefed 2026-09-14; the first fixer killed by the session limit before its first commit, a FRESH fixer re-briefed from the file on disk this morning. Merge
+`69657b2`, 3 commits, TEST-ONLY (`git diff main -- src/` empty): `tests/Shared/Harness.cs` +71, `PeerRowTests.cs`, `BridgeRoundTripTests.cs`. No assertion added,
+removed or altered; no timeout raised; no `Timing` membership — the verdict needs no runner clock, only that the peer reached the connector at all.
+
+- **Judged first — the SECOND wait, on the new peer's silence; the first never timed out.** The shipped body did not reproduce in 60 iterations under 12 CPU hogs
+  plus another worktree's suite. With the wait SPUN instead of polled every 50 ms — what the poll is worth where the connector's own teardown loses the CPU — it
+  failed 40 in 40, all on the second wait, the row still reading the previous peer's `… could not prove it holds this installation's bridge secret (…/bridge.auth)`
+  with `quiet.IsConnected = True`; and 40 in 40 recovered the moment a second client connected (hogs killed, `pgrep -x yes` → 0).
+- **The measured mechanism:** off Windows a named pipe is a Unix-domain socket — a connect to the single BUSY instance succeeds in 0 ms into the backlog and dies
+  when the accept loop's `finally` disposes that instance, so the next instance never sees the peer (nothing in 2000 ms) while the client still reports itself
+  connected; a read on the orphan settles at once with 0 bytes, on a live peer not within 500 ms. Windows retries on `ERROR_PIPE_BUSY`, hence green there. The
+  product masks nothing: the newcomer never arrived.
+- **Moved, 3 of 8:** `A_newly_arrived_silent_peer_…` (the red) and `A_peer_inside_the_auth_grace_…` hand over through `HandOver.ToASilentPeer`, reconnecting on
+  that end-of-stream and ONLY on it, so real masking still fails with the row quoted; `An_authenticated_peer_that_has_not_said_hello_…` through `PeerAsync`, which
+  redials an unanswered challenge (8 attempts) as `Redial` already does. **Not at risk, 5 of 8:** one connection each on a fresh connector with nothing being
+  disposed, where a connect that beats the accept loop gets `ENOENT`, which the client's own retry covers. **Beyond the class:**
+  `BridgeRoundTripTests.A_newly_arrived_silent_peer_…_refusal`, the identical shape and the macos red of run 34872880789, fixed the same way. Green after: the
+  fixed body under the same spin and load, 0 in 40.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `179e23c` (rebased onto `8cb95de` mid-flight; the first gate at `4455cd8`
+green too), Release: build `--no-incremental` → 0 warnings, 0 errors; Integration ×3 → 668 passed, 1 skipped, 0 failed each; Unit 1097 + Fault 304 + Integration
+668 = 2069 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 0 added. Runner: draft PR #21, run 34962898676 at `4455cd8` (ubuntu 12 m 11 s, macos
+14 m 17 s, windows 41 m 6 s, package 4 m 23 s) and run 34967216164 at `179e23c`, ALL FOUR GREEN both times; the PR closed after.
+Manager's gate at `69657b2` (the reported tip `036dcc0` rebased onto `3725179`, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1097/1097 (21 s), Fault 304/304 (1 m 24 s), Integration 668/669, 1 skipped (11 m 4 s) → 0 failed; names vs `main` → 0 removed, 0 added (sets 1741 = 1741; `[Fact]`/`[Theory]` 1709 = 1709); the scan flagged the product's own sentence "bridge secret" and the harness identifiers `cred.Secret`/`WrongSecret` — no value, judged false positives, excluded by name; no trailers; `rev-list --count` → 0; CI at `69657b2`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no product code, so no RED-first test and no mutant; the SHIPPED 50 ms-poll body was never reproduced on this Mac (a starved-thread-pool
+attempt stalled the test host and was killed by PID) — the runner logs stay its only sighting; the two fixtures moved beside the red have no red of their own,
+only the same shape and measurement; no `Timing`, no box, no ATAS, no money.
