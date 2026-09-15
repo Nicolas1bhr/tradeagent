@@ -2019,7 +2019,16 @@ public sealed class TradingGateway : IAsyncDisposable
     /// <param name="Closed">The keys this pass WROTE. Empty on a first sighting, and empty once the row exists.</param>
     /// <param name="Why">Why nothing was measured, or why the figure could not be worked out. Null when it could.</param>
     public sealed record LossWatchPass(DateTimeOffset At, long Pull, bool Ran, bool DayReached,
-        IReadOnlyList<string> SymbolsReached, IReadOnlyList<string> Closed, string? Why);
+        IReadOnlyList<string> SymbolsReached, IReadOnlyList<string> Closed, string? Why)
+    {
+        /// <summary>
+        /// The receipt keys this pass WROTE — the closures it let back in. Empty on every pass that
+        /// reopened nothing, which is almost all of them. Init-only rather than a positional
+        /// parameter for the reason the AI fields on <c>GatewayStatus</c> are: every other
+        /// construction site of this record means to say nothing about it.
+        /// </summary>
+        public IReadOnlyList<string> Reopened { get; init; } = [];
+    }
 
     /// <summary>A breach seen once: which pull saw it, and when. Two of these close a day.</summary>
     readonly record struct LossSighting(long Pull, DateTimeOffset At);
@@ -2069,7 +2078,18 @@ public sealed class TradingGateway : IAsyncDisposable
         var at = Now;
         var r = Settings.Risk;
 
-        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m)
+        // A CLOSURE THAT IS STANDING IS WORK THIS TICK OWES WHATEVER THE BUDGETS NOW SAY. With
+        // neither budget set nothing is measured and the platform is not asked — the rule
+        // MaxNotionalPerOrder has, and the reason a status on an install with no budgets costs
+        // nothing. But a scope closed by a breach is refused off the RECORD, ahead of the zero
+        // check, so an owner who set both budgets to zero after a closure would have closed the
+        // account for ever: the only code that can lift it would have returned on this line. It is a
+        // kv read on a key this app wrote, and it asks the platform nothing.
+        var closuresStanding = false;
+        try { closuresStanding = OpenClosures(ClosureAccountId).Count > 0; }
+        catch (GatewayDeniedException) { closuresStanding = true; }
+
+        if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m && !closuresStanding)
             return Idle(at, "neither loss budget is set, so nothing is measured");
 
         // The epoch READ FIRST, so a disconnect that happens during the pulls invalidates what this
@@ -2257,6 +2277,12 @@ public sealed class TradingGateway : IAsyncDisposable
     LossWatchPass Measured(LossToday loss, string accountId, RiskPolicy r, DateTimeOffset at, long pull,
         int epoch, IReadOnlyList<PositionInfo> positions, IReadOnlyList<LossBreachMark> notes)
     {
+            // THE REOPEN IS ASKED FIRST, AND IT IS ABOUT THE PAST. A scope that has served its
+            // closure, on a book this pull has just read flat, is let back in BEFORE this pull's own
+            // figure is judged — so a reopened scope is measured against the day it is actually in,
+            // by the same rules as any other, and can close again on its own two agreeing pulls.
+            var reopened = ReopenWhatHasEarnedIt(accountId, at, epoch, positions);
+
             var reached = positions
                 .Where(p => p.Quantity != 0 && loss.TradeReached(p.Symbol))
                 .Select(p => p.Symbol).Distinct(StringComparer.Ordinal).ToList();
@@ -2302,7 +2328,141 @@ public sealed class TradingGateway : IAsyncDisposable
             foreach (var p in positions.Where(p => p.Quantity != 0 && !reached.Contains(p.Symbol)))
                 _sightings.Remove(LossBreach.SymbolKey(accountId, p.Symbol, at));
 
-            return Settled(new LossWatchPass(at, pull, true, loss.DayReached, reached, closed, null));
+            return Settled(new LossWatchPass(at, pull, true, loss.DayReached, reached, closed, null)
+            {
+                Reopened = reopened
+            });
+    }
+
+    /// <summary>
+    /// EVERY CLOSURE THAT HAS EARNED ITS WAY BACK IN, LET BACK IN — the only code in this product
+    /// that ends a closure, and it runs on the watch's tick under the dispatch gate.
+    ///
+    /// <para><b>Why the tick and not the gate.</b> The admission gate is the piece of code an agent
+    /// can reach: it is called with the agent's own order, on the agent's own timing, as often as
+    /// the agent likes. A gate that wrote the receipt would be a gate that could be made to write
+    /// it, and the evidence a reopen rests on — a fresh flat read of the platform's book — is not
+    /// something to collect on the path of an order that is asking to be let through. So the gate
+    /// only ever READS the receipt, and the tick is the only writer.</para>
+    ///
+    /// <para><b>Why a row and not an arithmetic.</b> Eligibility is a pure function of a record that
+    /// is never rewritten, so anything could compute it. What cannot be computed afterwards is what
+    /// the book looked like at the instant the decision was made, and that is exactly what an owner
+    /// reading "TradeAgent let it trade again" has to be able to check. The receipt carries it.</para>
+    ///
+    /// <para><b>Everything here fails CLOSED.</b> A closure it cannot read, a reason it cannot
+    /// evaluate, a row it cannot write: each one leaves the scope closed and the gate refusing. The
+    /// only path that opens anything is the one where every condition was positively met.</para>
+    /// </summary>
+    List<string> ReopenWhatHasEarnedIt(string accountId, DateTimeOffset at, int epoch,
+        IReadOnlyList<PositionInfo> positions)
+    {
+        var written = new List<string>();
+
+        IReadOnlyList<LossBreachRecord> standing;
+        try { standing = OpenClosures(accountId); }
+        catch (GatewayDeniedException ex)
+        {
+            // A CLOSURE THAT CANNOT BE READ IS NOT A CLOSURE THAT MAY BE LIFTED. The gate is
+            // refusing off the same rows, and this leaves it refusing.
+            _log.TryEngineering("Gateway", "loss_reopen_closures_unreadable", "warn",
+                metadataJson: Json.Write(new { account = accountId, reason = ex.Message }));
+            return written;
+        }
+
+        if (standing.Count == 0) return written;
+
+        foreach (var breach in standing)
+        {
+            var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, _opt.LossMinClosure);
+            if (HeldBy(breach, eligible, at, epoch, positions) is { } held)
+            {
+                _log.TryEngineering("Gateway", "loss_reopen_held", metadataJson: Json.Write(new
+                {
+                    breach = LossBreach.KeyFor(breach), eligible, held
+                }));
+                continue;
+            }
+
+            var key = LossReopen.KeyFor(Connector.Id, breach);
+            var record = new LossReopenRecord
+            {
+                Account = breach.Account,
+                Connector = Connector.Id,
+                Mode = Settings.Mode,
+                Day = breach.Day,
+                Symbol = breach.Symbol,
+                BreachKey = LossBreach.KeyFor(breach),
+                ConfirmedAt = breach.ConfirmedAt,
+                EligibleAt = eligible,
+                MinClosure = _opt.LossMinClosure,
+                At = at,
+                ConnectionEpoch = epoch,
+                PositionsRead = [.. InScope(breach, positions).Select(p => $"{p.Symbol} {p.Quantity}")],
+                FlattenWasFlat = FlattenFlagFor(breach),
+                Why = LossReopen.Sentence(breach, eligible, at, _opt.LossMinClosure)
+            };
+
+            bool inserted;
+            try { inserted = _db.AddKvOnce(key, Json.Write(record)); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // THE ROW IS THE REOPEN. A receipt that could not be written is a scope that stays
+                // closed, which is the safe direction, and the tick will ask again in fifteen seconds.
+                _log.TryEngineering("Gateway", "loss_reopen_record_failed", "error", ex: ex,
+                    metadataJson: Json.Write(new { key }));
+                continue;
+            }
+
+            if (!inserted)
+            {
+                _log.TryEngineering("Gateway", "loss_reopen_already_written", metadataJson: Json.Write(new { key }));
+                continue;
+            }
+
+            written.Add(key);
+            _log.Activity(record.Why);
+            _log.TryEngineering("Gateway", "loss_reopened", "warn", metadataJson: Json.Write(new
+            {
+                key, breach = record.BreachKey, eligible, record.ConnectionEpoch, record.PositionsRead
+            }));
+        }
+
+        if (written.Count > 0) StateChanged?.Invoke();
+        return written;
+    }
+
+    /// <summary>
+    /// WHY THIS CLOSURE MAY NOT BE LIFTED YET, or null because nothing is holding it.
+    ///
+    /// <para>One method, so that the tick which acts and the surfaces which explain cannot drift
+    /// into two different answers. It is deliberately a SENTENCE rather than a flag: "closed" is a
+    /// state an owner and an agent both have to be able to plan around, and "waiting on" is the only
+    /// part of it that tells them whether waiting is what to do.</para>
+    /// </summary>
+    string? HeldBy(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at, int epoch,
+        IReadOnlyList<PositionInfo> positions)
+    {
+        if (at < eligible)
+            return $"the closure runs until {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC";
+
+        return null;
+    }
+
+    /// <summary>The positions one closure is about: the whole book, or just its own instrument.</summary>
+    static IEnumerable<PositionInfo> InScope(LossBreachRecord breach, IReadOnlyList<PositionInfo> positions) =>
+        positions.Where(p => breach.Symbol is null
+                             || string.Equals(p.Symbol, breach.Symbol, StringComparison.Ordinal));
+
+    /// <summary>
+    /// What the flatten said about this breach, or null because none ever ran — which is the honest
+    /// answer for a breach confirmed with nothing open. An unreadable record answers false, so it
+    /// holds the closure rather than lifting it.
+    /// </summary>
+    bool? FlattenFlagFor(LossBreachRecord breach)
+    {
+        try { return ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach))?.Flat; }
+        catch (GatewayDeniedException) { return false; }
     }
 
     /// <summary>

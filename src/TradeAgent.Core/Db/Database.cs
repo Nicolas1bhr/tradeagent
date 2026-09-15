@@ -1209,6 +1209,27 @@ public sealed class Database : IDisposable
     });
 
     /// <summary>
+    /// WRITE-ONCE, ENFORCED BY SQLITE AND NOT BY THE CALLER — <c>INSERT … ON CONFLICT DO NOTHING</c>,
+    /// answering whether this call is the one that inserted.
+    ///
+    /// <para><see cref="SetKv"/> is an UPSERT, so every "written once and never updated" record in
+    /// this database is a rule kept by the code that reads before it writes. That is enough where
+    /// one writer holds one lock. It is not enough for a row whose existence ENDS a refusal
+    /// (<c>LossReopen</c>): there the second writer would not just overwrite a value, it would move
+    /// the instant a reopen claims to have happened at and replace the evidence underneath it, and
+    /// a check-then-write cannot state that it did not — only the insert can.</para>
+    ///
+    /// <para>False means the key was already there and NOTHING was written. It is not an error: it
+    /// is the answer a caller races for and loses, and the row that is already there is the one that
+    /// counts.</para>
+    /// </summary>
+    public bool AddKvOnce(string key, string value) => Write(_ =>
+    {
+        using var c = Cmd("INSERT INTO kv(key,value) VALUES($k,$v) ON CONFLICT(key) DO NOTHING", ("$k", key), ("$v", value));
+        return c.ExecuteNonQuery() == 1;
+    });
+
+    /// <summary>
     /// EVERY KV ROW UNDER ONE KEY PREFIX, in key order — the read a family of keys needs when the
     /// members are not known in advance (the day's closed symbols, which are whichever symbols
     /// breached).

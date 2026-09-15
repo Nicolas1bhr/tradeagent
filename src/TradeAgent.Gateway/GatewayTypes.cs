@@ -102,6 +102,24 @@ public sealed class GatewayOptions
     /// <para>Recorded in <c>docs/CONTRACTS.md</c> as a choice the account owner may overrule.</para>
     /// </summary>
     public TimeSpan LossBreachConfirmWithin { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// THE SHORTEST A CLOSURE MAY LAST, measured from the instant the breach was confirmed — the
+    /// second half of <c>LossReopen.EligibleAt</c>, and the half that does the work.
+    ///
+    /// <para><b>Twenty-four hours, and it is fixed in this build.</b> Until <c>U-reopen-1</c> a
+    /// closure ended at the next UTC midnight, which meant a breach confirmed at 23:58Z was two
+    /// minutes of pause: the account was handed back, freshly flattened, to the same market that
+    /// had just taken it through the owner's daily budget. A whole day is the shortest pause that
+    /// cannot be shorter than the event it is answering, and it is the same unit the budget itself
+    /// is stated in.</para>
+    ///
+    /// <para>It is an OPTION rather than a setting on purpose: <see cref="GatewayOptions"/> is
+    /// in-process and no pipe op, verb or agent reaches it. Making it the account owner's number —
+    /// with a floor, and two-press — is <c>U-reopen-2</c>. Recorded in <c>docs/CONTRACTS.md</c> as a
+    /// choice the owner may overrule.</para>
+    /// </summary>
+    public TimeSpan LossMinClosure { get; set; } = TimeSpan.FromHours(24);
 }
 
 /// <summary>

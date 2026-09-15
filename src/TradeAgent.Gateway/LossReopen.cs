@@ -85,6 +85,37 @@ public static class LossReopen
     }
 
     /// <summary>
+    /// THE SENTENCE A REOPEN IS RECORDED WITH, AND SHOWN WITH, EVERYWHERE — written ONCE, onto the
+    /// receipt, at the moment it is written.
+    ///
+    /// <para>It is on the record rather than recomposed per surface for the reason the closure's own
+    /// sentence is (<see cref="LossBreach.DaySentence"/>): a sentence recomposed later would quietly
+    /// re-read state that has moved on, and say something the decision was not made on. Three things
+    /// have to be in it — what was reopened and when, WHY it was allowed (the closure served, the
+    /// book read flat, nothing left unresolved), and that TradeAgent did this by code with nobody
+    /// pressing anything, because an owner who finds an account trading again and cannot see who
+    /// decided that has been told nothing at all.</para>
+    /// </summary>
+    public static string Sentence(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at,
+        TimeSpan minClosure)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        var what = breach.Symbol is null ? "your account" : breach.Symbol;
+        return $"TradeAgent reopened {what} to new risk at {at.UtcDateTime:HH:mm} UTC on "
+               + $"{at.UtcDateTime:yyyy-MM-dd}, by code and with nobody pressing anything. The loss budget was "
+               + $"reached at {breach.ConfirmedAt.UtcDateTime:HH:mm} UTC on {breach.Day}; the closure ran the "
+               + $"{Hours(minClosure)} it had to, a fresh reading of your platform showed nothing open on it, "
+               + "and everything TradeAgent sent when it closed the book is accounted for. The earliest it could "
+               + $"have been reopened was {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC.";
+    }
+
+    /// <summary>The closure length in the words an owner uses. Whole hours; anything else says both.</summary>
+    public static string Hours(TimeSpan span) =>
+        span.Minutes == 0 && span.Seconds == 0
+            ? $"{span.TotalHours:0} hours"
+            : $"{span.TotalHours:0.#} hours";
+
+    /// <summary>
     /// THE HIGH-WATER MARK OF THE GATEWAY'S OWN CLOCK, while anything is closed:
     /// <c>loss_clock_high_water:{connector}:{account}</c>.
     ///

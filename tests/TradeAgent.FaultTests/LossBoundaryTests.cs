@@ -158,10 +158,14 @@ public class LossBoundaryTests(ITestOutputHelper log)
         // second record, and a boundary is a function of the FACT rather than of the tick that
         // noticed it. Two boundaries for one closure would be two sealed assessments and two senior
         // wakes for an event that never ended — COUNCIL :64, the reason the id is the fact's.
-        clock.Advance(TimeSpan.FromDays(1));
+        // Twenty-three hours, not twenty-four: a later UTC day — the key that used to be the whole
+        // of the closure has changed — and still inside the 24 h the closure runs for, so the scope
+        // has not earned a receipt and nothing has reopened it.
+        clock.Advance(TimeSpan.FromHours(23));
         await gw.LossWatchAsync();
         clock.Advance(Tick);
         await gw.LossWatchAsync();
+        Assert.NotNull(gw.DayClosed(conn.Broker.AccountId));
 
         var ids = boundaries.All().Select(b => b.Id).ToList();
         log.WriteLine($"boundaries            : {string.Join(", ", ids)}");
