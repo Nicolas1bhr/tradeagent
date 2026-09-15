@@ -2692,6 +2692,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 };
 
             DateTimeOffset? at = null;
+            string? extended = null;
+            LossBreachRecord? governs = null;
             foreach (var breach in standing)
             {
                 // A SCOPE HELD FOR REVIEW HAS NO INSTANT AT ALL, so it is asked before the
@@ -2705,7 +2707,9 @@ public sealed class TradingGateway : IAsyncDisposable
                         Rule = RuleFor(breach)
                     };
 
-                var eligible = EligibleFor(breach);
+                var plain = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
+                var extension = ExtensionFor(breach, plain);
+                var eligible = extension?.Until ?? plain;
 
                 // Only once the instant has passed can anything else be what is holding it — before
                 // that, "waiting" IS the answer and naming the flatten as well would be noise.
@@ -2713,16 +2717,16 @@ public sealed class TradingGateway : IAsyncDisposable
                     return new LossReopenReading
                     {
                         Held = reason, ReleasedAt = released?.At, ReleasedWhy = released?.Why,
-                        Rule = RuleFor(breach)
+                        Rule = RuleFor(breach), Extended = extension?.Why
                     };
 
-                if (at is null || eligible > at) at = eligible;
+                if (at is null || eligible > at) { at = eligible; extended = extension?.Why; governs = breach; }
             }
 
             return new LossReopenReading
             {
                 At = at, ReleasedAt = released?.At, ReleasedWhy = released?.Why,
-                Rule = RuleFor(standing[^1])
+                Rule = RuleFor(governs ?? standing[^1]), Extended = extended
             };
         }
         catch (GatewayDeniedException ex)
@@ -2765,8 +2769,96 @@ public sealed class TradingGateway : IAsyncDisposable
     /// explains both compute it: <see cref="LossReopen.EligibleAt"/> over the closure length this
     /// episode is judged by.
     /// </summary>
-    DateTimeOffset EligibleFor(LossBreachRecord breach) =>
-        LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
+    DateTimeOffset EligibleFor(LossBreachRecord breach)
+    {
+        var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
+        return ExtensionFor(breach, eligible)?.Until ?? eligible;
+    }
+
+    /// <summary>
+    /// THE ID OF THE LOSS BOUNDARY ONE EPISODE OPENED — <c>loss_budget:{account}:{yyyyMMdd}</c>, a
+    /// function of the FACT and never of the event that noticed it, exactly as
+    /// <see cref="OpenLossBoundary"/> builds it. Public because the extension row names it and a
+    /// reader has to be able to get from one to the other.
+    /// </summary>
+    public string LossBoundaryIdFor(LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        var day = long.Parse(breach.ConfirmedAt.UtcDateTime.ToString("yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture),
+            System.Globalization.CultureInfo.InvariantCulture);
+        return BoundaryIds.Of(BoundaryKind.LossBudget, breach.Account, day);
+    }
+
+    /// <summary>
+    /// THE ONE BOUNDED EXTENSION AN EPISODE MAY CARRY — its END and the sentence that names it, or
+    /// null because there is none (<c>U-reopen-2</c>, item 4).
+    ///
+    /// <para><b>The boundary's own disposition holds NOTHING, and that is the guard.</b> A closure
+    /// opens a <c>BoundaryKind.LossBudget</c> boundary whose default disposition is <c>hold</c>, and
+    /// <c>CouncilBoundaries.ApplyDue</c> writes that default onto the row when the deadline passes.
+    /// Nothing in the protocol ever revises it. So a closure that read that <c>hold</c> as holding
+    /// would be a closure with no end at all — an account shut for good because two directors said
+    /// nothing — and no line in this method looks at <c>BoundaryRow.Disposition</c>.</para>
+    ///
+    /// <para><b>Four bounds, checked here and never assumed of the writer.</b> A row with no
+    /// <c>Until</c> extends nothing, because a hold without an end is not a hold. A row naming a
+    /// boundary other than this episode's is not about this episode. The instant is clamped to at
+    /// most ONE closure length past eligibility, so the longest an extension can be is the length of
+    /// the closure it extends. And a row is one per episode by key, so it is applied ONCE rather than
+    /// re-applied each tick — an extension added per tick outruns the clock and never ends.</para>
+    ///
+    /// <para><b>Never past a release.</b> The owner's press is the last word on an episode: a person
+    /// who has looked and decided it may trade again does not then wait out a delay asked for before
+    /// they looked.</para>
+    ///
+    /// <para><b>WHAT IS NOT HERE, said rather than implied: nothing in this build writes one.</b> A
+    /// director's assessment is free markdown (<c>PublicationKind.Assessment</c>, an
+    /// <c>assessment-*.md</c> file capped in lines) and <c>CouncilBoundaries</c> deliberately exposes
+    /// no method that takes a disposition from a director at all — so there is no structured way for
+    /// one to ask for more time, and scraping a phrase out of a director's prose would be an agent
+    /// moving a money-path state by writing words in a document, which is exactly what
+    /// <c>AGENTS.md</c> says material handed to an agent may not do. The BOUND is implemented and the
+    /// request channel is not.</para>
+    ///
+    /// <para>An unreadable row extends nothing. That is the direction that lets the closure end on
+    /// the rule it was recorded with — which is itself a guard, and a delay that cannot be read
+    /// cannot be shown with its end either.</para>
+    /// </summary>
+    (DateTimeOffset Until, string Why)? ExtensionFor(LossBreachRecord breach, DateTimeOffset eligible)
+    {
+        LossExtensionRecord? row;
+        try
+        {
+            var json = _db.GetKv(LossHold.ExtensionKey(Connector.Id, breach));
+            if (json is null) return null;
+            row = Json.Read<LossExtensionRecord>(json);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_extension_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { breach = LossBreach.KeyFor(breach) }));
+            return null;
+        }
+
+        // NO END, NO HOLD.
+        if (row?.Until is not { } until) return null;
+
+        // AND IT HAS TO BE THIS EPISODE'S POST-MORTEM.
+        if (!string.Equals(row.BoundaryId, LossBoundaryIdFor(breach), StringComparison.Ordinal)) return null;
+
+        // THE OWNER'S PRESS OUTRANKS IT.
+        if (ReadRelease(breach) is not null) return null;
+
+        var bound = eligible + MinClosureFor(breach);
+        if (until <= eligible) return null;
+        var applied = until > bound ? bound : until;
+
+        return (applied,
+            $"TradeAgent is holding this closure open until {applied.UtcDateTime:yyyy-MM-dd HH:mm} UTC — at "
+            + $"most one closure length past the {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC it would "
+            + "otherwise have lifted at, once, and it ends then whatever happens next.");
+    }
 
     /// <summary>The rule an episode is being judged under, in the owner's words, for the surfaces.</summary>
     string RuleFor(LossBreachRecord breach) =>

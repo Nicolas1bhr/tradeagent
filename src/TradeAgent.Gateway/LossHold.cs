@@ -195,6 +195,13 @@ public sealed record LossReopenReading
     public string? ReleasedWhy { get; init; }
 
     /// <summary>
+    /// THE BOUNDED EXTENSION IN FORCE ON THE GOVERNING CLOSURE, AS A SENTENCE NAMING ITS END, or null
+    /// because there is none. It is stated wherever <see cref="At"/> is, because an instant that has
+    /// moved and does not say why is an instant an owner will read as the software changing its mind.
+    /// </summary>
+    public string? Extended { get; init; }
+
+    /// <summary>
     /// THE RULE THE STANDING CLOSURE IS BEING JUDGED UNDER, in the owner's words — the closure
     /// length and the strike window SNAPSHOT onto that closure's own record, never the live setting.
     /// Null while nothing is closed.
