@@ -5683,7 +5683,7 @@ untouched by both). Merge `570279b`, 9 commits, 39 files, +1695/−51 (`Versioni
 **Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `2902d9c`, Release: 0 warnings, 0 errors; touched classes 3× → Unit
 101/101, Fault 6/6 each; Unit 1072 + Fault 283 + Integration 668 = 2023 passed, 0 failed, 1 skipped (Integration 10 m 50 s); names → 29 added, 0 removed (1680 →
 1709). Manager's gate at `570279b` (the nine commits rebased over `4961989`), Release: build → 0 warnings, 0 errors; suite → 1072 + 283 + 668 = 2023 passed, 0 failed, 1 skipped; names vs `main` → 0 removed, 29 added (sets 1665 → 1694;
-`[Fact]`/`[Theory]` 1634 → 1663); scan clean; no trailers; `rev-list --count` → 0; CI run at `570279b`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+`[Fact]`/`[Theory]` 1634 → 1663); scan clean; no trailers; `rev-list --count` → 0; CI run 34883265713 at `570279b`: all four jobs GREEN — ubuntu, macos, windows-latest (23 m 38 s) and `package`.
 
 **NOT done, NOT verified:** no live or paper bar feed — the gate is proved over recorded bars and `GatewayOptions.Clock`; no runner turns a `StrategyIntent` into a
 `PlaceIntent`, so `IntentDecision.From` has no production caller yet; nothing reached a venue, ATAS, the box or real money; `U-flatten`, the allocator, the
