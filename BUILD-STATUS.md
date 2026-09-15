@@ -5907,3 +5907,44 @@ The hole `U-freshness` disclosed at its landing (the three declarations are opti
 **NOT done, NOT verified:** the declarations stay OPTIONAL in the parser (requiring them would refuse program texts this installation has already accepted; the brief
 excludes it); no runner on the order path, so no live or paper intent exists for this rule to gate; no promotion already recorded withdrawn, by code or by hand;
 section 4's new mark never seen on a screen, only asserted in the rendered text; no box, no ATAS, no money, no order, no venue.
+
+## 2026-09-15 — U-reopen-1 landed: a closed scope reopens by code only when it has earned it — a computed instant, a fresh flat book, a write-once receipt, a clock that cannot step it open
+
+The owner's decision of the morning (option B — the day reopens by code, never "until the owner has read it" — "only if it has exquisite logic and edge case
+handling"), shaped by ONE Astra consult (final answers only) and a read-only survey, briefed as two units, built by one fresh builder on a worktree cut from the
+flatten's tip. Merge `bacd4e3`, 7 commits, no schema rung — the records are `kv`. MONEY PATH: the dispatch gate, the approval path, the watcher tick.
+
+- **Closure is a state, not a key.** `OpenClosures` scans `loss_breach:{account}:` across days; a scope is closed from `ConfirmedAt` until a receipt exists for THAT
+  record; no second breach row or boundary while closed (one episode); every flatten key off the breach's day. RED (the moved rollover test): `Assert.NotNull()
+  Failure: Value is null` at 00:30Z. Mutant (`DayClosed` back to the day key): the same, `next UTC day : 2026-03-11 00:30Z`.
+- **Eligibility is computed, the reopen is a receipt.** `LossReopen.EligibleAt` = max(the next UTC midnight, `ConfirmedAt` + `GatewayOptions.LossMinClosure` = 24 h);
+  the receipt `loss_reopen:{connector}:{account}:{utcDay}` is written only by the tick, under `_dispatchGate`, through a new `Database.AddKvOnce` (`INSERT … ON CONFLICT
+  DO NOTHING`); the admission gate never writes it. RED: `Assert.Single() Failure: The collection was empty`, `eligible, no tick : LOSS_BUDGET_REACHED`. Mutant (the
+  gate writes it on first admission): `Assert.Throws() Failure: No exception was thrown`. Second mutant (the midnight term dropped): `2h closure -> eligible 11:00Z`.
+- **Flatness is fresh evidence.** The receipt needs a position read on the current epoch flat for the scope, the flatten record `Flat` with no opener unsettled, no
+  unresolved `op-budget-*` leg, `HasUnconfirmedWork` false; an unvaluable book stays out of `Measured`. Three REDs, each `Assert.Empty() Failure` with `reopened :
+  [loss_reopen:fake:SIM-001:2026-03-10]` — a flagged leg over a flat book, an opener that would not cancel, a position re-opened by hand. Mutant (flatness from the
+  flatten record alone): `book : [ES 1]`.
+- **A clock that stepped back cannot reopen.** `loss_clock_high_water:{connector}:{account}`, monotone, raised only while something is closed, seeded at `Close`;
+  `loss_clock_suspect` written once. RED: `high water / now : 2026-03-12 16:00Z / 2026-03-11 14:00Z`, a receipt written. Mutant (the mark upserted every tick): the same.
+- **A parked proposal dies with the breach.** `ApproveAsync` declines — `APPROVAL_PREDATES_LOSS_BREACH`, never `LOSS_BUDGET_REACHED` — any `AWAITING_APPROVAL` request
+  written before the latest breach of its scope, above the mode and the budgets, after the reopen too. RED: `Assert.Throws() Failure: No exception was thrown` — the
+  stale proposal reached the wire. Mutant (compared to `EligibleAt`): a proposal written DURING the closure refused instead.
+- **Told, the old sentences withdrawn:** `status.loss_reopens_at` / `loss_reopen_held` / `loss_reopened_at`, the Situation, the Safety row, section 4 (`reopens:` /
+  `reopened:`), `GatewaySchema`, `AGENTS.md`, `USER-GUIDE.md`, `CONTRACTS.md`; "midnight UTC" gone from the schema text. RED (shapes kept): 3 of 4, `Expected:
+  2026-03-11T12:00:40Z / Actual: null`. Mutant (`loss_reopened_at` off the receipt's presence alone): `after the second close: closed=12:02:20Z reopened=12:01:40Z`.
+- **Choices, in `CONTRACTS.md`:** 24 h; the connector in every new key (the breach key untouched — INHERITED LIMIT: keyed by account, so a platform sharing an account
+  id inherits its closures); the closure readers keep their `Today` names though they answer across days; the clock mark only while closed; "held" judged from rows
+  this app wrote, never a platform read, so `loss_reopens_at` is the EARLIEST, not a promise; `loss_reopened_at` absent whenever anything is closed; `LatestBreach`
+  skips an unparseable row while `OpenClosures` still throws on an unreadable STANDING one; the watch reads the platform on a tick even with both budgets zero while
+  a closure stands, so zeroing a budget after a breach cannot close an account for ever. Deviations kept: item 2's mutant watched on ONE admission (`_dispatchGate`
+  serialises placements); item 6's RED is the shapes-kept strip. Three tests MOVED (renamed, re-pinned): the rollover test now pins that a 22:30Z breach still refuses
+  at 00:30Z and two days later and trades only on a receipt; a next-day breach while closed opens NO second boundary; a flatten's own rows do not refuse the next day.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `3bec613` (rebased onto `e7d7ebe`), Release `--no-incremental`: 17 projects,
+0 warnings, 0 errors; Unit 1111 + Fault 329 + Integration 668 = 2108 passed, 0 failed, 1 skipped (Integration 11 m 5 s); touched classes 3× → Fault
+LossDayClosureTests 4, LossBoundaryTests 2, LossFlattenTests 9, LossReopenTests 6, LossReopenApprovalTests 3; Unit LossDayClosedSurfacesTests 6, LossReopenRuleTests 4,
+LossReopenSurfacesTests 4, every run green; names 1759 → 1776, 20 added, 0 removed, 3 moved. Manager's gate at `bacd4e3` (the reported tip `36478c8` rebased over `U-promote-bounds`, the branch's patch-id identical before and after; landed as `bacd4e3` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1116/1116 (22 s), Fault 329/329 (1 m 41 s), Integration 668/669, 1 skipped (11 m 4 s) → 0 failed; names vs `main` → 3 removed = the 3 MOVED, 20 added (sets 1759 → 1776; `[Fact]`/`[Theory]` 1727 → 1744 before the promote-bounds rebase); scan clean; no trailers; `rev-list --count` → 0; CI at `bacd4e3`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no schema rung; `LossMinClosure` is not a setting, no strikes, no review card, no bounded director hold (`U-reopen-2`); no data-loss exit
+(`U-flatten-3`); no stops (`U-protect`); no screen, no box, no ATAS, no money — every wire assertion is `RecordingConnector`.
