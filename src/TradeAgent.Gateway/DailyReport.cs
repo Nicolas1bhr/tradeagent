@@ -185,6 +185,33 @@ public sealed record ReportPerformance
     /// <summary>The bounded extension in force, naming its END. Null while there is none.</summary>
     public string? ExtendedWhy { get; init; }
 
+    /// <summary>
+    /// OPEN POSITIONS NOBODY CAN VALUE, and since when — one line each, empty as the honest none.
+    /// The clock the data-loss exit runs on, put in front of the owner before it fires rather than
+    /// after (<c>U-flatten-3</c>).
+    /// </summary>
+    public IReadOnlyList<string> ValuationLost { get; init; } = [];
+
+    /// <summary>
+    /// POSITIONS CLOSED TODAY UNDER <c>VALUATION_LOST</c>, in the exit record's own words. Empty is
+    /// the honest none, and every sentence in here says that no budget was reached.
+    /// </summary>
+    public IReadOnlyList<string> ValuationExits { get; init; } = [];
+
+    /// <summary>
+    /// WHAT THE THRESHOLDS IN THIS SECTION DO AND WHAT THEY CANNOT PROMISE — printed WHATEVER the
+    /// budgets are set to, and that is the point of it.
+    ///
+    /// <para>"Most it may lose in one day" reads as a bound on the loss. It is not one: it is the
+    /// figure at which TradeAgent intervenes, and what the intervention is left holding is whatever
+    /// a market order fills at after a gap, across whatever spread, less fees the platform may never
+    /// have reported. The one reader who must see this is the owner who HAS set a budget and is
+    /// relying on it, so printing it only for an installation with no budget — the mutant this
+    /// unit's third test watches go red — would put the disclosure exactly where there is nothing to
+    /// disclose.</para>
+    /// </summary>
+    public string? ThresholdDisclosure { get; init; }
+
     public string Currency { get; init; } = "";
 
     /// <summary>
@@ -561,6 +588,21 @@ public static class DailyReportText
         // record's own sentence, never a paraphrase and never derived from the figure above.
         if (r.Performance.FlattenState is { Length: > 0 } state)
             Kv(b, "positions closed for you", $"{state} — {r.Performance.FlattenWhy ?? Unknown}");
+
+        // WHAT CANNOT BE VALUED, AND SINCE WHEN. It is beside the closure rather than in the health
+        // section because it is about the owner's MONEY: a position nobody can value is a position
+        // the budget above it is not bounding, and the figure in this section is silently missing it.
+        List(b, "positions TradeAgent cannot value", r.Performance.ValuationLost);
+
+        // AND WHAT WAS CLOSED FOR IT. Its own line, never folded into "positions closed for you":
+        // that line is about a budget that was REACHED, and a reader who found a data-loss exit
+        // under it would be told their money went when their prices did.
+        List(b, "closed because nothing could value it", r.Performance.ValuationExits);
+
+        // AND WHAT NONE OF THE NUMBERS ABOVE PROMISES. Last in the money section, after every figure
+        // it qualifies, and printed whatever the budgets are — see ReportPerformance.ThresholdDisclosure.
+        if (r.Performance.ThresholdDisclosure is { Length: > 0 } disclosure)
+            Kv(b, "what these limits are and are not", disclosure);
         // WHAT IS ALLOCATED, AND TO WHAT. See ReportPerformance.Allocations: a withdrawn promotion is
         // listed and marked rather than dropped, because the row is still there and the version can
         // trade nothing.

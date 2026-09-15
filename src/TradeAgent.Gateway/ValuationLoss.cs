@@ -146,8 +146,12 @@ public static class ValuationLoss
     public static string Disclosure(TimeSpan tick, TimeSpan confirmWithin, TimeSpan quoteAge,
         TimeSpan exitBound, TimeSpan? lastReadingTook)
     {
+        // THE FIGURE AS MEASURED, and never rounded to zero: a reading reported as taking no time at
+        // all is a claim that the book is sampled instantaneously, which is the opposite of what this
+        // paragraph exists to say. Three decimals, so a sub-millisecond reading prints as itself.
         var sampling = lastReadingTook is { } took
-            ? $"TradeAgent's last reading of your open book took {took.TotalMilliseconds:0} ms; "
+            ? $"TradeAgent's last reading of your open book took {took.TotalMilliseconds:0.###} ms, and that "
+              + "is the app's own arithmetic rather than your platform's round trip. "
             : "";
 
         return "these are thresholds at which TradeAgent INTERVENES, and none of them is a maximum loss. "

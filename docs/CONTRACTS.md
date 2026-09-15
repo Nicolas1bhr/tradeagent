@@ -1277,6 +1277,120 @@ an aggregate of scopes, so a strategy losing on three instruments at once is thr
 counts and not one. Aggregate enforcement and attribution do not exist yet. The data-loss exit is
 `U-flatten-3`.
 
+## U-flatten-3 — a book nobody can value, its clock, and what the thresholds do not promise
+
+**AN UNVALUABLE OPEN POSITION IS A STATE WITH A CLOCK, AND THE CLOCK ONLY STOPS WHEN A PRICE COMES
+BACK.** `U-flatten-1` records nothing on a suspect print and `-2` flattens nothing from one — right,
+and it leaves the other failure: a feed that goes silent, a platform that stops marking, a disconnect
+that outlives the day. The gate already refuses new risk on the unknown (`RISK_CHECK_UNAVAILABLE`),
+which is the safe half; the position already there went on being exposed with nothing measuring it,
+which is the half nothing answered. Now every tick of `LossWatchAsync`, under the dispatch gate,
+writes one episode row per open instrument: `valuation_unavailable:{connector}:{account}:{symbol}`,
+carrying `Since` — the FIRST tick that could not value it — which is CARRIED FORWARD unchanged for as
+long as the episode is open. The only thing that ends an episode is a tick that actually valued the
+position, and the only thing that starts a new one is the next silence; a position that has GONE ends
+its episode too, because there is nothing left to value. `TradingGateway.CanBeValued` asks exactly
+what `LossBudget.Read` needs and nothing else — the platform's own mark, else a FRESH, in-epoch,
+executable quote, else the multiplier — so the clock and the figure can never disagree. The
+staleness and the epoch are the guard: a cached price always exists once one has arrived, so a check
+that asked only whether a price had ever been seen would end the episode on every tick and
+unavailability would never age.
+
+**NO DAY IN EITHER KEY, AND THE EXIT'S KEY IS THE EPISODE'S — a deviation from the brief's
+`{utcDay}`, and deliberate.** A breach is a fact about a UTC day because the ledger figure that
+closed the scope is a day's figure. A lost valuation is a fact about a STRETCH of time: keyed by the
+day, the episode row would start a fresh clock at every midnight, and the exit row of a second
+episode on the same instrument on the same date would collide with the first — the write-once insert
+would answer false, this code would read that as "already exited", and a position would be left open
+that nothing would ever close again. So the episode row carries no day at all and the exit is
+`loss_valuation_exit:{connector}:{account}:{symbol}:{yyyyMMddTHHmmssZ}`, the stamp being the
+episode's own start. The day is ON the record, for a reader. Both keys carry the CONNECTOR for
+`U-flatten-2`'s reason.
+
+**THE EXIT IS `-2`'s MECHANICS AND NOT `-2`'s EVENT, AND IT IS NEVER `LOSS_BUDGET_REACHED`.** After
+`RiskPolicy.ValuationLossExitMinutes` of CONTINUOUS unavailability, with the connection UP, the
+position is closed through the same cancel-then-settle-then-close order, the same write-ahead rows,
+the same `ReductionOnlyOrThrow` at the wire and the same resolution by machine behind a flat
+read-back — under this unit's own press kinds `op-valuation-cancel-` / `op-valuation-close-`, its own
+reason `VALUATION_LOST`, its own write-once (`AddKvOnce`) record and its own
+`BoundaryKind.ValuationLoss` boundary (`valuation_loss:{account}:{yyyyMMdd}`, default disposition
+`hold`, holding nothing). **Separate kinds** because `PressName`, the order's note and the drift
+sentence all date themselves by the kind, and every one of them would otherwise tell an owner a
+budget was reached when none was — and because a stuck valuation exit under the budget's kind would
+REFUSE the next real budget flatten, which is the more urgent event. **A separate boundary kind**
+because a shared id would let a valuation exit open the very boundary a loss-budget episode's
+extension names (`LossBoundaryIdFor`), moving a closure's clock with an event that was never about
+the closure. **WITH THE CONNECTION DOWN NOTHING IS SENT AT ALL** (`CLAUDE.md` rule 3): the clock goes
+on running, the pause the gate is already enforcing holds, and every surface says so on every day it
+lasts.
+
+**IT IS NOT A BREACH, AND THIS IS THE CHOICE THE BRIEF LEFT OPEN.** A `VALUATION_LOST` exit does NOT
+close the day, does NOT close the instrument, writes NO `loss_breach` row and counts towards NO
+strike. A budget breach is a fact about the owner's money — something was lost, and the closure, the
+strike and the post-mortem are all about that. A lost valuation is a fact about the owner's DATA:
+nobody has measured a loss at all, which is the problem. Counting it as a strike would let a flaky
+feed hold an account for a person to review; closing the day would turn a data outage into a trading
+ban the owner never asked for. New risk on that instrument stays denied only while the valuation is
+unavailable — which today is account-wide, because one unvaluable position makes the whole reading
+unknown — and not one tick longer. The exit is reported, with its reason, on `status.loss_valuation_exit`
+and on its own line in section 4, never folded into `positions closed for you`.
+
+**ZERO IS OFF AND IS THE WIDEST VALUE; LENGTHENING IS THE GRANT.** `RiskPolicy.ValuationLossExitMinutes`
+is on the Safety page, **15 out of the box**. Zero switches the exit off — the reading every other
+zero in that class already has (the notional cap, both loss budgets, the strike window) — rather than
+"exit on the first unvaluable tick", which would be a foot-gun reached by typing the digit that
+switches every other limit off; the episode is still recorded, the openers are still cancelled, and
+the sentence says in words that TradeAgent will not close it. LENGTHENING is the risky direction, so
+`RiskPolicy.Widenings` names it and the save arms the second press — it is the only box on that page
+whose risky direction is neither of the two above it. Fifteen minutes is a judgment and not a
+measurement: sixty ticks of the watch and thirty times `MaxQuoteAge`. `GatewayOptions.ValuationLossExitAfter`
+(15 minutes) is the FALLBACK used when the settings row could not be read at all — a row nobody could
+read is not an owner who chose zero.
+
+**THE THRESHOLDS ARE NOT A MAXIMUM LOSS, AND SECTION 4 SAYS SO ON EVERY DAY WHATEVER THE BUDGETS
+ARE.** The book is valued every `LossWatchInterval` (**15 s**, sooner when a price arrives); a
+closure needs a second agreeing reading inside `LossBreachConfirmWithin` (**60 s**); a price older
+than `MaxQuoteAge` (**30 s**) is refused as a basis for the figure; a position nobody can value at
+all is closed after `ValuationLossExitMinutes` (**15 minutes**). Each is a threshold at which
+TradeAgent INTERVENES. None bounds the realised loss: between two readings the market can gap
+straight through the figure, and what the closing MARKET order fills at — the spread it crosses, the
+slippage, and the fees the platform has not reported (already counted at their gross) — is not
+TradeAgent's to choose, so the loss can be larger than the budget and on a gap very much larger. The
+report prints the SAMPLING delay it measured on its own last pass, on a real wall clock rather than
+`GatewayOptions.Clock`, because the figure is a property of the machine and the platform and a
+constant compiled into a build would be a claim about somebody else's computer. **Measured by the
+builder on the dev Mac** (macOS 26.5.1, arm64, Release, simulator connector, one open position):
+**4.849 / 4.934 / 4.862 / 4.899 ms** per reading — the app's own arithmetic, NOT a platform round
+trip, which on a real venue is what dominates. The sampling gap an owner is exposed to is that plus
+the interval, so up to about 15 s. It is printed WHATEVER the budgets are: an installation with no
+budget has nothing to be misled about, and the owner relying on one is the reader who needs it.
+
+**Choices, and the owner's to overrule.** (a) The episode row is an UPSERT the watch refreshes and
+not an `AddKvOnce` — the watch is its only writer and writes it under the dispatch gate, and the one
+field that decides anything (`Since`) is carried forward rather than recomputed; the EXIT, which is
+what stops a second close going out, is write-once at the SQL layer. (b) The precautionary cancel
+takes only orders that could INCREASE exposure and leaves a resting protective order alone: nothing
+is being closed, and removing the one thing bounding a position nobody can measure would be the
+software cancelling the owner's stop because it had stopped being able to see. The budget flatten
+still takes those too, and is entitled to — it is removing the position they protect. (c) That cancel
+runs ONCE per episode, retried only while a cancel did not settle, because no new opener can arrive
+while the gate refuses on the unknown; a press row every fifteen seconds for a book that cannot
+change is a log, not a fact. (d) A cancel whose targets are all gone on the read-back CLEARS the flags
+it wrote (writing no state — `ClearTheFlatteningFlag`'s rule) and restores `ExecutionCapability` on
+`ReconcileAsync`'s own two lines: leaving them flagged would pause every order in the product for as
+long as a data outage lasted, a manual outage imposed by the one event that is already refusing new
+risk. A cancel that could NOT confirm one keeps every flag and pauses. (e) ONE exit attempt per
+episode: the record is written whatever the outcome, and an exit that could not confirm leaves its
+rows flagged and the account paused for a person, which is the product's answer everywhere else.
+There is no separate sweep for it — the tick re-derives the episode from its own row.
+
+**Not this unit, said rather than implied.** The denial while a valuation is missing is ACCOUNT-WIDE
+and not per symbol, because one unvaluable position makes `LossBudget.Read` answer unknown for the
+whole account; a per-symbol denial would need the figure to be decomposable and it is not. Nothing
+here re-opens, re-tries or reconciles an exit that failed. Stops and targets are `U-protect`. Not
+verified anywhere but the dev Mac: no box, no ATAS, no real money, and every order in every test went
+to the simulator through `RecordingConnector`.
+
 **One thing the simulator cannot prove, named rather than implied.** `FakeConnector.ClosePositionAsync`
 re-reads the position and sizes the order itself, so a reversal cannot be produced through it however
 wrong the composed size is; what the flow test can state is that no close reached the connector and

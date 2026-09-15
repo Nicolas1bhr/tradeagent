@@ -368,8 +368,15 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         var closed = gateway.ClosureToday();
         var flattened = gateway.FlattenStateToday();
         var reopen = gateway.ReopenReading();
+        var valuation = gateway.ValuationReading();
         return new ReportPerformance
         {
+            ValuationLost = Cap(valuation.Lost, ListShown, "position"),
+            ValuationExits = Cap(valuation.Exits, ListShown, "exit"),
+
+            // PRINTED WHATEVER THE BUDGETS ARE. The owner relying on one is the reader who needs it;
+            // an installation with none has nothing to be misled about. See the field's own summary.
+            ThresholdDisclosure = gateway.ThresholdDisclosure(),
             FlattenState = flattened.State,
             FlattenWhy = flattened.Why,
             ReopensAt = reopen.At,
