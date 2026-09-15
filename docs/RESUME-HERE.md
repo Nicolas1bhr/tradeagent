@@ -15,21 +15,19 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `69c44d7` (`U-loopback-listener-mac`, product sha `4b0c6e8`, plus its record), clean, pushed — 2026-09-15 17:30 CEST.** Landed today in order:
-   `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds`
-   `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8` — every merge sha's CI green on all four jobs where recorded; the sections are at the end of
-   `BUILD-STATUS.md`. Before them, 2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-freshness` `570279b` (19).
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-reopen-2` (worktree `U-reopen-2`, cut from the
-   reopen-1 tip `bacd4e3`, now on `main`; no schema): a fresh builder on `docs/briefs/U-reopen-2.md` — strikes, the two-press "Reopen after review" card, the durations as
-   owner settings narrowed two-press, the bounded director hold. (b) `u-close-all-win` (worktree, cut from `3c3b3f2`): a fresh fixer on its brief, draft PR allowed for
-   the windows proof. Re-brief either FRESH from its brief on disk: "read your branch first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
-4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-close-all-win` (windows, a press fixture, the docs-only `44f33a4`) and `U-loopback-listener-mac` (macos, a listener fixture, the docs-only `5415a8f`) —
-   hosted-runner reds briefed 2026-09-15, each takes the first free slot, a fixer never runs beside two heavy legs; `U-promote-bounds` (one item, light — the referee refusing promotion without
-   the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
-   by machine, after `-1`); `U-reopen-1` and `U-reopen-2` (the reopen by code the owner chose on 2026-09-15 — option B on condition of "exquisite logic and edge
-   case handling": a computed instant, fresh flatness, a write-once receipt, a clock guard, then two strikes and the owner's two-press release; after `U-flatten-2`);
-   `U-flatten-3` (the data-loss exit, after `-2`). At most two heavy legs at once, each on its own worktree from `main`; a schema number is
-   assigned here in landing order — tell each builder which unit takes the number before theirs.
+2. **`main` is `295eb08` (`U-reopen-2`, product sha `8714db1`, plus its record), clean, pushed — 2026-09-15 18:10 CEST.** Landed today in order: `U-flatten-1`
+   `1c5d71f`, `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds` `a816f1a`,
+   `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1` — every merge sha's CI green on all four jobs where recorded; the sections are at
+   the end of `BUILD-STATUS.md`. The owner's reopen decision (option B) is fully in the product. Before them, 2026-09-12 → 14, `U-turn-commit` (11) … `U-freshness` (19).
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-close-all-win` (worktree, tip `dac7430` rebased
+   onto `295eb08`, test-only, the fixer's report and PR #22 run green; the manager's gate running, its record drafted): land it. (b) `u-flatten-3` (worktree `U-flatten-3`,
+   cut from the reopen-2 tip `ddf81fc`; no schema): a fresh builder on `docs/briefs/U-flatten-3.md`. (c) `u-allocator-2` (worktree, cut from `ed387a1`; **schema 21**): a
+   fresh builder on its brief. Re-brief any of them FRESH from its brief on disk: "read your branch first; judge uncommitted files on their merits; finish, rebase onto
+   `main`, gate, report".
+4. **Queued in `docs/briefs/`, briefed and NOT dispatched:** `U-press-budget-legs` (test-only, one item — the five multi-leg press fixtures `U-close-all-win` named and
+   did not move; after `U-flatten-3` lands, which touches one of the files). Then the milestone review of the money path on `main` (`docs/HOW-WE-BUILD.md`: one fresh
+   reviewer told to break it at a named sha, Codex read-only in parallel, findings to `docs/REVIEW-<date>.md`) — DUE, the last was 2026-09-06. At most two heavy legs at
+   once, each on its own worktree from `main`; a schema number is assigned here in landing order (22 is next after `U-allocator-2`'s 21).
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
