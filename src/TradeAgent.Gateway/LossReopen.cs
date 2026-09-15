@@ -218,3 +218,28 @@ public sealed record LossClockMark
 {
     public DateTimeOffset At { get; init; }
 }
+
+/// <summary>
+/// THE FIRST TIME THE GATEWAY'S CLOCK READ BELOW ITS OWN HIGH-WATER MARK, while something was
+/// closed — written once and never updated.
+///
+/// <para>It is a fact about the MACHINE rather than about the account, and it is the one thing in
+/// this episode nobody in the software can put right: a clock that moved is a clock that may move
+/// again, and every instant on every record in this family was taken from it. So it refuses the
+/// reopen, it is said on every surface, and it stays said until the owner deals with it.</para>
+/// </summary>
+public sealed record LossClockSuspect
+{
+    public string Connector { get; init; } = "";
+
+    public string Account { get; init; } = "";
+
+    /// <summary>The highest instant this gateway had already seen.</summary>
+    public DateTimeOffset HighWater { get; init; }
+
+    /// <summary>What the clock said instead. Below the mark, which is what makes it suspect.</summary>
+    public DateTimeOffset Reading { get; init; }
+
+    /// <summary>The sentence the owner and the agent are shown. Written once, with the row.</summary>
+    public string Why { get; init; } = "";
+}

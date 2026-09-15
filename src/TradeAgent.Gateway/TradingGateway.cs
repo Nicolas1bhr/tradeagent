@@ -2372,10 +2372,14 @@ public sealed class TradingGateway : IAsyncDisposable
 
         if (standing.Count == 0) return written;
 
+        // THE CLOCK BEFORE ANYTHING ELSE, and only while something is closed — which is the only
+        // time it is consulted, and the reason a quiet installation writes no row a tick.
+        var clock = MarkTheClock(accountId, at);
+
         foreach (var breach in standing)
         {
             var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, _opt.LossMinClosure);
-            if (HeldBy(breach, eligible, at, epoch, positions) is { } held)
+            if (HeldBy(breach, eligible, at, epoch, positions, clock) is { } held)
             {
                 _log.TryEngineering("Gateway", "loss_reopen_held", metadataJson: Json.Write(new
                 {
@@ -2397,6 +2401,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 EligibleAt = eligible,
                 MinClosure = _opt.LossMinClosure,
                 At = at,
+                ClockHighWater = clock.HighWater,
                 ConnectionEpoch = epoch,
                 PositionsRead = [.. InScope(breach, positions).Select(p => $"{p.Symbol} {p.Quantity}")],
                 FlattenWasFlat = FlattenFlagFor(breach),
@@ -2441,8 +2446,14 @@ public sealed class TradingGateway : IAsyncDisposable
     /// part of it that tells them whether waiting is what to do.</para>
     /// </summary>
     string? HeldBy(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at, int epoch,
-        IReadOnlyList<PositionInfo> positions)
+        IReadOnlyList<PositionInfo> positions, (DateTimeOffset HighWater, bool Suspect) clock)
     {
+        // THE CLOCK FIRST, because every other line here is an arithmetic over instants it produced.
+        if (clock.Suspect || at < clock.HighWater)
+            return $"this computer's clock reads {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC, which is BEFORE the "
+                   + $"{clock.HighWater.UtcDateTime:yyyy-MM-dd HH:mm} UTC TradeAgent has already seen — a clock "
+                   + "that moved backwards cannot be used to decide that a closure has run its course";
+
         if (at < eligible)
             return $"the closure runs until {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC";
 
@@ -2502,6 +2513,112 @@ public sealed class TradingGateway : IAsyncDisposable
         return null;
     }
 
+    /// <summary>
+    /// THE HIGH-WATER MARK OF THIS GATEWAY'S CLOCK, RAISED AND ANSWERED — the guard that stops a
+    /// closure being ended by moving a machine clock.
+    ///
+    /// <para><b>Monotone on disk.</b> It is written only when the clock reads AT or above what has
+    /// already been seen, so nothing can lower it; it is in <c>kv</c> rather than a field because a
+    /// restart is the cheapest way to forget an in-memory one, and a restart is exactly what follows
+    /// a clock change.</para>
+    ///
+    /// <para><b>It is kept only while something is closed.</b> That is the only time it is asked,
+    /// and an installation with nothing closed writes no row a tick for a number nobody reads. The
+    /// mark is seeded the moment a breach is recorded (<c>Close</c>), so there is never a closure
+    /// without one.</para>
+    ///
+    /// <para><b>A reading below it is recorded ONCE and refuses.</b> Once, because the condition
+    /// repeats every tick for as long as the clock is wrong and a row per tick is a log rather than
+    /// a fact. It answers the MARK rather than the reading, so the caller compares against the
+    /// highest instant this gateway has ever seen and not against the one it is being told now.</para>
+    ///
+    /// <para>A row it cannot read or write answers suspect: a mark this app cannot establish is not
+    /// a mark it may act without.</para>
+    /// </summary>
+    (DateTimeOffset HighWater, bool Suspect) MarkTheClock(string accountId, DateTimeOffset at)
+    {
+        var key = LossReopen.ClockKey(Connector.Id, accountId);
+
+        LossClockMark? mark;
+        try { mark = _db.GetKv(key) is { } json ? Json.Read<LossClockMark>(json) : null; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_clock_mark_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            return (at, true);
+        }
+
+        if (mark is not null && at < mark.At)
+        {
+            var suspect = new LossClockSuspect
+            {
+                Connector = Connector.Id,
+                Account = accountId,
+                HighWater = mark.At,
+                Reading = at,
+                Why = $"This computer's clock went BACKWARDS while TradeAgent had your account closed to "
+                      + $"new risk: it read {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC after having already seen "
+                      + $"{mark.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Nothing will be reopened on a clock "
+                      + "TradeAgent cannot trust. Put the computer's time right; the closure lifts once the "
+                      + "clock is past what it has already seen and everything else is in order."
+            };
+
+            try
+            {
+                if (_db.AddKvOnce(LossReopen.SuspectKey(Connector.Id, accountId), Json.Write(suspect)))
+                {
+                    _log.Activity(suspect.Why, "warn");
+                    _log.TryEngineering("Gateway", "loss_clock_suspect", "error", metadataJson: Json.Write(new
+                    {
+                        account = accountId, connector = Connector.Id, high_water = mark.At, reading = at
+                    }));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.TryEngineering("Gateway", "loss_clock_suspect_not_recorded", "error", ex: ex);
+            }
+
+            return (mark.At, true);
+        }
+
+        try { _db.SetKv(key, Json.Write(new LossClockMark { At = at })); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // THE MARK IS THE GUARD. One this app could not raise is one it may not act on: the next
+            // tick would compare against a stale instant and call a moved clock honest.
+            _log.TryEngineering("Gateway", "loss_clock_mark_not_written", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            return (mark?.At ?? at, true);
+        }
+
+        return (at, false);
+    }
+
+    /// <summary>
+    /// The clock mark's own verdict for the SURFACES, which take no tick: the suspect row if one was
+    /// ever written, and null otherwise. Read-only — nothing outside the tick writes either row.
+    /// </summary>
+    public LossClockSuspect? ClockSuspect(string accountId)
+    {
+        if (accountId.Length == 0) return null;
+        try
+        {
+            return _db.GetKv(LossReopen.SuspectKey(Connector.Id, accountId)) is { } json
+                ? Json.Read<LossClockSuspect>(json)
+                : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new LossClockSuspect
+            {
+                Connector = Connector.Id, Account = accountId,
+                Why = $"TradeAgent could not read whether this computer's clock has moved ({ex.Message}), "
+                      + "and it will not reopen anything until it can"
+            };
+        }
+    }
+
     /// <summary>The positions one closure is about: the whole book, or just its own instrument.</summary>
     static IEnumerable<PositionInfo> InScope(LossBreachRecord breach, IReadOnlyList<PositionInfo> positions) =>
         positions.Where(p => breach.Symbol is null
@@ -2548,6 +2665,12 @@ public sealed class TradingGateway : IAsyncDisposable
         // being closed; the day being closed is this line.
         _db.SetKv(key, Json.Write(record));
         _sightings.Remove(key);
+
+        // THE CLOCK MARK IS SEEDED WITH THE CLOSURE ITSELF, so there is never a standing closure
+        // without one — a clock stepped back between this instant and the next tick would otherwise
+        // find no mark to be below. See MarkTheClock.
+        MarkTheClock(record.Account, record.ConfirmedAt);
+
         if (record.Symbol is null) SayOnceToday(ref _dailyLossSaidFor, record.Why);
         else SayOnceToday(ref _tradeLossSaidFor, record.Why);
         _log.TryEngineering("Gateway", "loss_budget_closed", "warn",
