@@ -403,6 +403,13 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     /// <para>A version whose promotion no longer stands is marked HERE rather than filtered upstream.
     /// The mutant is printing the line without the mark: the row is still on the table and the version
     /// may trade nothing, so an unmarked line tells the owner their capital is working when it is not.</para>
+    ///
+    /// <para><b>And a promotion carrying none of the three execution bounds is marked too.</b>
+    /// `U-promote-bounds` stopped the referee promoting such a version, and deliberately did not
+    /// withdraw the ones recorded before it (see <c>docs/CONTRACTS.md</c>) — so what is left is capital
+    /// standing behind a version whose decisions the gate at dispatch cannot judge the age of. That is
+    /// the opposite of the WITHDRAWN case and has to read as its opposite: the allocation IS live, and
+    /// the thing the owner cannot rely on is the staleness refusal rather than the permission.</para>
     /// </summary>
     internal static string AllocationLine(AllocationStanding standing)
     {
@@ -411,10 +418,17 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
                    + (a.MaxNotional is { } n and > 0m ? $" and {Labels.Money(n, a.Currency)}" : "")
                    + $" {a.Currency}, from {a.EffectiveFrom:yyyy-MM-dd HH:mm:ssK}, policy {a.PolicyVersion}";
 
-        return standing.Authorises
-            ? line
-            : line + " — WITHDRAWN: its promotion no longer stands, so it may trade nothing. "
-                   + standing.Promotion.Why;
+        if (!standing.Authorises)
+            return line + " — WITHDRAWN: its promotion no longer stands, so it may trade nothing. "
+                        + standing.Promotion.Why;
+
+        return standing.Promotion.Promotion is { Freshness: null }
+            ? line + " — NO EXECUTION BOUNDS: its promotion declares no `timeframe`, no "
+                   + "`data_freshness` and no `max_decision_age`, so the dispatch gate cannot judge how "
+                   + "stale anything this version decides is and would send every order it decided. "
+                   + "TradeAgent no longer promotes a version without the three; this promotion was "
+                   + "recorded before that and still stands."
+            : line;
     }
 
     ReportExecution ComposeExecution(DateTimeOffset from, DateTimeOffset to, DateTimeOffset at)

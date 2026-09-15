@@ -170,12 +170,17 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
     /// <para><b>A refusal is a VERDICT, and a failure is not.</b> A version that does not meet the
     /// policy gets a recorded <c>refused</c> promotion with its reason class — that is an answer, and it
     /// is what the budget was spent on. A referee that could not judge at all (no charge, no such
-    /// campaign, a policy this build does not implement, a dataset that serves nothing) writes no row
-    /// and says why in <see cref="RefereeVerdict.Why"/>.</para>
+    /// campaign, a policy this build does not implement, a dataset that serves nothing, a program that
+    /// declares none of the three execution bounds) writes no row and says why in
+    /// <see cref="RefereeVerdict.Why"/>.</para>
     /// </summary>
     public RefereeVerdict Verdict(string versionId, long campaignId, ExecutionModel? model = null,
         CancellationToken stop = default)
     {
+        // NO EXECUTION BOUNDS, NO PROMOTION — asked before anything else, and answered off the text
+        // this installation already holds. See `BoundsRefusal`.
+        if (BoundsRefusal(versionId) is { } unbounded) return RefereeVerdict.No(unbounded);
+
         // THE CHARGE COMES FIRST AND IT IS WHAT PRODUCES THE AUDIENCE. Nothing below can read a
         // held-back bar without it, because the audience is on the charge and is internal to Core.
         var charge = RequestVerdict(versionId, campaignId);
@@ -267,6 +272,51 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 
             return new RefereeVerdict(true, "", promotion);
         });
+    }
+
+    /// <summary>
+    /// WHY THIS VERSION CANNOT BE JUDGED AT ALL, or null because it can: the three execution bounds,
+    /// asked of the FROZEN PROGRAM before a verdict is charged.
+    ///
+    /// <para><b>The rule.</b> <c>docs/COUNCIL.md</c>:96-97 — "a promoted strategy declares its
+    /// timeframe, its required data freshness and its maximum decision age, and the runner checks them
+    /// again when the intent reaches execution". The word in that sentence is PROMOTED, and the three
+    /// declarations are OPTIONAL in the language (`U-freshness`, all three or none), so this is the
+    /// place the sentence becomes true. A program declaring none emits an intent with no
+    /// <c>IntentDecision</c> on it and <c>RefuseAStaleDecisionOrThrow</c> has nothing to refuse on —
+    /// every order it decided would be sent however old the bars behind it were.</para>
+    ///
+    /// <para><b>Before the charge, and it is the one check that is.</b> The answer is in the source
+    /// text this installation already recorded; reading the held-back months cannot change it. Charging
+    /// the scarcest budget in the product for it would spend the submitter's allowance on a fact three
+    /// lines of its own program would have settled — the reason <see cref="RequestVerdict"/> refuses an
+    /// unregistered version without charging either.</para>
+    ///
+    /// <para><b>It refuses to JUDGE, so no promotion row is written — not even a refusal.</b> A
+    /// recorded <c>refused</c> is a verdict about EVIDENCE: the budget was spent, the holdout was read,
+    /// and the version lost on the figures. This one is about the submission, it costs no holdout
+    /// access, and writing it as a verdict would put a permanent row in the ledger saying this program's
+    /// evidence was judged and found wanting when it never was.</para>
+    ///
+    /// <para><b>A source that does not parse falls through</b> to <see cref="Verdict"/>'s own refusal,
+    /// which says so in its own words; and a source that parses to a DIFFERENT program is refused there
+    /// too, by the hash check. Neither can reach a promotion through here: this method only ever
+    /// refuses, so the worst a tampered row can buy is a refusal it would have got anyway.</para>
+    /// </summary>
+    string? BoundsRefusal(string versionId)
+    {
+        if (_strategies.VersionById(versionId) is not { } version) return null;
+        if (StrategyParser.Parse(version.Source).Program is not { Freshness: null }) return null;
+
+        return $"version {Short(versionId)} declares no `timeframe`, no `data_freshness` and no "
+            + "`max_decision_age`, so TradeAgent will not judge it: docs/COUNCIL.md:96-97 — a promoted "
+            + "strategy declares its timeframe, its required data freshness and its maximum decision "
+            + "age, and the runner checks them again when the intent reaches execution. A program that "
+            + "declares none of the three decides with no bounds on it at all, so the gate at dispatch "
+            + "has nothing to refuse a stale signal on and every order it decided would be sent however "
+            + "old the bars behind it were. Declare all three and submit the program again — that is a "
+            + "different text and a different id, and it gets its own evidence. No verdict was charged "
+            + "and no promotion was recorded.";
     }
 
     /// <summary>
@@ -372,7 +422,8 @@ public sealed class Referee(Database db, Func<DateTimeOffset>? now = null,
 /// <see cref="Promotion"/> is a VERDICT: the budget was spent, the holdout was read, and the answer was
 /// no — recorded, immutable, and delivered like any other. <see cref="Ok"/> false is the referee
 /// declining to judge — no charge, no such campaign, a scoring policy this build does not implement, a
-/// dataset that serves nothing — and nothing is written.</para>
+/// dataset that serves nothing, a program that declares none of the three execution bounds — and
+/// nothing is written.</para>
 ///
 /// <para><b>The figures are not on here.</b> A caller gets the promotion and the run's id; the trace and
 /// the metrics stay in <c>strategy_run</c>, which is the owner's table. <c>docs/COUNCIL.md</c>:196-197

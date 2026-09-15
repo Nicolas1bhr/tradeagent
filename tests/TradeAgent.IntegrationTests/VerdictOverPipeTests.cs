@@ -28,8 +28,13 @@ public class VerdictOverPipeTests(ITestOutputHelper log)
 
     const int HoldoutAtBar = 60;
 
+    /// <summary>
+    /// The three execution bounds are on it because `U-promote-bounds` refuses to JUDGE a version that
+    /// declares none of them, and this test is about what the agent is told once a verdict exists.
+    /// </summary>
     const string ProgramText =
-        "instrument BTCUSDT\nsize fixed 1\nexit when close > 103\nentry when close < 97\n";
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + "exit when close > 103\nentry when close < 97\n";
 
     static string NewPipe() => "ta-verdict-" + Guid.NewGuid().ToString("n")[..12];
 

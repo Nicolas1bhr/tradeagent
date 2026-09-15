@@ -41,13 +41,20 @@ public class RefereeVerdictTests
     /// next open after a close under 97 and leaves at the next open after a close over 103, so the runs
     /// below close real trades and come out ahead — which is what lets the promoted path be tested at
     /// all, rather than only the refusals.
+    ///
+    /// <para>It declares the three execution bounds `docs/COUNCIL.md`:96-97 asks a promoted strategy
+    /// for, because `U-promote-bounds` refuses to judge a version that declares none of them at all and
+    /// every test below is about what happens AFTER the referee agrees to judge. The refusal itself has
+    /// its own class, `PromotionBoundsTests`. None of the three changes what the backtest does.</para>
     /// </summary>
     const string ProfitableText =
-        "instrument BTCUSDT\nsize fixed 1\nexit when close > 103\nentry when close < 97\n";
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + "exit when close > 103\nentry when close < 97\n";
 
     /// <summary>The same program the other way up: it buys the rip and sells the dip, and loses.</summary>
     const string LosingText =
-        "instrument BTCUSDT\nsize fixed 1\nexit when close < 97\nentry when close > 103\n";
+        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
+        + "exit when close < 97\nentry when close > 103\n";
 
     sealed record World(TradingGateway Gw, Database Db, DatasetRecord Set, CampaignRow Campaign, string VersionId);
 
@@ -494,11 +501,6 @@ public class RefereeVerdictTests
 
     // ---- the bounds a verdict was taken under -----------------------------------------------------
 
-    /// <summary>The same profitable program, with the three execution bounds `docs/COUNCIL.md`:96-97 asks for.</summary>
-    const string ProfitableWithBounds =
-        "instrument BTCUSDT\nsize fixed 1\ntimeframe 1m\ndata_freshness 2m\nmax_decision_age 30s\n"
-        + "exit when close > 103\nentry when close < 97\n";
-
     /// <summary>
     /// A PROMOTION'S BOUNDS COME OFF THE FROZEN PROGRAM, NEVER OFF THE VERSION ROW'S OWN COLUMNS.
     ///
@@ -513,7 +515,7 @@ public class RefereeVerdictTests
     [Fact]
     public async Task A_promotion_carries_the_bounds_of_the_frozen_program_not_the_version_rows_columns()
     {
-        var w = await Given(program: ProfitableWithBounds);
+        var w = await Given(program: ProfitableText);
         Assert.Null(new StrategyStore(w.Db).VersionById(w.VersionId)!.Freshness);
 
         var verdict = RefereeOf(w).Verdict(w.VersionId, w.Campaign.Id);

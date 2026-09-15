@@ -1942,3 +1942,45 @@ refuses with `ALLOCATION_NONE`.
 **The honest limit, stated.** No runner emits a live or paper intent yet, so the deployment this gate
 ceilings does not exist. What is contracted here is the gate, end to end, and it is what will be there
 when one does.
+
+## U-promote-bounds — no execution bounds, no promotion — `src/TradeAgent.Core/Strategy/Referee.cs`
+
+`docs/COUNCIL.md`:96-97 says a **promoted** strategy declares its timeframe, its required data
+freshness and its maximum decision age. `U-freshness` built the three declarations, the columns that
+carry them onto a verdict and the gate that refuses a stale decision at dispatch — but left them
+OPTIONAL in the language (all three or none), so a promoted version could declare none, emit an intent
+with no `IntentDecision` on it, and be dispatched however old the bars behind it were. This unit is the
+word *promoted* in that sentence, enforced.
+
+**`Referee.Verdict` refuses a version whose FROZEN PROGRAM declares none of the three, and the refusal
+names all three.** The bounds are read off the recorded source re-parsed, never off `strategy_version`'s
+own columns — a restatement some earlier writer put there. A source that no longer parses, or that
+parses to a different program, falls through to the refusals `Verdict` already had.
+
+**No promotion row is written at all — not even a `refused` one.** A recorded refusal is a verdict about
+EVIDENCE: the budget was spent, the held-back months were read, and the version lost on the figures.
+This refusal is about the submission. Writing it as a verdict would put a permanent row in the ledger
+saying a program's evidence was judged and found wanting when it never was.
+
+**It is asked BEFORE the verdict charge — a choice, stated.** The answer is in the text this
+installation already holds and no holdout bar can change it, so charging the scarcest budget in the
+product for it would spend the submitter's allowance on a fact three lines of its own program settle.
+`RequestVerdict` and `HoldoutFeed` are deliberately NOT changed: the rule is about promotion, not about
+who may look at evidence, and a bound-less version can still be charged and backtested like any other.
+
+**Nothing already promoted is invalidated by this unit.** `PromotionState.Invalidated` is what
+`docs/COUNCIL.md`:35 reserves for a changed ASSUMPTION — the dataset, the interpreter build, the scoring
+policy — and this build's judgement about what may be judged is not one of the assumptions those
+verdicts rested on. Withdrawing them by code would also be the app restating a record after the outcome
+was known, which is the move `Promotions` has no method for on purpose. `Promotions.Standing` is
+untouched, and a promotion recorded without bounds goes on reading `promoted`.
+
+**Section 4 of the owner's report names them instead.** A standing allocation whose promotion carries no
+bounds is printed **and marked NO EXECUTION BOUNDS**, naming the three and saying the dispatch gate
+cannot judge how stale anything that version decides is. It is the opposite of the WITHDRAWN mark and
+reads as its opposite: the allocation is live, and what the owner cannot rely on is the staleness
+refusal. A withdrawn allocation is not marked twice — the gate it would be judged at is never reached.
+
+**The language is unchanged.** The three declarations stay optional and all-or-none, because requiring
+them in the parser would refuse the program texts this installation has already accepted. Promotion is
+the narrower place, and it is the one the sentence names.
