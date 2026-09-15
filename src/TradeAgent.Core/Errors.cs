@@ -555,6 +555,41 @@ public static class Labels
         wider.Count == 1
             ? $"Confirm: widen “{wider[0]}”"
             : $"Confirm: widen {wider.Count} of your safety limits";
+
+    // ---- the review hold and its release (U-reopen-2) ---------------------------------------------
+
+    /// <summary>
+    /// THE ONE PRESS THAT LIFTS A REVIEW HOLD. A scope that reached the loss budget twice inside the
+    /// strike window is not reopened by code at all, and this is the only thing anywhere in the
+    /// product that changes that — in process, on the Safety page, with a note, and twice.
+    /// </summary>
+    public const string ReopenAfterReview = "Reopen after review";
+
+    /// <summary>The label on the required note. It is the durable trace of the decision.</summary>
+    public const string ReopenAfterReviewNote = "What you looked at — required";
+
+    /// <summary>
+    /// The hint under the box, which has to say what the press does NOT do: an owner who reads
+    /// "reopen" and expects the account to trade on the next tick has been told the wrong thing.
+    /// </summary>
+    public const string ReopenAfterReviewHint =
+        "This lifts the review hold only. TradeAgent still reopens the closure itself, once it has run "
+        + "its time and a fresh reading of your platform shows nothing open. The AI cannot press this "
+        + "and has no command to ask for it.";
+
+    /// <summary>
+    /// WHAT THE SECOND PRESS WILL DO, IN FULL — never the bare word "Confirm", and it names the
+    /// scopes rather than counting them, because "release 2 holds" does not say which account or
+    /// which instrument is about to be allowed back in.
+    /// </summary>
+    public static string ReleaseHoldArmed(IReadOnlyList<string> scopes)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+        return scopes.Count == 0
+            ? "Nothing is being held for review"
+            : $"Confirm: release the review hold on {string.Join(", ", scopes)} — TradeAgent may reopen "
+              + $"{(scopes.Count == 1 ? "it" : "them")} once the closure has run its time";
+    }
 }
 
 /// <summary>Technical detail, plain-language explanation, suggested repair, and whether we can fix it ourselves.</summary>

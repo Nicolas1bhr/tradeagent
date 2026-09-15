@@ -2812,6 +2812,135 @@ public sealed class TradingGateway : IAsyncDisposable
         return ReadRelease(breach) is null ? hold : null;
     }
 
+    /// <summary>
+    /// EVERY REVIEW HOLD STANDING ON THE SELECTED ACCOUNT, for the card that offers to release them.
+    /// Empty is the honest none; an account whose closures cannot be read answers empty too, because
+    /// the card must not offer to release something this build cannot see.
+    /// </summary>
+    public IReadOnlyList<LossHoldRecord> HoldsForReview()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return [];
+
+        try
+        {
+            return [.. OpenClosures(account).Select(ReviewHold).OfType<LossHoldRecord>()];
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return []; }
+    }
+
+    /// <summary>
+    /// THE OWNER RELEASES THE REVIEW HOLD — the only thing in this product that lifts one, and it is
+    /// IN-PROCESS ONLY (<c>U-reopen-2</c>, item 2).
+    ///
+    /// <para><b>Nothing agent-facing reaches it.</b> There is no <c>trade</c> verb, no pipe op and no
+    /// setting for this, which is <c>CLAUDE.md</c>'s rule about operator authority applied to the one
+    /// permission this unit adds: an agent that wanted its account let back in would have nowhere to
+    /// ask. It is called by a two-press card on the Safety page and by nothing else.</para>
+    ///
+    /// <para><b>It lifts the HOLD and nothing else.</b> The receipt is still the tick's to write, and
+    /// it still needs the eligibility instant, the fresh flat read, the settled flatten and the
+    /// honest clock — every condition <c>U-reopen-1</c> put on it. That asymmetry is deliberate: the
+    /// owner is answering the question the hold asked ("should this go on trading at all"), and they
+    /// are not being asked to certify the state of a book the software can read for itself.</para>
+    ///
+    /// <para><b>The note is required</b>, for the reason the unconfirmed-orders card requires one:
+    /// this row is the durable trace of a person overruling the software's own refusal, and an empty
+    /// one turns that trace into a timestamp. A blank one is refused in words, having written
+    /// nothing.</para>
+    ///
+    /// <para><b>It takes no dispatch gate.</b> It admits nothing by itself — it writes one row that
+    /// a later tick reads — and <c>AddKvOnce</c> is atomic, so the worst a race with a running tick
+    /// can do is leave the release to be noticed on the next one, fifteen seconds later. Taking the
+    /// gate would mean blocking the owner's UI thread behind a connector round trip.</para>
+    /// </summary>
+    public LossReleaseResult ReleaseHold(string note)
+    {
+        var typed = (note ?? "").Trim();
+        if (typed.Length == 0)
+            return new LossReleaseResult(false,
+                "Say what you looked at before releasing this. TradeAgent held the account because it "
+                + "reached your loss budget more than once, and the note is the only record of why you "
+                + "decided it should trade again.", []);
+
+        var account = ClosureAccountId;
+        if (account.Length == 0)
+            return new LossReleaseResult(false,
+                "No account is selected, so there is nothing to release.", []);
+
+        IReadOnlyList<LossBreachRecord> standing;
+        try { standing = OpenClosures(account); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new LossReleaseResult(false,
+                $"TradeAgent could not read what is closed on this account ({ex.Message}), so it will "
+                + "not release anything.", []);
+        }
+
+        var at = Now;
+        var written = new List<string>();
+        var refused = new List<string>();
+
+        foreach (var breach in standing)
+        {
+            if (ReviewHold(breach) is not { } hold) continue;
+
+            var record = new LossReleaseRecord
+            {
+                Account = breach.Account,
+                Connector = Connector.Id,
+                Mode = Settings.Mode,
+                Day = breach.Day,
+                Symbol = breach.Symbol,
+                BreachKey = LossBreach.KeyFor(breach),
+                HoldKey = LossHold.HoldKey(Connector.Id, breach),
+                Episodes = hold.Episodes,
+                Note = typed,
+                At = at,
+                MinClosure = MinClosureFor(breach),
+                StrikeWindowDays = StrikeWindowFor(breach),
+                Why = LossHold.ReleaseSentence(breach.Symbol, typed, at, hold.Episodes)
+            };
+
+            try
+            {
+                // WRITE-ONCE AT THE SQL LAYER, like the receipt. A second press that arrived while
+                // the first was still writing must not move the instant or the note this row claims.
+                if (_db.AddKvOnce(LossHold.ReleaseKey(Connector.Id, breach), Json.Write(record)))
+                {
+                    written.Add(LossHold.ReleaseKey(Connector.Id, breach));
+                    _log.Activity(record.Why, "warn");
+                    _log.TryEngineering("Gateway", "loss_hold_released", "warn", metadataJson: Json.Write(new
+                    {
+                        breach = record.BreachKey, record.HoldKey, record.Episodes, record.At
+                    }));
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.TryEngineering("Gateway", "loss_release_not_written", "error", ex: ex,
+                    metadataJson: Json.Write(new { breach = record.BreachKey }));
+                refused.Add($"{breach.Symbol ?? "your account"} ({ex.Message})");
+            }
+        }
+
+        if (refused.Count > 0)
+            return new LossReleaseResult(false,
+                $"TradeAgent could not write the release for {string.Join(", ", refused)}, so the hold "
+                + "stands. Nothing about the closure has changed.", written);
+
+        if (written.Count == 0)
+            return new LossReleaseResult(false,
+                "Nothing on this account is being held for review, so there is nothing to release. A "
+                + "closure that is simply running its time lifts by itself.", []);
+
+        StateChanged?.Invoke();
+        return new LossReleaseResult(true,
+            $"Released. TradeAgent will reopen {(written.Count == 1 ? "it" : "them")} itself once the "
+            + "closure has run its time and a fresh reading of your platform shows nothing open — the "
+            + "hold is lifted and none of the other conditions are.", written);
+    }
+
     /// <summary>The owner's release of one closure's hold, or null because there is none.</summary>
     LossReleaseRecord? ReadRelease(LossBreachRecord breach)
     {

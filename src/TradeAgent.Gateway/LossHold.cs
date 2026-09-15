@@ -141,6 +141,16 @@ public static class LossHold
 }
 
 /// <summary>
+/// WHAT THE OWNER'S RELEASE PRESS DID: whether anything was released, the keys written, and the
+/// sentence the card shows either way.
+///
+/// <para>A refusal is words and not an exception, for the reason <c>AllocationResult</c> is: the
+/// caller is a button on a screen, and a person who pressed something twice has to read why it did
+/// nothing rather than watch a dialog appear.</para>
+/// </summary>
+public sealed record LossReleaseResult(bool Ok, string Why, IReadOnlyList<string> Released);
+
+/// <summary>
 /// THE WHOLE OF WHAT THE SURFACES SAY ABOUT A CLOSURE ENDING, from one reading of the rows this app
 /// wrote — the earliest instant, what is holding it, whether a person has to look at it, when one
 /// last released one, and under which rule the standing closure is being judged.

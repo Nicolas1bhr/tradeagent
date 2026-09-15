@@ -589,6 +589,94 @@ public class TwoPressGrantTests
         Assert.Equal(0, applied);
     }
 
+    // ---- 6. the review-hold release card (U-reopen-2) --------------------------------------------
+
+    /// <summary>
+    /// RELEASING A REVIEW HOLD IS TWO PRESSES, AND THE ARMED SENTENCE NAMES WHAT IT LETS BACK IN.
+    ///
+    /// <para>A scope that reached the loss budget twice inside the strike window is not reopened by
+    /// code at all, and this press is the only thing anywhere in the product that changes that. One
+    /// press must arm and release nothing — the mutant this pins is the card built with
+    /// <c>Ui.Button</c> instead, where the hold lifts on the first click — and the second must carry
+    /// the whole sentence, naming the account and the instruments rather than counting them.</para>
+    /// </summary>
+    [Fact]
+    public void Releasing_a_review_hold_takes_two_presses_and_the_armed_sentence_names_the_scopes()
+    {
+        string? released = null;
+        var b = SafetyPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
+            note => released = note);
+        b.IsEnabled = true;
+
+        Press(b);
+        Assert.Null(released);
+        Assert.Equal(
+            "Confirm: release the review hold on your account, ES — TradeAgent may reopen them once "
+            + "the closure has run its time",
+            b.Content);
+
+        Press(b);
+        Assert.Equal("checked ATAS", released);
+        Assert.Equal(Labels.ReopenAfterReview, b.Content);
+    }
+
+    /// <summary>
+    /// AN EMPTY NOTE RELEASES NOTHING, ON EITHER PRESS. The note is the only durable trace of a
+    /// person overruling the software's own refusal to let an account back in; the page disables the
+    /// button until something is typed, and this is what stops a control that was enabled and then
+    /// emptied from applying a release with no words on it.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void An_empty_note_releases_nothing_on_either_press(string note)
+    {
+        var released = 0;
+        var b = SafetyPage.BuildReleaseConfirm(() => ["your account"], () => note, _ => released++);
+        b.IsEnabled = true;
+
+        Press(b);
+        Press(b);
+
+        Assert.Equal(0, released);
+    }
+
+    /// <summary>
+    /// A CHANGED NOTE UNDER A HALF-PRESSED BUTTON DISARMS IT, and so does a change in what is held.
+    /// The sentence the owner read named the scopes that were held when they read it, and the note
+    /// is the assertion the second press writes down — completing one against the other's words is
+    /// the disagreement the unconfirmed-orders card already refuses.
+    /// </summary>
+    [Fact]
+    public void Changing_what_is_held_disarms_a_half_pressed_release()
+    {
+        var released = 0;
+        var b = SafetyPage.BuildReleaseConfirm(() => ["your account", "ES"], () => "checked ATAS",
+            _ => released++);
+        b.IsEnabled = true;
+
+        Press(b);
+        Assert.True(Ui.IsArmed(b));
+
+        Ui.Relabel(b, Labels.ReopenAfterReview, Labels.ReleaseHoldArmed(["your account"]));
+
+        Assert.False(Ui.IsArmed(b));
+        Assert.Equal(Labels.ReopenAfterReview, b.Content);
+        Assert.Equal(0, released);
+    }
+
+    /// <summary>
+    /// THE SAFETY PAGE BUILDS ITS RELEASE CARD WITH THAT FACTORY — the line that ties the control
+    /// pressed above to the one the owner sees, which no test off a running app can otherwise reach.
+    /// </summary>
+    [Fact]
+    public void The_safety_page_builds_its_release_card_with_the_two_press_factory()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "TradeAgent.App", "DashboardView.cs"));
+        Assert.Contains("BuildReleaseConfirm(HeldScopes, () => _releaseNote.Text ?? \"\", ApplyRelease)", text);
+        Assert.DoesNotContain("Ui.Button(Labels.ReopenAfterReview", text);
+    }
+
     static string RepositoryRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

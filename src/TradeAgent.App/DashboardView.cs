@@ -1051,6 +1051,24 @@ sealed class SafetyPage
     readonly TextBlock _allocationNote = Ui.Micro("");
     readonly Button _allocate;
 
+    /// <summary>
+    /// THE REVIEW-HOLD CARD. It is the unconfirmed-orders card's shape — a REQUIRED free-text note,
+    /// a two-press button that stays disabled until something is typed, and an edit of the note
+    /// disarming a half-made press — because it is the same kind of act: a person overruling the
+    /// software's own refusal, where the note is the only durable trace of why.
+    ///
+    /// <para>The whole card hides itself while nothing is held, like <c>_unreadableCard</c>: a press
+    /// that would do nothing, offered on every screen for ever, teaches an owner to ignore it.</para>
+    /// </summary>
+    readonly Border _releaseCard;
+
+    readonly TextBox _releaseNote = Ui.With(Ui.TextField(placeholder: Labels.ReopenAfterReviewNote),
+        t => { t.Width = double.NaN; t.HorizontalAlignment = HorizontalAlignment.Stretch; });
+
+    readonly TextBlock _releaseHeld = Ui.Body("");
+    readonly TextBlock _releaseNoteResult = Ui.Micro("");
+    readonly Button _release;
+
     public Control Root { get; }
 
 
@@ -1223,6 +1241,36 @@ sealed class SafetyPage
                 ? Labels.LowerAiPriceArmed(Rate(p, currency()))
                 : null,
             save, "primary");
+        b.HorizontalAlignment = HorizontalAlignment.Left;
+        return b;
+    }
+
+    /// <summary>
+    /// THE PRESS THAT LIFTS A REVIEW HOLD. Two presses, a required note, and the armed sentence names
+    /// the scopes it is about to let TradeAgent reopen (<c>U-reopen-2</c>, item 2).
+    ///
+    /// <para>Two presses in BOTH senses of this page's rule: it is the widening direction and there
+    /// is no narrowing one — a hold cannot be re-imposed, because the count that wrote it was taken
+    /// at a confirmation that has passed. So the first press is the last moment the owner can change
+    /// their mind, which is the holdout card's reason rather than the risk limits'.</para>
+    ///
+    /// <para>The note is refused HERE as well as by the page, on either press. The page disables the
+    /// button until something is typed; this is what stops a control that was enabled and then
+    /// emptied from applying a release with no words on it.</para>
+    ///
+    /// <para>Static and handed the three things it does, like the four factories below it, so a test
+    /// presses the control the owner sees rather than a reconstruction of it.</para>
+    /// </summary>
+    internal static Button BuildReleaseConfirm(Func<IReadOnlyList<string>> heldScopes,
+        Func<string> note, Action<string> release)
+    {
+        var b = Ui.Confirm(Labels.ReopenAfterReview, Labels.ReleaseHoldArmed(heldScopes()), () =>
+        {
+            var typed = (note() ?? "").Trim();
+            if (typed.Length == 0) return;
+            release(typed);
+        });
+        b.IsEnabled = false;
         b.HorizontalAlignment = HorizontalAlignment.Left;
         return b;
     }
@@ -1557,6 +1605,39 @@ sealed class SafetyPage
                 + "rather than changing the old one, so what this version was allowed to hold, and when, "
                 + "stays readable afterwards.")));
 
+        // THE REVIEW-HOLD CARD, under the limits it is about. A scope that reached the loss budget
+        // twice inside the strike window is not reopened by code at all, and this is the only press
+        // anywhere in the product that changes that — so it sits with the loss budgets rather than
+        // with the emergency column, which is about taking authority away.
+        _release = BuildReleaseConfirm(HeldScopes, () => _releaseNote.Text ?? "", ApplyRelease);
+        var release = _release;
+        _releaseNote.TextChanged += (_, _) =>
+        {
+            // Editing the note changes what the press is asserting, so a confirmation armed against
+            // the old words must not survive to be completed against the new ones — the
+            // unconfirmed-orders card's rule, for the same reason.
+            Ui.DisarmConfirm(release);
+            release.IsEnabled = !string.IsNullOrWhiteSpace(_releaseNote.Text);
+        };
+        _releaseNoteResult.IsVisible = false;
+
+        _releaseCard = new Border
+        {
+            Background = Theme.CautionSoft,
+            BorderBrush = Theme.Caution,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Theme.Radius,
+            Padding = new Thickness(Theme.S5),
+            IsVisible = false,
+            Child = Ui.Col(Theme.S3,
+                Ui.With(Ui.Eyebrow("Held for you to look at"), t => t.Foreground = Theme.Caution),
+                _releaseHeld,
+                Ui.Muted(Labels.ReopenAfterReviewHint),
+                _releaseNote,
+                _release,
+                _releaseNoteResult)
+        };
+
         // THE ONE SCREEN THAT REPAIRS AN UNREADABLE SETTINGS ROW SAYS SO, ABOVE EVERYTHING ELSE.
         //
         // The failure is invisible without this. The gateway refuses everything and the health row on
@@ -1579,7 +1660,8 @@ sealed class SafetyPage
         };
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6, _unreadableCard, modeCard, limits, allocation, spending)));
+        grid.Children.Add(Pages.Column(0, Ui.Col(Theme.S6,
+            _unreadableCard, modeCard, limits, _releaseCard, allocation, spending)));
         grid.Children.Add(Pages.Column(1, emergency));
 
         Root = Pages.Scroll(Ui.Col(0,
@@ -1640,6 +1722,12 @@ sealed class SafetyPage
         var flattened = _host.Gateway.FlattenStateToday();
         _lossFlattenNote.Text = flattened.Why ?? "";
         _lossFlattenNote.IsVisible = _lossFlattenNote.Text.Length > 0;
+
+        // THE REVIEW-HOLD CARD, on the same pass and in place. Relabelled through Ui.Relabel rather
+        // than by assigning Content, so a half-pressed release survives the tick — and it is
+        // ABANDONED when the set of held scopes changes, because the sentence the owner read named
+        // the ones that were held then.
+        ShowHeldForReview();
 
         // Through SetResting, never by assigning Content: a half-pressed RESUME must survive the
         // five-second tick, and the fill it wears while armed is registered with the control.
@@ -2056,6 +2144,56 @@ sealed class SafetyPage
         // later on the refresh tick. Pressing the only button a warning names and watching nothing
         // change is how an owner concludes the software is broken and stops trying.
         _unreadableCard.IsVisible = _host.Gateway.Settings.CouldNotBeRead;
+    }
+
+    // ---- the review hold and its release (U-reopen-2) -------------------------------------------
+
+    /// <summary>
+    /// WHAT IS BEING HELD FOR REVIEW RIGHT NOW, in the owner's words — "your account" and the
+    /// instruments, in the order the closures were recorded. Empty is the honest none and is what
+    /// hides the card.
+    /// </summary>
+    IReadOnlyList<string> HeldScopes() =>
+        [.. _host.Gateway.HoldsForReview().Select(h => h.Symbol ?? "your account")];
+
+    /// <summary>
+    /// The card, on the five-second pass and in place: whether it is there at all, what it says is
+    /// held, and what the second press will do. Nothing here rebuilds a control — rebuilding a tree
+    /// is not a refresh, and it would drop a half-made press and empty a half-typed note.
+    /// </summary>
+    void ShowHeldForReview()
+    {
+        var holds = _host.Gateway.HoldsForReview();
+        _releaseCard.IsVisible = holds.Count > 0;
+        if (holds.Count == 0) return;
+
+        // THE HOLD'S OWN SENTENCES, never a paraphrase — they name the episodes that were counted
+        // and the window they were counted in, which is the whole of what the owner is being asked
+        // to look at.
+        _releaseHeld.Text = string.Join(" ", holds.Select(h => h.Why));
+        Ui.Relabel(_release, Labels.ReopenAfterReview,
+            Labels.ReleaseHoldArmed([.. holds.Select(h => h.Symbol ?? "your account")]));
+    }
+
+    /// <summary>
+    /// Takes the press. The gateway writes the row and answers in words either way; the note box is
+    /// emptied only on a release that actually happened, so a refusal leaves the owner's words where
+    /// they can press again rather than making them type them a second time.
+    /// </summary>
+    void ApplyRelease(string note)
+    {
+        var result = _host.Gateway.ReleaseHold(note);
+        _releaseNoteResult.Text = result.Why;
+        _releaseNoteResult.Foreground = result.Ok ? Theme.Positive : Theme.Caution;
+        _releaseNoteResult.IsVisible = true;
+
+        if (result.Ok)
+        {
+            _releaseNote.Text = "";
+            _release.IsEnabled = false;
+        }
+
+        ShowHeldForReview();
     }
 
     // ---- the capital allocation --------------------------------------------------------------
