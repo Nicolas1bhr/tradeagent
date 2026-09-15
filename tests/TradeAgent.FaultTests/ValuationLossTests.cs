@@ -99,6 +99,11 @@ public class ValuationLossTests(ITestOutputHelper log)
             ? Json.Read<ValuationUnavailableRecord>(json)
             : null;
 
+    static ValuationExitRecord? Exit(Database db, RecordingConnector conn, string symbol) =>
+        db.KvStartingWith($"{ValuationLoss.ExitPrefix}{ValuationLoss.Scope(conn.Id, conn.Broker.AccountId)}:{symbol}:")
+            .Select(r => Json.Read<ValuationExitRecord>(r.Value))
+            .FirstOrDefault();
+
     // ---------------------------------------------------------------- item 1
 
     /// <summary>
@@ -203,5 +208,143 @@ public class ValuationLossTests(ITestOutputHelper log)
 
         Assert.True(second.Since > first.Since);
         Assert.Equal(TimeSpan.FromSeconds(20), second.Age(clock.GetUtcNow()));
+    }
+
+    // ---------------------------------------------------------------- item 2
+
+    /// <summary>
+    /// THE DATA-LOSS EXIT, BOUNDED AND DISTINCT (item 2).
+    ///
+    /// <para>A book that was valued and then went silent stays open for exactly as long as the
+    /// owner's bound allows and is then closed — by code, with nobody pressing anything, under the
+    /// reason <c>VALUATION_LOST</c>, with its own record. Before this unit it stayed open for ever:
+    /// the gate refused new risk on the unknown and the position already there went on being exposed
+    /// with nothing measuring it.</para>
+    ///
+    /// <para><b>The mutant this watches.</b> Folding the exit's reason into the breach record: the
+    /// day would then read closed, <c>loss_day_closed_at</c> would carry an instant, section 4 would
+    /// print a loss budget that was reached, and the strike counter would have an episode to count.
+    /// None of it happened. Every one of those is asserted as ABSENT here, which is why the mutant
+    /// cannot survive this fixture.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_position_nobody_can_value_past_the_bound_is_closed_under_its_own_reason()
+    {
+        // One minute: three ticks of the watch's twenty seconds.
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
+
+        // VALUED FIRST, so the silence is a LOSS of something rather than an installation that never
+        // had a price at all.
+        await Ticks(gw, clock, 1);
+        Assert.Null(Episode(db, conn, "ES"));
+
+        conn.Faults.QuoteAge = Silent;
+        await Ticks(gw, clock, 2);
+        log.WriteLine($"before the bound      : ES {Held(conn, "ES")}, closes on the wire {conn.Closes}");
+        Assert.Equal(2m, Held(conn, "ES"));
+
+        await Ticks(gw, clock, 2);
+
+        var exit = Exit(db, conn, "ES");
+        log.WriteLine($"exit record           : {(exit is null ? "(none)" : Json.Write(exit))}");
+        log.WriteLine($"position after        : ES {Held(conn, "ES")}");
+
+        Assert.NotNull(exit);
+        Assert.Equal("VALUATION_LOST", exit.Reason);
+        Assert.True(exit.Flat);
+        Assert.Equal(0m, Held(conn, "ES"));
+        Assert.Contains("VALUATION_LOST", exit.Why, StringComparison.Ordinal);
+
+        // AND IT IS NOT A BREACH. Not one row, not one closed scope, not one strike — asserted here
+        // rather than left to the record's own words, because the words are what the mutant rewrites.
+        Assert.Null(gw.DayClosed(account));
+        Assert.Empty(gw.SymbolsClosedToday(account));
+        Assert.Empty(db.KvStartingWith("loss_breach:"));
+        Assert.Empty(db.KvStartingWith("loss_hold:"));
+        Assert.Empty(db.KvStartingWith("loss_flatten:"));
+
+        var status = Json.Write(await gw.StatusAsync());
+        log.WriteLine(status);
+        Assert.Contains("loss_valuation_exit", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("loss_day_closed_at", status, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// WITH THE CONNECTION DOWN, NOTHING IS SENT, AND THE PAUSE HOLDS (item 2, second half).
+    ///
+    /// <para><c>CLAUDE.md</c> rule 3 applied where it bites: an unavailable valuation is not a
+    /// refusal by anybody, and a connection that is not up cannot carry a close. So the clock goes on
+    /// running — the episode is exactly as long as it is, and the surfaces go on saying so — and the
+    /// exit does not run. A position closed on a connection that was down would be an order this
+    /// gateway believes it sent and cannot account for.</para>
+    /// </summary>
+    [Fact]
+    public async Task With_the_connection_down_the_exit_sends_nothing_and_the_episode_goes_on_ageing()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 1m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
+        conn.Faults.QuoteAge = Silent;
+        await Ticks(gw, clock, 2);
+        Assert.NotNull(Episode(db, conn, "ES"));
+
+        var closesBefore = conn.Closes;
+        conn.Faults.Disconnected = true;
+        await Ticks(gw, clock, 6);
+
+        var episode = Episode(db, conn, "ES");
+        log.WriteLine($"episode while down    : {(episode is null ? "(none)" : Json.Write(episode))}");
+        log.WriteLine($"closes on the wire    : {closesBefore} -> {conn.Closes}");
+        log.WriteLine($"position              : ES {Held(conn, "ES")}");
+
+        Assert.Equal(closesBefore, conn.Closes);
+        Assert.Equal(2m, Held(conn, "ES"));
+        Assert.Null(Exit(db, conn, "ES"));
+
+        Assert.NotNull(episode);
+        Assert.True(episode.Standing);
+        Assert.Null(episode.ExitKey);
+
+        // THE CLOCK RAN THE WHOLE TIME. The episode is as old as it is, and the moment the platform
+        // is reachable again the exit is owed — the pause is not a reset.
+        Assert.True(episode.Age(clock.GetUtcNow()) >= TimeSpan.FromMinutes(1),
+            $"the episode should have gone on ageing while the connection was down, and it is {episode.Age(clock.GetUtcNow())}");
+    }
+
+    /// <summary>
+    /// ZERO SWITCHES THE EXIT OFF AND THE EPISODE IS STILL RECORDED AND STILL SAID.
+    ///
+    /// <para>Zero is the WIDEST value the setting has, exactly as it is on the notional cap and both
+    /// loss budgets, and the widest value of a limit is the one an owner is most entitled to be told
+    /// about. So the clock still runs, the openers are still cancelled, the surfaces still carry the
+    /// episode — and the sentence says in words that TradeAgent will NOT close it.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_zero_bound_closes_nothing_and_says_so_while_still_recording_the_episode()
+    {
+        var (gw, conn, db, clock) = await Ready(exitAfterMinutes: 0m);
+        using var _1 = db;
+        await using var _2 = gw;
+
+        await gw.PlaceAsync(new AgentContext("a"), "open-es", TestEnv.Buy("ES", 2m));
+        conn.Faults.QuoteAge = Silent;
+        await Ticks(gw, clock, 20);
+
+        var episode = Episode(db, conn, "ES");
+        log.WriteLine($"episode               : {(episode is null ? "(none)" : episode.Why)}");
+        log.WriteLine($"position              : ES {Held(conn, "ES")}");
+
+        Assert.NotNull(episode);
+        Assert.True(episode.Standing);
+        Assert.Equal(2m, Held(conn, "ES"));
+        Assert.Null(Exit(db, conn, "ES"));
+        Assert.Contains("will NOT close it", episode.Why, StringComparison.Ordinal);
     }
 }
