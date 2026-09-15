@@ -1993,12 +1993,6 @@ public sealed class TradingGateway : IAsyncDisposable
         // ran first and died would leave a book half closed and nothing saying why.
         await FlattenWhatWasJustClosedAsync(pass.Closed, ct);
 
-        // AND THEN THE SWEEP, which is the same work arrived at from a restart rather than from a
-        // pull. It is here rather than in a startup path of its own because every host already runs
-        // this pass immediately after connecting: a second place to start, stop and forget would be
-        // a second way for a killed flatten to stay killed.
-        await ReFlattenClosuresWithNoOutcomeAsync(account.Id, at, ct);
-
         return pass;
     }
 
@@ -6321,6 +6315,15 @@ public sealed class TradingGateway : IAsyncDisposable
             // a connection failure.
             if (_lossWatchDue || _lastLossWatch is null || Now - _lastLossWatch >= _opt.LossWatchInterval)
                 await LossWatchAsync(ct);
+
+            // AND THE SWEEP FOR A FLATTEN THAT WAS KILLED, on this pass and NOT on the watch's own
+            // interval, because it must not inherit any of the watch's reasons to do nothing. A book
+            // nobody can value, a day with both budgets since set to zero, a pull that failed — each
+            // of those answers "nothing to measure", and none of them is an answer about a closure
+            // that is already on disk with no outcome beside it. Every host runs this pass
+            // immediately after connecting, so this IS the startup path; a second place to start and
+            // forget would be a second way for a killed flatten to stay killed.
+            if (account is not null) await ReFlattenClosuresWithNoOutcomeAsync(account.Id, Now, ct);
         }
         catch (Exception ex)
         {

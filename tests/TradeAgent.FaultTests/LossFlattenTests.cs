@@ -473,6 +473,111 @@ public class LossFlattenTests(ITestOutputHelper log)
 
         await gw.DisposeAsync();
     }
+
+    /// <summary>
+    /// A CLOSURE WITH NO OUTCOME BESIDE IT IS A FLATTEN THAT WAS KILLED, AND IT RE-RUNS (item 4).
+    ///
+    /// <para>The breach record is written first and on its own — everything after that line is a
+    /// consequence of the day being closed. Kill the process on the next line and what is left on
+    /// disk is a closed day, an open position, and nothing that says the app was going to do anything
+    /// about it. The gate refuses every order that could increase exposure, so the account looks
+    /// safe; it is not, because the position that closed the day is still there losing money with
+    /// nobody watching.</para>
+    ///
+    /// <para>What the sweep keys on is the OUTCOME record and never the composite. The composite is
+    /// written BEFORE the first close goes out, so a run killed half way through its legs leaves one
+    /// behind; skipping on that would decide that a flatten which never finished had finished. The
+    /// second gateway below is given exactly that — a composite from the run that died — and still
+    /// re-runs.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_breach_recorded_and_then_killed_is_flattened_on_the_next_start()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "es", TestEnv.Buy("ES", 2m));
+        conn.Broker.PriceOffset = -20m;
+
+        // KILLED BETWEEN THE RECORD AND THE COMPOSITE. The record is on disk and nothing else is.
+        var breach = new LossBreachRecord
+        {
+            Account = account, Day = LossBreach.Stamp(Noon), FirstSeenAt = Noon, ConfirmedAt = Noon,
+            FirstPull = 1, ConfirmingPull = 2, Loss = 2_000m, DayBudget = 1_000m, Currency = "USD",
+            Why = "TradeAgent closed today to new risk at 12:00 UTC."
+        };
+        db.SetKv(LossBreach.DayKey(account, Noon), Json.Write(breach));
+        await gw.DisposeAsync();
+
+        // AND A COMPOSITE FROM THE RUN THAT DIED, so that "keyed on the outcome" is measured rather
+        // than asserted: this is what a flatten killed after BeginComposite leaves behind.
+        var restarted = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        restarted.BeginComposite(AgentContext.Operator, $"{TradingGateway.BudgetClosePress}-deadbeefdeadbeef",
+            Ops.CloseAll, ["ES"], () => "deadbeefdeadbeef");
+
+        Assert.Null(restarted.FlattenToday(account));
+        Assert.Equal(2m, Held(conn, "ES"));
+        Assert.False(restarted.HasUnconfirmedWork());
+
+        await restarted.RefreshHealthAsync();
+
+        var flatten = restarted.FlattenToday(account);
+        Assert.NotNull(flatten);
+        log.WriteLine($"why                   : {flatten.Why}");
+        log.WriteLine($"position              : ES {Held(conn, "ES")}");
+        Assert.True(flatten.Flat);
+        Assert.Equal(0m, Held(conn, "ES"));
+
+        await restarted.DisposeAsync();
+    }
+
+    /// <summary>
+    /// AND IT NEVER RE-RUNS OVER AN UNRECONCILED ROW (item 4, the startup sweep's rule).
+    ///
+    /// <para>The rows a killed flatten leaves are flagged and UNKNOWN: orders this gateway put on the
+    /// wire and cannot account for. Re-running over one would send a second close on top of an order
+    /// that may have filled — long 2 becomes short 2, the exact failure the press mechanics exist to
+    /// prevent. So the sweep waits for reconciliation to say what became of it, and the gate keeps
+    /// every order refused while it waits. Here the unconfirmed order is an ordinary lost placement,
+    /// which is the same shape and easier to make than a half-killed press.</para>
+    /// </summary>
+    [Fact]
+    public async Task The_sweep_does_not_re_run_a_flatten_while_anything_is_unreconciled()
+    {
+        var (gw, conn, db, clock) = await Ready();
+        using var _1 = db;
+        var account = conn.Broker.AccountId;
+
+        await gw.PlaceAsync(new AgentContext("a"), "es", TestEnv.Buy("ES", 2m));
+
+        // AN ORDER THIS GATEWAY CANNOT ACCOUNT FOR: the broker took it and the acknowledgement was
+        // lost. The row is UNKNOWN and flagged, and it is on ES.
+        conn.Faults.DropAfterBrokerAccept = 1;
+        conn.Faults.Fill = FillBehaviour.LeaveWorking;
+        var lost = await gw.PlaceAsync(new AgentContext("a"), "lost", TestEnv.Buy("ES"));
+        conn.Faults.Fill = FillBehaviour.FillImmediately;
+        log.WriteLine($"the lost order        : {lost.State}");
+        Assert.Equal(ExecutionState.UNKNOWN, lost.State);
+        Assert.True(gw.HasUnconfirmedWork());
+
+        db.SetKv(LossBreach.DayKey(account, Noon), Json.Write(new LossBreachRecord
+        {
+            Account = account, Day = LossBreach.Stamp(Noon), ConfirmedAt = Noon,
+            Loss = 2_000m, DayBudget = 1_000m, Currency = "USD", Why = "closed"
+        }));
+
+        var closes = conn.Closes;
+        clock.Advance(Tick);
+        await gw.RefreshHealthAsync();
+
+        log.WriteLine($"unconfirmed work      : {gw.HasUnconfirmedWork()}");
+        log.WriteLine($"closes                : {closes} -> {conn.Closes}");
+        Assert.Null(gw.FlattenToday(account));
+        Assert.Equal(closes, conn.Closes);
+
+        await gw.DisposeAsync();
+    }
 }
 
 /// <summary>
