@@ -46,46 +46,78 @@ public class PeerRowTests
         return c;
     }
 
-    /// <summary>Answers the challenge (correctly or not) and optionally says a hello at that version.</summary>
+    /// <summary>
+    /// Answers the challenge (correctly or not) and optionally says a hello at that version.
+    ///
+    /// A PEER THAT PROVES ITSELF REDIALS WHEN ITS CONNECT LANDED IN AN INSTANCE THAT IS GOING AWAY.
+    /// That is what <c>BridgeRoundTripTests.Redial</c> already does for the stub bridge and what
+    /// <see cref="HandOver"/> sets out: off Windows a connect against the single instance succeeds
+    /// while that instance is busy and dies with it, so the connector never sees this peer at all.
+    /// The evidence is the challenge going unanswered — the reader reaching end of stream without a
+    /// response frame, or the write itself failing — and not anything the connector's row says.
+    ///
+    /// The wrong-proof peer is given no such treatment and needs none: in this class it is only ever
+    /// the FIRST peer on a fresh connector, with no earlier connection being torn down, so there is
+    /// no instance for it to lose; and it waits for no reply that could time its arrival.
+    /// </summary>
     static async Task<(NamedPipeClientStream Client, StreamWriter W)> PeerAsync(
-        string pipe, bool goodProof, int? helloVersion)
+        string pipe, bool goodProof, int? helloVersion, int attempts = 8)
     {
-        var client = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
-        await client.ConnectAsync(10_000);
-        var w = new StreamWriter(client, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
-        var r = new StreamReader(client, new UTF8Encoding(false), false, 8192, leaveOpen: true);
-
-        var cred = BridgePipeAuth.ReadForClient()!;
-        var nonce = BridgePipeAuth.NewNonce();
-        var proof = goodProof
-            ? BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce)
-            : BridgePipeAuth.Proof(WrongSecret, BridgePipeAuth.BridgeRole, nonce);
-        await w.WriteLineAsync(Json.Write(new
+        for (var attempt = 1; ; attempt++)
         {
-            v = Versions.BridgeProtocolVersion,
-            op = BridgePipeAuth.Challenge,
-            data = new { nonce, proof }
-        }));
+            var client = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await client.ConnectAsync(10_000);
+            var w = new StreamWriter(client, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            var r = new StreamReader(client, new UTF8Encoding(false), false, 8192, leaveOpen: true);
 
-        if (goodProof)
-        {
-            string? line;
-            while ((line = await r.ReadLineAsync()) is not null)
-                if (Json.Read<BridgeFrame>(line)?.Op == BridgePipeAuth.Response) break;
-        }
+            var cred = BridgePipeAuth.ReadForClient()!;
+            var nonce = BridgePipeAuth.NewNonce();
+            var proof = goodProof
+                ? BridgePipeAuth.Proof(cred.Secret, BridgePipeAuth.BridgeRole, nonce)
+                : BridgePipeAuth.Proof(WrongSecret, BridgePipeAuth.BridgeRole, nonce);
 
-        if (helloVersion is { } v)
-            await w.WriteLineAsync(Json.Write(new BridgeFrame
+            var answered = !goodProof;
+            try
             {
-                Op = BridgeOps.Hello,
-                Data = System.Text.Json.JsonSerializer.SerializeToElement(
-                    new BridgeHello
+                await w.WriteLineAsync(Json.Write(new
+                {
+                    v = Versions.BridgeProtocolVersion,
+                    op = BridgePipeAuth.Challenge,
+                    data = new { nonce, proof }
+                }));
+
+                if (goodProof)
+                {
+                    string? line;
+                    while ((line = await r.ReadLineAsync()) is not null)
+                        if (Json.Read<BridgeFrame>(line)?.Op == BridgePipeAuth.Response) { answered = true; break; }
+                }
+            }
+            catch (IOException) { answered = false; }
+
+            if (answered)
+            {
+                if (helloVersion is { } v)
+                    await w.WriteLineAsync(Json.Write(new BridgeFrame
                     {
-                        BridgeProtocolVersion = v,
-                        BridgeVersion = "0.0.9", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM"
-                    }, Json.Options)
-            }));
-        return (client, w);
+                        Op = BridgeOps.Hello,
+                        Data = System.Text.Json.JsonSerializer.SerializeToElement(
+                            new BridgeHello
+                            {
+                                BridgeProtocolVersion = v,
+                                BridgeVersion = "0.0.9", AtasVersion = "6.1.2.3", AccountId = "ATAS-SIM"
+                            }, Json.Options)
+                    }));
+                return (client, w);
+            }
+
+            client.Dispose();
+            if (attempt == attempts)
+                throw new TimeoutException(
+                    $"the challenge on {pipe} went unanswered through {attempts} connects — the " +
+                    "connector never took this peer");
+            await Task.Delay(100);
+        }
     }
 
     // ------------------------------------------------------------------ target 3
@@ -165,9 +197,13 @@ public class PeerRowTests
         Assert.Contains("could not prove", connector.StatusDetail!);
         wrong.Dispose();
 
-        // A different program takes the pipe and says nothing whatever.
-        using var quiet = await SilentAsync(pipe);
-        await Wait(() => connector.StatusDetail?.Contains("neither proved itself nor said") == true);
+        // A different program takes the pipe and says nothing whatever — HANDED OVER rather than
+        // merely connected, because a connect that lands in the instance this refusal is closing
+        // succeeds off Windows and then never reaches the connector at all. See HandOver: this
+        // fixture is the one that measured it, 40 failures in 40 with the row below still reading
+        // the refusal above.
+        using var quiet = await HandOver.ToASilentPeer(
+            connector, pipe, () => connector.StatusDetail?.Contains("neither proved itself nor said") == true);
 
         var row = connector.StatusDetail!;
         Assert.Contains("neither proved itself nor said", row);
@@ -323,9 +359,12 @@ public class PeerRowTests
         Assert.Contains("speaks protocol 2", connector.StatusDetail!);
         old.Dispose();
 
-        // The replacement takes the pipe and has not said anything yet.
-        using var arriving = await SilentAsync(pipe);
-        await Wait(() => connector.StatusDetail?.Contains("waiting for the add-on to authenticate") == true);
+        // The replacement takes the pipe and has not said anything yet — handed over for the reason
+        // the fixture above states: this peer is silent too, so a connect that died with the
+        // instance the refusal closed would leave it invisible with nothing to raise.
+        using var arriving = await HandOver.ToASilentPeer(
+            connector, pipe,
+            () => connector.StatusDetail?.Contains("waiting for the add-on to authenticate") == true);
 
         var row = connector.StatusDetail!;
         Assert.DoesNotContain("speaks protocol 2", row);
