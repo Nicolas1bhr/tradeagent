@@ -5974,3 +5974,44 @@ Unit 5× → 0 failed, 1117 each; names vs `main` → 0 removed, 1 added (1781 �
 
 **NOT done, NOT verified:** no product file touched, so no RED-first product test; no `[Collection]`; no assertion loosened or widened; no test deleted; no draft PR — the
 hosted runners' verdict on this fix is the merge sha's CI, recorded below; no box, no money.
+
+## 2026-09-15 — U-reopen-2 landed: two strikes hold the scope for the owner, the durations are his to narrow with two presses, and every record says which rule applied
+The second half of the owner's reopen decision, built by one fresh builder on a worktree cut from the reopen-1 tip. Merge `8714db1`, 6 commits, 22 files,
++3080/−35, no schema rung — the records are `kv`. MONEY PATH: a release lets orders flow.
+
+- **Two strikes hold the scope.** At CONFIRMATION, inside `Close` under `_dispatchGate`: the scope's earlier breach rows inside the window write
+  `loss_hold:{connector}:{account}[:{symbol}]:{utcDay}` through `AddKvOnce`, naming every episode; `HeldBy` answers above the instant, the tick writes no receipt, the
+  breach row is untouched. RED: `Assert.Empty() Failure`, `second reopen : [loss_reopen:fake:SIM-001:2026-03-13]` — the receipt written 24 h later. Mutant (the
+  window measured at reopening): `window from : 2026-03-17 (first episode 2026-03-10)`, `reopened : […2026-03-13]` — the strike aged out while the scope was closed.
+- **Release is the owner's, two-press, with a note.** `ReleaseHold` writes `loss_release:…` once with the note and the episodes; a *Reopen after review* card on the
+  Safety page calls it and nothing else does — no verb, no pipe op, no setting. RED (shapes kept): `release : ok=False []`. Mutant (the release writes the receipt):
+  `Assert.Null() Failure: Value is not null` with a leg still flagged. Second mutant (one press): the hold lifts on the first click, 3 of the card's tests red.
+- **The durations are the owner's, and every record snapshots what applied.** `RiskPolicy.LossMinClosureHours` (24) and `LossStrikeWindowDays` (7) on the Safety
+  page; `Widenings` names a SHORTENED one — the only fields on that page where smaller is the grant — so `BuildSaveLimits` arms the second press. The breach record
+  carries `MinClosure`/`StrikeWindowDays` at `Compose`, the receipt carries both, a record with no snapshot is judged by the fixed defaults. RED (the live setting
+  governing): `Expected: 2026-03-11T09:00:00 / Actual: 2026-03-11T00:00:00`, `snapshot : closure=none window=none`. Mutant (the snapshot dropped from the receipt):
+  `receipt rule : closure=00:00:00 window=0`.
+- **The directors' hold is bounded — and the request channel is NOT there.** No line of `ExtensionFor` reads `BoundaryRow.Disposition`: the boundary's `hold` is
+  written once by policy and never revised, so reading it as holding is a closure with no end. An instant moves only for a `loss_extend:…` row with an `Until` naming
+  THIS episode's boundary id, clamped to one closure length, applied once by key, void on a release, shown with its end. RED (the boundary's `hold` read as
+  holding): `reopens at 9999-12-31 23:59Z, said the directors are holding it`. Mutant (re-applied each tick): `asked / applied: 2026-04-10 / 2026-03-12`, `reopened : []`.
+  The brief's escape hatch taken: no method takes a disposition from a director, so NOTHING IN THIS BUILD WRITES AN EXTENSION ROW — the code and `CONTRACTS.md` say so.
+- **Told:** `status.loss_held_for_review` / `loss_released_at` / `loss_closure_rule`; the Situation and Safety row carry the hold, the extension with its end, the rule
+  and the release with the note quoted; section 4 gains `held for review`, `closure rule`, `held open until` and `loss closures in the window` (one line per episode:
+  scope, instant, the rule THAT episode was judged by, outcome); `GatewaySchema`, `AGENTS.md`, `USER-GUIDE.md`, `CONTRACTS.md`. RED (shapes kept): 3 of 3 red. Mutant
+  (the note optional): `blank note : ok=True — Released.`, `Assert.False() Failure`.
+- **Choices, in `CONTRACTS.md`:** the connector in all three new keys; one press releases EVERY hold standing on the account, each row carrying the same note; an
+  unreadable hold answers HELD and an unreadable breach row still counts as a strike through its key, while an unreadable release or extension answers "none"; a hold
+  that cannot be WRITTEN is logged at error and does not fail the closure; no press re-imposes a hold; a release with nothing held is refused in words; `ReleaseHold`
+  takes no dispatch gate; section 4's listing window is the LIVE setting while every decision follows a snapshot. One assertion RE-PINNED, not loosened: the surfaces
+  test pinned "AT LEAST 24 HOURS" and now pins the sentence that replaced it (the length is the snapshot). A released scope with a flagged leg refuses
+  `TRADING_PAUSED_UNRECONCILED`, the unreconciled pause being ahead of the loss gate — pinned with the wire count.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `83e52c4` (rebased onto `69c44d7`), Release `--no-incremental`: 17 projects,
+0 warnings, 0 errors; Unit 1127 + Fault 345 + Integration 668 = 2140 passed, 0 failed, 1 skipped (11 m 7 s); touched classes 3× → Fault LossStrikeTests 3,
+LossReleaseTests 4, LossRuleSnapshotTests 5, LossDirectorHoldTests 4; Unit LossHoldSurfacesTests 3, TwoPressGrantTests 34, LossReopenSurfacesTests 4, all 21 runs
+green; names 1782 → 1807, 25 added, 0 removed, 0 moved. Manager's gate at `ddf81fc` (the reported tip; `src`/`tests` identical to the gated `83e52c4`; landed as `8714db1` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1127/1127 (19 s), Fault 345/345 (1 m 36 s), Integration 668/669, 1 skipped (11 m 5 s) → 0 failed; names vs `main` → 0 removed, 25 added (sets 1782 → 1807; `[Fact]`/`[Theory]` 1750 → 1775); scan clean; no trailers; `rev-list --count` → 0; CI at `8714db1`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no schema rung; no allocation ladder (a hold is per scope; aggregate enforcement and attribution do not exist — `CONTRACTS.md`); no
+data-loss exit (`U-flatten-3`); no stops (`U-protect`); nothing writes an extension; no screen shot, no test constructs `SafetyPage` (the card's two-press behaviour is held
+at its factory, as every card on that page is); no box, no ATAS, no money — every wire assertion is `RecordingConnector` or the simulator.
