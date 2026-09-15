@@ -6015,3 +6015,37 @@ green; names 1782 → 1807, 25 added, 0 removed, 0 moved. Manager's gate at `ddf
 **NOT done, NOT verified:** no schema rung; no allocation ladder (a hold is per scope; aggregate enforcement and attribution do not exist — `CONTRACTS.md`); no
 data-loss exit (`U-flatten-3`); no stops (`U-protect`); nothing writes an extension; no screen shot, no test constructs `SafetyPage` (the card's two-press behaviour is held
 at its factory, as every card on that page is); no box, no ATAS, no money — every wire assertion is `RecordingConnector` or the simulator.
+
+## 2026-09-15 — U-close-all-win landed: a close-all press with two legs makes fourteen durable commits before its second close, and the fixture's budget is now sized by that arithmetic
+
+A hosted-runner red judged under step 6 — `OperatorEmergencyRecordTests.Close_all_with_a_healthy_connector_closes_each_position_once_and_records_each`, windows-latest at
+the DOCS-ONLY `44f33a4` (run 34944735920), 1 m 05 s, `Assert.Empty()` with one position still on the fake broker; first sighting — briefed this morning and fixed by one
+fresh fixer. Merge `0dbc121`, 3 commits, 5 files, +103/−22, TEST-ONLY (`git diff main -- src/` empty; every `Assert.` line in `DispatchRecoveryTests.cs` byte-identical
+to `main`; no test added, renamed or removed). The settle's-own-commits family of `U-sweep-win`, `U-press-settle-win` and `U-press-inflight-win`, one term further along.
+
+- **Judged from the code — one path, and nothing in the product is wrong:** ONE absolute deadline is opened per press (`RiskReducingScope.Begin`), and everything
+  between it and a leg's wire call is durable SQLite at `synchronous=FULL`. When it expires inside those commits the NEXT leg's close takes `Wire(ct, "positions")` →
+  `HonourTheOperationDeadline`'s `left <= 0` branch, which throws BEFORE the book is read while `RecoveryConnector` has already counted the call — exactly `two targets,
+  two closes reached the connector, one position still on the fake broker`; the shared `CloseCapturedAsync` records the leg UNKNOWN and flags it, so no leg is abandoned
+  unflagged. Reproduced on this Mac (a throwaway hook before `tx.Commit()` holding every commit 2234 ms, the worst commit measured on that runner image, reverted): the
+  real fixture on `PressBudget` fails byte for byte, the press record reading `op-close-…-0 ES FILLED needsRecon=True` beside `op-close-…-1 NQ UNKNOWN … the operation
+  deadline had already passed and nothing was sent to the simulator`.
+- **Why 65 s, from the red run's own trx:** a close-all makes 9 durable commits for one position and 14 for two (12 before the second leg's close reaches the wire), a
+  cancel-all 10 and 13 — `5 + 5×legs` bounds both. The red's fixture makes 35 in all; 65.58 s over 35 is 1874 ms a commit, inside the 16–2234 ms band measured on that
+  image, on a run whose whole Fault project averaged 8.6 s a test against 0.26 s here. Fourteen press commits at that rate are 26 s against a 20 s budget: not a budget
+  a stalled disk ate, but a budget never sized for two legs.
+- **Fixed once, at the test:** `Unresolved.PressBudgetFor(legs) = (5 + 5×legs) × 2234 ms` → 23 s, 34 s, 45 s, both commit counts and the runner's worst commit stated
+  there. GREEN under the 2234 ms stall: the press takes 31 s, both legs FILLED, `positions: []`. Mutant (the flat `PressBudget` put back, same stall): RED with the
+  `Assert.Empty()` message above. All ELEVEN presses in the file moved, each site naming its own legs — seven with two legs, four with one (20 s short of 23 s by the
+  same arithmetic). No `Timing` trait: the verdict is still what the press DID, and this number exists to keep the runner's clock out of it.
+- **NOT moved, named as a debt:** five multi-leg presses outside this brief's file still on the flat 20 s — `UnknownCloseTests.cs:259`, `EmergencyPressTests.cs:224,252`,
+  `PressInFlightTests.cs:151`, `LossFlattenTests.cs:206` — one token each; briefed as `U-press-budget-legs` the same hour, after `U-flatten-3` (which touches the last file).
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `6b3c1cf` (rebased onto `69c44d7`), Release: build `--no-incremental`, 17 projects →
+0 warnings, 0 errors; Fault 3× `--no-build` → 329/329 each; Unit 1117/1117, Fault 329/329, Integration 668 passed + 1 skipped of 669 → 0 failed; names vs `main` → 0
+removed, 0 added. Runner: draft PR #22, run 34988626096 at `6b3c1cf` — ALL FOUR JOBS GREEN (windows-latest Fault 324/324, the fixture 5.43 s; ubuntu; macos; package);
+the PR closed after. What that run does NOT prove: its disk was healthy (Fault 821 s at a 2.08 s median against the red's 2485 s at 6.19 s), so it re-ran the fixture,
+not the stall — the stalled-disk claim rests on the local reproduction and its mutant. Manager's gate at `dac7430` (the reported tip `d08fc15` rebased over `U-reopen-2`, the branch's patch-id identical before and after; landed as `0dbc121` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1127/1127 (22 s), Fault 345/345 (1 m 24 s), Integration 668/669, 1 skipped (11 m 7 s) → 0 failed; names vs `main` → 0 removed, 0 added (sets 1782 = 1782; `[Fact]`/`[Theory]` 1750 = 1750); scan clean; no trailers; `rev-list --count` → 0; CI at `0dbc121`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no product code and no product mutant; no `Timing` trait; no assertion loosened or touched; the five presses above not moved; no box, no
+ATAS, no money.
