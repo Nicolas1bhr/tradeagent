@@ -22,3 +22,24 @@ Gate: `dotnet build TradeAgent.sln -c Release --no-incremental` → 0 warnings; 
 file → 0 failed; names vs `main` → nothing removed; a draft PR's runners green at the tip (run id quoted; at most two runs; close it after the report).
 Commit per item, one sentence, no trailers. Append `## Report` (≤20 lines): tip sha, gate counts, which wait and what the connector said, what moved
 and what did not, the run id, what you did NOT do.
+
+## Report
+Tip `179e23c` + this, 3 commits, TEST-ONLY (`git diff main -- src/` empty): `Harness.cs` +71, `PeerRowTests.cs`, `BridgeRoundTripTests.cs`. No assertion added, removed or altered, no timeout
+raised, **no `Timing`**: the verdict needs no runner clock, only that the peer reached the connector at all.
+1. **THE SECOND WAIT**, on the new peer's silence; the first never timed out. The shipped body did not reproduce in 60 iterations under 12 hogs plus another worktree's suite; with that wait
+SPUN rather than polled every 50 ms — what the poll is worth where the connector's own teardown loses the CPU — it failed **40 in 40**, all on the second wait, the row still reading the
+previous peer's `… could not prove it holds this installation's bridge secret (…/bridge.auth)` with `quiet.IsConnected = True`, and **40 in 40 recovered** the moment a second client
+connected (hogs killed, `pgrep -x yes` → 0). MEASURED MECHANISM: off Windows a pipe is a Unix-domain socket — a connect to the single BUSY instance succeeds in **0 ms** into the backlog and
+dies when the accept loop's `finally` disposes that instance, so the next instance never sees the peer (nothing in 2000 ms) while the client still reports itself connected; a read on the
+orphan settles at once with **0 bytes**, on a live peer not within 500 ms. Windows retries on ERROR_PIPE_BUSY, hence green there.
+2. **MOVED, 3 of 8:** `A_newly_arrived_silent_peer_…` (the red) and `A_peer_inside_the_auth_grace_…` hand over through `HandOver.ToASilentPeer`, reconnecting on that end of stream and ONLY
+on it, so real masking still fails, with the row quoted; `An_authenticated_peer_that_has_not_said_hello_…` through `PeerAsync`, which redials an unanswered challenge (8 attempts), as
+`Redial` already does. **NOT AT RISK, 5 of 8** (`…speaks_v2`, `…fails_the_challenge`, `…compatible_hello`, `The_connecting_line_…`, `…inside_the_grace`): one connection each on a fresh
+connector with nothing being disposed, where a connect that beats the accept loop gets ENOENT, which the client's own retry covers — as it does the wrong-proof peer's single dial. **BEYOND
+THE CLASS:** `BridgeRoundTripTests.A_newly_arrived_silent_peer_…_refusal`, identical shape, the macos red of run 34872880789. **GREEN AFTER:** the fixed body, same spin and load, **0 in
+40**.
+**Gate at `179e23c`** (rebased onto `main` `8cb95de` mid-flight; the first gate, at `4455cd8`, was green too), Release: build `--no-incremental` → **0 warnings, 0 errors**; Integration ×3 →
+**668 passed, 1 skipped, 0 failed** each; Unit **1097** + Fault **304** + Integration **668** = **2069 passed, 0 failed, 1 skipped**; names vs `main` → **0 removed, 0 added** (1685 = 1685;
+`[Fact]`/`[Theory]` 1709 = 1709). **Runner:** PR #21, both runs ALL FOUR GREEN — 34962898676 at `4455cd8`, **34967216164 at `179e23c`**; closed after. **NOT done:** no product code, so no
+RED-first test and no mutant; no `Timing`, no box, no ATAS, no money; the SHIPPED 50 ms-poll body was never reproduced on this Mac (the starved-thread-pool attempt stalled the test host,
+killed by PID), so the runner logs stay its only sighting; and the two fixtures moved beside the red have no red of their own, only the same shape and measurement.
