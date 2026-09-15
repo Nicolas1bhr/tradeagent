@@ -27,7 +27,8 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
    judge the uncommitted files on their merits; finish item 5, rebase onto `main`, gate, report". Dispatch FIRST.
    (b) `u-peer-row-ubuntu` (worktree `U-peer-row-ubuntu`, tip `761af5f` = its base): NO commits, killed while reading. Re-brief fresh from
    `docs/briefs/U-peer-row-ubuntu.md`; a runner-measuring fixer costs a full builder and never runs beside two builders. Dispatch SECOND, alone with (a).
-4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-promote-bounds` (one item, light — the referee refusing promotion without
+4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-decision-hook-race` and `U-close-all-win` (the two hosted-runner
+   reds of the docs-only `44f33a4`, briefed 2026-09-15 morning — each takes the first free slot, a fixer never runs beside two heavy legs); `U-promote-bounds` (one item, light — the referee refusing promotion without
    the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
    by machine, after `-1`); `U-flatten-3` (the data-loss exit, after `-2`). At most two heavy legs at once, each on its own worktree from `main`; a schema number is
    assigned here in landing order — tell each builder which unit takes the number before theirs.
