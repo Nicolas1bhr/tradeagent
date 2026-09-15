@@ -120,6 +120,22 @@ public sealed class GatewayOptions
     /// choice the owner may overrule.</para>
     /// </summary>
     public TimeSpan LossMinClosure { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// HOW MANY UTC DATES A SECOND BREACH IS STILL A SECOND BREACH IN — <b>seven</b>, today and the
+    /// six before it, and the window <c>LossHold</c> counts a scope's strikes inside.
+    ///
+    /// <para>It is the fallback and not the rule: since <c>U-reopen-2</c> the number in force is
+    /// <see cref="TradeAgent.Core.RiskPolicy.LossStrikeWindowDays"/>, and what governs an episode is
+    /// the value SNAPSHOT onto its own breach record. This is what a record written before that
+    /// existed — one with no snapshot on it — is judged by, so a row from an older build is judged
+    /// by the rule that was in force when it was written rather than by whatever is set today.</para>
+    ///
+    /// <para>UTC DATES rather than a rolling span of hours, because a breach at 23:58Z and one at
+    /// 00:02Z are two days apart on any clock a person reads, and every other figure in this product
+    /// that says "day" means a UTC date.</para>
+    /// </summary>
+    public int LossStrikeWindow { get; set; } = 7;
 }
 
 /// <summary>

@@ -181,6 +181,13 @@ public sealed record LossReopenRecord
 
     public TimeSpan MinClosure { get; init; }
 
+    /// <summary>
+    /// The strike window, IN UTC DATES, that this episode was counted against — the second half of
+    /// the rule, on the row for the reason the first half is: the owner may change it afterwards and
+    /// a reader has to be able to see which number the decision was actually made under.
+    /// </summary>
+    public int StrikeWindowDays { get; init; }
+
     /// <summary>When the tick wrote this receipt. Never earlier than <see cref="EligibleAt"/>.</summary>
     public DateTimeOffset At { get; init; }
 

@@ -2391,7 +2391,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         foreach (var breach in standing)
         {
-            var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, _opt.LossMinClosure);
+            var eligible = EligibleFor(breach);
             if (HeldBy(breach, eligible, at, epoch, positions, clock) is { } held)
             {
                 _log.TryEngineering("Gateway", "loss_reopen_held", metadataJson: Json.Write(new
@@ -2412,13 +2412,14 @@ public sealed class TradingGateway : IAsyncDisposable
                 BreachKey = LossBreach.KeyFor(breach),
                 ConfirmedAt = breach.ConfirmedAt,
                 EligibleAt = eligible,
-                MinClosure = _opt.LossMinClosure,
+                MinClosure = MinClosureFor(breach),
+                StrikeWindowDays = StrikeWindowFor(breach),
                 At = at,
                 ClockHighWater = clock.HighWater,
                 ConnectionEpoch = epoch,
                 PositionsRead = [.. InScope(breach, positions).Select(p => $"{p.Symbol} {p.Quantity}")],
                 FlattenWasFlat = FlattenFlagFor(breach),
-                Why = LossReopen.Sentence(breach, eligible, at, _opt.LossMinClosure)
+                Why = LossReopen.Sentence(breach, eligible, at, MinClosureFor(breach))
             };
 
             bool inserted;
@@ -2463,6 +2464,12 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         // THE CLOCK FIRST, because every other line here is an arithmetic over instants it produced.
         if (clock.Suspect || at < clock.HighWater) return ClockBackwards(at, clock.HighWater);
+
+        // THEN THE REVIEW HOLD, BEFORE THE INSTANT, because a held scope has no eligibility instant
+        // at all: the count was taken when the second breach was confirmed and the way out is the
+        // owner's own press, so no amount of waiting is going to make this one lift. It is above the
+        // book and the flatten because it is the only holder here that a person has to answer.
+        if (ReviewHold(breach) is { } review) return review.Why;
 
         if (at < eligible)
             return $"the closure runs until {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC";
@@ -2653,47 +2660,197 @@ public sealed class TradingGateway : IAsyncDisposable
     /// fresh book read belongs to the tick, and its absence here is why <c>At</c> is the EARLIEST it
     /// could be and never a promise.</para>
     /// </summary>
-    public (DateTimeOffset? At, string? Held, DateTimeOffset? ReopenedAt, string? ReopenedWhy) ReopenReading()
+    public LossReopenReading ReopenReading()
     {
         var account = ClosureAccountId;
-        if (account.Length == 0) return (null, null, null, null);
+        if (account.Length == 0) return new LossReopenReading();
 
         var now = Now;
+        var released = LatestRelease(account);
         try
         {
             var standing = OpenClosures(account);
             if (standing.Count == 0)
             {
                 var receipt = LatestReceipt(account);
-                return (null, null, receipt?.At, receipt?.Why);
+                return new LossReopenReading
+                {
+                    ReopenedAt = receipt?.At, ReopenedWhy = receipt?.Why,
+                    ReleasedAt = released?.At, ReleasedWhy = released?.Why
+                };
             }
 
             // THE CLOCK IS THE ONE HOLDER THAT FIRES BEFORE THE INSTANT ARRIVES, so it is asked
             // first: an instant computed off a clock this app does not trust is not an instant.
             var clock = ClockAsRead(account, now);
             if (clock.Suspect)
-                return (null, ClockSuspect(account)?.Why ?? ClockBackwards(now, clock.HighWater), null, null);
+                return new LossReopenReading
+                {
+                    Held = ClockSuspect(account)?.Why ?? ClockBackwards(now, clock.HighWater),
+                    ReleasedAt = released?.At, ReleasedWhy = released?.Why,
+                    Rule = RuleFor(standing[^1])
+                };
 
             DateTimeOffset? at = null;
             foreach (var breach in standing)
             {
-                var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, _opt.LossMinClosure);
+                // A SCOPE HELD FOR REVIEW HAS NO INSTANT AT ALL, so it is asked before the
+                // arithmetic rather than after it: an "earliest" shown beside a hold would be a time
+                // nothing is going to honour, and waiting is not what to do about this one.
+                if (ReviewHold(breach) is { } hold)
+                    return new LossReopenReading
+                    {
+                        Held = hold.Why, HeldForReview = hold.Why,
+                        ReleasedAt = released?.At, ReleasedWhy = released?.Why,
+                        Rule = RuleFor(breach)
+                    };
+
+                var eligible = EligibleFor(breach);
 
                 // Only once the instant has passed can anything else be what is holding it — before
                 // that, "waiting" IS the answer and naming the flatten as well would be noise.
                 if (now >= eligible && HeldBy(breach, eligible, now, null, null, clock) is { } reason)
-                    return (null, reason, null, null);
+                    return new LossReopenReading
+                    {
+                        Held = reason, ReleasedAt = released?.At, ReleasedWhy = released?.Why,
+                        Rule = RuleFor(breach)
+                    };
 
                 if (at is null || eligible > at) at = eligible;
             }
 
-            return (at, null, null, null);
+            return new LossReopenReading
+            {
+                At = at, ReleasedAt = released?.At, ReleasedWhy = released?.Why,
+                Rule = RuleFor(standing[^1])
+            };
         }
-        catch (GatewayDeniedException ex) { return (null, ex.Message, null, null); }
+        catch (GatewayDeniedException ex)
+        {
+            return new LossReopenReading { Held = ex.Message, ReleasedAt = released?.At, ReleasedWhy = released?.Why };
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (null, $"TradeAgent could not work out when this lifts ({ex.Message})", null, null);
+            return new LossReopenReading
+            {
+                Held = $"TradeAgent could not work out when this lifts ({ex.Message})",
+                ReleasedAt = released?.At, ReleasedWhy = released?.Why
+            };
         }
+    }
+
+    // ---------------------------------------------------------------- held for review
+
+    /// <summary>
+    /// THE CLOSURE LENGTH THIS EPISODE IS JUDGED BY — the value SNAPSHOT onto its own breach record,
+    /// and never the one set today (<c>U-reopen-2</c>, item 3).
+    ///
+    /// <para>The durations became the owner's in this unit, which makes them values that can change
+    /// between a breach and its reopen. Reading the LIVE setting would mean a closure narrowed to an
+    /// hour after the event reopened an account the owner shut for a day, and a closure widened
+    /// afterwards delayed a receipt that had already been earned — the record-outranks-the-ledger
+    /// rule, broken by the one number the record is measured against.</para>
+    ///
+    /// <para>A record from before this unit carries no snapshot, and is judged by the FIXED default
+    /// (<see cref="GatewayOptions.LossMinClosure"/>, 24 hours) — the rule that was in force when it
+    /// was written, which is the only honest thing to judge it by.</para>
+    /// </summary>
+    TimeSpan MinClosureFor(LossBreachRecord breach) => _opt.LossMinClosure;
+
+    /// <summary>The strike window this episode was counted in. The snapshot rule above, in dates.</summary>
+    int StrikeWindowFor(LossBreachRecord breach) => _opt.LossStrikeWindow;
+
+    /// <summary>
+    /// THE INSTANT ONE CLOSURE MAY EARLIEST BE LIFTED, as the code that acts and every surface that
+    /// explains both compute it: <see cref="LossReopen.EligibleAt"/> over the closure length this
+    /// episode is judged by.
+    /// </summary>
+    DateTimeOffset EligibleFor(LossBreachRecord breach) =>
+        LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
+
+    /// <summary>The rule an episode is being judged under, in the owner's words, for the surfaces.</summary>
+    string RuleFor(LossBreachRecord breach) =>
+        $"closed for at least {LossReopen.Hours(MinClosureFor(breach))}; a second breach inside "
+        + $"{LossHold.Days(StrikeWindowFor(breach))} is held for you to look at";
+
+    /// <summary>
+    /// THE REVIEW HOLD STANDING OVER ONE CLOSURE, or null because none is — the row written at
+    /// confirmation, minus the owner's release of it.
+    ///
+    /// <para><b>A row it cannot read answers HELD.</b> The hold is the thing that stops code letting
+    /// an account back in, so an unreadable one is not an absent one: a scope whose hold nobody can
+    /// read is a scope a person has to look at, which is what the hold was saying in the first
+    /// place. It is the direction every other reader in this family fails in.</para>
+    /// </summary>
+    LossHoldRecord? ReviewHold(LossBreachRecord breach)
+    {
+        LossHoldRecord? hold;
+        try
+        {
+            var json = _db.GetKv(LossHold.HoldKey(Connector.Id, breach));
+            if (json is null) return null;
+            hold = Json.Read<LossHoldRecord>(json);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_hold_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { breach = LossBreach.KeyFor(breach) }));
+            return new LossHoldRecord
+            {
+                Account = breach.Account, Connector = Connector.Id, Day = breach.Day, Symbol = breach.Symbol,
+                BreachKey = LossBreach.KeyFor(breach),
+                Why = $"TradeAgent could not read whether this closure is being held for you to look at "
+                      + $"({ex.Message}), and it will not let the account back in over a row it cannot read"
+            };
+        }
+
+        if (hold is null) return null;
+
+        // THE OWNER'S RELEASE LIFTS THE HOLD AND NOTHING ELSE. It is a second row rather than an
+        // edit of the first, so the hold and the decision to release it are both still readable —
+        // the rule every record in this family follows.
+        return ReadRelease(breach) is null ? hold : null;
+    }
+
+    /// <summary>The owner's release of one closure's hold, or null because there is none.</summary>
+    LossReleaseRecord? ReadRelease(LossBreachRecord breach)
+    {
+        try
+        {
+            return _db.GetKv(LossHold.ReleaseKey(Connector.Id, breach)) is { } json
+                ? Json.Read<LossReleaseRecord>(json)
+                : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // AN UNREADABLE RELEASE IS NO RELEASE. The hold stands, which is the direction that
+            // leaves a person in the loop rather than letting code decide it was lifted.
+            _log.TryEngineering("Gateway", "loss_release_unreadable", "error", ex: ex,
+                metadataJson: Json.Write(new { breach = LossBreach.KeyFor(breach) }));
+            return null;
+        }
+    }
+
+    /// <summary>The most recent release on this account and platform, for the surfaces. Null when none.</summary>
+    LossReleaseRecord? LatestRelease(string accountId)
+    {
+        if (accountId.Length == 0) return null;
+
+        LossReleaseRecord? latest = null;
+        try
+        {
+            foreach (var (_, value) in _db.KvStartingWith(
+                         $"{LossHold.ReleasePrefix}{LossReopen.Scope(Connector.Id, accountId)}:"))
+            {
+                LossReleaseRecord? rec;
+                try { rec = Json.Read<LossReleaseRecord>(value); }
+                catch (Exception) { continue; }
+                if (rec is not null && (latest is null || rec.At > latest.At)) latest = rec;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+
+        return latest;
     }
 
     /// <summary>The most recent receipt on this account and platform, or null because there is none.</summary>
@@ -2823,6 +2980,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // find no mark to be below. See MarkTheClock.
         MarkTheClock(record.Account, record.ConfirmedAt);
 
+        // AND THE STRIKES ARE COUNTED HERE, ONCE, AT CONFIRMATION — never when the closure is asked
+        // to lift. See HoldIfThisIsASecondStrike.
+        HoldIfThisIsASecondStrike(key, record);
+
         if (record.Symbol is null) SayOnceToday(ref _dailyLossSaidFor, record.Why);
         else SayOnceToday(ref _tradeLossSaidFor, record.Why);
         _log.TryEngineering("Gateway", "loss_budget_closed", "warn",
@@ -2830,6 +2991,125 @@ public sealed class TradingGateway : IAsyncDisposable
 
         OpenLossBoundary(record);
         return key;
+    }
+
+    /// <summary>
+    /// A SECOND BREACH OF THIS SCOPE INSIDE THE STRIKE WINDOW HOLDS IT FOR THE OWNER — counted HERE,
+    /// at confirmation, under the dispatch gate, and written down (<c>U-reopen-2</c>, item 1).
+    ///
+    /// <para><b>Why the count is taken now and not at the reopen.</b> A window evaluated when the
+    /// closure is asked to lift is a window the closure itself moves: the scope sits shut for the
+    /// length of its own closure, the dates go by, and the earlier breach drops out of the count that
+    /// was supposed to be about it. The worse the run, the sooner the software would stop noticing —
+    /// which is the exact inversion of what this is for. So it is a ROW, written once, naming the
+    /// episodes it counted and the window it counted them in, and everything afterwards reads the
+    /// row rather than counting again.</para>
+    ///
+    /// <para><b>One scope at a time.</b> The account's own closures and one instrument's are
+    /// different scopes with different keys, so a day on which both budgets go through is one
+    /// incident for the account and one for the instrument, and neither is the other's second
+    /// strike. A restart or a duplicate pull adds none either: a breach key is written once, and
+    /// the watch records nothing further for a scope that is already closed.</para>
+    ///
+    /// <para><b>It cannot fail the closure</b>, for <see cref="OpenLossBoundary"/>'s reason: the
+    /// record is written and the gate is already refusing when this runs. A hold that could not be
+    /// written is said out loud in the engineering log and leaves the episode reopening by code
+    /// after its closure — a worse day than a held one, and not an open account.</para>
+    /// </summary>
+    void HoldIfThisIsASecondStrike(string key, LossBreachRecord record)
+    {
+        try
+        {
+            var window = StrikeWindowFor(record);
+            if (window <= 0) return;
+
+            var priors = PriorBreaches(record, window, key);
+            if (priors.Count == 0) return;
+
+            var all = priors.Append(record).OrderBy(x => x.ConfirmedAt).ToList();
+            var episodes = all
+                .Select(x => $"{x.ConfirmedAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC")
+                .ToList();
+
+            var hold = new LossHoldRecord
+            {
+                Account = record.Account,
+                Connector = Connector.Id,
+                Day = record.Day,
+                Symbol = record.Symbol,
+                BreachKey = key,
+                Episodes = episodes,
+                EpisodeKeys = [.. all.Select(LossBreach.KeyFor)],
+                StrikeWindowDays = window,
+                WindowFrom = LossHold.WindowFrom(record.ConfirmedAt, window),
+                At = record.ConfirmedAt,
+                Why = LossHold.Sentence(record.Symbol, episodes, window, record.ConfirmedAt)
+            };
+
+            if (!_db.AddKvOnce(LossHold.HoldKey(Connector.Id, record), Json.Write(hold))) return;
+
+            _log.Activity(hold.Why, "warn");
+            _log.TryEngineering("Gateway", "loss_held_for_review", "warn", metadataJson: Json.Write(new
+            {
+                breach = key, hold.EpisodeKeys, hold.StrikeWindowDays, hold.WindowFrom
+            }));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.TryEngineering("Gateway", "loss_hold_not_written", "error", ex: ex,
+                metadataJson: Json.Write(new { breach = key }));
+        }
+    }
+
+    /// <summary>
+    /// EVERY EARLIER BREACH OF THE SAME SCOPE INSIDE THE WINDOW, oldest first — the strikes, off the
+    /// rows themselves and off nothing else.
+    ///
+    /// <para>The SCOPE is the match: the account's own closures (<c>Symbol</c> null) count only
+    /// against the account, and one instrument's only against that instrument. The window is UTC
+    /// DATES, taken from the key without parsing the row, so a record this build cannot read still
+    /// counts as the breach it plainly is; a row that is unreadable AND inside the window is counted
+    /// through its key and named in the engineering log, because a scope whose history cannot be read
+    /// is not a scope with no history.</para>
+    ///
+    /// <para>Strictly EARLIER than the record being written, so the row this pass has just written
+    /// cannot count itself even if the caller forgot to exclude its key.</para>
+    /// </summary>
+    IReadOnlyList<LossBreachRecord> PriorBreaches(LossBreachRecord record, int windowDays, string thisKey)
+    {
+        var found = new List<LossBreachRecord>();
+
+        foreach (var (key, value) in _db.KvStartingWith(LossBreach.AccountPrefix(record.Account)))
+        {
+            if (string.Equals(key, thisKey, StringComparison.Ordinal)) continue;
+            if (LossBreach.ScopeOf(key, record.Account) is not { } scope) continue;
+            if (!string.Equals(scope.Symbol, record.Symbol, StringComparison.Ordinal)) continue;
+            if (!LossHold.InWindow(scope.Day, record.ConfirmedAt, windowDays)) continue;
+
+            LossBreachRecord? rec;
+            try { rec = Json.Read<LossBreachRecord>(value); }
+            catch (Exception ex)
+            {
+                // A ROW THAT CANNOT BE READ IS STILL A BREACH THAT HAPPENED. Its key says which
+                // scope and which UTC date, which is the whole of what the count needs; dropping it
+                // would let a rotted row buy an extra strike.
+                _log.TryEngineering("Gateway", "loss_strike_row_unreadable", "warn", ex: ex,
+                    metadataJson: Json.Write(new { key }));
+                found.Add(new LossBreachRecord
+                {
+                    Account = record.Account, Day = scope.Day, Symbol = scope.Symbol,
+                    ConfirmedAt = new DateTimeOffset(DateTime.Parse(scope.Day,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeUniversal
+                        | System.Globalization.DateTimeStyles.AdjustToUniversal), TimeSpan.Zero)
+                });
+                continue;
+            }
+
+            if (rec is not null && rec.ConfirmedAt < record.ConfirmedAt) found.Add(rec);
+        }
+
+        return [.. found.OrderBy(x => x.ConfirmedAt)];
     }
 
     /// <summary>
