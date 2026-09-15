@@ -57,6 +57,21 @@ public static class LossBreach
     public static string AccountPrefix(string account) => $"{Prefix}{account}:";
 
     /// <summary>
+    /// THE KEY ONE RECORD IS FILED UNDER, off the RECORD's own day and never off the clock. A
+    /// closure now outlives the day it began in (<c>U-reopen-1</c>), so a caller that rebuilt the
+    /// key from <c>Now</c> would name a row that does not exist the moment the clock crosses a
+    /// midnight — which is how a flatten's outcome would be filed against a breach that never
+    /// happened.
+    /// </summary>
+    public static string KeyFor(LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return breach.Symbol is null
+            ? $"{Prefix}{breach.Account}:{breach.Day}"
+            : $"{Prefix}{breach.Account}:{breach.Symbol}:{breach.Day}";
+    }
+
+    /// <summary>
     /// THE SENTENCE THE DAY'S CLOSURE IS REFUSED WITH, AND SHOWN WITH, EVERYWHERE — written ONCE,
     /// onto the record, at the moment it is confirmed.
     ///
@@ -96,24 +111,28 @@ public static class LossBreach
               + "little worse)";
 
     /// <summary>
-    /// The symbol a key closes, or null when it is not a symbol closure of THIS account and day.
+    /// WHAT ONE BREACH KEY CLOSES AND WHICH DAY IT WAS WRITTEN ON — or null when the key is not this
+    /// account's at all.
     ///
     /// <para>Four colon-separated parts is a symbol key and three is the day's own. The parse is
     /// here rather than at the call site so that the two shapes are decided by the one piece of code
     /// that writes them. A symbol carrying a colon would not survive it — no venue in the catalogue
     /// quotes one, and the alternative, a second index row listing the day's closed symbols, is a
     /// second copy of a fact that can disagree with the first.</para>
+    ///
+    /// <para><b>It answers the DAY rather than filtering by it</b> (<c>U-reopen-1</c>). A closure no
+    /// longer ends when its key goes out of scope, so a reader asking "what is closed" has to see
+    /// every day's rows and decide from the record and its receipt — a parse that took today's date
+    /// and dropped everything else would be the day-keyed expiry it replaced, wearing a scan.</para>
     /// </summary>
-    public static string? SymbolOf(string key, string account, DateTimeOffset at)
+    public static (string Day, string? Symbol)? ScopeOf(string key, string account)
     {
         ArgumentNullException.ThrowIfNull(key);
         var parts = key.Split(':');
-        return parts.Length == 4
-               && string.Equals(parts[0] + ":", Prefix, StringComparison.Ordinal)
-               && string.Equals(parts[1], account, StringComparison.Ordinal)
-               && string.Equals(parts[3], Stamp(at), StringComparison.Ordinal)
-            ? parts[2]
-            : null;
+        if (parts.Length is not (3 or 4)) return null;
+        if (!string.Equals(parts[0] + ":", Prefix, StringComparison.Ordinal)) return null;
+        if (!string.Equals(parts[1], account, StringComparison.Ordinal)) return null;
+        return parts.Length == 3 ? (parts[2], null) : (parts[3], parts[2]);
     }
 }
 

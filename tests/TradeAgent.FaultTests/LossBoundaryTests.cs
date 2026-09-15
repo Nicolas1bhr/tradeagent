@@ -137,7 +137,7 @@ public class LossBoundaryTests(ITestOutputHelper log)
     /// second post-mortem — and the first one is not reopened, reused or overwritten by it.
     /// </summary>
     [Fact]
-    public async Task A_breach_on_the_next_utc_day_opens_its_own_boundary()
+    public async Task A_breach_on_the_next_utc_day_while_the_scope_is_still_closed_opens_no_second_boundary()
     {
         var (gw, conn, db, clock) = await Ready(s => s.Risk.MaxDailyLoss = 1_000m);
         using var _1 = db;
@@ -152,8 +152,12 @@ public class LossBoundaryTests(ITestOutputHelper log)
         await gw.LossWatchAsync();
         Assert.Single(boundaries.All());
 
-        // The next UTC day: the closure has expired with its key, and the book is still through the
-        // budget, so the watch closes the new day too.
+        // THE NEXT UTC DAY, AND IT IS STILL THE SAME EPISODE. This test moved here from "a breach on
+        // the next UTC day opens its own boundary", which was true only because the closure expired
+        // with its key: the scope is still closed (no receipt — U-reopen-1), so the watch writes no
+        // second record, and a boundary is a function of the FACT rather than of the tick that
+        // noticed it. Two boundaries for one closure would be two sealed assessments and two senior
+        // wakes for an event that never ended — COUNCIL :64, the reason the id is the fact's.
         clock.Advance(TimeSpan.FromDays(1));
         await gw.LossWatchAsync();
         clock.Advance(Tick);
@@ -161,8 +165,13 @@ public class LossBoundaryTests(ITestOutputHelper log)
 
         var ids = boundaries.All().Select(b => b.Id).ToList();
         log.WriteLine($"boundaries            : {string.Join(", ", ids)}");
-        Assert.Equal(2, ids.Count);
+        Assert.Single(ids);
         Assert.Equal(ids.Count, ids.Distinct(StringComparer.Ordinal).Count());
+
+        // And the record it would have written is not there either: one episode, one row.
+        var rows = db.KvStartingWith(LossBreach.AccountPrefix(conn.Broker.AccountId)).Select(r => r.Key).ToList();
+        log.WriteLine($"breach rows           : {string.Join(", ", rows)}");
+        Assert.Single(rows);
 
         await gw.DisposeAsync();
     }

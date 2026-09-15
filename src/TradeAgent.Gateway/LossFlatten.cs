@@ -35,12 +35,28 @@ public static class LossFlatten
     public static string Scope(string connectorId, string account) => $"{connectorId}:{account}";
 
     /// <summary>The day's own flatten: <c>loss_flatten:{connector}:{account}:{utcDay}</c>.</summary>
-    public static string DayKey(string connectorId, string account, DateTimeOffset at) =>
-        $"{Prefix}{Scope(connectorId, account)}:{LossBreach.Stamp(at)}";
+    public static string DayKey(string connectorId, string account, string utcDay) =>
+        $"{Prefix}{Scope(connectorId, account)}:{utcDay}";
 
     /// <summary>One symbol's: <c>loss_flatten:{connector}:{account}:{symbol}:{utcDay}</c>.</summary>
-    public static string SymbolKey(string connectorId, string account, string symbol, DateTimeOffset at) =>
-        $"{Prefix}{Scope(connectorId, account)}:{symbol}:{LossBreach.Stamp(at)}";
+    public static string SymbolKey(string connectorId, string account, string symbol, string utcDay) =>
+        $"{Prefix}{Scope(connectorId, account)}:{symbol}:{utcDay}";
+
+    /// <summary>
+    /// THE OUTCOME KEY OF ONE BREACH RECORD — the day comes off the RECORD and never off the clock.
+    ///
+    /// <para>It was <c>Stamp(Now)</c> until <c>U-reopen-1</c>, which was the same instant as the
+    /// breach for as long as a closure could not outlive its own UTC day. It can now: a breach
+    /// confirmed at 23:58Z is flattened at 23:58Z and swept, re-read and reported on for a whole day
+    /// afterwards, and every one of those readers has to be naming the same row.</para>
+    /// </summary>
+    public static string KeyFor(string connectorId, LossBreachRecord breach)
+    {
+        ArgumentNullException.ThrowIfNull(breach);
+        return breach.Symbol is null
+            ? DayKey(connectorId, breach.Account, breach.Day)
+            : SymbolKey(connectorId, breach.Account, breach.Symbol, breach.Day);
+    }
 }
 
 /// <summary>

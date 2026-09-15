@@ -901,8 +901,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
         try
         {
-            var day = DayClosed(account);
-            return (day?.ConfirmedAt, day?.Why, SymbolsClosedToday(account));
+            // ONE SCAN, not three. Every closure standing on this account, from which the day's own
+            // and the symbols' are two readings of the same list — asking separately would let a row
+            // written between the two questions answer only one of them.
+            var open = OpenClosures(account);
+            var day = open.LastOrDefault(x => x.Symbol is null);
+            return (day?.ConfirmedAt, day?.Why,
+                [.. open.Select(x => x.Symbol).OfType<string>().Distinct(StringComparer.Ordinal)]);
         }
         catch (GatewayDeniedException ex) { return (null, ex.Message, []); }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -932,10 +937,13 @@ public sealed class TradingGateway : IAsyncDisposable
 
         try
         {
+            // OFF THE CLOSURES THAT ARE STANDING, and off their own days. A flatten is what was done
+            // about ONE breach: once that breach has a receipt the episode is over and this falls
+            // silent, because "your positions were closed" said beside a scope that is trading again
+            // is a sentence about last week.
             var records = new List<LossFlattenRecord>();
-            if (FlattenToday(account) is { } day) records.Add(day);
-            foreach (var symbol in SymbolsClosedToday(account))
-                if (FlattenToday(account, symbol) is { } sym) records.Add(sym);
+            foreach (var breach in OpenClosures(account))
+                if (ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach)) is { } rec) records.Add(rec);
 
             if (records.Count == 0) return (null, null);
 
@@ -1883,36 +1891,121 @@ public sealed class TradingGateway : IAsyncDisposable
     string _lastAccountId = "";
 
     /// <summary>
-    /// TODAY'S CLOSURE FOR THIS ACCOUNT, or null because the day is open.
+    /// EVERY CLOSURE STILL STANDING ON THIS ACCOUNT, whatever day it was recorded on, oldest first.
     ///
-    /// <para>It THROWS <see cref="ErrorCode.RISK_CHECK_UNAVAILABLE"/> when the row is there and
-    /// cannot be read, rather than answering null. "TradeAgent cannot tell whether the day is
-    /// closed" is not "the day is open", and the difference is a live order — the same rule the
-    /// unreadable settings row follows, and the reason an unknown loss refuses.</para>
+    /// <para><b>The closure is a STATE and not a key</b> (<c>U-reopen-1</c>). Until this, a breach
+    /// was filed under <c>loss_breach:{account}:{utcDay}</c> and every reader asked for TODAY's key,
+    /// so the closure ended when the key went out of scope — a breach confirmed at 23:58Z was gone
+    /// at 00:00Z. A scope is now closed from the record's <c>ConfirmedAt</c> until a RECEIPT exists
+    /// for that record (<see cref="LossReopen"/>), so the question "what is closed" is a scan of
+    /// every breach row this account has, minus the ones that have been let back in.</para>
+    ///
+    /// <para><b>The receipt is looked up from the KEY, before the row is parsed.</b> The key already
+    /// carries the day and the symbol, which is everything the receipt's own key needs — so a rotted
+    /// row from a closure that ENDED weeks ago cannot refuse today's orders, and a rotted row from
+    /// one that has NOT ended still does, which is <see cref="ReadBreach"/>'s rule and the whole
+    /// reason it throws.</para>
     /// </summary>
-    public LossBreachRecord? DayClosed(string accountId) => ReadBreach(LossBreach.DayKey(accountId, Now));
-
-    /// <summary>The closure of one symbol on this account today, or null because it is open.</summary>
-    public LossBreachRecord? SymbolClosed(string accountId, string symbol) =>
-        ReadBreach(LossBreach.SymbolKey(accountId, symbol, Now));
-
-    /// <summary>
-    /// Every symbol closed on this account today, in key order. Scanned rather than indexed: the
-    /// closed symbols are whichever ones breached, and a second row listing them is a second copy of
-    /// a fact that can disagree with the first.
-    /// </summary>
-    public IReadOnlyList<string> SymbolsClosedToday(string accountId)
+    public IReadOnlyList<LossBreachRecord> OpenClosures(string accountId)
     {
-        var day = Now;
+        if (accountId.Length == 0) return [];
+
         List<(string Key, string Value)> rows;
         try { rows = [.. _db.KvStartingWith(LossBreach.AccountPrefix(accountId))]; }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
-                $"TradeAgent could not read whether any position is closed for today ({ex.Message})");
+                $"TradeAgent could not read whether anything is closed to new risk ({ex.Message}), and "
+                + "what it cannot read it may not treat as open");
         }
 
-        return [.. rows.Select(x => LossBreach.SymbolOf(x.Key, accountId, day)).OfType<string>()];
+        var open = new List<LossBreachRecord>();
+        foreach (var (key, _) in rows)
+        {
+            if (LossBreach.ScopeOf(key, accountId) is not { } scope) continue;
+            if (_db.GetKv(LossReopen.KeyFor(Connector.Id, accountId, scope.Day, scope.Symbol)) is not null) continue;
+            if (ReadBreach(key) is { } rec) open.Add(rec);
+        }
+
+        return [.. open.OrderBy(x => x.ConfirmedAt)];
+    }
+
+    /// <summary>
+    /// THE ACCOUNT'S OWN CLOSURE AS IT STANDS NOW, or null because it is open — the most recent
+    /// breach record of the whole account that has no receipt.
+    ///
+    /// <para>It THROWS <see cref="ErrorCode.RISK_CHECK_UNAVAILABLE"/> when a row is there and cannot
+    /// be read, rather than answering null. "TradeAgent cannot tell whether the account is closed"
+    /// is not "it is open", and the difference is a live order — the same rule the unreadable
+    /// settings row follows, and the reason an unknown loss refuses.</para>
+    ///
+    /// <para>The LATEST rather than the first, because that is the one whose eligibility instant is
+    /// furthest out: a second breach recorded while the first was still standing would be the same
+    /// episode (the watch writes none — see <c>Measured</c>), but a record restored from anywhere
+    /// else must not be able to shorten a closure by being older.</para>
+    /// </summary>
+    public LossBreachRecord? DayClosed(string accountId) =>
+        OpenClosures(accountId).LastOrDefault(x => x.Symbol is null);
+
+    /// <summary>The closure of one symbol on this account as it stands now, or null because it is open.</summary>
+    public LossBreachRecord? SymbolClosed(string accountId, string symbol) =>
+        OpenClosures(accountId).LastOrDefault(x => string.Equals(x.Symbol, symbol, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Every symbol closed on this account right now, in key order. Scanned rather than indexed: the
+    /// closed symbols are whichever ones breached, and a second row listing them is a second copy of
+    /// a fact that can disagree with the first.
+    /// </summary>
+    public IReadOnlyList<string> SymbolsClosedToday(string accountId) =>
+        [.. OpenClosures(accountId).Select(x => x.Symbol).OfType<string>().Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// THE MOST RECENT BREACH OF ONE SCOPE, WHETHER OR NOT IT IS STILL CLOSED — the account's own
+    /// when <paramref name="symbol"/> is null, otherwise that instrument's.
+    ///
+    /// <para>It exists because two questions outlive the closure itself. What was DONE about a
+    /// breach is filed under the breach's day, so a reader has to know which breach it is asking
+    /// about; and a proposal parked BEFORE a breach is refused even after the scope has reopened
+    /// (<see cref="ApproveAsync"/>), which needs the instant of a closure that has ended.</para>
+    ///
+    /// <para><b>A row it cannot read is SKIPPED here, and that is the one place in this family where
+    /// that is right.</b> <see cref="OpenClosures"/> throws on an unreadable STANDING closure, and
+    /// the gate refuses on it. This method also sees rows from episodes that ended, possibly months
+    /// ago; throwing on one of those would make a single rotted row an account that can never
+    /// approve anything again, with no route out that this build has. It is said out loud in the
+    /// engineering log rather than swallowed.</para>
+    /// </summary>
+    public LossBreachRecord? LatestBreach(string accountId, string? symbol)
+    {
+        if (accountId.Length == 0) return null;
+
+        List<(string Key, string Value)> rows;
+        try { rows = [.. _db.KvStartingWith(LossBreach.AccountPrefix(accountId))]; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"TradeAgent could not read this account's loss-budget history ({ex.Message})");
+        }
+
+        LossBreachRecord? latest = null;
+        foreach (var (key, value) in rows)
+        {
+            if (LossBreach.ScopeOf(key, accountId) is not { } scope) continue;
+            if (!string.Equals(scope.Symbol, symbol, StringComparison.Ordinal)) continue;
+
+            LossBreachRecord? rec;
+            try { rec = Json.Read<LossBreachRecord>(value); }
+            catch (Exception ex)
+            {
+                _log.TryEngineering("Gateway", "loss_breach_unreadable", "error", ex: ex,
+                    metadataJson: Json.Write(new { key }));
+                continue;
+            }
+
+            if (rec is not null && (latest is null || rec.ConfirmedAt > latest.ConfirmedAt)) latest = rec;
+        }
+
+        return latest;
     }
 
     // ---------------------------------------------------------------- the watch
@@ -2113,14 +2206,17 @@ public sealed class TradingGateway : IAsyncDisposable
         List<LossBreachRecord> owed;
         try
         {
+            // EVERY CLOSURE STILL STANDING, and each one's outcome under its OWN day. A closure now
+            // outlives the day it began in, so the sweep that runs the morning after a 23:58Z breach
+            // is asking about a record filed under yesterday.
             owed = [];
-            if (DayClosed(accountId) is { } day
-                && ReadFlattenRecord(LossFlatten.DayKey(Connector.Id, accountId, at)) is null)
+            var open = OpenClosures(accountId);
+            if (open.LastOrDefault(x => x.Symbol is null) is { } day
+                && ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, day)) is null)
                 owed.Add(day);
             else
-                foreach (var symbol in SymbolsClosedToday(accountId))
-                    if (SymbolClosed(accountId, symbol) is { } sym
-                        && ReadFlattenRecord(LossFlatten.SymbolKey(Connector.Id, accountId, symbol, at)) is null)
+                foreach (var sym in open.Where(x => x.Symbol is not null))
+                    if (ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, sym)) is null)
                         owed.Add(sym);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -2167,16 +2263,35 @@ public sealed class TradingGateway : IAsyncDisposable
 
             var closed = new List<string>();
 
-            if (loss.DayReached)
+            // ONE EPISODE UNTIL IT IS REOPENED. A scope that is already closed records NOTHING
+            // further: the second breach is the first one, still going. Until this, the day key was
+            // the whole of it — so a breach at 23:58Z wrote a second record at 00:00Z off the
+            // flatten's OWN fills, and the account would have been "closed twice" for one event,
+            // each closure with its own eligibility instant and its own boundary. The scope is asked
+            // rather than the key, and an unreadable answer counts as CLOSED: it is the direction
+            // that writes nothing, and the gate is refusing off the same rows anyway.
+            var alreadyClosed = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var standing in OpenClosures(accountId))
+                    alreadyClosed.Add(standing.Symbol ?? "");
+            }
+            catch (GatewayDeniedException)
+            {
+                alreadyClosed.Add("");
+                foreach (var symbol in reached) alreadyClosed.Add(symbol);
+            }
+
+            if (loss.DayReached && !alreadyClosed.Contains(""))
             {
                 var key = LossBreach.DayKey(accountId, at);
                 if (Confirmed(key, pull, at, out var first))
                     closed.Add(Close(key, Compose(accountId, null, loss.Loss, r.MaxDailyLoss, loss, at,
                         first, pull, epoch, notes)));
             }
-            else _sightings.Remove(LossBreach.DayKey(accountId, at));
+            else if (!loss.DayReached) _sightings.Remove(LossBreach.DayKey(accountId, at));
 
-            foreach (var symbol in reached)
+            foreach (var symbol in reached.Where(s => !alreadyClosed.Contains(s)))
             {
                 var key = LossBreach.SymbolKey(accountId, symbol, at);
                 if (Confirmed(key, pull, at, out var first))
@@ -4973,10 +5088,12 @@ public sealed class TradingGateway : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(breach);
 
+        // THE KEYS COME OFF THE RECORD'S OWN DAY, NEVER OFF THE CLOCK. A closure outlives the UTC
+        // day it began in (U-reopen-1), so a flatten that runs — or is swept and re-run — after a
+        // midnight would otherwise file its outcome against a breach that does not exist, and the
+        // sweep keyed on the ABSENCE of that outcome would send a second set of closes for ever.
         var startedAt = Now;
-        var breachKey = breach.Symbol is null
-            ? LossBreach.DayKey(breach.Account, startedAt)
-            : LossBreach.SymbolKey(breach.Account, breach.Symbol, startedAt);
+        var breachKey = LossBreach.KeyFor(breach);
 
         var account = await AccountAsync(ct);
         if (account is null || !string.Equals(account.Id, breach.Account, StringComparison.Ordinal))
@@ -4990,10 +5107,8 @@ public sealed class TradingGateway : IAsyncDisposable
             return null;
         }
 
-        var dayKey = LossFlatten.DayKey(Connector.Id, breach.Account, startedAt);
-        var key = breach.Symbol is null
-            ? dayKey
-            : LossFlatten.SymbolKey(Connector.Id, breach.Account, breach.Symbol, startedAt);
+        var dayKey = LossFlatten.DayKey(Connector.Id, breach.Account, breach.Day);
+        var key = LossFlatten.KeyFor(Connector.Id, breach);
 
         // WRITTEN ONCE. The outcome of a flatten is a fact about one breach on one day, and a second
         // run would be a second set of closes sent over a book the first one already flattened.
@@ -5088,7 +5203,7 @@ public sealed class TradingGateway : IAsyncDisposable
             Account = breach.Account,
             Connector = Connector.Id,
             Mode = Settings.Mode,
-            Day = LossBreach.Stamp(startedAt),
+            Day = breach.Day,   // the BREACH's day, which is the key this record is filed under
             Symbol = breach.Symbol,
             BreachKey = breachKey,
             StartedAt = startedAt,
@@ -5448,13 +5563,20 @@ public sealed class TradingGateway : IAsyncDisposable
         }
     }
 
-    /// <summary>What TradeAgent did about today's closure on this account, or null because nothing.</summary>
+    /// <summary>
+    /// What TradeAgent did about this account's latest whole-account closure, or null because there
+    /// is none. Off the BREACH's day, never the clock's: a closure now outlives the day it began in.
+    /// </summary>
     public LossFlattenRecord? FlattenToday(string accountId) =>
-        ReadFlattenRecord(LossFlatten.DayKey(Connector.Id, accountId, Now));
+        LatestBreach(accountId, null) is { } breach
+            ? ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach))
+            : null;
 
     /// <summary>The same, for one symbol's closure.</summary>
     public LossFlattenRecord? FlattenToday(string accountId, string symbol) =>
-        ReadFlattenRecord(LossFlatten.SymbolKey(Connector.Id, accountId, symbol, Now));
+        LatestBreach(accountId, symbol) is { } breach
+            ? ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, breach))
+            : null;
 
     /// <summary>
     /// THE ONE THING AN APP-OWNED LEG MAY PUT ON THE WIRE: an order that OPPOSES a position and is

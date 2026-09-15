@@ -197,27 +197,36 @@ public class LossDayClosureTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE DAY THE RECORD CLOSES IS THE UTC DAY, AND IT REOPENS BY ITSELF (item 1).
+    /// THE CLOSURE OUTLIVES THE UTC DAY IT BEGAN IN, AND ENDS ONLY ON A RECEIPT (item 1).
     ///
-    /// <para>Everything that says "today" in this product says the UTC day —
-    /// <c>TradingGateway.StartOfDay</c>, <c>trade pnl</c>, the sentence the agent is given. A record
-    /// keyed on the LOCAL date would expire at local midnight, which in every timezone east of UTC
-    /// is hours before the ledger's day ends: the budget would be enforced against a figure that is
-    /// still accumulating, and the agent would get a fresh day while the day it lost was still
-    /// running. Both instants below are the same UTC day and straddle a local midnight.</para>
+    /// <para><b>This test moved here from "the next one starts clean", which is the rule it used to
+    /// pin and is the defect this unit closes.</b> <c>U-flatten-1</c> filed the record under
+    /// <c>loss_breach:{account}:{utcDay}</c> and every reader asked for TODAY's key, so the closure
+    /// ended when the key went out of scope: a breach confirmed at 23:58Z was gone at 00:00Z, two
+    /// minutes of pause after an account was flattened, with nothing checking that the flatten had
+    /// resolved or that any time had passed. A day-keyed lookup cannot express "closed for 24
+    /// hours", so the lookup is now a SCAN of the account's breach rows and the closure is a state
+    /// that ends when a receipt for THAT record exists.</para>
     ///
-    /// <para>Nothing reopens the day but the clock. There is no verb, no op and no setting that
-    /// clears a closure — see <c>CLAUDE.md</c> on where authority lives.</para>
+    /// <para>What has NOT changed is which day the record belongs to: everything that says "today"
+    /// in this product says the UTC day, and both of the first two instants below are the same UTC
+    /// day straddling a local midnight east of UTC. What changed is that crossing into the next one
+    /// is no longer an event at all.</para>
+    ///
+    /// <para>The receipt is written here by the test, exactly as the watcher writes it, because THIS
+    /// is the unit of "the closure ends on the receipt and on nothing else". What the watcher has to
+    /// establish BEFORE it writes one is measured next door in <c>LossReopenTests</c>.</para>
     /// </summary>
     [Fact]
-    public async Task The_closure_lasts_the_whole_utc_day_and_the_next_one_starts_clean()
+    public async Task The_closure_outlives_the_utc_day_it_began_in_and_ends_only_on_a_receipt()
     {
         var clock = new TestClock(Evening);
         var (gw, conn, db) = await Ready(clock, s => s.Risk.MaxDailyLoss = 1_000m);
         using var _1 = db;
 
         var account = conn.Broker.AccountId;
-        Write(db, LossBreach.DayKey(account, Evening), Breach(account, Evening, 1_000m, 1_000m));
+        var breach = Breach(account, Evening, 1_000m, 1_000m);
+        Write(db, LossBreach.DayKey(account, Evening), breach);
 
         var places = conn.Places;
         log.WriteLine($"breach at             : {Evening:yyyy-MM-dd HH:mm}Z, local {Evening.LocalDateTime:yyyy-MM-dd HH:mm}");
@@ -233,11 +242,39 @@ public class LossDayClosureTests(ITestOutputHelper log)
         Assert.Equal(places, conn.Places);
         Assert.NotNull(gw.DayClosed(account));
 
-        // THE NEXT UTC DAY: nothing was cleared, and nothing had to be. The key carries the day.
-        clock.MoveTo(Evening.AddHours(2));
+        // THE NEXT UTC DAY, AND NOTHING HAPPENED. This is the line the old test asserted the
+        // opposite of: 00:01Z is three minutes of closure, and three minutes is not a pause.
+        clock.MoveTo(Evening.AddHours(2));   // 2026-03-11 00:30Z — the next UTC day
+        log.WriteLine($"next UTC day          : {clock.GetUtcNow():yyyy-MM-dd HH:mm}Z");
+        Assert.NotNull(gw.DayClosed(account));
+
+        var overnight = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "next-day", TestEnv.Buy("ES")));
+        log.WriteLine($"over the midnight     : {overnight.Code} — {overnight.Message}");
+        Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, overnight.Code);
+        Assert.Equal(places, conn.Places);
+        Assert.Null(gw.GetRequest("next-day"));
+
+        // AND A DAY LATER STILL, WHICH IS PAST EVERY ELIGIBILITY INSTANT: no receipt, no reopen.
+        // Time alone never opened anything — a tick has to have looked and written the row.
+        clock.MoveTo(Evening.AddDays(2));
+        Assert.NotNull(gw.DayClosed(account));
+        await Assert.ThrowsAsync<GatewayDeniedException>(() =>
+            gw.PlaceAsync(new AgentContext("a"), "two-days", TestEnv.Buy("ES")));
+        Assert.Equal(places, conn.Places);
+
+        // THE RECEIPT, AND ONLY THEN. It is filed under the BREACH's day, not the day it was
+        // written on, because it is the release of that record and of nothing else.
+        db.SetKv(LossReopen.KeyFor(conn.Id, breach), Json.Write(new LossReopenRecord
+        {
+            Account = account, Connector = conn.Id, Day = breach.Day,
+            BreachKey = LossBreach.DayKey(account, Evening), ConfirmedAt = Evening,
+            EligibleAt = Evening.AddDays(1), At = Evening.AddDays(2), Why = "reopened by the test"
+        }));
+
         Assert.Null(gw.DayClosed(account));
-        var fresh = await gw.PlaceAsync(new AgentContext("a"), "next-day", TestEnv.Buy("ES"));
-        log.WriteLine($"next UTC day          : {fresh.State}, places {conn.Places}");
+        var fresh = await gw.PlaceAsync(new AgentContext("a"), "after-receipt", TestEnv.Buy("ES"));
+        log.WriteLine($"after the receipt     : {fresh.State}, places {conn.Places}");
         Assert.Equal(ExecutionState.FILLED, fresh.State);
         Assert.Equal(places + 1, conn.Places);
 

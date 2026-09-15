@@ -324,7 +324,7 @@ public class LossFlattenTests(ITestOutputHelper log)
     /// still clears anything the app could not.</para>
     /// </summary>
     [Fact]
-    public async Task An_all_filled_flatten_resolves_itself_and_the_next_day_opens_clean()
+    public async Task An_all_filled_flatten_resolves_itself_and_its_own_rows_do_not_refuse_the_next_day()
     {
         var (gw, conn, db, clock) = await Ready();
         using var _1 = db;
@@ -340,23 +340,34 @@ public class LossFlattenTests(ITestOutputHelper log)
         log.WriteLine($"unconfirmed work      : {gw.HasUnconfirmedWork()}");
         Assert.False(gw.HasUnconfirmedWork());
 
-        // THE NEXT UTC DAY. The closure's key carries the day, so tomorrow asks for a key nothing
-        // wrote — and the rows this flatten left behind must not be what refuses the first order.
+        // THE NEXT UTC DAY, AND THE ROWS THIS FLATTEN LEFT BEHIND MUST NOT BE WHAT REFUSES THE FIRST
+        // ORDER. The midnight no longer reopens anything (U-reopen-1: the closure ends on a receipt
+        // and on nothing else), so what this class still has to prove is WHICH refusal is standing —
+        // the closure's, never the flatten's own unfinished business.
         conn.Broker.PriceOffset = 0m;
         clock.Advance(TimeSpan.FromDays(1));
         await gw.RefreshHealthAsync();
 
-        // What DOES still refuse it is the figure, because the simulator stamps its fills with the
-        // machine's wall clock rather than with this test's, so yesterday's realised loss is still in
-        // the ledger's "today". That is the fixture's limit and not the product's: the verdict this
-        // test is about is WHICH refusal, and TRADING_PAUSED_UNRECONCILED is the one that must be gone.
         var figure = await Assert.ThrowsAsync<GatewayDeniedException>(() =>
             gw.PlaceAsync(new AgentContext("a"), "tomorrow", TestEnv.Buy("ES")));
         log.WriteLine($"tomorrow's refusal    : {figure.Code}");
         Assert.Equal(ErrorCode.LOSS_BUDGET_REACHED, figure.Code);
         Assert.NotEqual(ErrorCode.TRADING_PAUSED_UNRECONCILED, figure.Code);
+        Assert.False(gw.HasUnconfirmedWork());
+        Assert.Empty(gw.Unreconciled());
 
-        // And with a budget that today's figure is inside, the first order of the new day goes out.
+        // AND WITH THE CLOSURE LIFTED THE ORDER GOES OUT, which is the whole claim: nothing this
+        // flatten wrote is still in the way. The receipt is written here exactly as the watcher
+        // writes it — what the watcher must establish first is measured in LossReopenTests. The
+        // budget is widened too, because the simulator stamps its fills with the machine's wall
+        // clock rather than this test's, so yesterday's realised loss is still in the ledger's
+        // "today"; that is the fixture's limit and not the product's.
+        var breach = gw.LatestBreach(account, null)!;
+        db.SetKv(LossReopen.KeyFor(conn.Id, breach), Json.Write(new LossReopenRecord
+        {
+            Account = account, Connector = conn.Id, Day = breach.Day, BreachKey = LossBreach.KeyFor(breach),
+            ConfirmedAt = breach.ConfirmedAt, At = clock.GetUtcNow(), Why = "reopened by the test"
+        }));
         gw.Update(x => x.Risk.MaxDailyLoss = 100_000m);
         var tomorrow = await gw.PlaceAsync(new AgentContext("a"), "tomorrow-2", TestEnv.Buy("ES"));
         log.WriteLine($"tomorrow's first order: {tomorrow.State}");
