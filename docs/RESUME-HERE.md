@@ -15,16 +15,16 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `586d288` (`U-allocator-1` at schema 20, product sha `8cb95de`, plus its record), clean, pushed — 2026-09-15 14:15 CEST.** Landed today in order: `U-flatten-1`
-   `1c5d71f` (morning, no schema; CI green on all four jobs), `U-allocator-1` `8cb95de` (14:10, schema 20; CI verdict recorded in the commit after its record). Before them,
-   2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-freshness` `570279b` (19): the list is in the 2026-09-14 sections.
-3. **IN FLIGHT at the time of writing (if you read this after a kill, read each branch first — the commits are the handoff, nothing of the agent survives):**
-   (a) `u-flatten-2` (worktree `U-flatten-2`, cut from the allocator tip `65ba93f` plus the amended brief; no schema): a fresh builder on `docs/briefs/U-flatten-2.md` with six
-   edge cases from the day's consult in its prompt (openers settled before closes; daily subsumes symbol; keyed by account; the write-ahead row; a failed terminal leg is not
-   flat; the flatten's outcome is its own write-once record). (b) `u-peer-row-ubuntu` (worktree `U-peer-row-ubuntu`): a fresh fixer on its brief, draft PR allowed.
-   Re-brief either one FRESH from its brief on disk: "read your branch first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
-4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-decision-hook-race` and `U-close-all-win` (the two hosted-runner
-   reds of the docs-only `44f33a4`, briefed 2026-09-15 morning — each takes the first free slot, a fixer never runs beside two heavy legs); `U-promote-bounds` (one item, light — the referee refusing promotion without
+2. **`main` is `473178c` (`U-flatten-2`, product sha `d7f235d`, plus its record), clean, pushed — 2026-09-15 15:45 CEST.** Landed today in order: `U-flatten-1` `1c5d71f`
+   (no schema), `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2` (test-only), `U-flatten-2` `d7f235d` (no schema) — every merge sha's CI green on all four
+   jobs where recorded; the rest in the 2026-09-15 sections. Before them, 2026-09-12 → 14, `U-turn-commit` `0da64d7` (11) … `U-freshness` `570279b` (19).
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-decision-hook-race` (worktree, tip `00a316f`
+   rebased onto `473178c`, gated by the fixer, the manager's gate running; its record drafted): land it. (b) `u-reopen-1` (worktree `U-reopen-1`, cut from the
+   flatten-2 tip `d7f235d`; no schema): a fresh builder on `docs/briefs/U-reopen-1.md` told to mirror `U-flatten-2`'s connector-keyed records. (c) `u-promote-bounds`
+   (worktree, cut from `473178c`): a fresh builder on its one-item brief. Re-brief any of them FRESH from its brief on disk: "read your branch first; judge uncommitted
+   files on their merits; finish, rebase onto `main`, gate, report".
+4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order after 3:** `U-close-all-win` (windows, a press fixture, the docs-only `44f33a4`) and `U-loopback-listener-mac` (macos, a listener fixture, the docs-only `5415a8f`) —
+   hosted-runner reds briefed 2026-09-15, each takes the first free slot, a fixer never runs beside two heavy legs; `U-promote-bounds` (one item, light — the referee refusing promotion without
    the three bounds, the hole `U-freshness` disclosed); `U-allocator-2` (**schema 21**, after `U-allocator-1`); `U-flatten-2` (the reduction-only flatten resolved
    by machine, after `-1`); `U-reopen-1` and `U-reopen-2` (the reopen by code the owner chose on 2026-09-15 — option B on condition of "exquisite logic and edge
    case handling": a computed instant, fresh flatness, a write-once receipt, a clock guard, then two strikes and the owner's two-press release; after `U-flatten-2`);
