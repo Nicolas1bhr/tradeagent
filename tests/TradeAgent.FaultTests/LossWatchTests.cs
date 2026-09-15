@@ -120,7 +120,9 @@ public class LossWatchTests(ITestOutputHelper log)
         Assert.Equal("long", mark.Side);
         Assert.Equal("bid", mark.Source);        // the executable side, not the mid
         Assert.Equal(conn.Broker.Quote("ES", Noon).Bid, mark.Mark);
-        Assert.Contains("NOTHING WAS CLOSED FOR YOU", rec.Why, StringComparison.Ordinal);
+        // The sentence states the RULE, and U-flatten-2 reversed the rule: it used to promise
+        // "NOTHING WAS CLOSED FOR YOU" and now says the opposite, because the app closes the book.
+        Assert.Contains("CLOSES YOUR OPEN POSITIONS", rec.Why, StringComparison.Ordinal);
 
         // THE WIRE. ONE close, for the one open position, and the book reads flat afterwards
         // (U-flatten-2; until that unit this asserted that nothing was sent at all).

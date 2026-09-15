@@ -848,11 +848,13 @@ public sealed class TradingGateway : IAsyncDisposable
         // even if the owner has since set the budget to zero, so a reading that returned NotEnforced
         // without it would show an open day on every surface while the gateway went on refusing.
         var closed = ClosureToday();
+        var flattened = FlattenStateToday();
 
         var r = Settings.Risk;
         if (r.MaxDailyLoss <= 0m && r.MaxLossPerTrade <= 0m) return LossToday.NotEnforced with
         {
-            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
+            FlattenState = flattened.State, FlattenWhy = flattened.Why
         };
 
         if (positions is null)
@@ -863,7 +865,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 return LossBudget.CannotBeRead(r, AccountCurrency,
                     $"your open positions could not be read ({ex.Message})") with
                 {
-                    DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+                    DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
+                    FlattenState = flattened.State, FlattenWhy = flattened.Why
                 };
             }
         }
@@ -878,7 +881,8 @@ public sealed class TradingGateway : IAsyncDisposable
         return LossBudget.Read(r, AccountCurrency, LedgerPnl(StartOfDay(Now), "today"),
             positions, LastQuote, _instrumentCache) with
         {
-            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
+            DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols,
+            FlattenState = flattened.State, FlattenWhy = flattened.Why
         };
     }
 
@@ -905,6 +909,47 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             return (null, $"TradeAgent could not read whether today is closed to new risk ({ex.Message}), "
                           + "and new positions are refused until it can", []);
+        }
+    }
+
+    /// <summary>
+    /// WHAT TRADEAGENT DID ABOUT TODAY'S CLOSURE, IN TWO WORDS AND A SENTENCE — <c>flat</c>,
+    /// <c>unresolved</c>, or null because nothing has been flattened.
+    ///
+    /// <para>Off the flatten's own record and never from the figure or from a composite answering ok.
+    /// <c>flat</c> is the one claim in this product that is a statement about the PLATFORM's book, so
+    /// it is only ever made where the book was read back and agreed; everything else is
+    /// <c>unresolved</c>, which means a person has to go and look.</para>
+    ///
+    /// <para>The DAY's flatten is what the two words are about, and a symbol's is folded in: a symbol
+    /// closure whose own flatten could not be confirmed makes the account unresolved, because the
+    /// position it names is open and nobody has said otherwise.</para>
+    /// </summary>
+    public (string? State, string? Why) FlattenStateToday()
+    {
+        var account = ClosureAccountId;
+        if (account.Length == 0) return (null, null);
+
+        try
+        {
+            var records = new List<LossFlattenRecord>();
+            if (FlattenToday(account) is { } day) records.Add(day);
+            foreach (var symbol in SymbolsClosedToday(account))
+                if (FlattenToday(account, symbol) is { } sym) records.Add(sym);
+
+            if (records.Count == 0) return (null, null);
+
+            var unresolved = records.Where(x => !x.Flat).ToList();
+            return unresolved.Count > 0
+                ? ("unresolved", string.Join(" ", unresolved.Select(x => x.Why)))
+                : ("flat", string.Join(" ", records.Select(x => x.Why)));
+        }
+        catch (GatewayDeniedException ex) { return ("unresolved", ex.Message); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return ("unresolved",
+                $"TradeAgent could not read what it did about today's closure ({ex.Message}), so whether "
+                + "your positions were closed cannot be stated here");
         }
     }
 
@@ -1123,6 +1168,7 @@ public sealed class TradingGateway : IAsyncDisposable
             LossBudgetTrade = loss.TradeBudget > 0m ? loss.TradeBudget : null,
             LossDayClosedAt = loss.DayClosedAt,
             LossSymbolsClosed = loss.SymbolsClosed.Count > 0 ? loss.SymbolsClosed : null,
+            LossFlatten = loss.FlattenState,
             AiModel = ai.Model
         };
     }
@@ -1727,12 +1773,18 @@ public sealed class TradingGateway : IAsyncDisposable
     /// IT REFUSES ONLY WHAT CAN INCREASE EXPOSURE. A close, and an order smaller than the position
     /// it is against, always pass — for the reason the open-position cap lets a close through
     /// (<see cref="OpenPositionCapOrThrow"/>): a budget that stopped an account being flattened
-    /// would be a trap, and the day it fired would be the day the owner most needs out. This unit
-    /// REFUSES new risk and closes nothing; closing on a breach is its own unit.
+    /// would be a trap, and the day it fired would be the day the owner most needs out.
     ///
-    /// IT IS NOT A KILL SWITCH AND REMOVES NO PERMISSION. Nothing is written, the mode is untouched,
-    /// and the next UTC day starts clean — the same day <c>trade pnl</c> and the Performance card
-    /// mean by "today" (<see cref="StartOfDay"/>).
+    /// THIS METHOD STILL CLOSES NOTHING, AND SOMETHING ELSE NOW DOES. It is a GATE: it reads the
+    /// record, refuses, and sends no order of any kind. What closes the book on a confirmed breach is
+    /// <see cref="FlattenForBreachAsync"/>, called by the watch after the record is written and
+    /// outside the dispatch gate — so the sentence this gate refuses with is about new risk, and the
+    /// flatten's own record is what says where the owner's money went. They are deliberately two
+    /// pieces of code: a gate that could send an order would be a gate that could be made to send one.
+    ///
+    /// IT IS NOT A KILL SWITCH AND REMOVES NO PERMISSION. Nothing is written by THIS method, the mode
+    /// is untouched, and the next UTC day starts clean — the same day <c>trade pnl</c> and the
+    /// Performance card mean by "today" (<see cref="StartOfDay"/>).
     ///
     /// A BUDGET OF ZERO READS NOTHING. Both at zero and the ledger is not touched, the instrument
     /// list is not asked for and nothing can refuse — the rule <c>MaxNotionalPerOrder</c> has, for

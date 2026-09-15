@@ -134,6 +134,17 @@ public sealed record ReportPerformance
 
     /// <summary>Instruments closed to opens and adds for the rest of that UTC day.</summary>
     public IReadOnlyList<string> SymbolsClosed { get; init; } = [];
+
+    /// <summary>
+    /// What TradeAgent DID about the closure: <c>flat</c>, <c>unresolved</c>, or null because nothing
+    /// was flattened. See <see cref="LossToday.FlattenState"/>; this report is composed from the
+    /// gateway's own record and asks the platform nothing, which is why the state has to be a record
+    /// rather than a reading.
+    /// </summary>
+    public string? FlattenState { get; init; }
+
+    /// <summary>The flatten's own sentence, written once with its record.</summary>
+    public string? FlattenWhy { get; init; }
     public string Currency { get; init; } = "";
 
     /// <summary>
@@ -460,17 +471,21 @@ public static class DailyReportText
         Kv(b, "loss allowance left", Money(r.Performance.LossAllowanceRemaining, money)
                                      + (r.Performance.LossBudgetDay is { } d
                                          ? $" of {Labels.Money(d, money)}" : " — no daily loss budget is set"));
-        // WHETHER THE DAY WAS CLOSED, SINCE WHEN, WHY, AND THAT NOTHING WAS CLOSED FOR THE OWNER.
-        // Printed even when the figure above it is smaller than the budget, because that is exactly
-        // the case an owner would otherwise read as "the software stopped trading for no reason".
+        // WHETHER THE DAY WAS CLOSED, SINCE WHEN AND WHY. Printed even when the figure above it is
+        // smaller than the budget, because that is exactly the case an owner would otherwise read as
+        // "the software stopped trading for no reason".
         Kv(b, "closed to new risk", r.Performance.DayClosedAt is { } closed
             ? $"since {Instant(closed)} — {r.Performance.DayClosedWhy ?? Unknown}"
             : r.Performance.DayClosedWhy is { Length: > 0 } unreadable ? unreadable
-            : "no — the day was open to new positions"
-              + (r.Performance.SymbolsClosed.Count > 0 ? "" : ", and nothing was closed for you"));
+            : "no — the day was open to new positions");
         if (r.Performance.SymbolsClosed.Count > 0)
-            Kv(b, "positions closed to adds", string.Join(", ", r.Performance.SymbolsClosed)
-                                              + " — NOTHING WAS CLOSED FOR YOU; closing and reducing still work");
+            Kv(b, "positions closed to adds", string.Join(", ", r.Performance.SymbolsClosed));
+
+        // AND WHAT WAS DONE ABOUT IT, AS ITS OWN LINE. A closed day and a flattened book are two
+        // facts, and this is the one that says where the owner's money is. It is the flatten
+        // record's own sentence, never a paraphrase and never derived from the figure above.
+        if (r.Performance.FlattenState is { Length: > 0 } state)
+            Kv(b, "positions closed for you", $"{state} — {r.Performance.FlattenWhy ?? Unknown}");
         // WHAT IS ALLOCATED, AND TO WHAT. See ReportPerformance.Allocations: a withdrawn promotion is
         // listed and marked rather than dropped, because the row is still there and the version can
         // trade nothing.

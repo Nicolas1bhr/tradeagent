@@ -93,15 +93,24 @@ public static class GatewaySchema
             + "not enforced at all, and an absent loss_today means TradeAgent could not work the figure out — never "
             + "that nothing was lost. Reaching either budget REFUSES every order that could increase exposure, with "
             + "LOSS_BUDGET_REACHED, until midnight UTC for the day's budget; closing or reducing a position is never "
-            + "refused by them, and nothing is closed for you. A day whose loss cannot be worked out refuses new "
+            + "refused by them. A day whose loss cannot be worked out refuses new "
             + "positions too, with RISK_CHECK_UNAVAILABLE and a sentence saying what was missing. "
             + "loss_day_closed_at is SINCE WHEN today has been closed to new risk, and loss_symbols_closed "
             + "names the instruments closed to opens and adds; both are ABSENT while nothing is closed. A "
             + "closure is a RECORD TradeAgent wrote when it confirmed the breach, not a figure it recomputes: "
             + "the day stays closed until the NEXT UTC DAY however the loss moves afterwards, so closing a "
             + "loser, restarting TradeAgent and the account owner widening the budget all leave it closed, and "
-            + "asking again is not what reopens it. Closing and reducing are never refused, NOTHING WAS CLOSED "
-            + "FOR YOU, and there is no command here — for you or for anyone — that reopens a day.", []),
+            + "asking again is not what reopens it. Closing and reducing are never refused, and there is no "
+            + "command here — for you or for anyone — that reopens a day. "
+            + "loss_flatten is WHAT TRADEAGENT DID ABOUT IT, and it is the field to read before you plan "
+            + "anything: a confirmed breach CANCELS every working order of yours that could increase exposure "
+            + "and CLOSES what is open, by code, with nobody pressing anything. flat means those closes were "
+            + "filled and a fresh read of the account says nothing is open — your positions are GONE, do not "
+            + "plan around managing them. unresolved means TradeAgent cannot confirm that: a close was refused "
+            + "or has no confirmed outcome, an order would not cancel, or a position still reads open — and "
+            + "while it stands every order of yours is refused anyway, because the records behind it are "
+            + "flagged for the account owner. ABSENT means nothing has been flattened. There is no command "
+            + "here that starts, stops or undoes it.", []),
         new(Core.Ops.Connectors,  "trade connectors",          false, "Trading backends TradeAgent knows about.", []),
         new(Core.Ops.Accounts,    "trade accounts",            false, "Accounts visible on the connected platform.", []),
         new(Core.Ops.Account,     "trade account",             false, "The selected account, with balance and equity.", []),

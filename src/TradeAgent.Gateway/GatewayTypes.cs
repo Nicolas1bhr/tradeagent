@@ -363,6 +363,21 @@ public sealed record GatewayStatus(
     public IReadOnlyList<string>? LossSymbolsClosed { get; init; }
 
     /// <summary>
+    /// WHAT TRADEAGENT DID ABOUT THE CLOSURE — <c>flat</c> or <c>unresolved</c> — or ABSENT because
+    /// nothing has been flattened.
+    ///
+    /// <para>It is on the wire because an agent that reads only <c>loss_day_closed_at</c> will assume
+    /// its positions are where it left them and spend the rest of its session planning around
+    /// managing them. They are not there: a confirmed breach cancels every order that could increase
+    /// exposure and closes what is open, by code, with nobody pressing anything.</para>
+    ///
+    /// <para><c>unresolved</c> is not a softer <c>flat</c>. It means a leg was refused, a close has no
+    /// confirmed outcome, or a position still reads open — and while it stands, every order is
+    /// refused anyway, because the records behind it are flagged.</para>
+    /// </summary>
+    public string? LossFlatten { get; init; }
+
+    /// <summary>
     /// THE MODEL TRADEAGENT ASKED YOUR AI TOOL FOR, or absent where it asked for none — either the
     /// tool takes no model flag, or nothing has named one and it runs on its own configuration.
     ///

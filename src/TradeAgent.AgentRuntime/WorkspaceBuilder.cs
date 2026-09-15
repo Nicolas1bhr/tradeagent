@@ -335,10 +335,9 @@ public static class WorkspaceBuilder
     These are not suggestions you can negotiate. There is no command that raises them — only the
     account owner can, in the TradeAgent window.
 
-    The two loss budgets never refuse a close or a reduce, and TradeAgent closes nothing for you:
-    they stop new risk and leave what is open to you. `trade status` carries `loss_today`,
-    `loss_budget_day` and `loss_budget_trade` — each ABSENT rather than zero, and an absent
-    `loss_today` means the figure could not be worked out, which refuses new positions too.
+    The two loss budgets never refuse a close or a reduce: they stop new risk. `trade status` carries
+    `loss_today`, `loss_budget_day` and `loss_budget_trade` — each ABSENT rather than zero, and an
+    absent `loss_today` means the figure could not be worked out, which refuses new positions too.
 
     **A breached budget closes the day, and TradeAgent writes that down.** It watches the account on
     its own clock, not only when you send something, and the moment two separate readings agree that
@@ -347,8 +346,17 @@ public static class WorkspaceBuilder
     refused off that record — it is not re-derived from the figure, so closing the loser, restarting
     TradeAgent or the account owner widening the budget will not reopen the day. **The next UTC day
     reopens it and nothing else does.** There is no command, here or anywhere, that lifts it, and
-    asking repeatedly costs you turns and changes nothing. Closing and reducing still work, and
-    NOTHING WAS CLOSED FOR YOU: the positions are exactly where you left them.
+    asking repeatedly costs you turns and changes nothing.
+
+    **And it closes your open positions for you.** This is new and it changes what you should do
+    next. On a confirmed breach TradeAgent cancels every working order of yours that could increase
+    exposure, waits until the platform confirms they are no longer working, and then closes what is
+    open — by code, with nobody pressing anything, and it may only send orders that reduce a position.
+    `trade status` carries `loss_flatten`: **`flat`** means those closes filled and a fresh read of
+    the account says nothing is open, so **your positions are gone — do not plan around managing
+    them**; **`unresolved`** means TradeAgent cannot confirm that, and while it stands every order you
+    send is refused anyway, because the records behind it are flagged for the account owner to read.
+    Absent means nothing has been flattened. There is no command that starts, stops or undoes it.
 
     ## Rules that matter
 

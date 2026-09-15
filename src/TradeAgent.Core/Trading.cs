@@ -820,6 +820,22 @@ public sealed record LossToday
     public IReadOnlyList<string> SymbolsClosed { get; init; } = [];
 
     /// <summary>
+    /// WHAT TRADEAGENT DID ABOUT THE CLOSURE: <c>flat</c>, <c>unresolved</c>, or null because nothing
+    /// has been flattened.
+    ///
+    /// <para>Until <c>U-flatten-2</c> a breach closed the day and sent nothing, and every surface in
+    /// this product promised exactly that. It now cancels the orders that could increase exposure and
+    /// closes what is open, so the promise had to go — and what replaced it is not "your positions
+    /// were closed" either. <c>flat</c> is a statement about the PLATFORM's book and is only made
+    /// where the book was read back and agreed; <c>unresolved</c> means a leg is refused, unconfirmed
+    /// or still showing a position, and somebody has to go and look.</para>
+    /// </summary>
+    public string? FlattenState { get; init; }
+
+    /// <summary>The flatten's own sentence, written once onto its record. Null while there is none.</summary>
+    public string? FlattenWhy { get; init; }
+
+    /// <summary>
     /// The comparison the gateway refuses on. Reaching the budget is enough — the owner's number is
     /// a ceiling and not a threshold to cross — so it is <c>&gt;=</c>, and an UNKNOWN is never
     /// "reached": it is refused by its own branch, with its own sentence, because "we could not work
@@ -876,19 +892,25 @@ public sealed record LossToday
     }
 
     /// <summary>
-    /// WHAT IS CLOSED, SINCE WHEN, AND THAT NOTHING WAS CLOSED FOR YOU — or null because nothing is.
+    /// WHAT IS CLOSED, SINCE WHEN, AND WHAT WAS DONE ABOUT IT — or null because nothing is closed.
     ///
     /// <para>The day's own sentence is the one written onto the record at the moment of the breach.
     /// The symbols are named separately because they are a different refusal: opens and adds on those
-    /// instruments only, with the rest of the account untouched.</para>
+    /// instruments only, with the rest of the account untouched. The flatten's sentence is last and
+    /// is a different fact again: the first two say the day is shut, and only that one says where the
+    /// owner's money is.</para>
     /// </summary>
     public string? ClosedLine()
     {
         var parts = new List<string>();
         if (DayClosedWhy is { Length: > 0 } why) parts.Add(why);
         if (SymbolsClosed.Count > 0)
-            parts.Add($"Closed to new positions for the rest of the UTC day: {string.Join(", ", SymbolsClosed)}. "
-                      + "NOTHING WAS CLOSED FOR YOU — closing or reducing those positions still works.");
+            parts.Add($"Closed to new positions for the rest of the UTC day: {string.Join(", ", SymbolsClosed)}.");
+
+        // WHAT WAS DONE ABOUT IT, LAST AND IN ITS OWN WORDS. It is the flatten's own sentence rather
+        // than one composed here, for the reason the closure's is: it names what was actually closed
+        // and what was not, and a sentence recomposed per surface would quietly say something else.
+        if (FlattenWhy is { Length: > 0 } did) parts.Add(did);
 
         return parts.Count == 0 ? null : string.Join(" ", parts);
     }

@@ -63,17 +63,21 @@ public static class LossBreach
     /// <para>It is on the record rather than recomposed per surface because the figure it names is
     /// the one that closed the day, and a sentence recomposed later would quietly re-read the
     /// ledger: the refusal would then say a number that is not the number it refused on. Four things
-    /// have to be in it — since when, why, that it lasts the whole UTC day, and that TRADEAGENT
-    /// CLOSED NOTHING — because an owner who reads "the day is closed" and assumes the app flattened
-    /// the book has been told the opposite of what happened.</para>
+    /// have to be in it — since when, why, that it lasts the whole UTC day, and that TradeAgent
+    /// CLOSES what is open when this happens. The fourth used to be its opposite, and changing it was
+    /// the point of <c>U-flatten-2</c>: an owner who reads "the day is closed" and assumes their
+    /// positions are where they left them has been told the opposite of what happened. It says the
+    /// RULE rather than the outcome, because this sentence is written at the moment of the breach and
+    /// the flatten has not run yet; what was actually closed is on the flatten's own record.</para>
     /// </summary>
     public static string DaySentence(decimal loss, decimal budget, string currency,
         DateTimeOffset at, int feesUnknownFills) =>
         $"TradeAgent closed today to new risk at {at.UtcDateTime:HH:mm} UTC: the day was down "
         + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
         + $"“{Labels.MaxDailyLoss}”{Fees(feesUnknownFills)}. It stays closed until the next UTC "
-        + "day, whatever the figure does afterwards. NOTHING WAS CLOSED FOR YOU — closing or reducing a "
-        + "position is still allowed.";
+        + "day, whatever the figure does afterwards. TradeAgent CLOSES YOUR OPEN POSITIONS when this "
+        + "happens — it cancels the orders that could add risk and closes what is open, and the result "
+        + "is reported separately. Closing or reducing a position is still allowed.";
 
     /// <summary>The same, for one position, which is closed to opens and adds and to nothing else.</summary>
     public static string SymbolSentence(string symbol, decimal loss, decimal budget, string currency,
@@ -81,8 +85,9 @@ public static class LossBreach
         $"TradeAgent closed {symbol} to new risk at {at.UtcDateTime:HH:mm} UTC: it was down "
         + $"{Labels.Money(loss, currency)} against the {Labels.Money(budget, currency)} you set as "
         + $"“{Labels.MaxLossPerTrade}”{Fees(feesUnknownFills)}. It stays closed until the next "
-        + "UTC day, whatever the figure does afterwards. NOTHING WAS CLOSED FOR YOU — closing or reducing "
-        + "it is still allowed.";
+        + "UTC day, whatever the figure does afterwards. TradeAgent CLOSES THIS POSITION when this "
+        + "happens — it cancels that instrument's working orders and closes what is open, and the "
+        + "result is reported separately. Closing or reducing it is still allowed.";
 
     /// <summary>The clause every loss figure carries while the platform has reported no fee for a fill.</summary>
     static string Fees(int fills) =>

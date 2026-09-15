@@ -9,13 +9,13 @@ namespace TradeAgent.Tests.Unit;
 /// <summary>
 /// THE DAY IS TOLD CLOSED, HONESTLY, ON EVERY SURFACE — and "honestly" is doing all the work.
 ///
-/// <para>Three things have to be said and one must not. Since WHEN: a closure without an instant is
-/// a mood. WHY: the figure that closed it, against the limit it was measured against, in the
-/// account's currency. That it lasts the WHOLE UTC DAY: an owner who thinks it will lift when the
-/// number recovers will sit and wait for something that is not coming. And what must not be implied
-/// is that TradeAgent did anything about the positions — it did not, it closed nothing, and an owner
-/// who reads "closed" and assumes the book was flattened has been told the opposite of the truth.
-/// </para>
+/// <para>Four things have to be said. Since WHEN: a closure without an instant is a mood. WHY: the
+/// figure that closed it, against the limit it was measured against, in the account's currency. That
+/// it lasts the WHOLE UTC DAY: an owner who thinks it will lift when the number recovers will sit and
+/// wait for something that is not coming. And WHAT WAS DONE ABOUT THE POSITIONS — which until
+/// <c>U-flatten-2</c> was "nothing, and say so plainly", and is now that TradeAgent closes what is
+/// open. The fourth one is asserted here as the RULE the closure sentence states; whether it actually
+/// happened is a different record and <see cref="LossFlattenSurfacesTests"/> holds it.</para>
 ///
 /// <para>Every one of these reads the RECORD. Deriving any of it from today's loss is the defect the
 /// unit exists to close, and it is the one a test has to be built to catch: the day closes on an
@@ -36,8 +36,14 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    /// A day closed by the watch, and then made to look open again: the losing position is closed at
-    /// a REALISED loss smaller than the budget, which is the ordinary end of a bad morning.
+    /// A day closed by the watch, and then made to look open again.
+    ///
+    /// <para>It used to be made to look open by closing the loser at a REALISED loss smaller than the
+    /// budget. <c>U-flatten-2</c> closes the loser itself, at the price that closed the day, so the
+    /// figure the ledger is left holding IS the budget and that route is gone. What replaces it is the
+    /// harder version of the same attack: the owner WIDENS the budget afterwards, which makes every
+    /// number on every surface say the day is fine while the gateway goes on refusing. No assertion
+    /// below changed — this is the setup arriving at the same state by the route that still exists.</para>
     /// </summary>
     static async Task<(TradingGateway Gw, TradeAgent.Core.Db.Database Db, TestClock Clock)> ClosedDay(
         ITestOutputHelper log)
@@ -55,10 +61,9 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         var closing = await gw.LossWatchAsync();
         Assert.NotEmpty(closing.Closed);
 
-        // AND NOW THE FIGURE RECOVERS. The loser is closed nineteen points down instead of twenty,
-        // so what the ledger holds is smaller than the budget that closed the day.
+        // AND NOW THE BUDGET IS WIDENED, well past what the day has lost.
+        gw.Update(s => s.Risk.MaxDailyLoss = 100_000m);
         conn.Broker.PriceOffset = -19m;
-        await gw.CloseAsync(new AgentContext("a"), "surf-out", "ES");
         await gw.QuoteAsync("ES");
 
         var reading = await gw.LossTodayAsync();
@@ -99,10 +104,10 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     }
 
     /// <summary>
-    /// THE SITUATION BLOCK SAYS IT IN THE AI'S OWN WORDS, including that nothing was closed for it.
+    /// THE SITUATION BLOCK SAYS IT IN THE AI'S OWN WORDS, including what happens to its positions.
     /// </summary>
     [Fact]
-    public async Task The_situation_line_says_since_when_why_and_that_nothing_was_closed()
+    public async Task The_situation_line_says_since_when_why_and_what_happens_to_the_positions()
     {
         var (gw, db, _) = await ClosedDay(log);
         using var _1 = db;
@@ -115,7 +120,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         Assert.NotNull(line);
         Assert.Contains("closed today to new risk at 12:00 UTC", line, StringComparison.Ordinal);
         Assert.Contains("next UTC day", line, StringComparison.Ordinal);
-        Assert.Contains("NOTHING WAS CLOSED FOR YOU", line, StringComparison.Ordinal);
+        Assert.Contains("CLOSES YOUR OPEN POSITIONS", line, StringComparison.Ordinal);
 
         // And it is in the Situation the mission actually renders, not only in the helper.
         var situation = new MissionSituation { LocalTime = Noon, Mode = "PAPER", Loss = loss }.Text();
@@ -130,7 +135,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
     /// loss, and on the day this is about, that figure is under the budget.</para>
     /// </summary>
     [Fact]
-    public async Task Section_four_of_the_owners_report_says_the_day_was_closed_and_that_nothing_was_closed_for_them()
+    public async Task Section_four_of_the_owners_report_says_the_day_was_closed_and_what_that_does_to_positions()
     {
         var (gw, db, _) = await ClosedDay(log);
         using var _1 = db;
@@ -142,7 +147,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         log.WriteLine(section);
 
         Assert.Contains("closed to new risk", section, StringComparison.Ordinal);
-        Assert.Contains("NOTHING WAS CLOSED FOR YOU", section, StringComparison.Ordinal);
+        Assert.Contains("CLOSES YOUR OPEN POSITIONS", section, StringComparison.Ordinal);
         Assert.Contains("next UTC day", section, StringComparison.Ordinal);
     }
 
@@ -225,7 +230,6 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
 
         var guide = File.ReadAllText(Path.Combine(repo, "docs", "USER-GUIDE.md"));
         Assert.Contains("stays closed until the next UTC day", guide, StringComparison.Ordinal);
-        Assert.Contains("Nothing was closed for you", guide, StringComparison.Ordinal);
 
         var contracts = File.ReadAllText(Path.Combine(repo, "docs", "CONTRACTS.md"));
         Assert.Contains("loss_day_closed_at", contracts, StringComparison.Ordinal);
@@ -238,6 +242,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
         Assert.Contains("loss_day_closed_at", schema, StringComparison.Ordinal);
         Assert.Contains("loss_symbols_closed", schema, StringComparison.Ordinal);
         Assert.Contains("NEXT UTC DAY", schema, StringComparison.Ordinal);
+        Assert.Contains("CLOSES what is open", schema, StringComparison.Ordinal);
 
         var root = Path.Combine(Path.GetTempPath(), "tradeagent-tests", Guid.NewGuid().ToString("n"));
         var home = WorkspaceBuilder.Build(new WorkspaceContext(
@@ -246,7 +251,7 @@ public class LossDayClosedSurfacesTests(ITestOutputHelper log)
             Risk: new RiskPolicy { MaxDailyLoss = 500m, InstrumentAllowlist = ["ES"] }), root);
         var agents = File.ReadAllText(Path.Combine(home, "AGENTS.md"));
         Assert.Contains("loss_day_closed_at", agents, StringComparison.Ordinal);
-        Assert.Contains("NOTHING WAS CLOSED FOR YOU", agents, StringComparison.Ordinal);
+        Assert.Contains("closes your open positions for you", agents, StringComparison.Ordinal);
         Directory.Delete(root, true);
     }
 

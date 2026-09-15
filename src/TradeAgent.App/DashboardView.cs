@@ -955,12 +955,26 @@ sealed class SafetyPage
     /// while nothing is closed, because a permanent "the day is open" line is noise the eye stops
     /// reading long before the day it matters.</para>
     ///
-    /// <para>It carries the record's own sentence — since when, why, that the next UTC day reopens
-    /// it, and that NOTHING WAS CLOSED — rather than a shorter paraphrase: an owner reading "closed"
-    /// beside a flat-looking figure and assuming TradeAgent flattened the book has been told the
-    /// opposite of what happened.</para>
+    /// <para>It carries the record's own sentence — since when, why, and that the next UTC day
+    /// reopens it — rather than a shorter paraphrase: an owner reading "closed" beside a flat-looking
+    /// figure has to be told which figure closed it and when it lifts.</para>
     /// </summary>
     readonly TextBlock _lossClosedNote = new()
+    {
+        Text = "", FontSize = Theme.Micro, Foreground = Theme.Caution,
+        TextWrapping = Avalonia.Media.TextWrapping.Wrap, IsVisible = false
+    };
+
+    /// <summary>
+    /// WHAT TRADEAGENT DID ABOUT IT — a SECOND row, under the closure and never folded into it.
+    ///
+    /// <para>They are two facts and an owner acts differently on each. The row above says the day is
+    /// shut and when it opens; this one says whether their money is still in the market. Until
+    /// <c>U-flatten-2</c> the answer was always "nothing was closed for you" and one row could carry
+    /// both; now it is <c>flat</c> or <c>unresolved</c>, and <c>unresolved</c> is the one sentence on
+    /// this page that means go and look at the platform.</para>
+    /// </summary>
+    readonly TextBlock _lossFlattenNote = new()
     {
         Text = "", FontSize = Theme.Micro, Foreground = Theme.Caution,
         TextWrapping = Avalonia.Media.TextWrapping.Wrap, IsVisible = false
@@ -1497,6 +1511,7 @@ sealed class SafetyPage
             Ui.FieldRow(Labels.MaxLossPerTrade, _maxLossPerTrade, _tradeLossHint),
             Ui.FieldRow(Labels.MaxDailyLoss, _maxDailyLoss, _dailyLossHint),
             _lossClosedNote,
+            _lossFlattenNote,
             Ui.FieldRow(Labels.InstrumentAllowlist, _allowlist,
                 "Comma separated. " + Labels.NoInstrumentAllowed),
             Ui.Spacer(Theme.S2),
@@ -1611,6 +1626,12 @@ sealed class SafetyPage
             DayClosedAt = closed.At, DayClosedWhy = closed.Why, SymbolsClosed = closed.Symbols
         }.ClosedLine() ?? "";
         _lossClosedNote.IsVisible = _lossClosedNote.Text.Length > 0;
+
+        // AND WHAT WAS DONE ABOUT IT, off the flatten's own record on the same five-second pass and
+        // updated in place like every other row here.
+        var flattened = _host.Gateway.FlattenStateToday();
+        _lossFlattenNote.Text = flattened.Why ?? "";
+        _lossFlattenNote.IsVisible = _lossFlattenNote.Text.Length > 0;
 
         // Through SetResting, never by assigning Content: a half-pressed RESUME must survive the
         // five-second tick, and the fill it wears while armed is registered with the control.

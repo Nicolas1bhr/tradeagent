@@ -748,10 +748,9 @@ The seven:
 sent**, and they are in your account's currency: once the day is down by the amount you set — money
 already lost plus what your open positions are down right now — the AI is refused every order that
 could take on more, until midnight UTC, and once one position is down by the per-position amount it
-may not be added to. **Closing or reducing a position is never refused by them, and TradeAgent does
-not close anything for you**: they stop new risk, they do not tidy up. Both start at **0**, which
-means not enforced — but you cannot choose either real-money mode until you have set a daily one, and
-the refusal says so, because nobody is watching the day for you.
+may not be added to. **Closing or reducing a position is never refused by them.** Both start at **0**,
+which means not enforced — but you cannot choose either real-money mode until you have set a daily
+one, and the refusal says so, because nobody is watching the day for you.
 
 **TradeAgent watches the day itself, and a breach is written down.** It re-measures your open
 positions every few seconds — not only when the AI sends something — so a position that goes through
@@ -763,10 +762,25 @@ odd price does not close a day; two readings that agree do.
 **Once the day is closed it stays closed until the next UTC day**, and that is deliberate. It does
 not reopen because the AI closed the losing position at a smaller loss, because TradeAgent was
 restarted, or because you raised the limit afterwards — those are all the same day, and a limit that
-unwound itself the moment the number moved would not be a limit. **Nothing was closed for you**: your
-positions are exactly where they were, closing and reducing still work, and there is no command the
-AI can send that reopens the day. If you want it trading again today, the honest answer is that this
-build does not offer one — the day reopens at UTC midnight.
+unwound itself the moment the number moved would not be a limit. There is no command the AI can send
+that reopens the day. If you want it trading again today, the honest answer is that this build does
+not offer one — the day reopens at UTC midnight.
+
+**And TradeAgent closes your open positions.** A budget about what has already been lost that left
+the losing position open would go on losing, so the moment a breach is confirmed TradeAgent cancels
+every working order that could add risk, waits until your platform confirms those orders are no
+longer working, and then closes what is open. It may only send orders that REDUCE a position, and it
+checks that against a fresh reading of the position immediately before each order — a close that
+would reverse or open anything is refused and nothing is sent for it. The AI cannot start this, stop
+it, or ask for it; there is no button for it either.
+
+**It tells you one of two things, and the second one needs you.** The Safety page, the daily report
+and the AI's own status all carry it. **Closed and flat** means the closes were filled and a fresh
+read of your account says nothing is open. **Could not be confirmed** means something did not
+answer — a close your platform refused, an order that would not cancel, a position still showing —
+and then TradeAgent stops all AI trading and leaves the records on the Dashboard for you, exactly as
+it does after you press Close all positions. **Go and look at your platform when you see that.** It
+is the one case where the software is telling you it does not know where your money is.
 
 The defaults are deliberately small. Start there.
 

@@ -366,8 +366,11 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         // OFF THE RECORD, LIKE EVERY OTHER SURFACE. It costs no platform call — the closure is a row
         // this app wrote — so it belongs in a report that asks the platform nothing.
         var closed = gateway.ClosureToday();
+        var flattened = gateway.FlattenStateToday();
         return new ReportPerformance
         {
+            FlattenState = flattened.State,
+            FlattenWhy = flattened.Why,
             Allocations = Cap(allocations, ListShown, "allocation"),
             DayClosedAt = closed.At,
             DayClosedWhy = closed.Why,

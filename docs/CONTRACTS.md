@@ -1024,6 +1024,96 @@ it", which needs a press this build does not have); the record lives in `kv` rat
 its own until `U-protect` gives the protections one; and the two intervals above are judgments rather
 than measurements. There is no verb, no pipe op and no setting that reopens a day.
 
+**A confirmed breach CLOSES WHAT IS OPEN, by code, and the app is the only thing that may do it**
+(`U-flatten-2`). `U-flatten-1` closed the day and sent nothing, and every surface in this product
+promised exactly that; a budget about what has ALREADY been lost that leaves the losing position open
+goes on losing, so the promise is withdrawn and the sentences that carried it are rewritten. The
+flatten runs from `TradingGateway.FlattenForBreachAsync`, called by the watch immediately after the
+record is written and OUTSIDE the dispatch gate, and there is no verb, no pipe op, no setting and no
+button that reaches it. **Operator authority is unchanged**: the app is not asking for permission, it
+is doing the one thing the owner already bounded when they set the budget.
+
+**It is a REDUCTION-ONLY exception to two-press, and the exception is enforced in code and not in
+this paragraph.** Two new app-owned press kinds, `op-budget-cancel-` and `op-budget-close-`, join
+`op-close-` and `op-cancel-` in `IsPressRecord`/`PressKindOf`. They keep the whole of the press
+machinery — the flagged write-ahead row before the wire, the per-kind claim, the settle-before-send,
+the drift re-read, `RiskReducingScope` for one absolute deadline, the composite plan — and they add
+one thing: `TradingGateway.ReductionOnlyOrThrow`, checked against a FRESH read of the position taken
+after the write-ahead row and immediately before the call. An order that does not oppose the position,
+is larger than it, or meets a flat book **throws and nothing is sent**; the row is left REJECTED with
+the sentence, and the leg is reported. Only the app's legs take that last look: the owner's press is
+byte for byte what it was, because a person pressing a button has looked at the account and can press
+again, and an app leg has nobody. The two kinds are SEPARATE from the owner's so that an unresolved
+app flatten can never refuse a person pressing Close all positions; what it does refuse — in words,
+by the existing rule — is the owner's leg on the one instrument it is still holding an order for.
+
+**Openers first, and the cancels must have SETTLED before a single close goes out.** A flatten that
+closes the position and leaves a working buy on the book has flattened nothing: the opener fills a
+second later into a day that is now closed to everything that could hedge it. So every working order
+that could increase exposure is cancelled first — `CouldIncreaseExposure`, which is
+`CanIncreaseExposure`'s question asked of an order on the book — **and so is every working order on an
+instrument the flatten is about to close, including a reducing one**: a protective sell is a reducer
+only while the long exists, and the moment the flatten removes it that same order is an opener. That
+second set is this unit's choice and is the owner's to overrule. The working book is then read again
+and every target has to be gone from it; if any is still working, or the read fails, **no close is
+sent at all**, the press row is left flagged and the record says which order stopped it. A per-symbol
+breach touches that symbol's orders and that symbol's position and nothing else; **the daily scope
+subsumes a symbol's**, so a day already flattened writes no second set of closes, and neither closure
+is cleared early by the other.
+
+**Resolved by MACHINE, or flagged and pausing, and terminal is not flatness.** A leg is resolved when
+its record is FILLED **and** a fresh read of the position says flat — both halves, on a read-back
+that is the only statement about the platform's book this app ever makes. A REJECTED or CANCELLED
+close is terminal and closed nothing; a composite answering ok is this app agreeing with itself.
+A resolved leg has its flag cleared by `ClearTheFlatteningFlag` — which writes no state, only lifts
+the flag the app itself wrote behind evidence the app itself checked — and when every leg resolves,
+the app's own press rows are cleared too and `ExecutionCapability` goes back to READY on
+`ReconcileAsync`'s own two lines. Anything else keeps the flag, pauses all order flow exactly as an
+owner's press does, and waits for a person. **`LOSS_BUDGET_REACHED` is still the caller's answer**,
+still refused off the record and never off the figure.
+
+**The outcome is its own write-once record and the breach row is NEVER updated.** `loss_flatten:
+{connector}:{account}:{utcDay}` in `kv` (and `…:{connector}:{account}:{symbol}:{utcDay}`), carrying
+both press nonces, the cancelled orders, the openers that would not settle, every leg with its state,
+fill and read-back position, the residual, `Flat`, and one sentence. The breach row is the
+MEASUREMENT and this is the CLAIM about what was then done: a record the app appends to is a record
+the app can rewrite, which is the rule the material ledger already follows. **The key carries the
+connector** — an account id is unique only within a platform and switching platforms builds a new
+gateway over the same database, so a PAPER account's flatten must never be able to answer for a LIVE
+closure; that is a deviation from the brief's `loss_flatten:{account}:{utcDay}` and is deliberate. The
+account is read off the BREACH record and the flatten refuses outright unless the account this
+gateway is actually operating is that account: none is ever the "currently selected" one implicitly.
+
+**A closure with no outcome beside it is a flatten that was killed, and it re-runs** —
+`ReFlattenClosuresWithNoOutcomeAsync`, on the health pass every host already runs immediately after
+connecting, so that IS the startup path. It is keyed on the ABSENCE of the outcome record and never
+on the composite: a composite is written BEFORE the first close, so a run killed among its legs
+leaves one behind and keying on it would decide that a flatten which never finished had. It **never
+runs while anything is unreconciled** (the startup sweep's rule): the rows a killed flatten leaves are
+flagged and UNKNOWN, and closing over one is how a long 2 becomes a short 2. It is on the health pass
+rather than on the watch's own interval because every reason the watch has to do nothing — an
+unvaluable book, both budgets since set to zero, a failed pull — is not an answer about a closure
+already on disk.
+
+**Told, on every surface, in two words.** `status.loss_flatten` is `flat` or `unresolved`, ABSENT
+while nothing has been flattened, on the `ai_cost_today` convention; the Situation, the Safety page's
+own row under the closure, section 4 of the daily report (`positions closed for you`), `AGENTS.md` and
+the guide all carry the flatten record's own sentence rather than a paraphrase. `flat` is the only
+claim this product makes about the platform's book and it is only made behind a read-back;
+`unresolved` means go and look. **Owner-overrulable, and recorded as choices**: cancelling the
+reducing orders on an instrument about to be closed; the connector in the key; the app clearing its
+own flags behind a read-back (the alternative is a person confirming every correct flatten, which
+makes a breach a manual outage); and the flatten running on the watch's thread rather than on a queue
+of its own.
+
+**One thing the simulator cannot prove, named rather than implied.** `FakeConnector.ClosePositionAsync`
+re-reads the position and sizes the order itself, so a reversal cannot be produced through it however
+wrong the composed size is; what the flow test can state is that no close reached the connector and
+that the row says why. The arithmetic itself is held directly (`ReductionOnlyTests`). The other named
+limit is inherited: the shared close path catches a definite `ConnectorRejectedException` in the same
+arm as a timeout and records UNKNOWN, so a broker's flat refusal of a close reads as "we do not know".
+That is the safe direction and it is not this unit's to change.
+
 **The open-position cap counts what is on its way to being a position, and is decided inside the
 dispatch gate.** `MaxOpenPositions` used to count the positions the platform had already FILLED, read
 before the gate. Both halves were permissive in the same direction: two placements arriving together
