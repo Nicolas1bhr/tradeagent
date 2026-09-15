@@ -359,7 +359,12 @@ public class CampaignLedgerTests
             return names;
         });
 
-        Assert.Equal(["campaign_id", "version_id", "run_id", "kind", "charged", "registered_at"], columns);
+        Assert.Equal(
+            ["campaign_id", "version_id", "run_id", "kind", "charged", "registered_at",
+             // Schema 21: which campaign the trial was CHARGED to, beside the one it PEEKED at.
+             // Still nothing about who asked — that is the property this list is asserted for.
+             "charged_to"],
+            columns);
     }
 
     /// <summary>
@@ -696,7 +701,7 @@ public class CampaignLedgerTests
         {
             // The loop's cheap first look, taken before the run — and on a campaign with one trial left
             // BOTH callers are honestly told there is room.
-            looked[i] = campaigns.TrialRefusal(campaign.Id, EvaluationClass.Research);
+            looked[i] = campaigns.TrialRefusal(campaign.Id, version, EvaluationClass.Research);
             read.SignalAndWait();
             registered[i] = campaigns.RegisterTrial(
                 campaign.Id, version, $"run-{Budget - 1 + i}", EvaluationClass.Research, At);
@@ -766,7 +771,7 @@ public class CampaignLedgerTests
 
         Assert.True(campaigns.RegisterTrial(campaign.Id, version, "run-0", EvaluationClass.Research, At).Ok);
         Assert.True(campaigns.Registered(campaign.Id, version, "run-0"));
-        Assert.NotNull(campaigns.TrialRefusal(campaign.Id, EvaluationClass.Research));
+        Assert.NotNull(campaigns.TrialRefusal(campaign.Id, version, EvaluationClass.Research));
 
         var again = campaigns.RegisterTrial(campaign.Id, version, "run-0", EvaluationClass.Research, At);
         Assert.True(again.Ok, again.Why);

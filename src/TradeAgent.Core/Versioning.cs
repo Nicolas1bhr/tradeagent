@@ -217,6 +217,13 @@ public static class Versions
     /// <c>renewed_from</c>, so a variant of a promoted program was a fresh hash related to nothing at
     /// all. Not backfilled: every row written before this rung declared no parent, which is exactly
     /// what NULL says about it.</para>
+    ///
+    /// <para>Beside it <c>strategy_trial.charged_to</c>, the campaign a trial was CHARGED to as against
+    /// the one it PEEKED at, so a variant run against a second holdout is charged back to the campaign
+    /// lineage its ancestry is already being charged to. Backfilled to <c>campaign_id</c> — unlike the
+    /// column above, because there IS a knowable fact: every trial registered before this rung was
+    /// charged to its own campaign, there being no ancestry in the product to charge one anywhere
+    /// else.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 21;
 

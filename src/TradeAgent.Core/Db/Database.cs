@@ -1211,6 +1211,25 @@ public sealed class Database : IDisposable
             // which reads correctly as "every version this installation holds is its own root".
             Exec("ALTER TABLE strategy_version ADD COLUMN parent_version_id TEXT REFERENCES strategy_version(id);");
 
+            // COMPARABLE TRIALS: WHICH CAMPAIGN A TRIAL WAS CHARGED TO, beside which one it peeked at.
+            //
+            // `campaign_id` is the PEEK — whose held-back months this run read up to. `charged_to` is
+            // the COST — which family of versions paid for it. They are one number for a version that
+            // declared no parent, and they differ for a variant: a child is charged to the campaign
+            // lineage its ancestry is already being charged to (`CampaignStore.ChargedCampaignFor`), so
+            // a family cannot buy itself an untouched trial budget by submitting a new hash against a
+            // second dataset. `TrialsCharged` counts a row under either number, which means the run's
+            // own campaign is still counted exactly as it was and the second ceiling can only tighten.
+            //
+            // BACKFILLED to `campaign_id`, which is the opposite reading from `parent_version_id` above
+            // and is right for the same reason the schema 17 rung backfilled a venue: there is a
+            // knowable fact here. Every trial registered before this rung WAS charged to its own
+            // campaign — there was no ancestry in this product to charge one anywhere else — so leaving
+            // it null would make a knowable past read as an unknown.
+            Exec("ALTER TABLE strategy_trial ADD COLUMN charged_to INTEGER REFERENCES strategy_campaign(id);");
+            Exec("UPDATE strategy_trial SET charged_to=campaign_id WHERE charged_to IS NULL;");
+            Exec("CREATE INDEX IF NOT EXISTS ix_trial_charged_to ON strategy_trial(charged_to, charged);");
+
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','21') ON CONFLICT(key) DO UPDATE SET value='21';");
         }
 

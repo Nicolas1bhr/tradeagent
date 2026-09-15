@@ -39,13 +39,20 @@ public class VersionLineageTests
     static Ledger Given(int trialBudget = 10)
     {
         var db = TestEnv.NewDb();
+        var l = Holdout(db, "BTCUSDT", trialBudget);
+        return l;
+    }
+
+    /// <summary>One held-back dataset with its own open campaign, in a database that may hold several.</summary>
+    static Ledger Holdout(Database db, string pair, int trialBudget = 10)
+    {
         var datasets = new DatasetStore(db);
         var file = Path.Combine(Paths.Data, $"lineage-{Guid.NewGuid():n}.csv");
         Directory.CreateDirectory(Paths.Data);
         File.WriteAllText(file, KlineNormaliser.Header + "\n");
 
         var id = datasets.Record(new DatasetRecord(
-            0, BinanceArchive.Source, "BTCUSDT", BinanceArchive.Interval, "v1", 12, 12, [],
+            0, BinanceArchive.Source, pair, BinanceArchive.Interval, "v1", 12, 12, [],
             file, DatasetStore.Sha256(file)!, 1000, Cutoff.AddDays(-300), Cutoff.AddDays(60), 0, [],
             false, 0, 0, 0, At, DatasetState.ACCEPTED, null, []));
 
@@ -53,7 +60,7 @@ public class VersionLineageTests
         var set = datasets.ById(id)!;
 
         var campaigns = new CampaignStore(db);
-        var opened = campaigns.Open("BTCUSDT 1m v1", set, trialBudget, 3, At);
+        var opened = campaigns.Open($"{pair} 1m v1", set, trialBudget, 3, At);
         Assert.True(opened.Ok, opened.Why);
 
         return new Ledger(db, set, opened.Campaign!, new StrategyStore(db), campaigns);
@@ -132,5 +139,87 @@ public class VersionLineageTests
         Assert.Null(l.Strategies.VersionById(second)!.ParentVersionId);
         Assert.Equal([second], l.Strategies.Ancestry(second));
         Assert.DoesNotContain(first, l.Strategies.Ancestry(second));
+    }
+
+    // ---- item 2: comparable trials ---------------------------------------------------------------
+
+    /// <summary>
+    /// ITEM 2 — A VARIANT IS CHARGED TO ITS PARENT'S CAMPAIGN LINEAGE, so being a new hash buys a family
+    /// no holdout access at all.
+    ///
+    /// <para><b>What was wrong.</b> A campaign is opened per holdout dataset, and a trial was charged to
+    /// whichever campaign the run was made under. So a family that had spent its attempts on one holdout
+    /// tweaked a number, got a fresh version id, ran it against a second held-back dataset and was
+    /// charged against a budget that had never been touched. <c>docs/COUNCIL.md</c>:201 asks for
+    /// COMPARABLE trials, and a comparison in which one candidate can mint its own allowance is not
+    /// one.</para>
+    ///
+    /// <para><b>The mutant.</b> Charge the child to its own campaign — one line in
+    /// <c>ChargedCampaignFor</c> — and the parent's lineage count is unmoved by the variant, which is
+    /// the defect exactly.</para>
+    /// </summary>
+    [Fact]
+    public void A_variant_run_against_a_second_holdout_is_charged_to_its_parents_campaign_as_well()
+    {
+        var first = Given();
+        using var _ = first.Db;
+        var second = Holdout(first.Db, "ETHUSDT");
+
+        var parent = Record(first, 103, parent: null);
+        Assert.True(first.Campaigns
+            .RegisterTrial(first.Campaign.Id, parent, Run(first, parent, 0.001m),
+                EvaluationClass.Research, At).Ok);
+        Assert.Equal(1, first.Campaigns.TrialsCharged(first.Campaign.Id));
+
+        // The variant: a new hash, a different holdout, and a campaign whose budget nothing has touched.
+        var child = Record(first, 104, parent: parent);
+        var registered = second.Campaigns.RegisterTrial(
+            second.Campaign.Id, child, Run(second, child, 0.001m), EvaluationClass.Research, At);
+        Assert.True(registered.Ok, registered.Why);
+
+        // THE PEEK IS THE SECOND CAMPAIGN'S AND THE COST IS THE FIRST'S. Both counts move, because the
+        // run really did read the second holdout's pre-cutoff bars and the family really did pay.
+        Assert.Equal(2, first.Campaigns.TrialsCharged(first.Campaign.Id));
+        Assert.Equal(1, second.Campaigns.TrialsCharged(second.Campaign.Id));
+
+        var row = Assert.Single(second.Campaigns.Trials(second.Campaign.Id));
+        Assert.Equal(second.Campaign.Id, row.CampaignId);
+        Assert.Equal(first.Campaign.Id, row.ChargedTo);
+    }
+
+    /// <summary>
+    /// ITEM 2 — AND THE CHARGE FOLLOWS A RENEWAL FORWARD, because a renewal is what buys a family more
+    /// attempts and a closed campaign is not where a new charge belongs.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:132 — renewal is authorised by code and buys trials, never holdout
+    /// access. The charge therefore lands on the campaign of that lineage which is open NOW, which is
+    /// also what keeps the second ceiling from reading as permanently full.</para>
+    /// </summary>
+    [Fact]
+    public void A_variant_is_charged_to_the_open_campaign_of_its_parents_lineage_after_a_renewal()
+    {
+        var first = Given(trialBudget: 1);
+        using var _ = first.Db;
+        var second = Holdout(first.Db, "ETHUSDT");
+
+        var parent = Record(first, 103, parent: null);
+        Assert.True(first.Campaigns
+            .RegisterTrial(first.Campaign.Id, parent, Run(first, parent, 0.001m),
+                EvaluationClass.Research, At).Ok);
+
+        var renewed = first.Campaigns.Renew(first.Campaign.Id, 5, 3, At.AddDays(1));
+        Assert.True(renewed.Ok, renewed.Why);
+
+        var child = Record(first, 104, parent: parent);
+        var registered = second.Campaigns.RegisterTrial(
+            second.Campaign.Id, child, Run(second, child, 0.001m), EvaluationClass.Research, At);
+        Assert.True(registered.Ok, registered.Why);
+
+        var row = Assert.Single(second.Campaigns.Trials(second.Campaign.Id));
+        Assert.Equal(renewed.Campaign!.Id, row.ChargedTo);
+        Assert.Equal(1, first.Campaigns.TrialsCharged(renewed.Campaign.Id));
+
+        // The parent's own campaign is closed and spent, and the renewal is where the family now pays.
+        Assert.Equal(1, first.Campaigns.TrialsCharged(first.Campaign.Id));
     }
 }

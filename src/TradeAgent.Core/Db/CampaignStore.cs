@@ -101,10 +101,56 @@ public sealed record TrialRow(
     string RunId,
     string Kind,
     bool Charged,
-    DateTimeOffset RegisteredAt);
+    DateTimeOffset RegisteredAt)
+{
+    /// <summary>
+    /// THE CAMPAIGN WHOSE BUDGET THIS TRIAL WAS CHARGED AGAINST, which is not always the campaign the
+    /// run was made under.
+    ///
+    /// <para><see cref="CampaignId"/> is the PEEK: which holdout's pre-cutoff bars this run read. This
+    /// is the COST: which family of versions paid for it. They are the same number for a version that
+    /// declared no parent, and they differ for a variant — <c>docs/COUNCIL.md</c>:201's "comparable
+    /// trials". A child is charged to the campaign lineage its ancestry was already being charged to,
+    /// so submitting a variant against a fresh holdout cannot buy a family an untouched trial budget
+    /// by being a new hash.</para>
+    ///
+    /// <para>Null on a row written before schema 21 only until the rung backfills it to
+    /// <see cref="CampaignId"/> — which is what every trial registered before this unit genuinely was:
+    /// there was no ancestry to charge one anywhere else.</para>
+    /// </summary>
+    public long? ChargedTo { get; init; }
+}
 
 /// <summary>What registering a trial did: whether it was charged, and where the campaign now stands.</summary>
 public sealed record TrialRegistered(bool Ok, string Why, bool Charged, int Spent, int Budget);
+
+/// <summary>
+/// THE RULE A TRIAL IS ADMITTED AGAINST, built once and asked by BOTH the cheap look before a run and
+/// the transaction that writes the row — the shape <c>AiAdmissionRule</c> has, for the same reason it
+/// has it: two comparisons that could drift apart would be two budgets.
+///
+/// <para>It carries everything the arithmetic needs EXCEPT the counts, and that omission is the whole
+/// design. The counts are the one part another caller can change between a look and a commit, so they
+/// are read where nothing can move them — inside <see cref="CampaignStore.RegisterTrial"/>'s own
+/// <see cref="Database.Write"/>.</para>
+/// </summary>
+public sealed record TrialAdmission
+{
+    /// <summary>The campaign the RUN is made under: whose held-back months this is a peek before.</summary>
+    public required CampaignRow? RunCampaign { get; init; }
+
+    /// <summary>
+    /// The campaign this version's FAMILY is charged to — <see cref="CampaignStore.ChargedCampaignFor"/>.
+    /// The same row as <see cref="RunCampaign"/> for a version that declared no parent.
+    /// </summary>
+    public required CampaignRow? HomeCampaign { get; init; }
+
+    /// <summary>A fixture run is charged nothing, so no budget has anything to refuse.</summary>
+    public required bool Charged { get; init; }
+
+    /// <summary>Whether the two campaigns above are one row, which is the ordinary case.</summary>
+    public bool OneCampaign => RunCampaign?.Id == HomeCampaign?.Id;
+}
 
 /// <summary>
 /// ONE VERDICT THAT WAS ASKED FOR. The row exists because the question was put, not because it was
@@ -256,11 +302,19 @@ public sealed class CampaignStore(Database db)
 
     // ---- trials -----------------------------------------------------------------------------------
 
-    /// <summary>How many CHARGED trials this campaign has registered. A fixture run is not among them.</summary>
+    /// <summary>
+    /// HOW MANY CHARGED TRIALS THIS CAMPAIGN HAS REGISTERED. A fixture run is not among them.
+    ///
+    /// <para>A trial counts here when this campaign was the PEEK (<c>campaign_id</c>) or when it was
+    /// the COST (<c>charged_to</c>) — a variant run over another holdout, charged back to the campaign
+    /// lineage its ancestry was already being charged to. A row that is both counts once, which is what
+    /// <c>COUNT(*)</c> over an OR does and what every version that declared no parent produces.</para>
+    /// </summary>
     public int TrialsCharged(long campaignId) => db.Read(_ =>
     {
         using var c = db.Cmd(
-            "SELECT COUNT(*) FROM strategy_trial WHERE campaign_id=$id AND charged=1", ("$id", campaignId));
+            "SELECT COUNT(*) FROM strategy_trial WHERE charged=1 AND (campaign_id=$id OR charged_to=$id)",
+            ("$id", campaignId));
         return Convert.ToInt32(c.ExecuteScalar(), CultureInfo.InvariantCulture);
     });
 
@@ -268,7 +322,7 @@ public sealed class CampaignStore(Database db)
     public IReadOnlyList<TrialRow> Trials(long campaignId) => db.Read(_ =>
     {
         using var c = db.Cmd("""
-            SELECT campaign_id, version_id, run_id, kind, charged, registered_at
+            SELECT campaign_id, version_id, run_id, kind, charged, registered_at, charged_to
             FROM strategy_trial WHERE campaign_id=$id ORDER BY registered_at, run_id
             """, ("$id", campaignId));
 
@@ -276,8 +330,74 @@ public sealed class CampaignStore(Database db)
         using var r = c.ExecuteReader();
         while (r.Read())
             rows.Add(new TrialRow(r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3),
-                r.GetInt32(4) != 0, Sql.Time(r.GetString(5))));
+                r.GetInt32(4) != 0, Sql.Time(r.GetString(5)))
+            {
+                ChargedTo = r.IsDBNull(6) ? null : r.GetInt64(6)
+            });
         return rows;
+    });
+
+    /// <summary>
+    /// THE CAMPAIGN A TRIAL FOR THIS VERSION IS CHARGED TO — its ancestry's, when its ancestry has one,
+    /// and otherwise the campaign the run was made under.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:201, "comparable trials". Without this a variant is a fresh hash
+    /// related to nothing: run it against a second holdout and it is charged against a second campaign's
+    /// untouched budget, so a family can buy itself as many attempts as the owner has datasets. The
+    /// charge follows the DECLARED ancestry (<c>StrategyVersionRow.ParentVersionId</c>) to the ELDEST
+    /// ancestor that has already been charged somewhere, and then forward through that campaign's
+    /// renewals to the one now open — a renewal buys the family trials, which is what renewal is for,
+    /// and a closed campaign is not where a new charge belongs.</para>
+    ///
+    /// <para><b>It can only ever tighten.</b> The run's own campaign is still counted exactly as it
+    /// was: <see cref="TrialsCharged"/> counts a row under both numbers, and
+    /// <see cref="RegisterTrial"/> refuses when EITHER budget is full. A declared parent therefore
+    /// cannot buy a trial the run's own campaign would have refused.</para>
+    /// </summary>
+    public long ChargedCampaignFor(string versionId, long campaignId)
+    {
+        var ancestry = new StrategyStore(db).Ancestry(versionId);
+
+        // ELDEST FIRST, so the whole family answers to where its root was charged rather than to
+        // wherever its newest member happened to be run.
+        for (var i = ancestry.Count - 1; i >= 0; i--)
+            if (ChargedCampaignOf(ancestry[i]) is { } home)
+                return Current(home);
+
+        return campaignId;
+    }
+
+    /// <summary>The campaign the earliest charged trial of this version was charged to, or null.</summary>
+    long? ChargedCampaignOf(string versionId) => db.Read<long?>(_ =>
+    {
+        using var c = db.Cmd("""
+            SELECT COALESCE(charged_to, campaign_id) FROM strategy_trial
+             WHERE version_id=$v AND charged=1 ORDER BY registered_at, run_id LIMIT 1
+            """, ("$v", versionId));
+        var o = c.ExecuteScalar();
+        return o is null or DBNull ? null : Convert.ToInt64(o, CultureInfo.InvariantCulture);
+    });
+
+    /// <summary>
+    /// The newest campaign in this one's renewal lineage — <see cref="Lineage"/> walked the other way.
+    /// It stops on a row it has already seen, so a cycle is a short walk rather than a hang.
+    /// </summary>
+    long Current(long campaignId) => db.Read<long>(_ =>
+    {
+        var at = campaignId;
+        var seen = new HashSet<long> { at };
+
+        while (true)
+        {
+            using var c = db.Cmd("SELECT id FROM strategy_campaign WHERE renewed_from=$id LIMIT 1",
+                ("$id", at));
+            var o = c.ExecuteScalar();
+            if (o is null or DBNull) return at;
+
+            var next = Convert.ToInt64(o, CultureInfo.InvariantCulture);
+            if (!seen.Add(next)) return at;
+            at = next;
+        }
     });
 
     /// <summary>
@@ -294,13 +414,59 @@ public sealed class CampaignStore(Database db)
     /// <para>A <c>fixture</c> run is never refused here — it is charged nothing, so there is nothing for
     /// a budget to refuse.</para>
     /// </summary>
-    public string? TrialRefusal(long campaignId, string kind)
+    public string? TrialRefusal(long campaignId, string versionId, string kind)
     {
         if (kind == EvaluationClass.Fixture) return null;
-        if (ById(campaignId) is not { } campaign) return null;
+        if (ById(campaignId) is null) return null;
 
-        var spent = TrialsCharged(campaignId);
-        return spent < campaign.TrialBudget ? null : Spent(campaignId, campaign.TrialBudget, made: false);
+        var rule = Admission(campaignId, versionId, kind);
+        return Refusal(rule, Counts(rule), made: false);
+    }
+
+    /// <summary>
+    /// THE ONE PIECE OF ARITHMETIC BOTH THE LOOK AND THE GATE ASK — the shape
+    /// <c>AiAdmissionRule.Reading</c> has, and for the same reason: two comparisons that could drift
+    /// apart would be two budgets.
+    ///
+    /// <para>It carries every count it was decided on, so a refusal can name WHICH ceiling had no room:
+    /// the campaign the run peeks at, the campaign the version's family is charged to, or the part of
+    /// the trial budget reserved for exploration.</para>
+    /// </summary>
+    TrialAdmission Admission(long campaignId, string versionId, string kind) => new()
+    {
+        Charged = kind != EvaluationClass.Fixture,
+        RunCampaign = ById(campaignId),
+        HomeCampaign = ById(ChargedCampaignFor(versionId, campaignId))
+    };
+
+    /// <summary>
+    /// The counts this rule is decided on. Read by the LOOK in its own transaction, where they are a
+    /// cheap honest answer, and by the GATE inside the write, where nothing can move them.
+    /// </summary>
+    (int Run, int Home) Counts(TrialAdmission rule) =>
+        (rule.RunCampaign is { } run ? TrialsCharged(run.Id) : 0,
+         rule.HomeCampaign is { } home ? TrialsCharged(home.Id) : 0);
+
+    /// <summary>
+    /// WHY THIS TRIAL WOULD NOT BE REGISTERED, in words, or null because it would. One rule, both
+    /// callers; <paramref name="made"/> only chooses the tense of the sentence.
+    /// </summary>
+    static string? Refusal(TrialAdmission rule, (int Run, int Home) spent, bool made)
+    {
+        if (!rule.Charged || rule.RunCampaign is not { } run) return null;
+
+        if (spent.Run >= run.TrialBudget) return Spent(run.Id, run.TrialBudget, made);
+
+        // AND THE FAMILY'S OWN CAMPAIGN, which is a second ceiling and never a looser one: a variant
+        // run against a fresh holdout is charged back to the campaign lineage its ancestry is already
+        // being charged to (`docs/COUNCIL.md`:201, comparable trials).
+        return rule.HomeCampaign is { } home && !rule.OneCampaign && spent.Home >= home.TrialBudget
+            ? Spent(home.Id, home.TrialBudget, made)
+              + " This run is over another holdout, and it is charged there as well as here because the "
+              + "version it runs declares a parent: a variant is charged to the campaign lineage its "
+              + "ancestry is already being charged to, so a family cannot buy itself an untouched trial "
+              + "budget by submitting a new hash against a second dataset."
+            : null;
     }
 
     /// <summary>
@@ -333,25 +499,34 @@ public sealed class CampaignStore(Database db)
             return new TrialRegistered(false, $"there is no campaign {campaignId}.", false, 0, 0);
 
         var charged = kind != EvaluationClass.Fixture;
-        var spent = TrialsCharged(campaignId);
+
+        // THE RULE AND ITS COUNTS, BOTH READ HERE. The rule is the same one `TrialRefusal` asked before
+        // the run; the counts are the part another caller can move in between, so they are read inside
+        // this transaction and nowhere else. That is `AiAttemptStore.Begin`'s shape and it is the whole
+        // of the guard.
+        var rule = Admission(campaignId, versionId, kind);
+        var spent = Counts(rule);
+        var chargedTo = rule.HomeCampaign?.Id ?? campaignId;
 
         // ALREADY REGISTERED: the same question, asked again. The first row stands and the answer is Ok
         // whatever the budget now says — see the doc comment.
         if (Registered(campaignId, versionId, runId))
-            return new TrialRegistered(true, "", charged, spent, campaign.TrialBudget);
+            return new TrialRegistered(true, "", charged, spent.Run, campaign.TrialBudget);
 
         // THE GATE, AND IT IS THIS TRANSACTION'S OWN READING RATHER THAN THE CALLER'S.
-        if (charged && spent >= campaign.TrialBudget)
-            return new TrialRegistered(false, Spent(campaignId, campaign.TrialBudget, made: true), false,
-                spent, campaign.TrialBudget);
+        if (Refusal(rule, spent, made: true) is { } why)
+            return new TrialRegistered(false, why, false, spent.Run, campaign.TrialBudget);
 
         using var c = db.Cmd("""
-            INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at)
-            VALUES($id,$ver,$run,$kind,$charged,$at)
+            INSERT INTO strategy_trial(campaign_id, version_id, run_id, kind, charged, registered_at,
+                                       charged_to)
+            VALUES($id,$ver,$run,$kind,$charged,$at,$home)
             ON CONFLICT(campaign_id, version_id, run_id) DO NOTHING
             """,
             ("$id", campaignId), ("$ver", versionId), ("$run", runId), ("$kind", kind),
-            ("$charged", charged ? 1 : 0), ("$at", Sql.T(at)));
+            ("$charged", charged ? 1 : 0), ("$at", Sql.T(at)),
+            // THE COST, BESIDE THE PEEK. They are one number for a version that declared no parent.
+            ("$home", chargedTo));
         c.ExecuteNonQuery();
 
         return new TrialRegistered(true, "", charged, TrialsCharged(campaignId), campaign.TrialBudget);

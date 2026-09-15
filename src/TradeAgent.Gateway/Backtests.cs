@@ -156,7 +156,7 @@ public sealed class Backtests(TradingGateway gateway, Database db, Func<DateTime
         // and nothing is refused. A `fixture` dataset is free, so it is never refused here either.
         var campaign = _campaigns.OpenForDataset(ask.Dataset);
         var kind = EvaluationClass.Or(gateway.Datasets.ById(ask.Dataset)?.EvaluationClass);
-        if (campaign is { } open && _campaigns.TrialRefusal(open.Id, kind) is { } spent)
+        if (campaign is { } open && _campaigns.TrialRefusal(open.Id, program.StrategyId, kind) is { } spent)
             throw new GatewayDeniedException(ErrorCode.CAMPAIGN_BUDGET_REACHED, spent);
 
         if (!_running.TryAdd(role, 0))
