@@ -275,3 +275,74 @@ public sealed class StubBridge : IAsyncDisposable
         catch (TimeoutException) { }
     }
 }
+
+/// <summary>
+/// A NEW PEER TAKES THE BRIDGE PIPE, AND THE FIXTURE PROVES THE CONNECTOR TOOK IT.
+///
+/// <see cref="StubBridge"/>'s caller in <c>BridgeRoundTripTests.Redial</c> already states the hazard
+/// for a peer that SPEAKS: the pipe has one server instance, the accept loop creates the next only
+/// after the previous read loop ends, so a peer arriving while the connector is recycling can land on
+/// a connection that is already going away — and a real bridge answers that by dialling again. This
+/// is the same hazard reached by the peer that has nothing to say, which is the case with no
+/// exception to catch.
+///
+/// OFF WINDOWS THE CONNECT SUCCEEDS AGAINST AN INSTANCE THAT IS ABOUT TO BE DISPOSED. Measured on
+/// this Mac, and the same by construction on any Unix .NET, where a named pipe is a Unix-domain
+/// socket: a connect to the single instance while it is BUSY and has no accept pending returns
+/// SUCCESS in 0 ms with <c>IsConnected == true</c>, because the kernel queues it in the listen
+/// backlog. Disposing that instance — which is exactly what the connector's accept loop does in its
+/// <c>finally</c> — takes the queued connection with it: the NEXT instance never sees the peer (still
+/// nothing after 2000 ms) and the client goes on reporting <c>IsConnected == true</c>. On Windows the
+/// same connect gets ERROR_PIPE_BUSY and the client keeps retrying until an instance exists, which is
+/// why these fixtures are green there and went red on ubuntu-latest (run 34881215351) and
+/// macos-latest (run 34872880789).
+///
+/// A peer that writes finds out. A peer that says nothing whatever cannot: with the handing-over
+/// fixture's first wait spun instead of polled every 50 ms — which is what that poll amounts to on a
+/// runner where the connector's own teardown is the thing that loses the CPU — the shipped body
+/// failed 40 times out of 40, with the row still reading the PREVIOUS peer's
+/// "could not prove it holds this installation's bridge secret", and 40 out of 40 recovered the
+/// instant a second client connected.
+///
+/// THE EVIDENCE HERE IS THE PEER'S OWN TRANSPORT AND NOTHING THE CONNECTOR SAYS. A read on an
+/// orphaned client completes at once with 0 bytes; a read on a live one does not (still pending after
+/// 500 ms, measured both ways). So the read is started and never awaited, and whichever settles first
+/// decides. A reconnect is triggered by that EOF ONLY — never by the row failing to say what the
+/// caller is waiting for — so a connector that really did mask the new peer behind the old one still
+/// fails the test, with the row it was holding quoted in the message.
+/// </summary>
+public static class HandOver
+{
+    /// <summary>
+    /// Connects a peer that says nothing and returns it once <paramref name="arrived"/> holds,
+    /// reconnecting for as long as the far end of a connect turns out to have gone away.
+    /// </summary>
+    public static async Task<NamedPipeClientStream> ToASilentPeer(
+        AtasConnector connector, string pipe, Func<bool> arrived, int timeoutMs = 10_000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var connects = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            var peer = new NamedPipeClientStream(".", pipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await peer.ConnectAsync(10_000);
+            connects++;
+
+            // Never awaited: on a connection the connector has taken this stays pending for as long
+            // as the peer stays silent, and the caller's `using` is what ends it. Faults are observed
+            // so that disposing the stream under it cannot surface as an unobserved exception.
+            var gone = peer.ReadAsync(new byte[1].AsMemory()).AsTask();
+            _ = gone.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+
+            while (DateTime.UtcNow < deadline && !gone.IsCompleted)
+            {
+                if (arrived()) return peer;
+                await Task.Delay(50);
+            }
+            peer.Dispose();
+        }
+        throw new TimeoutException(
+            $"the connector never reported the peer handed to {pipe}, after {connects} connect(s) in " +
+            $"{timeoutMs} ms; the row reads: {connector.StatusDetail ?? "(nothing)"}");
+    }
+}
