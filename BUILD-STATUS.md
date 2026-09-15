@@ -5729,3 +5729,44 @@ so; the same build re-run alone next morning: Unit 1078 + Integration 668 = 0 fa
 **NOT done, NOT verified:** NOTHING IS SENT — no close, cancel or order leaves the gateway because of a breach, asserted at the wire (order count and position
 unchanged across a closure); the flatten (`U-flatten-2`), the data-loss exit (`U-flatten-3`), stops and targets (`U-protect`), a table, the assessments' content, the
 admission gate's mark validity (b); no screen, no box, no ATAS, no money. `DownloadPartBindingTests` also flaked once in the builder's DEBUG run — the loopback class, watched.
+
+## 2026-09-15 — U-allocator-1 landed: capital is allocated to a promoted version, and the dispatch gate refuses an order past it on the one position reading
+
+The first allocator unit (COUNCIL `:55-57` the allocator is code, `:59-63` a change of allocation is a consequential boundary, `:32-33` only a promoted version
+executes), briefed from a read-only survey, built by two builders: the first killed by the 2026-09-14 session limit with items 1–4 committed and item 5 uncommitted;
+the second, fresh and briefed to read the branch first, kept that work on its merits, rebased over `U-flatten-1`, finished item 5 and quoted one mutant per item.
+Merge `8cb95de`, 8 commits, rebased onto `926e87e`. **Schema 20** (`U-flatten-1` took no rung; `U-allocator-2` takes 21). MONEY PATH: the dispatch gate.
+
+- **The allocation is one immutable row** (`strategy_allocation`: id = sha256 over version id, promotion id, policy version, `max_quantity`, `max_notional`,
+  currency, `effective_from`; `INSERT … ON CONFLICT DO NOTHING`, no update, no delete, no pipe op, no verb). Mutant (the clock hashed into the id):
+  `The_same_allocation_recorded_twice…` → `Assert.Single() Failure: The collection contained 2 items`, the two rows differing only in `At`.
+- **Written only for a version whose `Standing` reads `promoted` at that instant**, through a two-press Capital card on the Safety page the agent has no route
+  to. Mutant (`Standing` replaced by "a promotion row exists"): `An_invalidated_promotion_cannot_be_allocated_capital` → `version 6b52acd9f0d5 may trade up to 1
+  from 2026-09-13 12:00:00Z.`
+- **An intent may name its version and the request records it:** `PlaceIntent.StrategyVersionId`; `execution_request.strategy_version_id` and `allocation_id`
+  written at create, never re-derived from the parameters blob. Mutant (scraped from `parameters`): `A_rewritten_parameters_blob…` → `Expected:
+  "6b52acd9f0d5…" / Actual: "a-version-that-never-placed-anything"`.
+- **The ceiling is the FOURTH gate inside the dispatch gate, on the one position reading,** after `LossBudgetOrThrow` and, like it, returning before refusing
+  when `CanIncreaseExposure` is false so a close is never refused; an order naming a version with no standing allocation, or past `max_quantity` /
+  `max_notional`, is refused `ALLOCATION_*` — nothing sent, no row written. Mutant (evaluated above the awaited reads): `Two_placements_in_flight_together…`
+  → `Assert.Equal() Failure: Expected: 1 / Actual: 2`, `connector place calls: 2`, two orders at the broker.
+- **Told:** section 4 names every standing allocation (version, ceiling, currency, from when, policy version) and marks one whose promotion now reads
+  invalidated `WITHDRAWN`; the Situation's promoted line says what capital stands behind it, no holdout figure. RED (the behaviour stripped, the shapes kept,
+  so the failure is silence): all 5 red, `Not found: "- allocated: none"`; mutant (the WITHDRAWN mark dropped): `Not found: "WITHDRAWN: its promotion no
+  longer stands"`.
+- **Two defects the first full suite found, both fixed in `090c74c`:** item 3 added two columns to `Cols` but not to `TryCreateFlagged`'s VALUES list —
+  `SQLite Error 1: '19 values for 21 columns'`, 43 Fault + 1 Integration red, every operator emergency press unable to write its row, and LIVE ON THE BRANCH
+  under all four committed items (the first builder committed them without a full-suite run); and the rung-16 rollback fixture did not undo schema 20 —
+  `duplicate column name: strategy_version_id`. No assertion loosened.
+- **Choices, now in `CONTRACTS.md` with a test holding them (`3e8d399`):** capital is allocated to a promoted strategy version (COUNCIL names no subject; rule 8
+  makes it the only executable thing); the ceiling is the owner's declared number, not a fraction of a balance the app does not persist; a position not
+  attributable to a version counts against the ceiling anyway — it can only refuse. Deviation kept: one commit spans items 1 and 3 (one root cause in each).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `3e8d399`, Release: 17 projects, 0 warnings, 0 errors; Unit 1097 +
+Fault 304 + Integration 668 = 2069 passed, 0 failed, 1 skipped; touched classes 3× → AllocationLedgerTests 10, AllocationGateTests 10, AllocationSurfacesTests 6,
+TwoPressGrantTests 27, VenueCatalogTests 8, all green; names `main` 1712 → 1741, `[Fact]`/`[Theory]` 1680 → 1709, nothing removed, nothing moved.
+Manager's gate at `65ba93f` (landed as `8cb95de` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1097/1097 (18 s), Fault 304/304 (1 m 24 s), Integration 668/669, 1 skipped (11 m 4 s) → 0 failed; names vs `main` → 0 removed, 29 added (sets 1712 → 1741; `[Fact]`/`[Theory]` 1680 → 1709); scan clean; no trailers; `rev-list --count` → 0; CI at `8cb95de`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no runner emits a live or paper intent, so the deployment this gate ceilings does not exist — the gate is bound end to end and the
+limit is stated in `CONTRACTS.md`; `docs/USER-GUIDE.md` untouched (the Capital card is the owner's only route); no screen, no box, no ATAS, no money, nothing
+sent to any venue. Not this unit: parentage, exploration, retirement (`U-allocator-2`); the boundary event and the sealed assessments; a balance-derived ceiling.
