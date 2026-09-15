@@ -232,6 +232,30 @@ public sealed record LossBreachRecord
     /// <summary>Every open position and the mark it was valued at.</summary>
     public IReadOnlyList<LossBreachMark> Marks { get; init; } = [];
 
+    /// <summary>
+    /// THE CLOSURE LENGTH THAT APPLIED TO THIS BREACH, snapshot at confirmation — the owner's
+    /// <c>RiskPolicy.LossMinClosureHours</c> as it then stood (<c>U-reopen-2</c>, item 3).
+    ///
+    /// <para>Eligibility is computed from THIS and never from the number in force when the question
+    /// is asked, which is the record-outranks-the-ledger rule applied to the one value the record is
+    /// measured against: a closure narrowed after the event cannot bring this reopen forward, and one
+    /// widened after it cannot delay a receipt that has been earned.</para>
+    ///
+    /// <para><b>NULL means a record written before this unit</b>, and such a row is judged by the
+    /// FIXED default (<c>GatewayOptions.LossMinClosure</c>, 24 hours) — the rule that was in force
+    /// when it was written, which is the only honest thing to judge it by. It is nullable rather than
+    /// defaulted for exactly that reason: a <c>TimeSpan.Zero</c> from an absent JSON field would be
+    /// indistinguishable from an owner who set the closure to nothing.</para>
+    /// </summary>
+    public TimeSpan? MinClosure { get; init; }
+
+    /// <summary>
+    /// The strike window, IN UTC DATES, that applied to this breach. Snapshot and nullable for
+    /// <see cref="MinClosure"/>'s reasons — a zero from an absent field would read as "the owner
+    /// switched the strike rule off", which is a decision and not a missing value.
+    /// </summary>
+    public int? StrikeWindowDays { get; init; }
+
     /// <summary>The sentence the owner and the agent are shown. Written once, with the record.</summary>
     public string Why { get; init; } = "";
 }

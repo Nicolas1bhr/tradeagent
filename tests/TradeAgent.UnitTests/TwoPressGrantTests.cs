@@ -589,6 +589,78 @@ public class TwoPressGrantTests
         Assert.Equal(0, applied);
     }
 
+    /// <summary>
+    /// THE TWO CLOSURE DURATIONS WIDEN BY GETTING SMALLER (<c>U-reopen-2</c>, item 3).
+    ///
+    /// <para>Every cap above them on this page is a ceiling, where larger is wider. These two are
+    /// pauses: a shorter closure is more days the AI may lose a budget in, and a shorter strike
+    /// window is fewer episodes that ever add up to a hold the owner has to release by hand. So
+    /// SHORTENING either is the grant and asks twice, and lengthening one saves in a press — which is
+    /// the direction a "bigger number means more authority" comparison gets exactly backwards.</para>
+    /// </summary>
+    [Fact]
+    public void A_save_that_shortens_a_closure_or_a_strike_window_takes_two_presses_and_names_it()
+    {
+        (RiskPolicy Pending, string Named)[] cases =
+        [
+            (Closure(hours: 6m), Labels.LossMinClosure),
+            // Zero is "no closure beyond the UTC day", so it is the widest value the field has.
+            (Closure(hours: 0m), Labels.LossMinClosure),
+            (Closure(window: 3), Labels.LossStrikeWindow),
+            // And zero here switches the strike rule off altogether.
+            (Closure(window: 0), Labels.LossStrikeWindow)
+        ];
+
+        foreach (var (pending, named) in cases)
+        {
+            var saved = 0;
+            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
+
+            Press(b);
+            Assert.Equal($"{named}: {0}", $"{named}: {saved}");
+            Assert.Equal($"Confirm: widen \u201c{named}\u201d", b.Content);
+
+            Press(b);
+            Assert.Equal($"{named}: {1}", $"{named}: {saved}");
+        }
+    }
+
+    /// <summary>
+    /// LENGTHENING EITHER OF THEM SAVES IN ONE PRESS. An owner who decides a losing day should cost
+    /// the AI a week rather than a day is taking authority away, and should not have to argue with
+    /// the software about it — this page's rule, on the two fields where it reads backwards.
+    /// </summary>
+    [Fact]
+    public void A_save_that_lengthens_a_closure_or_a_strike_window_takes_one_press()
+    {
+        (RiskPolicy Pending, string What)[] cases =
+        [
+            (Closure(hours: 48m), "a longer closure"),
+            (Closure(window: 30), "a longer strike window"),
+            (Closure(hours: 24m, window: 7), "both unchanged")
+        ];
+
+        foreach (var (pending, what) in cases)
+        {
+            var saved = 0;
+            var b = SafetyPage.BuildSaveLimits(() => Policy(), () => pending, () => saved++);
+
+            Press(b);
+
+            Assert.Equal($"{what}: saved 1, button says {Labels.SaveLimits}",
+                $"{what}: saved {saved}, button says {b.Content}");
+        }
+    }
+
+    /// <summary>The page's own policy with one or both durations changed; everything else at Policy().</summary>
+    static RiskPolicy Closure(decimal hours = 24m, int window = 7)
+    {
+        var p = Policy();
+        p.LossMinClosureHours = hours;
+        p.LossStrikeWindowDays = window;
+        return p;
+    }
+
     // ---- 6. the review-hold release card (U-reopen-2) --------------------------------------------
 
     /// <summary>

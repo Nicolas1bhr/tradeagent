@@ -530,6 +530,25 @@ public static class Labels
             ? "0 means not enforced."
             : $"0 means not enforced. This is in {currency}, your account's currency.";
 
+    /// <summary>
+    /// THE CLOSURE LENGTH, as the owner's own number. Shortening it is the grant, which is the
+    /// opposite of the four caps above it — see <c>RiskPolicy.LossMinClosureHours</c>.
+    /// </summary>
+    public const string LossMinClosure = "How long it stays closed after a losing day (hours)";
+
+    /// <summary>The strike window, in UTC dates. Shortening it is the grant.</summary>
+    public const string LossStrikeWindow = "Days in which a second losing day holds it for you";
+
+    /// <summary>
+    /// What the two duration boxes say under them. It has to say which direction is the risky one,
+    /// because on these two the smaller number is the one that hands the AI more room, and every
+    /// other box on the page reads the other way round.
+    /// </summary>
+    public const string LossClosureHint =
+        "TradeAgent will not reopen a scope that reaches the budget twice inside that many days — you "
+        + "release that yourself. Making either number SMALLER gives the AI more room, so it asks again "
+        + "first. Neither one changes a closure that is already standing.";
+
     public const string InstrumentAllowlist = "Instruments it may touch";
 
     /// <summary>

@@ -2755,10 +2755,10 @@ public sealed class TradingGateway : IAsyncDisposable
     /// (<see cref="GatewayOptions.LossMinClosure"/>, 24 hours) — the rule that was in force when it
     /// was written, which is the only honest thing to judge it by.</para>
     /// </summary>
-    TimeSpan MinClosureFor(LossBreachRecord breach) => _opt.LossMinClosure;
+    TimeSpan MinClosureFor(LossBreachRecord breach) => breach.MinClosure ?? _opt.LossMinClosure;
 
     /// <summary>The strike window this episode was counted in. The snapshot rule above, in dates.</summary>
-    int StrikeWindowFor(LossBreachRecord breach) => _opt.LossStrikeWindow;
+    int StrikeWindowFor(LossBreachRecord breach) => breach.StrikeWindowDays ?? _opt.LossStrikeWindow;
 
     /// <summary>
     /// THE INSTANT ONE CLOSURE MAY EARLIEST BE LIFTED, as the code that acts and every surface that
@@ -3298,6 +3298,13 @@ public sealed class TradingGateway : IAsyncDisposable
             TradeBudget = reading.TradeBudget,
             Currency = reading.Currency,
             SettingsRevision = Sha256Hex.Of(Json.Write(Settings.Risk))[..12],
+
+            // THE RULE THIS EPISODE WILL BE JUDGED BY, TAKEN NOW. The settings hash above is an
+            // identity and not an arithmetic — nothing can compute an eligibility instant from it —
+            // so the two numbers that decide when this closure lifts are on the row in their own
+            // right, and every reader uses them instead of whatever is set when it asks.
+            MinClosure = LossReopen.ClosureOf(Settings.Risk.LossMinClosureHours),
+            StrikeWindowDays = Settings.Risk.LossStrikeWindowDays,
             Realized = reading.Realized,
             Unrealized = reading.Unrealized,
             FeesUnknownFills = reading.FeesUnknownFills,

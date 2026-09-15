@@ -68,6 +68,44 @@ public sealed class RiskPolicy
     /// bound on the day is the one configuration this product must not be able to reach quietly.
     /// </summary>
     public decimal MaxDailyLoss { get; set; }
+
+    /// <summary>
+    /// HOW LONG A CLOSURE LASTS AT ITS SHORTEST, IN HOURS — the owner's number since
+    /// <c>U-reopen-2</c>, and <b>24</b> out of the box.
+    ///
+    /// <para>A confirmed loss-budget breach closes the scope until TradeAgent writes a receipt, and
+    /// the earliest that can happen is the LATER of the next UTC midnight and this many hours after
+    /// the breach. Both terms are kept: a shorter number here must still not be able to end a
+    /// closure inside the UTC day whose ledger figure closed it.</para>
+    ///
+    /// <para><b>Shortening it is the risky direction</b>, which is the opposite of every cap above
+    /// and the reason it is in <see cref="Widenings"/>: a shorter pause is more of the owner's money
+    /// the AI may lose in a week, and it is a grant in exactly the way raising a quantity cap is.
+    /// Lengthening it saves in one press.</para>
+    ///
+    /// <para><b>The number in force never governs a closure that is already standing.</b> Each breach
+    /// record carries the value that applied to IT, and eligibility is computed from that snapshot —
+    /// so a closure narrowed after the event cannot bring a reopen forward and one widened after it
+    /// cannot delay a receipt that has been written.</para>
+    /// </summary>
+    public decimal LossMinClosureHours { get; set; } = 24m;
+
+    /// <summary>
+    /// HOW MANY UTC DATES A SECOND BREACH OF THE SAME SCOPE IS STILL A SECOND BREACH IN — <b>7</b>
+    /// out of the box: today and the six before it.
+    ///
+    /// <para>A scope that reaches the budget twice inside this window is HELD: TradeAgent will not
+    /// reopen it by code at all, and only the owner's own press on the Safety page lifts that. The
+    /// count is taken when the second breach is confirmed and written down, so this number governs
+    /// what was counted then and nothing afterwards re-counts it.</para>
+    ///
+    /// <para><b>Shortening it is the risky direction</b>, for <see cref="LossMinClosureHours"/>'s
+    /// reason: fewer dates is fewer episodes that ever add up to a hold. Zero switches the strike
+    /// rule off altogether and is therefore the widest value it has — the reading the notional cap
+    /// and both loss budgets already have for their own zero.</para>
+    /// </summary>
+    public int LossStrikeWindowDays { get; set; } = 7;
+
     /// <summary>
     /// THE INSTRUMENTS THE AI MAY TOUCH. AN EMPTY LIST IS NOT A WILDCARD.
     ///
@@ -117,6 +155,14 @@ public sealed class RiskPolicy
         if (to.MaxOrdersPerMinute > from.MaxOrdersPerMinute) wider.Add(Labels.MaxOrdersPerMinute);
         if (Widens(from.MaxLossPerTrade, to.MaxLossPerTrade)) wider.Add(Labels.MaxLossPerTrade);
         if (Widens(from.MaxDailyLoss, to.MaxDailyLoss)) wider.Add(Labels.MaxDailyLoss);
+
+        // THE TWO DURATIONS WIDEN BY GETTING SMALLER, which is the opposite of everything above them
+        // and the reason they are spelled out here rather than folded into one of the helpers. A
+        // shorter closure is more days the AI may lose a budget in; a shorter strike window is fewer
+        // episodes that ever add up to a hold. Zero is the widest value each of them has — no
+        // closure beyond the UTC day, and no strike rule at all — and Shortens reads it that way.
+        if (Shortens(from.LossMinClosureHours, to.LossMinClosureHours)) wider.Add(Labels.LossMinClosure);
+        if (Shortens(from.LossStrikeWindowDays, to.LossStrikeWindowDays)) wider.Add(Labels.LossStrikeWindow);
         if (to.InstrumentAllowlist.Any(i => !from.InstrumentAllowed(i))) wider.Add(Labels.InstrumentAllowlist);
 
         return wider;
@@ -130,6 +176,15 @@ public sealed class RiskPolicy
     /// </summary>
     static bool Widens(decimal from, decimal to) =>
         from > 0m && (to <= 0m || to > from);
+
+    /// <summary>
+    /// The comparison for a DURATION, where shorter is wider — the two loss-closure numbers. A value
+    /// at or below zero is "not enforced beyond the UTC day" and "no strike rule", so it is the
+    /// widest each of them has and a plain <c>&lt;</c> already catches it; it is spelled separately
+    /// from <see cref="Widens"/> so that nobody reading either one has to hold both directions in
+    /// their head at once.
+    /// </summary>
+    static bool Shortens(decimal from, decimal to) => to < from;
 }
 
 public sealed class TradeAgentSettings

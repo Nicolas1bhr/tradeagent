@@ -109,6 +109,15 @@ public static class LossReopen
                + $"have been reopened was {eligible.UtcDateTime:yyyy-MM-dd HH:mm} UTC.";
     }
 
+    /// <summary>
+    /// THE OWNER'S NUMBER AS A DURATION. At or below zero is NO closure beyond the UTC day — the
+    /// widest value the setting has — and <see cref="EligibleAt"/>'s midnight term is what is then
+    /// left holding it, which is deliberate: the figure that closed the scope is a UTC day's, and a
+    /// closure ending inside its own day hands the account back to the same figure.
+    /// </summary>
+    public static TimeSpan ClosureOf(decimal hours) =>
+        hours <= 0m ? TimeSpan.Zero : TimeSpan.FromHours((double)hours);
+
     /// <summary>The closure length in the words an owner uses. Whole hours; anything else says both.</summary>
     public static string Hours(TimeSpan span) =>
         span.Minutes == 0 && span.Seconds == 0
