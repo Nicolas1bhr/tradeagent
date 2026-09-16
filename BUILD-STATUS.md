@@ -6161,3 +6161,34 @@ the identity of a loss-line scope), MED 6+7+8 one batch unit; fixes are not re-r
 
 **NOT done, NOT verified:** no box, no ATAS, no real money, no screen, no mutation testing, no bridge code read; the updater, the Doctor, the relay's task delivery,
 the venue override loader, the second candle source, the backtest and the referee not probed; Codex ran no test. Nothing fixed, nothing pushed by the reviewer.
+
+## 2026-09-16 — U-press-budget-legs landed: the five multi-leg press fixtures outside the close-all file take the per-leg budget, their legs measured rather than read
+
+The debt `U-close-all-win` named, briefed as one test-only item and fixed by one fresh fixer. Merge `ee08704`, 2 commits, TEST-ONLY (`git diff main -- src/` empty;
+no `Assert.` line touched; no test added, renamed or deleted). Not the money path.
+
+- **Legs MEASURED, not read off the fixture:** a throwaway probe printed each press's own capture count (`OperatorCancelAllAsync`'s `captured`, `CloseCapturedAsync`'s
+  `captured`, `CancelWorkingOrdersAsync`'s `targets`) beside the running test's name over the whole Fault project, then was reverted.
+- **Moved, one token each:** `UnknownCloseTests.cs:261` 2 legs (ES+NQ) → `PressBudgetFor(2)`; `EmergencyPressTests.cs:261` 2 legs (both orders rest, both cancels are
+  the verdict) → `For(2)`; `PressInFlightTests.cs:153` 2 legs (ES waits, NQ closes) → `For(2)`; `LossFlattenTests.cs:52`, the shared `Ready` behind nine flattens, 2 legs
+  (the daily breach closes ES and NQ; the resting-opener fixture cancels one order then closes one position inside the SAME deadline) → `For(2)`; and
+  `EmergencyPressTests.cs:229` ONE leg, not the brief's two (pk-1 rests and pk-2 fills, so the cancel-all captures one working order and the close-all one position,
+  each under its own deadline) → `For(1)`, 23 s — the fixer's correction of the brief, kept.
+- **Swept (`grep -rn 'PressBudget' tests/`):** every other flat-20 s site is ONE leg, measured, and left flat — nineteen sites across `UnknownCloseTests`,
+  `EmergencyPressTests`, `PressInFlightTests`, `PressAtomicityTests`, `ValuationLossTests`, `LossDirectorHoldTests`, `LossReleaseTests`, `LossReopenTests`,
+  `LossReopenApprovalTests`, `LossRuleSnapshotTests`, `LossStrikeTests`; none at risk of the two-leg arithmetic, though 20 s is under the 23 s one leg gets — not this
+  item. **Named, not moved, outside `PressBudget`:** `IntegrationTests/SweepRequestIdTests.cs:290` `SweepBudget = 20 s` feeds ten AGENT sweeps (pipe `cancel-all` /
+  `close-all`, not a press), measured up to SIX legs; a different constant in a different project — a debt stated, not touched.
+- **It bites, quoted.** With a throwaway hook holding EVERY `Database.Write` commit 2234 ms (reverted, `git status` clean of it),
+  `A_confirmed_daily_breach_closes_every_open_position_and_the_book_reads_flat` on `PressBudgetFor(2)`: GREEN, `Passed! - Failed: 0, Passed: 1 … Duration: 1 m 58 s`.
+  Mutant (the flat `PressBudget` put back, same stall): RED — `Assert.Equal() Failure: Expected: 2 / Actual: 1` at `LossFlattenTests.cs:223`, `leg : op-budget-close-…-1
+  NQ captured 1 -> UNKNOWN filled 0`, `book : [NQ 1]`, the leg refused with `the operation deadline had already passed and nothing was sent to the simulator`. The fixture
+  tried FIRST, `UnknownCloseTests.cs:261`, did NOT bite under the same stall on either budget (its ES leg is refused by the settle's own failed read before it can spend
+  the budget) — that site's move rests on the measured two legs and the arithmetic, stated as such.
+
+**Verified by running (the fixer, quoted; then the manager's gate):** fixer's gate at `33bffa7` (rebased onto `6c7dd09`; rebased once more after the gate onto the
+docs-only `2dcf8f3`, `git patch-id --stable` identical), Release: build `--no-incremental` → 0 warnings, 0 errors; Fault 3× → 350/350 each; Unit 1145/1145; Integration
+668 passed + 1 skipped of 669 → 0 failed; names vs `main` → 0 removed, 0 added. Manager's gate at `9855529` (the reported tip; landed as `ee08704` after a docs-only rebase, `src`/`tests` identical), Release, overlapping the reviewer's own probe suite: build, 17 projects → 0 warnings, 0 errors; Unit 1145/1145 (21 s), Fault 350/350 (1 m 25 s), Integration 668/669, 1 skipped (11 m 3 s — its normal length, so not contaminated) → 0 failed; names vs `main` → 0 removed, 0 added (sets 1830 = 1830; `[Fact]`/`[Theory]` 1798 = 1798); scan clean; no trailers; `rev-list --count` → 0; CI at `ee08704`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no product code and no product mutant; no assertion loosened or touched; no test deleted; no `Timing` trait; the one-leg flat sites and the
+Integration `SweepBudget` family not moved; no box, no CI run of its own (the merge sha's CI is recorded below), no ATAS, no money.
