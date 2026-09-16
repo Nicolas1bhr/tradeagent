@@ -6130,3 +6130,34 @@ Manager's gate at `0d6a268` (the reported tip `0572fbd` rebased over `U-flatten-
 COUNCIL `:219-222` whose subject is a TEAM or CANDIDATE AGENT (heritable candidate definition, diversity budgets, bounded births and turnover, probation, rollback, a
 cross-candidate selection protocol) is named in `CONTRACTS.md` as waiting on an entity this build does not have. No verb, no pipe op, no UI for retirement;
 `USER-GUIDE.md` untouched; no screen, no box, no ATAS, nothing sent to any venue.
+
+## 2026-09-16 — the third milestone review of the money path at `c441120`: five HIGH, three MED, all executed; Codex's four hypotheses all verified
+
+Run as `docs/HOW-WE-BUILD.md` says, the last step before any release: one fresh Opus reviewer told to break the money path at a named sha (`docs/briefs/REVIEW.md`,
+worktree `review` detached at `c441120`, probes on `review-probes-c`), and Codex `gpt-5.6-sol` read-only on the same sha in its own worktree, in parallel and
+uncoordinated. The findings, the probe output quoted, the guards that held, the ranked UNVERIFIED list and what was not done are in `docs/REVIEW-2026-09-16.md`;
+Codex's answer is its `## Codex` section. **HIGH 5 · MED 3 · LOW 0 · UNVERIFIED 7 — every finding an executed refutation.**
+
+- **HIGH 1** `LossBreach.cs:144-152` — a closure on a venue-qualified symbol (`ES:H6`, `BINANCE:BTCUSDT`) is written and invisible to every reader: `ScopeOf` splits
+  the key on `:`, so `OpenClosures` skips the row and the closed scope trades. **HIGH 2** `TradingGateway.cs:783-794`, `Pnl.cs:124`, `FillStore.cs` — the fill ledger is
+  scoped to no account and no platform; one account's profit keeps another trading past its budget, one account's loss closes an account that never traded. **HIGH 3**
+  `TradingGateway.cs:6299`, `LossBreach.cs:179-261` — a PAPER breach flattens the LIVE book after a platform switch: the check is `account.Id == breach.Account` and the
+  record carries no connector. **HIGH 4** `TradingGateway.cs:4786-4790` — `ApproveAsync` re-runs two of the four position gates and drops the capital gate and the
+  unresolved-reducer refusal: a parked order goes out over a withdrawn ceiling, a parked reduce doubles a close. **HIGH 5** `GatewayPipeServer.cs:658,702`,
+  `AgentGrants.cs:118-130` — a launch grant is verified once at `hello`; an expired, revoked or turn-ended grant keeps placing orders on the socket it said hello on.
+- **MED 6** `TradingGateway.cs:2508,2605-2660`, `LossReopen.cs:135-148` — one forward clock step ends a closure on the next tick, against what the contract and the
+  code's own doc claim; rated MED because nothing an agent can reach moves the clock. **MED 7** `TradingGateway.cs:3793` — the per-order limits (allowlist,
+  `MaxOrderQuantity`, `MaxNotionalPerOrder`, quote age) are decided above `_dispatchGate` and never re-asked at the wire. **MED 8** — the two agreeing pulls are keyed
+  by the UTC day, so a pair straddling midnight writes no breach at all.
+- **Codex** (read-only; its sandbox refused MSBuild's temp directory, `MSB1025`, so it executed nothing) offered four UNVERIFIED hypotheses; handed to the reviewer
+  after its own hunt, all four VERIFIED: C1 = 5, C2 = 3, C3 = 4 (both arms), C4 = 6. **Least proven, the reviewer's order:** whether any attached platform names an
+  instrument or account with a colon (1's defect executed, its reachability on ATAS not); a second close after an exit throwing between its close and its record
+  (UNVERIFIED 1, read only); everything the bridge half does — `AtasStrategyAdapter`, `CoidWitness`, `AdapterTeardown` not opened.
+
+**Verified by running (the reviewer, quoted):** probes branch `review-probes-c` @ `58aa4fa`, two test files, no product change; Release build `--no-incremental` → 0
+warnings, 0 errors; full suite → Unit 1132 + Fault 362 + Integration 669 = 2163 passed, 0 failed, 1 skipped (2150 on `main` plus 13 probes); the probe classes alone
+12/12 and 1/1. The findings are not fixed on `main`: each HIGH becomes a fix unit before any release (briefed in `docs/briefs/` the same hour, 1+2+3 as ONE class fix —
+the identity of a loss-line scope), MED 6+7+8 one batch unit; fixes are not re-reviewed.
+
+**NOT done, NOT verified:** no box, no ATAS, no real money, no screen, no mutation testing, no bridge code read; the updater, the Doctor, the relay's task delivery,
+the venue override loader, the second candle source, the backtest and the referee not probed; Codex ran no test. Nothing fixed, nothing pushed by the reviewer.
