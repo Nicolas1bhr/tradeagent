@@ -6259,3 +6259,31 @@ VenueCatalogTests 8, PnlScopeTests 1, PnlTests 11, all pass; names 1832 → 1841
 no screen. The sweep's own connector-and-mode filter has NO mutant of its own — the flatten's refusal masks it — so it is log hygiene and the refusal is the guard,
 asked directly in the test. The two arms naming the new record fields cannot compile on the base by construction; their red-first evidence is C2's quoted red plus
 each guard's mutant.
+
+## 2026-09-16 — U-approve-gates landed: an approval runs every position gate a placement runs, on its own single reading, and is attributed to the allocation that authorised it
+
+The fix unit for the third review's HIGH 4 (`ApproveAsync` re-ran two of the four position gates and dropped the capital gate and the reconciliation refusal, so a
+parked order went out over a withdrawn ceiling attributed to a superseded allocation and a parked reduce doubled a close), built by one fresh builder with the
+reviewer's probes `C3a` and `C3b` as its REDs. Merge `9aeea56`, 2 commits, no schema. MONEY PATH: the approval path.
+
+- **One gate sequence, two callers.** `TradingGateway.PositionGatesOrThrow(intent, positions, account, requestId, reference, ct)` runs the open-position cap, the
+  unresolved-reducer refusal, the loss budgets and the allocation ceiling in that order; `PlaceAsync` and `ApproveAsync` each take their own single `GetPositionsAsync`
+  reading inside `_dispatchGate` and hand it in; the approval writes the allocation the sequence answers with (`ExecutionRequestStore.Attribute`) before dispatch. RED
+  on `1b8f408` (the probes given assertions — they only logged): `A_parked_order_approved_after_its_capital_was_withdrawn_is_refused_as_a_fresh_one_is` → `a FRESH
+  order now: ALLOCATION_EXCEEDED / the PARKED order, approved: SENT`, `orders that reached the wire: 1`; `A_parked_reduce_approved_over_an_unresolved_reducer_…` →
+  `Expected: "CLOSE_UNRESOLVED" Actual: "SENT"`, `position at the broker: ES 1 (it was ES 3)`; `An_approval_is_attributed_to_the_allocation_that_authorised_it_…` →
+  `Expected: "b40e87b4…" Actual: "9500f0aa…"`. Mutant 1 (the approval path back on the old two-gate sequence): the same three red. Mutant 2 (`AllocationId` not
+  reassigned): `the record's allocation_id: 9500f0aa…`, the superseded row. Control: `A_parked_reduce_with_nothing_unresolved_still_approves_and_reaches_the_wire` → `SENT`.
+- **Choices, in `CONTRACTS.md` under `U-approve-gates`** (step 7 of "An approval is a dispatch decision…" split, step 8 naming the four gates): the signature takes
+  `reference` and `ct` beyond the brief's four, because the ceiling's value arm multiplies the price the risk check already trusted and a second quote read inside the
+  gate would be a second answer to one question; the sequence answers with the `AllocationRow` and each caller writes it; `Attribute` is the only update naming
+  `allocation_id` and matches only an `AWAITING_APPROVAL` row, so an order the wire has seen can never be re-attributed (the field's doc corrected); null is a value —
+  a proposal whose allocation lapsed is recorded as attributed to nothing; a MODIFY runs none of the four; `LOSS_BUDGET_REACHED`, `APPROVAL_PREDATES_LOSS_BREACH`,
+  `ALLOCATION_*` and `CLOSE_UNRESOLVED` unchanged as the callers' answers, the budgets below the reducer refusal, each still starting at `CanIncreaseExposure`.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `799a6e3` (rebased onto `e4a19dc`), Release `--no-incremental`: 0 warnings,
+0 errors; Unit 1145 + Fault 354 + Integration 670 = 2169 passed, 0 failed, 1 skipped; touched classes 3× → ApprovalPositionGateTests 4, ApprovalReauthorizationTests
+30, AllocationGateTests 10, all pass; names 1832 → 1836, 4 added, 0 removed. Manager's gate at `c1fde96` (the reported tip `0381399` rebased over `U-scope-identity`, the branch's patch-id identical before and after; landed as `9aeea56` after a docs-only rebase, `src`/`tests` identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1146/1146 (21 s), Fault 365/365 (1 m 26 s), Integration 670/671, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 4 added (sets 1832 → 1836; `[Fact]`/`[Theory]` 1800 → 1804, before the scope unit's own additions); scan clean; no trailers; `rev-list --count` → 0; CI at `9aeea56`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no schema; the per-order limits above the gate (MED 7 — `U-review-med`), the approval TTL and the mode re-check untouched; nothing sweeps;
+no box, no money — every test is the simulator behind `RecordingConnector`, nothing proven on Windows.
