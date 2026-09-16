@@ -1540,11 +1540,15 @@ decision again from the start, in this order:
    account ids alone would send a simulator proposal to a real broker exposing the same id;
 6. the chosen account must be the one the record names — else `ACCOUNT_NOT_FOUND`, since the dispatch
    goes to the account on the record;
-7. every risk limit: allowlist, quantity, paper-vs-real, rate limit, open positions, quote freshness
-   for an order without its own price, and order value multiplied by contract size. A parked
-   MODIFICATION re-reads its target from the book at the moment of the press and is judged on the
-   order as it will stand **now** — it may have moved, filled or been cancelled while it waited, and
-   a target that cannot be read refuses the approval rather than sending on a stale reading.
+7. every risk limit: allowlist, quantity, paper-vs-real, rate limit, quote freshness for an order
+   without its own price, and order value multiplied by contract size. A parked MODIFICATION re-reads
+   its target from the book at the moment of the press and is judged on the order as it will stand
+   **now** — it may have moved, filled or been cancelled while it waited, and a target that cannot be
+   read refuses the approval rather than sending on a stale reading;
+8. then, for a placement only, **every gate a placement runs on the position, in the same order and
+   off one reading of it** — the open-position cap, the unresolved-reducer refusal, the loss budgets
+   and the allocation ceiling, which is `U-approve-gates` below. The allocation that gate answers with
+   is recorded on the request before anything is dispatched.
 
 Only then does it dispatch. A refusal at any step leaves the record `AWAITING_APPROVAL` for a person
 to decline deliberately — except step 2. A request as old as or older than the approval time-to-live
@@ -2467,3 +2471,45 @@ Also not built: any automatic trigger that decides WHEN a candidate is put up fo
 policy is about a population, which is the same missing entity. `OpenRetirement` is in-process and
 this build calls it from nowhere; what is contracted here is the event, the disposition, the fence and
 the record.
+
+## U-approve-gates — one gate sequence, two callers, and the allocation the press went out under
+
+**No schema.** REVIEW 2026-09-16 finding 4 in code. `PlaceAsync` ran four gates on its single position
+reading inside the dispatch gate and `ApproveAsync` re-ran two of them; the two it dropped were the
+capital gate and the reconciliation refusal, two of the five `docs/COUNCIL.md`:14-15 says EVERY order
+passes. Two arms of one cause, so one structural fix.
+
+**The four position gates are ONE method — `TradingGateway.PositionGatesOrThrow` — and both callers
+call it.** `PlaceAsync` and `ApproveAsync` each take their own single `GetPositionsAsync` reading
+inside `_dispatchGate` and hand it in; the sequence is the open-position cap, then the
+unresolved-reducer refusal, then the loss budgets, then the allocation ceiling, and the order is part
+of the contract. Four gates asking the platform the same question one after another could be told four
+different answers and refuse on the oldest of them, which is why the reading is taken once and handed
+in; and the reading is the CALLER's because the caller decides when — before the record exists on the
+placement path, after the mode, platform and account re-checks on the approval path. A caller that
+wants these gates gets all four or none. So a parked order whose capital the owner has withdrawn is
+answered `ALLOCATION_EXCEEDED` (or `ALLOCATION_NONE`) exactly as a fresh one is, and a parked reduce
+over an order this gateway cannot account for is answered `CLOSE_UNRESOLVED` exactly as a fresh one
+is. The loss budgets keep their place below the reducer refusal, and they and the ceiling each start
+at `CanIncreaseExposure`, so **a close is never refused by either** — the trap a closed day would
+otherwise be. `LOSS_BUDGET_REACHED` and `APPROVAL_PREDATES_LOSS_BREACH` are unchanged, and the second
+is still judged above the mode, before this sequence and before the budgets that could mask it.
+
+**The sequence answers with the allocation, and the approval path records it before dispatching.**
+`ExecutionRequestStore.Attribute` is the one update that names `allocation_id`, and it writes only
+while the record is still `AWAITING_APPROVAL`: a record the wire has seen can never be re-attributed,
+which is the property `ExecutionRequest.AllocationId` exists to have. The row that authorised the
+frame about to leave is the one standing at the PRESS, not the one standing when the proposal parked —
+the allocation ledger has no update, so a ceiling is changed by superseding it and superseding gives a
+new id, and recording the parked one would answer `docs/COUNCIL.md`:210-211 with an allocation that
+did not cause the operation. **Null is a value here, not a no-op:** a proposal whose allocation has
+lapsed goes out attributed to nothing, because nothing is what authorised it. `strategy_version_id`
+has no update at all — it is the caller's claim, carried verbatim, and it does not change while a
+proposal waits.
+
+**A MODIFICATION runs none of this**, for the reasons already stated: a change to an order that exists
+cannot raise a count of instruments, and the sequence is written against a `PlaceIntent`. What a
+modification re-runs is step 7 above, against the target as the book holds it at the press.
+
+**Not in this unit:** the per-order limits above the gate (MED 7), the approval TTL and the mode
+re-check (unchanged), and any sweep — expiry is still evaluated only when a person presses Approve.

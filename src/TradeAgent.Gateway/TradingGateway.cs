@@ -3864,6 +3864,65 @@ public sealed class TradingGateway : IAsyncDisposable
 
     // ---------------------------------------------------------------- mutations
 
+    /// <summary>
+    /// THE FOUR GATES THAT ARE QUESTIONS ABOUT THE POSITION, IN ONE SEQUENCE AND IN ONE ORDER, so that
+    /// a placement and an approval cannot be two different sets of rules.
+    ///
+    /// <para><b>Why it is one method (REVIEW 2026-09-16, finding 4).</b> There were two copies of this
+    /// sequence: <see cref="PlaceAsync"/> ran four gates and <see cref="ApproveAsync"/> re-ran two of
+    /// them. The two it dropped were the capital gate and the reconciliation refusal — two of the five
+    /// <c>docs/COUNCIL.md</c>:14-15 says EVERY order passes — so a parked order was approved onto a
+    /// ceiling the owner had since withdrawn, and a parked reduce was approved over an order this
+    /// gateway cannot account for, which is the doubling <see cref="ErrorCode.CLOSE_UNRESOLVED"/>
+    /// exists to refuse. Two arms of one cause, and a second copy is how the cause came back. A caller
+    /// that wants these gates now gets all four or none.</para>
+    ///
+    /// <para><b>ONE POSITION READING, HANDED IN.</b> The caller reads the platform's positions once,
+    /// inside <c>_dispatchGate</c>, and hands that reading here: four gates asking the platform the
+    /// same question one after another could be told four different answers and refuse on the oldest
+    /// of them. The reading is the caller's because the caller also decides WHEN — before the record
+    /// exists on the placement path, after the mode, platform and account re-checks on the approval
+    /// path.</para>
+    ///
+    /// <para><b>The order is part of the contract.</b> The cap counts instruments, the reducer refusal
+    /// answers "is there an earlier order that moves this position the same way", the loss budgets
+    /// answer "is this account or this symbol closed", and the ceiling answers "what may this version
+    /// be holding" — and only the last has a row for an answer. The budgets stay below the reducer
+    /// refusal so that the two arms of finding 4 keep the codes the review measured, and each of the
+    /// last two starts at <see cref="CanIncreaseExposure"/>, so a close is never refused by either.</para>
+    ///
+    /// <para><b>What it answers with</b> is the allocation this order is going out under, or null
+    /// because there is none — the value the caller puts on the record. It is known only in here, and
+    /// on both paths it is written before anything is dispatched.</para>
+    ///
+    /// <para><paramref name="reference"/> is the price the risk check already trusted, carried rather
+    /// than read again (see <see cref="RiskCheckOrThrow"/>): the allocation's value ceiling multiplies
+    /// the same number the notional cap does, and a second quote read inside the gate would be a second
+    /// answer to the same question and an awaited round trip in the one place that must stay short.</para>
+    /// </summary>
+    async Task<AllocationRow?> PositionGatesOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions,
+        AccountInfo account, string requestId, decimal reference, CancellationToken ct)
+    {
+        // See OpenPositionCapOrThrow: the cap is the one risk limit whose answer depends on what the
+        // OTHER callers are doing, so it is the one that cannot be decided out there with the reads.
+        OpenPositionCapOrThrow(intent, positions, requestId);
+
+        // A close and a reduce are sized from what is here; an order this gateway cannot account for
+        // on the same instrument would move that position the same way, so sending on top of it closes
+        // the position twice. `close` is refused a step earlier, in CloseAsync; this is the reduce the
+        // agent did not call a close, and the placement whose blocker appeared while these reads were
+        // in flight.
+        RefuseAnUnresolvedReducerOrThrow(intent, positions);
+
+        await LossBudgetOrThrow(intent, account, positions, ct);
+
+        // THE ONE THAT ANSWERS WITH A ROW. See AllocationCeilingOrThrow: what a promoted version may
+        // be HOLDING is a question about the position, so it is decided here with the other three
+        // rather than out there with the reads, where two callers arriving together would each see the
+        // same empty account and both pass one allocation.
+        return await AllocationCeilingOrThrow(intent, positions, reference, requestId, ct);
+    }
+
     public async Task<ExecutionRequest> PlaceAsync(AgentContext ctx, string requestId, PlaceIntent intent, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(requestId))
@@ -3910,39 +3969,18 @@ public sealed class TradingGateway : IAsyncDisposable
         await _dispatchGate.WaitAsync(ct);
         try
         {
-            // INSIDE THE GATE, AND BEFORE THE RECORD EXISTS. See OpenPositionCapOrThrow: the cap is
-            // the one risk limit whose answer depends on what the OTHER callers are doing, so it is
-            // the one that cannot be decided out there with the reads. Before TryCreate, so that a
-            // refusal leaves no row behind — exactly as it did when it lived in the risk check.
+            // INSIDE THE GATE, AND BEFORE THE RECORD EXISTS. Before TryCreate, so that a refusal
+            // leaves no row behind — exactly as it did when the cap lived in the risk check.
             //
-            // ONE POSITION READ, TWO GATES. The loss budgets are decided on the same reading the
-            // open-position cap is, at the same instant and in the same place, because two reads one
-            // after the other can disagree and a gate refusing on the older of them is a gate
-            // deciding by accident. Both refuse before TryCreate: nothing is placed and no request
-            // row is written.
+            // ONE POSITION READ, FOUR GATES, and the same sequence ApproveAsync runs: see
+            // PositionGatesOrThrow for why they are one method and why the reading is taken here and
+            // handed in. All four refuse before TryCreate: nothing is placed and no request row is
+            // written. The allocation the sequence answers with goes onto the record at create —
+            // assigned rather than constructed with, because the standing is only known inside the
+            // gate.
             var positions = await Connector.GetPositionsAsync(account.Id, ct);
-            OpenPositionCapOrThrow(intent, positions, requestId);
-
-            // A THIRD GATE ON THE SAME READING, and it is here for the same reason the other two
-            // are: it is a question about the POSITION, and a second read to ask it could disagree
-            // with this one. A close and a reduce are sized from what is here; an order this gateway
-            // cannot account for on the same instrument would move that position the same way, so
-            // sending on top of it closes the position twice. `close` is refused a step earlier, in
-            // CloseAsync; this is the reduce the agent did not call a close, and the placement whose
-            // blocker appeared while these reads were in flight.
-            RefuseAnUnresolvedReducerOrThrow(intent, positions);
-
-            await LossBudgetOrThrow(intent, account, positions, ct);
-
-            // A FOURTH GATE ON THE SAME READING, AND THE ONE THAT ANSWERS WITH A ROW. See
-            // AllocationCeilingOrThrow: what a promoted version may be HOLDING is a question about the
-            // position, so it is decided here with the other three rather than out there with the
-            // reads, where two callers arriving together would each see the same empty account and
-            // both pass one allocation. The allocation it was decided against goes onto the record at
-            // create — assigned rather than constructed with, because the standing is only known
-            // inside this gate, and no store method writes the column again.
             record.AllocationId =
-                (await AllocationCeilingOrThrow(intent, positions, reference, requestId, ct))?.Id;
+                (await PositionGatesOrThrow(intent, positions, account, requestId, reference, ct))?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
@@ -4863,25 +4901,36 @@ public sealed class TradingGateway : IAsyncDisposable
                 // limits are applied to is the size the order has NOW — not the one it had when the
                 // AI asked. ResultingOrderOrThrow refuses when the target cannot be read at all.
                 before = change is null ? null : await TargetBeforeAsync(account.Id, change.Order!, ct);
-                await RiskCheckOrThrow(intent
+                var reference = await RiskCheckOrThrow(intent
                     ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice),
                     account, ct);
 
-                // The cap and the loss budgets, on the same terms as a placement's — this whole
-                // method already runs inside the dispatch gate, so they are asked here rather than
-                // in the risk check, and off ONE position read for the reason PlaceAsync takes one.
+                // EVERY GATE A PLACEMENT RUNS ON THE POSITION, IN THE SAME ORDER AND OFF ONE READING
+                // OF IT — PositionGatesOrThrow, the same method PlaceAsync calls. This whole method
+                // already runs inside the dispatch gate, so they are asked here rather than in the
+                // risk check, and the reading is taken here for the reason PlaceAsync takes its own.
                 // Only for a placement: see OpenPositionCapOrThrow on why a modification cannot
                 // raise a count of instruments, and CanIncreaseExposure on why a close never is.
                 //
-                // THE BUDGETS ARE ASKED AGAIN HERE AND THAT IS THE POINT OF ASKING THEM AT ALL. A
-                // proposal parks until a person answers it, and the day can go past its budget while
-                // it waits — approving an order decided against a morning the account has since lost
-                // is precisely the decision this gate exists to stop being made by default.
+                // THE GATES ARE ASKED AGAIN HERE AND THAT IS THE POINT OF ASKING THEM AT ALL. A
+                // proposal parks until a person answers it, and while it waits the day can go past
+                // its budget, the owner can withdraw the capital behind it, and an order this gateway
+                // cannot account for can appear on the instrument it is sized against. Approving on
+                // the verdict the proposal parked with is precisely the decision this gate exists to
+                // stop being made by default (REVIEW 2026-09-16, finding 4).
+                //
+                // AND THE ANSWER IS RECORDED BEFORE ANYTHING IS DISPATCHED. The allocation that
+                // authorised THIS dispatch is the one that stood at the press, not the one that stood
+                // when the proposal parked: docs/COUNCIL.md:210-211 asks which allocation caused an
+                // operation, and the operation is the frame that is about to leave. A parked row
+                // carries the earlier id until this line replaces it, and null is an answer — a
+                // reduce whose allocation has lapsed goes out attributed to nothing, because nothing
+                // is what authorised it.
                 if (intent is not null)
                 {
                     var positions = await Connector.GetPositionsAsync(account.Id, ct);
-                    OpenPositionCapOrThrow(intent, positions, requestId);
-                    await LossBudgetOrThrow(intent, account, positions, ct);
+                    var allocation = await PositionGatesOrThrow(intent, positions, account, requestId, reference, ct);
+                    stored = _requests.Attribute(requestId, allocation?.Id);
                 }
             }
             catch (GatewayDeniedException ex)

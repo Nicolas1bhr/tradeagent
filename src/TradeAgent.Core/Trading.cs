@@ -1229,8 +1229,14 @@ public sealed class ExecutionRequest
     /// <para><see cref="AllocationId"/> is settable where <see cref="StrategyVersionId"/> is not, and
     /// only because of WHERE it is known: the version arrives on the intent, and the allocation is the
     /// one that authorised this order, read inside the dispatch gate with the position that the three
-    /// gates beside it are decided on. It is assigned once, before the row exists, and no store method
-    /// ever writes it again — <c>ExecutionRequestStore</c> has no update that names either column.</para>
+    /// gates beside it are decided on. It is assigned before the row exists, and written again in
+    /// exactly one place: <c>ExecutionRequestStore.Attribute</c>, which an approval calls after
+    /// re-running those gates and which updates nothing unless the record is still
+    /// <c>AWAITING_APPROVAL</c>. An approval is a dispatch decision made at the moment it is made, so
+    /// the row that authorised the frame about to leave is the one standing at the press and not the
+    /// one standing when the proposal parked (REVIEW 2026-09-16, finding 4). A record the wire has
+    /// seen can therefore never be re-attributed, and <c>strategy_version_id</c> has no update at
+    /// all.</para>
     /// </summary>
     public string? StrategyVersionId { get; init; }
 

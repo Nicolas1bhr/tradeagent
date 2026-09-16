@@ -352,6 +352,52 @@ public sealed class ExecutionRequestStore(Database db, TimeProvider? clock = nul
         return Get(requestId) ?? throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT, "request vanished");
     }
 
+    /// <summary>
+    /// THE ALLOCATION AN ORDER IS GOING OUT UNDER, WRITTEN ONCE MORE AND ONLY WHILE IT IS STILL
+    /// AWAITING APPROVAL.
+    ///
+    /// <para>An approval is a dispatch decision authorized at the moment it is made, and the gates it
+    /// re-runs include the capital ceiling (<c>TradingGateway.PositionGatesOrThrow</c>). The row that
+    /// authorised the frame about to leave is therefore the one standing at the PRESS, which can be a
+    /// different row from the one the proposal parked under — the allocation ledger has no update, so
+    /// a ceiling is changed by superseding it, and superseding gives a new id. Recording the parked
+    /// one would answer <c>docs/COUNCIL.md</c>:210-211 with an allocation that did not cause the
+    /// operation (REVIEW 2026-09-16, finding 4).</para>
+    ///
+    /// <para><b>The state is in the WHERE clause and that is the whole guard.</b> An order that has
+    /// been dispatched, filled, cancelled or settled can never be re-attributed by this method: the
+    /// update matches no row and the call throws. So the column still cannot be rewritten under an
+    /// order the wire has seen, which is the property <see cref="ExecutionRequest.AllocationId"/>
+    /// exists to have; what this adds is the one write that happens BEFORE a parked order is sent.
+    /// <c>strategy_version_id</c> is not named here and has no update at all — the version is the
+    /// caller's claim, carried verbatim from the intent, and it does not change while a proposal
+    /// waits.</para>
+    ///
+    /// <para>Null is a value, not a no-op: a proposal whose allocation has lapsed goes out attributed
+    /// to nothing, because nothing is what authorised it.</para>
+    /// </summary>
+    public ExecutionRequest Attribute(string requestId, string? allocationId)
+    {
+        var updated = db.Write(_ =>
+        {
+            using var c = db.Cmd("""
+                UPDATE execution_request
+                SET allocation_id=$aid, updated_at=$now
+                WHERE request_id=$rid AND execution_state='AWAITING_APPROVAL'
+                """, ("$rid", requestId), ("$aid", allocationId), ("$now", Sql.T(Now)));
+            return c.ExecuteNonQuery();
+        });
+
+        if (updated != 1)
+        {
+            var actual = Get(requestId);
+            throw new TradeAgentException(ErrorCode.ILLEGAL_STATE_TRANSITION,
+                $"expected {requestId} to be awaiting approval to record the allocation it is going out "
+                + $"under, but found {actual?.State.ToString() ?? "missing"}");
+        }
+        return Get(requestId)!;
+    }
+
     static ExecutionRequest Map(SqliteDataReader r) => new()
     {
         RequestId = r.GetString(0),
