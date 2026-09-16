@@ -25,7 +25,8 @@ namespace TradeAgent.Tests.Fault;
 // Every test here asserts both directions: the unsafe outcome is refused AND an ordinary press
 // still reaches the wire.
 //
-// AND EVERY PRESS BELOW RUNS UNDER `Unresolved.PressBudget` EXCEPT WHERE THE BUDGET IS THE SUBJECT.
+// AND EVERY PRESS BELOW RUNS UNDER `Unresolved.PressBudget` — or, where a press's legs have been
+// COUNTED, under `Unresolved.PressBudgetFor(legs)` — EXCEPT WHERE THE BUDGET IS THE SUBJECT.
 // "Reaches the wire" is a claim about what the press DID, and everything between the instant a press
 // opens its deadline and the instant its leg goes out is durable SQLite at `synchronous=FULL` — on
 // windows-latest one such commit has been measured at 2234 ms, which is a whole emergency budget
@@ -217,11 +218,15 @@ public class SecondPressRefusedTests
     /// <summary>
     /// PER KIND, and that is deliberate: an unresolved cancel-all must never be able to stop
     /// somebody flattening a position. They are different decisions and are refused separately.
+    ///
+    /// <see cref="Unresolved.PressBudgetFor"/> AT ONE LEG, measured rather than assumed: pk-1 rests
+    /// and pk-2 fills, so the cancel-all captures ONE working order and the close-all ONE position,
+    /// and each press opens its own deadline. One leg is 23 s against the flat 20 s.
     /// </summary>
     [Fact]
     public async Task An_unresolved_cancel_all_does_not_block_close_all()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(1));
         using var dbh = db;
         await gw.PlaceAsync(AgentContext.Operator, "pk-1", TestEnv.Buy());
         c.Inner.Faults.Fill = FillBehaviour.FillImmediately;
@@ -245,11 +250,15 @@ public class PressReachesTheWireOnItsOwnTermsTests
     /// F9. Cancel-all is one cancel per CAPTURED order. The account-wide sweep acted on orders the
     /// person never saw — including any that arrived after the press — and could be reconciled
     /// against nothing.
+    ///
+    /// <see cref="Unresolved.PressBudgetFor"/> AT TWO LEGS: both orders rest, so the capture is
+    /// measured at two and the verdict is that BOTH cancels reached the wire. Two legs is 34 s there
+    /// against the flat 20 s, and the second cancel is the one a budget that ran out would lose.
     /// </summary>
     [Fact]
     public async Task Cancel_all_sends_one_cancel_per_captured_order_and_no_account_wide_sweep()
     {
-        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db) = await Recovery.Ready(new FaultProfile { Fill = FillBehaviour.LeaveWorking }, emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
         var a = await gw.PlaceAsync(AgentContext.Operator, "po-1", TestEnv.Buy());
         var b = await gw.PlaceAsync(AgentContext.Operator, "po-2", TestEnv.Buy("NQ"));

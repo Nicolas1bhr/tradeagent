@@ -46,7 +46,8 @@ namespace TradeAgent.Tests.Fault;
 // is the third appearance of `U-press-win-3`'s finding: one `synchronous=FULL` commit on
 // windows-latest has been measured at 2234 ms, which is a whole emergency budget inside one write.
 //
-// So every fixture here takes `Unresolved.PressBudget` (20 s), whose argument and measurements are
+// So every fixture here takes `Unresolved.PressBudget` (20 s) — or `Unresolved.PressBudgetFor(legs)`
+// where the press's legs have been counted — whose argument and measurements are
 // written at its declaration. NO FIXTURE IN THIS FILE HAS THE TWO-SECOND PROMISE AS ITS VERDICT —
 // not one asserts a duration, a deadline, or a refusal at one — so none is left on the default, and
 // nothing here joins `Timing`: no verdict below needs the RUNNER to keep a wall clock.
@@ -142,13 +143,14 @@ public class PressWaitsOnOpenWorkTests(ITestOutputHelper Out)
     /// one nothing is in flight on — an emergency control that gives up on every symbol because one
     /// of them is busy would be a worse failure than the one this unit fixes.
     ///
-    /// <see cref="Unresolved.PressBudget"/>: "the other instrument is still closed" is a close that
-    /// reaches the broker, and NQ's leg is the second of two — the last thing a press this size does.
+    /// <see cref="Unresolved.PressBudgetFor"/> AT TWO LEGS, measured at the capture (ES and NQ):
+    /// "the other instrument is still closed" is a close that reaches the broker, and NQ's leg is the
+    /// second of two — the last thing a press this size does. Two legs is 34 s there against 20 s.
     /// </summary>
     [Fact]
     public async Task The_other_instruments_of_the_same_press_are_still_closed()
     {
-        var (gw, c, db, _) = await Stranded.Ready(emergencyBudget: Unresolved.PressBudget);
+        var (gw, c, db, _) = await Stranded.Ready(emergencyBudget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
 
         await gw.PlaceAsync(new AgentContext("ai"), "two-es", TestEnv.Buy(qty: 2m));

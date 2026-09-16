@@ -17,7 +17,11 @@ namespace TradeAgent.Tests.Fault;
 /// position reads back flat, and anything else stays flagged and pauses order flow exactly as an
 /// owner's press does.</para>
 ///
-/// <para><b>Every press in this file takes <see cref="Unresolved.PressBudget"/>.</b> Every verdict
+/// <para><b>Every press in this file takes <see cref="Unresolved.PressBudgetFor"/> at TWO legs.</b>
+/// Two is what the file's widest flatten was measured to run — the daily breach closes ES and NQ,
+/// and the resting-opener fixture cancels one order and then closes one position inside the SAME
+/// deadline — and the flat <see cref="Unresolved.PressBudget"/> is 20 s where two legs is 34 s.
+/// Every verdict
 /// below is the book or a record, and everything between the instant the flatten opens its deadline
 /// and the instant its leg goes out is durable SQLite at <c>synchronous=FULL</c> — one such commit
 /// has measured 2234 ms on windows-latest, which is the whole of the simulator's two seconds
@@ -45,7 +49,7 @@ public class LossFlattenTests(ITestOutputHelper log)
         var db = TestEnv.NewDb();
         var conn = new RecordingConnector(new FakeConnector(new FakeBroker())
         {
-            EmergencyBudget = Unresolved.PressBudget
+            EmergencyBudget = Unresolved.PressBudgetFor(2)
         });
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>

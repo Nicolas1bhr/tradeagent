@@ -250,13 +250,15 @@ public class PressSettlesAnUnknownCloseTests(ITestOutputHelper Out)
     /// cannot know whether it is live — and a close sent on top of it could reverse the position. ES
     /// is refused, ES's row is still written so the card names it, and NQ is still closed.
     ///
-    /// <see cref="Unresolved.PressBudget"/>: NQ's close is the half of the verdict that has to reach
-    /// the wire, and it is the SECOND leg — behind ES's refusal and its flagged row.
+    /// <see cref="Unresolved.PressBudgetFor"/> AT TWO LEGS, which is what this press runs: the
+    /// capture is measured at two positions (ES and NQ), and NQ's close is the half of the verdict
+    /// that has to reach the wire — the SECOND leg, behind ES's refusal and its flagged row. The flat
+    /// <see cref="Unresolved.PressBudget"/> is 20 s where the arithmetic there gives two legs 34 s.
     /// </summary>
     [Fact]
     public async Task A_leg_whose_unknown_close_cannot_be_read_is_refused_and_the_other_instrument_is_closed()
     {
-        var (gw, c, db, lost) = await Unresolved.WithALostClose(alsoOpen: "NQ", budget: Unresolved.PressBudget);
+        var (gw, c, db, lost) = await Unresolved.WithALostClose(alsoOpen: "NQ", budget: Unresolved.PressBudgetFor(2));
         using var dbh = db;
 
         c.Inner.Faults.HideOrderHistory = true;      // the read the settle needs cannot be served
