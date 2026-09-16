@@ -6049,3 +6049,43 @@ not the stall — the stalled-disk claim rests on the local reproduction and its
 
 **NOT done, NOT verified:** no product code and no product mutant; no `Timing` trait; no assertion loosened or touched; the five presses above not moved; no box, no
 ATAS, no money.
+
+## 2026-09-16 — U-flatten-3 landed: a position nobody can value is a state with a clock, and past the owner's bound it is closed under its own reason, never as a budget breach
+
+The third `U-flatten` unit (Astra's line of 2026-09-14, adopted: a persistent data loss needs its own pre-authorised response with a reason distinct from a breach,
+and no claim of unattended protection without it), built by one fresh builder on a worktree cut from the reopen-2 tip, killed by the 2026-09-15 session limit with
+all three items committed and resumed the next day with one message. Merge `c441120`, 4 commits, no schema rung. MONEY PATH: the watcher tick, the app's legs.
+
+- **Unavailable is a state with a clock.** One episode row per open instrument (`valuation_unavailable:{connector}:{account}:{symbol}`), `Since` written on the first
+  tick that cannot value it and carried forward until a FRESH in-epoch executable mark ends it; the risk-increasing orders on that symbol cancelled ONCE per episode
+  through `-2`'s cancel mechanics under `op-valuation-cancel-`. RED (tracking disabled): `episode : (none)`, `book after ten ticks : [FB-1 Buy 2 FILLED | FB-3 Buy 1
+  WORKING]` — nothing recorded, the opener still resting. Mutant (`CanBeValued` takes any cached quote): `episode : (none)` — unavailability never ages past one tick.
+- **The data-loss exit, bounded and distinct.** Past `RiskPolicy.ValuationLossExitMinutes` (15 out of the box; zero is OFF and the WIDEST value, so lengthening is the
+  two-press widening) of CONTINUOUS unavailability with the connection UP, the position closes through `-2`'s cancel/close mechanics under its own reason
+  `VALUATION_LOST`, its own write-once episode-keyed record `loss_valuation_exit:{connector}:{account}:{symbol}:{yyyyMMddTHHmmssZ}` and its own
+  `BoundaryKind.ValuationLoss`. RED: `before the bound : ES 2, closes on the wire 0`, `exit record : (none)`, `position after : ES 2`. Mutant (the reason folded
+  into the breach record): `Assert.Null() Failure … Actual: LossBreachRecord { … Why = TradeAgent closed today to new risk at 12:01 UTC: the day was down 1000 USD …}`
+  — the report claims a budget breach that never happened. Connection DOWN: nothing sent, the clock runs on, its own fixture (`closes on the wire : 0 -> 0`, `ES 2`).
+- **Disclosure.** Section 4 and `CONTRACTS.md` state all four thresholds with the numbers in force (tick 15 s, confirmation 60 s, quote age 30 s, exit bound 15 min),
+  that each is a point at which TradeAgent INTERVENES, and that none bounds the realised loss — gap, spread, slippage, unreported fees. RED: `Not found: "none of them
+  is a maximum loss"` while the report still printed `loss allowance left … of 1,000.00 USD`. Mutant (printed only when the budget is zero): `Not found: "what these
+  limits are and are not"`. Sampling delay MEASURED on this Mac (Release, simulator connector, one open position): one reading of the open book 4.849 / 4.934 /
+  4.862 / 4.899 ms — the app's own arithmetic, not a platform round trip — on top of a watch interval of up to 15 s; the report prints the live figure.
+- **Choices, in `CONTRACTS.md`:** a `VALUATION_LOST` exit does NOT close the day and is NOT a strike — nobody measured a loss; the instrument stays refused new risk only
+  while it cannot be valued. The exit keyed by EPISODE, not `{utcDay}` (the brief's key): two silences on one instrument on one date are two events, and a day key would
+  make the second write-once insert answer false and leave a position nothing would ever close. Two new app press kinds and a separate boundary kind, so no surface
+  dates a valuation exit by a budget. The episode row is an upsert the watch refreshes under the dispatch gate; the EXIT is write-once at the SQL layer. The
+  precautionary cancel takes only orders that could INCREASE exposure — a resting protective order is the one thing bounding an unmeasurable position — and clears
+  the flags it wrote behind its own read-back, or a data outage would pause the whole product. Deviations kept: item 2's product code in item 1's commit (the episode
+  and its exit share `ValuationLoss.cs`, neither half compiles alone); `CancelOpenersForBreachAsync` and `AccountForTheFlattenAsync` generalised to take the press
+  kind rather than copied; the RED and mutant quotes taken at the pre-rebase tip `efa239b` (the only difference to the gated tip is the test-only `U-close-all-win`).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `c7926ab` (rebased onto `910795b`), Release `--no-incremental`: 17 projects,
+0 warnings, 0 errors; Unit 1132 + Fault 350 + Integration 668 = 2150 passed, 0 failed, 1 skipped; touched classes 3× → 13 classes, 39 runs, every one exit 0;
+names 1807 → 1817, 10 added, 0 removed, 0 moved. Manager's gate at `c441120` (the reported tip, 0 behind `main` `910795b`; `src`/`tests` identical to the gated `c7926ab`), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1132/1132 (19 s), Fault 350/350 (1 m 26 s), Integration 668/669, 1 skipped (11 m 7 s) → 0 failed; names vs `main` → 0 removed, 10 added (sets 1807 → 1817; `[Fact]`/`[Theory]` 1775 → 1785); scan clean; no trailers; `rev-list --count` → 0; CI at `c441120`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** NOT VERIFIED anywhere but this Mac — no box, no ATAS, no real money; every order reached the simulator through `RecordingConnector`,
+wire counts asserted. No schema. The denial while a valuation is missing stays ACCOUNT-wide (one unvaluable position makes `LossBudget.Read` answer unknown for the
+whole account; a per-symbol denial needs a decomposable figure, which it is not). Nothing re-tries or reconciles an exit that could not confirm — one attempt per
+episode, then the rows stay flagged and the account pauses for a person. Stops and targets (`U-protect`), the Situation block, `AGENTS.md`, `USER-GUIDE.md` and the
+agent schema untouched beyond `status.loss_valuation_lost` / `loss_valuation_exit`, added so an agent can see a position is on its way to being closed.
