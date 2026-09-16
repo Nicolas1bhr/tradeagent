@@ -6089,3 +6089,44 @@ wire counts asserted. No schema. The denial while a valuation is missing stays A
 whole account; a per-symbol denial needs a decomposable figure, which it is not). Nothing re-tries or reconciles an exit that could not confirm — one attempt per
 episode, then the rows stay flagged and the account pauses for a person. Stops and targets (`U-protect`), the Situation block, `AGENTS.md`, `USER-GUIDE.md` and the
 agent schema untouched beyond `status.loss_valuation_lost` / `loss_valuation_exit`, added so an agent can see a position is on its way to being closed.
+
+## 2026-09-16 — U-allocator-2 landed: declared parentage outside the hash, variants charged to their lineage, an exploration reserve read where it is written, a retirement that fences and erases nothing, the directors' forecasts sealed against a baseline
+
+The second allocator unit (COUNCIL `:271-272` and `:218-226`), built by one fresh builder, killed by the 2026-09-15 session limit with items 1–3 committed and item 4
+in uncommitted files, resumed the next day with one message. Merge `0d6a268`, 6 commits, 19 files, +1996/−76. **Schema 21.** NOT the money path: nothing here
+reaches `PlaceAsync`.
+
+- **`strategy_version.parent_version_id`** — declared by the submitter through the `backtest` op's `parent`, self-referencing, outside the version hash, the first
+  declaration stands. RED: `SQLite Error 1: 'table strategy_version has no column named parent_version_id'`. Mutant (the parent inferred from the role's last version):
+  `Assert.Null() Failure: Value is not null / Actual: "6b52acd9f0d5…"`.
+- **A variant is charged to its ancestry's campaign lineage** (`strategy_trial.charged_to`, walked to the eldest charged ancestor then forward through renewals; counted
+  under either number, so it can only tighten). RED (the item reverted): `Assert.Equal() Failure: Expected: 2 / Actual: 1`. Mutant (charged to the child's own
+  campaign): `Expected: 2 / Actual: 1` — the lineage count unmoved by a variant.
+- **The exploration reserve:** two pots summing to the trial budget, both counts read inside `RegisterTrial`'s own `Database.Write`. RED: `Expected: False / Actual: True`
+  (a third exploration trial taken with 3 of 5 unspent) and, on `Barrier(2)`, `Expected: 1 / Actual: 2`. Mutant (the reserve refused by the pre-run look, not at the
+  gate): `Expected: 1 / Actual: 2`.
+- **The retirement disposition,** opened on the `U-council-concurrent-2` machine, its default frozen at open to bounded replacement, applied by `ApplyDue`, fencing a
+  NEW trial and a NEW verdict only. RED: `Expected: False / Actual: True` — a retired candidate registered a further trial. Mutant (retirement clearing the allocation
+  row): `Assert.NotNull() Failure: Value is null` — the deployed strategy lost its capital. The brief's item-4 RED corrected by the builder: nothing in the product
+  applied a retirement at all, so no code path could delete or rewrite a trial row; the reachable RED is the absent fence, "erases nothing" held row by row.
+- **The directors' own record:** `RECOMMENDATION:` and `BASELINE:` declared on the assessment and sealed with it, against `review_baseline` written in the same UPDATE
+  as the disposition; section 8 prints one line per director per settled boundary, silence included. RED: `Expected: "promoted" / Actual: null`, `Not found:
+  "recommended deploy, code applied hold — d"…`. Mutant (the declared baseline read at review time): `Expected: "unjudged" / Actual: "promoted"` — every forecast reads
+  correct.
+- **Choices, in `CONTRACTS.md`:** the candidate is a strategy VERSION and the retirement default is bounded replacement (a successor whose promotion stands), not
+  "promoted ⇒ keep" — under the latter a retired candidate could never hold capital and COUNCIL `:223`'s "never kills a deployed strategy" would be unreachable;
+  `CampaignExplorationBudget` = 50 of 200, clamped to `[0, trial_budget]`, a campaign opened with none declared recording its whole budget; a parent claim is
+  unverifiable but creates NO allowance; a loss-budget boundary has no measurable baseline and none is required. Deviations: `TrialRefusal` gained a `versionId`
+  parameter (two call sites updated, no assertion changed); three exact column-list assertions extended and still exact; the assessment fixtures now declare the two
+  lines the app requires. The rung-16 rollback fixture undoes 21 as well. The builder's own note: a `git checkout --` reverting a mutant after the resume wiped the
+  uncommitted item-4 `BoundaryStore.cs` changes; reconstructed from its scratchpad fragments, rebuilt, re-tested, then committed.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `e7add72` (rebased onto `910795b`), Release `--no-incremental` with bin/obj
+deleted first: 17 projects, 0 warnings, 0 errors; Unit 1140 + Fault 345 + Integration 668 = 2153 passed, 0 failed, 1 skipped; six touched classes 3× → VersionLineage
+6, RetirementBoundary 7, BoundaryLedger 9, CampaignLedger 20, CouncilRelay 20, VenueCatalog 8, every run `Passed!`; names 1807 → 1820, 13 added, 0 removed.
+Manager's gate at `0d6a268` (the reported tip `0572fbd` rebased over `U-flatten-3`; the branch's patch differs from before the rebase by ONE context line — flatten-3's `ValuationLoss` boundary kind added beside this unit's addition in `BoundaryStore.cs` — every changed line identical), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1145/1145 (20 s), Fault 350/350 (1 m 26 s), Integration 668/669, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 13 added (sets 1817 → 1830; `[Fact]`/`[Theory]` 1785 → 1798); scan clean; no trailers; `rev-list --count` → 0; CI at `0d6a268`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** nothing in this build calls `OpenRetirement` — the policy deciding WHEN a candidate is put up is about a population; every part of
+COUNCIL `:219-222` whose subject is a TEAM or CANDIDATE AGENT (heritable candidate definition, diversity budgets, bounded births and turnover, probation, rollback, a
+cross-candidate selection protocol) is named in `CONTRACTS.md` as waiting on an entity this build does not have. No verb, no pipe op, no UI for retirement;
+`USER-GUIDE.md` untouched; no screen, no box, no ATAS, nothing sent to any venue.
