@@ -117,7 +117,55 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// this <see cref="DisposeAsync"/> has no way to reach one: it awaited the ACCEPT loop, which is
     /// not where a stalled writer is parked, and the connection outlived the server that owned it.
     /// </summary>
-    readonly System.Collections.Concurrent.ConcurrentDictionary<NamedPipeServerStream, byte> _live = new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<NamedPipeServerStream, Connected> _live = new();
+
+    /// <summary>
+    /// WHAT ONE OPEN CONNECTION PROVED, AND WHETHER IT IS INSIDE A CALL RIGHT NOW.
+    ///
+    /// <para>Both halves exist for the same ending. When a launch grant stops being live, the
+    /// connections it authenticated must close — otherwise revoking it changes a list and nothing
+    /// else, while the revoked caller keeps trading down a socket it opened earlier (REVIEW
+    /// 2026-09-16 finding 5). To close them, the server has to know which connection is holding
+    /// which token.</para>
+    ///
+    /// <para>And it must not close one MID-CALL: <see cref="Security.AgentGrants.Grace"/> is for a
+    /// frame the gateway is already inside, whose order may already be at the broker, and cutting
+    /// the socket there would report a failure for an order that placed. So an ending on a busy
+    /// connection is recorded, the reply is delivered, and the connection closes on its way out.</para>
+    ///
+    /// <para>Under a lock rather than three volatile fields, because "set ended, and close it if
+    /// nobody is inside" and "leave the call, and close if it ended while I was in there" are each
+    /// one decision over two fields. Read with volatile fields, an ending that lands between the two
+    /// reads is an ending nobody acts on, and the socket stays open for ever.</para>
+    /// </summary>
+    sealed class Connected
+    {
+        readonly Lock _gate = new();
+        string? _grant;
+        bool _inCall, _ended;
+
+        /// <summary>
+        /// The launch grant's token this connection proved at hello, or null for a caller that
+        /// presented none — authenticated, roleless, and nothing to end.
+        /// </summary>
+        public string? Grant
+        {
+            get { lock (_gate) return _grant; }
+            set { lock (_gate) _grant = value; }
+        }
+
+        /// <summary>A frame is being handled from now until <see cref="LeaveCall"/>.</summary>
+        public void EnterCall() { lock (_gate) _inCall = true; }
+
+        /// <summary>Done with the frame; true if the grant ended while it ran, so this connection closes.</summary>
+        public bool LeaveCall() { lock (_gate) { _inCall = false; return _ended; } }
+
+        /// <summary>
+        /// The grant this connection proved has ended. True if the CALLER should close the pipe now;
+        /// false means a call is in flight and the handler will close it after the reply.
+        /// </summary>
+        public bool End() { lock (_gate) { _ended = true; return !_inCall; } }
+    }
 
     /// <summary>
     /// Every handler task currently running. Registering the PIPES was not enough: closing a pipe
@@ -513,7 +561,44 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
     public string PipeName => _pipe;
 
-    public void Start() => _loop ??= Task.Run(() => AcceptLoop(_accept.Token));
+    /// <summary>
+    /// Opens the door, and subscribes to the register's endings while it is open.
+    ///
+    /// <para>Not in the constructor, because <see cref="Grants"/> is an <c>init</c> property and is
+    /// not set yet when the constructor runs — a subscription there would listen to
+    /// <see cref="Security.AgentGrants.Shared"/> whatever register this server was given. Here is
+    /// also where it belongs: the subscription exists to close PIPE connections, and a server that
+    /// was never started has none. <see cref="DisposeAsync"/> unsubscribes.</para>
+    /// </summary>
+    public void Start()
+    {
+        if (_loop is not null) return;
+        Grants.Ended += OnGrantEnded;
+        _loop = Task.Run(() => AcceptLoop(_accept.Token));
+    }
+
+    /// <summary>
+    /// A LAUNCH GRANT HAS ENDED, SO THE CONNECTIONS IT AUTHENTICATED CLOSE.
+    ///
+    /// <para>This is the half of finding 5 that re-verifying the grant per frame does not cover. A
+    /// revoked or expired token is caught on the next frame either way — but a turn that ends
+    /// DISPOSES its grant, and the expiry is then pulled in to now plus the 60 s grace rather than
+    /// deleted, so for that minute the register still calls the grant live. Without this the ended
+    /// turn keeps placing orders down the connection it already holds for as long as the grace runs,
+    /// which is precisely the minute nobody is supervising it.</para>
+    ///
+    /// <para>A connection with a call in flight is not cut: it is marked, answers the frame it is
+    /// inside, and closes on the way out. That is what the grace is for, and it is all it is for.</para>
+    /// </summary>
+    void OnGrantEnded(string token)
+    {
+        foreach (var (pipe, state) in _live)
+        {
+            if (!Security.AgentGrants.SameToken(state.Grant, token)) continue;
+            if (!state.End()) continue;            // in a call: the handler closes it after the reply
+            try { pipe.Dispose(); } catch (Exception) { /* already gone */ }
+        }
+    }
 
     async Task AcceptLoop(CancellationToken ct)
     {
@@ -526,10 +611,11 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                 await server.WaitForConnectionAsync(ct);
                 var s = server;
                 server = null; // ownership moves to the handler
-                _live[s] = 0;
+                var state = new Connected();
+                _live[s] = state;
                 // The HANDLER token, not the accept token: a connection already taken is served to
                 // the end even though the door has closed.
-                var handler = Task.Run(() => Serve(s, _cts.Token), _cts.Token);
+                var handler = Task.Run(() => Serve(s, state, _cts.Token), _cts.Token);
                 _handlers[handler] = 0;
                 _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
             }
@@ -560,12 +646,15 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous, PipeBuffer, PipeBuffer);
     }
 
-    async Task Serve(NamedPipeServerStream pipe, CancellationToken ct)
+    async Task Serve(NamedPipeServerStream pipe, Connected state, CancellationToken ct)
     {
         var authenticated = false;
-        // WHO THIS CONNECTION PROVED IT IS, settled once at hello and never re-read off a later
-        // frame. A role carried per-request would be a role the caller asserts; this one is the
-        // grant the app minted for one process, looked up in the app's own register.
+        // WHO THIS CONNECTION PROVED IT IS, settled at hello and never re-read off a later frame. A
+        // role carried per-request would be a role the caller asserts; this one is the grant the app
+        // minted for one process, looked up in the app's own register.
+        //
+        // WHETHER THAT IS STILL TRUE is a different question, and it is asked again on every frame
+        // below. What the connection proved does not change; what it is worth does.
         Security.AgentGrant? grant = null;
         try
         {
@@ -672,6 +761,10 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     }
 
                     authenticated = true;
+                    // WHICH TOKEN THIS SOCKET IS HOLDING, so that the end of that grant can reach it.
+                    // Recorded after every refusal above, so a connection that failed the checks is
+                    // never registered as holding anything.
+                    state.Grant = grant?.Token;
                     if (!await Send(pipe, IpcResponse.Success(req.Id, new
                     {
                         protocol_version = Versions.ProtocolVersion,
@@ -693,14 +786,51 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
                     return;
                 }
 
+                // THE GRANT IS RE-VERIFIED HERE, ON EVERY FRAME, and this is the whole of finding 5.
+                //
+                // It used to be verified once, inside the hello arm, and the role it proved was then
+                // carried into every later frame on this connection — so an expired, revoked or
+                // turn-ended grant kept placing orders for as long as the caller held the socket,
+                // while a NEW connection presenting the same grant was refused. Revocation that does
+                // not reach a live connection is not revocation.
+                //
+                // Against the token this connection PROVED, never against `req.Grant`: a token read
+                // off a later frame is one the caller asserts, and re-reading it here would let a
+                // peer swap in some other live grant per frame and be whoever it liked.
+                //
+                // Before the reserved-session check and before the role gate, because it is the
+                // question those two are answered ON BEHALF OF. A read is refused as well as a
+                // place: a fresh connection presenting this grant is refused outright rather than
+                // served as a roleless reader, and the same ending cannot mean less on a socket that
+                // happens to be open already.
+                if (grant is not null && EndedGrantRefusal(req, grant) is { } gone)
+                {
+                    gateway.Log.Engineering("Ipc", "grant_rejected", "warn", session: req.Session,
+                        requestId: req.RequestId ?? req.Id);
+                    await Send(pipe, gone, req.Op, req.Session, req.RequestId ?? req.Id);
+                    return; // one chance per connection, exactly as hello gives
+                }
+
                 if (ReservedSessionRefusal(req) is { } refusal)
                 {
                     if (!await Send(pipe, refusal, req.Op, req.Session, req.RequestId ?? req.Id)) return;
                     continue;
                 }
 
-                if (!await Send(pipe, await Handle(req, grant?.Role, grant?.AttemptId, ct),
-                        req.Op, req.Session, req.RequestId ?? req.Id)) return;
+                // INSIDE THE CALL from here to the reply. An ending that arrives now is recorded and
+                // acted on below rather than cutting the frame in half: this is the one thing
+                // AgentGrants.Grace is for.
+                state.EnterCall();
+                IpcResponse answer;
+                var endedMidCall = false;
+                try { answer = await Handle(req, grant?.Role, grant?.AttemptId, ct); }
+                finally { endedMidCall = state.LeaveCall(); }
+
+                if (!await Send(pipe, answer, req.Op, req.Session, req.RequestId ?? req.Id)) return;
+
+                // The grant ended while that call was in flight. The reply is delivered — the agent
+                // learns what happened to the order it already sent — and then the connection goes.
+                if (endedMidCall) return;
             }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException)
@@ -921,6 +1051,27 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
 
         grant = verdict.Grant;
         return null;
+    }
+
+    /// <summary>
+    /// IS THE GRANT THIS CONNECTION PROVED STILL LIVE? Asked on every frame; null means carry on.
+    ///
+    /// <para>The same register, the same verdict and the same words a FRESH connection presenting
+    /// this token would get, because it is the same question — the only difference is that this
+    /// caller asked it a while ago and got a yes. A grant is worth what it is worth now.</para>
+    ///
+    /// <para>The peer-image rule is NOT re-run here, and that is a choice with a reason: the process
+    /// on the other end of an accepted pipe cannot change, so the rule's answer cannot either, while
+    /// re-running it would hash the trade command's image off disk on every frame — a file read and
+    /// a SHA-256 in the path of every order, to re-answer a question whose subject is fixed. It is
+    /// settled once, at hello, where the connection is admitted.</para>
+    /// </summary>
+    IpcResponse? EndedGrantRefusal(IpcRequest req, Security.AgentGrant grant)
+    {
+        var verdict = Grants.Verify(grant.Token);
+        return verdict.State is Security.GrantState.Valid
+            ? null
+            : IpcResponse.Fail(req.Id, ErrorCode.IPC_UNAUTHENTICATED, verdict.Reason);
     }
 
     /// <summary>
@@ -2668,6 +2819,12 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     {
         if (_disposed) return;      // idempotent: disposing twice is not an error, it is a no-op
         _disposed = true;
+
+        // 0. Stop listening for endings. The register outlives this server — AgentGrants.Shared is
+        //    process-wide — so a subscription left behind would keep every disposed server, and the
+        //    gateway and database behind it, alive for the life of the process. A no-op if Start
+        //    was never called.
+        Grants.Ended -= OnGrantEnded;
 
         // 1. Stop taking new connections. Handlers already running are untouched by this.
         await _accept.CancelAsync();

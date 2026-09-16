@@ -76,8 +76,40 @@ public sealed class AgentGrants
     /// </summary>
     public static readonly TimeSpan MaxTurn = TimeSpan.FromHours(6);
 
-    /// <summary>How long a grant outlives its turn, so a call already in flight is still answered.</summary>
+    /// <summary>
+    /// How long a grant outlives its turn, and WHAT THAT BUYS — which is narrower than "the grant
+    /// still works for a minute".
+    ///
+    /// <para>It covers a call ALREADY IN FLIGHT: a frame the gateway is inside right now is answered
+    /// rather than cut off, because hanging up mid-frame would look to the agent like a failed order
+    /// when the order may already be at the broker. And it covers a <c>trade</c> the agent STARTED a
+    /// moment before its turn ended, which is still that turn's work and may still say hello.</para>
+    ///
+    /// <para>It does NOT cover a further frame arriving on a connection whose turn is over: the
+    /// gateway re-verifies the grant on every frame and <see cref="Ended"/> closes the connections
+    /// that grant authenticated, so the caller cannot even send one (REVIEW 2026-09-16 finding 5).
+    /// A grace that let a socket keep trading for a minute after the turn ended would be a minute of
+    /// unattributable orders, which is the opposite of what a launch grant is for.</para>
+    /// </summary>
     public static readonly TimeSpan Grace = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// A GRANT HAS STOPPED BEING LIVE, and the token it was. Raised for every way a grant can end —
+    /// revoked, its turn ended, or simply expired and pruned — because a register the rest of the
+    /// program has to POLL is a register whose endings arrive whenever someone happens to ask.
+    ///
+    /// <para>It exists so that an ending reaches the SOCKET. Revocation that changes a list while the
+    /// revoked caller keeps trading down a connection it opened earlier is not revocation, and that
+    /// is what the pipe server subscribes to this for. A subscriber gets the token and nothing else:
+    /// this type knows about processes and turns, not about transports.</para>
+    ///
+    /// <para>Raised OUTSIDE <see cref="_gate"/>, deliberately: a subscriber closing a pipe is doing
+    /// I/O, and doing it under the lock that every <see cref="Verify"/> on every frame contends for
+    /// would put the register's throughput at the mercy of a peer that stopped reading. It may be
+    /// raised more than once for one token — a turn that ends is one ending and the expiry that
+    /// follows it a minute later is another — so a subscriber must be idempotent.</para>
+    /// </summary>
+    public event Action<string>? Ended;
 
     /// <summary>
     /// The process-wide register, for the same reason <see cref="Core.AgentPresence.Shared"/> is one:
@@ -93,7 +125,17 @@ public sealed class AgentGrants
     public AgentGrants(Func<DateTimeOffset>? now = null) => _now = now ?? (() => DateTimeOffset.UtcNow);
 
     /// <summary>How many grants are live right now. Diagnostics only.</summary>
-    public int Live { get { lock (_gate) { Prune(); return _live.Count; } } }
+    public int Live
+    {
+        get
+        {
+            List<string>? gone;
+            int count;
+            lock (_gate) { gone = Prune(); count = _live.Count; }
+            RaiseEnded(gone);
+            return count;
+        }
+    }
 
     /// <summary>
     /// Mints one launch's grant.
@@ -107,29 +149,47 @@ public sealed class AgentGrants
         var token = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
         var span = life is { } l && l > TimeSpan.Zero && l < MaxTurn ? l : MaxTurn;
         var grant = new AgentGrant(this, token, role, attemptId ?? "", _now() + span);
+        List<string>? gone;
         lock (_gate)
         {
-            Prune();
+            gone = Prune();
             _live.Add(grant);
         }
+        RaiseEnded(gone);
         return grant;
     }
 
-    /// <summary>Takes a grant out of the register outright. The turn is over and nothing is in flight.</summary>
+    /// <summary>
+    /// Takes a grant out of the register outright. The turn is over and nothing is in flight.
+    ///
+    /// <para><see cref="Ended"/> is raised for the token whether or not this register held it, so that
+    /// an owner revoking twice, or revoking a token another register issued, still reaches every
+    /// connection holding it. A revocation is the one operation that must not depend on the revoker
+    /// having guessed the right register.</para>
+    /// </summary>
     public void Revoke(string? token)
     {
         if (token is null) return;
         lock (_gate) _live.RemoveAll(g => g.Token == token);
+        RaiseEnded([token]);
     }
 
     internal void EndTurn(AgentGrant grant)
     {
+        List<string>? gone;
         lock (_gate)
         {
             var until = _now() + Grace;
             if (grant.Expires > until) grant.Expires = until;
-            Prune();
+            gone = Prune();
         }
+
+        // THE TURN IS OVER NOW, not when the grace runs out. The grant stays in the register for the
+        // grace so that a `trade` started a moment ago can still say hello (see Grace) — but the
+        // connections this launch is ALREADY holding have had their turn, and an ending that does not
+        // reach them leaves the socket trading on a turn that is finished.
+        RaiseEnded([grant.Token]);
+        RaiseEnded(gone);
     }
 
     /// <summary>
@@ -163,12 +223,46 @@ public sealed class AgentGrants
         return new GrantVerdict(GrantState.Valid, found, "");
     }
 
+    /// <summary>
+    /// Are these the same grant token? Exposed because the pipe server has to answer it too — which
+    /// connection is holding the grant that just ended — and a credential compared by <c>==</c> is
+    /// the habit this codebase does not want anywhere near a credential, in its own assembly or in
+    /// anyone else's.
+    /// </summary>
+    public static bool SameToken(string? a, string? b) =>
+        a is not null && b is not null && Same(a, b);
+
     static bool Same(string a, string b) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 
-    void Prune()
+    /// <summary>
+    /// Drops every grant whose expiry has passed and RETURNS what it dropped, so the caller can
+    /// announce those endings once it is out of the lock. Null rather than an empty list because
+    /// pruning nothing is the ordinary case and it should allocate nothing.
+    /// </summary>
+    List<string>? Prune()
     {
         var cutoff = _now();
-        _live.RemoveAll(g => g.Expires <= cutoff);
+        List<string>? gone = null;
+        for (var i = _live.Count - 1; i >= 0; i--)
+        {
+            if (_live[i].Expires > cutoff) continue;
+            (gone ??= []).Add(_live[i].Token);
+            _live.RemoveAt(i);
+        }
+        return gone;
+    }
+
+    void RaiseEnded(IReadOnlyList<string>? tokens)
+    {
+        if (tokens is null || Ended is not { } handlers) return;
+        foreach (var token in tokens)
+        {
+            // ONE SUBSCRIBER THAT THROWS DOES NOT KEEP THE ENDING FROM THE OTHERS, and does not
+            // fault the turn that ended. There is no useful answer to "closing a socket threw"
+            // beyond not letting it stop the next one.
+            foreach (var handler in handlers.GetInvocationList())
+                try { ((Action<string>)handler)(token); } catch (Exception) { }
+        }
     }
 }

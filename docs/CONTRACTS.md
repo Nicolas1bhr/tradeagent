@@ -155,6 +155,52 @@ neither verified for a vendor CLI; the honest alternative is harness-only execut
 (`docs/COUNCIL.md`, round 4). Also open: the Unix session can be escaped by a process that calls
 `setsid` itself, which any scripting language on the machine can do in one line.
 
+## U-grant-liveness — a grant is worth what it is worth NOW — `src/TradeAgent.Gateway/GatewayPipeServer.cs`
+
+REVIEW 2026-09-16 finding 5. The grant above was verified once, inside the `hello` arm, and the role it
+proved was carried into every later frame on that connection. So an EXPIRED, REVOKED or turn-ended
+grant kept placing orders for as long as the caller held the socket, while a NEW connection presenting
+the same grant was refused `IPC_UNAUTHENTICATED` (probe `C1`: all three, one order each at the wire).
+Revocation that does not reach a live connection is not revocation.
+
+**Every frame re-verifies the grant the connection PROVED**, against the same register, with the same
+code and the same words a fresh connection presenting that token gets. Against the token proved at
+`hello` and never against `req.Grant`: a token read off a later frame is one the caller asserts, and
+re-reading it there would let a peer swap in another live grant per frame and be whoever it liked.
+
+**An ending reaches the socket.** `AgentGrants.Ended` (`src/TradeAgent.Security/AgentGrants.cs`) is raised for every way a grant stops being live
+— revoked, turn ended, or expired and pruned — and the pipe server closes the connections holding that
+token. It is raised outside the register's lock, may be raised twice for one token (the turn ending,
+then the expiry a minute later), and a subscriber that throws does not stop the next one. The server
+subscribes in `Start` (`Grants` is an `init` property and is unset in the constructor) and unsubscribes
+in `DisposeAsync`, because `AgentGrants.Shared` outlives every server.
+
+**The 60 s `Grace` is for a call already in flight and for a `trade` launched a moment before the turn
+ended — nothing else.** A connection inside a call is marked rather than cut, answers that frame, and
+closes on the way out: cutting it would report a failure for an order that may already be at the
+broker. A FRESH connection is still served inside the grace, and `GrantLivenessTests` asserts that in
+the same breath as the closure, so the fix cannot quietly delete the grace.
+
+Four choices this unit made where the brief was silent:
+
+- **A frame on an ended grant is refused outright, not downgraded to roleless.** A fresh connection
+  presenting that grant is refused before it can read; a socket that happens to be open already must
+  not mean more. So reads go too, and the connection closes after the refusal — one chance, exactly as
+  `hello` gives.
+- **The peer-image rule is not re-run per frame.** The process on the other end of an accepted pipe
+  cannot change, so its answer cannot either, and re-running it would hash the `trade` image off disk
+  in the path of every order.
+- **Natural expiry is enforced on the frame, not by a timer.** Nothing runs at the moment an expiry
+  passes; `Ended` fires for an expired grant whenever the register is next pruned. A socket holding an
+  expired grant is answered `IPC_UNAUTHENTICATED` on its next frame either way, so a timer would buy
+  the closing of an idle socket that can no longer do anything.
+- **`Revoke` raises `Ended` whether or not this register held the token**, so an owner revoking twice,
+  or revoking against the wrong register, still reaches every connection holding it.
+
+**Not this unit, and unchanged:** the in-process harness worker (`CallAsync`) presents no grant and has
+none to end — its identity is the one the composition root assigns it, and its turn ends with the
+conversation. No new permission reaches the agent-facing pipe: the only thing added to it is a refusal.
+
 ## Gateway IPC — `src/TradeAgent.Core/Protocol.cs`
 
 Newline-delimited JSON over a named pipe, one object per line, 1 MiB cap **counted in bytes on the
