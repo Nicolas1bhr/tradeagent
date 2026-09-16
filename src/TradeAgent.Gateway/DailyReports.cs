@@ -371,6 +371,10 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         var valuation = gateway.ValuationReading();
         return new ReportPerformance
         {
+            Scope = pnl is { Account.Length: > 0 }
+                ? $"{pnl.Account} at {pnl.Connector}"
+                : null,
+            UnattributedFills = pnl?.UnattributedFills ?? 0,
             ValuationLost = Cap(valuation.Lost, ListShown, "position"),
             ValuationExits = Cap(valuation.Exits, ListShown, "exit"),
 
@@ -472,7 +476,9 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             OpenRequests = SafeCount(() => gateway.Requests.Open().Count),
             Unreconciled = SafeCount(() => gateway.Unreconciled().Count),
             OrdersToday = today.Count,
-            FillsToday = SafeCount(() => gateway.Fills.Since(from).Count(f => f.At < to)),
+            // THE OPERATING PAIR'S OWN, like every other figure in this document: a count taken over
+            // every row in the table counts another account's day as this one's (`U-scope-identity`).
+            FillsToday = SafeCount(() => gateway.ScopedFills(from).Fills.Count(f => f.At >= from && f.At < to)),
             RejectionsToday = today.Count(r => r.State == ExecutionState.REJECTED),
             Unknown = unknown,
             LastFillPullAt = pull?.At,

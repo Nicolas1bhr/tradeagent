@@ -1222,9 +1222,11 @@ earliest and never a promise; `LatestBreach` SKIPPING a breach row it cannot par
 from an episode that ended cannot make an account unable to approve anything ever again) while
 `OpenClosures` still THROWS on an unreadable STANDING closure; and the watch reading the platform on
 a tick when both budgets are zero but a closure stands, which is the only way an owner who zeroed the
-budgets after a breach is not closed for ever. **Inherited limit:** a breach row is keyed by the
-ACCOUNT and not the platform (`U-flatten-1`'s key, unchanged), so on a switch to a platform carrying
-the same account id, that account's closures and the approval rule above still apply.
+budgets after a breach is not closed for ever. A breach row is still KEYED by the account and not
+the platform, so on a switch to a platform carrying the same account id that account's closures and
+the approval rule above still apply — refusing new risk is the safe direction on any platform. What
+the record now also CARRIES is the platform and the mode it was measured on, and that is what the
+flatten is bound by: see `U-scope-identity`.
 
 **A SCOPE THAT REACHES THE BUDGET TWICE IN THE WINDOW IS NOT REOPENED BY CODE AT ALL**
 (`U-reopen-2`). `U-reopen-1` reopens every closure once it has earned it, which is the right answer
@@ -1308,7 +1310,8 @@ window is the LIVE setting, because it is how much history is shown and not a de
 that decides a hold is on the hold's own row. `AGENTS.md` and `USER-GUIDE.md` say the same.
 
 **Choices in this unit, and the owner's to overrule.** The connector is in all three new keys
-(`U-flatten-2`'s reason; the breach key is still `U-flatten-1`'s and untouched). One press releases
+(`U-flatten-2`'s reason; the breach key stays `U-flatten-1`'s shape, and `U-scope-identity` is what
+made every part of it safe to build out of a platform's own names). One press releases
 EVERY hold standing on the account, each getting its own row carrying the same note, because the
 owner reviews an account rather than a key. A hold that cannot be WRITTEN is said out loud in the
 engineering log and does not fail the closure (`OpenLossBoundary`'s precedent) — a worse day than a
@@ -1322,6 +1325,62 @@ scope — the account, or one instrument — and nothing in this build enforces 
 an aggregate of scopes, so a strategy losing on three instruments at once is three independent
 counts and not one. Aggregate enforcement and attribution do not exist yet. The data-loss exit is
 `U-flatten-3`.
+
+## U-scope-identity — a loss-line scope is `(connector, account, symbol)`, carried on the row
+
+**THE SCOPE IS ON THE ROW, AND A KEY IS ONLY AN ADDRESS.** `LossBreach.ScopeOf` used to take a
+closure apart with `key.Split(':')` and refuse anything that was not exactly three or four parts.
+The names in a key are the PLATFORM's strings and never ones TradeAgent chooses, so a
+venue-qualified instrument (`ES:H6`, `BINANCE:BTCUSDT`) or an account id a prop firm qualifies made
+five parts, and `OpenClosures`, `LatestBreach`, `ClosureHistory`, `PriorBreaches`,
+`SymbolsClosedToday` and the strike count all answered "nothing is closed" about a closure that was
+written, on disk, flattened and never reopened — so the closed scope went on trading, and was closed
+and flattened again on every pair of agreeing pulls (REVIEW 2026-09-16, findings 1 and 3, and
+UNVERIFIED 2). Every one of those readers now takes `Account`, `Symbol` and `Day` off the RECORD,
+which always carried them, after a prefix scan; `ScopeOf` survives only as the ADDRESS decoder for a
+row this build cannot parse, which is the one thing a row cannot answer about itself.
+
+**The delimiter choice, in one sentence: the parts are ESCAPED at minting, not refused.** The review
+offered refusing a name that carries the delimiter instead, and that would delete the loss budget on
+exactly the venues whose own convention is `VENUE:SYMBOL` — a protection removed rather than a defect
+fixed — so `LossBreach.Part` maps `%` to `%25` and `:` to `%3A` before a name goes into any
+`loss_breach:`, `loss_flatten:`, `loss_reopen:`, `loss_hold:`, `loss_release:`, `loss_extend:`,
+`valuation_unavailable:` or `loss_valuation_exit:` key. It is total and reversible, so no name is
+unaddressable and **no two scopes ever share a row** — the account `ACC:ES` losing its day and the
+account `ACC` losing ES were the same key, which is a second breach silently never written. A name
+carrying NEITHER character maps to itself, so every key and every receipt already on disk is byte for
+byte the key it was: nothing is migrated and nothing is orphaned.
+
+**A BREACH IS BOUND TO THE PLATFORM AND THE MODE IT WAS MEASURED ON.** `LossBreachRecord` carries
+`Connector` and `Mode` at `Compose` — the fields every other record on this line already had — and
+`FlattenForBreachAsync` refuses when either differs from the gateway it is running on, with the
+sentence the account check already uses, before it reads anything. Without them a PAPER breach on a
+simulator's `SIM-001` cancelled the owner's resting orders and closed their real positions on a
+broker whose account carries the same id, on an installation that had set no loss budget at all
+(finding 3); the mode is the second half because the same broker and the same connector id are a
+different undertaking in LIVE than in PAPER. The killed-flatten sweep filters the same two before it
+announces work. **A record written before this unit names neither: it still CLOSES, because refusing
+new risk is the safe direction on any platform, and it is never flattened, because sending closes is
+not.** That asymmetry is deliberate and is the owner's to overrule.
+
+**THE FILL LEDGER IS SCOPED, AND A ROW THAT NAMES NO PLATFORM BELONGS TO NO PAIR.** `fill` gains
+`connector` at **schema 22** — nullable, NOT backfilled, because this build cannot know which
+connector wrote a row it did not stamp and a backfill to the attached one would be the defect with a
+migration in front of it. `LedgerPnl` and `PnlAsync` read `FillStore.Scoped(connector, account)`, and
+`Pnl.Compute` keys its average-cost book by `(account, symbol)` rather than by the symbol alone: one
+account's fills entering another's book do not make a smaller answer, they make a wrong one. Until
+this, every money figure in the product — including the one the daily loss budget closes a day on —
+was a sum over every row in the table, so one account's loss closed an account that had never traded
+and one account's PROFIT netted off a real loss until the budget never fired (finding 2). **Rows with
+no connector are counted and reported as `unattributed fills` beside the figure and are in none of
+it**; `trade pnl` carries `connector`, `account` and `unattributed_fills` and says so in its note, the
+Performance card names the pair in its caption, and section 4 prints an `account` line above every
+figure and an `unattributed fills` line when there are any. **With no account selected there is no
+pair and the ledger reads empty**, which is the honest answer rather than everybody's.
+
+**Not this unit.** The sweep's second attempt after an exit throws (the review's UNVERIFIED 1); the
+bridge; a per-symbol valuation denial; and any all-accounts report — `Pnl.Compute` will now keep two
+accounts' books apart if it is ever handed both, but nothing hands it both.
 
 ## U-flatten-3 — a book nobody can value, its clock, and what the thresholds do not promise
 

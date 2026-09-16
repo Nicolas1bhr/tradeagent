@@ -659,7 +659,12 @@ public sealed class TradingGateway : IAsyncDisposable
                 Side: x.Side.ToString(), Quantity: x.Quantity, Price: x.Price,
                 ConnectorOrderId: x.ConnectorOrderId, ClientOrderId: x.ClientOrderId,
                 RequestId: requestId, AgentSession: session, Source: source,
-                Fee: x.Fee, RecordedAt: Now));
+                Fee: x.Fee, RecordedAt: Now)
+            {
+                // WHICH PLATFORM THIS HAPPENED ON (schema 22). An account id is unique only within a
+                // platform, and the loss budget is enforced off this table.
+                ConnectorId = Connector.Id
+            });
 
             // MONEY MOVED, SO THE AI IS WOKEN. Raised only for a row this call actually wrote: the
             // ledger has two sources on purpose and the five-minute pull serves the same executions
@@ -781,18 +786,45 @@ public sealed class TradingGateway : IAsyncDisposable
     /// it. Open positions are NOT in it: <see cref="PnlReport.Unrealized"/> is null and the caller is
     /// the one that says so on screen.
     /// </summary>
-    public PnlReport LedgerPnl(DateTimeOffset? since, string window) => Pnl.Compute(new PnlInputs
+    public PnlReport LedgerPnl(DateTimeOffset? since, string window)
     {
-        AllFills = _fills.Since(),
-        Positions = null,
-        Instruments = _instrumentCache,
-        Quotes = _quotes,
-        Since = since,
-        Window = window,
-        AsOf = Now,
-        CoverageFrom = Coverage()?.WatchingFrom,
-        Notes = PullNotes()
-    });
+        var (fills, unattributed) = ScopedFills(since);
+        return Pnl.Compute(new PnlInputs
+        {
+            AllFills = fills,
+            Positions = null,
+            Instruments = _instrumentCache,
+            Quotes = _quotes,
+            Since = since,
+            Window = window,
+            AsOf = Now,
+            CoverageFrom = Coverage()?.WatchingFrom,
+            Notes = PullNotes(),
+            Connector = Connector.Id,
+            Account = ClosureAccountId,
+            UnattributedFills = unattributed
+        });
+    }
+
+    /// <summary>
+    /// THE OPERATING PAIR'S OWN FILLS — <c>(connector, account)</c>, and nothing else's
+    /// (<c>U-scope-identity</c>, REVIEW 2026-09-16 finding 2).
+    ///
+    /// <para>Until this, every money figure in the product was computed over <c>_fills.Since()</c> —
+    /// every row in the table. One database that had seen two accounts, or one account on two
+    /// platforms, produced ONE figure out of all of them, and that figure is what the daily loss
+    /// budget closes a day on: a second account's loss closed an account that had never traded, and
+    /// a second account's PROFIT netted off a real loss so the budget never fired.</para>
+    ///
+    /// <para>With no account selected there is no pair, and the honest answer is an empty ledger
+    /// rather than everybody's: a figure computed over rows that are not this installation's is not
+    /// a smaller version of the right one.</para>
+    /// </summary>
+    public (List<Fill> Fills, int Unattributed) ScopedFills(DateTimeOffset? since)
+    {
+        var account = ClosureAccountId;
+        return account.Length == 0 ? ([], 0) : _fills.Scoped(Connector.Id, account, since);
+    }
 
     /// <summary>
     /// The whole answer, including what is still open. Reads the platform's positions — its own
@@ -816,9 +848,10 @@ public sealed class TradingGateway : IAsyncDisposable
         // failure leaves whatever was cached — with `incomplete` naming any symbol still unpriced.
         try { await InstrumentsAsync(ct); } catch (Exception) { /* the report names what it could not size */ }
 
+        var (fills, unattributed) = ScopedFills(since);
         return Pnl.Compute(new PnlInputs
         {
-            AllFills = _fills.Since(),
+            AllFills = fills,
             Positions = positions,
             Instruments = _instrumentCache,
             Quotes = _quotes,
@@ -826,7 +859,10 @@ public sealed class TradingGateway : IAsyncDisposable
             Window = window,
             AsOf = Now,
             CoverageFrom = Coverage()?.WatchingFrom,
-            Notes = notes
+            Notes = notes,
+            Connector = Connector.Id,
+            Account = ClosureAccountId,
+            UnattributedFills = unattributed
         });
     }
 

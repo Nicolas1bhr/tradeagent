@@ -234,6 +234,7 @@ public class VenueCatalogTests
                 ALTER TABLE boundary_submission DROP COLUMN recommendation;
                 ALTER TABLE boundary_submission DROP COLUMN baseline;
                 ALTER TABLE boundary_event DROP COLUMN review_baseline;
+                ALTER TABLE fill DROP COLUMN connector;
                 DROP TABLE strategy_allocation;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;

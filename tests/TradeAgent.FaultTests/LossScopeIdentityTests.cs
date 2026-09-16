@@ -158,7 +158,7 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var clock = new TestClock(Noon);
         var db = TestEnv.NewDb();
         var conn = new VenueSymbolConnector(
-            new RecordingConnector(new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(30) }),
+            new RecordingConnector(new FakeConnector(new FakeBroker()) { EmergencyBudget = Unresolved.PressBudgetFor(1) }),
             "ES", symbol);
         var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gw.Update(s =>
@@ -415,7 +415,7 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
 
         // ---- the simulator: an ordinary losing day, confirmed and flattened.
         var paper = new RecordingConnector(
-            new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(30) }, "fake");
+            new FakeConnector(new FakeBroker()) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, "fake");
         var gwA = new TradingGateway(db, paper, new HealthRegistry(), new GatewayOptions { Clock = clock });
         gwA.Update(s =>
         {
@@ -445,7 +445,7 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         // book is still the owner's own and still not this breach's to close.
         var liveBroker = new FakeBroker { IsSimulated = !inLiveMode };
         var live = new RecordingConnector(
-            new FakeConnector(liveBroker) { EmergencyBudget = TimeSpan.FromSeconds(30) }, liveId);
+            new FakeConnector(liveBroker) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, liveId);
         await live.ConnectAsync();
 
         live.Faults.Fill = FillBehaviour.FillImmediately;
@@ -543,7 +543,7 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         var clock = new TestClock(Noon);
         var broker = new FakeBroker { IsSimulated = false };
         var live = new RecordingConnector(
-            new FakeConnector(broker) { EmergencyBudget = TimeSpan.FromSeconds(30) }, "fake");
+            new FakeConnector(broker) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, "fake");
         await live.ConnectAsync();
 
         live.Faults.Fill = FillBehaviour.FillImmediately;
@@ -607,5 +607,156 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
         Assert.Equal(4m, positions.Single(p => p.Symbol == "ES").Quantity);
         Assert.Equal(1, working);
         Assert.Null(gw.FlattenToday(broker.AccountId));
+    }
+
+    /// <summary>
+    /// P3, RENAMED AND TURNED ROUND — ONE ACCOUNT'S LOSS NEVER CLOSES ANOTHER ACCOUNT'S DAY.
+    ///
+    /// <para>Two accounts on one platform in one database. <c>ACC-B</c> has never traded: it has no
+    /// fill at the platform and no position, and the figure TradeAgent measures for it must be its
+    /// own.</para>
+    /// </summary>
+    [Fact]
+    public async Task One_accounts_loss_never_closes_another_accounts_day()
+    {
+        var db = TestEnv.NewDb();
+        var clock = new TestClock(Noon);
+
+        // ---- account A loses a day.
+        var a = new RecordingConnector(
+            new FakeConnector(new FakeBroker { AccountId = "ACC-A" }) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, "fake");
+        var gwA = new TradingGateway(db, a, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gwA.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = "ACC-A";
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        await a.ConnectAsync();
+        await gwA.RefreshHealthAsync();
+        await gwA.PlaceAsync(new AgentContext("x"), "p3-a-open", TestEnv.Buy("ES"));
+        a.Broker.PriceOffset = -20m;
+        clock.Advance(Tick); await gwA.LossWatchAsync();
+        clock.Advance(Tick); var closedA = await gwA.LossWatchAsync();
+        log.WriteLine($"account A closed        : {string.Join(",", closedA.Closed)}");
+        log.WriteLine($"account A realised      : {gwA.LedgerPnl(TradingGateway.StartOfDay(clock.GetUtcNow()), "today").Realized}");
+        Assert.NotEmpty(closedA.Closed);
+
+        // ---- account B: a different account on the same platform, which has never traded.
+        var b = new RecordingConnector(
+            new FakeConnector(new FakeBroker { AccountId = "ACC-B" }) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, "fake");
+        var gwB = new TradingGateway(db, b, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gwB.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = "ACC-B";
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        await b.ConnectAsync();
+        await gwB.RefreshHealthAsync();
+
+        var figure = gwB.LedgerPnl(TradingGateway.StartOfDay(clock.GetUtcNow()), "today");
+        log.WriteLine($"account B has traded    : {(await b.GetExecutionsAsync("ACC-B", null)).Count} fills at the platform");
+        log.WriteLine($"what TradeAgent says B lost today: {figure.Realized}");
+
+        clock.Advance(Tick); await gwB.LossWatchAsync();
+        clock.Advance(Tick); await gwB.LossWatchAsync();
+        log.WriteLine($"breach rows now         : {string.Join(" ", db.KvStartingWith("loss_breach:").Select(x => x.Key))}");
+        log.WriteLine($"B's day closed          : {gwB.DayClosed("ACC-B") is not null}");
+
+        var verdict = "SENT";
+        try { await gwB.PlaceAsync(new AgentContext("x"), "p3-b-buy", TestEnv.Buy("ES")); }
+        catch (GatewayDeniedException ex) { verdict = ex.Code.ToString(); }
+        log.WriteLine($"a first buy on account B: {verdict}");
+
+        Assert.Equal(0m, figure.Realized);
+        Assert.Equal(0, figure.Fills);
+        Assert.Null(gwB.DayClosed("ACC-B"));
+        Assert.Equal([LossBreach.DayKey("ACC-A", clock.GetUtcNow())],
+            db.KvStartingWith("loss_breach:").Select(x => x.Key).ToArray());
+        Assert.Equal("SENT", verdict);
+    }
+
+    /// <summary>
+    /// P3b, RENAMED AND TURNED ROUND — ONE ACCOUNT'S PROFIT NEVER KEEPS ANOTHER TRADING PAST ITS
+    /// OWN BUDGET. The direction of finding 2 that costs money.
+    ///
+    /// <para><c>ACC-B</c> holds a long that is 1250 USD down against its own 1000 USD daily budget,
+    /// once with a winning account's fills beside it in the database and once on a clean one. The
+    /// two arms have to answer the same, because the second account's fills are not B's day.</para>
+    /// </summary>
+    [Fact]
+    public async Task One_accounts_profit_never_keeps_another_trading_past_its_budget()
+    {
+        foreach (var withAWinnerBeside in new[] { true, false })
+        {
+            var db = TestEnv.NewDb();
+            var clock = new TestClock(Noon);
+
+            if (withAWinnerBeside)
+            {
+                var a = new RecordingConnector(new FakeConnector(new FakeBroker { AccountId = "ACC-A" }), "fake");
+                var gwA = new TradingGateway(db, a, new HealthRegistry(), new GatewayOptions { Clock = clock });
+                gwA.Update(s =>
+                {
+                    s.Mode = TradingMode.PAPER;
+                    s.SelectedAccountId = "ACC-A";
+                    s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+                    s.Risk.MaxOrderQuantity = 10m;
+                    s.Risk.MaxNotionalPerOrder = 0m;
+                    s.Risk.MaxOpenPositions = 10;
+                    s.Risk.MaxOrdersPerMinute = 100;
+                });
+                await a.ConnectAsync();
+                await gwA.RefreshHealthAsync();
+                await gwA.PlaceAsync(new AgentContext("x"), "p3b-a-buy", TestEnv.Buy("ES"));
+                a.Broker.PriceOffset = 30m;
+                await gwA.PlaceAsync(new AgentContext("x"), "p3b-a-sell",
+                    new PlaceIntent("ES", OrderSide.Sell, OrderType.Market, 1m, null, null, TimeInForce.Day, null));
+            }
+
+            var b = new RecordingConnector(
+                new FakeConnector(new FakeBroker { AccountId = "ACC-B" }) { EmergencyBudget = Unresolved.PressBudgetFor(1) }, "fake");
+            var gwB = new TradingGateway(db, b, new HealthRegistry(), new GatewayOptions { Clock = clock });
+            gwB.Update(s =>
+            {
+                s.Mode = TradingMode.PAPER;
+                s.SelectedAccountId = "ACC-B";
+                s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+                s.Risk.MaxOrderQuantity = 10m;
+                s.Risk.MaxNotionalPerOrder = 0m;
+                s.Risk.MaxOpenPositions = 10;
+                s.Risk.MaxOrdersPerMinute = 100;
+                s.Risk.MaxDailyLoss = 1_000m;
+            });
+            await b.ConnectAsync();
+            await gwB.RefreshHealthAsync();
+            await gwB.PlaceAsync(new AgentContext("x"), "p3b-b-buy", TestEnv.Buy("ES"));
+            b.Broker.PriceOffset = -25m;
+
+            clock.Advance(Tick); await gwB.LossWatchAsync();
+            clock.Advance(Tick); var pass = await gwB.LossWatchAsync();
+
+            var figure = gwB.LedgerPnl(TradingGateway.StartOfDay(clock.GetUtcNow()), "today");
+            log.WriteLine($"[a winning account beside it: {withAWinnerBeside}]");
+            log.WriteLine($"  what TradeAgent measures   : realised={figure.Realized}");
+            log.WriteLine($"  B's day reached its budget : {pass.DayReached}");
+            log.WriteLine($"  B's day closed             : {gwB.DayClosed("ACC-B") is not null}");
+            log.WriteLine("");
+
+            Assert.True(pass.DayReached);
+            Assert.NotNull(gwB.DayClosed("ACC-B"));
+            Assert.Equal(-1250m, figure.Realized);
+        }
     }
 }

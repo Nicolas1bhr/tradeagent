@@ -45,7 +45,27 @@ public sealed record PnlReport(
     DateTimeOffset? CoverageFrom,
     IReadOnlyList<PnlSymbol> BySymbol,
     IReadOnlyList<PnlDay> ByDay,
-    IReadOnlyList<string> Incomplete);
+    IReadOnlyList<string> Incomplete)
+{
+    /// <summary>
+    /// WHOSE MONEY THIS IS — the platform and the account the figure was computed over, named on
+    /// the answer so that no surface can show it as "the" figure (<c>U-scope-identity</c>).
+    ///
+    /// <para>Empty when the caller computed over a ledger it did not scope, which only the
+    /// backtest's own reader does.</para>
+    /// </summary>
+    public string Connector { get; init; } = "";
+
+    public string Account { get; init; } = "";
+
+    /// <summary>
+    /// ROWS OF THIS ACCOUNT IN THIS WINDOW THAT NAME NO PLATFORM — every fill written before schema
+    /// 22. They are reported BESIDE the figure and are not in it: this build cannot know which
+    /// platform wrote them, and attributing them to the one attached now would be REVIEW
+    /// 2026-09-16's finding 2 with a migration in front of it. The owner's to overrule.
+    /// </summary>
+    public int UnattributedFills { get; init; }
+}
 
 /// <summary>What <see cref="Pnl.Compute"/> is given. Nulls mean "not known", never "none".</summary>
 public sealed record PnlInputs
@@ -87,6 +107,14 @@ public sealed record PnlInputs
 
     /// <summary>Things the CALLER already knows are missing — a failed pull, an unreadable position list.</summary>
     public IReadOnlyList<string> Notes { get; init; } = [];
+
+    /// <summary>The platform and the account <see cref="AllFills"/> was scoped to. See <see cref="PnlReport.Connector"/>.</summary>
+    public string Connector { get; init; } = "";
+
+    public string Account { get; init; } = "";
+
+    /// <summary>This account's rows in the window that name no platform. See <see cref="PnlReport.UnattributedFills"/>.</summary>
+    public int UnattributedFills { get; init; }
 }
 
 /// <summary>
@@ -112,7 +140,14 @@ public static class Pnl
         var fills = i.AllFills.OrderBy(f => f.At).ToList();
 
         // ---- realised, by walking every fill in order ------------------------------------------
-        var books = new Dictionary<string, Book>(StringComparer.Ordinal);
+        // THE BOOK IS KEYED BY (ACCOUNT, SYMBOL) and never by the symbol alone
+        // (`U-scope-identity`, REVIEW 2026-09-16 finding 2). Average cost is a running quantity, so
+        // one account's fills entering another's book do not make a smaller answer, they make a
+        // wrong one: account A's buy at 4000 and account B's sell at 4100 read as one round trip
+        // that neither of them made. The caller scopes the rows it hands in as well — this is the
+        // arithmetic refusing to mix them even if it is handed two accounts, which the backtest's
+        // own reader and any future all-accounts report legitimately are.
+        var books = new Dictionary<(string Account, string Symbol), Book>();
         var multipliers = new Dictionary<string, (decimal Value, bool Known)>(StringComparer.Ordinal);
         var counted = new List<(Fill Fill, decimal Realized)>();
 
@@ -121,11 +156,18 @@ public static class Pnl
             if (!multipliers.TryGetValue(f.Symbol, out var m))
                 multipliers[f.Symbol] = m = MultiplierFor(f.Symbol, i.Instruments);
 
-            if (!books.TryGetValue(f.Symbol, out var book)) books[f.Symbol] = book = new Book();
+            var scope = (f.AccountId, f.Symbol);
+            if (!books.TryGetValue(scope, out var book)) books[scope] = book = new Book();
             var realized = book.Apply(Signed(f), f.Price, m.Value);
 
             if (i.Since is null || f.At >= i.Since) counted.Add((f, realized));
         }
+
+        // FILLS THIS BUILD CANNOT ATTRIBUTE TO A PLATFORM ARE NAMED, NEVER NETTED.
+        if (i.UnattributedFills > 0)
+            incomplete.Add($"{i.UnattributedFills} fill(s) of this account were recorded before "
+                           + "TradeAgent stamped which platform a fill happened on, so they are not in "
+                           + "these figures at all — they are shown separately and nothing nets them in");
 
         var window = counted.Select(c => c.Fill).ToList();
         var realizedTotal = counted.Sum(c => c.Realized);
@@ -252,7 +294,12 @@ public static class Pnl
             CoverageFrom: i.CoverageFrom,
             BySymbol: bySymbol,
             ByDay: byDay,
-            Incomplete: incomplete);
+            Incomplete: incomplete)
+        {
+            Connector = i.Connector,
+            Account = i.Account,
+            UnattributedFills = i.UnattributedFills
+        };
     }
 
     /// <summary>

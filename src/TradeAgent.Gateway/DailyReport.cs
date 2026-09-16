@@ -106,6 +106,20 @@ public sealed record ReportReadiness
 /// </summary>
 public sealed record ReportPerformance
 {
+    /// <summary>
+    /// WHOSE MONEY THIS SECTION IS ABOUT — the platform and the account every figure below was
+    /// computed over (<c>U-scope-identity</c>). Until this, the figures were a sum over every fill in
+    /// the database whatever account or platform put it there, so a document that named no pair was
+    /// naming no one's money (REVIEW 2026-09-16, finding 2).
+    /// </summary>
+    public string? Scope { get; init; }
+
+    /// <summary>
+    /// Fills of this account in the window that name no platform — written before schema 22. Printed
+    /// BESIDE the figures and never in them.
+    /// </summary>
+    public int UnattributedFills { get; init; }
+
     public decimal? Exposure { get; init; }
     public decimal? Realized { get; init; }
     public decimal? Unrealized { get; init; }
@@ -523,6 +537,13 @@ public static class DailyReportText
 
         Section(b, "4. Capital and performance");
         var money = r.Performance.Currency;
+        // WHOSE MONEY, FIRST. Every figure under this line is one account's on one platform, and a
+        // figure that named no pair was the defect this line exists to close.
+        Kv(b, "account", r.Performance.Scope ?? Unknown);
+        if (r.Performance.UnattributedFills > 0)
+            Kv(b, "unattributed fills", $"{r.Performance.UnattributedFills} — recorded before TradeAgent "
+                                        + "stamped which platform a fill happened on, and not counted in "
+                                        + "anything below");
         Kv(b, "exposure", Money(r.Performance.Exposure, money));
         Kv(b, "realised", Money(r.Performance.Realized, money));
         Kv(b, "unrealised", Money(r.Performance.Unrealized, money)

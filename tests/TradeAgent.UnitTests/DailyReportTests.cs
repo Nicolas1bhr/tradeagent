@@ -1,6 +1,7 @@
 using TradeAgent.AgentRuntime;
 using TradeAgent.ConnectorSdk;
 using TradeAgent.Core;
+using TradeAgent.Connectors.Fake;
 using TradeAgent.Core.Db;
 using TradeAgent.Gateway;
 using Xunit;
@@ -29,9 +30,15 @@ public class DailyReportTests
         return new DateTimeOffset(day, TimeZoneInfo.Local.GetUtcOffset(day));
     }
 
+    /// <summary>
+    /// One fill as the gateway records one — stamped with the PLATFORM it happened on, which is what
+    /// every row this build writes carries since schema 22 (`U-scope-identity`). A row without it
+    /// belongs to no `(connector, account)` pair and is reported beside the figures rather than in
+    /// them, which is a different test from this one.
+    /// </summary>
     static Fill F(DateTimeOffset at, OrderSide side, decimal qty, decimal price, decimal? fee, string id) =>
         new("SIM-001", id, at, "ES", side.ToString(), qty, price, "FB-1", null, null, null,
-            FillSource.Event, fee, at);
+            FillSource.Event, fee, at) { ConnectorId = FakeConnector.ConnectorId };
 
     [Fact]
     public async Task A_day_with_a_fee_the_platform_never_reported_withholds_the_net_and_names_the_fee()

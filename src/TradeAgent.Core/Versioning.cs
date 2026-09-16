@@ -240,7 +240,7 @@ public static class Versions
     /// itself. Nullable and NOT backfilled — no assessment written before this rung declared anything
     /// and no boundary settled before it measured anything.</para>
     /// </summary>
-    public const int DatabaseSchemaVersion = 21;
+    public const int DatabaseSchemaVersion = 22;
 
     /// <summary>
     /// THE GRANT-POLICY REVISION EVERY LAUNCH RECORD CARRIES (<c>docs/COUNCIL.md</c>, round 4).

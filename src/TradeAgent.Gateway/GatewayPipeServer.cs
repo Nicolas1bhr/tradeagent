@@ -1988,15 +1988,23 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         var r = await gateway.PnlAsync(since, window, ct);
         return new PnlReply(
             r.Window, r.Since, r.AsOf,
-            "days are UTC calendar days. A null figure is an UNKNOWN and never a zero: 'net' is " +
+            "days are UTC calendar days. Every figure here is the OPERATING PAIR's — the account in " +
+            "'account' on the platform in 'connector', and no other account's and no other " +
+            "platform's fills are in it. A null figure is an UNKNOWN and never a zero: 'net' is " +
             "withheld when any fill in the period has no fee, and 'unrealized' when an open " +
-            "position has no price or no contract size. 'incomplete' names every gap.",
+            "position has no price or no contract size. 'incomplete' names every gap, " +
+            "'unattributed_fills' among them.",
             r.Realized, r.Fees, r.FeesUnknownFills, r.Net, r.Unrealized,
             r.MaxDrawdown, r.DrawdownIncludesUnrealized, r.Fills, r.FirstFillAt, r.CoverageFrom,
             [.. r.BySymbol.Select(s => new PnlReplySymbol(s.Symbol, s.Realized, s.Fees, s.FeesUnknownFills,
                 s.Unrealized, s.OpenQuantity, s.LastPrice, s.LastPriceAt, s.Multiplier, s.MultiplierKnown, s.Fills))],
             [.. r.ByDay.Select(d => new PnlReplyDay(d.Day, d.Realized, d.Fees, d.FeesUnknownFills, d.Fills))],
-            r.Incomplete);
+            r.Incomplete)
+        {
+            Connector = r.Connector,
+            Account = r.Account,
+            UnattributedFills = r.UnattributedFills
+        };
     }
 
     /// <summary>
@@ -2028,7 +2036,24 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? CoverageFrom,
         IReadOnlyList<PnlReplySymbol> BySymbol,
         IReadOnlyList<PnlReplyDay> ByDay,
-        IReadOnlyList<string> Incomplete);
+        IReadOnlyList<string> Incomplete)
+    {
+        /// <summary>
+        /// WHOSE MONEY THIS IS — the platform and the account every figure above was computed over
+        /// (<c>U-scope-identity</c>). The agent plans against this figure and the loss budget refuses
+        /// on it, and until this they were a sum over every fill in the database whatever account or
+        /// platform put it there (REVIEW 2026-09-16, finding 2).
+        /// </summary>
+        public string Connector { get; init; } = "";
+
+        public string Account { get; init; } = "";
+
+        /// <summary>
+        /// This account's fills that name no platform — written before schema 22, counted here and
+        /// in NONE of the figures above. `incomplete` says the same thing in words.
+        /// </summary>
+        public int UnattributedFills { get; init; }
+    }
 
     /// <inheritdoc cref="PnlReply"/>
     sealed record PnlReplySymbol(

@@ -41,6 +41,14 @@ sealed class PerformanceCard
     readonly TextBlock _allHeading = Ui.Micro("since the first fill");
     readonly TextBlock _incomplete;
     readonly TextBlock _empty;
+
+    /// <summary>
+    /// WHOSE MONEY THIS CARD IS ABOUT. It used to be a fixed sentence, because the figures were a sum
+    /// over every fill in the database whatever account or platform put it there (REVIEW 2026-09-16,
+    /// finding 2). It is now one account's on one platform, and the caption says which —
+    /// updated in place on the tick like every other control on this page.
+    /// </summary>
+    readonly TextBlock _scope;
     readonly Grid _numbers;
 
     string _signature = "";
@@ -54,6 +62,9 @@ sealed class PerformanceCard
         _incomplete.IsVisible = false;
 
         _empty = Ui.Muted("No fills yet. This fills in the moment the AI's first order is executed.");
+
+        _scope = Ui.Micro("Closed trades only, in your account's currency. Anything still open is not "
+                          + "counted here.");
 
         _numbers = new Grid
         {
@@ -72,7 +83,7 @@ sealed class PerformanceCard
         Root = Ui.Section("Performance", Ui.Col(Theme.S3,
             _empty,
             _numbers,
-            Ui.Micro("Closed trades only, in your account's currency. Anything still open is not counted here."),
+            _scope,
             _incomplete));
     }
 
@@ -111,7 +122,12 @@ sealed class PerformanceCard
     {
         var t = Words(today, "today");
         var a = Words(all, all.FirstFillAt is { } first ? $"since {first.ToLocalTime():d MMM}" : "all time");
-        var signature = $"{t.Net}|{t.Fees}|{t.Drop}|{t.Fills}|{a.Net}|{a.Fees}|{a.Drop}|{a.Fills}|{a.Column}|{t.Incomplete}|{a.Incomplete}";
+        var scope = today.Account.Length == 0
+            ? "Closed trades only, in your account's currency. Anything still open is not counted here."
+            : $"Closed trades on {today.Account} at {today.Connector} only, in that account's currency. "
+              + "No other account's and no other platform's fills are in these figures, and anything "
+              + "still open is not counted here.";
+        var signature = $"{t.Net}|{t.Fees}|{t.Drop}|{t.Fills}|{a.Net}|{a.Fees}|{a.Drop}|{a.Fills}|{a.Column}|{t.Incomplete}|{a.Incomplete}|{scope}";
         if (signature == _signature) return;
         _signature = signature;
 
@@ -119,6 +135,7 @@ sealed class PerformanceCard
         _numbers.IsVisible = any;
         _empty.IsVisible = !any;
 
+        _scope.Text = scope;
         _allHeading.Text = a.Column;
         Paint(_todayNet, t);
         Paint(_allNet, a);

@@ -1278,6 +1278,33 @@ public sealed class Database : IDisposable
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','21') ON CONFLICT(key) DO UPDATE SET value='21';");
         }
 
+        if (have < 22)
+        {
+            // WHICH PLATFORM A FILL HAPPENED ON — `U-scope-identity`, REVIEW 2026-09-16 finding 2.
+            //
+            // The fill ledger is the ruler every money figure in this product is measured with, and
+            // until this rung it was scoped to NOTHING: `LedgerPnl` handed `Since()` — every row in
+            // the table — to `Pnl.Compute`, which keyed its average-cost book by SYMBOL alone. One
+            // database that has seen two accounts, or one account on two platforms, produced ONE
+            // figure out of all of them, and that figure is what the daily loss budget closes a day
+            // on. Both directions were live: a second account's loss closed an account that had never
+            // traded, and a second account's PROFIT netted off a real loss so the budget never fired.
+            // `account_id` was always on the row; the platform was nowhere, and an account id is
+            // unique only within a platform.
+            //
+            // NULLABLE AND NOT BACKFILLED, which is the opposite of the 17 and 18 rungs and right for
+            // the opposite reason. There is no knowable answer here: a row written before this rung
+            // was written by whichever connector that installation was running at the time, and this
+            // build cannot tell which — a database that has only ever seen one platform and one that
+            // switched look identical from inside. A backfill to the CURRENT connector would attribute
+            // another platform's fills to this one, which is the defect with a migration in front of
+            // it. Such a row belongs to no pair and is reported as an unattributed fill beside the
+            // figure, never netted into it (`Pnl.UnattributedFills`).
+            Exec("ALTER TABLE fill ADD COLUMN connector TEXT;");
+
+            Exec($"INSERT INTO meta(key,value) VALUES('schema_version','22') ON CONFLICT(key) DO UPDATE SET value='22';");
+        }
+
         var found = ReadInt("SELECT value FROM meta WHERE key='schema_version'") ?? 0;
         if (found > Versions.DatabaseSchemaVersion)
             throw new TradeAgentException(ErrorCode.STATE_DATABASE_CORRUPT,
