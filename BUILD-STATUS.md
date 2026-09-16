@@ -6192,3 +6192,34 @@ docs-only `2dcf8f3`, `git patch-id --stable` identical), Release: build `--no-in
 
 **NOT done, NOT verified:** no product code and no product mutant; no assertion loosened or touched; no test deleted; no `Timing` trait; the one-leg flat sites and the
 Integration `SweepBudget` family not moved; no box, no CI run of its own (the merge sha's CI is recorded below), no ATAS, no money.
+
+## 2026-09-16 — U-grant-liveness landed: a launch grant is re-verified on every frame, and a grant that ends closes the connection that proved it
+
+The fix unit for the third review's HIGH 5 (an expired, revoked or turn-ended grant kept placing orders on the socket it said hello on, while a NEW connection with
+the same grant was refused `IPC_UNAUTHENTICATED`), built by one fresh builder with the reviewer's probe `C1` as its RED. Merge `105f3c1`, 2 commits, no schema.
+MONEY PATH: authority on the agent-facing pipe.
+
+- **Liveness at every frame, and an ending that reaches the socket.** Every frame that reaches the role gate is re-verified against the token the connection PROVED at
+  hello — never against `req.Grant`, or a peer could swap in another live grant per frame; an ended grant is refused outright with the code and words a fresh
+  connection gets, and the connection closes (not downgraded to roleless, so reads go too). `AgentGrants.Ended` fires for every way a grant stops being live, outside
+  the register's lock, possibly twice for one token, a throwing subscriber never stopping the next; the server subscribes in `Start` and unsubscribes in `DisposeAsync`;
+  natural expiry is enforced on the frame, not by a timer; `Revoke` raises `Ended` whether or not this register held the token. RED (the probe, renamed
+  `An_ended_grant_places_no_further_order_on_the_connection_it_authenticated`, a fourth ending added): all four arms red at the wire — `[Expired] before=SENT after=SENT
+  orders after=1 new connection=IPC_UNAUTHENTICATED`, `[Revoked]` and `[DisposedAndLapsed]` identical, `[DisposedInsideTheGrace] … new connection=ACCEPTED`; and
+  `An_expired_grant_sends_no_close_all_…`: `close-all after, on that connection: SENT`, `mutating calls at the wire after: 1`. Mutant 1 (`Grants.Ended += OnGrantEnded`
+  taken out of `Start`, the per-frame check kept): `[DisposedInsideTheGrace] 1 order(s) reached the broker AFTER the turn ended` while the other three arms read
+  `after=IPC_UNAUTHENTICATED orders after=0` — the finding's second half exactly: only the ending that deliberately keeps the token in the register, the turn ending
+  inside the 60 s grace, needs the socket closed to be an ending at all. Mutant 2 (the check applied only to `Ops.Buy`): `the gateway served a close-all on a
+  connection whose launch grant had expired an hour earlier`, `mutating calls at the wire after: 1`.
+- **The `Grace` stays,** documented where it is declared: a call already in flight, and a `trade` launched a moment before the turn ended; a connection inside a call
+  is marked, answers that frame, then closes — cutting it would report a failure for an order that may already be at the broker. The RED test asserts in the same
+  breath that a FRESH connection is still ACCEPTED inside the grace, so the closure cannot be mistaken for permission to delete the grace. The peer-image rule is not
+  re-run per frame: the process behind an accepted pipe cannot change, and re-running would hash the `trade` image off disk in the path of every order. All in
+  `CONTRACTS.md` under `U-grant-liveness`.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `174fa5b` (rebased onto `c1ac6cd`), Release `--no-incremental`: 0 warnings,
+0 errors; Unit 1145 + Fault 350 + Integration 670 = 2165 passed, 0 failed, 1 skipped; `GrantLivenessTests` 3× → 2/2 each; names 1798 → 1800, 2 added, 0 removed.
+Manager's gate at `105f3c1` (the reported tip `79c0853` rebased onto `1b8f408`, `src`/`tests` identical), Release, beside another builder's suite: build, 17 projects → 0 warnings, 0 errors; Unit 1145/1145 (22 s), Fault 350/350 (1 m 26 s), Integration 670/671, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 2 added (sets 1830 → 1832; `[Fact]`/`[Theory]` 1798 → 1800); scan clean; no trailers; `rev-list --count` → 0; CI at `105f3c1`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** no schema; no box, no order placed anywhere; the pipe ACL and token, the turn budget and the harness worker's key untouched; the in-process
+worker path (`CallAsync`) unchanged — it presents no grant and has none to end; no new permission reaches the agent-facing pipe, only a refusal.
