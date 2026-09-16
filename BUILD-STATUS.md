@@ -6219,7 +6219,7 @@ MONEY PATH: authority on the agent-facing pipe.
 
 **Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `174fa5b` (rebased onto `c1ac6cd`), Release `--no-incremental`: 0 warnings,
 0 errors; Unit 1145 + Fault 350 + Integration 670 = 2165 passed, 0 failed, 1 skipped; `GrantLivenessTests` 3× → 2/2 each; names 1798 → 1800, 2 added, 0 removed.
-Manager's gate at `105f3c1` (the reported tip `79c0853` rebased onto `1b8f408`, `src`/`tests` identical), Release, beside another builder's suite: build, 17 projects → 0 warnings, 0 errors; Unit 1145/1145 (22 s), Fault 350/350 (1 m 26 s), Integration 670/671, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 2 added (sets 1830 → 1832; `[Fact]`/`[Theory]` 1798 → 1800); scan clean; no trailers; `rev-list --count` → 0; CI at `105f3c1`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+Manager's gate at `105f3c1` (the reported tip `79c0853` rebased onto `1b8f408`, `src`/`tests` identical), Release, beside another builder's suite: build, 17 projects → 0 warnings, 0 errors; Unit 1145/1145 (22 s), Fault 350/350 (1 m 26 s), Integration 670/671, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 2 added (sets 1830 → 1832; `[Fact]`/`[Theory]` 1798 → 1800); scan clean; no trailers; `rev-list --count` → 0; CI at `105f3c1`: GREEN on all four jobs (run 35108591315: ubuntu, windows, macos, package).
 
 **NOT done, NOT verified:** no schema; no box, no order placed anywhere; the pipe ACL and token, the turn budget and the harness worker's key untouched; the in-process
 worker path (`CallAsync`) unchanged — it presents no grant and has none to end; no new permission reaches the agent-facing pipe, only a refusal.
