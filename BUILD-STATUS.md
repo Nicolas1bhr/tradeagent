@@ -6287,3 +6287,38 @@ reviewer's probes `C3a` and `C3b` as its REDs. Merge `9aeea56`, 2 commits, no sc
 
 **NOT done, NOT verified:** no schema; the per-order limits above the gate (MED 7 — `U-review-med`), the approval TTL and the mode re-check untouched; nothing sweeps;
 no box, no money — every test is the simulator behind `RecordingConnector`, nothing proven on Windows.
+
+## 2026-09-16 — U-review-med landed: a closure is held against a monotone reading, the per-order limits are asked again at the wire, and a breach's sighting is keyed by its scope
+
+The third review's three MED findings as one batch, built by one fresh builder with the reviewer's probes `C4`, `P2`, `P4` as its REDs, after every HIGH fix had
+landed — so item 2 went INTO `PositionGatesOrThrow`, the shared gate `U-approve-gates` made, and serves both callers. Merge `f9f5878`, 4 commits, no schema.
+MONEY PATH: the reopen, the dispatch gate, the breach confirmation.
+
+- **A closure is held against a monotone reading as well as the wall clock.** The clock mark carries `GatewayOptions.Clock.GetTimestamp()` (`Stopwatch` in production);
+  eligibility requires the closure to have RUN on both; a forward wall-clock step of more than four watch intervals (60 s shipped) with no matching monotone elapse
+  is suspect like a backward one — `loss_clock_suspect`, refused, said in `status`; a restart is a new gateway run, never suspect, and its gap is ADDED to the instant
+  off the `LossBreachRecord.ClockUnverified` baseline (null on an older row measured from zero); a bounded extension may only push the instant later. RED (`C4`,
+  renamed `A_clock_set_forward_past_the_instant_with_no_time_elapsed_ends_no_closure`): `after ONE forward jump : reopened=[loss_reopen:fake:SIM-001:2026-03-10]`,
+  `clock suspect row : none`. Mutant (the monotone term dropped): the same. Second guard, the restart penalty: RED `A_restart_does_not_credit_the_gap_it_could_not_see`;
+  mutant (the gap credited): the same line. Eight existing test clocks gained `GetTimestamp`/`TimestampFrequency` tracking their wall half — a fake that moves only the
+  wall IS a moved machine clock, which is what the new class measures — with no assertion loosened.
+- **The per-order limits are asked again at the wire,** inside the shared gate, for placements and approvals, on the reference price the record carries; the contract
+  heading "Every gate is evaluated at the moment of dispatch, after the awaited reads" is now true. RED (`P2`, renamed `An_instrument_taken_off_the_allowlist_inside_
+  the_gate_does_not_reach_the_wire`): `the order in flight : SENT`, `orders at the broker : [ES Buy 5]`. Mutant (the call inside the gate removed): `Expected:
+  "RISK_LIMIT_EXCEEDED" Actual: "SENT"`. Not re-asked, by choice: the rate limit (advisory; the wire reservation bounds the minute), the PAPER-vs-account check
+  (`ReauthorizeAtDispatchOrThrow` owns it), `quantity <= 0`; a price the intent NAMED skips the quote-age rule; a value cap switched on inside the window fails closed
+  with `RISK_CHECK_UNAVAILABLE` off the cached instrument list rather than an awaited read inside the gate. `A_size_cap_narrowed_while_a_proposal_waited_refuses_the_
+  approval` was GREEN on the base (`ApproveAsync` already ran the risk check inside the gate) — a guard checked in both directions, not a RED, stated as such.
+- **The sighting is keyed by scope, the day by the confirming pull.** `Confirmed` files the first sighting under (connector, account, symbol); the record's `Day` is the
+  CONFIRMING pull's instant at `Compose`, so a pair straddling midnight confirms and the day that lost the money is the day the record names. RED (`P4`, a `[Theory]`
+  carrying the 22:59 control): `pull 2: reached=True closed=[]`, `breach rows : []`. Mutant (the day off the first pull): `Expected: "2026-03-11" Actual: "2026-03-10"`.
+- `LossReopen.Step` added because `Hours` rendered a 90-second jump as "0 hours". All choices in `CONTRACTS.md` under `U-review-med`, landed with item 3's commit.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `9206207` (one line of `BUILD-STATUS.md` prose from the product tip `6116df7`,
+rebased onto `b896e36`), Release `--no-incremental`: 0 warnings, 0 errors; Unit 1146 + Fault 374 + Integration 670 = 2190 passed, 0 failed, 1 skipped; eleven classes
+touched or added 3× green (34 + 7); names `[Fact]`/`[Theory]` 1813 → 1821, eight added, 0 removed (plus `SetForward`, a test-clock helper the name pattern catches).
+Manager's gate at `f9f5878` (the reported tip, 0 behind `main` `b896e36`; `src`/`tests` identical to the product tip `6116df7`), Release: build, 17 projects → 0 warnings, 0 errors; Unit 1146/1146 (21 s), Fault 374/374 (1 m 26 s), Integration 670/671, 1 skipped (11 m 6 s) → 0 failed; names vs `main` → 0 removed, 9 added (sets 1845 → 1854; `[Fact]`/`[Theory]` 1813 → 1821); scan clean; no trailers; `rev-list --count` → 0; CI at `f9f5878`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** a fifth position gate; the review's UNVERIFIED list; anything on the bridge; the box; any defence of a closure against a clock moved while the
+process is DOWN beyond declining to credit the gap — there is no trustworthy elapsed-time source across a process boundary, and the contract says so rather than
+implying one; no box, no ATAS, no money.
