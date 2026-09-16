@@ -1526,7 +1526,7 @@ public sealed class TradingGateway : IAsyncDisposable
     /// dispatch gate (<see cref="AllocationCeilingOrThrow"/>), so the two are stated against one
     /// price rather than two reads that can disagree.
     /// </summary>
-    async Task<decimal> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
+    async Task<OrderPricing> RiskCheckOrThrow(PlaceIntent intent, AccountInfo account, CancellationToken ct)
     {
         var r = Settings.Risk;
 
@@ -1559,7 +1559,8 @@ public sealed class TradingGateway : IAsyncDisposable
         // A price we trust is required for EVERY order, whether or not a value cap is set: an agent
         // sizing a market order from a stale quote is the failure this prevents.
         var quote = await Connector.GetQuoteAsync(intent.Symbol, ct);
-        var reference = intent.LimitPrice ?? intent.StopPrice
+        var named = intent.LimitPrice ?? intent.StopPrice;
+        var reference = named
                         ?? (quote is not null && !quote.IsStale(_opt.MaxQuoteAge) ? quote.Last ?? quote.Ask ?? quote.Bid : null);
         if (reference is null)
             throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
@@ -1568,16 +1569,116 @@ public sealed class TradingGateway : IAsyncDisposable
         // ASKED FOR ONLY BY THE GATE THAT USES IT. MaxNotionalPerOrder is zero by default and that
         // means "not enforced" (see RiskPolicy), so an installation that set no value cap must not
         // be stopped from trading by metadata nothing is going to multiply.
+        decimal? size = null;
         if (r.MaxNotionalPerOrder > 0)
         {
-            var notional = intent.Quantity * reference.Value * await ContractSizeOrThrow(intent.Symbol, ct);
+            size = await ContractSizeOrThrow(intent.Symbol, ct);
+            var notional = intent.Quantity * reference.Value * size.Value;
             if (notional > r.MaxNotionalPerOrder)
                 throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
                     $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
         }
 
-        return reference.Value;
+        // AND WHAT THE GATE NEEDS TO ASK THE SAME QUESTIONS AGAIN WITHOUT A SECOND ROUND TRIP: the
+        // price, the QUOTE it came from where it was not named by the intent, and the multiplier
+        // that was used. See PerOrderLimitsAtDispatchOrThrow.
+        return new OrderPricing(reference.Value, named is null ? quote : null, size);
     }
+
+    /// <summary>
+    /// THE PRICE THE LIMITS WERE DECIDED ON, AND THE EVIDENCE BEHIND IT — carried from the risk
+    /// check into the dispatch gate so the same questions can be asked again there without a second
+    /// answer to any of them.
+    /// </summary>
+    /// <param name="Reference">
+    /// The price every value limit multiplies: the intent's own limit or stop where it named one,
+    /// and otherwise this gateway's newest usable quote.
+    /// </param>
+    /// <param name="Quote">
+    /// The quote the reference came from, or NULL when the intent named the price itself — which is
+    /// the difference the quote-age rule turns on: a named price does not go stale, and a quote does.
+    /// </param>
+    /// <param name="ContractSize">
+    /// What one contract was worth per unit of price, or null because no value cap was enforced and
+    /// nothing was going to multiply. See <see cref="ContractSizeOrThrow"/>.
+    /// </param>
+    readonly record struct OrderPricing(decimal Reference, QuoteInfo? Quote, decimal? ContractSize);
+
+    /// <summary>
+    /// THE OWNER'S PER-ORDER LIMITS, ASKED AGAIN AT THE MOMENT OF DISPATCH (<c>U-review-med</c>,
+    /// item 2; REVIEW 2026-09-16 finding 7, probe <c>P2</c>).
+    ///
+    /// <para><b>What was wrong.</b> <c>docs/CONTRACTS.md</c> has said "every gate is evaluated at
+    /// the moment of dispatch, after the awaited reads" since a kill switch pressed inside
+    /// <c>PlaceAsync</c>'s reads was found not to stop the order it was pressed to stop. What was
+    /// actually re-evaluated there was the AUTHORIZATION chain and the record's mode
+    /// (<see cref="ReauthorizeAtDispatchOrThrow"/>) plus the gates that need the position reading.
+    /// The instrument allowlist, the quantity cap, the value cap and the quote-age rule were decided
+    /// in <see cref="RiskCheckOrThrow"/> ABOVE the gate — so an owner narrowing a limit on the
+    /// Safety page while an order sat in the gate's position read was answered after it had gone,
+    /// over a window one <c>WorstCaseOperationPath</c> wide, 50 s at shipped ATAS values.</para>
+    ///
+    /// <para><b>Why it is a second pass rather than a move.</b> The first pass has to stay where it
+    /// is: it is the one that turns the agent away before its order costs a quote and a position
+    /// read, and it is the one that produces the reference price the record is built around.
+    /// This pass re-decides the same four questions on what the first one already read, so it
+    /// awaits NOTHING and holds the gate for no longer than the arithmetic takes.</para>
+    ///
+    /// <para><b>The quote age is a limit like the others and is re-asked like one.</b> A reference
+    /// the intent NAMED does not age; one taken from a quote does, and a quote that was fresh above
+    /// the gate can be past <c>MaxQuoteAge</c> by the time the reads come back — which would size
+    /// the allocation ceiling off a price nobody is showing any more.</para>
+    ///
+    /// <para><b>The rate limit is NOT re-asked</b>, deliberately: it is advisory in the risk check
+    /// by its own comment, what bounds the minute is the reservation taken at the wire
+    /// (<see cref="ReserveDispatchOrThrow"/>), and charging it twice for one order would refuse
+    /// callers the owner's number allows.</para>
+    ///
+    /// <para><b>And a value cap switched ON inside the window fails CLOSED.</b> The contract size is
+    /// carried from the first pass only when a cap was enforced there; asking the platform for it
+    /// here would be an awaited round trip inside the gate. So the cached instrument list answers,
+    /// and where it cannot the order is refused with <c>RISK_CHECK_UNAVAILABLE</c> — no limit was
+    /// broken, TradeAgent could not work out whether one would be, and an unknown on the money path
+    /// is refused rather than waved through.</para>
+    /// </summary>
+    void PerOrderLimitsAtDispatchOrThrow(PlaceIntent intent, OrderPricing priced)
+    {
+        var r = Settings.Risk;
+
+        if (!r.InstrumentAllowed(intent.Symbol))
+            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
+                $"{intent.Symbol} is not on the allowed instrument list");
+
+        if (intent.Quantity > r.MaxOrderQuantity)
+            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
+                $"quantity {intent.Quantity} exceeds the limit of {r.MaxOrderQuantity}");
+
+        if (priced.Quote is { } quote && quote.IsStale(_opt.MaxQuoteAge))
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"no price newer than {_opt.MaxQuoteAge.TotalSeconds:0}s for {intent.Symbol}, so the order value cannot be checked");
+
+        if (r.MaxNotionalPerOrder <= 0) return;
+
+        if ((priced.ContractSize ?? ContractSizeAsCached(intent.Symbol)) is not { } size)
+            throw new GatewayDeniedException(ErrorCode.RISK_CHECK_UNAVAILABLE,
+                $"the platform does not report a contract size for {intent.Symbol}, so the order's value "
+                + "cannot be checked against your limit");
+
+        var notional = intent.Quantity * priced.Reference * size;
+        if (notional > r.MaxNotionalPerOrder)
+            throw new GatewayDeniedException(ErrorCode.RISK_LIMIT_EXCEEDED,
+                $"order value {notional:N0} exceeds the limit of {r.MaxNotionalPerOrder:N0}");
+    }
+
+    /// <summary>
+    /// The contract size out of the list this gateway has already read, or null because it has not
+    /// read one that names this instrument. It never calls the platform: the one caller is inside
+    /// the dispatch gate, where an awaited round trip is the thing being closed.
+    /// </summary>
+    decimal? ContractSizeAsCached(string symbol) =>
+        _instrumentCache.FirstOrDefault(i => i.Symbol == symbol)?.ContractSize is { } size && size > 0
+            ? size
+            : null;
 
     /// <summary>
     /// WHAT ONE CONTRACT IS WORTH PER UNIT OF PRICE — REQUIRED, NOT GUESSED (REVIEW 2026-09-05b,
@@ -4021,13 +4122,23 @@ public sealed class TradingGateway : IAsyncDisposable
     /// because there is none — the value the caller puts on the record. It is known only in here, and
     /// on both paths it is written before anything is dispatched.</para>
     ///
-    /// <para><paramref name="reference"/> is the price the risk check already trusted, carried rather
-    /// than read again (see <see cref="RiskCheckOrThrow"/>): the allocation's value ceiling multiplies
-    /// the same number the notional cap does, and a second quote read inside the gate would be a second
-    /// answer to the same question and an awaited round trip in the one place that must stay short.</para>
+    /// <para><b>AND THE OWNER'S OWN PER-ORDER LIMITS, RE-ASKED IN HERE</b> (<c>U-review-med</c>, item
+    /// 2). They are not questions about the position, so they are not a fifth gate on this reading —
+    /// they are the four numbers on the Safety page, and they were decided in
+    /// <see cref="RiskCheckOrThrow"/> above the dispatch gate and never asked again, so an owner
+    /// narrowing one while an order sat in these very reads was answered after the order had gone
+    /// (REVIEW 2026-09-16, finding 7, probe P2). They sit here for the reason the four do: this is
+    /// the sequence both callers run, and a copy is how a divergence comes back. Above the ceiling,
+    /// so the ceiling multiplies a reference whose freshness has just been re-asked.</para>
+    ///
+    /// <para><paramref name="priced"/> is what the risk check already read and trusted — the
+    /// reference price, the quote it came from and the contract size (see
+    /// <see cref="OrderPricing"/>): the allocation's value ceiling multiplies the same number the
+    /// notional cap does, and a second quote read inside the gate would be a second answer to the
+    /// same question and an awaited round trip in the one place that must stay short.</para>
     /// </summary>
     async Task<AllocationRow?> PositionGatesOrThrow(PlaceIntent intent, IReadOnlyList<PositionInfo> positions,
-        AccountInfo account, string requestId, decimal reference, CancellationToken ct)
+        AccountInfo account, string requestId, OrderPricing priced, CancellationToken ct)
     {
         // See OpenPositionCapOrThrow: the cap is the one risk limit whose answer depends on what the
         // OTHER callers are doing, so it is the one that cannot be decided out there with the reads.
@@ -4042,11 +4153,15 @@ public sealed class TradingGateway : IAsyncDisposable
 
         await LossBudgetOrThrow(intent, account, positions, ct);
 
+        // AND THE FOUR NUMBERS THE OWNER SET, ASKED AGAIN AFTER EVERY AWAITED READ ABOVE. It awaits
+        // nothing: see PerOrderLimitsAtDispatchOrThrow.
+        PerOrderLimitsAtDispatchOrThrow(intent, priced);
+
         // THE ONE THAT ANSWERS WITH A ROW. See AllocationCeilingOrThrow: what a promoted version may
         // be HOLDING is a question about the position, so it is decided here with the other three
         // rather than out there with the reads, where two callers arriving together would each see the
         // same empty account and both pass one allocation.
-        return await AllocationCeilingOrThrow(intent, positions, reference, requestId, ct);
+        return await AllocationCeilingOrThrow(intent, positions, priced.Reference, requestId, ct);
     }
 
     public async Task<ExecutionRequest> PlaceAsync(AgentContext ctx, string requestId, PlaceIntent intent, CancellationToken ct = default)
@@ -4070,7 +4185,7 @@ public sealed class TradingGateway : IAsyncDisposable
         // value ceiling multiplies the same reference the notional cap does, so the two limits are
         // stated in one number; a second quote read inside the gate would be a second answer to the
         // same question and an awaited round trip in the one place that must stay short.
-        var reference = await RiskCheckOrThrow(intent, account, ct);
+        var priced = await RiskCheckOrThrow(intent, account, ct);
 
         var record = new ExecutionRequest
         {
@@ -4106,7 +4221,7 @@ public sealed class TradingGateway : IAsyncDisposable
             // gate.
             var positions = await Connector.GetPositionsAsync(account.Id, ct);
             record.AllocationId =
-                (await PositionGatesOrThrow(intent, positions, account, requestId, reference, ct))?.Id;
+                (await PositionGatesOrThrow(intent, positions, account, requestId, priced, ct))?.Id;
 
             var (created, stored) = _requests.TryCreate(record);
 
@@ -5027,9 +5142,9 @@ public sealed class TradingGateway : IAsyncDisposable
                 // limits are applied to is the size the order has NOW — not the one it had when the
                 // AI asked. ResultingOrderOrThrow refuses when the target cannot be read at all.
                 before = change is null ? null : await TargetBeforeAsync(account.Id, change.Order!, ct);
-                var reference = await RiskCheckOrThrow(intent
-                    ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice),
-                    account, ct);
+                var resulting = intent
+                    ?? ResultingOrderOrThrow(change!.Order!, before, change.Quantity, change.LimitPrice, change.StopPrice);
+                var priced = await RiskCheckOrThrow(resulting, account, ct);
 
                 // EVERY GATE A PLACEMENT RUNS ON THE POSITION, IN THE SAME ORDER AND OFF ONE READING
                 // OF IT — PositionGatesOrThrow, the same method PlaceAsync calls. This whole method
@@ -5055,8 +5170,16 @@ public sealed class TradingGateway : IAsyncDisposable
                 if (intent is not null)
                 {
                     var positions = await Connector.GetPositionsAsync(account.Id, ct);
-                    var allocation = await PositionGatesOrThrow(intent, positions, account, requestId, reference, ct);
+                    var allocation = await PositionGatesOrThrow(intent, positions, account, requestId, priced, ct);
                     stored = _requests.Attribute(requestId, allocation?.Id);
+                }
+                else
+                {
+                    // A MODIFICATION RUNS NO POSITION GATE, so the per-order limits are re-asked on
+                    // their own here — the only thing between them and the wire on this path is the
+                    // quote read inside the risk check itself, and a cap the owner narrowed while a
+                    // person was deciding is still the cap the press has to be answered against.
+                    PerOrderLimitsAtDispatchOrThrow(resulting, priced);
                 }
             }
             catch (GatewayDeniedException ex)

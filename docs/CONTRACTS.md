@@ -950,6 +950,16 @@ and **the mode is checked against the record rather than against a list**: a pla
 past the question of whether a person should see it, and only the mode a record was decided under may
 send it.
 
+**The heading was over-stated until `U-review-med`, and the OWNER'S OWN NUMBERS were what it missed.**
+What ran again at the wire was the authorization chain, the record's mode and the four gates that
+need the position reading; the instrument allowlist, `MaxOrderQuantity`, `MaxNotionalPerOrder` and
+the quote-age rule were decided in `RiskCheckOrThrow` above the gate, so an owner narrowing a limit
+on the Safety page while an order sat in the gate's position read was answered after the order had
+gone — measured, `ES Buy 5` at the broker off an allowlist it had just been taken off (REVIEW
+2026-09-16 finding 7, probe P2). Those four are now re-decided inside the gate, on the place and the
+approval paths, by `PerOrderLimitsAtDispatchOrThrow`: see `U-review-med` for what it does not re-ask
+and why.
+
 **Nothing awaited may come between the last gate and the wire — and what is left after it is the
 connector's own send, which is a WINDOW that is stated rather than closed.** The re-check used to sit
 above the close's stale-position re-read, so a `close` re-authorized and then made ONE MORE awaited
