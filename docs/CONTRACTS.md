@@ -1393,6 +1393,77 @@ pair and the ledger reads empty**, which is the honest answer rather than everyb
 bridge; a per-symbol valuation denial; and any all-accounts report — `Pnl.Compute` will now keep two
 accounts' books apart if it is ever handed both, but nothing hands it both.
 
+## U-review-med — a closure held against two clocks, the owner's limits at the wire, a sighting keyed by scope
+
+**A CLOSURE IS HELD AGAINST A MONOTONE READING AS WELL AS AGAINST THE WALL CLOCK.** The high-water
+mark refused `at < mark` and nothing else, so ONE forward step of the machine clock past the
+eligibility instant ended a closure on the very next tick with no time having passed at all: the mark
+rose, no suspect row was written, and `HeldBy`'s remaining test — `at < eligible` — had just been
+satisfied by the jump (finding 6, probe C4). `LossClockMark` now carries a second reading of the same
+tick, `Monotone`, taken from the same `TimeProvider` — `Stopwatch`'s counter in production, which
+nothing in the machine's settings can move — and the RUN that took it. Within one run the two have to
+move together: a wall step ahead of the monotone elapse by more than `LossReopen.ForwardSlack` —
+**four watch intervals, 60 s at the shipped 15 s** — writes the same `loss_clock_suspect` row with
+`Direction` `forward`, the step and the elapse on it as evidence, refuses, and is said in `status`,
+on the Situation line and in section 4 through the row's own sentence. Nothing an agent can reach
+moves a clock, which is why this was MED.
+
+**A RESTART IS NOT A MOVED CLOCK, AND IT IS NOT SERVED TIME EITHER.** Two monotone readings taken by
+two different runs have different origins and cannot be subtracted, so a mark whose `Run` is not this
+gateway's writes no suspect row — and a new gateway over the same database, a platform switch
+included, is a new run by design. What it does instead is decline to CREDIT the gap: the wall step
+across the downtime is added to `LossClockMark.Unverified`, and every standing closure has that much
+added to its eligibility instant, on the tick and on every surface alike. The baseline each closure's
+share is measured from is `LossBreachRecord.ClockUnverified`, snapshot at `Compose` for the reason
+`MinClosure` is; **NULL means a record written before this unit and is measured from zero**, which
+counts the whole of the account's accumulated gap against it. The receipt carries
+`ClockUnverified` as the evidence of what was added. A machine that is off overnight therefore serves
+a longer closure than one that is not, and that asymmetry is deliberate: TradeAgent was not watching,
+refusing new risk is the safe direction, and the alternative is trusting a wall clock across the one
+window nothing can check. **A bounded extension may only push the instant later**, never undo the
+penalty.
+
+**THE OWNER'S PER-ORDER LIMITS ARE ASKED AGAIN AT THE MOMENT OF DISPATCH.** The allowlist,
+`MaxOrderQuantity`, `MaxNotionalPerOrder` and the quote-age rule are re-decided inside the dispatch
+gate by `PerOrderLimitsAtDispatchOrThrow` — in `PlaceAsync` after the position read and the loss
+budgets and ABOVE the allocation ceiling, so the ceiling multiplies a reference whose freshness has
+just been re-asked; in `ApproveAsync` after the same reads, on the resulting order of a modification
+as well as on a placement. It **awaits nothing**: the reference price, the QUOTE it came from and the
+contract size are carried out of `RiskCheckOrThrow` on `OrderPricing`, because a second quote read
+inside the gate would be a second answer to one question and a round trip in the one place that must
+stay short. The first pass stays where it is — it is the one that turns an agent away before its
+order costs a quote and a position read.
+
+**What it deliberately does NOT re-ask**, and each is a choice: the RATE LIMIT, because it is
+advisory in the risk check by its own comment and what bounds the minute is the reservation taken at
+the wire, so charging it twice would refuse callers the owner's number allows; the PAPER-vs-real
+account check, which is `ReauthorizeAtDispatchOrThrow`'s mode-against-the-record question and is
+already at the wire; and `quantity <= 0`, which is a shape error the agent cannot have fixed by
+waiting. A reference the intent NAMED does not age and its quote-age rule is skipped — only a price
+taken from a quote can go stale. And a value cap switched ON inside the window **fails closed**: the
+contract size is carried only when a cap was enforced above, the cached instrument list answers where
+it can, and otherwise `RISK_CHECK_UNAVAILABLE` rather than an awaited read inside the gate.
+
+**A SIGHTING IS ABOUT A SCOPE, AND THE RECORD'S DAY IS THE CONFIRMING PULL'S.** `Confirmed` filed the
+first of the two agreeing pulls under the BREACH KEY, which carries the UTC day — so a pair
+straddling midnight never agreed: the pull at 23:59:50Z filed itself under yesterday's key, the pull
+at 00:00:10Z looked under today's, found nothing, and filed itself as a first sighting of its own. At
+`LossWatchInterval` 15 s that is the last tick of EVERY UTC day, and the day that went through the
+owner's budget wrote no `loss_breach` row at all: nothing flattened, no `BoundaryKind.LossBudget`
+boundary, no strike counted, and the only thing still refusing was the admission gate's live figure,
+which stops the moment the figure recovers (finding 8, probe P4). The sighting is now keyed by
+`(connector, account, symbol)`, escaped through `LossBreach.Part` for `U-scope-identity`'s reason, and
+a scope does not change at midnight. The `Day` on the record is `Compose`'s `at` — the CONFIRMING
+pull's instant, never the first sighting's — which is the instant the closure exists from and the
+instant the key it is written under is built from: a record whose `Day` disagreed with its own
+address would send every reader that takes the day off the record to a flatten key and a reopen
+receipt nobody is going to write.
+
+**Not this unit.** A fifth position gate; the review's UNVERIFIED list; anything on the bridge; and
+any defence of the closure against a clock moved while the process is DOWN beyond not crediting the
+gap — there is no trustworthy elapsed-time source across a process boundary, and this says so rather
+than implying one.
+
 ## U-flatten-3 — a book nobody can value, its clock, and what the thresholds do not promise
 
 **AN UNVALUABLE OPEN POSITION IS A STATE WITH A CLOCK, AND THE CLOCK ONLY STOPS WHEN A PRICE COMES

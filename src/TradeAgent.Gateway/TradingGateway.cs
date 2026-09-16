@@ -2557,23 +2557,28 @@ public sealed class TradingGateway : IAsyncDisposable
 
             if (loss.DayReached && !alreadyClosed.Contains(""))
             {
+                // THE KEY IS THE ADDRESS AND THE SCOPE IS WHAT AGREED. Both are taken from THIS
+                // pull's instant, so the record, the key it is written under and the day it names
+                // are one answer — see SightingScope and Compose.
                 var key = LossBreach.DayKey(accountId, at);
-                if (Confirmed(key, pull, at, out var first))
-                    closed.Add(Close(key, Compose(accountId, null, loss.Loss, r.MaxDailyLoss, loss, at,
+                var scope = SightingScope(accountId, null);
+                if (Confirmed(key, scope, pull, at, out var first))
+                    closed.Add(Close(key, scope, Compose(accountId, null, loss.Loss, r.MaxDailyLoss, loss, at,
                         first, pull, epoch, notes)));
             }
-            else if (!loss.DayReached) _sightings.Remove(LossBreach.DayKey(accountId, at));
+            else if (!loss.DayReached) _sightings.Remove(SightingScope(accountId, null));
 
             foreach (var symbol in reached.Where(s => !alreadyClosed.Contains(s)))
             {
                 var key = LossBreach.SymbolKey(accountId, symbol, at);
-                if (Confirmed(key, pull, at, out var first))
-                    closed.Add(Close(key, Compose(accountId, symbol, loss.LossOn(symbol), r.MaxLossPerTrade,
+                var scope = SightingScope(accountId, symbol);
+                if (Confirmed(key, scope, pull, at, out var first))
+                    closed.Add(Close(key, scope, Compose(accountId, symbol, loss.LossOn(symbol), r.MaxLossPerTrade,
                         loss, at, first, pull, epoch, notes)));
             }
 
             foreach (var p in positions.Where(p => p.Quantity != 0 && !reached.Contains(p.Symbol)))
-                _sightings.Remove(LossBreach.SymbolKey(accountId, p.Symbol, at));
+                _sightings.Remove(SightingScope(accountId, p.Symbol));
 
             return Settled(new LossWatchPass(at, pull, true, loss.DayReached, reached, closed, null)
             {
@@ -3609,12 +3614,12 @@ public sealed class TradingGateway : IAsyncDisposable
     /// expired and starts again from here. A row that already exists answers false and is never
     /// rewritten — see <see cref="LossBreach"/>.
     /// </summary>
-    bool Confirmed(string key, long pull, DateTimeOffset at, out LossSighting first)
+    bool Confirmed(string key, string scope, long pull, DateTimeOffset at, out LossSighting first)
     {
         first = default;
         if (_db.GetKv(key) is not null) return false;
 
-        if (_sightings.TryGetValue(key, out var seen)
+        if (_sightings.TryGetValue(scope, out var seen)
             && seen.Pull != pull
             && at - seen.At <= _opt.LossBreachConfirmWithin)
         {
@@ -3622,17 +3627,38 @@ public sealed class TradingGateway : IAsyncDisposable
             return true;
         }
 
-        _sightings[key] = new LossSighting(pull, at);
+        _sightings[scope] = new LossSighting(pull, at);
         return false;
     }
 
+    /// <summary>
+    /// WHAT A SIGHTING IS ABOUT: the SCOPE — <c>(connector, account, symbol)</c> — and not the key
+    /// the record will be addressed by (<c>U-review-med</c>, item 3; REVIEW 2026-09-16 finding 8,
+    /// probe <c>P4</c>).
+    ///
+    /// <para>The sighting used to be filed under the BREACH KEY, which carries the UTC day. A pair
+    /// straddling midnight therefore never agreed: the pull at 23:59:50Z filed itself under
+    /// yesterday's key, the pull at 00:00:10Z looked under today's, found nothing, and filed itself
+    /// as a first sighting of its own. At <c>LossWatchInterval</c> 15 s that is the LAST TICK OF
+    /// EVERY UTC DAY, and the day that went through the owner's budget wrote no record at all —
+    /// nothing flattened, no <c>BoundaryKind.LossBudget</c> boundary, no strike counted, and the
+    /// only thing still refusing was the admission gate's live figure, which stops refusing the
+    /// moment the figure recovers.</para>
+    ///
+    /// <para>A scope does not change at midnight. The parts are escaped through
+    /// <see cref="LossBreach.Part"/> for the reason every key on this line is: an account called
+    /// <c>ACC:ES</c> and the instrument <c>ES</c> on <c>ACC</c> must not be one entry.</para>
+    /// </summary>
+    string SightingScope(string accountId, string? symbol) =>
+        $"{LossReopen.Scope(Connector.Id, accountId)}:{(symbol is null ? "" : LossBreach.Part(symbol))}";
+
     /// <summary>Writes the record, opens the boundary, says so once, and answers the key it wrote.</summary>
-    string Close(string key, LossBreachRecord record)
+    string Close(string key, string scope, LossBreachRecord record)
     {
         // THE RECORD FIRST AND ON ITS OWN. Everything after this line is a consequence of the day
         // being closed; the day being closed is this line.
         _db.SetKv(key, Json.Write(record));
-        _sightings.Remove(key);
+        _sightings.Remove(scope);
 
         // THE CLOCK MARK IS SEEDED WITH THE CLOSURE ITSELF, so there is never a standing closure
         // without one — a clock stepped back between this instant and the next tick would otherwise
@@ -3823,6 +3849,13 @@ public sealed class TradingGateway : IAsyncDisposable
             // named neither could be acted on by a gateway operating neither (finding 3).
             Connector = Connector.Id,
             Mode = Settings.Mode,
+
+            // THE DAY IS THE CONFIRMING PULL'S — `at`, never `first.At` (U-review-med, item 3). It
+            // is the instant the closure exists from, it is the instant the KEY this record is
+            // written under is built from, and every reader now takes the day off the RECORD after a
+            // prefix scan (U-scope-identity). A day taken from the first sighting would, on a pair
+            // straddling midnight, put the row at one address and send every reader of it — the
+            // flatten's key, the reopen receipt's — to another.
             Day = LossBreach.Stamp(at),
             Symbol = symbol,
             FirstSeenAt = first.At,
