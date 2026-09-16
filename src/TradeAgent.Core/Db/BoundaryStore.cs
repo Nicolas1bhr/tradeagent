@@ -67,6 +67,69 @@ public static class BoundaryKind
     public const string ValuationLoss = "valuation_loss";
 }
 
+/// <summary>
+/// THE TWO LINES AN ASSESSMENT MUST DECLARE, AND WHAT THE APP DOES WITH THEM.
+///
+/// <para><c>docs/COUNCIL.md</c>:225 — "the directors' own recommendations, forecasts and timeliness are
+/// recorded against declared baselines". Both are read from the assessment's own text as whole lines
+/// with a fixed prefix, from a CLOSED vocabulary each, and an assessment that declares neither is
+/// refused in words having written nothing: a recommendation the app had to infer from prose would be
+/// the app's reading of a director rather than the director's own word, and a forecast nobody can mark
+/// is not a forecast.</para>
+///
+/// <para>A BASELINE is required only where the app can measure one
+/// (<see cref="BoundaryBaselines.Measurable"/>). A recommendation is required always.</para>
+/// </summary>
+public sealed record BoundaryDeclaration(string? Recommendation, string? Baseline, string? Why)
+{
+    public const string RecommendationPrefix = "RECOMMENDATION:";
+
+    public const string BaselinePrefix = "BASELINE:";
+
+    /// <summary>Reads both declarations out of an assessment, or says in words why it was refused.</summary>
+    public static BoundaryDeclaration Read(string content, string kind)
+    {
+        var recommendation = Line(content, RecommendationPrefix);
+        var baseline = Line(content, BaselinePrefix);
+
+        if (!BoundaryDisposition.IsKnown(recommendation))
+            return new BoundaryDeclaration(null, null,
+                $"your assessment must declare, on a line of its own, `{RecommendationPrefix} "
+                + "<disposition>` — the answer you say TradeAgent's policy should reach. One of "
+                + $"`{BoundaryDisposition.Deploy}`, `{BoundaryDisposition.Hold}`, "
+                + $"`{BoundaryDisposition.Retire}`, `{BoundaryDisposition.Keep}`. It is a "
+                + "RECOMMENDATION and never an instruction — code applies the default frozen when the "
+                + "boundary opened, and neither director can veto it — but it is recorded, and your "
+                + "record against it is in the account owner's report. An assessment that recommends "
+                + "nothing is not published.");
+
+        if (!BoundaryBaselines.Measurable(kind))
+            return new BoundaryDeclaration(recommendation, null, null);
+
+        if (!BoundaryBaselines.IsKnown(baseline))
+            return new BoundaryDeclaration(null, null,
+                $"your assessment must also declare, on a line of its own, `{BaselinePrefix} <state>` — "
+                + "what you expect TradeAgent to measure about this version when the boundary is "
+                + $"reviewed. One of `{PromotionState.Promoted}`, `{PromotionState.Refused}`, "
+                + $"`{PromotionState.Invalidated}`, `{PromotionState.Unjudged}`. It is taken NOW and "
+                + "compared with what the app actually measures at the review, which is what makes it a "
+                + "forecast rather than a description.");
+
+        return new BoundaryDeclaration(recommendation, baseline, null);
+    }
+
+    /// <summary>
+    /// The first line that starts with this prefix, trimmed and lower-cased — or null. A whole line, so
+    /// a prefix quoted inside a sentence about the protocol is not mistaken for a declaration.
+    /// </summary>
+    static string? Line(string content, string prefix) =>
+        (content ?? "").Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(l => l[prefix.Length..].Trim().Trim('`').ToLowerInvariant())
+            .FirstOrDefault();
+}
+
 /// <summary>What a director may hand the app about a boundary. Both are publications, and the app decides which.</summary>
 public static class BoundarySubmissionKind
 {
@@ -148,6 +211,41 @@ public static class BoundaryIds
         $"{kind}:{entity}:{revision.ToString(CultureInfo.InvariantCulture)}";
 }
 
+/// <summary>
+/// WHAT A DIRECTOR IS MEASURED AGAINST — the app's own reading of a boundary's subject, taken twice.
+///
+/// <para><c>docs/COUNCIL.md</c>:225: "the directors' own recommendations, forecasts and timeliness are
+/// recorded against declared baselines". A baseline is only a baseline if the APP can measure it, so the
+/// vocabulary is <see cref="PromotionState"/> — promoted, refused, invalidated, unjudged — which is a
+/// reading <c>Promotions.Standing</c> already computes from the evidence and never from anyone's
+/// account of it. A director declaring a free-text expectation would be declaring something nobody can
+/// mark.</para>
+///
+/// <para><b>Not every boundary has one.</b> A promotion and a retirement are about a strategy VERSION
+/// and this measurement is about a version, so both are measurable. A loss-budget boundary is about an
+/// account and this build measures no baseline for it — <see cref="Measurable"/> says so, no baseline is
+/// required of an assessment there, and the record reads "no baseline" rather than inventing one.</para>
+/// </summary>
+public static class BoundaryBaselines
+{
+    /// <summary>Whether the app can measure a baseline for boundaries of this kind at all.</summary>
+    public static bool Measurable(string kind) =>
+        kind is BoundaryKind.Promotion or BoundaryKind.Retirement;
+
+    /// <summary>
+    /// The app's reading of this boundary's subject NOW, or null where it has none. Taken at the
+    /// assessment for the DECLARATION and again in <see cref="CouncilBoundaries.ApplyDue"/> for the
+    /// review — two instants, one method, so the two readings cannot be two different questions.
+    /// </summary>
+    public static string? Measure(Database db, string kind, string entity) =>
+        Measurable(kind) ? new Promotions(db).Standing(entity).State : null;
+
+    /// <summary>Whether a declared word is one this vocabulary holds.</summary>
+    public static bool IsKnown(string? word) =>
+        word is PromotionState.Promoted or PromotionState.Refused or PromotionState.Invalidated
+             or PromotionState.Unjudged;
+}
+
 /// <summary>ONE CONSEQUENTIAL BOUNDARY, as the app wrote it down.</summary>
 public sealed record BoundaryRow(
     string Id, string Kind, string Entity, long Revision, DateTimeOffset OpenedAt,
@@ -155,11 +253,77 @@ public sealed record BoundaryRow(
     string? Disposition, DateTimeOffset? DisposedAt, string? DisposedBy)
 {
     public bool IsOpen => Disposition is null;
+
+    /// <summary>
+    /// THE APP'S OWN MEASUREMENT OF THIS BOUNDARY'S SUBJECT AT THE REGISTERED REVIEW TIME, written in
+    /// the same UPDATE as the disposition and never afterwards.
+    ///
+    /// <para>This is the other half of a forecast. A director declares what it expects the subject to
+    /// read at review (<see cref="BoundarySubmissionRow.Baseline"/>), and this is what it actually read
+    /// when code settled the boundary. Both are frozen: the declaration at declaration time, this at
+    /// review time. Measuring the declaration at review time instead would make every forecast correct,
+    /// which is the mutant this column exists against.</para>
+    ///
+    /// <para>Null on a boundary nothing has disposed yet, and on one whose kind has no measurable
+    /// baseline (<see cref="BoundaryBaselines.Measurable"/>).</para>
+    /// </summary>
+    public string? ReviewBaseline { get; init; }
 }
 
 /// <summary>Which boundary one publication answers, and as what.</summary>
 public sealed record BoundarySubmissionRow(
-    string BoundaryId, string Role, string Kind, string PublicationId, DateTimeOffset At);
+    string BoundaryId, string Role, string Kind, string PublicationId, DateTimeOffset At)
+{
+    /// <summary>
+    /// THE DISPOSITION THIS DIRECTOR SAYS THE POLICY SHOULD REACH, declared with the assessment and
+    /// sealed with it.
+    ///
+    /// <para>It is a RECOMMENDATION and never an instruction: code applies the default frozen at open,
+    /// and <c>docs/COUNCIL.md</c>:62 is why — "neither director can veto an eligible deployment
+    /// forever". Recording it is what lets :225 hold the directors to their own words, and it has to be
+    /// recorded BEFORE the outcome is known or it is not a recommendation at all.</para>
+    /// </summary>
+    public string? Recommendation { get; init; }
+
+    /// <summary>
+    /// WHAT THIS DIRECTOR DECLARED THE SUBJECT WOULD READ AT REVIEW, from
+    /// <see cref="BoundaryBaselines"/>'s vocabulary — a forecast, taken at declaration time.
+    /// </summary>
+    public string? Baseline { get; init; }
+}
+
+/// <summary>
+/// ONE DIRECTOR'S RECORD ON ONE SETTLED BOUNDARY: what it recommended against what code did, what it
+/// forecast against what the app measured, and whether it answered before the deadline.
+///
+/// <para>A READING and never a row. <c>docs/COUNCIL.md</c>:225 asks that recommendations, forecasts and
+/// timeliness be recorded against declared baselines; the four facts it is computed from are each
+/// frozen where they were written — the recommendation and the forecast on the submission, the
+/// disposition and the measurement on the boundary — so this comparison cannot move after the fact.</para>
+/// </summary>
+public sealed record DirectorRecord(
+    string BoundaryId, string Kind, string Entity, string Role, string? Recommendation,
+    string Disposition, string? Declared, string? Measured, bool Late, bool Silent)
+{
+    /// <summary>Whether the policy reached what this director said it should. Null when it said nothing.</summary>
+    public bool? Agreed => Recommendation is null ? null : Recommendation == Disposition;
+
+    /// <summary>Whether the forecast held. Null when none was declared or none could be measured.</summary>
+    public bool? Held => Declared is null || Measured is null ? null : Declared == Measured;
+
+    /// <summary>The one line the owner's report prints for it.</summary>
+    public string Line() =>
+        $"{CouncilRoles.Title(Role)} on boundary `{BoundaryId}` ({Kind} of {Entity}): "
+        + (Silent
+            ? "no assessment was submitted before code settled it"
+            : $"recommended {Recommendation ?? "nothing"}, code applied {Disposition}"
+              + (Agreed is { } a ? a ? " — agreed" : " — differed" : "")
+              + (Declared is null
+                  ? "; no baseline was declared"
+                  : $"; forecast {Declared}, measured {Measured ?? "nothing this build measures"}"
+                    + (Held is { } h ? h ? " — held" : " — did not hold" : ""))
+              + (Late ? "; submitted after the deadline" : ""));
+}
 
 /// <summary>Whether the boundary was newly opened by this call, and the row either way.</summary>
 public sealed record BoundaryOpened(bool Fresh, BoundaryRow Row);
@@ -208,7 +372,12 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
 
     const string Cols =
         "id, kind, entity, revision, opened_at, deadline_at, default_disposition, evidence, "
-        + "disposition, disposed_at, disposed_by";
+        + "disposition, disposed_at, disposed_by, "
+        // LAST, so every positional read above it keeps its index. See `BoundaryRow.ReviewBaseline`.
+        + "review_baseline";
+
+    const string SubmissionCols =
+        "boundary_id, role, kind, publication_id, at, recommendation, baseline";
 
     // ---- opening ----------------------------------------------------------------------------------
 
@@ -233,7 +402,7 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
 
         using var c = db.Cmd($"""
             INSERT INTO boundary_event({Cols})
-            VALUES($id,$kind,$entity,$rev,$at,$deadline,$default,$evidence,NULL,NULL,NULL)
+            VALUES($id,$kind,$entity,$rev,$at,$deadline,$default,$evidence,NULL,NULL,NULL,NULL)
             ON CONFLICT(id) DO NOTHING
             """,
             ("$id", id), ("$kind", kind), ("$entity", entity), ("$rev", revision), ("$at", Sql.T(at)),
@@ -346,17 +515,29 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
                 + "revised, and a second one is not published. The one bounded challenge, after both "
                 + "assessments are delivered, is where a reading changes.");
 
+        // WHAT THIS DIRECTOR IS PUTTING ITS NAME TO, read out of the assessment itself and refused in
+        // words when it is not there. `docs/COUNCIL.md`:225 asks that recommendations and forecasts be
+        // recorded against declared baselines, and a recommendation the app had to infer from prose
+        // would be the app's reading of a director rather than the director's own word.
+        var declared = BoundaryDeclaration.Read(p.Content, mine.Kind);
+        if (declared.Why is { } missing) return new BoundarySubmitted(false, missing);
+
         // SEALED: committed as an artifact, WITHHELD from the peer. Not "not delivered yet" — a state on
         // the row, so a restart in the middle cannot mistake it for a delivery that merely failed.
         _publications.CommitSealed(p, at);
 
         using var c = db.Cmd("""
-            INSERT INTO boundary_submission(boundary_id, role, kind, publication_id, at)
-            VALUES($b,$role,$kind,$pub,$at)
+            INSERT INTO boundary_submission(boundary_id, role, kind, publication_id, at, recommendation,
+                                            baseline)
+            VALUES($b,$role,$kind,$pub,$at,$rec,$base)
             ON CONFLICT(boundary_id, role, kind) DO NOTHING
             """,
             ("$b", mine.Id), ("$role", p.Role), ("$kind", BoundarySubmissionKind.Assessment),
-            ("$pub", p.Id), ("$at", Sql.T(at)));
+            ("$pub", p.Id), ("$at", Sql.T(at)),
+            ("$rec", declared.Recommendation),
+            // THE FORECAST AS IT WAS DECLARED, AT DECLARATION TIME. Never re-read later: a baseline
+            // taken at review is the review, and every forecast measured against itself is correct.
+            ("$base", declared.Baseline));
         c.ExecuteNonQuery();
 
         return new BoundarySubmitted(true, "", mine.Id);
@@ -488,8 +669,8 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
     public BoundarySubmissionRow? Challenged(string boundaryId) => db.Read(_ =>
     {
         using var c = db.Cmd("""
-            SELECT boundary_id, role, kind, publication_id, at FROM boundary_submission
-             WHERE boundary_id=$b AND kind=$kind LIMIT 1
+            SELECT boundary_id, role, kind, publication_id, at, recommendation, baseline
+              FROM boundary_submission WHERE boundary_id=$b AND kind=$kind LIMIT 1
             """, ("$b", boundaryId), ("$kind", BoundarySubmissionKind.Challenge));
         using var r = c.ExecuteReader();
         return r.Read() ? ReadSubmission(r) : null;
@@ -524,10 +705,16 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
             if (!expired && !closed) continue;
 
             using var c = db.Cmd("""
-                UPDATE boundary_event SET disposition=$d, disposed_at=$at, disposed_by=$by
+                UPDATE boundary_event
+                   SET disposition=$d, disposed_at=$at, disposed_by=$by, review_baseline=$measured
                  WHERE id=$id AND disposition IS NULL
                 """,
                 ("$d", b.DefaultDisposition), ("$at", Sql.T(now)), ("$by", BoundaryAuthor.Policy),
+                // THE REGISTERED REVIEW TIME IS THIS INSTANT, and the app's own reading of the subject
+                // is taken HERE, in the same statement as the disposition. The directors' forecasts were
+                // taken when they were declared; this is what they are marked against, and freezing both
+                // is the whole of `docs/COUNCIL.md`:225's "against declared baselines".
+                ("$measured", BoundaryBaselines.Measure(db, b.Kind, b.Entity)),
                 ("$id", b.Id));
 
             if (c.ExecuteNonQuery() == 1 && ById(b.Id) is { } row) settled.Add(row);
@@ -576,8 +763,8 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
     public IReadOnlyList<BoundarySubmissionRow> Submissions(string boundaryId) => db.Read(_ =>
     {
         using var c = db.Cmd("""
-            SELECT boundary_id, role, kind, publication_id, at FROM boundary_submission
-             WHERE boundary_id=$b ORDER BY at, role
+            SELECT boundary_id, role, kind, publication_id, at, recommendation, baseline
+              FROM boundary_submission WHERE boundary_id=$b ORDER BY at, role
             """, ("$b", boundaryId));
 
         var rows = new List<BoundarySubmissionRow>();
@@ -590,8 +777,8 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
     public BoundarySubmissionRow? Submission(string boundaryId, string role, string kind) => db.Read(_ =>
     {
         using var c = db.Cmd("""
-            SELECT boundary_id, role, kind, publication_id, at FROM boundary_submission
-             WHERE boundary_id=$b AND role=$role AND kind=$kind
+            SELECT boundary_id, role, kind, publication_id, at, recommendation, baseline
+              FROM boundary_submission WHERE boundary_id=$b AND role=$role AND kind=$kind
             """, ("$b", boundaryId), ("$role", role), ("$kind", kind));
         using var r = c.ExecuteReader();
         return r.Read() ? ReadSubmission(r) : null;
@@ -609,6 +796,29 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
             AssessmentsDelivered(b.Id),
             Challenged(b.Id) is not null))];
 
+    /// <summary>
+    /// EVERY DIRECTOR'S RECORD ON EVERY BOUNDARY CODE HAS SETTLED, newest first —
+    /// <c>docs/COUNCIL.md</c>:225's "the directors' own recommendations, forecasts and timeliness".
+    ///
+    /// <para>One line per director per settled boundary, INCLUDING the director that submitted nothing:
+    /// silence is part of a timeliness record, and a list that only held the assessments that arrived
+    /// would be a record of the diligent. The comparison is between four frozen facts — the
+    /// recommendation and the forecast as they were declared, the disposition and the measurement as
+    /// they were taken at review — so nothing here can move after the fact.</para>
+    /// </summary>
+    public IReadOnlyList<DirectorRecord> Records(int limit = 100) =>
+        [.. All(limit)
+            .Where(b => b is { Disposition: not null })
+            .SelectMany(b => CouncilRoles.All.Select(role =>
+            {
+                var mine = Submission(b.Id, role, BoundarySubmissionKind.Assessment);
+                return new DirectorRecord(
+                    b.Id, b.Kind, b.Entity, role, mine?.Recommendation, b.Disposition!,
+                    mine?.Baseline, b.ReviewBaseline,
+                    Late: mine is { } row && row.At > b.DeadlineAt,
+                    Silent: mine is null);
+            }))];
+
     static List<BoundaryRow> ReadAll(SqliteCommand c)
     {
         var rows = new List<BoundaryRow>();
@@ -620,10 +830,17 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
     static BoundaryRow Read(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3), Sql.Time(r.GetValue(4)),
         Sql.Time(r.GetValue(5)), r.GetString(6), r.GetString(7), Sql.S(r.GetValue(8)),
-        Sql.TimeN(r.GetValue(9)), Sql.S(r.GetValue(10)));
+        Sql.TimeN(r.GetValue(9)), Sql.S(r.GetValue(10)))
+    {
+        ReviewBaseline = Sql.S(r.GetValue(11))
+    };
 
     static BoundarySubmissionRow ReadSubmission(SqliteDataReader r) => new(
-        r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.Time(r.GetValue(4)));
+        r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.Time(r.GetValue(4)))
+    {
+        Recommendation = Sql.S(r.GetValue(5)),
+        Baseline = Sql.S(r.GetValue(6))
+    };
 }
 
 /// <summary>

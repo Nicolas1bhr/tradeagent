@@ -2269,3 +2269,96 @@ refusal. A withdrawn allocation is not marked twice — the gate it would be jud
 **The language is unchanged.** The three declarations stay optional and all-or-none, because requiring
 them in the parser would refuse the program texts this installation has already accepted. Promotion is
 the narrower place, and it is the one the sentence names.
+
+## U-allocator-2 — evolution: parentage, comparable trials, an exploration reserve, retirement
+
+**Schema 21.** `docs/COUNCIL.md`:201 ("evolution adds versioned parentage, comparable trials,
+exploration and bounded replacement; directors are evaluated too") and :218-226 in code, except the
+parts named at the end of this section as waiting on an entity this build does not have.
+
+**A version's parent is DECLARED by its submitter and never inferred, and it is outside the version's
+hash.** `strategy_version.parent_version_id`, self-referencing so a claim about a version this
+installation does not hold is unwritable; the `backtest` op's `parent` field is the only route and it
+grants nothing. Parentage outside `StrategyProgram.StrategyId` is the point: the same twelve lines
+must be ONE version whatever their submitter says about where they came from, or every run, trial and
+verdict already charged against the first is evidence about a row nobody can find. `RecordVersion` is
+`ON CONFLICT DO NOTHING`, so the FIRST declaration stands and a resubmission cannot restate its own
+ancestry. The app guesses no parent from the role's last version, the clock or any similarity — two
+unrelated programs from one role would read as parent and child, and every count taken over an
+ancestry would be a count over an invention. A version with none is its own root, which is a statement
+and not a gap.
+
+**A variant is charged to its ancestry's campaign lineage — `strategy_trial.charged_to`, beside
+`campaign_id`.** `campaign_id` is the PEEK (whose held-back months this run read up to);
+`charged_to` is the COST (which family paid). A campaign is opened per holdout dataset, so before this
+a family that had spent its attempts on one holdout could tweak a number, get a fresh id, run against
+a second held-back dataset and be charged against a budget nothing had touched. `ChargedCampaignFor`
+walks the declared ancestry to the ELDEST ancestor already charged somewhere and then forward through
+that campaign's renewals to the one open now — renewal buys the family trials, and a closed campaign
+is not where a new charge belongs. **It can only tighten:** `TrialsCharged` counts a row under either
+number and `RegisterTrial` refuses when EITHER budget is full, so a declared parent never buys a trial
+the run's own campaign would have refused. Backfilled to `campaign_id`, which is what every trial
+before this rung genuinely was.
+
+**The trial budget is TWO POTS that sum to it: `exploration_budget` and the rest.** An exploration
+trial is one registered by a version with no declared parent, or one whose parent's
+`Promotions.Standing` does not read `promoted`; `strategy_trial.exploration` records which pot, copied
+at registration for the reason `kind` is copied — a parent promoted next month must not reclassify
+what a trial cost last month, because a count that moves under a promotion is a budget the process
+being measured can move. Two pots rather than two independent caps is what makes the submitter's own
+parent declaration safe to take: declaring one moves a trial between pots and **creates no allowance**.
+The honest limit, stated: the app cannot verify that a program is really derived from the parent it
+names, and a submitter whose exploration pot is full can reach the other pot by claiming a promoted
+ancestry — what it cannot do is widen the campaign. `CampaignExplorationBudget` is **50 of 200**, a
+choice, copied onto the campaign at open like the other two budgets, clamped to `[0, trial_budget]`;
+a campaign opened with none declared records its whole trial budget, which is what every campaign
+before schema 21 had. **`TrialRefusal` and `RegisterTrial` now ask ONE rule** (`TrialAdmission`, the
+shape `AiAdmissionRule` has) and the COUNTS are read only inside `RegisterTrial`'s own
+`Database.Write` — a reservation taken outside it is the look `U-referee-1` named, two roles both
+honestly told there is room and both taking it.
+
+**Retirement is the boundary machine `U-council-concurrent-2` built, not a second one.**
+`CouncilBoundaries.OpenRetirement` opens `kind=retirement` over a version, with the policy's default
+frozen at open: **bounded replacement** — retired when a successor that declared it as parent has been
+promoted and that promotion STANDS, kept otherwise. `ApplyDue` applies it. `Retirements` computes the
+answer at read time from the newest disposed retirement boundary over that entity; there is no
+`retired` column and no retirement table, for the reason `strategy_promotion` has no `invalidated`
+one, and a later `keep` reinstates a candidate without erasing that it was put up. **The disposition
+writes no DELETE and no UPDATE to any history row**: trials, runs, verdicts, promotions and the
+standing capital allocation are exactly what they were, no reconciliation is cancelled, and the
+dispatch gate goes on enforcing the ceiling — a deployed strategy has its own lifecycle (:223). What it
+does is FENCE what comes next: a NEW trial and a NEW verdict are refused in words that say what was
+not taken away. A trial already on the table and a verdict already charged still answer Ok, because
+neither is a new assignment and refusing them would make a restart look like something retirement had
+removed. **It is not a new permission** (:225): no `trade` verb, no pipe op, in-process only.
+
+**The candidate is a strategy VERSION — a choice, stated** — because the doctrine's subject at
+:219-222 is a candidate AGENT and no such entity exists in this build. A version is what this product
+can select over: declared parentage, a comparable trial history, a promotion record.
+
+**The directors are evaluated too.** An assessment must declare, each on a line of its own,
+`RECOMMENDATION:` from `BoundaryDisposition` and — where the app can measure one —`BASELINE:` from
+`PromotionState`; an assessment declaring neither is refused in words, published nothing and bought
+nobody a turn, because a recommendation the app inferred from prose would be the app's reading of a
+director rather than the director's word. Both are sealed with the assessment onto
+`boundary_submission`. `boundary_event.review_baseline` is the APP's measurement of the same subject at
+the registered review time, written by `ApplyDue` in the same UPDATE as the disposition. **Two
+instants, both frozen:** a baseline read at review would be compared with itself and every forecast
+would read correct. `CouncilBoundaries.Records` compares the four, one line per director per settled
+boundary **including the director that submitted nothing** — silence is a timeliness record, and a
+list of only the assessments that arrived would be a record of the diligent. Section 8 of the owner's
+report prints them, under "measured by TradeAgent" because the app froze every part of them. A
+loss-budget boundary has no measurable baseline in this build: `BoundaryBaselines.Measurable` says so,
+no baseline is required of an assessment there, and the record says "no baseline" rather than
+inventing one.
+
+**NOT built, and waiting on an entity this build does not have.** Everything at `docs/COUNCIL.md`
+:219-222 whose subject is a TEAM or a CANDIDATE AGENT: the heritable candidate definition (model,
+mission, tools, memory seed varying while permission ceilings, scorer and supervisor never do),
+diversity budgets, bounded BIRTHS and turnover, probation and rollback, and a fixed selection protocol
+with registered review times across candidates. There is no team, no candidate agent and no team
+incarnation in this product, so each of those would need a record of something that does not exist.
+Also not built: any automatic trigger that decides WHEN a candidate is put up for retirement — that
+policy is about a population, which is the same missing entity. `OpenRetirement` is in-process and
+this build calls it from nowhere; what is contracted here is the event, the disposition, the fence and
+the record.

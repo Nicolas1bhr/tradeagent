@@ -231,6 +231,9 @@ public class VenueCatalogTests
                 ALTER TABLE strategy_trial DROP COLUMN charged_to;
                 ALTER TABLE strategy_trial DROP COLUMN exploration;
                 ALTER TABLE strategy_campaign DROP COLUMN exploration_budget;
+                ALTER TABLE boundary_submission DROP COLUMN recommendation;
+                ALTER TABLE boundary_submission DROP COLUMN baseline;
+                ALTER TABLE boundary_event DROP COLUMN review_baseline;
                 DROP TABLE strategy_allocation;
                 DROP TABLE venue_instrument;
                 DROP TABLE venue;

@@ -1254,6 +1254,27 @@ public sealed class Database : IDisposable
             Exec("ALTER TABLE strategy_trial ADD COLUMN exploration INTEGER NOT NULL DEFAULT 0;");
             Exec("UPDATE strategy_trial SET exploration=1;");
 
+            // THE DIRECTORS ARE EVALUATED TOO.
+            //
+            // `docs/COUNCIL.md`:225: "the directors' own recommendations, forecasts and timeliness are
+            // recorded against declared baselines". Before this rung a `boundary_submission` recorded
+            // WHICH boundary a publication answered and nothing about what it said, so none of those
+            // three nouns had a column anywhere.
+            //
+            // `recommendation` and `baseline` are the DIRECTOR'S OWN DECLARATIONS, read off the
+            // assessment as whole lines from two closed vocabularies (`BoundaryDeclaration`) and sealed
+            // with it. `review_baseline` is the APP'S measurement of the same subject at the registered
+            // review time, written by `ApplyDue` in the same UPDATE as the disposition. Two instants,
+            // both frozen: a forecast measured against a reading taken at review would be a forecast
+            // measured against itself, and every one of them would read correct.
+            //
+            // All three nullable and NOT backfilled. No assessment written before this rung declared
+            // anything, and no boundary settled before it measured anything, so NULL is the truth about
+            // those rows — a default would invent a recommendation nobody made.
+            Exec("ALTER TABLE boundary_submission ADD COLUMN recommendation TEXT;");
+            Exec("ALTER TABLE boundary_submission ADD COLUMN baseline TEXT;");
+            Exec("ALTER TABLE boundary_event ADD COLUMN review_baseline TEXT;");
+
             Exec($"INSERT INTO meta(key,value) VALUES('schema_version','21') ON CONFLICT(key) DO UPDATE SET value='21';");
         }
 

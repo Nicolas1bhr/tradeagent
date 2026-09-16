@@ -524,6 +524,14 @@ public static class WorkspaceBuilder
     - **Write `out/assessment-<attempt>.md`** — at most **20 lines**, named after THIS turn's attempt
       id, exactly like every other file you publish. TradeAgent decides which boundary it answers:
       the oldest one open to you that you have not assessed.
+    - **Two of those lines are declarations, and without them the assessment is not published.**
+      `RECOMMENDATION: <deploy|hold|retire|keep>` — the answer you say the policy should reach. And,
+      for a boundary about a strategy version, `BASELINE: <promoted|refused|invalidated|unjudged>` —
+      what you expect TradeAgent to MEASURE about that version when the boundary is reviewed. The
+      recommendation is not an instruction and the baseline is not a description: both are recorded
+      as yours, compared with what code actually did and actually measured, and your record against
+      them is in the account owner's report. Declare them when you write, because a forecast taken
+      at the review is not a forecast.
     - **It is sealed.** Yours is committed the moment TradeAgent has it and is not delivered to the
       other director until theirs exists too; then both arrive at once. You cannot revise it and a
       second one is not published, so write the one you mean.

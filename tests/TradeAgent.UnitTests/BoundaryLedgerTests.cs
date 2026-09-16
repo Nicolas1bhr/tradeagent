@@ -176,11 +176,18 @@ public class BoundaryLedgerTests
 
         Assert.Equal([
             "id", "kind", "entity", "revision", "opened_at", "deadline_at", "default_disposition",
-            "evidence", "disposition", "disposed_at", "disposed_by"
+            "evidence", "disposition", "disposed_at", "disposed_by",
+            // Schema 21: the app's own reading of the subject at the registered review time, written in
+            // the same UPDATE as the disposition. Still nothing about an attempt.
+            "review_baseline"
         ], Columns(db, "boundary_event"));
 
-        Assert.Equal(["boundary_id", "role", "kind", "publication_id", "at"],
-            Columns(db, "boundary_submission"));
+        Assert.Equal([
+            "boundary_id", "role", "kind", "publication_id", "at",
+            // Schema 21: what this director recommended and what it forecast, both declared by the
+            // director and sealed with its assessment. Still nothing about an attempt.
+            "recommendation", "baseline"
+        ], Columns(db, "boundary_submission"));
     }
 
     // ---- item 4: the deadline's default is applied by CODE ------------------------------------------
@@ -287,16 +294,32 @@ public class BoundaryLedgerTests
         Assert.Null(boundaries.NextDeadline());
     }
 
-    /// <summary>One director's submission, as the relay builds it: content-addressed, to the peer.</summary>
-    static Publication Assessment(string role, string text, string kind = PublicationKind.Assessment) => new()
+    /// <summary>
+    /// One director's submission, as the relay builds it: content-addressed, to the peer.
+    ///
+    /// <para>An ASSESSMENT carries the two declarations schema 21 requires of one — the recommendation
+    /// and the forecast (<c>BoundaryDeclaration</c>) — because an assessment that declares neither is
+    /// refused and nothing in this class is about that refusal. A challenge declares nothing.</para>
+    /// </summary>
+    static Publication Assessment(string role, string text, string kind = PublicationKind.Assessment,
+        string recommendation = BoundaryDisposition.Deploy,
+        string baseline = PromotionState.Unjudged)
     {
-        Id = Publication.IdOf(role, kind, text),
-        Role = role,
-        Kind = kind,
-        Recipients = string.Join(",", CouncilRelay.RecipientsOf(role)),
-        CreatedAt = At,
-        Content = text
-    };
+        var content = kind == PublicationKind.Assessment
+            ? $"{BoundaryDeclaration.RecommendationPrefix} {recommendation}\n"
+              + $"{BoundaryDeclaration.BaselinePrefix} {baseline}\n{text}"
+            : text;
+
+        return new Publication
+        {
+            Id = Publication.IdOf(role, kind, content),
+            Role = role,
+            Kind = kind,
+            Recipients = string.Join(",", CouncilRelay.RecipientsOf(role)),
+            CreatedAt = At,
+            Content = content
+        };
+    }
 
     /// <summary>
     /// NO PIPE OP AND NO <c>trade</c> VERB REACHES A BOUNDARY, AND NO METHOD TAKES A DISPOSITION.

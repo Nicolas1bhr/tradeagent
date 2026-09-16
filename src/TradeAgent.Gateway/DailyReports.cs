@@ -619,6 +619,25 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
         }
         catch (Exception ex) { gaps.Add(new ReportGap("verdicts", $"the promotion ledger could not be read ({ex.Message})")); }
 
+        // AND THE DIRECTORS' OWN RECORD, which goes in "measured by TradeAgent" for the same reason the
+        // verdicts do: every part of it was frozen by the app — the recommendation and the forecast when
+        // the assessment was sealed, the disposition and the measurement when code settled the boundary
+        // — and no director's account of its own performance is anywhere near it
+        // (`docs/COUNCIL.md`:225, "the directors' own recommendations, forecasts and timeliness are
+        // recorded against declared baselines"). A director that submitted nothing is listed too:
+        // silence is part of a timeliness record, and a list of only the assessments that arrived would
+        // be a record of the diligent.
+        try
+        {
+            foreach (var record in _boundaries.Records(ListShown))
+                metrics.Add(record.Line());
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("director records",
+                $"the boundary ledger could not be read ({ex.Message})"));
+        }
+
         try
         {
             foreach (var role in CouncilRoles.All)

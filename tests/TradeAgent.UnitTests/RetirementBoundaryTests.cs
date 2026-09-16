@@ -1,3 +1,4 @@
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
@@ -263,5 +264,183 @@ public class RetirementBoundaryTests
 
         Assert.Single(c.Boundaries.ApplyDue(At.AddDays(1)));
         Assert.False(new Retirements(c.Db).IsRetired(c.VersionId));
+    }
+
+    // ---- item 5: the directors are evaluated too --------------------------------------------------
+
+    /// <summary>One director's assessment, declaring what schema 21 requires: a recommendation and a forecast.</summary>
+    static Publication Assessment(string role, string recommendation, string baseline, string text) =>
+        Built(role, PublicationKind.Assessment,
+            $"{BoundaryDeclaration.RecommendationPrefix} {recommendation}\n"
+            + $"{BoundaryDeclaration.BaselinePrefix} {baseline}\n{text}");
+
+    static Publication Built(string role, string kind, string content) => new()
+    {
+        Id = Publication.IdOf(role, kind, content),
+        Role = role,
+        Kind = kind,
+        Recipients = string.Join(",", CouncilRelay.RecipientsOf(role)),
+        CreatedAt = At,
+        Content = content
+    };
+
+    /// <summary>
+    /// ITEM 5 — EACH ASSESSMENT RECORDS WHAT ITS DIRECTOR RECOMMENDED AND WHAT IT FORECAST, and the
+    /// forecast is marked against what the app measured at the REGISTERED REVIEW TIME.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:225 — "the directors' own recommendations, forecasts and timeliness
+    /// are recorded against declared baselines". Before this every boundary settled with two sealed
+    /// opinions in it and no row anywhere saying what either of them had been for, so a director could
+    /// never be wrong.</para>
+    ///
+    /// <para><b>The mutant.</b> Read the declared baseline off the boundary's REVIEW measurement instead
+    /// of off the submission — one line in <c>DirectorRecord</c> — and every forecast is compared with
+    /// itself, so every one of them reads correct.</para>
+    /// </summary>
+    [Fact]
+    public void Each_assessment_records_its_recommendation_and_the_baseline_declared_when_it_was_written()
+    {
+        var c = Given(successor: true, window: TimeSpan.FromMilliseconds(1));
+        using var _ = c.Db;
+
+        var opened = c.Boundaries.OpenRetirement(
+            c.VersionId, c.Campaign.Id, "a successor of this candidate has been promoted", At);
+
+        // The candidate's promotion STANDS, so what the app measures at review is `promoted`. One
+        // director forecasts that and one forecasts the opposite, both BEFORE the review.
+        Assert.True(c.Boundaries.Assess(Assessment(
+            CouncilRoles.Research, BoundaryDisposition.Retire, PromotionState.Promoted,
+            "the successor is better on every clause."), At).Ok);
+        Assert.True(c.Boundaries.Assess(Assessment(
+            CouncilRoles.Operations, BoundaryDisposition.Keep, PromotionState.Unjudged,
+            "I expect this evidence to be withdrawn."), At).Ok);
+
+        var settled = Assert.Single(c.Boundaries.ApplyDue(At.AddDays(1)));
+        Assert.Equal(BoundaryDisposition.Retire, settled.Disposition);
+        Assert.Equal(PromotionState.Promoted, settled.ReviewBaseline);
+
+        var records = c.Boundaries.Records();
+        Assert.Equal(2, records.Count);
+
+        var research = Assert.Single(records, r => r.Role == CouncilRoles.Research);
+        Assert.Equal(BoundaryDisposition.Retire, research.Recommendation);
+        Assert.Equal(true, research.Agreed);
+        Assert.Equal(PromotionState.Promoted, research.Declared);
+        Assert.Equal(PromotionState.Promoted, research.Measured);
+        Assert.Equal(true, research.Held);
+        Assert.False(research.Late);
+        Assert.False(research.Silent);
+
+        var operations = Assert.Single(records, r => r.Role == CouncilRoles.Operations);
+        Assert.Equal(BoundaryDisposition.Keep, operations.Recommendation);
+        Assert.Equal(false, operations.Agreed);
+        Assert.Equal(PromotionState.Unjudged, operations.Declared);
+
+        // THE FORECAST IS MARKED AGAINST WHAT WAS MEASURED, NOT AGAINST ITSELF.
+        Assert.Equal(PromotionState.Promoted, operations.Measured);
+        Assert.Equal(false, operations.Held);
+
+        Assert.Contains("forecast unjudged, measured promoted — did not hold", operations.Line(),
+            StringComparison.Ordinal);
+        Assert.Equal(opened.Row.Id, operations.BoundaryId);
+    }
+
+    /// <summary>
+    /// ITEM 5 — AN ASSESSMENT THAT DECLARES NO RECOMMENDATION IS REFUSED, having published nothing and
+    /// bought nobody a turn.
+    ///
+    /// <para>A recommendation the app had to infer from prose would be the app's reading of a director
+    /// rather than the director's own word, and a record built on it would be a record of the app's
+    /// guesses. So it is a line of its own, from a closed vocabulary, or the assessment is not
+    /// published — the shape every other refusal on this class has.</para>
+    /// </summary>
+    [Fact]
+    public void An_assessment_that_declares_no_recommendation_is_refused_and_nothing_is_published()
+    {
+        var c = Given(successor: true, window: TimeSpan.FromMilliseconds(1));
+        using var _ = c.Db;
+        c.Boundaries.OpenRetirement(c.VersionId, c.Campaign.Id, "a routine review", At);
+
+        var refused = c.Boundaries.Assess(
+            Built(CouncilRoles.Research, PublicationKind.Assessment, "I read it as thin."), At);
+
+        Assert.False(refused.Ok);
+        Assert.Contains("RECOMMENDATION:", refused.Why, StringComparison.Ordinal);
+        Assert.Empty(new PublicationStore(c.Db).By(CouncilRoles.Research));
+        Assert.Empty(c.Boundaries.Submissions(
+            BoundaryIds.Of(BoundaryKind.Retirement, c.VersionId, c.Campaign.Id)));
+
+        // AND ONE THAT DECLARES A RECOMMENDATION BUT NO FORECAST, where a forecast is measurable.
+        var half = c.Boundaries.Assess(Built(CouncilRoles.Research, PublicationKind.Assessment,
+            $"{BoundaryDeclaration.RecommendationPrefix} {BoundaryDisposition.Keep}\nI read it as thin."),
+            At);
+
+        Assert.False(half.Ok);
+        Assert.Contains("BASELINE:", half.Why, StringComparison.Ordinal);
+        Assert.Empty(new PublicationStore(c.Db).By(CouncilRoles.Research));
+    }
+
+    /// <summary>
+    /// ITEM 5 — A DIRECTOR THAT NEVER ANSWERED IS IN THE RECORD, as silent.
+    ///
+    /// <para>Timeliness is one of the three things :225 asks to be recorded, and a list holding only the
+    /// assessments that arrived would be a record of the diligent. Saying nothing is the cheapest way to
+    /// hold up a decision, so it is the thing that most needs a line.</para>
+    /// </summary>
+    [Fact]
+    public void A_director_that_never_answered_is_in_the_record_as_silent()
+    {
+        var c = Given(successor: true, window: TimeSpan.FromMilliseconds(1));
+        using var _ = c.Db;
+        c.Boundaries.OpenRetirement(c.VersionId, c.Campaign.Id, "a routine review", At);
+
+        Assert.True(c.Boundaries.Assess(Assessment(
+            CouncilRoles.Research, BoundaryDisposition.Retire, PromotionState.Promoted,
+            "the successor is better."), At).Ok);
+
+        Assert.Single(c.Boundaries.ApplyDue(At.AddDays(1)));
+
+        var silent = Assert.Single(c.Boundaries.Records(), r => r.Role == CouncilRoles.Operations);
+        Assert.True(silent.Silent);
+        Assert.Null(silent.Recommendation);
+        Assert.Null(silent.Agreed);
+        Assert.Contains("no assessment was submitted before code settled it", silent.Line(),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// ITEM 5 — SECTION 8 OF THE OWNER'S REPORT NAMES EACH DIRECTOR'S RECORD AGAINST ITS BASELINE.
+    ///
+    /// <para>It goes in "measured by TradeAgent" and not in "claimed by an agent" because every part of
+    /// it was frozen by the app: the recommendation and the forecast when the assessment was sealed, the
+    /// disposition and the measurement when code settled the boundary. No director's account of its own
+    /// performance is anywhere near it.</para>
+    /// </summary>
+    [Fact]
+    public async Task Section_eight_names_each_directors_record_against_the_baseline_it_declared()
+    {
+        var (gw, _, db) = await TestEnv.Ready();
+        using var _1 = db;
+        var boundaries = new CouncilBoundaries(db, () => TimeSpan.FromMilliseconds(1));
+
+        boundaries.Open(BoundaryKind.Promotion, "version-a", 1, BoundaryDisposition.Hold,
+            "holdout run 9f3c under campaign 1", At);
+
+        Assert.True(boundaries.Assess(Assessment(
+            CouncilRoles.Research, BoundaryDisposition.Deploy, PromotionState.Promoted,
+            "the evidence is sufficient."), At).Ok);
+        Assert.True(boundaries.Assess(Assessment(
+            CouncilRoles.Operations, BoundaryDisposition.Hold, PromotionState.Unjudged,
+            "the sample is one campaign wide."), At).Ok);
+
+        Assert.Single(boundaries.ApplyDue(At.AddDays(1)));
+
+        var report = gw.Reports.Compose(DateTimeOffset.Now);
+        var lines = string.Join("\n", report.Research.AppMetrics);
+
+        Assert.Contains("recommended deploy, code applied hold — differed", lines, StringComparison.Ordinal);
+        Assert.Contains("recommended hold, code applied hold — agreed", lines, StringComparison.Ordinal);
+        Assert.Contains("forecast promoted, measured unjudged — did not hold", lines, StringComparison.Ordinal);
+        Assert.Contains("forecast unjudged, measured unjudged — held", lines, StringComparison.Ordinal);
     }
 }

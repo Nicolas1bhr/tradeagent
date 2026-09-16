@@ -231,6 +231,14 @@ public static class Versions
     /// between pots and creates no allowance (<c>docs/COUNCIL.md</c>:220). Both backfilled, and to the
     /// only values true of the rows that exist: every campaign written before this rung had its whole
     /// budget open to exploration, because no version could declare a parent at all.</para>
+    ///
+    /// <para>And THE DIRECTORS' OWN RECORD: <c>boundary_submission.recommendation</c> and
+    /// <c>.baseline</c>, both declared by the director and sealed with its assessment, against
+    /// <c>boundary_event.review_baseline</c>, the app's measurement of the same subject written by
+    /// <c>ApplyDue</c> in the same UPDATE as the disposition (<c>docs/COUNCIL.md</c>:225). Two instants,
+    /// both frozen; a forecast measured against a reading taken at review would be measured against
+    /// itself. Nullable and NOT backfilled — no assessment written before this rung declared anything
+    /// and no boundary settled before it measured anything.</para>
     /// </summary>
     public const int DatabaseSchemaVersion = 21;
 

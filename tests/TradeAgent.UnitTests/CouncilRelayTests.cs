@@ -473,6 +473,15 @@ public class CouncilRelayTests
     static string AssessmentName(string attempt) =>
         CouncilRelay.Pattern(PublicationKind.Assessment).Replace("*", attempt);
 
+    /// <summary>
+    /// An assessment's text WITH the two declarations schema 21 requires of one — the recommendation and
+    /// the forecast (<c>BoundaryDeclaration</c>). An assessment that declares neither is refused, and
+    /// nothing in this class is about that refusal.
+    /// </summary>
+    static string Assessed(string text) =>
+        $"{BoundaryDeclaration.RecommendationPrefix} {BoundaryDisposition.Deploy}\n"
+        + $"{BoundaryDeclaration.BaselinePrefix} {PromotionState.Unjudged}\n{text}";
+
     static string ChallengeName(string attempt) =>
         CouncilRelay.Pattern(PublicationKind.Challenge).Replace("*", attempt);
 
@@ -508,7 +517,7 @@ public class CouncilRelayTests
 
         // ---- the Research Director writes first ------------------------------------------------
         world.Launched(db, CouncilRoles.Research, "turn-r");
-        world.Write(CouncilRoles.Research, AssessmentName("turn-r"), "I read the evidence as sufficient.");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r"), Assessed("I read the evidence as sufficient."));
         Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r");
 
         var store = new PublicationStore(db);
@@ -524,7 +533,7 @@ public class CouncilRelayTests
 
         // ---- and now the chair writes its own ---------------------------------------------------
         world.Launched(db, CouncilRoles.Operations, "turn-o");
-        world.Write(CouncilRoles.Operations, AssessmentName("turn-o"), "I read it as thin.");
+        world.Write(CouncilRoles.Operations, AssessmentName("turn-o"), Assessed("I read it as thin."));
         Relaying(world, db, refusals).Run(CouncilRoles.Operations, "turn-o");
 
         // BOTH RELEASED TOGETHER, BY ONE PASS.
@@ -552,12 +561,12 @@ public class CouncilRelayTests
         var refusals = new List<string>();
 
         world.Launched(db, CouncilRoles.Research, "turn-r1");
-        world.Write(CouncilRoles.Research, AssessmentName("turn-r1"), "my reading.");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r1"), Assessed("my reading."));
         Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r1");
         Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
 
         world.Launched(db, CouncilRoles.Research, "turn-r2");
-        world.Write(CouncilRoles.Research, AssessmentName("turn-r2"), "on reflection, the opposite.");
+        world.Write(CouncilRoles.Research, AssessmentName("turn-r2"), Assessed("on reflection, the opposite."));
         Relaying(world, db, refusals).Run(CouncilRoles.Research, "turn-r2");
 
         Assert.Single(new PublicationStore(db).By(CouncilRoles.Research));
@@ -588,7 +597,7 @@ public class CouncilRelayTests
         foreach (var (role, turn) in new[] { (CouncilRoles.Research, "a-r"), (CouncilRoles.Operations, "a-o") })
         {
             world.Launched(db, role, turn);
-            world.Write(role, AssessmentName(turn), $"{role} assessed it.");
+            world.Write(role, AssessmentName(turn), Assessed($"{role} assessed it."));
             Relaying(world, db, refusals).Run(role, turn);
         }
 
@@ -625,7 +634,7 @@ public class CouncilRelayTests
         var refusals = new List<string>();
 
         world.Launched(db, CouncilRoles.Research, "a-r");
-        world.Write(CouncilRoles.Research, AssessmentName("a-r"), "my reading.");
+        world.Write(CouncilRoles.Research, AssessmentName("a-r"), Assessed("my reading."));
         world.Write(CouncilRoles.Research, ChallengeName("a-r"), "and my challenge.");
         Relaying(world, db, refusals).Run(CouncilRoles.Research, "a-r");
 
@@ -651,7 +660,7 @@ public class CouncilRelayTests
         foreach (var (role, turn) in new[] { (CouncilRoles.Research, "a-r"), (CouncilRoles.Operations, "a-o") })
         {
             world.Launched(db, role, turn);
-            world.Write(role, AssessmentName(turn), $"{role} assessed it.");
+            world.Write(role, AssessmentName(turn), Assessed($"{role} assessed it."));
             Relaying(world, db, refusals).Run(role, turn);
         }
 
