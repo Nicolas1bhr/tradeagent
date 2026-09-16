@@ -320,6 +320,22 @@ public sealed record LossBreachRecord
     /// </summary>
     public int? StrikeWindowDays { get; init; }
 
+    /// <summary>
+    /// THE GATEWAY'S UNVERIFIED-TIME COUNTER AS IT STOOD WHEN THIS BREACH WAS CONFIRMED — the
+    /// BASELINE the closure's own restart penalty is measured from (<c>U-review-med</c>, item 1).
+    ///
+    /// <para>The counter on <c>LossClockMark</c> is per account and lives across episodes, so it is
+    /// not a duration this closure served: what belongs to THIS closure is how much it has grown
+    /// since, and that subtraction needs the value at the breach. It is on the record for the reason
+    /// <see cref="MinClosure"/> is — a reader has to be able to check the arithmetic that was
+    /// actually done, and the counter it is subtracted from moves.</para>
+    ///
+    /// <para><b>NULL means a record written before this unit</b>, and such a row is measured from
+    /// ZERO: the whole of the account's accumulated unverified time counts against it, which leaves
+    /// the closure longer rather than shorter and is this line's direction on every unknown.</para>
+    /// </summary>
+    public TimeSpan? ClockUnverified { get; init; }
+
     /// <summary>The sentence the owner and the agent are shown. Written once, with the record.</summary>
     public string Why { get; init; } = "";
 }

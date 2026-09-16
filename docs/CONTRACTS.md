@@ -1189,11 +1189,12 @@ unresolved and `HasUnconfirmedWork` is false; and — inherited, because the reo
 watch's measured branch — the book could be valued at all, so `RISK_CHECK_UNAVAILABLE` stays
 independently blocking while a budget is enforced. A daily closure and a symbol closure compose by
 AND: each has its own receipt and its own scope, and the account-wide press conditions apply to both.
-**A clock that stepped BACK never reopens anything**: every tick that runs while something is closed
-raises `loss_clock_high_water:{connector}:{account}` (monotone, seeded with the breach), eligibility
-also requires `Now` at or above it, and a reading below it writes `loss_clock_suspect:{connector}:
-{account}` ONCE, refuses, and says so on every surface. A step forward is ordinary and lengthens
-nothing.
+**A clock that MOVED never reopens anything, whichever way it went**: every tick that runs while
+something is closed raises `loss_clock_high_water:{connector}:{account}` (seeded with the breach),
+eligibility also requires `Now` at or above it, and a reading below it writes
+`loss_clock_suspect:{connector}:{account}` ONCE, refuses, and says so on every surface. A step
+FORWARD is answered by the same row and the same refusal — see `U-review-med`, which is where the
+mark's second reading, the restart penalty and what the direction is called are stated.
 
 **A parked proposal that predates the breach dies with it**, with its own code
 (`APPROVAL_PREDATES_LOSS_BREACH`) and its own sentence, never `LOSS_BUDGET_REACHED` — and the request

@@ -30,6 +30,14 @@ public class LossReopenApprovalTests(ITestOutputHelper log)
     {
         DateTimeOffset _now = at;
         public override DateTimeOffset GetUtcNow() => _now;
+
+        // A COHERENT CLOCK: the monotone half moves with the wall half, which is what a machine
+        // nobody has touched does. The gateway holds a closure against BOTH since U-review-med, and
+        // a fake that moved only the wall would be simulating a clock somebody set forward —
+        // LossClockMonotoneTests is where that one is measured.
+        public override long GetTimestamp() => _now.UtcTicks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public void Advance(TimeSpan by) => _now += by;
         public void MoveTo(DateTimeOffset to) => _now = to;
     }

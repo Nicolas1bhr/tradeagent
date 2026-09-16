@@ -2524,7 +2524,7 @@ public sealed class TradingGateway : IAsyncDisposable
 
         foreach (var breach in standing)
         {
-            var eligible = EligibleFor(breach);
+            var eligible = EligibleFor(breach, clock);
             if (HeldBy(breach, eligible, at, epoch, positions, clock) is { } held)
             {
                 _log.TryEngineering("Gateway", "loss_reopen_held", metadataJson: Json.Write(new
@@ -2549,6 +2549,7 @@ public sealed class TradingGateway : IAsyncDisposable
                 StrikeWindowDays = StrikeWindowFor(breach),
                 At = at,
                 ClockHighWater = clock.HighWater,
+                ClockUnverified = UnverifiedFor(breach, clock),
                 ConnectionEpoch = epoch,
                 PositionsRead = [.. InScope(breach, positions).Select(p => $"{p.Symbol} {p.Quantity}")],
                 FlattenWasFlat = FlattenFlagFor(breach),
@@ -2593,10 +2594,13 @@ public sealed class TradingGateway : IAsyncDisposable
     /// part of it that tells them whether waiting is what to do.</para>
     /// </summary>
     string? HeldBy(LossBreachRecord breach, DateTimeOffset eligible, DateTimeOffset at, int? epoch,
-        IReadOnlyList<PositionInfo>? positions, (DateTimeOffset HighWater, bool Suspect) clock)
+        IReadOnlyList<PositionInfo>? positions, ClockReading clock)
     {
         // THE CLOCK FIRST, because every other line here is an arithmetic over instants it produced.
-        if (clock.Suspect || at < clock.HighWater) return ClockBackwards(at, clock.HighWater);
+        // The row's own sentence where there is one, because it names the direction the clock moved
+        // and a forward step is not a backward one.
+        if (clock.Suspect || at < clock.HighWater)
+            return ClockSuspect(breach.Account)?.Why ?? ClockBackwards(at, clock.HighWater);
 
         // THEN THE REVIEW HOLD, BEFORE THE INSTANT, because a held scope has no eligibility instant
         // at all: the count was taken when the second breach was confirmed and the way out is the
@@ -2690,10 +2694,20 @@ public sealed class TradingGateway : IAsyncDisposable
     /// a fact. It answers the MARK rather than the reading, so the caller compares against the
     /// highest instant this gateway has ever seen and not against the one it is being told now.</para>
     ///
+    /// <para><b>AND SO IS A READING TOO FAR ABOVE IT</b> (<c>U-review-med</c>, item 1). A forward
+    /// step used to raise the mark and cost nothing, so ONE jump past the eligibility instant ended
+    /// a closure on the next tick with no time having passed (REVIEW 2026-09-16, finding 6). The
+    /// mark now carries the MONOTONE reading of the same tick and the RUN that took it, and within
+    /// one run a wall step ahead of the monotone elapse by more than
+    /// <see cref="LossReopen.ForwardSlack"/> is the same act in the direction that ENDS a closure.
+    /// Across a restart the two readings are not comparable, so the gap is added to
+    /// <see cref="LossClockMark.Unverified"/> and charged to every standing closure instead. See
+    /// <see cref="LossReopen.ClockKey"/>.</para>
+    ///
     /// <para>A row it cannot read or write answers suspect: a mark this app cannot establish is not
     /// a mark it may act without.</para>
     /// </summary>
-    (DateTimeOffset HighWater, bool Suspect) MarkTheClock(string accountId, DateTimeOffset at)
+    ClockReading MarkTheClock(string accountId, DateTimeOffset at)
     {
         var key = LossReopen.ClockKey(Connector.Id, accountId);
 
@@ -2703,32 +2717,106 @@ public sealed class TradingGateway : IAsyncDisposable
         {
             _log.TryEngineering("Gateway", "loss_clock_mark_unreadable", "error", ex: ex,
                 metadataJson: Json.Write(new { key }));
-            return (at, true);
+            return new ClockReading(at, true, TimeSpan.Zero);
         }
 
+        // THE MONOTONE READING OF THIS TICK, taken from the same TimeProvider the wall instant came
+        // from. In production that is Stopwatch's counter, which nothing in the machine's settings
+        // can move; what makes it evidence is that it and `at` are two readings of ONE instant.
+        var monotone = _opt.Clock.GetTimestamp();
+        var unverified = mark?.Unverified ?? TimeSpan.Zero;
+
         if (mark is not null && at < mark.At)
+            return Suspect(mark, "backwards", null, null,
+                $"This computer's clock went BACKWARDS while TradeAgent had your account closed to "
+                + $"new risk: it read {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC after having already seen "
+                + $"{mark.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Nothing will be reopened on a clock "
+                + "TradeAgent cannot trust. Put the computer's time right; the closure lifts once the "
+                + "clock is past what it has already seen and everything else is in order.");
+
+        if (mark is not null)
         {
-            var suspect = new LossClockSuspect
+            var stepped = at - mark.At;
+
+            // A RESTART IS NOT A MOVED CLOCK, AND IT IS NOT SERVED TIME EITHER. Two monotone
+            // readings taken by two different runs have different origins and cannot be subtracted,
+            // so this gateway says nothing about the clock — and counts nothing of the gap towards
+            // any closure standing over it. See LossReopen.ClockKey.
+            if (!string.Equals(mark.Run, _runId, StringComparison.Ordinal))
+            {
+                if (stepped > TimeSpan.Zero) unverified += stepped;
+                if (stepped > LossReopen.ForwardSlack(_opt.LossWatchInterval))
+                    _log.TryEngineering("Gateway", "loss_clock_unverified_gap", "warn",
+                        metadataJson: Json.Write(new
+                        {
+                            account = accountId, connector = Connector.Id,
+                            gap_seconds = stepped.TotalSeconds, unverified_seconds = unverified.TotalSeconds
+                        }));
+            }
+            else
+            {
+                var measured = _opt.Clock.GetElapsedTime(mark.Monotone, monotone);
+                if (measured < TimeSpan.Zero) measured = TimeSpan.Zero;
+
+                // THE SAME ACT AS A STEP BACK, IN THE DIRECTION THAT ENDS A CLOSURE. Within one run
+                // the two readings move together; a wall step this far ahead of the monotone elapse
+                // is a clock somebody set, and eligibility is an arithmetic over instants it
+                // produced (REVIEW 2026-09-16, finding 6).
+                if (stepped > measured + LossReopen.ForwardSlack(_opt.LossWatchInterval))
+                    return Suspect(mark, "forward", stepped, measured,
+                        $"This computer's clock jumped FORWARD while TradeAgent had your account closed "
+                        + $"to new risk: it moved {LossReopen.Step(stepped)} in one step, from "
+                        + $"{mark.At.UtcDateTime:yyyy-MM-dd HH:mm} to {at.UtcDateTime:yyyy-MM-dd HH:mm} "
+                        + $"UTC, while only {measured.TotalSeconds:0} seconds actually passed. A closure "
+                        + "is time the account has to serve, so nothing will be reopened on a clock "
+                        + "TradeAgent cannot trust. Put the computer's time right; the closure lifts "
+                        + "once it has genuinely run and everything else is in order.");
+            }
+        }
+
+        try
+        {
+            _db.SetKv(key, Json.Write(new LossClockMark
+            {
+                At = at, Monotone = monotone, Run = _runId, Unverified = unverified
+            }));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // THE MARK IS THE GUARD. One this app could not raise is one it may not act on: the next
+            // tick would compare against a stale instant and call a moved clock honest.
+            _log.TryEngineering("Gateway", "loss_clock_mark_not_written", "error", ex: ex,
+                metadataJson: Json.Write(new { key }));
+            return new ClockReading(mark?.At ?? at, true, unverified);
+        }
+
+        return new ClockReading(at, false, unverified);
+
+        ClockReading Suspect(LossClockMark had, string direction, TimeSpan? stepped, TimeSpan? measured,
+            string why)
+        {
+            var row = new LossClockSuspect
             {
                 Connector = Connector.Id,
                 Account = accountId,
-                HighWater = mark.At,
+                HighWater = had.At,
                 Reading = at,
-                Why = $"This computer's clock went BACKWARDS while TradeAgent had your account closed to "
-                      + $"new risk: it read {at.UtcDateTime:yyyy-MM-dd HH:mm} UTC after having already seen "
-                      + $"{mark.At.UtcDateTime:yyyy-MM-dd HH:mm} UTC. Nothing will be reopened on a clock "
-                      + "TradeAgent cannot trust. Put the computer's time right; the closure lifts once the "
-                      + "clock is past what it has already seen and everything else is in order."
+                Direction = direction,
+                Stepped = stepped,
+                Measured = measured,
+                Why = why
             };
 
             try
             {
-                if (_db.AddKvOnce(LossReopen.SuspectKey(Connector.Id, accountId), Json.Write(suspect)))
+                if (_db.AddKvOnce(LossReopen.SuspectKey(Connector.Id, accountId), Json.Write(row)))
                 {
-                    _log.Activity(suspect.Why, "warn");
+                    _log.Activity(row.Why, "warn");
                     _log.TryEngineering("Gateway", "loss_clock_suspect", "error", metadataJson: Json.Write(new
                     {
-                        account = accountId, connector = Connector.Id, high_water = mark.At, reading = at
+                        account = accountId, connector = Connector.Id, direction,
+                        high_water = had.At, reading = at,
+                        stepped_seconds = stepped?.TotalSeconds, measured_seconds = measured?.TotalSeconds
                     }));
                 }
             }
@@ -2737,42 +2825,47 @@ public sealed class TradingGateway : IAsyncDisposable
                 _log.TryEngineering("Gateway", "loss_clock_suspect_not_recorded", "error", ex: ex);
             }
 
-            return (mark.At, true);
+            return new ClockReading(had.At, true, unverified);
         }
-
-        try { _db.SetKv(key, Json.Write(new LossClockMark { At = at })); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // THE MARK IS THE GUARD. One this app could not raise is one it may not act on: the next
-            // tick would compare against a stale instant and call a moved clock honest.
-            _log.TryEngineering("Gateway", "loss_clock_mark_not_written", "error", ex: ex,
-                metadataJson: Json.Write(new { key }));
-            return (mark?.At ?? at, true);
-        }
-
-        return (at, false);
     }
 
     /// <summary>
     /// THE CLOCK MARK AS IT STANDS, WITHOUT RAISING IT — what a surface asks. Suspect when a suspect
-    /// row was ever written, or when the clock reads below the mark right now.
+    /// row was ever written, or when the clock reads below the mark right now. The unverified total
+    /// comes off the mark either way, because a surface has to show the same instant the tick acts
+    /// on and that instant is moved by it.
     /// </summary>
-    (DateTimeOffset HighWater, bool Suspect) ClockAsRead(string accountId, DateTimeOffset at)
+    ClockReading ClockAsRead(string accountId, DateTimeOffset at)
     {
-        if (ClockSuspect(accountId) is not null) return (at, true);
+        var flagged = ClockSuspect(accountId) is not null;
 
         try
         {
             var mark = _db.GetKv(LossReopen.ClockKey(Connector.Id, accountId)) is { } json
                 ? Json.Read<LossClockMark>(json)
                 : null;
-            return mark is null ? (at, false) : (mark.At, at < mark.At);
+            return mark is null
+                ? new ClockReading(at, flagged, TimeSpan.Zero)
+                : new ClockReading(mark.At, flagged || at < mark.At, mark.Unverified);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return (at, true);
+            return new ClockReading(at, true, TimeSpan.Zero);
         }
     }
+
+    /// <summary>
+    /// WHAT THE CLOCK MARK SAYS, IN ONE VALUE: the highest instant seen, whether it may be acted on
+    /// at all, and the wall time this gateway declined to count towards any closure.
+    /// </summary>
+    readonly record struct ClockReading(DateTimeOffset HighWater, bool Suspect, TimeSpan Unverified);
+
+    /// <summary>
+    /// THIS GATEWAY RUN'S OWN ID, for the one comparison that is only valid within a process: two
+    /// monotone readings. A new gateway over the same database — a restart, or a platform switch —
+    /// is a new run by design, because its monotone counter's origin is its own.
+    /// </summary>
+    readonly string _runId = Guid.NewGuid().ToString("n");
 
     /// <summary>
     /// WHEN A STANDING CLOSURE MAY EARLIEST BE LIFTED, WHAT IS HOLDING IT, AND WHEN THE LAST ONE WAS
@@ -2840,9 +2933,10 @@ public sealed class TradingGateway : IAsyncDisposable
                         Rule = RuleFor(breach)
                     };
 
-                var plain = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
+                var plain = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach))
+                            + UnverifiedFor(breach, clock);
                 var extension = ExtensionFor(breach, plain);
-                var eligible = extension?.Until ?? plain;
+                var eligible = extension?.Until is { } until && until > plain ? until : plain;
 
                 // Only once the instant has passed can anything else be what is holding it — before
                 // that, "waiting" IS the answer and naming the flatten as well would be noise.
@@ -2902,10 +2996,37 @@ public sealed class TradingGateway : IAsyncDisposable
     /// explains both compute it: <see cref="LossReopen.EligibleAt"/> over the closure length this
     /// episode is judged by.
     /// </summary>
-    DateTimeOffset EligibleFor(LossBreachRecord breach)
+    DateTimeOffset EligibleFor(LossBreachRecord breach) =>
+        EligibleFor(breach, ClockAsRead(breach.Account, Now));
+
+    /// <summary>
+    /// The same, against a clock reading already taken — which the tick has and a surface asking
+    /// about several closures at once takes once.
+    /// </summary>
+    DateTimeOffset EligibleFor(LossBreachRecord breach, ClockReading clock)
     {
-        var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach));
-        return ExtensionFor(breach, eligible)?.Until ?? eligible;
+        var eligible = LossReopen.EligibleAt(breach.ConfirmedAt, MinClosureFor(breach))
+                       + UnverifiedFor(breach, clock);
+
+        // THE EXTENSION MAY ONLY PUSH IT LATER. It is a bounded delay over the plain instant, and
+        // one computed before the restart penalty must not be allowed to undo the penalty.
+        return ExtensionFor(breach, eligible)?.Until is { } until && until > eligible ? until : eligible;
+    }
+
+    /// <summary>
+    /// HOW MUCH OF THIS CLOSURE'S WALL TIME THIS GATEWAY DECLINED TO COUNT — the account's
+    /// unverified total now, less what it stood at when the breach was confirmed
+    /// (<c>U-review-med</c>, item 1).
+    ///
+    /// <para>It is a difference rather than the counter itself because the counter lives across
+    /// episodes and what belongs to THIS closure is only its growth since. A record written before
+    /// this unit carries no baseline and is measured from zero, which counts the whole of the
+    /// account's accumulated gap against it — longer, never shorter.</para>
+    /// </summary>
+    static TimeSpan UnverifiedFor(LossBreachRecord breach, ClockReading clock)
+    {
+        var since = clock.Unverified - (breach.ClockUnverified ?? TimeSpan.Zero);
+        return since > TimeSpan.Zero ? since : TimeSpan.Zero;
     }
 
     /// <summary>
@@ -3619,6 +3740,11 @@ public sealed class TradingGateway : IAsyncDisposable
             // right, and every reader uses them instead of whatever is set when it asks.
             MinClosure = LossReopen.ClosureOf(Settings.Risk.LossMinClosureHours),
             StrikeWindowDays = Settings.Risk.LossStrikeWindowDays,
+
+            // AND THE BASELINE THE CLOSURE'S RESTART PENALTY IS MEASURED FROM. The counter is the
+            // account's and lives across episodes; what this closure is charged is how much it grows
+            // from here. See UnverifiedFor.
+            ClockUnverified = ClockAsRead(account, at).Unverified,
             Realized = reading.Realized,
             Unrealized = reading.Unrealized,
             FeesUnknownFills = reading.FeesUnknownFills,

@@ -126,23 +126,66 @@ public static class LossReopen
             : $"{span.TotalHours:0.#} hours";
 
     /// <summary>
-    /// THE HIGH-WATER MARK OF THE GATEWAY'S OWN CLOCK, while anything is closed:
-    /// <c>loss_clock_high_water:{connector}:{account}</c>.
+    /// A STEP OF THE CLOCK, IN THE UNIT THAT READS. <see cref="Hours"/> is the closure's own wording
+    /// and is always hours, which turns a step of ninety seconds into "0 hours"; a clock step is
+    /// anything from a minute to a year, so it says minutes below the hour and hours above it.
+    /// </summary>
+    public static string Step(TimeSpan span) =>
+        span < TimeSpan.FromHours(1)
+            ? $"{span.TotalMinutes:0.#} minutes"
+            : $"{span.TotalHours:0.#} hours";
+
+    /// <summary>
+    /// THE MARK OF THE GATEWAY'S OWN CLOCK, while anything is closed:
+    /// <c>loss_clock_high_water:{connector}:{account}</c>. It carries TWO readings of the same tick
+    /// and the time this gateway has declined to count, and a closure is held against all three.
     ///
     /// <para>Every instant this unit reasons about comes from <c>GatewayOptions.Clock</c>, and a
-    /// machine clock can be set backwards — by a person, by an NTP correction, by a restored image.
-    /// Eligibility alone would be satisfied by moving the clock forward a day; refusing that is what
-    /// this mark is for, and it is monotone on disk rather than in memory because a restart is the
-    /// cheapest way to forget an in-memory one.</para>
+    /// machine clock can be moved — by a person, by an NTP correction, by a restored image. The mark
+    /// is on disk rather than in memory because a restart is the cheapest way to forget an in-memory
+    /// one, and a restart is exactly what follows a clock change.</para>
     ///
-    /// <para>A clock that steps FORWARD is allowed and only ever leaves things closed longer: it
-    /// advances the mark, and the eligibility instant it is compared against does not move.</para>
+    /// <para><b>A step FORWARD used to be ordinary, and it was not.</b> The mark refused a reading
+    /// below itself and nothing else, so ONE forward step past the eligibility instant ended a
+    /// closure on the very next tick with no time having passed at all: the mark rose, no suspect
+    /// row was written, and the only remaining test — <c>at &lt; eligible</c> — had just been
+    /// satisfied by the jump (REVIEW 2026-09-16, finding 6, probe <c>C4</c>). What both this comment
+    /// and <c>docs/CONTRACTS.md</c> used to say — that a forward step "only ever leaves things
+    /// closed longer" — was a claim about the code that the code did not keep.</para>
+    ///
+    /// <para><b>So the mark carries a MONOTONE reading beside the wall one</b>
+    /// (<see cref="LossClockMark.Monotone"/>, from the same <see cref="TimeProvider"/> — in
+    /// production <c>Stopwatch</c>'s counter, which nothing can set). Within one run the two have to
+    /// move together: a wall step larger than the monotone elapse by more than
+    /// <see cref="ForwardSlack"/> is a clock somebody moved, and it is refused and recorded exactly
+    /// as a backward one is.</para>
+    ///
+    /// <para><b>Across a RESTART the two readings cannot be compared at all</b> — a monotone
+    /// counter's origin is its own process's — so the mark names the run that wrote it
+    /// (<see cref="LossClockMark.Run"/>) and the first tick of a new run writes no suspect row.
+    /// What it does instead is decline to CREDIT the gap it did not see: the wall step across the
+    /// downtime is added to <see cref="LossClockMark.Unverified"/>, and every closure standing at
+    /// the time has its eligibility instant moved by that much. The closure is lengthened rather
+    /// than shortened, which is this line's direction everywhere.</para>
     /// </summary>
     public static string ClockKey(string connectorId, string account) =>
         $"loss_clock_high_water:{Scope(connectorId, account)}";
 
     /// <summary>
-    /// WRITTEN ONCE, THE FIRST TIME A TICK SEES THE CLOCK BELOW ITS OWN MARK:
+    /// HOW FAR THE WALL CLOCK MAY RUN AHEAD OF THE MONOTONE READING BEFORE IT IS SUSPECT — four
+    /// watch intervals, 60 s at the shipped 15 s.
+    ///
+    /// <para>It is a multiple of the watch's own interval rather than a constant because the thing
+    /// being bounded is the gap between two consecutive ticks of THIS watch, and that is what the
+    /// interval is. Four of them, so an ordinary late tick — a loaded machine, a slow platform read,
+    /// a garbage collection — is not a clock anybody moved; and small enough that the smallest step
+    /// worth making (an hour, to bring a 24 h closure inside a working day) is nowhere near it.</para>
+    /// </summary>
+    public static TimeSpan ForwardSlack(TimeSpan watchInterval) =>
+        watchInterval > TimeSpan.Zero ? watchInterval * 4 : TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// WRITTEN ONCE, THE FIRST TIME A TICK SEES A CLOCK IT CANNOT TRUST:
     /// <c>loss_clock_suspect:{connector}:{account}</c>. Once, because the condition repeats every
     /// tick for as long as the clock is wrong and a row per tick is a log, not a fact.
     /// </summary>
@@ -208,6 +251,13 @@ public sealed record LossReopenRecord
     public DateTimeOffset ClockHighWater { get; init; }
 
     /// <summary>
+    /// The wall time this gateway declined to count against this closure — the restart gaps it could
+    /// not verify, which were ADDED to <see cref="EligibleAt"/>. Zero on an installation that never
+    /// went down while the scope was closed, which is the ordinary case.
+    /// </summary>
+    public TimeSpan ClockUnverified { get; init; }
+
+    /// <summary>
     /// The connection the flat reading came from. A position read from before a reconnect is a
     /// memory of a book rather than a reading of it — the rule the breach's own marks follow.
     /// </summary>
@@ -230,20 +280,52 @@ public sealed record LossReopenRecord
     public string Why { get; init; } = "";
 }
 
-/// <summary>The gateway clock's high-water mark, as persisted. One field, and it only goes up.</summary>
+/// <summary>
+/// THE GATEWAY CLOCK'S MARK, AS PERSISTED — the wall reading, the monotone reading taken with it,
+/// the run that took them, and the wall time this gateway has declined to count. See
+/// <see cref="LossReopen.ClockKey"/> for what each one is for.
+/// </summary>
 public sealed record LossClockMark
 {
+    /// <summary>The highest wall instant this gateway has seen while something was closed.</summary>
     public DateTimeOffset At { get; init; }
+
+    /// <summary>
+    /// The monotone counter at the same tick, from <c>GatewayOptions.Clock.GetTimestamp()</c>. It is
+    /// comparable only against a reading from the same run, which is what <see cref="Run"/> says.
+    /// Zero on a mark written before this unit, which <see cref="Run"/> being empty already covers.
+    /// </summary>
+    public long Monotone { get; init; }
+
+    /// <summary>
+    /// The gateway run that wrote this mark. EMPTY means a mark written before <c>U-review-med</c>,
+    /// and such a mark is treated as another run's: its monotone reading is not compared, and the
+    /// step across it is not credited.
+    /// </summary>
+    public string Run { get; init; } = "";
+
+    /// <summary>
+    /// THE WALL TIME THIS GATEWAY COULD NOT VERIFY, accumulated. It grows only across a restart —
+    /// the one gap a monotone counter cannot speak about — and it is added to the eligibility
+    /// instant of every closure standing over it, so a process that was down for a day has not
+    /// served a day of closure.
+    /// </summary>
+    public TimeSpan Unverified { get; init; }
 }
 
 /// <summary>
-/// THE FIRST TIME THE GATEWAY'S CLOCK READ BELOW ITS OWN HIGH-WATER MARK, while something was
-/// closed — written once and never updated.
+/// THE FIRST TIME THE GATEWAY'S CLOCK DID NOT AGREE WITH ITS OWN MARK, while something was closed —
+/// written once and never updated.
 ///
 /// <para>It is a fact about the MACHINE rather than about the account, and it is the one thing in
 /// this episode nobody in the software can put right: a clock that moved is a clock that may move
 /// again, and every instant on every record in this family was taken from it. So it refuses the
 /// reopen, it is said on every surface, and it stays said until the owner deals with it.</para>
+///
+/// <para><b>Two ways it can disagree, and the row says which.</b> BACKWARDS is a reading below the
+/// mark. FORWARD is a reading above it by more than <see cref="LossReopen.ForwardSlack"/> with no
+/// monotone elapse to match — which is the same act in the direction that ENDS a closure rather
+/// than lengthening one, and is therefore the one worth the row.</para>
 /// </summary>
 public sealed record LossClockSuspect
 {
@@ -254,8 +336,23 @@ public sealed record LossClockSuspect
     /// <summary>The highest instant this gateway had already seen.</summary>
     public DateTimeOffset HighWater { get; init; }
 
-    /// <summary>What the clock said instead. Below the mark, which is what makes it suspect.</summary>
+    /// <summary>What the clock said instead: below the mark, or too far above it.</summary>
     public DateTimeOffset Reading { get; init; }
+
+    /// <summary>
+    /// <c>"backwards"</c> or <c>"forward"</c>. EMPTY on a row written before <c>U-review-med</c>,
+    /// when backwards was the only direction this record could describe.
+    /// </summary>
+    public string Direction { get; init; } = "";
+
+    /// <summary>
+    /// What the wall clock moved by and what the monotone counter measured over the same two
+    /// readings, on a FORWARD row — the whole of the evidence, so a reader can check the arithmetic
+    /// rather than take the sentence's word for it. Null on a backwards row.
+    /// </summary>
+    public TimeSpan? Stepped { get; init; }
+
+    public TimeSpan? Measured { get; init; }
 
     /// <summary>The sentence the owner and the agent are shown. Written once, with the row.</summary>
     public string Why { get; init; } = "";
