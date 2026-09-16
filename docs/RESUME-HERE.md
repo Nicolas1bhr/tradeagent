@@ -15,19 +15,18 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `c46a76d` (`U-close-all-win`, product sha `0dbc121`, plus its record), clean, pushed — 2026-09-16 13:55 CEST.** Landed 2026-09-15 in order: `U-flatten-1`
-   `1c5d71f`, `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds` `a816f1a`,
-   `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121` — ten landings, every merge sha's CI GREEN on all four
-   jobs, recorded; the sections are at the end of `BUILD-STATUS.md`. The owner's reopen decision (option B) is fully in the product.
-3. **IN FLIGHT at the time of writing — both RESUMED 2026-09-16 13:50 after the session limit killed them at ~18:30 the evening before (the branch is the handoff):**
-   (a) `u-flatten-3` (worktree `U-flatten-3`, tip `efa239b`, clean; items 1–3 COMMITTED `b058891` `59f5105` `efa239b`; owes the rebase onto `main`, the gate and the report).
-   (b) `u-allocator-2` (worktree `U-allocator-2`, tip `ed13e38`, **schema 21**; items 1–3 COMMITTED `713211c` `23029ff` `ed13e38`; item 4 UNCOMMITTED — `BoundaryStore.cs`,
-   `StrategyStore.cs`, an untracked `RetirementBoundaryTests.cs`). If either dies again: re-brief FRESH from its brief on disk with "read your branch first; judge
-   uncommitted files on their merits; finish, rebase onto `main`, gate, report".
+2. **`main` is `dc44567` (`U-flatten-3`, product sha `c441120`, plus its record and the review brief), clean, pushed — 2026-09-16 14:30 CEST.** Landed 2026-09-15
+   in order: `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`,
+   `U-promote-bounds` `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121`; 2026-09-16: `U-flatten-3`
+   `c441120` — eleven landings, every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`.
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-allocator-2` (worktree `U-allocator-2`, **schema 21**;
+   items 1–3 committed, item 4 was in progress; resumed 2026-09-16 13:50 after the session-limit kill). (b) **The third milestone review of the money path at `c441120`:**
+   a fresh Opus reviewer on `docs/briefs/REVIEW.md` (its worktree `review`, detached; probes on `review-probes-c`; output `docs/REVIEW-2026-09-16.md` in the main
+   worktree, uncommitted until the manager commits it) and Codex `gpt-5.6-sol` read-only in the worktree `review-codex` (answer in the session scratchpad; the manager
+   pastes it under `## Codex` in the review file). Each HIGH becomes a fix unit before any release; MED and LOW together one batch unit; fixes are not re-reviewed.
 4. **Queued in `docs/briefs/`, briefed and NOT dispatched:** `U-press-budget-legs` (test-only, one item — the five multi-leg press fixtures `U-close-all-win` named and
-   did not move; after `U-flatten-3` lands, which touches one of the files). Then the milestone review of the money path on `main` (`docs/HOW-WE-BUILD.md`: one fresh
-   reviewer told to break it at a named sha, Codex read-only in parallel, findings to `docs/REVIEW-<date>.md`) — DUE, the last was 2026-09-06. At most two heavy legs at
-   once, each on its own worktree from `main`; a schema number is assigned here in landing order (22 is next after `U-allocator-2`'s 21).
+   did not move; dispatch when a slot frees). After the review: its fix units. At most two heavy legs at once, each on its own worktree from `main`; a schema number is
+   assigned here in landing order (22 is next after `U-allocator-2`'s 21).
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
