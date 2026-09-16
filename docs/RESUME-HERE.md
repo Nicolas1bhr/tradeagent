@@ -10,20 +10,25 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
 
 ## Do this first
 
-**Session closed 2026-09-15 ~10:30 CEST, the morning after the session limit took both running legs at ~21:40 CEST (the owner: "round off surgically
-what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees exist for the branches in 3. Restart in this order:**
+**Session state at 2026-09-16 18:20 CEST: NOTHING is in flight, `docs/briefs/` is empty, no worktree exists, `main` is clean and pushed.** Restart in this order:
 
-1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
-   merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `e258e64` (`U-approve-gates`, product sha `9aeea56`, plus its record), clean, pushed — 2026-09-16 17:20 CEST.** Sixteen landings since 2026-09-15
-   morning, every merge sha's CI green on all four jobs where recorded — the list and the sections are at the end of `BUILD-STATUS.md`; the third milestone review at
-   `c441120` is landed (`docs/REVIEW-2026-09-16.md`; probes on `review-probes-c` @ `58aa4fa`); **all five HIGH findings are fixed on `main`** (`U-grant-liveness`,
-   `U-scope-identity` at schema 22, `U-approve-gates`). The MED batch is the last fix unit.
-3. **IN FLIGHT at the time of writing (after a kill, read the branch first — the commits are the handoff):** `u-review-med` (worktree, cut from the scope-identity tip
-   `f16c485`; MED 6+7+8 as one batch: the monotone clock term, the per-order limits inside the gate, the sighting keyed by scope): a fresh builder on its brief. Re-brief
-   FRESH from the brief on disk after a kill: "read your branch first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
-4. **Queued:** nothing briefed. When `U-approve-gates` and `U-review-med` are on `main`, every finding of the third review is fixed; the next work is the owner's call
-   (a release, the box, the paper loop). At most two heavy legs at once; 23 is the next schema number.
+1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md`, `docs/REVIEW-2026-09-16.md` and the `## 2026-09-15` and `## 2026-09-16` sections at the end of `BUILD-STATUS.md`**
+   (one per landing, every merge sha's CI verdict recorded).
+2. **`main` is `6e091de` (`U-review-med`, product sha `f9f5878`, plus its record). Schema 22.** Seventeen landings since 2026-09-15 morning, in order: `U-flatten-1`,
+   `U-allocator-1` (20), `U-peer-row-ubuntu`, `U-flatten-2`, `U-decision-hook-race`, `U-promote-bounds`, `U-reopen-1`, `U-loopback-listener-mac`, `U-reopen-2`,
+   `U-close-all-win`, `U-flatten-3`, `U-allocator-2` (21), `U-press-budget-legs`, the third milestone review at `c441120` (five HIGH, three MED, all executed),
+   `U-grant-liveness`, `U-scope-identity` (22), `U-approve-gates`, `U-review-med` — every finding of the review is fixed on `main`; every merge sha's CI green on
+   all four jobs where recorded (`f9f5878`'s verdict is the last one owed). The owner's reopen decision (option B, "exquisite logic and edge case handling") is in the
+   product: `U-reopen-1`/`-2`, hardened by the review's MED 6.
+3. **Nothing is in flight.** The probes branch `review-probes-c` @ `58aa4fa` stays (the fix units' REDs came from it); every other branch merged is left in place
+   (deleting merged branches is not part of the grant).
+4. **The queue is EMPTY and the next work is the owner's call.** Three routes, none briefed: (a) **a release** — `docs/HOW-WE-BUILD.md` makes the milestone review the last
+   step before a release is cut, and it is done with its fixes landed; a release needs the Windows box (the ATAS adapter compiles only there; CI's artifact is
+   `NO-ATAS-ADAPTER` and must never be published) and the 17 landings have NOT been run on the box or on a screen; (b) **the box verification** of what landed
+   (the bridge at protocol 3, the Safety page's new cards — Capital, Reopen after review, the loss and valuation settings — seen once); (c) **the paper loop** — the
+   gap every record names: no runner turns a `StrategyIntent` into a `PlaceIntent`, so the dispatch gate, the ceiling, the freshness refusal and the flatten are
+   bound end to end against a deployment that does not exist; that line needs a read-only survey and one Astra consult before it is briefed (the unit order after
+   `U-allocator` in `docs/COUNCIL.md`). The review's seven UNVERIFIED items are listed in `docs/REVIEW-2026-09-16.md` and are not fix units.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
