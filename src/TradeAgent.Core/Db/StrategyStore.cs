@@ -247,6 +247,21 @@ public sealed class StrategyStore(Database db)
     /// not hold answers an empty list, because a version it has never accepted has no ancestry here to
     /// report.</para>
     /// </summary>
+    /// <summary>
+    /// EVERY VERSION THAT DECLARED THIS ONE AS ITS PARENT, newest first — the successors a replacement
+    /// policy is about.
+    ///
+    /// <para>One level and not a subtree: "bounded replacement" (<c>docs/COUNCIL.md</c>:201) is about a
+    /// candidate and the thing put up in its place, and a grandchild answers to its own parent.</para>
+    /// </summary>
+    public IReadOnlyList<StrategyVersionRow> ChildrenOf(string versionId) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {VersionCols} FROM strategy_version WHERE parent_version_id=$id "
+            + "ORDER BY created_at DESC, id DESC", ("$id", versionId));
+        return (IReadOnlyList<StrategyVersionRow>)ReadVersions(c);
+    });
+
     public IReadOnlyList<string> Ancestry(string versionId)
     {
         var chain = new List<string>();

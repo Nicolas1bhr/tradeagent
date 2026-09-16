@@ -94,6 +94,31 @@ public static class BoundaryDisposition
 
     /// <summary>The policy's answer is no. Not a refusal by a director — no director can answer at all.</summary>
     public const string Hold = "hold";
+
+    /// <summary>
+    /// A RETIREMENT BOUNDARY'S "YES": this candidate takes no new assignments from now on.
+    ///
+    /// <para><c>docs/COUNCIL.md</c>:223-224, and every clause of that sentence is a thing this
+    /// disposition does NOT do. It erases no history: no trial, run, verdict, promotion or allocation
+    /// row is deleted or rewritten by it. It cancels no reconciliation. It does not kill a deployed
+    /// strategy, "which has its own lifecycle" — a retired candidate's standing allocation is exactly
+    /// the row it was, and the dispatch gate goes on enforcing it. What it does is FENCE: a new trial
+    /// and a new verdict for that version are refused in words.</para>
+    ///
+    /// <para>It is therefore not a new permission and nothing agent-reachable touches it: :225,
+    /// "retirement executes an already-authorised lifecycle policy — it is not a new agent-reachable
+    /// permission operation". Code applies it, at the deadline, from the default frozen at open.</para>
+    /// </summary>
+    public const string Retire = "retire";
+
+    /// <summary>
+    /// A RETIREMENT BOUNDARY'S "NO": the candidate goes on exactly as it was. The default for a
+    /// candidate nothing has replaced, frozen at open like every other default.
+    /// </summary>
+    public const string Keep = "keep";
+
+    /// <summary>Whether a word is one this build writes. A disposition a query filters on is not free text.</summary>
+    public static bool IsKnown(string? word) => word is Deploy or Hold or Retire or Keep;
 }
 
 /// <summary>
@@ -236,6 +261,56 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
 
         return new BoundaryOpened(fresh, ById(id)!);
     });
+
+    /// <summary>
+    /// PUTS ONE RESEARCH CANDIDATE UP FOR RETIREMENT — the shape <c>docs/COUNCIL.md</c>:222 asks for,
+    /// through the machine that already exists and not a second one.
+    ///
+    /// <para>"A retirement-candidate EVENT: evidence frozen, two sealed assessments, one bounded
+    /// challenge, code applies the disposition." Every one of those is <see cref="Open"/>'s already: the
+    /// evidence is written on the row at open and never afterwards, the pair is sealed by
+    /// <see cref="Assess"/>, the challenge is bounded by <see cref="Challenge"/>, and
+    /// <see cref="ApplyDue"/> is the code that applies it. A second table for retirement would be two
+    /// records of one protocol.</para>
+    ///
+    /// <para><b>The candidate is a strategy VERSION, and that is a choice, stated.</b> The doctrine's
+    /// subject at :219-222 is a candidate AGENT with a heritable definition — model, mission, tools,
+    /// memory seed — and no such entity exists in this build. A version is the candidate this product
+    /// does have: it has a declared parentage, a comparable trial history and a promotion record, which
+    /// is what a selection protocol needs to select over. The parts of :219-222 whose subject is a team
+    /// or a candidate agent are NOT built here; <c>docs/CONTRACTS.md</c> names them as waiting on
+    /// one.</para>
+    ///
+    /// <para><b>The default is the policy's, computed now and frozen on the row: BOUNDED REPLACEMENT.</b>
+    /// A candidate is retired when a SUCCESSOR has been promoted — a version that declared this one as
+    /// its parent and whose promotion STANDS — and is otherwise kept. That is :201's "bounded
+    /// replacement" and it is the only reading under which :223's "never kills a deployed strategy" has
+    /// anything to say: a retired candidate may perfectly well still be the one with capital behind it,
+    /// because a ceiling is lowered by recording a fresh allocation and by nothing else. Retiring the
+    /// parent takes none of it away.</para>
+    ///
+    /// <para>The successor's standing is read through <c>Promotions.Standing</c> and never as "a
+    /// promotion row exists", the reading <c>Allocations.Record</c> takes for the same reason: a
+    /// successor promoted on evidence TradeAgent has since withdrawn has replaced nothing.</para>
+    ///
+    /// <para><b>No pipe op and no <c>trade</c> verb reaches this,</b> like every other operator
+    /// authority. It is in-process only, and nothing in this build calls it automatically: the policy
+    /// that decides WHEN a candidate is put up is the part that needs the entity that does not exist.
+    /// What is built is the event, the disposition and the fence.</para>
+    /// </summary>
+    public BoundaryOpened OpenRetirement(string versionId, long revision, string evidence,
+        DateTimeOffset at) =>
+        Open(BoundaryKind.Retirement, versionId, revision,
+            Replaced(versionId) ? BoundaryDisposition.Retire : BoundaryDisposition.Keep,
+            evidence, at);
+
+    /// <summary>Whether a successor of this candidate has been promoted and that promotion still stands.</summary>
+    bool Replaced(string versionId)
+    {
+        var promotions = new Promotions(db);
+        return new StrategyStore(db).ChildrenOf(versionId)
+            .Any(child => promotions.Standing(child.Id).IsPromoted);
+    }
 
     // ---- the two sealed assessments -----------------------------------------------------------------
 
@@ -549,6 +624,64 @@ public sealed class CouncilBoundaries(Database db, Func<TimeSpan>? window = null
 
     static BoundarySubmissionRow ReadSubmission(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), Sql.Time(r.GetValue(4)));
+}
+
+/// <summary>
+/// WHETHER A CANDIDATE HAS BEEN RETIRED, COMPUTED AT READ TIME FROM THE BOUNDARY LEDGER.
+///
+/// <para>There is no <c>retired</c> column and no retirement table, for the reason
+/// <c>strategy_promotion</c> has no <c>invalidated</c> column: the record of what was decided IS the
+/// boundary row, and a second copy of it would be a state some sweep has to keep true. The newest
+/// disposed retirement boundary over an entity is the one that answers, so a later <c>keep</c>
+/// reinstates a candidate without erasing that it was once put up — which is :223, "it never erases
+/// history", in the shape of the read rather than as a promise.</para>
+///
+/// <para><b>What a retirement fences is NEW ASSIGNMENTS and nothing else.</b> A retired candidate
+/// registers no further trial and is charged no further verdict. Its existing trials, runs, verdicts
+/// and promotions stand unchanged; its standing capital allocation stands unchanged and the dispatch
+/// gate goes on enforcing it, because a deployed strategy "has its own lifecycle"; no reconciliation is
+/// cancelled. There is no method on this class or on <see cref="CouncilBoundaries"/> that deletes or
+/// updates any of those rows, which is what makes the sentence true rather than intended.</para>
+/// </summary>
+public sealed class Retirements(Database db)
+{
+    const string Cols =
+        "id, kind, entity, revision, opened_at, deadline_at, default_disposition, evidence, "
+        + "disposition, disposed_at, disposed_by";
+
+    /// <summary>The newest retirement boundary over this entity that code has disposed, or null.</summary>
+    public BoundaryRow? Standing(string entity) => db.Read(_ =>
+    {
+        using var c = db.Cmd(
+            $"SELECT {Cols} FROM boundary_event WHERE kind=$kind AND entity=$entity "
+            + "AND disposition IS NOT NULL ORDER BY disposed_at DESC, revision DESC LIMIT 1",
+            ("$kind", BoundaryKind.Retirement), ("$entity", entity));
+        using var r = c.ExecuteReader();
+        return r.Read()
+            ? new BoundaryRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetInt64(3),
+                Sql.Time(r.GetValue(4)), Sql.Time(r.GetValue(5)), r.GetString(6), r.GetString(7),
+                Sql.S(r.GetValue(8)), Sql.TimeN(r.GetValue(9)), Sql.S(r.GetValue(10)))
+            : null;
+    });
+
+    /// <summary>Whether this candidate takes no new assignments. Nothing else follows from it.</summary>
+    public bool IsRetired(string entity) =>
+        Standing(entity)?.Disposition == BoundaryDisposition.Retire;
+
+    /// <summary>
+    /// The refusal a retired candidate's next assignment reads, naming what retirement did NOT do — so
+    /// that a role reading it does not go looking for evidence it believes has been taken away.
+    /// </summary>
+    public string? Refusal(string entity) =>
+        Standing(entity) is { Disposition: BoundaryDisposition.Retire } row
+            ? $"version {entity} was retired by boundary `{row.Id}` at {row.DisposedAt:u}, so it takes "
+              + "no new research assignment: no further trial is registered for it and no further "
+              + "verdict is charged. Nothing of its record has been removed — every trial, run, verdict "
+              + "and promotion it has is still in the ledger, any capital allocated to it still stands "
+              + "and the dispatch gate still enforces it, and no reconciliation was cancelled. "
+              + "Retirement fences what comes next and nothing else. A successor declares this version "
+              + "as its parent and is charged to the same campaign lineage."
+            : null;
 }
 
 /// <summary>

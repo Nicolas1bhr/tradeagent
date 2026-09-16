@@ -508,6 +508,11 @@ public sealed class CampaignStore(Database db)
     /// </summary>
     public string? TrialRefusal(long campaignId, string versionId, string kind)
     {
+        // THE FENCE COMES FIRST AND IT IS NOT A BUDGET. A retired candidate takes no new assignment at
+        // all, so a fixture run of one is refused here too — the exemption above is about the trial
+        // budget, and this is about whether there is an assignment to make.
+        if (new Retirements(db).Refusal(versionId) is { } retired) return retired;
+
         if (kind == EvaluationClass.Fixture) return null;
         if (ById(campaignId) is null) return null;
 
@@ -646,6 +651,13 @@ public sealed class CampaignStore(Database db)
         if (Registered(campaignId, versionId, runId))
             return new TrialRegistered(true, "", charged, spent.Run, campaign.TrialBudget);
 
+        // AND THE RETIREMENT FENCE, AFTER IT. `docs/COUNCIL.md`:223: retirement "stops new assignments
+        // and fences attempts". A trial already on the table is not a new assignment — it is a row that
+        // is already there, and refusing it would make a restart look like something a retirement had
+        // taken away, which is exactly what a retirement never does.
+        if (new Retirements(db).Refusal(versionId) is { } retired)
+            return new TrialRegistered(false, retired, false, spent.Run, campaign.TrialBudget);
+
         // THE GATE, AND IT IS THIS TRANSACTION'S OWN READING RATHER THAN THE CALLER'S.
         if (Refusal(rule, spent, made: true) is { } why)
             return new TrialRegistered(false, why, false, spent.Run, campaign.TrialBudget);
@@ -766,6 +778,13 @@ public sealed class CampaignStore(Database db)
 
         if (VerdictCharged(campaignId, versionId))
             return new VerdictCharged(true, "", spent, campaign.VerdictBudget);
+
+        // THE RETIREMENT FENCE, AFTER the already-charged answer and before the budget. A verdict the
+        // campaign has already paid for stays obtainable — the charge is taken before the computation,
+        // and a retirement must not turn a paid-for verdict into an unreachable one. What is refused is
+        // a NEW one (`docs/COUNCIL.md`:223, "stops new assignments").
+        if (new Retirements(db).Refusal(versionId) is { } retired)
+            return new VerdictCharged(false, retired, spent, campaign.VerdictBudget);
 
         if (!campaign.IsOpen)
             return new VerdictCharged(false,
