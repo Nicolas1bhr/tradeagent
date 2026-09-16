@@ -40,7 +40,8 @@ public static class ValuationLoss
     public const string ExitPrefix = "loss_valuation_exit:";
 
     /// <summary>The account as this app identifies one: the platform it is on, and then its id.</summary>
-    public static string Scope(string connectorId, string account) => $"{connectorId}:{account}";
+    public static string Scope(string connectorId, string account) =>
+        $"{LossBreach.Part(connectorId)}:{LossBreach.Part(account)}";
 
     /// <summary>
     /// ONE INSTRUMENT'S EPISODE: <c>valuation_unavailable:{connector}:{account}:{symbol}</c>.
@@ -52,7 +53,7 @@ public static class ValuationLoss
     /// stretch, so the stretch is what the row is about.</para>
     /// </summary>
     public static string KeyFor(string connectorId, string account, string symbol) =>
-        $"{Prefix}{Scope(connectorId, account)}:{symbol}";
+        $"{Prefix}{Scope(connectorId, account)}:{LossBreach.Part(symbol)}";
 
     /// <summary>The episode's identity, as a stamp a key can carry: the instant it began.</summary>
     public static string EpisodeStamp(DateTimeOffset since) =>
@@ -73,7 +74,7 @@ public static class ValuationLoss
     /// what the key is.</para>
     /// </summary>
     public static string ExitKey(string connectorId, string account, string symbol, DateTimeOffset since) =>
-        $"{ExitPrefix}{Scope(connectorId, account)}:{symbol}:{EpisodeStamp(since)}";
+        $"{ExitPrefix}{Scope(connectorId, account)}:{LossBreach.Part(symbol)}:{EpisodeStamp(since)}";
 
     /// <summary>
     /// THE BOUND AS A DURATION, from the owner's number in minutes. At or below zero is OFF — no

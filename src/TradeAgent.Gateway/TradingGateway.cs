@@ -1934,11 +1934,19 @@ public sealed class TradingGateway : IAsyncDisposable
     /// for that record (<see cref="LossReopen"/>), so the question "what is closed" is a scan of
     /// every breach row this account has, minus the ones that have been let back in.</para>
     ///
-    /// <para><b>The receipt is looked up from the KEY, before the row is parsed.</b> The key already
-    /// carries the day and the symbol, which is everything the receipt's own key needs — so a rotted
-    /// row from a closure that ENDED weeks ago cannot refuse today's orders, and a rotted row from
-    /// one that has NOT ended still does, which is <see cref="ReadBreach"/>'s rule and the whole
-    /// reason it throws.</para>
+    /// <para><b>The scope comes off the ROW</b> (<c>U-scope-identity</c>). It used to be read out of
+    /// the key's shape with <c>Split(':')</c>, so a closure on a venue-qualified instrument
+    /// (<c>ES:H6</c>, <c>BINANCE:BTCUSDT</c>) or on an account id a prop firm qualifies made five
+    /// parts instead of four and was SKIPPED here — written, on disk, never reopened, and invisible
+    /// to every reader that goes through this one, so the closed scope went on trading (REVIEW
+    /// 2026-09-16, finding 1). The record already carried its own <c>Account</c>, <c>Symbol</c> and
+    /// <c>Day</c>; the key is now only what it is filed under.</para>
+    ///
+    /// <para><b>A row it cannot parse is judged by its ADDRESS.</b> That is the one thing left to ask
+    /// with, and it keeps the rule the key lookup was there for: a rotted row from a closure that
+    /// ENDED has a receipt and cannot refuse today's orders, and a rotted row from one that has NOT
+    /// ended still refuses, which is <see cref="ReadBreach"/>'s rule and the whole reason it
+    /// throws.</para>
     /// </summary>
     public IReadOnlyList<LossBreachRecord> OpenClosures(string accountId)
     {
@@ -1954,14 +1962,49 @@ public sealed class TradingGateway : IAsyncDisposable
         }
 
         var open = new List<LossBreachRecord>();
-        foreach (var (key, _) in rows)
+        foreach (var (key, value) in rows)
         {
-            if (LossBreach.ScopeOf(key, accountId) is not { } scope) continue;
+            var row = TryParseBreach(value);
+            if (ScopeOfRow(key, accountId, row) is not { } scope) continue;
             if (_db.GetKv(LossReopen.KeyFor(Connector.Id, accountId, scope.Day, scope.Symbol)) is not null) continue;
-            if (ReadBreach(key) is { } rec) open.Add(rec);
+
+            if (row is not null) { open.Add(row); continue; }
+            if (ReadBreach(key) is { } rec) open.Add(rec);   // throws on a standing closure it cannot read
         }
 
         return [.. open.OrderBy(x => x.ConfirmedAt)];
+    }
+
+    /// <summary>The row, or null when this build cannot make a record of it. It never throws.</summary>
+    static LossBreachRecord? TryParseBreach(string value)
+    {
+        try { return Json.Read<LossBreachRecord>(value); }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
+    /// WHICH SCOPE ONE BREACH ROW IS ABOUT — off the ROW, and off the key only when the row cannot
+    /// say. Null means it is not this account's at all.
+    ///
+    /// <para>This is the whole of <c>U-scope-identity</c>'s first item in one place: every reader of
+    /// the <c>loss_breach:</c> family asks THIS, and none of them parses a key. The row is the truth
+    /// because the row is what the writer composed — the key is an address, and an address made out
+    /// of names a platform chose (<c>ES:H6</c>, an account id with a colon in it) cannot be taken
+    /// apart again by counting delimiters.</para>
+    ///
+    /// <para>A row that names a DIFFERENT account is not this account's closure, whatever it is
+    /// filed under. A row that names none, or that this build cannot parse at all, is judged by its
+    /// address, because that is the only thing left — and <see cref="LossBreach.ScopeOf"/> decodes
+    /// the escaping the key was minted with, so it is right about every name too.</para>
+    /// </summary>
+    static (string Day, string? Symbol)? ScopeOfRow(string key, string accountId, LossBreachRecord? row)
+    {
+        if (row is { Account.Length: > 0, Day.Length: > 0 })
+            return string.Equals(row.Account, accountId, StringComparison.Ordinal)
+                ? (row.Day, row.Symbol)
+                : null;
+
+        return LossBreach.ScopeOf(key, accountId);
     }
 
     /// <summary>
@@ -2024,19 +2067,21 @@ public sealed class TradingGateway : IAsyncDisposable
         LossBreachRecord? latest = null;
         foreach (var (key, value) in rows)
         {
-            if (LossBreach.ScopeOf(key, accountId) is not { } scope) continue;
+            // THE SCOPE COMES OFF THE ROW (`U-scope-identity`), so a breach on a venue-qualified
+            // instrument is one this reader can see — and `APPROVAL_PREDATES_LOSS_BREACH`, which is
+            // judged on what this answers, can see it too.
+            var rec = TryParseBreach(value);
+            if (ScopeOfRow(key, accountId, rec) is not { } scope) continue;
             if (!string.Equals(scope.Symbol, symbol, StringComparison.Ordinal)) continue;
 
-            LossBreachRecord? rec;
-            try { rec = Json.Read<LossBreachRecord>(value); }
-            catch (Exception ex)
+            if (rec is null)
             {
-                _log.TryEngineering("Gateway", "loss_breach_unreadable", "error", ex: ex,
+                _log.TryEngineering("Gateway", "loss_breach_unreadable", "error",
                     metadataJson: Json.Write(new { key }));
                 continue;
             }
 
-            if (rec is not null && (latest is null || rec.ConfirmedAt > latest.ConfirmedAt)) latest = rec;
+            if (latest is null || rec.ConfirmedAt > latest.ConfirmedAt) latest = rec;
         }
 
         return latest;
@@ -2932,7 +2977,8 @@ public sealed class TradingGateway : IAsyncDisposable
                 metadataJson: Json.Write(new { breach = LossBreach.KeyFor(breach) }));
             return new LossHoldRecord
             {
-                Account = breach.Account, Connector = Connector.Id, Day = breach.Day, Symbol = breach.Symbol,
+                Account = breach.Account, Connector = Connector.Id, Mode = Settings.Mode,
+                Day = breach.Day, Symbol = breach.Symbol,
                 BreachKey = LossBreach.KeyFor(breach),
                 Why = $"TradeAgent could not read whether this closure is being held for you to look at "
                       + $"({ex.Message}), and it will not let the account back in over a row it cannot read"
@@ -3108,19 +3154,16 @@ public sealed class TradingGateway : IAsyncDisposable
 
         foreach (var (key, value) in rows)
         {
-            if (LossBreach.ScopeOf(key, account) is not { } scope) continue;
+            var rec = TryParseBreach(value);
+            if (ScopeOfRow(key, account, rec) is not { } scope) continue;
             if (!LossHold.InWindow(scope.Day, now, window)) continue;
 
-            LossBreachRecord? rec;
-            try { rec = Json.Read<LossBreachRecord>(value); }
-            catch (Exception)
+            if (rec is null)
             {
                 lines.Add((DateTimeOffset.MinValue,
                     $"{scope.Symbol ?? "the account"} on {scope.Day} — TradeAgent cannot read that row"));
                 continue;
             }
-
-            if (rec is null) continue;
             lines.Add((rec.ConfirmedAt,
                 $"{rec.Symbol ?? "the account"} reached the budget at "
                 + $"{rec.ConfirmedAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC; rule: {RuleFor(rec)}; {Outcome(rec)}"));
@@ -3384,6 +3427,7 @@ public sealed class TradingGateway : IAsyncDisposable
             {
                 Account = record.Account,
                 Connector = Connector.Id,
+                Mode = Settings.Mode,
                 Day = record.Day,
                 Symbol = record.Symbol,
                 BreachKey = key,
@@ -3415,11 +3459,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// rows themselves and off nothing else.
     ///
     /// <para>The SCOPE is the match: the account's own closures (<c>Symbol</c> null) count only
-    /// against the account, and one instrument's only against that instrument. The window is UTC
-    /// DATES, taken from the key without parsing the row, so a record this build cannot read still
-    /// counts as the breach it plainly is; a row that is unreadable AND inside the window is counted
-    /// through its key and named in the engineering log, because a scope whose history cannot be read
-    /// is not a scope with no history.</para>
+    /// against the account, and one instrument's only against that instrument. The scope and the UTC
+    /// date come off the ROW (<c>U-scope-identity</c>), falling back to the key only for a row this
+    /// build cannot read — which still counts as the breach it plainly is, and is named in the
+    /// engineering log, because a scope whose history cannot be read is not a scope with no
+    /// history.</para>
     ///
     /// <para>Strictly EARLIER than the record being written, so the row this pass has just written
     /// cannot count itself even if the caller forgot to exclude its key.</para>
@@ -3431,18 +3475,17 @@ public sealed class TradingGateway : IAsyncDisposable
         foreach (var (key, value) in _db.KvStartingWith(LossBreach.AccountPrefix(record.Account)))
         {
             if (string.Equals(key, thisKey, StringComparison.Ordinal)) continue;
-            if (LossBreach.ScopeOf(key, record.Account) is not { } scope) continue;
+            var rec = TryParseBreach(value);
+            if (ScopeOfRow(key, record.Account, rec) is not { } scope) continue;
             if (!string.Equals(scope.Symbol, record.Symbol, StringComparison.Ordinal)) continue;
             if (!LossHold.InWindow(scope.Day, record.ConfirmedAt, windowDays)) continue;
 
-            LossBreachRecord? rec;
-            try { rec = Json.Read<LossBreachRecord>(value); }
-            catch (Exception ex)
+            if (rec is null)
             {
-                // A ROW THAT CANNOT BE READ IS STILL A BREACH THAT HAPPENED. Its key says which
+                // A ROW THAT CANNOT BE READ IS STILL A BREACH THAT HAPPENED. Its address says which
                 // scope and which UTC date, which is the whole of what the count needs; dropping it
                 // would let a rotted row buy an extra strike.
-                _log.TryEngineering("Gateway", "loss_strike_row_unreadable", "warn", ex: ex,
+                _log.TryEngineering("Gateway", "loss_strike_row_unreadable", "warn",
                     metadataJson: Json.Write(new { key }));
                 found.Add(new LossBreachRecord
                 {

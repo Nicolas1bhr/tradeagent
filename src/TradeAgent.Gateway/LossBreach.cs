@@ -46,21 +46,57 @@ public static class LossBreach
         at.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     /// <summary>
+    /// ONE NAME, MADE SAFE TO PUT BETWEEN TWO COLONS — and the whole of this unit's key half.
+    ///
+    /// <para>A key is an ADDRESS. The names in it are the PLATFORM's strings and never ones
+    /// TradeAgent chooses: <c>ES:H6</c>, <c>BINANCE:BTCUSDT</c> and an account id a prop firm
+    /// qualifies with its own venue all carry the character the key is built out of, so
+    /// <c>loss_breach:ACC:ES:H6:2026-03-10</c> and <c>loss_breach:ACC:ES:H6</c>-the-account's own day
+    /// were the same row — one scope's closure silently overwriting another's, or silently not being
+    /// written at all (REVIEW 2026-09-16, finding 1 and UNVERIFIED 2).</para>
+    ///
+    /// <para><b>Escaped, not refused.</b> The alternative the review offered — refuse a name that
+    /// contains the delimiter at the point the key is minted — would remove the loss budget from
+    /// exactly the venues whose own convention is <c>VENUE:SYMBOL</c>, which is a protection deleted
+    /// rather than a defect fixed. <c>%</c> becomes <c>%25</c> and <c>:</c> becomes <c>%3A</c>: a
+    /// total, reversible mapping, so no name is ever unaddressable and no two names ever share an
+    /// address. A name that contains NEITHER character — every name any connector in this build
+    /// produces — maps to itself, so every key and every receipt already on disk is byte for byte
+    /// the key it was and nothing is orphaned by this change.</para>
+    /// </summary>
+    public static string Part(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return value.Contains('%', StringComparison.Ordinal) || value.Contains(':', StringComparison.Ordinal)
+            ? value.Replace("%", "%25", StringComparison.Ordinal).Replace(":", "%3A", StringComparison.Ordinal)
+            : value;
+    }
+
+    /// <summary>The name back out of <see cref="Part"/>. Undone in the reverse order it was done.</summary>
+    public static string Name(string part)
+    {
+        ArgumentNullException.ThrowIfNull(part);
+        return part.Contains('%', StringComparison.Ordinal)
+            ? part.Replace("%3A", ":", StringComparison.Ordinal).Replace("%25", "%", StringComparison.Ordinal)
+            : part;
+    }
+
+    /// <summary>
     /// THE DAY'S OWN CLOSURE: <c>loss_breach:{account}:{utcDay}</c>. The account is in the key
     /// because a budget is the ACCOUNT's, and a second account on the same platform has lost nothing
     /// because this one has.
     /// </summary>
-    public static string DayKey(string account, DateTimeOffset at) => $"{Prefix}{account}:{Stamp(at)}";
+    public static string DayKey(string account, DateTimeOffset at) => $"{Prefix}{Part(account)}:{Stamp(at)}";
 
     /// <summary>
     /// ONE SYMBOL'S CLOSURE: <c>loss_breach:{account}:{symbol}:{utcDay}</c>. Opens and adds on that
     /// symbol are refused until TradeAgent reopens it; everything else on the account is untouched.
     /// </summary>
     public static string SymbolKey(string account, string symbol, DateTimeOffset at) =>
-        $"{Prefix}{account}:{symbol}:{Stamp(at)}";
+        $"{Prefix}{Part(account)}:{Part(symbol)}:{Stamp(at)}";
 
     /// <summary>What a scan for one account's closures asks for.</summary>
-    public static string AccountPrefix(string account) => $"{Prefix}{account}:";
+    public static string AccountPrefix(string account) => $"{Prefix}{Part(account)}:";
 
     /// <summary>
     /// THE KEY ONE RECORD IS FILED UNDER, off the RECORD's own day and never off the clock. A
@@ -73,8 +109,8 @@ public static class LossBreach
     {
         ArgumentNullException.ThrowIfNull(breach);
         return breach.Symbol is null
-            ? $"{Prefix}{breach.Account}:{breach.Day}"
-            : $"{Prefix}{breach.Account}:{breach.Symbol}:{breach.Day}";
+            ? $"{Prefix}{Part(breach.Account)}:{breach.Day}"
+            : $"{Prefix}{Part(breach.Account)}:{Part(breach.Symbol)}:{breach.Day}";
     }
 
     /// <summary>
@@ -130,11 +166,17 @@ public static class LossBreach
     /// WHAT ONE BREACH KEY CLOSES AND WHICH DAY IT WAS WRITTEN ON — or null when the key is not this
     /// account's at all.
     ///
-    /// <para>Four colon-separated parts is a symbol key and three is the day's own. The parse is
-    /// here rather than at the call site so that the two shapes are decided by the one piece of code
-    /// that writes them. A symbol carrying a colon would not survive it — no venue in the catalogue
-    /// quotes one, and the alternative, a second index row listing the day's closed symbols, is a
-    /// second copy of a fact that can disagree with the first.</para>
+    /// <para><b>It decodes an ADDRESS, and it is no longer how a reader learns what is closed.</b>
+    /// Every reader now takes the scope off the ROW — <see cref="LossBreachRecord.Account"/>,
+    /// <see cref="LossBreachRecord.Symbol"/>, <see cref="LossBreachRecord.Day"/>, which were always
+    /// there — so a key is only what a row is filed and looked up under (<c>U-scope-identity</c>).
+    /// This is left for the one thing a row cannot answer: the receipt of a closure whose row can no
+    /// longer be parsed, where the alternative is to refuse today's orders on a rotted record from
+    /// an episode that ended months ago.</para>
+    ///
+    /// <para>Four colon-separated parts is a symbol key and three is the day's own, and each part is
+    /// a <see cref="Part"/> — so a venue-qualified name makes four parts and not five, and comes
+    /// back out of <see cref="Name"/> exactly as the platform spelled it.</para>
     ///
     /// <para><b>It answers the DAY rather than filtering by it</b> (<c>U-reopen-1</c>). A closure no
     /// longer ends when its key goes out of scope, so a reader asking "what is closed" has to see
@@ -147,8 +189,8 @@ public static class LossBreach
         var parts = key.Split(':');
         if (parts.Length is not (3 or 4)) return null;
         if (!string.Equals(parts[0] + ":", Prefix, StringComparison.Ordinal)) return null;
-        if (!string.Equals(parts[1], account, StringComparison.Ordinal)) return null;
-        return parts.Length == 3 ? (parts[2], null) : (parts[3], parts[2]);
+        if (!string.Equals(Name(parts[1]), account, StringComparison.Ordinal)) return null;
+        return parts.Length == 3 ? (Name(parts[2]), null) : (Name(parts[3]), Name(parts[2]));
     }
 }
 
@@ -180,6 +222,28 @@ public sealed record LossBreachRecord
 {
     /// <summary>The account whose budget was breached.</summary>
     public string Account { get; init; } = "";
+
+    /// <summary>
+    /// THE PLATFORM THIS BREACH WAS MEASURED ON, and the MODE it was measured in — the other two
+    /// thirds of a loss-line scope, and the two this record was missing.
+    ///
+    /// <para>An account id is unique only within a platform, and switching platforms builds a new
+    /// gateway over the same database. Without these, a PAPER breach on a simulator's
+    /// <c>SIM-001</c> was indistinguishable from a LIVE breach on a broker's <c>SIM-001</c>, and
+    /// <c>FlattenForBreachAsync</c> — which compared the account and nothing else — cancelled the
+    /// owner's resting orders and closed their real positions on an installation that had set no
+    /// loss budget at all (REVIEW 2026-09-16, finding 3). Every other record on this line already
+    /// carried both; this one is why the flatten could not ask.</para>
+    ///
+    /// <para><b>Empty means a record written before <c>U-scope-identity</c></b>, and such a row
+    /// names no platform and no mode. It still CLOSES — refusing new risk on an account that
+    /// reached its budget is the safe direction on any platform — and it never flattens, because
+    /// sending closes is not.</para>
+    /// </summary>
+    public string Connector { get; init; } = "";
+
+    /// <summary>The mode this gateway was in when the breach was confirmed. See <see cref="Connector"/>.</summary>
+    public TradingMode? Mode { get; init; }
 
     /// <summary>The UTC day, <c>yyyy-MM-dd</c>. The day it stays closed for.</summary>
     public string Day { get; init; } = "";

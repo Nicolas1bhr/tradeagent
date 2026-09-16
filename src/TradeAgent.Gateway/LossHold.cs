@@ -47,7 +47,7 @@ public static class LossHold
     public static string KeyFor(string prefix, string connectorId, string account, string? symbol, string utcDay) =>
         symbol is null
             ? $"{prefix}{LossReopen.Scope(connectorId, account)}:{utcDay}"
-            : $"{prefix}{LossReopen.Scope(connectorId, account)}:{symbol}:{utcDay}";
+            : $"{prefix}{LossReopen.Scope(connectorId, account)}:{LossBreach.Part(symbol)}:{utcDay}";
 
     /// <summary>The hold on one breach record.</summary>
     public static string HoldKey(string connectorId, LossBreachRecord breach)
@@ -221,6 +221,13 @@ public sealed record LossHoldRecord
     /// <summary>The platform the account is on. See <see cref="LossReopen"/> on why it is in the key.</summary>
     public string Connector { get; init; } = "";
 
+    /// <summary>
+    /// The mode this gateway was in. On the row for <see cref="LossBreachRecord.Connector"/>'s
+    /// reason — the same platform in a different mode is a different undertaking, and every record
+    /// on this line carries the whole scope it is about (<c>U-scope-identity</c>).
+    /// </summary>
+    public TradingMode? Mode { get; init; }
+
     /// <summary>The breach's UTC day — the day this hold is filed under.</summary>
     public string Day { get; init; } = "";
 
@@ -333,6 +340,13 @@ public sealed record LossExtensionRecord
     public string Account { get; init; } = "";
 
     public string Connector { get; init; } = "";
+
+    /// <summary>
+    /// The mode this gateway was in. On the row for <see cref="LossBreachRecord.Connector"/>'s
+    /// reason — the same platform in a different mode is a different undertaking, and every record
+    /// on this line carries the whole scope it is about (<c>U-scope-identity</c>).
+    /// </summary>
+    public TradingMode? Mode { get; init; }
 
     public string Day { get; init; } = "";
 

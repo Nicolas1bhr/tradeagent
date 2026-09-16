@@ -18,7 +18,7 @@ namespace TradeAgent.Tests;
 /// it completes, with <see cref="Reached"/> already signalled. That is the barrier every
 /// "authorized, then the owner pressed Stop" test is built out of.
 /// </summary>
-public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
+public sealed class RecordingConnector(FakeConnector inner, string? id = null) : ITradingConnector
 {
     public FakeConnector Inner { get; } = inner;
     public FakeBroker Broker => Inner.Broker;
@@ -110,7 +110,13 @@ public sealed class RecordingConnector(FakeConnector inner) : ITradingConnector
         await Hold;
     }
 
-    public string Id => Inner.Id;
+    /// <summary>
+    /// The PLATFORM this recorder presents itself as. <c>null</c> is the simulator's own id, which is
+    /// what every existing caller gets; a test that needs two platforms over one database — the owner
+    /// switching brokers — passes a different one, and the gateway has nothing else to tell two
+    /// platforms apart by.
+    /// </summary>
+    public string Id => id ?? Inner.Id;
     public string DisplayName => Inner.DisplayName;
     public ConnectorCapabilities Capabilities => Inner.Capabilities;
     public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;

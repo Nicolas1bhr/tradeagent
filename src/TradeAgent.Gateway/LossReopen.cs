@@ -35,7 +35,8 @@ public static class LossReopen
     public const string Prefix = "loss_reopen:";
 
     /// <summary>The account as this app identifies one: the platform it is on, and then its id.</summary>
-    public static string Scope(string connectorId, string account) => $"{connectorId}:{account}";
+    public static string Scope(string connectorId, string account) =>
+        $"{LossBreach.Part(connectorId)}:{LossBreach.Part(account)}";
 
     /// <summary>The day's own receipt: <c>loss_reopen:{connector}:{account}:{utcDay}</c>.</summary>
     public static string DayKey(string connectorId, string account, string utcDay) =>
@@ -43,7 +44,7 @@ public static class LossReopen
 
     /// <summary>One symbol's: <c>loss_reopen:{connector}:{account}:{symbol}:{utcDay}</c>.</summary>
     public static string SymbolKey(string connectorId, string account, string symbol, string utcDay) =>
-        $"{Prefix}{Scope(connectorId, account)}:{symbol}:{utcDay}";
+        $"{Prefix}{Scope(connectorId, account)}:{LossBreach.Part(symbol)}:{utcDay}";
 
     /// <summary>
     /// THE RECEIPT THAT RELEASES ONE BREACH RECORD — the day and symbol come off the RECORD, never

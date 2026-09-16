@@ -1,0 +1,389 @@
+using TradeAgent.ConnectorSdk;
+using TradeAgent.Connectors.Fake;
+using TradeAgent.Core;
+using TradeAgent.Core.Db;
+using TradeAgent.Gateway;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace TradeAgent.Tests.Fault;
+
+/// <summary>
+/// U-scope-identity — A LOSS-LINE SCOPE IS <c>(connector, account, symbol)</c>, CARRIED ON EVERY
+/// RECORD AND READ OFF THE ROW.
+///
+/// <para>Six tests, every one of them REVIEW 2026-09-16's own probe brought over from
+/// <c>review-probes-c</c> and renamed, with the assertions turned from the DEFECT they recorded to
+/// the behaviour this unit owes: <c>P1</c>, <c>P1b</c>, <c>P1c</c> (finding 1), <c>C2</c>
+/// (finding 3) and <c>P3</c>, <c>P3b</c> (finding 2). Each was red on <c>4bb0846</c>.</para>
+///
+/// <para>Nothing reaches a wire here but the simulator behind <see cref="RecordingConnector"/> —
+/// the venue-qualified probes put one relabelling seam in front of it so the gateway sees a
+/// platform whose instrument is called <c>ES:H6</c>, and nothing about the gateway is faked.</para>
+/// </summary>
+public class LossScopeIdentityTests(ITestOutputHelper log)
+{
+    sealed class TestClock(DateTimeOffset at) : TimeProvider
+    {
+        DateTimeOffset _now = at;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
+    }
+
+    static readonly DateTimeOffset Noon = new(2026, 3, 10, 12, 0, 0, TimeSpan.Zero);
+    static readonly TimeSpan Tick = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// A PLATFORM THAT NAMES ITS INSTRUMENT THE WAY MANY VENUES DO — <c>VENUE:SYMBOL</c>.
+    ///
+    /// <para>The simulator behind <see cref="RecordingConnector"/>, relabelled at the seam: every
+    /// instrument, quote, position, order and fill the inner broker calls <paramref name="inward"/>
+    /// is presented to the gateway as <paramref name="outward"/> and translated back on the way in.
+    /// The symbol is the PLATFORM's string and not one TradeAgent chooses, which is the whole of
+    /// finding 1.</para>
+    /// </summary>
+    sealed class VenueSymbolConnector(RecordingConnector inner, string inward, string outward) : ITradingConnector
+    {
+        public RecordingConnector Inner { get; } = inner;
+        public FakeBroker Broker => Inner.Broker;
+
+        public int Places => Inner.Places;
+        public int Closes => Inner.Closes;
+        public int Cancels => Inner.Cancels;
+
+        string In(string s) => string.Equals(s, outward, StringComparison.Ordinal) ? inward : s;
+        string Out(string s) => string.Equals(s, inward, StringComparison.Ordinal) ? outward : s;
+
+        InstrumentInfo Out(InstrumentInfo i) => i with { Symbol = Out(i.Symbol) };
+        QuoteInfo? Out(QuoteInfo? q) => q is null ? null : q with { Symbol = Out(q.Symbol) };
+        PositionInfo Out(PositionInfo p) => p with { Symbol = Out(p.Symbol) };
+        OrderInfo Out(OrderInfo o) => o with { Symbol = Out(o.Symbol) };
+        ExecutionInfo Out(ExecutionInfo e) => e with { Symbol = Out(e.Symbol) };
+
+        public string Id => Inner.Id;
+        public string DisplayName => Inner.DisplayName;
+        public ConnectorCapabilities Capabilities => Inner.Capabilities;
+        public TimeSpan WorstCaseOperationPath => Inner.WorstCaseOperationPath;
+        public TimeSpan EmergencyBudget => Inner.EmergencyBudget;
+        public Task ConnectAsync(CancellationToken ct = default) => Inner.ConnectAsync(ct);
+        public Task<HealthState> GetHealthAsync(CancellationToken ct = default) => Inner.GetHealthAsync(ct);
+        public Task<bool> IsConnectedAsync(CancellationToken ct = default) => Inner.IsConnectedAsync(ct);
+        public Task<IReadOnlyList<AccountInfo>> GetAccountsAsync(CancellationToken ct = default) => Inner.GetAccountsAsync(ct);
+        public Task<AccountInfo?> GetAccountAsync(string a, CancellationToken ct = default) => Inner.GetAccountAsync(a, ct);
+
+        public async Task<IReadOnlyList<InstrumentInfo>> GetInstrumentsAsync(CancellationToken ct = default) =>
+            [.. (await Inner.GetInstrumentsAsync(ct)).Select(Out)];
+
+        public async Task<QuoteInfo?> GetQuoteAsync(string s, CancellationToken ct = default) =>
+            Out(await Inner.GetQuoteAsync(In(s), ct));
+
+        public async Task<IReadOnlyList<PositionInfo>> GetPositionsAsync(string a, CancellationToken ct = default) =>
+            [.. (await Inner.GetPositionsAsync(a, ct)).Select(Out)];
+
+        public async Task<IReadOnlyList<OrderInfo>> GetOrdersAsync(string a, bool inactive, DateTimeOffset? since, CancellationToken ct = default) =>
+            [.. (await Inner.GetOrdersAsync(a, inactive, since, ct)).Select(Out)];
+
+        public async Task<IReadOnlyList<ExecutionInfo>> GetExecutionsAsync(string a, DateTimeOffset? since, CancellationToken ct = default) =>
+            [.. (await Inner.GetExecutionsAsync(a, since, ct)).Select(Out)];
+
+        public async Task<OrderInfo> PlaceOrderAsync(PlaceOrderCommand cmd, CancellationToken ct = default) =>
+            Out(await Inner.PlaceOrderAsync(cmd with { Symbol = In(cmd.Symbol) }, ct));
+
+        public async Task<OrderInfo> ModifyOrderAsync(ModifyOrderCommand c, CancellationToken ct = default) =>
+            Out(await Inner.ModifyOrderAsync(c, ct));
+
+        public Task CancelOrderAsync(string id, CancellationToken ct = default) => Inner.CancelOrderAsync(id, ct);
+
+        public Task<IReadOnlyList<string>> CancelAllOrdersAsync(string a, CancellationToken ct = default) =>
+            Inner.CancelAllOrdersAsync(a, ct);
+
+        public async Task<OrderInfo?> ClosePositionAsync(string a, string s, string coid, CancellationToken ct = default)
+        {
+            var r = await Inner.ClosePositionAsync(a, In(s), coid, ct);
+            return r is null ? null : Out(r);
+        }
+
+        // THE STREAM IS RELABELLED TOO, or the fill ledger would record the inner name and the test
+        // would be measuring a gateway that had been told two different things.
+        readonly Dictionary<Delegate, Delegate> _wrapped = [];
+
+        Action<T> Wrap<T>(Action<T> handler, Func<T, T> map)
+        {
+            lock (_wrapped)
+            {
+                if (_wrapped.TryGetValue(handler, out var had)) return (Action<T>)had;
+                Action<T> w = x => handler(map(x));
+                _wrapped[handler] = w;
+                return w;
+            }
+        }
+
+        Action<T>? Unwrap<T>(Action<T> handler)
+        {
+            lock (_wrapped) return _wrapped.Remove(handler, out var had) ? (Action<T>)had : null;
+        }
+
+        public event Action<HealthState>? ConnectionChanged { add => Inner.ConnectionChanged += value; remove => Inner.ConnectionChanged -= value; }
+        public event Action<AccountInfo>? AccountChanged { add => Inner.AccountChanged += value; remove => Inner.AccountChanged -= value; }
+
+        public event Action<QuoteInfo>? QuoteChanged
+        {
+            add { if (value is not null) Inner.QuoteChanged += Wrap(value, q => q with { Symbol = Out(q.Symbol) }); }
+            remove { if (value is not null && Unwrap(value) is { } w) Inner.QuoteChanged -= w; }
+        }
+
+        public event Action<OrderInfo>? OrderChanged
+        {
+            add { if (value is not null) Inner.OrderChanged += Wrap(value, Out); }
+            remove { if (value is not null && Unwrap(value) is { } w) Inner.OrderChanged -= w; }
+        }
+
+        public event Action<ExecutionInfo>? ExecutionReceived
+        {
+            add { if (value is not null) Inner.ExecutionReceived += Wrap(value, Out); }
+            remove { if (value is not null && Unwrap(value) is { } w) Inner.ExecutionReceived -= w; }
+        }
+
+        public event Action<PositionInfo>? PositionChanged
+        {
+            add { if (value is not null) Inner.PositionChanged += Wrap(value, Out); }
+            remove { if (value is not null && Unwrap(value) is { } w) Inner.PositionChanged -= w; }
+        }
+
+        public ValueTask DisposeAsync() => Inner.DisposeAsync();
+    }
+
+    static (TradingGateway Gw, VenueSymbolConnector Conn, Database Db, TestClock Clock) OnVenue(string symbol)
+    {
+        var clock = new TestClock(Noon);
+        var db = TestEnv.NewDb();
+        var conn = new VenueSymbolConnector(
+            new RecordingConnector(new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(30) }),
+            "ES", symbol);
+        var gw = new TradingGateway(db, conn, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = conn.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [symbol, "NQ", "MES", "YM"];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;   // not enforced, so no multiplier is asked for
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 0m;          // only the PER-SYMBOL budget may close anything
+            s.Risk.MaxLossPerTrade = 100m;
+        });
+        return (gw, conn, db, clock);
+    }
+
+    static PlaceIntent Buy(string symbol, decimal qty = 1m) =>
+        new(symbol, OrderSide.Buy, OrderType.Market, qty, null, null, TimeInForce.Day, null);
+
+    /// <summary>
+    /// P1, RENAMED AND TURNED ROUND — A CLOSURE ON A VENUE-QUALIFIED SYMBOL IS VISIBLE TO EVERY
+    /// READER, AND THE SCOPE IT CLOSED STOPS TRADING.
+    ///
+    /// <para>The same losing day twice, once on <c>ES:H6</c> and once on plain <c>ES</c>, against
+    /// the same simulator and the same figures, so the only difference is the symbol's own name.
+    /// The record is written by <c>LossWatchAsync</c> on two agreeing pulls and the buy afterwards
+    /// goes through <c>PlaceAsync</c>: nothing here reaches past the gateway's own code.</para>
+    ///
+    /// <para>The figure recovers completely before the second buy — flattened, and the price back —
+    /// so from there only the RECORD can refuse, which is the whole reason the record exists.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_venue_qualified_symbols_closure_is_visible_to_every_reader()
+    {
+        foreach (var symbol in new[] { "ES:H6", "ES" })
+        {
+            var (gw, conn, db, clock) = OnVenue(symbol);
+            await conn.ConnectAsync();
+            await gw.RefreshHealthAsync();
+
+            await gw.PlaceAsync(new AgentContext("a"), "p1-open", Buy(symbol));
+            conn.Broker.PriceOffset = -20m;
+
+            clock.Advance(Tick);
+            await gw.LossWatchAsync();
+            clock.Advance(Tick);
+            var closing = await gw.LossWatchAsync();
+
+            var rows = db.KvStartingWith("loss_breach:").Select(x => x.Key).ToList();
+            log.WriteLine($"[{symbol}]");
+            log.WriteLine($"  breach rows on disk   : {string.Join(" ", rows)}");
+            log.WriteLine($"  the watch closed      : {string.Join(",", closing.Closed)}");
+            log.WriteLine($"  SymbolClosed says     : {(gw.SymbolClosed(conn.Broker.AccountId, symbol) is null ? "NOTHING IS CLOSED" : "closed")}");
+            log.WriteLine($"  SymbolsClosedToday    : [{string.Join(",", gw.SymbolsClosedToday(conn.Broker.AccountId))}]");
+
+            conn.Broker.PriceOffset = 0m;
+            gw.Update(s => s.Risk.MaxLossPerTrade = 1_000_000m);
+            clock.Advance(Tick);
+
+            var before = conn.Places;
+            string verdict;
+            try
+            {
+                await gw.PlaceAsync(new AgentContext("a"), "p1-after", Buy(symbol));
+                verdict = "SENT";
+            }
+            catch (GatewayDeniedException ex) { verdict = ex.Code.ToString(); }
+            catch (TradeAgentException ex) { verdict = ex.Code.ToString(); }
+
+            log.WriteLine($"  a new buy on it       : {verdict}");
+            log.WriteLine($"  orders that reached the wire after the closure: {conn.Places - before}");
+            log.WriteLine("");
+
+            Assert.NotEmpty(rows);
+            Assert.NotEmpty(closing.Closed);
+            Assert.NotNull(gw.SymbolClosed(conn.Broker.AccountId, symbol));
+            Assert.Equal([symbol], gw.SymbolsClosedToday(conn.Broker.AccountId));
+            Assert.Equal("LOSS_BUDGET_REACHED", verdict);
+            Assert.Equal(0, conn.Places - before);
+        }
+    }
+
+    /// <summary>
+    /// P1b, RENAMED AND TURNED ROUND — THE KEY THE PRODUCT MINTS ROUND-TRIPS THROUGH THE PRODUCT'S
+    /// OWN READER FOR EVERY NAME A PLATFORM CAN HAND IT, AND TWO SCOPES NEVER ADDRESS ONE ROW.
+    ///
+    /// <para>The narrowest statement of finding 1 and of the review's UNVERIFIED 2 (the account id
+    /// with a colon, which makes a whole DAY closure invisible), with no gateway in it at all.</para>
+    ///
+    /// <para>The last assertion is the one the review's "what would fix it" column did not have to
+    /// state: a key is an ADDRESS, and an address two different scopes can both mint is a second
+    /// breach that is silently never written.</para>
+    /// </summary>
+    [Fact]
+    public void The_breach_key_round_trips_for_every_name_a_platform_can_hand_it()
+    {
+        var at = Noon;
+        foreach (var symbol in new[] { "ES", "ES:H6", "BINANCE:BTCUSDT" })
+        {
+            var key = LossBreach.SymbolKey("SIM-1", symbol, at);
+            var back = LossBreach.ScopeOf(key, "SIM-1");
+            log.WriteLine($"{key,-46} -> {(back is null ? "NOT A KEY THIS READER KNOWS" : $"day={back.Value.Day} symbol={back.Value.Symbol}")}");
+            Assert.Equal((LossBreach.Stamp(at), symbol), back);
+        }
+
+        foreach (var account in new[] { "SIM-1", "RITHMIC:SIM-1" })
+        {
+            var key = LossBreach.DayKey(account, at);
+            var back = LossBreach.ScopeOf(key, account);
+            log.WriteLine($"{key,-46} -> {(back is null ? "NOT A KEY THIS READER KNOWS" : $"day={back.Value.Day} symbol={back.Value.Symbol ?? "(account)"}")}");
+            Assert.Equal((LossBreach.Stamp(at), (string?)null), back);
+        }
+
+        // NOTHING ON DISK MOVES. A name with no delimiter in it mints exactly the key it always did,
+        // so every closure and every receipt written before this unit is still found by its own key.
+        Assert.Equal("loss_breach:SIM-1:ES:2026-03-10", LossBreach.SymbolKey("SIM-1", "ES", at));
+        Assert.Equal("loss_breach:SIM-1:2026-03-10", LossBreach.DayKey("SIM-1", at));
+
+        // TWO SCOPES, TWO ADDRESSES. The account `ACC:ES` losing its day and the account `ACC`
+        // losing ES are different facts, and they were the same row.
+        log.WriteLine($"day of ACC:ES   -> {LossBreach.DayKey("ACC:ES", at)}");
+        log.WriteLine($"ES of ACC       -> {LossBreach.SymbolKey("ACC", "ES", at)}");
+        Assert.NotEqual(LossBreach.DayKey("ACC:ES", at), LossBreach.SymbolKey("ACC", "ES", at));
+
+        // AND ONE ACCOUNT'S SCAN NEVER SWEEPS UP ANOTHER'S.
+        Assert.StartsWith(LossBreach.AccountPrefix("ACC"), LossBreach.SymbolKey("ACC", "ES", at), StringComparison.Ordinal);
+        Assert.DoesNotContain(LossBreach.AccountPrefix("ACC"), LossBreach.DayKey("ACC:ES", at), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// AND THE ROW A BUILD BEFORE THIS UNIT ALREADY WROTE IS STILL SEEN — the half of finding 1 that
+    /// a change to how keys are MINTED cannot reach on its own.
+    ///
+    /// <para>An installation that reached a per-instrument budget on <c>ES:H6</c> before this unit
+    /// has a row on disk under the key that build minted: <c>loss_breach:SIM-001:ES:H6:2026-03-10</c>,
+    /// five colon-separated parts, which no decoder that counts delimiters can take apart. Escaping
+    /// what is minted from here on does nothing for it. The scope is read off the ROW, so it is seen
+    /// — and the scope it closed stops trading on the very first tick after the upgrade.</para>
+    ///
+    /// <para>The row is written with the product's own writer at the product's own legacy key; only
+    /// the key shape is spelled out here, because that shape is the fixture.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_closure_written_under_an_older_builds_key_is_still_seen()
+    {
+        const string symbol = "ES:H6";
+        var (gw, conn, db, clock) = OnVenue(symbol);
+        await conn.ConnectAsync();
+        await gw.RefreshHealthAsync();
+
+        var account = conn.Broker.AccountId;
+        var legacy = $"loss_breach:{account}:{symbol}:{LossBreach.Stamp(Noon)}";
+        db.SetKv(legacy, Json.Write(new LossBreachRecord
+        {
+            // NO CONNECTOR AND NO MODE EITHER: the build that wrote this row had no such fields.
+            // It still CLOSES — refusing new risk is the safe direction on any platform — and it is
+            // never flattened, which is the asymmetry `docs/CONTRACTS.md` records as deliberate.
+            Account = account, Symbol = symbol, Day = LossBreach.Stamp(Noon),
+            FirstSeenAt = Noon, ConfirmedAt = Noon, FirstPull = 1, ConfirmingPull = 2,
+            Loss = 900m, TradeBudget = 100m, Currency = "USD",
+            Why = "TradeAgent closed ES:H6 to new risk at 12:00 UTC."
+        }));
+
+        log.WriteLine($"the row on disk       : {legacy}");
+        log.WriteLine($"SymbolClosed says     : {(gw.SymbolClosed(account, symbol) is null ? "NOTHING IS CLOSED" : "closed")}");
+        log.WriteLine($"SymbolsClosedToday    : [{string.Join(",", gw.SymbolsClosedToday(account))}]");
+
+        var before = conn.Places;
+        string verdict;
+        try
+        {
+            await gw.PlaceAsync(new AgentContext("a"), "legacy-after", Buy(symbol));
+            verdict = "SENT";
+        }
+        catch (GatewayDeniedException ex) { verdict = ex.Code.ToString(); }
+
+        log.WriteLine($"a new buy on it       : {verdict}");
+        log.WriteLine($"orders that reached the wire: {conn.Places - before}");
+
+        Assert.NotNull(gw.SymbolClosed(account, symbol));
+        Assert.Equal([symbol], gw.SymbolsClosedToday(account));
+        Assert.Equal("LOSS_BUDGET_REACHED", verdict);
+        Assert.Equal(0, conn.Places - before);
+    }
+
+    /// <summary>
+    /// P1c, RENAMED AND TURNED ROUND — THE SCOPE IS CLOSED ONCE AND FLATTENED ONCE, HOWEVER MANY
+    /// TICKS GO BY.
+    ///
+    /// <para>"One episode until it is reopened" is enforced by <c>alreadyClosed</c>, which is built
+    /// out of <c>OpenClosures</c>. A reader that cannot see the row writes ANOTHER breach record and
+    /// sends ANOTHER app flatten at the instrument on every pair of agreeing pulls, and
+    /// <c>PriorBreaches</c> cannot see them either, so no strike is ever counted however many there
+    /// are. Eight ticks with the price on the floor, and the agent asking again on each one.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_venue_qualified_scope_is_closed_and_flattened_exactly_once()
+    {
+        foreach (var symbol in new[] { "ES:H6", "ES" })
+        {
+            var (gw, conn, db, clock) = OnVenue(symbol);
+            await conn.ConnectAsync();
+            await gw.RefreshHealthAsync();
+
+            await gw.PlaceAsync(new AgentContext("a"), "p1c-open", Buy(symbol));
+            conn.Broker.PriceOffset = -20m;
+
+            for (var i = 0; i < 8; i++)
+            {
+                clock.Advance(Tick);
+                await gw.LossWatchAsync();
+                try { await gw.PlaceAsync(new AgentContext("a"), $"p1c-again-{i}", Buy(symbol)); }
+                catch (GatewayDeniedException) { }
+            }
+
+            log.WriteLine($"[{symbol}] breach rows={db.KvStartingWith("loss_breach:").Count} "
+                          + $"flatten rows={db.KvStartingWith("loss_flatten:").Count} "
+                          + $"hold rows={db.KvStartingWith("loss_hold:").Count} "
+                          + $"closes at the wire={conn.Closes} places at the wire={conn.Places}");
+
+            Assert.Single(db.KvStartingWith("loss_breach:"));
+            Assert.Single(db.KvStartingWith("loss_flatten:"));
+            Assert.Equal(1, conn.Closes);
+            Assert.Equal(1, conn.Places);
+        }
+    }
+}
