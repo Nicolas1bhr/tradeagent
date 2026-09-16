@@ -15,15 +15,14 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `5f26fca` (`U-allocator-2`, product sha `0d6a268`, schema 21, plus its record), clean, pushed — 2026-09-16 14:50 CEST.** Landed 2026-09-15 in order:
-   `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds`
-   `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121`; 2026-09-16: `U-flatten-3` `c441120`,
-   `U-allocator-2` `0d6a268` (21) — twelve landings, every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`.
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-press-budget-legs` (worktree, test-only, one
-   item, the fixer's report and gate green; the manager's gate running, its record drafted): land it. (b) the first two fix units of the third review, dispatched
-   2026-09-16 ~16:00: `u-scope-identity` (**schema 22**; HIGH 1+2+3 as one class fix — the identity of a loss-line scope) and `u-grant-liveness` (HIGH 5), each a fresh
-   builder on its brief, worktrees of the same name. Re-brief FRESH from the brief on disk after a kill: "read your branch first; judge uncommitted files on their
-   merits; finish, rebase onto `main`, gate, report".
+2. **`main` is `a4cd3f4` (`U-press-budget-legs`, product sha `ee08704`, plus its record), clean, pushed — 2026-09-16 15:40 CEST.** Thirteen landings since 2026-09-15
+   morning, every merge sha's CI green on all four jobs where recorded — the list and the sections are at the end of `BUILD-STATUS.md`; the third milestone review of the
+   money path at `c441120` is landed (`docs/REVIEW-2026-09-16.md`: five HIGH, three MED, seven UNVERIFIED, Codex under its own heading; probes on `review-probes-c` @
+   `58aa4fa`, kept as the fix units' RED tests). No release is cut before every HIGH fix unit is on `main`.
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** the first two fix units of the review, dispatched 2026-09-16
+   15:30: `u-scope-identity` (worktree, **schema 22**; HIGH 1+2+3 as one class fix — the identity of a loss-line scope) and `u-grant-liveness` (worktree; HIGH 5), each a
+   fresh builder on its brief, cut from `4bb0846`. Re-brief FRESH from the brief on disk after a kill: "read your branch first; judge uncommitted files on their merits;
+   finish, rebase onto `main`, gate, report".
 4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order:** `U-approve-gates` (HIGH 4, light — after either leg above lands), `U-review-med` (MED 6+7+8 as
    one batch; after `U-scope-identity` lands, same code). The review is landed: `docs/REVIEW-2026-09-16.md` (five HIGH, three MED, seven UNVERIFIED, Codex under its own
    heading); fixes are not re-reviewed; no release is cut before every HIGH fix unit is on `main`. At most two heavy legs at once; 23 is the next schema number.
