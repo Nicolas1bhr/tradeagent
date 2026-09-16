@@ -2331,7 +2331,16 @@ public sealed class TradingGateway : IAsyncDisposable
             // outlives the day it began in, so the sweep that runs the morning after a 23:58Z breach
             // is asking about a record filed under yesterday.
             owed = [];
-            var open = OpenClosures(accountId);
+
+            // ONLY THIS PLATFORM'S AND THIS MODE'S CLOSURES ARE OWED A FLATTEN HERE. The outcome key
+            // carries the connector, so a breach fully flattened on the platform it was recorded on
+            // has NO outcome under this one — and a sweep that keyed on that absence alone re-ran a
+            // paper flatten against a live book (finding 3). `FlattenForBreachAsync` refuses the same
+            // three things; this is so the sweep does not announce work it is about to decline.
+            var open = OpenClosures(accountId)
+                .Where(x => string.Equals(x.Connector, Connector.Id, StringComparison.Ordinal)
+                            && x.Mode == Settings.Mode)
+                .ToList();
             if (open.LastOrDefault(x => x.Symbol is null) is { } day
                 && ReadFlattenRecord(LossFlatten.KeyFor(Connector.Id, day)) is null)
                 owed.Add(day);
@@ -3550,6 +3559,12 @@ public sealed class TradingGateway : IAsyncDisposable
         DateTimeOffset at, LossSighting first, long pull, int epoch, IReadOnlyList<LossBreachMark> marks) => new()
         {
             Account = account,
+
+            // THE OTHER TWO THIRDS OF THE SCOPE. An account id is unique only within a platform, and
+            // a mode is what makes the same platform a different undertaking — so a breach that
+            // named neither could be acted on by a gateway operating neither (finding 3).
+            Connector = Connector.Id,
+            Mode = Settings.Mode,
             Day = LossBreach.Stamp(at),
             Symbol = symbol,
             FirstSeenAt = first.At,
@@ -6319,10 +6334,11 @@ public sealed class TradingGateway : IAsyncDisposable
     /// this app agreeing with itself. Anything else leaves the row flagged, which pauses order flow
     /// exactly as an owner's press does, and the record says which.</para>
     ///
-    /// <para><b>The account is the BREACH's.</b> Never the currently selected one, and never implied:
-    /// this refuses outright unless the account this gateway is actually operating is the account the
-    /// breach was recorded for, on the platform it was recorded on. A PAPER account's flatten may not
-    /// answer for a LIVE closure.</para>
+    /// <para><b>The scope is the BREACH's — platform, mode and account.</b> Never the currently
+    /// selected one, and never implied: this refuses outright unless the connector this gateway is
+    /// running on, the mode it is in and the account it is operating are all three the ones the
+    /// breach was recorded with. A PAPER account's flatten may not answer for a LIVE closure, and a
+    /// breach recorded before those two fields existed is never flattened at all.</para>
     ///
     /// <para>Returns the record it wrote, or null when it did not run — already done, subsumed by the
     /// day's own flatten, another app press still unresolved, or the wrong account.</para>
@@ -6338,6 +6354,31 @@ public sealed class TradingGateway : IAsyncDisposable
         // sweep keyed on the ABSENCE of that outcome would send a second set of closes for ever.
         var startedAt = Now;
         var breachKey = LossBreach.KeyFor(breach);
+
+        // THE PLATFORM AND THE MODE ARE ASKED FIRST, and with the same sentence the account check
+        // uses: this flatten runs only where the breach was recorded. An account id is unique only
+        // within a platform and switching platforms builds a new gateway over the same database, so
+        // without this a PAPER breach on a simulator's SIM-001 cancelled the owner's resting orders
+        // and closed their real positions on a broker whose account carries the same id — on an
+        // installation that had set no loss budget at all (REVIEW 2026-09-16, finding 3). The mode is
+        // the second half and not a nicety: the same broker, the same account and the same connector
+        // id are a different undertaking in LIVE than in PAPER, and one set of paper losses must not
+        // be able to reach a real book through them.
+        //
+        // A record written before `U-scope-identity` names neither, and none of them is flattened
+        // here: the closure it carries still REFUSES new risk on any platform, because refusing is
+        // the safe direction, and it never SENDS, because sending is not.
+        if (!string.Equals(breach.Connector, Connector.Id, StringComparison.Ordinal)
+            || breach.Mode != Settings.Mode)
+        {
+            _log.TryEngineering("Gateway", "loss_flatten_not_this_platform", "warn",
+                metadataJson: Json.Write(new
+                {
+                    breach = breachKey, recorded_on = breach.Connector, recorded_in = breach.Mode?.ToString(),
+                    operating_on = Connector.Id, operating_in = Settings.Mode.ToString()
+                }));
+            return null;
+        }
 
         var account = await AccountAsync(ct);
         if (account is null || !string.Equals(account.Id, breach.Account, StringComparison.Ordinal))

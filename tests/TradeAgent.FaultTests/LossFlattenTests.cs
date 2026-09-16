@@ -518,7 +518,11 @@ public class LossFlattenTests(ITestOutputHelper log)
         // KILLED BETWEEN THE RECORD AND THE COMPOSITE. The record is on disk and nothing else is.
         var breach = new LossBreachRecord
         {
-            Account = account, Day = LossBreach.Stamp(Noon), FirstSeenAt = Noon, ConfirmedAt = Noon,
+            // THE PLATFORM AND THE MODE ARE ON IT, exactly as `Compose` writes them: a flatten runs
+            // only where its breach was recorded (`U-scope-identity`), and a fixture that named
+            // neither would be testing the legacy row rather than the killed run.
+            Account = account, Connector = conn.Id, Mode = TradingMode.PAPER,
+            Day = LossBreach.Stamp(Noon), FirstSeenAt = Noon, ConfirmedAt = Noon,
             FirstPull = 1, ConfirmingPull = 2, Loss = 2_000m, DayBudget = 1_000m, Currency = "USD",
             Why = "TradeAgent closed today to new risk at 12:00 UTC."
         };

@@ -386,4 +386,226 @@ public class LossScopeIdentityTests(ITestOutputHelper log)
             Assert.Equal(1, conn.Places);
         }
     }
+
+    /// <summary>
+    /// C2, RENAMED AND TURNED ROUND — A PAPER BREACH NEVER FLATTENS ANOTHER PLATFORM'S BOOK, AND
+    /// NEVER ANOTHER MODE'S.
+    ///
+    /// <para>An ordinary paper day, closed and flattened on the simulator; then the owner switches
+    /// to a platform carrying a NON-simulated account with the same id, a position they put on by
+    /// hand and a resting bid, on an installation that has set no loss budget at all. The flatten's
+    /// OUTCOME key carries the connector, so the killed-flatten sweep on the new platform finds no
+    /// outcome for a breach that was fully flattened elsewhere and re-runs it.</para>
+    ///
+    /// <para>Three arms, because the record is bound to BOTH halves of its platform identity and
+    /// each half has to hold on its own: both different; the SAME connector id in a different mode —
+    /// the installation that switched from paper to live without changing broker; and a DIFFERENT
+    /// connector id in the same mode — the owner who attached a second platform and has not switched
+    /// mode at all, where the mode check alone would let the closes through.</para>
+    /// </summary>
+    [Theory]
+    [InlineData("atas", true, "another platform, in live mode")]
+    [InlineData("fake", true, "the same platform, in live mode")]
+    [InlineData("atas", false, "another platform, still in paper")]
+    public async Task A_paper_breach_never_flattens_another_platform_or_another_mode(
+        string liveId, bool inLiveMode, string what)
+    {
+        var db = TestEnv.NewDb();
+        var clock = new TestClock(Noon);
+
+        // ---- the simulator: an ordinary losing day, confirmed and flattened.
+        var paper = new RecordingConnector(
+            new FakeConnector(new FakeBroker()) { EmergencyBudget = TimeSpan.FromSeconds(30) }, "fake");
+        var gwA = new TradingGateway(db, paper, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gwA.Update(s =>
+        {
+            s.Mode = TradingMode.PAPER;
+            s.SelectedAccountId = paper.Broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 1_000m;
+        });
+        await paper.ConnectAsync();
+        await gwA.RefreshHealthAsync();
+        await gwA.PlaceAsync(new AgentContext("a"), "c2-open", TestEnv.Buy("ES"));
+        paper.Broker.PriceOffset = -20m;
+        clock.Advance(Tick); await gwA.LossWatchAsync();
+        clock.Advance(Tick); var closing = await gwA.LossWatchAsync();
+
+        log.WriteLine($"[{what}]");
+        log.WriteLine($"paper breach            : {string.Join(",", closing.Closed)}");
+        log.WriteLine($"paper flatten           : flat={gwA.FlattenToday(paper.Broker.AccountId)?.Flat}");
+        Assert.NotEmpty(closing.Closed);
+
+        // ---- the owner switches. Another account carrying the same id, on `liveId`. It is a REAL
+        // one wherever the arm is in live mode; in the paper arm it is a second simulator, and the
+        // book is still the owner's own and still not this breach's to close.
+        var liveBroker = new FakeBroker { IsSimulated = !inLiveMode };
+        var live = new RecordingConnector(
+            new FakeConnector(liveBroker) { EmergencyBudget = TimeSpan.FromSeconds(30) }, liveId);
+        await live.ConnectAsync();
+
+        live.Faults.Fill = FillBehaviour.FillImmediately;
+        await live.Inner.PlaceOrderAsync(new PlaceOrderCommand("OWNER-1", liveBroker.AccountId, "ES",
+            OrderSide.Buy, OrderType.Market, 4m, null, null, TimeInForce.Day, "the owner's own position"));
+        live.Faults.Fill = FillBehaviour.LeaveWorking;
+        await live.Inner.PlaceOrderAsync(new PlaceOrderCommand("OWNER-2", liveBroker.AccountId, "ES",
+            OrderSide.Buy, OrderType.Limit, 2m, 50m, null, TimeInForce.Day, "the owner's own resting bid"));
+        live.Faults.Fill = FillBehaviour.FillImmediately;
+
+        var before = (live.Places, live.Closes, live.Cancels);
+        log.WriteLine($"live book before        : {string.Join(",", (await live.GetPositionsAsync(liveBroker.AccountId)).Select(p => $"{p.Symbol} {p.Quantity}"))}"
+                      + $"  working={(await live.GetOrdersAsync(liveBroker.AccountId, false, null)).Count(o => o.State == ExecutionState.WORKING)}");
+
+        var gwB = new TradingGateway(db, live, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gwB.Update(s =>
+        {
+            s.Mode = inLiveMode ? TradingMode.LIVE_CONFIRM : TradingMode.PAPER;
+            s.LiveActivated = inLiveMode;
+            s.SelectedAccountId = liveBroker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 0m;      // this installation has set NO budget at all
+            s.Risk.MaxLossPerTrade = 0m;
+        });
+
+        clock.Advance(Tick);
+        await gwB.RefreshHealthAsync();      // the health pass: the watch, then the killed-flatten sweep
+
+        var after = (live.Places, live.Closes, live.Cancels);
+        var positions = await live.GetPositionsAsync(liveBroker.AccountId);
+        var working = (await live.GetOrdersAsync(liveBroker.AccountId, false, null)).Count(o => o.State == ExecutionState.WORKING);
+
+        log.WriteLine($"live cancels sent       : {after.Cancels - before.Cancels}");
+        log.WriteLine($"live closes sent        : {after.Closes - before.Closes}");
+        log.WriteLine($"live places sent        : {after.Places - before.Places}");
+        log.WriteLine($"live book after         : {string.Join(",", positions.Select(p => $"{p.Symbol} {p.Quantity}"))}  working={working}");
+        log.WriteLine($"live flatten record     : flat={gwB.FlattenToday(liveBroker.AccountId)?.Flat}");
+        log.WriteLine("");
+
+        // AND THE FLATTEN REFUSES WHEN IT IS ASKED DIRECTLY, not only when the sweep declines to ask.
+        // They are two separate pieces of code and the refusal is this one's: the sweep's filter only
+        // keeps the engineering log from announcing work it is about to decline.
+        var standing = gwB.DayClosed(liveBroker.AccountId);
+        Assert.NotNull(standing);
+        Assert.Null(await gwB.FlattenForBreachAsync(standing));
+
+        after = (live.Places, live.Closes, live.Cancels);
+        positions = await live.GetPositionsAsync(liveBroker.AccountId);
+        working = (await live.GetOrdersAsync(liveBroker.AccountId, false, null)).Count(o => o.State == ExecutionState.WORKING);
+
+        // NOTHING REACHED THE OWNER'S REAL BOOK, and it is still exactly where they left it.
+        Assert.Equal(0, after.Cancels - before.Cancels);
+        Assert.Equal(0, after.Closes - before.Closes);
+        Assert.Equal(0, after.Places - before.Places);
+        Assert.Equal(4m, positions.Single(p => p.Symbol == "ES").Quantity);
+        Assert.Equal(1, working);
+
+        // AND NO LIVE FLATTEN WAS RECORDED. On the arm that keeps the connector id the only row
+        // `FlattenToday` can find is the PAPER gateway's own, untouched; on the other there is none.
+        var recorded = gwB.FlattenToday(liveBroker.AccountId);
+        if (recorded is not null)
+        {
+            Assert.Equal(TradingMode.PAPER, recorded.Mode);
+            Assert.Equal("fake", recorded.Connector);
+        }
+    }
+
+    /// <summary>
+    /// A KILLED PAPER FLATTEN NEVER RE-RUNS AGAINST A LIVE BOOK ON THE SAME PLATFORM — the case the
+    /// connector id alone cannot answer, because it is the same one.
+    ///
+    /// <para>A closure with no outcome beside it is a flatten that was killed, and the health pass
+    /// re-runs it. On the same connector id a FINISHED flatten leaves an outcome row that stops a
+    /// second run; a killed one leaves none, so this is the arm where only the MODE can refuse: a
+    /// paper day's closure, killed before it wrote anything, and the owner then in LIVE_CONFIRM on
+    /// the same broker over the same database, with a position they put on by hand and a resting
+    /// bid.</para>
+    ///
+    /// <para>The row is stamped the way <c>Compose</c> stamps one, so `stamped` is what the arm
+    /// varies: a row written BEFORE this unit names no platform and no mode, and is never flattened
+    /// either — the asymmetry `docs/CONTRACTS.md` records as deliberate, and the arm that is red on
+    /// `4bb0846`.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(false, "a row written before this unit: no platform, no mode")]
+    [InlineData(true, "a row this build wrote, stamped fake/PAPER")]
+    public async Task A_killed_paper_flatten_never_re_runs_in_live_mode_on_the_same_platform(
+        bool stamped, string what)
+    {
+        var db = TestEnv.NewDb();
+        var clock = new TestClock(Noon);
+        var broker = new FakeBroker { IsSimulated = false };
+        var live = new RecordingConnector(
+            new FakeConnector(broker) { EmergencyBudget = TimeSpan.FromSeconds(30) }, "fake");
+        await live.ConnectAsync();
+
+        live.Faults.Fill = FillBehaviour.FillImmediately;
+        await live.Inner.PlaceOrderAsync(new PlaceOrderCommand("OWNER-1", broker.AccountId, "ES",
+            OrderSide.Buy, OrderType.Market, 4m, null, null, TimeInForce.Day, "the owner's own position"));
+        live.Faults.Fill = FillBehaviour.LeaveWorking;
+        await live.Inner.PlaceOrderAsync(new PlaceOrderCommand("OWNER-2", broker.AccountId, "ES",
+            OrderSide.Buy, OrderType.Limit, 2m, 50m, null, TimeInForce.Day, "the owner's own resting bid"));
+        live.Faults.Fill = FillBehaviour.FillImmediately;
+
+        // KILLED BETWEEN THE RECORD AND THE FIRST CLOSE: the breach is on disk and no outcome is.
+        var breach = new LossBreachRecord
+        {
+            Account = broker.AccountId,
+            Connector = stamped ? "fake" : "",
+            Mode = stamped ? TradingMode.PAPER : null,
+            Day = LossBreach.Stamp(Noon), FirstSeenAt = Noon, ConfirmedAt = Noon,
+            FirstPull = 1, ConfirmingPull = 2, Loss = 2_000m, DayBudget = 1_000m, Currency = "USD",
+            Why = "TradeAgent closed today to new risk at 12:00 UTC."
+        };
+        db.SetKv(LossBreach.DayKey(broker.AccountId, Noon), Json.Write(breach));
+
+        var gw = new TradingGateway(db, live, new HealthRegistry(), new GatewayOptions { Clock = clock });
+        gw.Update(s =>
+        {
+            s.Mode = TradingMode.LIVE_CONFIRM;
+            s.LiveActivated = true;
+            s.SelectedAccountId = broker.AccountId;
+            s.Risk.InstrumentAllowlist = [.. TestEnv.Instruments];
+            s.Risk.MaxOrderQuantity = 10m;
+            s.Risk.MaxNotionalPerOrder = 0m;
+            s.Risk.MaxOpenPositions = 10;
+            s.Risk.MaxOrdersPerMinute = 100;
+            s.Risk.MaxDailyLoss = 0m;
+            s.Risk.MaxLossPerTrade = 0m;
+        });
+
+        var before = (live.Places, live.Closes, live.Cancels);
+        clock.Advance(Tick);
+        await gw.RefreshHealthAsync();          // the health pass IS the killed-flatten sweep
+
+        // AND ASKED DIRECTLY TOO: the sweep's filter and the flatten's refusal are two pieces of
+        // code, and the refusal is this one's.
+        var standing = gw.DayClosed(broker.AccountId);
+        Assert.NotNull(standing);
+        Assert.Null(await gw.FlattenForBreachAsync(standing));
+
+        var after = (live.Places, live.Closes, live.Cancels);
+        var positions = await live.GetPositionsAsync(broker.AccountId);
+        var working = (await live.GetOrdersAsync(broker.AccountId, false, null)).Count(o => o.State == ExecutionState.WORKING);
+
+        log.WriteLine($"[{what}]");
+        log.WriteLine($"live cancels sent       : {after.Cancels - before.Cancels}");
+        log.WriteLine($"live closes sent        : {after.Closes - before.Closes}");
+        log.WriteLine($"live book after         : {string.Join(",", positions.Select(p => $"{p.Symbol} {p.Quantity}"))}  working={working}");
+        log.WriteLine($"live flatten record     : {gw.FlattenToday(broker.AccountId)?.Flat.ToString() ?? "none"}");
+
+        Assert.Equal(0, after.Cancels - before.Cancels);
+        Assert.Equal(0, after.Closes - before.Closes);
+        Assert.Equal(0, after.Places - before.Places);
+        Assert.Equal(4m, positions.Single(p => p.Symbol == "ES").Quantity);
+        Assert.Equal(1, working);
+        Assert.Null(gw.FlattenToday(broker.AccountId));
+    }
 }
