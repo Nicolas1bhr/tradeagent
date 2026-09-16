@@ -6223,3 +6223,39 @@ Manager's gate at `105f3c1` (the reported tip `79c0853` rebased onto `1b8f408`, 
 
 **NOT done, NOT verified:** no schema; no box, no order placed anywhere; the pipe ACL and token, the turn budget and the harness worker's key untouched; the in-process
 worker path (`CallAsync`) unchanged — it presents no grant and has none to end; no new permission reaches the agent-facing pipe, only a refusal.
+
+## 2026-09-16 — U-scope-identity landed: a loss-line scope is (connector, mode, account, symbol) on every row, read off the row, and the fill ledger is scoped to the operating pair
+
+The fix unit for the third review's HIGH 1, 2 and 3 — three findings with one root cause, the loss line not knowing which scope it was about — built by one fresh
+builder with the reviewer's probes `P1`, `P1b`, `P1c`, `P3`, `P3b`, `C2` as its REDs. Merge `f16c485`, 4 commits. **Schema 22** (`fill.connector`). MONEY PATH: the loss
+gate, the flatten, the ledger the budget is enforced off.
+
+- **The scope is on the row.** Every loss-line record carries connector, mode, account, symbol and day as fields, and every reader (`OpenClosures`, `LatestBreach`,
+  `ClosureHistory`, `PriorBreaches`, `SymbolsClosedToday`, the strike count) scans by prefix then parses off the ROW, never `Split(':')`; the key keeps `:` and each part
+  is ESCAPED at minting (`%`→`%25`, `:`→`%3A`) — a DEVIATION from the brief's "refused when minted", kept: a refusal would delete the loss budget on exactly the venues
+  whose convention is `VENUE:SYMBOL`, while the escape is total and reversible, and a name with neither character maps to itself, so nothing on disk moves. RED on
+  `4bb0846`: `A_venue_qualified_symbols_closure_is_visible_to_every_reader` (P1) `Assert.NotNull() Failure: Value is null`; P1b `Expected: Tuple ("2026-03-10", "ES:H6") /
+  Actual: null`; P1c `Expected: 1 / Actual: 8` (closed and flattened eight times); the builder's own `A_closure_written_under_an_older_builds_key_is_still_seen` red too.
+  Mutants: `OpenClosures` back to `ScopeOf(key)` → the older-key test red; `LossBreach.Part` not escaping → P1b red.
+- **A breach is bound to its platform and mode.** `FlattenForBreachAsync` refuses when the record's connector OR mode differs from the gateway it runs on, and the
+  killed-flatten sweep never re-runs another platform's breach; a record with neither field (written before this unit) still CLOSES and is never FLATTENED. RED:
+  `A_paper_breach_never_flattens_another_platform_or_another_mode` (C2) `Expected: 0 / Actual: 1` — one cancel reached the live platform. Mutants: the connector half
+  dropped → the `("atas", still paper)` arm red; the mode half dropped → `A_killed_paper_flatten_never_re_runs_in_live_mode_on_the_same_platform` red.
+- **The fill ledger is scoped.** `fill.connector` at schema 22, nullable, NOT backfilled (no honest backfill exists); `LedgerPnl` reads the operating (connector, account)
+  pair through `ScopedFills`; the average-cost book is keyed by (account, symbol); `trade pnl`, the Performance card, section 4 and its `fills today` count print the
+  pair's figure and name it; rows with no connector are `unattributed fills` beside every figure and in none of them; with no account selected the ledger reads
+  empty. RED: `One_accounts_loss_never_closes_another_accounts_day` (P3) `Expected: 0 / Actual: -1000.00`; P3b `Expected: True / Actual: False`; the builder's own
+  `One_accounts_sell_never_closes_another_accounts_buy` `Expected: 0 / Actual: 100`. Mutants: `ScopedFills` back to `_fills.Since()` → P3 red; the book keyed by symbol
+  alone → the last one red.
+- **Beyond the brief, named:** `RecordingConnector` gained an optional connector id (additive, default unchanged); `LossHoldRecord` and `LossExtensionRecord` gained
+  `Mode`; two existing fixtures updated with NO assertion changed (stamping the connector and mode `Compose` writes; the connector every fill carries); the rung-16
+  rollback fixture undoes 22; the `Inherited limit` sentence of `U-reopen-1` and the `U-reopen-2` choices line replaced in `CONTRACTS.md` by what is now true.
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `6dcb84c` (on `e4a19dc`), Release `--no-incremental`: 0 warnings, 0 errors; Unit
+1146 + Fault 361 + Integration 670 = 2177 passed, 0 failed, 1 skipped; touched classes 3× → LossScopeIdentityTests 11, LossFlattenTests 9, DailyReportTests 10,
+VenueCatalogTests 8, PnlScopeTests 1, PnlTests 11, all pass; names 1832 → 1841, 9 added, 0 removed, 0 moved. Manager's gate at `f16c485` (the reported tip, 0 behind `main` `e4a19dc`; `src`/`tests` identical to the product tip `6dcb84c`), Release, beside another builder's suite: build, 17 projects → 0 warnings, 0 errors; Unit 1146/1146 (22 s), Fault 361/361 (1 m 26 s), Integration 670/671, 1 skipped (11 m 7 s) → 0 failed; names vs `main` → 0 removed, 9 added (sets 1832 → 1841; `[Fact]`/`[Theory]` 1800 → 1809); scan clean; no trailers; `rev-list --count` → 0; CI at `f16c485`: PENDING when this record was written — the verdict is recorded in the commit that follows.
+
+**NOT done, NOT verified:** the sweep's second attempt after an exit throws (UNVERIFIED 1); the bridge; a per-symbol valuation denial; no box, no ATAS, no real money,
+no screen. The sweep's own connector-and-mode filter has NO mutant of its own — the flatten's refusal masks it — so it is log hygiene and the refusal is the guard,
+asked directly in the test. The two arms naming the new record fields cannot compile on the base by construction; their red-first evidence is C2's quoted red plus
+each guard's mutant.
