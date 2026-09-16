@@ -15,18 +15,19 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `dc44567` (`U-flatten-3`, product sha `c441120`, plus its record and the review brief), clean, pushed — 2026-09-16 14:30 CEST.** Landed 2026-09-15
-   in order: `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (schema 20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`,
-   `U-promote-bounds` `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121`; 2026-09-16: `U-flatten-3`
-   `c441120` — eleven landings, every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`.
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-allocator-2` (worktree `U-allocator-2`, **schema 21**;
-   items 1–3 committed, item 4 was in progress; resumed 2026-09-16 13:50 after the session-limit kill). (b) **The third milestone review of the money path at `c441120`:**
-   a fresh Opus reviewer on `docs/briefs/REVIEW.md` (its worktree `review`, detached; probes on `review-probes-c`; output `docs/REVIEW-2026-09-16.md` in the main
-   worktree, uncommitted until the manager commits it) and Codex `gpt-5.6-sol` read-only in the worktree `review-codex` (answer in the session scratchpad; the manager
-   pastes it under `## Codex` in the review file). Each HIGH becomes a fix unit before any release; MED and LOW together one batch unit; fixes are not re-reviewed.
-4. **Queued in `docs/briefs/`, briefed and NOT dispatched:** `U-press-budget-legs` (test-only, one item — the five multi-leg press fixtures `U-close-all-win` named and
-   did not move; dispatch when a slot frees). After the review: its fix units. At most two heavy legs at once, each on its own worktree from `main`; a schema number is
-   assigned here in landing order (22 is next after `U-allocator-2`'s 21).
+2. **`main` is `5f26fca` (`U-allocator-2`, product sha `0d6a268`, schema 21, plus its record), clean, pushed — 2026-09-16 14:50 CEST.** Landed 2026-09-15 in order:
+   `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds`
+   `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121`; 2026-09-16: `U-flatten-3` `c441120`,
+   `U-allocator-2` `0d6a268` (21) — twelve landings, every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`.
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) **the third milestone review of the money path at
+   `c441120`:** a fresh Opus reviewer on `docs/briefs/REVIEW.md` (worktree `review`, detached; probes on `review-probes-c`; output `docs/REVIEW-2026-09-16.md` in the
+   main worktree, uncommitted until the manager commits it), handed four UNVERIFIED hypotheses from Codex to execute as probes (a revoked grant surviving on an
+   authenticated pipe; a PAPER breach flattening LIVE on a shared account id; `ApproveAsync` skipping the reducer and allocation gates; a forward clock jump
+   reopening early). Codex `gpt-5.6-sol` read-only could not build in its sandbox (`MSB1025`) and reported no executed finding; its answer is in the session scratchpad
+   and goes under `## Codex` in the review file. Each HIGH becomes a fix unit before any release; MED and LOW one batch unit; fixes are not re-reviewed.
+   (b) `u-press-budget-legs` (worktree, cut from `b54f847`, test-only, one item): a fresh fixer on its brief.
+4. **Queued:** nothing briefed beyond the review's fix units, which are written from `docs/REVIEW-2026-09-16.md` when it lands. At most two heavy legs at once, each on
+   its own worktree from `main`; a schema number is assigned here in landing order (22 is next).
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
