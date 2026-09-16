@@ -18,7 +18,7 @@ Short on purpose. A handoff nobody can afford to read is not a handoff.
    `U-allocator-1` (20), `U-peer-row-ubuntu`, `U-flatten-2`, `U-decision-hook-race`, `U-promote-bounds`, `U-reopen-1`, `U-loopback-listener-mac`, `U-reopen-2`,
    `U-close-all-win`, `U-flatten-3`, `U-allocator-2` (21), `U-press-budget-legs`, the third milestone review at `c441120` (five HIGH, three MED, all executed),
    `U-grant-liveness`, `U-scope-identity` (22), `U-approve-gates`, `U-review-med` — every finding of the review is fixed on `main`; every merge sha's CI green on
-   all four jobs where recorded (`f9f5878`'s verdict is the last one owed). The owner's reopen decision (option B, "exquisite logic and edge case handling") is in the
+   all four jobs, every verdict recorded — none owed. The owner's reopen decision (option B, "exquisite logic and edge case handling") is in the
    product: `U-reopen-1`/`-2`, hardened by the review's MED 6.
 3. **Nothing is in flight.** The probes branch `review-probes-c` @ `58aa4fa` stays (the fix units' REDs came from it); every other branch merged is left in place
    (deleting merged branches is not part of the grant).
