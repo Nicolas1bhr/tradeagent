@@ -19,15 +19,14 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
    `U-flatten-1` `1c5d71f`, `U-allocator-1` `8cb95de` (20), `U-peer-row-ubuntu` `69657b2`, `U-flatten-2` `d7f235d`, `U-decision-hook-race` `4809e58`, `U-promote-bounds`
    `a816f1a`, `U-reopen-1` `bacd4e3`, `U-loopback-listener-mac` `4b0c6e8`, `U-reopen-2` `8714db1`, `U-close-all-win` `0dbc121`; 2026-09-16: `U-flatten-3` `c441120`,
    `U-allocator-2` `0d6a268` (21) — twelve landings, every merge sha's CI green on all four jobs where recorded; the sections are at the end of `BUILD-STATUS.md`.
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) **the third milestone review of the money path at
-   `c441120`:** a fresh Opus reviewer on `docs/briefs/REVIEW.md` (worktree `review`, detached; probes on `review-probes-c`; output `docs/REVIEW-2026-09-16.md` in the
-   main worktree, uncommitted until the manager commits it), handed four UNVERIFIED hypotheses from Codex to execute as probes (a revoked grant surviving on an
-   authenticated pipe; a PAPER breach flattening LIVE on a shared account id; `ApproveAsync` skipping the reducer and allocation gates; a forward clock jump
-   reopening early). Codex `gpt-5.6-sol` read-only could not build in its sandbox (`MSB1025`) and reported no executed finding; its answer is in the session scratchpad
-   and goes under `## Codex` in the review file. Each HIGH becomes a fix unit before any release; MED and LOW one batch unit; fixes are not re-reviewed.
-   (b) `u-press-budget-legs` (worktree, cut from `b54f847`, test-only, one item): a fresh fixer on its brief.
-4. **Queued:** nothing briefed beyond the review's fix units, which are written from `docs/REVIEW-2026-09-16.md` when it lands. At most two heavy legs at once, each on
-   its own worktree from `main`; a schema number is assigned here in landing order (22 is next).
+3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-press-budget-legs` (worktree, test-only, one
+   item, the fixer's report and gate green; the manager's gate running, its record drafted): land it. (b) the first two fix units of the third review, dispatched
+   2026-09-16 ~16:00: `u-scope-identity` (**schema 22**; HIGH 1+2+3 as one class fix — the identity of a loss-line scope) and `u-grant-liveness` (HIGH 5), each a fresh
+   builder on its brief, worktrees of the same name. Re-brief FRESH from the brief on disk after a kill: "read your branch first; judge uncommitted files on their
+   merits; finish, rebase onto `main`, gate, report".
+4. **Queued in `docs/briefs/`, briefed and NOT dispatched, in this order:** `U-approve-gates` (HIGH 4, light — after either leg above lands), `U-review-med` (MED 6+7+8 as
+   one batch; after `U-scope-identity` lands, same code). The review is landed: `docs/REVIEW-2026-09-16.md` (five HIGH, three MED, seven UNVERIFIED, Codex under its own
+   heading); fixes are not re-reviewed; no release is cut before every HIGH fix unit is on `main`. At most two heavy legs at once; 23 is the next schema number.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
    unit's worktree created on the previous unit's TIP the moment its report arrives; the manager's detached gate (`nohup` build + three suites to files, a
    Monitor on DONE) on the reported tip; a test-name diff from git objects (`[[:space:]]`, both set sizes printed); the secret scan as a gate — a record's own
