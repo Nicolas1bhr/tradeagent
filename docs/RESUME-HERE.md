@@ -15,14 +15,13 @@ what's left, we'll pick back up tomorrow fresh"). Nothing is running. Worktrees 
 
 1. **Read `docs/HOW-WE-BUILD.md`, `docs/COUNCIL.md` and the `## 2026-09-14` and `## 2026-09-15` sections at the end of `BUILD-STATUS.md`** (one per landing, every
    merge sha's CI verdict recorded — nothing is in flight).
-2. **`main` is `8ee5adc` (`U-scope-identity`, product sha `f16c485`, schema 22, plus its record), clean, pushed — 2026-09-16 17:05 CEST.** Fifteen landings since
-   2026-09-15 morning, every merge sha's CI green on all four jobs where recorded — the list and the sections are at the end of `BUILD-STATUS.md`; the third milestone
-   review at `c441120` is landed (`docs/REVIEW-2026-09-16.md`; probes on `review-probes-c` @ `58aa4fa`); HIGH 1, 2, 3 and 5 are fixed on `main`. No release is cut before
-   every HIGH fix unit is on `main`.
-3. **IN FLIGHT at the time of writing (after a kill, read each branch first — the commits are the handoff):** (a) `u-approve-gates` (worktree, tip `c1fde96` rebased
-   over the scope unit, the builder's report and gate green; the manager's gate running, its record drafted): land it — HIGH 4. (b) `u-review-med` (worktree, cut from
-   the scope-identity tip `f16c485`; MED 6+7+8 as one batch): a fresh builder on its brief. Re-brief FRESH from the brief on disk after a kill: "read your branch
-   first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
+2. **`main` is `e258e64` (`U-approve-gates`, product sha `9aeea56`, plus its record), clean, pushed — 2026-09-16 17:20 CEST.** Sixteen landings since 2026-09-15
+   morning, every merge sha's CI green on all four jobs where recorded — the list and the sections are at the end of `BUILD-STATUS.md`; the third milestone review at
+   `c441120` is landed (`docs/REVIEW-2026-09-16.md`; probes on `review-probes-c` @ `58aa4fa`); **all five HIGH findings are fixed on `main`** (`U-grant-liveness`,
+   `U-scope-identity` at schema 22, `U-approve-gates`). The MED batch is the last fix unit.
+3. **IN FLIGHT at the time of writing (after a kill, read the branch first — the commits are the handoff):** `u-review-med` (worktree, cut from the scope-identity tip
+   `f16c485`; MED 6+7+8 as one batch: the monotone clock term, the per-order limits inside the gate, the sighting keyed by scope): a fresh builder on its brief. Re-brief
+   FRESH from the brief on disk after a kill: "read your branch first; judge uncommitted files on their merits; finish, rebase onto `main`, gate, report".
 4. **Queued:** nothing briefed. When `U-approve-gates` and `U-review-med` are on `main`, every finding of the third review is fixed; the next work is the owner's call
    (a release, the box, the paper loop). At most two heavy legs at once; 23 is the next schema number.
 5. **How a leg is run** (`docs/HOW-WE-BUILD.md` and the memory): a fresh Opus builder per unit with the brief, the rules and the gate in its prompt; the next
