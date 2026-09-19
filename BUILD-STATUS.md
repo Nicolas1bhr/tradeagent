@@ -6354,3 +6354,41 @@ commit and its push (`push exit: 0`); caps measured with `wc -l`/python: `manage
 windows, macos, package) — both docs-only, both recorded here, none owed; no survey
 leg dispatched, no brief written, `docs/briefs/` not created; no box, no ATAS, no money; nothing here marks a feature implemented, a test passed or a boundary
 enforced — the handoff's § 4 items are starting points for the survey, not findings.
+
+## 2026-09-19 — the survey landed: `docs/INSPECTION-2026-09-19.md`, the reachable loop at `222dcc9`, five tables, 87 lines; docs only
+
+The first leg of the paper line, as `manager-prompt.md` § 4 orders: one fresh general-purpose Opus leg, read-only, on its own worktree (branch `survey`), from
+the 39-line brief `docs/briefs/SURVEY.md` (landed `222dcc9`), writing the one file. Merge `50c40cc` (ff-only), then this record with the brief retired. No product
+file changed. Leg cost: 138k tokens, 47 tool uses, 5 m 47 s. Every cell labelled SOURCE / RUN / HIST; the leg built nothing, ran no test class, no CLI, no provider,
+no box — every finding is a source observation or a `git grep`, and the report says so.
+
+- **Earliest broken dependency (tables 3, 5):** candidate → verdict is ABSENT. `Referee.Verdict` (`Referee.cs:177`) has zero production callers (RUN `git grep -c
+  'referee.Verdict(' -- src/` → 0; four test files), no pipe op and no `trade` verb asks for one, so promotion, allocation and everything downstream are unreachable
+  ahead of the missing runner. Downstream, two more absences: no deployment store and no runner (`IntentDecision.From` has no `src/` caller; `StrategyEvaluator.Step`
+  has one, `Backtest.cs:460`; the gateway's own doc at `TradingGateway.cs:1856-1858` says "no runner emits a live or paper intent yet"), and no advancing price
+  source (Binance completed-month archives only, `BinanceArchive.cs:16-21`; `FakeBroker.BasePrice` deterministic and unmoving, `FakeBroker.cs:62-67`).
+- **Connected and preserved (tables 1, 3):** turn → data read, program creation (`write_file` into `trading/`), backtest (`Ops.Backtest` for every role; version and
+  run recorded; a trial registered when a campaign is open), fills → `pnl`/`report` for orders that exist, the next turn scheduled from `next.json`; the holdout door
+  (`BarAudience.Referee`, internal), the charge-first referee, the allocation ceiling on dispatch, the boundaries' deadlines and code-written defaults.
+- **Obstructions (table 2):** the verdict op (smallest correction: a read-only op calling the existing `Referee.Verdict` under the caller's role, returning
+  `RefereeFeedback.Text`, the charge and the holdout untouched); the campaign (opened only by the owner's holdout press, `SettingsView.cs:476`, in one transaction with
+  the cutoff); paper allocation (`Allocate` has one caller, the owner's press, `DashboardView.cs:2248`); no exec and no spawn tool in the harness. Preserved as
+  reasonable: the 20-line report cap with its quarantine, the assessment baseline, owner-only data collection.
+- **Boundaries (table 4):** operator authority off the pipe by absence (24 op names, none for mode, kill switch, approval, allocation, verdict or update); an agent's
+  `trade buy` today names no version, so it is un-ceilinged and gated by mode, role and the kill switch instead; `Containment.Sandbox()` NONE — stated, not enforced;
+  the Operations role's vendor CLI runs `--dangerously-bypass-approvals-and-sandbox` (`RuntimeManifest.cs:461`) while the harness role has six tools and no exec —
+  an asymmetry recorded, not judged.
+- **Queue (table 5), by dependency:** `U-verdict-op` → (`U-campaign-open`, likely nothing: the campaign opens with the owner's one-time cutoff) → `U-paper-grant` →
+  `U-paper-runner` → `U-advancing-bars` → `U-decide-again`. Owner-only prerequisites named: the 12-month download, one holdout press, a harness key.
+
+**Manager's checks after the report (RUN, this Mac, 2026-09-19):** the six load-bearing claims re-read at the cited lines — all hold. One clause the survey did not
+name, which shapes the first brief: `ScoringPolicyV1.Reason` (`Referee.cs:475`) answers `evidence-precedes-the-freeze` whenever the holdout window's start is not
+AFTER the version's `created_at`, so over completed-month archives no version frozen today can be promoted before a later month is collected — the principles'
+"favourable historical verdict → eligible for paper" distinction is not in the code. Binance's public klines answer this Mac without a key: `GET
+api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2` → HTTP 200 in 0.46 s, the current minute's bar; `data-api.binance.vision` → HTTP 200 too.
+
+**Verified by running:** the survey worktree clean at `50c40cc`, one file vs `main`; scan clean; `merge --ff-only` exit 0; `rev-list --count` → 0; caps measured
+(`wc -l`: report 87, brief 39, this section); no trailers. CI at `222dcc9` (the brief), at `50c40cc` and at this record: PENDING at the time of writing, recorded when complete.
+
+**NOT done, NOT verified:** no build, no suite, no runtime — nothing in the report or in this section marks a feature implemented, a test passed or a boundary
+enforced; the Binance probe is a read of public data from this Mac and proves nothing about the product; no Astra consult yet; no brief for a product unit yet.
