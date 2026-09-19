@@ -537,7 +537,10 @@ every single request is one it composed itself — and that changes three things
   TradeAgent holds, read your daily report, and ask TradeAgent to **backtest a program in its own
   folder** — TradeAgent runs the program over its own market data and works out every figure itself,
   so a result is something it was measured on rather than something it says about itself. That places
-  no order and proves no fill. There is no shell, no way to install anything, and no
+  no order and proves no fill. It can also **ask TradeAgent to judge a program it has already
+  backtested** over the months you held back — it gets a verdict and a reason in words and never a
+  figure from those months, and the campaign's small budget of judgements is what stops it asking over
+  and over. There is no shell, no way to install anything, and no
   way to reach the internet. Anything else it asks for is refused and written down.
 - **Everything it asked for is recorded.** Every read, every write and every trading call it made —
   served or refused — is in TradeAgent's own records, which it cannot edit. That is not true of the

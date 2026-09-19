@@ -2212,10 +2212,22 @@ a time would spend the owner's money doing so.
 ## The campaign, the trials and the verdict budget — `src/TradeAgent.Core/Db/CampaignStore.cs`, `Strategy/Referee.cs`
 
 **The referee is code and never a role** (`docs/COUNCIL.md`:55-57). There is no LLM behind any of this, no
-role called referee, no workspace folder for it — and **no pipe op and no `trade` verb reaches it**: not
-the holdout, not a campaign, not a trial, not a verdict. A caller that could open a campaign would have
-given itself an unlimited supply of attempts, and one that could ask for verdicts could search the
-holdout by asking.
+role called referee, no workspace folder for it. **The verdict REQUEST is `Ops.Verdict`** (`U-verdict-op`,
+`GatewayPipeServer.VerdictFor`, `trade verdict --version <hash>`): models propose candidates and software
+decides admission and issues the verdict, `docs/PRINCIPLES.md` § Evidence. **The holdout, the campaign,
+the trial and the disposition still have no pipe op and no `trade` verb** — a caller that could open a
+campaign would have given itself an unlimited supply of attempts.
+
+**What bounds the one that is reachable, so that it is not "searching the holdout by asking".** The
+frame carries a version and at most a dataset: the months are the campaign's own, the scorer is
+`ScoringPolicyV1` bound to the sha fixed at open, and the execution model is the judge's default — none
+of the three is a parameter. The supply is the **verdict budget counted across the whole renewal
+lineage** (three by default), charged by `RequestVerdict` before anything reads a bar. And what crosses
+back is `RefereeFeedback.Text`, which reads the promotion row alone: the verdict and a reason class from
+a closed vocabulary, no metric, no trace hash and no bar. The gateway adds two bounds of its own: a role
+must already have COMPLETED a registered trial of that exact version over that dataset, so a version
+nobody measured buys nothing; and a promotion already recorded for (version, campaign) is answered **as
+it stands with nothing re-run**, so asking again once the dataset has grown buys no second peek.
 
 **A campaign is opened by the app when the owner sets a holdout, one per holdout dataset.**
 `TradingGateway.SetHoldout` writes the cutoff and opens the campaign in ONE transaction, so months held
