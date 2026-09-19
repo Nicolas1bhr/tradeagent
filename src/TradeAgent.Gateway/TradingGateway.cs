@@ -276,6 +276,14 @@ public sealed class TradingGateway : IAsyncDisposable
     DateTimeOffset Now => _opt.Clock.GetUtcNow();
 
     /// <summary>
+    /// THE SAME CLOCK, FOR THE SURFACES ABOVE THIS ONE. The pipe server answers "how stale is this
+    /// series" and the report prints an age; both are measured with the clock the gateway's own
+    /// refusals are measured with, so a test that moves time moves all of them together and a
+    /// status cannot disagree with the dispatch that is about to refuse on it.
+    /// </summary>
+    public DateTimeOffset UtcNow => Now;
+
+    /// <summary>
     /// THE PAUSE THAT DOES NOT DEPEND ON THE DATABASE. Every durable record of an unconfirmed
     /// outcome is a write, and a write can fail — a locked database, a full disk, a read-only file.
     /// When it does, the wire has still been touched, so the refusal has to exist somewhere the
@@ -1257,10 +1265,45 @@ public sealed class TradingGateway : IAsyncDisposable
             LossHeldForReview = loss.HeldForReview,
             LossReleasedAt = loss.ReleasedAt,
             LossClosureRule = loss.ClosureRule,
+            ForwardData = ForwardStatus(),
             LossValuationLost = loss.ValuationLost.Count > 0 ? loss.ValuationLost : null,
             LossValuationExit = loss.ValuationExits.Count > 0 ? loss.ValuationExits : null,
             AiModel = ai.Model
         };
+    }
+
+    /// <summary>
+    /// HOW STALE THE FORWARD BARS ARE, for the status. Read off the ROWS and never off "when the
+    /// collector last ran": a collector running happily against a vendor publishing nothing is
+    /// exactly the case a liveness figure must not report as fresh.
+    ///
+    /// <para>Null — the whole record absent — when this installation has neither a bar nor an
+    /// attempt for the configured pair, which is what an installation that has never collected
+    /// forward looks like. A read that throws leaves it absent too, because the status must render
+    /// with the wire down and an invented zero here would tell the agent its data is current.</para>
+    /// </summary>
+    ForwardDataStatus? ForwardStatus()
+    {
+        try
+        {
+            var symbol = Settings.MarketDataPair;
+            var series = _forward.Series(symbol);
+            if (series.Bars == 0 && series.LastReceivedAt is null) return null;
+
+            var now = Now;
+            return new ForwardDataStatus(symbol)
+            {
+                LastBar = series.LastBar,
+                AgeSeconds = _forward.Freshness(symbol, now) is { } age ? (long)age.TotalSeconds : null,
+                // THE UTC DAY, not the owner's local one. This counts holes in a market-data feed
+                // that publishes in UTC, beside a bar whose open time is in UTC; the owner's midnight
+                // is the right cut for their spending and the wrong one for this.
+                GapsToday = _forward.GapsSeen(symbol, StartOfDay(now), now.AddTicks(1)),
+                LastError = series.LastError,
+                Collecting = Settings.CollectLiveBars
+            };
+        }
+        catch (Exception) { return null; }
     }
 
     public Task<IReadOnlyList<AccountInfo>> AccountsAsync(CancellationToken ct = default) => Connector.GetAccountsAsync(ct);

@@ -2560,9 +2560,29 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
             + "The cutoff is told to you rather than hidden so that you need not find it one refusal at a "
             + "time; nothing on this channel can set, clear or move it, and moving it earlier is refused "
             + "even to the account owner. 'evaluation_class' is 'research' for real collected history and "
-            + "'fixture' for bars that exist to prove the machinery works and are never evidence.",
-            [.. sets.Select(Describe)]);
+            + "'fixture' for bars that exist to prove the machinery works and are never evidence. "
+            // AND THE FORWARD SERIES, NAMED HERE AND KEPT APART FROM THE DATASETS. A caller that could
+            // not tell the two lists apart would be one bar count away from asking for a verdict over
+            // minutes nobody checksummed.
+            + "'forward' is a DIFFERENT KIND OF THING and is listed separately: bars TradeAgent "
+            + "collected itself, minute by minute, while it was running. They carry NO vendor "
+            + "checksum — none is published for a live window and none could be — so they are NOT "
+            + "evaluation evidence and no verdict is ever taken over them. No holdout applies to them "
+            + "either, and that is a fact about what they are rather than a relaxation: every forward "
+            + "bar post-dates every freeze on this installation, because it did not exist when the "
+            + "freeze was taken. Read them with 'data-bars --source forward'.",
+            [.. sets.Select(Describe)],
+            [.. gateway.Forward.All().Select(Describe)]);
     }
+
+    /// <summary>One forward series on the wire. See <see cref="ForwardBars"/>.</summary>
+    static DataListReplyForward Describe(ForwardSeries series) => new(
+        series.Source, series.Symbol, series.Interval, series.Bars, series.FirstBar, series.LastBar,
+        series.Gaps, series.BarsMissing, series.LastReceivedAt, series.LastError,
+        // THE SENTENCE IS ON THE ROW AND NOT ONLY IN THE NOTE ABOVE, for the reason a bar's
+        // `quality` is on every bar: a caller that reasons over one of these series has to be able
+        // to read what it is from the series itself.
+        series.Note);
 
     /// <summary>
     /// The bars themselves, for one pair, between two instants.
@@ -2583,6 +2603,22 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         if (from is { } lo && to is { } hi && lo > hi)
             throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
                 $"'from' ({lo:O}) is after 'to' ({hi:O}), which is a window with nothing in it.");
+
+        // THE SOURCE IS A WORD AND IT IS CHECKED, not defaulted: 'forward' and the archive are
+        // different evidence with different claims attached, and a misspelling that quietly served
+        // the archive would answer a question nobody asked.
+        if (req.Args is not null && req.Args.ContainsKey("source"))
+        {
+            var word = (req.Str("source") ?? "").Trim().ToLowerInvariant();
+            if (word.Length > 0 && word != "archive")
+                return word == ForwardBars.SourceWord
+                    ? ForwardBars_(pair, from, to)
+                    : throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                        $"'{word}' is not a source this build serves bars from. It has 'archive' — the "
+                        + "frozen, checksummed history the account owner collected — and "
+                        + $"'{ForwardBars.SourceWord}', the closed minutes TradeAgent collected itself "
+                        + "while it was running. Leaving --source out means the archive.");
+        }
 
         var newest = gateway.Datasets.Newest(pair)
             ?? throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
@@ -2639,6 +2675,68 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     }
 
     /// <summary>
+    /// THE FORWARD BARS — the closed minutes TradeAgent collected itself while it was running.
+    ///
+    /// <para><b>No holdout applies, and that is a statement about what these bars ARE rather than a
+    /// relaxation.</b> A holdout is a cutoff the account owner drew across a FROZEN dataset; every
+    /// forward bar post-dates every freeze on this installation, because it did not exist when the
+    /// freeze was taken. There is nothing here to hold back. The archive reader's cutoff is
+    /// untouched, still checked inside <c>DatasetReader.Read</c>, and still refuses every caller —
+    /// this method does not go near it, and a program judged over held-back months cannot reach one
+    /// of them through this door.</para>
+    ///
+    /// <para><b>And they are not evaluation evidence.</b> There is no vendor checksum for a live
+    /// window and none is claimed, so the reply says so in the same words <c>data-list</c> uses.
+    /// Served to any role for the reason above; the refusal a research caller would deserve is on
+    /// the EVIDENCE side, and it is that no verdict is taken over these bars at all.</para>
+    ///
+    /// <para>Bounded exactly as the archive read is bounded: at most <c>DatasetReader.MaxBars</c>,
+    /// and a window holding more is REFUSED naming the cap rather than truncated. An answer quietly
+    /// cut short is a different window from the one that was asked for.</para>
+    /// </summary>
+    object ForwardBars_(string pair, DateTimeOffset? from, DateTimeOffset? to)
+    {
+        var series = gateway.Forward.Series(pair);
+        if (series.Bars == 0)
+            throw new GatewayDeniedException(ErrorCode.MARKET_DATA_UNAVAILABLE,
+                $"TradeAgent holds no forward bars for {pair}"
+                + (series.LastError is { Length: > 0 } why ? $": the last look failed — {why}." : ".")
+                + " They are collected only while TradeAgent is running, and the account owner "
+                + "switches that on in TradeAgent's own window under Market data; there is no command "
+                + "here that does it.");
+
+        // ONE PAST THE CAP IS ENOUGH TO KNOW THE WINDOW IS TOO BIG, and it is the last row this asks
+        // the database for — the reading `DatasetReader.Read` takes, so the two doors refuse alike.
+        var bars = gateway.Forward.Since(pair,
+            from is { } lo ? lo - ForwardBars.BarLength : null, DatasetReader.MaxBars + 1);
+
+        if (to is { } hi) bars = [.. bars.Where(b => b.OpenTime <= hi)];
+
+        if (bars.Count > DatasetReader.MaxBars)
+            throw new GatewayDeniedException(ErrorCode.INVALID_REQUEST,
+                $"That window holds more than {DatasetReader.MaxBars} forward bars, which is the most "
+                + "one call may have. Ask for a shorter period with --from and --to; the series covers "
+                + $"{series.FirstBar:yyyy-MM-dd HH:mm} to {series.LastBar:yyyy-MM-dd HH:mm} UTC and "
+                + $"{DatasetReader.MaxBars} one-minute bars is about {DatasetReader.MaxBars / 1440} days.");
+
+        return new DataForwardBarsReply(
+            series.Source, pair, series.Interval,
+            ForwardBars.Evidence
+            + ". Closed bars in UTC, ascending, nothing filled in: a minute that is missing is missing, "
+            + "'gaps_in_series' counts the runs of them and 'bars_missing' the minutes, and 'data-list' "
+            + "says where they are. The FIRST reading of a minute is the one stored — a later answer "
+            + "that disagreed did not overwrite it — and every bar carries the instant it was received, "
+            + "which is after its own close. 'last_bar_age_seconds' is how stale this series is right "
+            + "now; a strategy's `data_freshness` is checked against the bar its decision was computed "
+            + "from, at dispatch, and is not something this read can satisfy on its behalf.",
+            from, to, bars.Count, series.Bars, series.Gaps, series.BarsMissing,
+            series.FirstBar, series.LastBar, series.LastReceivedAt,
+            gateway.Forward.Freshness(pair, gateway.UtcNow) is { } age ? (long)age.TotalSeconds : null,
+            [.. bars.Select(b => new DataForwardBar(
+                b.OpenTime, b.Open, b.High, b.Low, b.Close, b.Volume, b.CloseTime, b.ReceivedAt))]);
+    }
+
+    /// <summary>
     /// A date on a data request. Absent is null; PRESENT AND UNREADABLE IS A REFUSAL, the same rule
     /// `pnl --since` follows and for the same reason — a window that quietly became a different
     /// window is a different answer.
@@ -2684,7 +2782,28 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
     /// field from an anonymous object, and an absent <c>rejected_reason</c> reads as a field this
     /// build does not have rather than as "there is no reason because nothing is wrong".
     /// </summary>
-    sealed record DataListReply(int Count, string Note, IReadOnlyList<DataListReplyItem> Datasets);
+    sealed record DataListReply(int Count, string Note, IReadOnlyList<DataListReplyItem> Datasets,
+        IReadOnlyList<DataListReplyForward> Forward);
+
+    /// <summary>
+    /// ONE FORWARD SERIES, IN ITS OWN LIST. It is deliberately NOT a <see cref="DataListReplyItem"/>
+    /// with some fields null: a dataset has a version, a normalised hash, months attempted and
+    /// present, a holdout and an evaluation class, and a forward series has none of those and never
+    /// will. Merged, the reply would be one shape whose meaning depended on which half of its fields
+    /// were filled in — and the one fact that must never be lost is which of the two a caller is
+    /// looking at.
+    /// </summary>
+    sealed record DataListReplyForward(
+        string Source, string Symbol, string Interval, int Bars,
+        // NEVER DROPPED WHEN NULL: "this series has no bars yet" and "this build has no such field"
+        // are different answers, and the first is the ordinary state of a collector that has just
+        // started or has been failing all morning.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? FirstBar,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastBar,
+        int Gaps, int BarsMissing,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastReceivedAt,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? LastError,
+        string Note);
 
     /// <inheritdoc cref="DataListReply"/>
     sealed record DataListReplyItem(
@@ -2729,6 +2848,34 @@ public sealed class GatewayPipeServer(TradingGateway gateway, string token, stri
         int MidpointBarsInWindow, int MidpointBarsInDataset,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? MidpointVolumeNote,
         IReadOnlyList<DataBarsReplyBar> Bars);
+
+    /// <summary>
+    /// THE FORWARD WINDOW, AND IT IS ITS OWN SHAPE for the reason <see cref="DataListReplyForward"/>
+    /// is: there is no version, no dataset id, no normalised hash and no midpoint count here, and
+    /// there never will be. A reply that reused <see cref="DataBarsReply"/> with those fields empty
+    /// would let a caller read forward minutes as though they were a frozen dataset.
+    /// </summary>
+    sealed record DataForwardBarsReply(
+        string Source, string Pair, string Interval, string Note,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? From,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? To,
+        int Count, int BarsInSeries, int GapsInSeries, int BarsMissing,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? FirstBar,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastBar,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] DateTimeOffset? LastReceivedAt,
+        // NEVER DROPPED WHEN NULL: "this series has no bars to be stale" and "this build cannot tell
+        // you how stale it is" are different answers to a question about acting on it.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? LastBarAgeSeconds,
+        IReadOnlyList<DataForwardBar> Bars);
+
+    /// <summary>
+    /// ONE FORWARD BAR. <c>received_at</c> is on every bar rather than only on the series, because it
+    /// is what makes the closure claim checkable by the caller: this bar's close time precedes the
+    /// moment it was read, and a reader can see that rather than trust it.
+    /// </summary>
+    sealed record DataForwardBar(
+        DateTimeOffset OpenTime, decimal Open, decimal High, decimal Low, decimal Close, decimal Volume,
+        DateTimeOffset CloseTime, DateTimeOffset ReceivedAt);
 
     /// <inheritdoc cref="DataListReply"/>
     sealed record DataBarsReplyBar(

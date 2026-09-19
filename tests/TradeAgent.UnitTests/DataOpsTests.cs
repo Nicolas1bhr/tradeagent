@@ -31,10 +31,14 @@ public class DataOpsTests
         Assert.False(list.Mutating);
         Assert.False(bars.Mutating);
         Assert.Equal("trade data list", list.Cli);
-        Assert.Equal("trade data bars --pair P [--from D] [--to D]", bars.Cli);
+        // `--source` joined this line at `U-forward-bars`, and it is OPTIONAL: every caller written
+        // before forward bars existed leaves it out and still gets the frozen archive, which is what
+        // it meant then and still means.
+        Assert.Equal("trade data bars --pair P [--from D] [--to D] [--source archive|forward]", bars.Cli);
         Assert.Contains(bars.Args, a => a.Name == "pair" && a.Required);
         Assert.Contains(bars.Args, a => a.Name == "from");
         Assert.Contains(bars.Args, a => a.Name == "to");
+        Assert.Contains(bars.Args, a => a.Name == "source" && !a.Required);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Globalization;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 
 namespace TradeAgent.Gateway;
@@ -125,7 +126,7 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
             Performance = ComposePerformance(from, at),
             Execution = ComposeExecution(from, to, at),
             Spending = ComposeSpending(i),
-            OtherCosts = ComposeOtherCosts(),
+            OtherCosts = ComposeOtherCosts(from, to, at),
             Research = ComposeResearch(from, to),
             Decisions = ComposeDecisions(from, to, at, gateway.Settings.OwnerReplyDeadlineHours),
             Recovery = ComposeRecovery(from, to, i)
@@ -549,15 +550,63 @@ public sealed class DailyReports(TradingGateway gateway, Database db, Func<DateT
     static string Figure(decimal? value) =>
         value is { } d ? d.ToString(CultureInfo.InvariantCulture) : DailyReportText.Unknown;
 
-    static ReportOtherCosts ComposeOtherCosts() => new()
+    /// <summary>
+    /// THE ONE OPERATING ACTIVITY THIS APP CAN COUNT — the live market-data feed — and the gap that
+    /// still says nothing here is priced.
+    ///
+    /// <para>Counted off the forward ledger's own rows: the attempts made in the day's window, how
+    /// many of them recorded a failure, the bars the series holds and how stale its newest one is.
+    /// Never off "the collector is running": a collector running happily against a vendor publishing
+    /// nothing is exactly what this line must not report as healthy.</para>
+    ///
+    /// <para>Null — printed as "not collected" — when this installation has neither a bar nor an
+    /// attempt, which is what an owner who switched the toggle off has. A read that fails leaves it
+    /// null too and adds the reason as a gap, never a zero: a zero here would read as a day on which
+    /// the feed worked and published nothing.</para>
+    /// </summary>
+    ReportOtherCosts ComposeOtherCosts(DateTimeOffset from, DateTimeOffset to, DateTimeOffset at)
     {
-        Missing =
-        [
-            new ReportGap("data, market data subscriptions, platform fees, machine",
+        string? forward = null;
+        var gaps = new List<ReportGap>
+        {
+            new("data, market data subscriptions, platform fees, machine",
                 "TradeAgent does not measure any operating cost other than the AI, so no figure here "
                 + "is a complete cost of running this")
-        ]
-    };
+        };
+
+        try
+        {
+            var symbol = gateway.Settings.MarketDataPair;
+            var series = gateway.Forward.Series(symbol);
+            var (attempts, failed) = gateway.Forward.Fetches(symbol, from, to);
+
+            if (series.Bars > 0 || attempts > 0)
+            {
+                var age = gateway.Forward.Freshness(symbol, at);
+                forward =
+                    $"{series.Source} {symbol} {series.Interval}: {attempts:N0} requests today"
+                    + (failed > 0 ? $", {failed:N0} of them recorded a failure" : "")
+                    + $", {series.Bars:N0} bars held, newest "
+                    + (age is { } old ? $"{old.TotalMinutes:N0} min old" : "none yet")
+                    + $", {series.Gaps:N0} gap runs / {series.BarsMissing:N0} minutes missing and NOTHING "
+                    + "filled in"
+                    + (gateway.Settings.CollectLiveBars ? "" : " — collection is switched OFF")
+                    + (series.LastError is { Length: > 0 } why ? $" — last look: {why.ReplaceLineEndings(" ")}" : "")
+                    // THE SENTENCE TRAVELS WITH THE FIGURE. `trade report` serves this document to the
+                    // AI as well as to the owner, and a bar count with no caveat beside it is a claim
+                    // about evidence neither of them can check.
+                    + $" ({ForwardBars.Evidence}). No price: TradeAgent does not know what this "
+                    + "installation's bandwidth costs.";
+            }
+        }
+        catch (Exception ex)
+        {
+            gaps.Add(new ReportGap("live market data",
+                $"the forward ledger could not be read ({ex.Message})"));
+        }
+
+        return new ReportOtherCosts { ForwardData = forward, Missing = gaps };
+    }
 
     ReportResearch ComposeResearch(DateTimeOffset from, DateTimeOffset to)
     {

@@ -192,7 +192,8 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
         case "cancel":
             a["id"] = pos.ElementAtOrDefault(0) ?? "";
             return (Ops.Cancel, a);
-        // `trade data list` and `trade data bars --pair BTCUSDT --from 2026-08-01 --to 2026-08-02`.
+        // `trade data list` and `trade data bars --pair BTCUSDT --from 2026-08-01 --to 2026-08-02`,
+        // with `--source forward` for the bars TradeAgent collected itself minute by minute.
         // Both are READS. There is deliberately no `trade data collect`: the account owner presses
         // that in TradeAgent, and this CLI is the agent's side of the fence.
         case "data":
@@ -202,7 +203,10 @@ static (string? Op, Dictionary<string, object> Args) Map(string cmd, List<string
             if (sub is not "bars") return (null, a);
 
             a["pair"] = flags.GetValueOrDefault("pair") ?? pos.ElementAtOrDefault(1) ?? "";
-            Opt("from"); Opt("to");
+            // `--source forward` asks for the closed minutes TradeAgent collected itself rather than
+            // the frozen archive. Left out means the archive, which is what every caller written
+            // before forward bars existed meant and still means.
+            Opt("from"); Opt("to"); Opt("source");
             return (Ops.DataBars, a);
         }
 

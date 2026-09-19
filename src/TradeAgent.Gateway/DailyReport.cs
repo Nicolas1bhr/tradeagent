@@ -305,9 +305,27 @@ public sealed record ReportSpending
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
-/// <summary>Everything it costs to run that is NOT the AI. Today the app measures none of it.</summary>
+/// <summary>
+/// Everything it costs to run that is NOT the AI. The app still measures no money here — see
+/// <see cref="Missing"/> — and one operating activity is now at least COUNTED.
+/// </summary>
 public sealed record ReportOtherCosts
 {
+    /// <summary>
+    /// WHAT THE LIVE MARKET-DATA FEED DID TODAY, in one line, or null because this installation
+    /// collects none.
+    ///
+    /// <para>It belongs in this section and not in section 8 because it is the one operating
+    /// activity this app runs continuously and pays for in requests rather than in evidence: the
+    /// gap this section declares names "data, market data subscriptions" among the costs nothing
+    /// measures, and this is the part of it TradeAgent can actually count. The BARS are research
+    /// evidence and are reported as such where the evidence is.</para>
+    ///
+    /// <para>It is a COUNT and never a price. TradeAgent does not know what this installation's
+    /// bandwidth costs, and the gap below still says so.</para>
+    /// </summary>
+    public string? ForwardData { get; init; }
+
     public IReadOnlyList<ReportGap> Missing { get; init; } = [];
 }
 
@@ -662,6 +680,7 @@ public static class DailyReportText
         Gaps(b, r.Spending.Missing);
 
         Section(b, "7. Other operating costs");
+        Kv(b, "live market data", r.OtherCosts.ForwardData ?? "not collected");
         Gaps(b, r.OtherCosts.Missing);
 
         Section(b, "8. Research evidence");

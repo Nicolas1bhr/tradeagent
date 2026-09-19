@@ -200,21 +200,34 @@ public sealed class ForwardBarStore(Database db)
     // ---------------------------------------------------------------------------------- the reads
 
     /// <summary>
+    /// THE MOST ROWS ONE <see cref="Since"/> MAY RETURN, AND IT IS ONE PAST THE CAP A CALLER IS TOLD
+    /// ABOUT.
+    ///
+    /// <para>That one row is the whole point. A reader bounded by <see cref="DatasetReader.MaxBars"/>
+    /// asks for one more, sees that there is one, and REFUSES the window — which is the rule the
+    /// archive reader already follows (<c>DatasetReader.Read</c> stops one bar past the cap). Clamped
+    /// at the cap exactly, the pipe op could never tell "exactly ten thousand bars" from "more than
+    /// ten thousand" and would hand back a silently shortened window. Measured here: a request for
+    /// 10,050 forward bars came back as 10,000 with nothing in the reply saying so.</para>
+    /// </summary>
+    public const int MaxRows = DatasetReader.MaxBars + 1;
+
+    /// <summary>
     /// THE BARS AFTER <paramref name="openExclusive"/>, ascending, at most <paramref name="limit"/>.
     ///
     /// <para>EXCLUSIVE, because the caller is a runner that has already consumed a bar and is asking
     /// what has happened since: inclusive would hand it the same minute twice on every poll, and a
     /// strategy that acted on each would be acting twice on one candle.</para>
     ///
-    /// <para>The limit is capped at <see cref="DatasetReader.MaxBars"/> — the one a caller is told
-    /// about — rather than refused, because this read has no window to be a different window from:
-    /// "the next N after X" is answered exactly, and the caller asks again with the last open time
-    /// it got.</para>
+    /// <para>The limit is capped at <see cref="MaxRows"/> rather than refused, because this read has
+    /// no window to be a different window from: "the next N after X" is answered exactly, and the
+    /// caller asks again with the last open time it got. A caller that DOES own a window — the pipe
+    /// op — asks for one past the cap and refuses on what comes back.</para>
     /// </summary>
     public IReadOnlyList<ForwardBar> Since(string symbol, DateTimeOffset? openExclusive = null,
         int limit = DatasetReader.MaxBars, string source = ForwardBars.Source) => db.Read(_ =>
     {
-        var take = Math.Clamp(limit, 0, DatasetReader.MaxBars);
+        var take = Math.Clamp(limit, 0, MaxRows);
         if (take == 0) return (IReadOnlyList<ForwardBar>)[];
 
         using var c = db.Cmd($"""

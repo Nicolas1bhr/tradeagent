@@ -166,8 +166,13 @@ public static class GatewaySchema
             + "'evaluation_class' is 'research' for real collected history and 'fixture' for bars that exist to "
             + "prove the machinery works and are never evidence. You "
             + "cannot write any of this — the account owner collects data in TradeAgent, and the holdout is set "
-            + "in TradeAgent's own window and can never be moved earlier.", []),
-        new(Core.Ops.DataBars, "trade data bars --pair P [--from D] [--to D]", false,
+            + "in TradeAgent's own window and can never be moved earlier. "
+            + "'forward' is a SEPARATE list and a different kind of thing: closed 1-minute bars TradeAgent "
+            + "collected itself, minute by minute, while it was running. They carry NO vendor checksum — none is "
+            + "published for a live window — so they are NOT evaluation evidence and no verdict is ever taken "
+            + "over them; no holdout applies to them either, because every one of them post-dates every freeze "
+            + "on this installation. Read them with 'trade data bars --source forward'.", []),
+        new(Core.Ops.DataBars, "trade data bars --pair P [--from D] [--to D] [--source archive|forward]", false,
             "Closed bars from that data, ascending, in UTC, with nothing filled in. They are hypothesis evidence: "
             + "they establish no fill, no queue position and no intrabar ordering, so what you compute over them "
             + $"is a reason to test something and never a record of a trade. At most {Core.Data.DatasetReader.MaxBars} "
@@ -180,11 +185,21 @@ public static class GatewaySchema
             + "'to' at all, which asks for every bar there is — and it is refused rather than cut short at the "
             + "cutoff, because an answer quietly clipped is a different window from the one you asked for. Ask "
             + "for a window whose 'to' is EARLIER than the cutoff. Every part of the AI is refused equally, and "
-            + "so is a caller that presented no launch grant.",
+            + "so is a caller that presented no launch grant. "
+            + "'--source forward' asks instead for the closed minutes TradeAgent collected ITSELF while it was "
+            + "running. Those are bounded the same way and refused the same way when the window is too big, and "
+            + "NO holdout applies to them — not a relaxation but a fact about what they are: every forward bar "
+            + "post-dates every freeze on this installation, because it did not exist when the freeze was taken. "
+            + "They carry no vendor checksum, they are NEVER evaluation evidence, and every bar comes back with "
+            + "the instant it was received, which is after its own close. A minute the vendor did not publish is "
+            + "recorded as missing and is never filled in, and the FIRST reading of a minute is the one served.",
             [
                 new("pair", "string", true, "Which pair, e.g. BTCUSDT. Upper-case letters and digits only."),
                 new("from", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
-                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused.")
+                new("to", "string", false, "ISO-8601 date or instant, inclusive. Present and unreadable is refused."),
+                new("source", "string", false,
+                    "'archive' (the default) for the frozen, checksummed history the account owner collected, or "
+                    + "'forward' for the closed minutes TradeAgent collected itself. Any other word is refused.")
             ]),
 
         new(Core.Ops.VenueList, "trade venue list", false,

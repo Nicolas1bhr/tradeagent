@@ -521,6 +521,50 @@ public sealed record GatewayStatus(
     /// same turn on a different model is a different bill by a factor of fifty.
     /// </summary>
     public string? AiModel { get; init; }
+
+    /// <summary>
+    /// HOW STALE THE FORWARD BARS ARE RIGHT NOW, or ABSENT because this installation collects none.
+    ///
+    /// <para>It is on the status for the reason <see cref="LossToday"/> is: it is a fact the agent's
+    /// next piece of work is about to be bounded by. A paper run decides on the bar that has just
+    /// closed, and a program's <c>data_freshness</c> is checked against that bar AT DISPATCH — so an
+    /// agent that could not see the age of the newest bar would plan a session it is not going to be
+    /// allowed to have, and read every refusal as the software being broken.</para>
+    ///
+    /// <para>ABSENT never means "fresh". It means this installation is collecting no forward bars —
+    /// the owner's toggle is off, or the collector has never yet had an answer — and the age inside
+    /// it is null for a series that has attempts but no bars at all.</para>
+    /// </summary>
+    public ForwardDataStatus? ForwardData { get; init; }
+}
+
+/// <summary>
+/// THE FORWARD SERIES AS THE STATUS REPORTS IT — the one line an agent needs before it decides
+/// anything on live bars.
+///
+/// <para>These are NOT evaluation evidence: there is no vendor checksum for a live window and none
+/// is claimed. The full sentence is on <c>data-list</c> and on <c>data-bars --source forward</c>;
+/// this is the freshness, the holes seen today and whatever the last look got wrong.</para>
+/// </summary>
+public sealed record ForwardDataStatus(string Symbol)
+{
+    /// <summary>The newest CLOSED bar's open time, or absent because there is none yet.</summary>
+    public DateTimeOffset? LastBar { get; init; }
+
+    /// <summary>
+    /// How old that bar is, measured from its CLOSE. Absent means there is no bar at all and never
+    /// means fresh — the distinction <see cref="GatewayStatus.LossToday"/> makes, for the same reason.
+    /// </summary>
+    public long? AgeSeconds { get; init; }
+
+    /// <summary>Gap RUNS first seen since the start of the current UTC day. Counted, never filled.</summary>
+    public int GapsToday { get; init; }
+
+    /// <summary>What the last look got wrong, in words, or absent because it worked.</summary>
+    public string? LastError { get; init; }
+
+    /// <summary>False when the owner has switched collection off. Then the age only grows.</summary>
+    public bool Collecting { get; init; }
 }
 
 public sealed record ReconcileResult(int Resolved, int Inconclusive, IReadOnlyList<string> Details)
