@@ -6392,3 +6392,42 @@ api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=2` → HTTP 200 i
 
 **NOT done, NOT verified:** no build, no suite, no runtime — nothing in the report or in this section marks a feature implemented, a test passed or a boundary
 enforced; the Binance probe is a read of public data from this Mac and proves nothing about the product; no Astra consult yet; no brief for a product unit yet.
+
+## 2026-09-19 — U-verdict-op landed: the candidate → verdict arrow is connected — a council role asks the app's referee for a verdict on its own frozen version, bounded, idempotent and sanitised
+
+The first paper-line unit, the survey's earliest broken dependency (`docs/INSPECTION-2026-09-19.md` tables 3 and 5), built by one fresh Opus builder from the
+39-line brief `docs/briefs/U-verdict-op.md` (landed `a617486`), resumed once after a wifi outage stalled it at its first step with nothing on disk. Merge
+`413c6de`, 5 commits (4 items + the report), 14 files, +939/−26, no schema rung. NOT the money path: nothing here reaches `PlaceAsync`. The sibling's five files
+untouched (`git diff --name-only` → 0 of them). Preceded by the one bounded Astra consult `manager-prompt.md` § 7 allows (2026-09-19, `gpt-6-astra`, "high",
+≈ 7 min, answer file only, sent to the owner, kept out of the repo): its advice taken into this brief — admission needs a COMPLETED research run by the asking
+role, the request is idempotent so a dataset that grew buys no second peek — and into the queue: a typed paper-eligible verdict, one paper envelope, forward
+bars, a paper adapter, a deployment record, the runner, then the observed loop; its one pre-run insistence, a crash-after-acceptance recovery test.
+
+- **`Ops.Verdict`** (`Protocol.cs`), a read for the gateway — not in `Mutating`, a zero connector path (`HandlerPaths`, `TimeSpan.Zero` like `Backtest`). It asks for
+  one of the final judgements a campaign budgets; it reads no bar, moves no cutoff, opens and renews no campaign.
+- **`VerdictFor`** beside `BacktestFor` (`GatewayPipeServer.cs`): a known council role (`Backtests.RoleOf`, made `internal`, its refusal unchanged — the operator and
+  a roleless connection get no verdict); an OPEN campaign for the dataset (`Campaigns.OpenForDataset`; none → the owner's holdout press named); a COMPLETED
+  registered run of that version by that role (new read `StrategyStore.CompletedRunsOf`; `--dataset` optional when exactly one qualifies); one verdict at a time
+  per role; IDEMPOTENT on (version, campaign) — an existing promotion is answered as it stands and the referee is not called. Otherwise the EXISTING
+  `Referee.Verdict` runs unchanged: charge, audience, promotion row, delivery to Research and boundary as before. The reply carries the verdict, the reason
+  class, `text` = `RefereeFeedback.Text` byte for byte, spent/budget — no metric, trace hash, run figure or bar.
+- **`trade verdict --version <hash> [--dataset <id>]`**, `Ops.Verdict` in `GrantedWorkerTools.TradeOps` for every role, described in `GatewaySchema` and in two
+  lines of the mission instructions; `CONTRACTS.md` § campaign now says the verdict REQUEST is an op and the holdout, campaign, trial and disposition still have
+  none — the per-lineage verdict budget and the sanitised text are what bound "searching the holdout by asking"; one `USER-GUIDE.md` sentence.
+- **Deviations, kept:** `text` asserted equal to `RefereeFeedback.Text(promotion)` rather than containing the owner's report line (the brief conflated the two);
+  `RefereeVerdictTests.No_pipe_op_asks_for_a_verdict_or_writes_a_promotion` now asserts exactly ONE op named verdict, non-mutating, args {version, dataset}, with the
+  promote/referee/holdout/campaign/trial/disposition bans intact and its name kept — the one existing assertion changed; the builder overwrote the pre-existing
+  `VerdictOverPipeTests.cs`, noticed, restored it verbatim and rebuilt the three commits (name diff: 0 removed).
+
+**Verified by running (the builder, quoted; then the manager's gate):** builder's gate at `3f3edf1` (on `a617486`), `dotnet clean` then Release `--no-incremental`:
+17 projects, 0 warnings, 0 errors; Unit 1146 + Fault 374 + Integration 677 = 2197 passed, 0 failed, 1 skipped (the `[Fact(Skip)]` already on `main`); touched classes
+3× → 19/19 Integration, 12/12 Unit each pass; names 1855 → 1861, 6 added, 0 removed. RED: `{"code":"INVALID_REQUEST","message":"unknown operation 'verdict'"}` on 4
+of the 6 new tests. Mutant (`text` built from the holdout run's metrics): `Assert.DoesNotContain() Failure: Sub-string found  String: ···"48, gross 48, trace
+802c9c601482cc1e6e26e"···` at `VerdictOverPipeTests.cs:279`; reverted, 6/6 green. Manager's gate at `3f3edf1` (the reported tip; landed as `413c6de` after a docs-only rebase over `d123e91`, `src`/`tests` identical), Release: build `--no-incremental` → 0 warnings, 0 errors; Unit 1146/1146 (21 s), Fault 374/374 (1 m 25 s), Integration 677/678, 1 skipped (11 m 3 s, its normal length) → 0 failed. Names vs `main` (from git objects, `[[:space:]]`): sets 1854 → 1860,
+0 removed, 6 added; `[Fact]`/`[Theory]` 1821 → 1827. Scan: two judged false positives excluded by name in that one command (a doc comment "token on every frame";
+`grants.Issue(...).Token`, a property read), otherwise clean; no trailers; `rev-list --count` → 0. CI at `413c6de`: recorded when complete. Docs-only shas recorded: `222dcc9` (run 35440880279),
+`50c40cc` (35441312812), `c7b22a3` (35441352574), `a617486` (35441665140) — each GREEN on all four jobs (ubuntu, windows, macos, package).
+
+**NOT done, NOT verified:** no test of the one-at-a-time refusal (two concurrent pipe callers); `RefereeFeedback.Text` still ends "You cannot ask for one" — stale,
+in `Referee.cs`, which `U-paper-verdict` owns and was told to fix; no real model has asked for a verdict — every caller is a test over the pipe against the
+simulator; over completed-month archives every production verdict is still `evidence-precedes-the-freeze` until `U-paper-verdict` lands; no box, no ATAS, no money.
